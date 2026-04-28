@@ -15,6 +15,16 @@ skills/
     README.md         # Optional: extended docs, examples, changelog
 ```
 
+## Skills Catalog
+
+| Skill | Description |
+|-------|-------------|
+| [threadlight-design](skills/threadlight-design/) | Design agentic workflows — turn any business process into a structured folder of Skills + AGENTS.md, ready for Foundry deployment |
+| [threadlight-deploy](skills/threadlight-deploy/) | Generate all deployment artifacts for Microsoft Foundry Hosted Agents (container.py, Dockerfile, azd project, Teams bot) |
+| [foundry-hosted-agents](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — Agent + FoundryChatClient + ResponsesHostServer pattern, RBAC, troubleshooting |
+| [pptx](skills/pptx/) | Generate professional PowerPoint (PPTX) presentations using python-pptx with dark/light themes |
+| [auto-demo-producer](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright recording + edge-tts narration + ffmpeg assembly |
+
 ## Contributing
 
 1. **Fork & branch** — create a feature branch from `main`.
