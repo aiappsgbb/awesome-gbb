@@ -2,9 +2,68 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
+[![Skills](https://img.shields.io/badge/skills-5-blue)](#skills-catalog)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+---
+
+## Contents
+
+- [What Are Skills?](#what-are-skills)
+- [Skills Catalog](#skills-catalog)
+  - [🏗️ Agent Design & Deployment](#️-agent-design--deployment)
+  - [📊 Content Generation](#-content-generation)
+- [How to Use](#how-to-use)
+- [Repository Structure](#repository-structure)
+- [Contributing](#contributing)
+
+---
+
 ## What Are Skills?
 
-Skills are reusable, composable building blocks for AI agents. Each Skill encodes domain expertise as a structured markdown file (`SKILL.md`) that an agentic runtime — such as GitHub Copilot CLI, Microsoft Foundry, or any compatible host — can load and execute.
+Skills are reusable, composable building blocks for AI agents. Each Skill encodes domain expertise as a structured markdown file (`SKILL.md`) that an agentic runtime — such as **GitHub Copilot CLI**, **Microsoft Foundry**, or any compatible host — can load and execute.
+
+A skill tells the agent **what to do**, **when to activate**, and **how to do it** — step by step.
+
+---
+
+## Skills Catalog
+
+### 🏗️ Agent Design & Deployment
+
+| Skill | Description |
+|-------|-------------|
+| [**threadlight-design**](skills/threadlight-design/) | Design agentic workflows — turn any business process into a structured folder of Skills + AGENTS.md, ready for Foundry deployment |
+| [**threadlight-deploy**](skills/threadlight-deploy/) | Generate all deployment artifacts for Microsoft Foundry Hosted Agents — container.py, Dockerfile, azd project, Teams bot. One-command deploy via `azd up` |
+| [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting |
+
+### 📊 Content Generation
+
+| Skill | Description |
+|-------|-------------|
+| [**pptx**](skills/pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes |
+| [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
+
+---
+
+## How to Use
+
+**As a GitHub Copilot CLI user-level skill:**
+
+```bash
+# Copy a skill to your global skills directory
+cp -r skills/<skill-name> ~/.copilot/skills/<skill-name>
+```
+
+**As a project-level skill (scoped to a repo):**
+
+```bash
+cp -r skills/<skill-name> .github/skills/<skill-name>
+```
+
+**In Microsoft Foundry:** Skills are loaded by the container runtime at startup — see [threadlight-deploy](skills/threadlight-deploy/) for the full deployment pattern.
+
+---
 
 ## Repository Structure
 
@@ -15,15 +74,7 @@ skills/
     README.md         # Optional: extended docs, examples, changelog
 ```
 
-## Skills Catalog
-
-| Skill | Description |
-|-------|-------------|
-| [threadlight-design](skills/threadlight-design/) | Design agentic workflows — turn any business process into a structured folder of Skills + AGENTS.md, ready for Foundry deployment |
-| [threadlight-deploy](skills/threadlight-deploy/) | Generate all deployment artifacts for Microsoft Foundry Hosted Agents (container.py, Dockerfile, azd project, Teams bot) |
-| [foundry-hosted-agents](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — Agent + FoundryChatClient + ResponsesHostServer pattern, RBAC, troubleshooting |
-| [pptx](skills/pptx/) | Generate professional PowerPoint (PPTX) presentations using python-pptx with dark/light themes |
-| [auto-demo-producer](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright recording + edge-tts narration + ffmpeg assembly |
+---
 
 ## Contributing
 
