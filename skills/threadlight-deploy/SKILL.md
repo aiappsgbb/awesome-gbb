@@ -194,26 +194,82 @@ Map configured MCP servers for Foundry runtime (NOT local dev):
 
 | Design Tool | MAF Runtime | Notes |
 |-------------|-------------|-------|
-| Browser Automation | **MCP ACA** — deploy Playwright as a remote MCP server | Local Playwright cannot run inside hosted agent containers. Use the official Playwright MCP Docker image or `npx @playwright/mcp` packaged in an ACA. See `mcp-aca-reference.md`. |
-| Code Interpreter | Platform MCP / custom tool | Use Foundry Toolbox MCP endpoint if available, or a custom `@tool` function |
-| Azure AI Search | Platform MCP / custom tool | Use Foundry Toolbox MCP endpoint if available, or a custom `@tool` function |
-| Bing Search / Web Search | **MCP server** or **custom tool** (Python function calling a search API) | Deploy a web search MCP server as ACA, or define a custom `@tool` function that calls a search API (Tavily, SerpAPI, etc.). |
+| Browser Automation | **MCP ACA** — deploy Playwright as a remote MCP server | Local Playwright cannot run inside hosted agent containers. Use `npx @playwright/mcp` packaged in an ACA. |
+| Web Search | **Foundry Toolbox** — `client.get_toolbox("toolbox-name")` | Create a Toolbox with `web_search` tool via REST API or postprovision hook. No Bing resource needed — it's a built-in Toolbox tool type. |
+| Code Interpreter | **Foundry Toolbox** — add `code_interpreter` to Toolbox | Computation and data processing. Note: file output stays in Toolbox sandbox, NOT agent `$HOME`. |
+| File Generation | **Custom `@tool`** — `save_report` writing to `$HOME` | Agent writes CSV/MD/HTML to `Path.home()`. Downloadable via session files API. For HTML reports, add `markdown` library to convert MD→styled HTML. |
+| Azure AI Search | Foundry Toolbox or custom MCP | Use Toolbox if available, or deploy custom MCP ACA |
 | Cosmos DB | MCP ACA (e.g., .NET MCPToolKit — see MCP ACA reference) | Proven pattern |
 | Custom data store | Custom MCP server (deploy as ACA or Azure Functions) | Proven pattern |
 
 > **Key constraints for MAF hosted agents:**
 >
 > 1. **No local browser** — hosted agent containers are headless Python environments.
->    Playwright, Selenium, etc. cannot run locally. Deploy browser automation as a
->    remote MCP server on ACA (e.g., `mcr.microsoft.com/playwright/mcp` or a custom
->    container running `npx @playwright/mcp --port 8080`).
+>    Deploy browser automation as a remote MCP server on ACA.
 >
-> 2. **No built-in web search** — use a web search MCP server or custom `@tool`
->    function calling a search API (proven pattern).
+> 2. **Foundry Toolbox is the preferred tool source** — create a Toolbox with `web_search`
+>    and/or `code_interpreter` tools. Load via `client.get_toolbox("name")` in container.py.
+>    The Toolbox is an MCP endpoint managed by the platform — no infrastructure to deploy.
 >
-> 3. **Foundry Toolbox MCP** — the refreshed preview supports platform-managed MCP
->    tools via the Foundry Toolbox endpoint. Use `client.get_mcp_tool()` to connect.
->    Note: some tools may require `Foundry-Features: Toolsets=V1Preview` header.
+> 3. **Session files for report output** — custom `@tool` functions can write files to
+>    `Path.home()` (agent's `$HOME`). Files persist across turns and are downloadable via
+>    the session files API: `GET .../sessions/{sid}/files/content?path=filename`.
+
+### Foundry Toolbox Setup
+
+Create a Toolbox via REST API (or automate in a postprovision hook):
+
+```bash
+TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+curl -X POST "$PROJECT_ENDPOINT/toolboxes/my-tools/versions?api-version=v1" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Foundry-Features: Toolboxes=V1Preview" \
+  -d '{"tools":[{"type":"web_search","name":"web_search"},{"type":"code_interpreter","name":"code_interpreter"}]}'
+```
+
+In container.py, load as async:
+```python
+toolbox = await client.get_toolbox(os.environ["TOOLBOX_NAME"])
+agent = Agent(client=client, tools=[mcp_tool, toolbox], ...)
+```
+
+### Content Filtering for Sensitive Domains
+
+Agents in tobacco, pharma, weapons, or other regulated domains trigger Azure OpenAI's
+default content filters (severity: `Medium`) on legitimate queries. Create a custom RAI
+policy with `High` severity thresholds and apply to the model deployment:
+
+```bash
+# Create policy
+az rest --method PUT \
+  --url ".../raiPolicies/my-ci-policy?api-version=2025-10-01-preview" \
+  --body '{"properties":{"mode":"Blocking","basePolicyName":"Microsoft.DefaultV2","contentFilters":[
+    {"name":"Hate","blocking":true,"enabled":true,"severityThreshold":"High","source":"Prompt"},
+    {"name":"Hate","blocking":true,"enabled":true,"severityThreshold":"High","source":"Completion"},
+    {"name":"Violence","blocking":true,"enabled":true,"severityThreshold":"High","source":"Prompt"},
+    {"name":"Violence","blocking":true,"enabled":true,"severityThreshold":"High","source":"Completion"},
+    {"name":"Selfharm","blocking":true,"enabled":true,"severityThreshold":"High","source":"Prompt"},
+    {"name":"Selfharm","blocking":true,"enabled":true,"severityThreshold":"High","source":"Completion"},
+    {"name":"Jailbreak","blocking":true,"enabled":true,"source":"Prompt"}
+  ]}}'
+
+# Apply to deployment
+echo '{"properties":{"raiPolicyName":"my-ci-policy"}}' > /tmp/rai.json
+az rest --method PATCH \
+  --url ".../deployments/gpt-5.4-mini?api-version=2026-03-15-preview" \
+  --headers "Content-Type=application/json" --body @/tmp/rai.json
+```
+
+**Automate via postprovision hook** — add to `azure.yaml`:
+```yaml
+hooks:
+    postprovision:
+        shell: pwsh
+        run: 'cd infra/scripts && uv sync --frozen --quiet && uv run postdeploy.py'
+```
+
+The hook script creates the Toolbox, RAI policy, and Teams manifest idempotently.
 
 ### 4. `container.py` — MAF Runtime
 
@@ -438,6 +494,35 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
    The extension's postdeploy hook auto-assigns RBAC. If it failed (missing
    `AZURE_TENANT_ID`), manually assign roles — see Identity & RBAC reference.
 
+4. **If the bot returns `server_error` in Teams:**
+   Stale conversations from previous agent versions cause persistent `server_error`.
+   Type `!reset` in the Teams chat, or the bot auto-retries with a fresh conversation.
+
+## Bot Implementation Notes
+
+The Teams bot (`copilot/bot.py`) MUST use the refreshed preview invocation pattern:
+```python
+# CORRECT — agent-bound client (refreshed preview)
+oai_client = project_client.get_openai_client(agent_name=AGENT_NAME)
+response = await oai_client.responses.create(input=user_message, stream=True)
+
+# WRONG — old agent_reference pattern (silently fails)
+# response = await oai_client.responses.create(
+#     input=user_message,
+#     extra_body={"agent_reference": {"name": AGENT_NAME, "type": "agent_reference"}}
+# )
+```
+
+**Retry pattern:** The bot should reset `ConversationState.thread_id` and retry on
+`server_error` — stale conversations break after agent version updates.
+
+**Session files:** After response, check for report files in the session and send inline:
+```python
+# List files in agent session
+files = requests.get(f"{endpoint}/agents/{name}/endpoint/sessions/{sid}/files?path=.", ...)
+# Download and send as code block in Teams (data URI attachments are rejected by Teams)
+```
+
 ## Authentication
 
 - **KEYLESS ONLY** — never use API keys for Azure services
@@ -454,11 +539,50 @@ middleware needed.
 
 ## Evaluations
 
-After deployment, run Foundry cloud evals:
-- 6 built-in evaluators: intent_resolution, task_adherence, task_completion,
-  coherence, tool_selection, tool_output_utilization
-- All evaluator names use `builtin.` prefix
-- Minimum 300K TPM recommended for eval runs
+After deployment, run Foundry evaluations. **Important:** The SDK's `azure_ai_agent`
+target type does NOT correctly route to hosted agent endpoints — it sends requests to
+the project endpoint instead of the agent's dedicated endpoint. Use a **two-phase approach**:
+
+### Phase 1: Invoke the agent sequentially
+```python
+project = AIProjectClient(endpoint=..., credential=..., allow_preview=True)
+oai = project.get_openai_client(agent_name="my-agent")
+
+# Warm up (cold start takes 15-30s)
+oai.responses.create(input="Hello", stream=False)
+
+# Invoke each query
+for query in test_queries:
+    response = oai.responses.create(input=query, stream=False)
+    results.append({"query": query, "response": response.output_text})
+```
+
+### Phase 2: Score with Foundry evaluators
+```python
+client = project.get_openai_client()  # NOT agent-bound
+evaluation = client.evals.create(
+    name="my-eval",
+    data_source_config={"type": "custom", "item_schema": {...}},
+    testing_criteria=[
+        {"type": "azure_ai_evaluator", "evaluator_name": "builtin.task_adherence",
+         "data_mapping": {"query": "{{item.query}}", "response": "{{item.response}}"}},
+    ],
+)
+run = client.evals.runs.create(
+    eval_id=evaluation.id,
+    data_source={"type": "jsonl", "source": {"type": "file_content", "content": [{"item": r} for r in results]}},
+)
+```
+
+### Evaluator RBAC
+The eval judges need model access. Assign `Cognitive Services OpenAI User` on the
+AI account to: your user identity, account managed identity, and project managed identity.
+
+### Recommended evaluators
+- `builtin.task_adherence` — follows system instructions?
+- `builtin.task_completion` — completed the task?
+- `builtin.intent_resolution` — understood user intent?
+- `builtin.coherence` — logical and well-structured?
 ```
 
 ---
@@ -696,13 +820,22 @@ The scaffold's `infra/main.parameters.json` includes these critical parameters:
 > **⚠️ `ENABLE_CAPABILITY_HOST=false` is mandatory.** The refreshed preview removed
 > capability host creation. The old default was `true` (for initial preview). If your
 > Bicep still defaults to `true`, provisioning will fail or create unnecessary resources.
+>
+> **⚠️ MIGRATION: Delete existing CapabilityHosts.** If the Foundry account had a previous
+> initial preview deployment, an old CapabilityHost resource may still exist. Its presence
+> blocks the refreshed preview API — you'll get `"The requested experience is not available
+> for this subscription"` even with `ENABLE_CAPABILITY_HOST=false`. Delete it:
+> ```bash
+> az rest --method DELETE --url "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/capabilityHosts/agents?api-version=2025-10-01-preview"
+> ```
+> Deletion takes 2-5 minutes. Also remove the `capabilityHosts` resource from `ai-project.bicep`.
 
 ### Region Availability
 
 Not all regions support hosted agents. If you get `"The requested experience is not
 available for this subscription"` during `azd deploy`, try a different region.
 
-**Known working regions (April 2026):** `northcentralus`, `eastus`, `swedencentral`, `westus`
+**Known working regions (April 2026):** `northcentralus`, `eastus`, `swedencentral`, `canadacentral`, `australiaeast`
 **Known failing regions:** `eastus2` (returned "experience not available" in testing)
 
 > Always check [Region availability](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#region-availability)
