@@ -207,8 +207,8 @@ class AgentBot(AgentApplication):
                 "Error processing message: %s\n%s", e, traceback.format_exc()
             )
             await context.send_activity(
-                f"⚠️ Something went wrong. Please try again.\n\n"
-                f"Error: {type(e).__name__}: {e}"
+                "⚠️ Something went wrong. Please try again, "
+                "or type **!reset** to start a fresh conversation."
             )
 
         return True
@@ -284,9 +284,10 @@ microsoft-agents-hosting-core>=0.8.0
 microsoft-agents-hosting-teams>=0.8.0
 microsoft-agents-storage-blob>=0.8.0
 
-# Azure AI
+# Azure AI + OpenAI
 azure-ai-projects>=2.0.0
 azure-identity>=1.19.0
+openai>=1.68.0
 
 # Web server
 aiohttp>=3.9.0
@@ -407,8 +408,73 @@ output botName string = bot.name
 
 ### `infra/bot/aca.bicep`
 
-The ACA module should create a container app with external ingress on port 80,
-the UAMI identity attached, and the required environment variables injected.
+```bicep
+@description('Name of the container app')
+param name string
+
+@description('Location')
+param location string = resourceGroup().location
+
+@description('Container app environment resource ID')
+param containerAppEnvironmentId string
+
+@description('Container image')
+param image string
+
+@description('Target port')
+param targetPort int = 80
+
+@description('User-Assigned Managed Identity resource ID')
+param userAssignedIdentityId string
+
+@description('Environment variables')
+param env array = []
+
+@description('Tags')
+param tags object = {}
+
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: name
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: containerAppEnvironmentId
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: targetPort
+        transport: 'auto'
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'copilot'
+          image: image
+          env: env
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 3
+      }
+    }
+  }
+}
+
+output fqdn string = containerApp.properties.configuration.ingress.fqdn
+output name string = containerApp.name
+```
 
 ### Bicep integration in `main.bicep`:
 
@@ -557,17 +623,31 @@ import zipfile
 from pathlib import Path
 
 
-def build_manifest(bot_client_id: str, agent_name: str, output_dir: str = "copilot"):
-    """Build the Teams app package zip."""
+def build_manifest(
+    bot_client_id: str,
+    agent_name: str,
+    agent_description: str = "",
+    developer_name: str = "",
+    output_dir: str = "copilot",
+):
+    """Build the Teams app package zip, replacing all placeholder tokens."""
     src = Path("copilot/teams_package")
     out = Path(output_dir)
     out.mkdir(exist_ok=True)
 
     manifest = json.loads((src / "manifest.json").read_text())
+
+    # Replace all tokens
     manifest["id"] = bot_client_id
     manifest["copilotAgents"]["customEngineAgents"][0]["id"] = bot_client_id
     manifest["bots"][0]["botId"] = bot_client_id
     manifest["name"]["short"] = agent_name
+    if agent_description:
+        manifest["name"]["full"] = agent_description
+        manifest["description"]["short"] = agent_description
+        manifest["description"]["full"] = agent_description
+    if developer_name:
+        manifest["developer"]["name"] = developer_name
 
     zip_path = out / "copilot_package.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
@@ -584,9 +664,30 @@ def build_manifest(bot_client_id: str, agent_name: str, output_dir: str = "copil
 if __name__ == "__main__":
     build_manifest(
         bot_client_id=os.environ.get("BOT_APP_ID", "<uami-client-id>"),
-        agent_name=os.environ.get("AGENT_NAME", "My Agent"),
+        agent_name=os.environ.get("AGENT_DISPLAY_NAME", "My Agent"),
+        agent_description=os.environ.get("AGENT_DESCRIPTION", ""),
+        developer_name=os.environ.get("DEVELOPER_NAME", ""),
     )
 ```
+
+### Wiring as azd postprovision hook
+
+Add to `azure.yaml`:
+
+```yaml
+hooks:
+  postprovision:
+    shell: sh
+    run: >
+      python scripts/build_teams_manifest.py
+    env:
+      BOT_APP_ID: ${AZURE_BOT_APP_ID}
+      AGENT_DISPLAY_NAME: "My Agent"
+      AGENT_DESCRIPTION: "My agent description"
+      DEVELOPER_NAME: "My Org"
+```
+
+`AZURE_BOT_APP_ID` is set by Bicep output → azd env during provisioning.
 
 ---
 
