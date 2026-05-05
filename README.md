@@ -21,9 +21,9 @@
 
 ## What Are Skills?
 
-Skills are reusable, composable building blocks for AI agents. Each Skill encodes domain expertise as a structured markdown file (`SKILL.md`) that an agentic runtime — such as **GitHub Copilot CLI**, **Microsoft Foundry**, or any compatible host — can load and execute.
+Skills are reusable, composable building blocks for AI agents. Each Skill encodes domain expertise as a structured markdown file (`SKILL.md`) that **GitHub Copilot CLI** (or any compatible agentic runtime) can load and execute.
 
-A skill tells the agent **what to do**, **when to activate**, and **how to do it** — step by step.
+These are **developer-oriented skills** — they help you build, deploy, and ship faster. A skill tells the agent **what to do**, **when to activate**, and **how to do it** — step by step.
 
 ---
 
@@ -68,7 +68,7 @@ npx @anthropic/copilot-cli skill install aiappsgbb/awesome-gbb/skills/<skill-nam
 cp -r skills/<skill-name> .github/skills/<skill-name>
 ```
 
-**In Microsoft Foundry:** Skills are loaded by the container runtime at startup — see [threadlight-deploy](skills/threadlight-deploy/) for the full deployment pattern.
+**Deploy skill-based agents to Microsoft Foundry?** See [threadlight-design](skills/threadlight-design/) to design your agent workflow and [threadlight-deploy](skills/threadlight-deploy/) to generate all deployment artifacts.
 
 ---
 
