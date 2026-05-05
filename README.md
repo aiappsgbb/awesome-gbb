@@ -50,11 +50,16 @@ A skill tells the agent **what to do**, **when to activate**, and **how to do it
 
 ## How to Use
 
-**As a GitHub Copilot CLI user-level skill:**
+**Install a skill from GitHub:**
 
 ```bash
-# Copy a skill to your global skills directory
-cp -r skills/<skill-name> ~/.copilot/skills/<skill-name>
+gh skill install aiappsgbb/awesome-gbb/skills/<skill-name>
+```
+
+**Or with npx:**
+
+```bash
+npx @anthropic/copilot-cli skill install aiappsgbb/awesome-gbb/skills/<skill-name>
 ```
 
 **As a project-level skill (scoped to a repo):**
