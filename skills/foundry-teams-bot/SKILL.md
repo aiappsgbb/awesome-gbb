@@ -136,18 +136,13 @@ logger = logging.getLogger(__name__)
 FOUNDRY_AGENT_NAME = os.getenv("FOUNDRY_AGENT_NAME", "__PROJECT_NAME__")
 PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
 
-# For production, replace MemoryStorage with BlobStorage:
-# from microsoft_agents.storage.blob import BlobStorage
-# storage = BlobStorage(connection_string=os.getenv("BLOB_CONN_STR"), container_name="bot-state")
-storage = MemoryStorage()
-
 
 class AgentBot(AgentApplication):
     """Teams bot that forwards messages to a Foundry Hosted Agent."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._conversation_state = ConversationState(storage)
+        self._conversation_state = ConversationState(MemoryStorage())
         self.on_activity(ActivityTypes.message, self._on_message)
 
     async def _on_message(self, context: TurnContext, state: TurnState) -> bool:
@@ -273,7 +268,6 @@ def _friendly_error(error) -> str:
 - `allow_preview=True` on `AIProjectClient` is REQUIRED for `agent_name` to work
 - Collect all streaming chunks before sending — Teams garbles individual chunks
 - Never leak internal error details to Teams users — log server-side, return generic message
-- For production, swap `MemoryStorage` for `BlobStorage` to survive container restarts
 
 ### `copilot/app.py`
 
@@ -317,7 +311,6 @@ microsoft-agents-authentication-msal>=0.8.0
 microsoft-agents-hosting-aiohttp>=0.8.0
 microsoft-agents-hosting-core>=0.8.0
 microsoft-agents-hosting-teams>=0.8.0
-microsoft-agents-storage-blob>=0.8.0
 
 # Azure AI + OpenAI
 azure-ai-projects>=2.1.0
@@ -831,7 +824,6 @@ The bot's UAMI needs these role assignments to call the Foundry Hosted Agent:
 | `openai` import error at runtime | Missing from requirements.txt | Ensure `openai>=1.68.0` is in requirements.txt |
 | Manifest placeholders still visible | `build_teams_manifest.py` not run or env vars missing | Wire as postprovision hook — ensure `BOT_APP_ID` flows from Bicep output |
 | `server_error` on every message | Stale conversation from previous agent version | Type `!reset` in Teams chat — bot also auto-retries once on `server_error` |
-| State lost after container restart | Using `MemoryStorage` (in-memory only) | Switch to `BlobStorage` for production (see comment in bot.py) |
 
 > **Note on `devPreview` manifest:** The `copilotAgents.customEngineAgents` section
 > requires `manifestVersion: "devPreview"`. This is the current Teams schema for
