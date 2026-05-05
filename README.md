@@ -68,7 +68,8 @@ npx @anthropic/copilot-cli skill install aiappsgbb/awesome-gbb/skills/<skill-nam
 cp -r skills/<skill-name> .github/skills/<skill-name>
 ```
 
-**Deploy skill-based agents to Microsoft Foundry?** See [threadlight-design](skills/threadlight-design/) to design your agent workflow and [threadlight-deploy](skills/threadlight-deploy/) to generate all deployment artifacts.
+> [!NOTE]
+> **Looking to deploy skill-based agents to Microsoft Foundry?** See [threadlight-design](skills/threadlight-design/) to design your agent workflow, [threadlight-deploy](skills/threadlight-deploy/) to generate deployment artifacts, [foundry-hosted-agents](skills/foundry-hosted-agents/) for the refreshed preview reference, and [ghcp-hosted-agents](skills/ghcp-hosted-agents/) for the GitHub Copilot SDK variant.
 
 ---
 
