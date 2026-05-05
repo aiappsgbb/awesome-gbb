@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-6-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-7-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -37,6 +37,7 @@ A skill tells the agent **what to do**, **when to activate**, and **how to do it
 | [**threadlight-deploy**](skills/threadlight-deploy/) | Generate all deployment artifacts for Microsoft Foundry Hosted Agents — container.py, Dockerfile, azd project, Teams bot. One-command deploy via `azd up` |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a Foundry Hosted Agent to Microsoft Teams — bot code, Bicep infrastructure, Teams manifest, UAMI auth, and ACA deployment |
+| [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, for long-running tool loops |
 
 ### 📊 Content Generation
 
