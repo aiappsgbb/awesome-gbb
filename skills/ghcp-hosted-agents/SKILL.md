@@ -46,207 +46,21 @@ Deploy Foundry hosted agents using the **GitHub Copilot SDK** with BYOK
 
 ## Runtime Pattern (GHCP SDK + Invocations)
 
-```python
-"""Foundry Hosted Agent — GHCP SDK + BYOK via Invocations protocol."""
+**Copy the reference template** at `references/container.py` into the project root.
+Then adapt `_load_mcp_servers()` for your MCP server configuration.
 
-from __future__ import annotations
+The template provides:
+1. `_init_byok()` / `_get_provider()` — BYOK auth with `DefaultAzureCredential`
+2. `_ensure_session()` — Creates/resumes `CopilotClient` session with provider, skills, MCP
+3. `_stream_response()` — Subscribes to session events, yields SSE
+4. `handle_invoke()` — `@app.invoke_handler` that returns `StreamingResponse`
 
-import asyncio
-import json
-import logging
-import os
-import pathlib
-import time
-from typing import Any
-
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
-
-from azure.ai.agentserver.invocations import InvocationAgentServerHost
-from copilot import CopilotClient
-from copilot.session import PermissionHandler
-from copilot.generated.session_events import SessionEventType
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-BASE_DIR = pathlib.Path(os.getenv("PROJECT_DIR", "/app")).resolve()
-
-# ---------------------------------------------------------------------------
-# BYOK Authentication
-# ---------------------------------------------------------------------------
-
-_BYOK_CREDENTIAL = None
-_BYOK_ENDPOINT = ""
-
-
-def _init_byok() -> bool:
-    """Initialize BYOK with DefaultAzureCredential.
-
-    CRITICAL: Use ai.azure.com scope, NOT cognitiveservices.azure.com.
-    """
-    global _BYOK_CREDENTIAL, _BYOK_ENDPOINT
-    endpoint = (
-        os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").strip().rstrip("/")
-        or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "").strip().rstrip("/")
-    )
-    if not endpoint:
-        return False
-    try:
-        from azure.identity import DefaultAzureCredential
-        _BYOK_CREDENTIAL = DefaultAzureCredential()
-        _BYOK_ENDPOINT = endpoint
-        token = _BYOK_CREDENTIAL.get_token("https://ai.azure.com/.default")
-        logger.info("BYOK verified: %s", endpoint)
-        return True
-    except Exception as exc:
-        logger.error("BYOK init failed: %s", exc)
-        return False
-
-
-def _get_provider() -> dict | None:
-    """Mint a fresh BYOK provider dict for CopilotClient session."""
-    if not _BYOK_CREDENTIAL or not _BYOK_ENDPOINT:
-        return None
-    try:
-        token = _BYOK_CREDENTIAL.get_token("https://ai.azure.com/.default")
-        return {
-            "type": "openai",
-            "base_url": f"{_BYOK_ENDPOINT}/openai/v1/",
-            "bearer_token": token.token,
-            "wire_api": "responses",
-        }
-    except Exception as exc:
-        logger.error("BYOK token failed: %s", exc)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Session Management
-# ---------------------------------------------------------------------------
-
-app = InvocationAgentServerHost()
-
-_client: CopilotClient | None = None
-_session = None
-_model = os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-5.4")
-_skills_dir = str(BASE_DIR / "skills")
-
-
-def _load_instructions() -> str:
-    ci = BASE_DIR / "copilot-instructions.md"
-    return ci.read_text(encoding="utf-8").strip() if ci.exists() else ""
-
-
-def _load_mcp_servers() -> list[dict] | None:
-    """Load MCP servers from environment variables."""
-    servers = []
-    # Add any MCP servers your agent needs
-    mcp_fqdn = os.environ.get("MCP_SERVER_FQDN", "").strip()
-    if mcp_fqdn:
-        servers.append({"name": "mcp", "url": f"https://{mcp_fqdn}/mcp"})
-    return servers or None
-
-
-async def _ensure_session():
-    """Create or resume a CopilotClient session with BYOK."""
-    global _client, _session
-    if _session is not None:
-        return
-
-    session_id = os.environ.get("FOUNDRY_AGENT_SESSION_ID", "")
-
-    _client = CopilotClient()
-    await _client.start()
-
-    kwargs: dict[str, Any] = {
-        "on_permission_request": PermissionHandler.approve_all,
-        "streaming": True,
-        "model": _model,
-        "working_directory": str(pathlib.Path.home()),
-    }
-
-    provider = _get_provider()
-    if provider:
-        kwargs["provider"] = provider
-
-    instructions = _load_instructions()
-    if instructions:
-        kwargs["system_message"] = {"mode": "replace", "content": instructions}
-
-    if pathlib.Path(_skills_dir).is_dir():
-        kwargs["skill_directories"] = [_skills_dir]
-
-    mcp = _load_mcp_servers()
-    if mcp:
-        kwargs["mcp_servers"] = mcp
-
-    try:
-        if session_id:
-            _session = await _client.resume_session(
-                session_id,
-                **{k: v for k, v in kwargs.items() if k != "session_id"},
-            )
-        else:
-            raise Exception("no session_id")
-    except Exception:
-        _session = await _client.create_session(**kwargs)
-
-
-# ---------------------------------------------------------------------------
-# SSE Streaming Handler
-# ---------------------------------------------------------------------------
-
-async def _stream_response(invocation_id: str, input_text: str):
-    """Stream CopilotClient events as SSE."""
-    await _ensure_session()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def on_event(event):
-        if event.type == SessionEventType.SESSION_IDLE:
-            queue.put_nowait(None)  # Signal completion
-        elif event.type == SessionEventType.SESSION_ERROR:
-            queue.put_nowait(RuntimeError(getattr(event.data, "message", "error")))
-        else:
-            queue.put_nowait(event)
-
-    unsubscribe = _session.on(on_event)
-    try:
-        await _session.send(input_text)
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                yield f"data: {json.dumps({'type': 'error', 'message': str(item)})}\n\n".encode()
-                break
-            yield f"data: {json.dumps(item.to_dict())}\n\n".encode()
-
-        yield f"event: done\ndata: {json.dumps({'invocation_id': invocation_id})}\n\n".encode()
-    finally:
-        unsubscribe()
-
-
-@app.invoke_handler
-async def handle_invoke(request: Request) -> Response:
-    try:
-        data = await request.json()
-        input_text = data.get("input", "")
-        if not input_text:
-            return JSONResponse(status_code=400, content={"error": "missing input"})
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
-
-    return StreamingResponse(
-        _stream_response(request.state.invocation_id, input_text),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-    )
-
-
-if __name__ == "__main__":
-    _init_byok()
-    app.run()
+```
+container.py → CopilotClient + InvocationAgentServerHost → port 8088
+  ├── BYOK auth (ai.azure.com scope)
+  ├── Skills via skill_directories parameter
+  ├── MCP servers via mcp_servers parameter
+  └── SSE streaming (no timeout on long tool loops)
 ```
 
 **Key points:**
@@ -291,25 +105,11 @@ events flow throughout.
 
 ## agent.yaml
 
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+**Copy** `references/agent.yaml` into your project root and adapt:
 
-kind: hosted
-name: my-agent
-description: Agent using GHCP SDK with Invocations protocol
-protocols:
-  - protocol: invocations    # NOT responses
-    version: 1.0.0
-environment_variables:
-  - name: MODEL_DEPLOYMENT_NAME
-    value: gpt-5.4
-  # Add MCP server FQDNs if needed
-  # - name: MCP_SERVER_FQDN
-  #   value: ${MCP_SERVER_FQDN}
-resources:
-  cpu: "1"
-  memory: 2Gi
-```
+- `name` — your agent name
+- `description` — your agent description
+- `environment_variables` — add MCP server FQDNs if needed
 
 **Critical:** Use `protocol: invocations` (not `responses`). Version must be semver `1.0.0`.
 
@@ -317,22 +117,7 @@ resources:
 
 ## pyproject.toml
 
-```toml
-[project]
-name = "my-agent"
-version = "1.0.0"
-requires-python = ">=3.12"
-dependencies = [
-    "github-copilot-sdk>=0.2.0",
-    "azure-ai-agentserver-invocations>=1.0.0b3",
-    "azure-identity>=1.19.0,<1.26.0a0",
-    "python-dotenv>=1.0.0",
-]
-
-[tool.uv]
-required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-prerelease = "if-necessary-or-explicit"
-```
+**Copy** `references/pyproject.toml` into your project root and update `name` and `version`.
 
 **Notes:**
 - `github-copilot-sdk` provides `CopilotClient`, session management, event types
@@ -344,18 +129,7 @@ prerelease = "if-necessary-or-explicit"
 
 ## Dockerfile
 
-```dockerfile
-FROM python:3.12-slim
-
-RUN pip install uv
-WORKDIR /app
-COPY . .
-
-RUN uv pip install --system --compile-bytecode .
-
-EXPOSE 8088
-CMD ["python", "container.py"]
-```
+**Copy** `references/Dockerfile` into your project root. No changes needed for most agents.
 
 ---
 
@@ -451,50 +225,19 @@ curl -N -X POST "$ENDPOINT/agents/my-agent/endpoint/protocols/invocations?api-ve
 
 ### Parsing SSE Responses
 
-```python
-import json
-import requests
+Use `references/invoke_agent.py` as a library or standalone script:
 
-def invoke_invocations(endpoint, token, agent_name, query, timeout=600):
-    """Invoke via Invocations SSE endpoint and extract response text."""
-    url = f"{endpoint}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
-    resp = requests.post(
-        url,
-        json={"input": query},
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Foundry-Features": "HostedAgents=V1Preview",
-        },
-        stream=True,
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-
-    message_text = ""
-    delta_text = ""
-
-    for line in resp.iter_lines(decode_unicode=True):
-        if not line or not line.startswith("data: "):
-            continue
-        try:
-            event = json.loads(line[6:])
-            event_type = event.get("type", "")
-            content = event.get("data", {}).get("content", "")
-
-            if event_type == "assistant.message" and content:
-                message_text += content
-            elif event_type == "assistant.message_delta" and content:
-                delta_text += content
-        except json.JSONDecodeError:
-            continue
-
-    # Prefer complete message; fall back to accumulated deltas
-    return message_text if message_text else delta_text
+```bash
+export AZURE_AI_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+export AGENT_NAME="my-agent"
+python references/invoke_agent.py "What is the capital of France?"
 ```
 
-**Important:** Always parse both `assistant.message` AND `assistant.message_delta`.
-Some responses only emit deltas without a final complete message event.
+The `invoke_invocations()` function parses both `assistant.message` and
+`assistant.message_delta` events, preferring the complete message when available.
+
+**Important:** Always parse both event types. Some responses only emit deltas
+without a final complete message event.
 
 ---
 

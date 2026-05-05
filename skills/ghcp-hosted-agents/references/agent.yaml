@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+
+kind: hosted
+name: my-agent
+description: Agent using GHCP SDK with Invocations protocol
+metadata:
+  tags:
+    - ghcp-sdk
+    - hosted-agent
+protocols:
+  - protocol: invocations    # NOT responses — required for GHCP SDK SSE streaming
+    version: 1.0.0
+environment_variables:
+  - name: MODEL_DEPLOYMENT_NAME
+    value: gpt-5.4
+  # Add MCP server FQDNs if needed:
+  # - name: MCP_SERVER_FQDN
+  #   value: ${MCP_SERVER_FQDN}
+resources:
+  cpu: "1"
+  memory: 2Gi
