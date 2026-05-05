@@ -109,11 +109,12 @@ Ask the user for:
 
 ### `copilot/bot.py`
 
-The bot is **stateless** — each message is an independent call to the Foundry agent.
-The hosted agent platform manages conversation history on the server side.
+The bot tracks a `previous_response_id` per Teams conversation so the Foundry agent
+can maintain context across turns. The `!reset` command clears this state — essential
+when conversations go stale after agent redeployments.
 
 ```python
-"""Teams bot that streams from a Foundry Hosted Agent (stateless)."""
+"""Teams bot that streams from a Foundry Hosted Agent."""
 
 import logging
 import os
@@ -124,6 +125,8 @@ from azure.identity.aio import DefaultAzureCredential
 from microsoft_agents.activity import Activity, ActivityTypes
 from microsoft_agents.hosting.core import (
     AgentApplication,
+    ConversationState,
+    MemoryStorage,
     TurnContext,
     TurnState,
 )
@@ -133,18 +136,32 @@ logger = logging.getLogger(__name__)
 FOUNDRY_AGENT_NAME = os.getenv("FOUNDRY_AGENT_NAME", "__PROJECT_NAME__")
 PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
 
+# For production, replace MemoryStorage with BlobStorage:
+# from microsoft_agents.storage.blob import BlobStorage
+# storage = BlobStorage(connection_string=os.getenv("BLOB_CONN_STR"), container_name="bot-state")
+storage = MemoryStorage()
+
 
 class AgentBot(AgentApplication):
     """Teams bot that forwards messages to a Foundry Hosted Agent."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._conversation_state = ConversationState(storage)
         self.on_activity(ActivityTypes.message, self._on_message)
 
     async def _on_message(self, context: TurnContext, state: TurnState) -> bool:
         """Handle incoming Teams message."""
         user_message = context.activity.text or ""
         if not user_message.strip():
+            return True
+
+        # !reset — clear conversation state and start fresh
+        if user_message.strip().lower() == "!reset":
+            state["previous_response_id"] = None
+            await context.send_activity(
+                "🔄 Conversation reset. Send a new message to start fresh."
+            )
             return True
 
         try:
@@ -159,22 +176,40 @@ class AgentBot(AgentApplication):
                         agent_name=FOUNDRY_AGENT_NAME
                     )
 
+                    # Build request — pass previous_response_id for continuity
+                    create_kwargs = {
+                        "input": user_message,
+                        "stream": True,
+                    }
+                    prev_id = state.get("previous_response_id")
+                    if prev_id:
+                        create_kwargs["previous_response_id"] = prev_id
+
                     # Stream response from Foundry Hosted Agent
                     collected_text = []
-                    stream = oai.responses.create(
-                        input=user_message,
-                        stream=True,
-                    )
+                    response_id = None
+                    stream = oai.responses.create(**create_kwargs)
 
                     async for event in await stream:
                         if hasattr(event, "type"):
                             if event.type == "response.output_text.delta":
                                 collected_text.append(event.delta)
+                            elif event.type == "response.completed":
+                                response_id = getattr(event.response, "id", None)
                             elif event.type == "response.failed":
                                 error = getattr(event.response, "error", None)
+                                if _is_stale_conversation(error):
+                                    # Stale conversation — auto-reset and retry once
+                                    state["previous_response_id"] = None
+                                    logger.warning("Stale conversation — resetting")
+                                    return await self._on_message(context, state)
                                 msg = _friendly_error(error)
                                 await context.send_activity(msg)
                                 return True
+
+                    # Persist response ID for next turn
+                    if response_id:
+                        state["previous_response_id"] = response_id
 
                     # Send collected response as single message
                     full_response = "".join(collected_text).strip()
@@ -192,10 +227,19 @@ class AgentBot(AgentApplication):
             )
             await context.send_activity(
                 "⚠️ Something went wrong while processing your request. "
-                "Please try again."
+                "Please try again, or type **!reset** to start a fresh conversation."
             )
 
         return True
+
+
+def _is_stale_conversation(error) -> bool:
+    """Check if the error indicates a stale/broken conversation."""
+    if not error:
+        return False
+    code = str(getattr(error, "code", "")).lower()
+    msg = str(getattr(error, "message", "")).lower()
+    return "server_error" in code or "server_error" in msg
 
 
 def _friendly_error(error) -> str:
@@ -214,16 +258,22 @@ def _friendly_error(error) -> str:
         return "⏰ The request timed out. Please try a shorter question."
 
     logger.warning("Foundry error: code=%s msg=%s", code, msg)
-    return "⚠️ The agent encountered an error. Please try again."
+    return "⚠️ The agent encountered an error. Please try again or type **!reset**."
 ```
 
 **Critical implementation notes:**
-- **Stateless** — no conversation state management; the Foundry platform handles history
+- **`previous_response_id`** — tracks conversation continuity across turns; the Foundry
+  platform uses this to maintain the agent's memory of prior messages
+- **`!reset`** — clears `previous_response_id`, giving the user a fresh conversation.
+  Essential when stale conversations break after agent redeployments
+- **Auto-retry on `server_error`** — resets state and retries once (stale conversations
+  from old agent versions cause persistent `server_error`)
 - Uses `get_openai_client(agent_name=...)` — the **refreshed preview** pattern
 - Do NOT use `extra_body={"agent_reference": ...}` — that's the old pattern and silently fails
 - `allow_preview=True` on `AIProjectClient` is REQUIRED for `agent_name` to work
 - Collect all streaming chunks before sending — Teams garbles individual chunks
 - Never leak internal error details to Teams users — log server-side, return generic message
+- For production, swap `MemoryStorage` for `BlobStorage` to survive container restarts
 
 ### `copilot/app.py`
 
@@ -567,6 +617,17 @@ module copilotAca 'bot/aca.bicep' = {
         {
             "botId": "__BOT_APP_ID__",
             "scopes": ["personal"],
+            "commandLists": [
+                {
+                    "scopes": ["personal"],
+                    "commands": [
+                        {
+                            "title": "!reset",
+                            "description": "Reset conversation and start fresh"
+                        }
+                    ]
+                }
+            ],
             "isNotificationOnly": false,
             "supportsCalling": false,
             "supportsVideo": false
@@ -769,6 +830,8 @@ The bot's UAMI needs these role assignments to call the Foundry Hosted Agent:
 | `FOUNDRY_AGENT_NAME` wrong | Env var not set or doesn't match agent name | Must match the agent name in `azd ai agent show` output |
 | `openai` import error at runtime | Missing from requirements.txt | Ensure `openai>=1.68.0` is in requirements.txt |
 | Manifest placeholders still visible | `build_teams_manifest.py` not run or env vars missing | Wire as postprovision hook — ensure `BOT_APP_ID` flows from Bicep output |
+| `server_error` on every message | Stale conversation from previous agent version | Type `!reset` in Teams chat — bot also auto-retries once on `server_error` |
+| State lost after container restart | Using `MemoryStorage` (in-memory only) | Switch to `BlobStorage` for production (see comment in bot.py) |
 
 > **Note on `devPreview` manifest:** The `copilotAgents.customEngineAgents` section
 > requires `manifestVersion: "devPreview"`. This is the current Teams schema for
