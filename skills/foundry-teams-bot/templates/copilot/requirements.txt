@@ -1,0 +1,18 @@
+# Microsoft Agents SDK (Bot Framework successor)
+microsoft-agents-activity>=0.8.0
+microsoft-agents-authentication-msal>=0.8.0
+microsoft-agents-hosting-aiohttp>=0.8.0
+microsoft-agents-hosting-core>=0.8.0
+microsoft-agents-hosting-teams>=0.8.0
+microsoft-agents-storage-blob>=0.8.0
+
+# Azure AI + OpenAI
+azure-ai-projects>=2.0.0
+azure-identity>=1.19.0
+openai>=1.68.0
+
+# Web server
+aiohttp>=3.9.0
+
+# Logging
+python-dotenv>=1.0.0

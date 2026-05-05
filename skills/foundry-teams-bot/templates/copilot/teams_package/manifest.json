@@ -1,0 +1,55 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
+    "manifestVersion": "devPreview",
+    "version": "1.0.0",
+    "id": "__BOT_APP_ID__",
+    "developer": {
+        "name": "__DEVELOPER_NAME__",
+        "websiteUrl": "https://example.com",
+        "privacyUrl": "https://example.com/privacy",
+        "termsOfUseUrl": "https://example.com/terms"
+    },
+    "name": {
+        "short": "__AGENT_NAME__",
+        "full": "__AGENT_DESCRIPTION__"
+    },
+    "description": {
+        "short": "__AGENT_DESCRIPTION__",
+        "full": "__AGENT_DESCRIPTION__"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "accentColor": "#0078D4",
+    "copilotAgents": {
+        "customEngineAgents": [
+            {
+                "type": "bot",
+                "id": "__BOT_APP_ID__"
+            }
+        ]
+    },
+    "bots": [
+        {
+            "botId": "__BOT_APP_ID__",
+            "scopes": ["personal"],
+            "commandLists": [
+                {
+                    "scopes": ["personal"],
+                    "commands": [
+                        {
+                            "title": "!reset",
+                            "description": "Reset conversation and start fresh"
+                        }
+                    ]
+                }
+            ],
+            "isNotificationOnly": false,
+            "supportsCalling": false,
+            "supportsVideo": false
+        }
+    ],
+    "permissions": ["identity", "messageTeamMembers"],
+    "validDomains": []
+}

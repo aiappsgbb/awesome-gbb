@@ -67,24 +67,29 @@ Invoke this skill when the user wants to:
 
 ## Directory Structure
 
-Generate these files in the project:
+Template files are in `templates/` — copy them into your project root:
+
+```bash
+cp -r templates/* <your-project>/
+```
+
+This adds:
 
 ```
 copilot/
 ├── bot.py                      # Bot logic — receives messages, calls Foundry
-├── app.py                      # aiohttp web server (JWT auth middleware)
+├── app.py                      # aiohttp web server (SDK-managed Bot Framework auth)
 ├── requirements.txt            # Python dependencies
 ├── Dockerfile                  # Container for ACA deployment
 └── teams_package/
     ├── manifest.json           # Teams app manifest (devPreview)
-    ├── color.png               # 192×192 color icon
-    └── outline.png             # 32×32 outline icon
+    ├── color.png               # 192×192 color icon (provide your own)
+    └── outline.png             # 32×32 outline icon (provide your own)
 
 infra/bot/
 ├── uami.bicep                  # User-Assigned Managed Identity
 ├── bot-service.bicep           # Azure Bot Service + MsTeamsChannel
-├── aca.bicep                   # ACA environment + bot container app
-└── fetch-container-image.bicep # Prevents image overwrite on reprovision
+└── aca.bicep                   # ACA environment + bot container app
 
 scripts/
 └── build_teams_manifest.py     # postprovision: builds copilot_package.zip
@@ -106,131 +111,10 @@ Ask the user for:
 
 ### `copilot/bot.py`
 
-The bot MUST use the **refreshed preview invocation pattern** — agent-bound client:
+> **Template:** [`templates/copilot/bot.py`](templates/copilot/bot.py)
 
-```python
-"""Teams bot that streams from a Foundry Hosted Agent."""
-
-import json
-import logging
-import os
-import traceback
-
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import DefaultAzureCredential
-from microsoft_agents.activity import Activity, ActivityTypes
-from microsoft_agents.hosting.core import (
-    AgentApplication,
-    ConversationState,
-    MemoryStorage,
-    TurnContext,
-    TurnState,
-)
-
-logger = logging.getLogger(__name__)
-
-AGENT_NAME = os.getenv("AGENT_NAME", "__PROJECT_NAME__")
-PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
-
-
-class AgentBot(AgentApplication):
-    """Teams bot that forwards messages to a Foundry Hosted Agent."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._storage = MemoryStorage()
-        self._conversation_state = ConversationState(self._storage)
-        self.on_activity(ActivityTypes.message, self._on_message)
-
-    async def _on_message(self, context: TurnContext, state: TurnState) -> bool:
-        """Handle incoming Teams message."""
-        user_message = context.activity.text or ""
-        if not user_message.strip():
-            return True
-
-        # Handle reset command
-        if user_message.strip().lower() == "!reset":
-            state["thread_id"] = None
-            await context.send_activity(
-                "🔄 Conversation reset. Send a new message to start fresh."
-            )
-            return True
-
-        try:
-            async with DefaultAzureCredential() as credential:
-                async with AIProjectClient(
-                    endpoint=PROJECT_ENDPOINT,
-                    credential=credential,
-                    allow_preview=True,  # REQUIRED for agent_name
-                ) as project_client:
-                    # Agent-bound client — routes to dedicated endpoint
-                    oai = project_client.get_openai_client(
-                        agent_name=AGENT_NAME
-                    )
-
-                    # Stream response from Foundry Hosted Agent
-                    collected_text = []
-                    stream = oai.responses.create(
-                        input=user_message,
-                        stream=True,
-                    )
-
-                    async for event in await stream:
-                        if hasattr(event, "type"):
-                            if event.type == "response.output_text.delta":
-                                collected_text.append(event.delta)
-                            elif event.type == "response.failed":
-                                error = getattr(event.response, "error", None)
-                                msg = _friendly_error(error)
-                                await context.send_activity(msg)
-                                return True
-
-                    # Send collected response as single message
-                    full_response = "".join(collected_text).strip()
-                    if full_response:
-                        await context.send_activity(full_response)
-                    else:
-                        await context.send_activity(
-                            "🤔 I processed your request but didn't "
-                            "generate a text response."
-                        )
-
-        except Exception as e:
-            error_code = getattr(e, "code", "") or ""
-            if "server_error" in str(error_code).lower():
-                # Stale conversation — reset and retry
-                state["thread_id"] = None
-                logger.warning("server_error — resetting conversation")
-                return await self._on_message(context, state)
-
-            logger.error(
-                "Error processing message: %s\n%s", e, traceback.format_exc()
-            )
-            await context.send_activity(
-                "⚠️ Something went wrong. Please try again, "
-                "or type **!reset** to start a fresh conversation."
-            )
-
-        return True
-
-
-def _friendly_error(error) -> str:
-    """Convert Foundry error to user-friendly message."""
-    if not error:
-        return "⚠️ An unexpected error occurred. Please try again."
-
-    code = getattr(error, "code", "")
-    msg = getattr(error, "message", str(error))
-
-    if "content_filter" in code.lower() or "content_filter" in msg.lower():
-        return "🚫 Your message was filtered by content safety policies. Please rephrase."
-    if "rate_limit" in code.lower() or "429" in msg:
-        return "⏳ The service is currently busy. Please wait a moment and try again."
-    if "timeout" in code.lower():
-        return "⏰ The request timed out. Please try a shorter question."
-
-    return f"⚠️ Error: {msg}"
-```
+The bot MUST use the **refreshed preview invocation pattern** — agent-bound client.
+Replace `__PROJECT_NAME__` with the Foundry agent name.
 
 **Critical implementation notes:**
 - Uses `get_openai_client(agent_name=...)` — the **refreshed preview** pattern
@@ -242,79 +126,17 @@ def _friendly_error(error) -> str:
 
 ### `copilot/app.py`
 
-```python
-"""aiohttp web server for the Teams bot."""
+> **Template:** [`templates/copilot/app.py`](templates/copilot/app.py)
 
-import logging
-import os
-
-from aiohttp import web
-from microsoft_agents.authentication.msal import MsalConnectionManager
-from microsoft_agents.hosting.aiohttp import CloudAdapter, start_agent_process
-
-from bot import AgentBot
-
-logger = logging.getLogger(__name__)
-
-PORT = int(os.getenv("PORT", "80"))
-
-
-def create_app() -> web.Application:
-    """Create the aiohttp application with bot routes."""
-    agent_configuration = MsalConnectionManager()
-    adapter = CloudAdapter(agent_configuration)
-    bot = AgentBot(adapter=adapter)
-    app = start_agent_process(bot, adapter, agent_configuration)
-    return app
-
-
-if __name__ == "__main__":
-    app = create_app()
-    web.run_app(app, host="0.0.0.0", port=PORT)
-```
+aiohttp server with SDK-managed Bot Framework auth via `MsalConnectionManager`.
 
 ### `copilot/requirements.txt`
 
-```
-# Microsoft Agents SDK (Bot Framework successor)
-microsoft-agents-activity>=0.8.0
-microsoft-agents-authentication-msal>=0.8.0
-microsoft-agents-hosting-aiohttp>=0.8.0
-microsoft-agents-hosting-core>=0.8.0
-microsoft-agents-hosting-teams>=0.8.0
-microsoft-agents-storage-blob>=0.8.0
-
-# Azure AI + OpenAI
-azure-ai-projects>=2.0.0
-azure-identity>=1.19.0
-openai>=1.68.0
-
-# Web server
-aiohttp>=3.9.0
-
-# Logging
-python-dotenv>=1.0.0
-```
+> **Template:** [`templates/copilot/requirements.txt`](templates/copilot/requirements.txt)
 
 ### `copilot/Dockerfile`
 
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY bot.py app.py ./
-COPY teams_package/ ./teams_package/
-
-EXPOSE 80
-CMD ["python", "app.py"]
-```
+> **Template:** [`templates/copilot/Dockerfile`](templates/copilot/Dockerfile)
 
 ---
 
@@ -322,159 +144,21 @@ CMD ["python", "app.py"]
 
 ### `infra/bot/uami.bicep`
 
-```bicep
-@description('Name of the User-Assigned Managed Identity')
-param name string
+> **Template:** [`templates/infra/bot/uami.bicep`](templates/infra/bot/uami.bicep)
 
-@description('Location for the identity')
-param location string = resourceGroup().location
-
-@description('Tags for the resource')
-param tags object = {}
-
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: name
-  location: location
-  tags: tags
-}
-
-output id string = identity.id
-output clientId string = identity.properties.clientId
-output principalId string = identity.properties.principalId
-output name string = identity.name
-```
+Creates a User-Assigned Managed Identity. Outputs: `id`, `clientId`, `principalId`.
 
 ### `infra/bot/bot-service.bicep`
 
-```bicep
-@description('Name of the Azure Bot resource')
-param name string
+> **Template:** [`templates/infra/bot/bot-service.bicep`](templates/infra/bot/bot-service.bicep)
 
-@description('Location for the Bot Service (use "global" for most scenarios)')
-param location string = 'global'
-
-@description('Bot display name in Teams')
-param displayName string
-
-@description('UAMI Client ID — used as msaAppId')
-param msaAppId string
-
-@description('UAMI Tenant ID')
-param msaAppTenantId string
-
-@description('UAMI Resource ID')
-param msaAppMSIResourceId string
-
-@description('Bot messages endpoint (e.g., https://<aca-fqdn>/api/messages)')
-param messagesEndpoint string
-
-@description('Tags for the resource')
-param tags object = {}
-
-resource bot 'Microsoft.BotService/botServices@2022-09-15' = {
-  name: name
-  location: location
-  tags: tags
-  sku: {
-    name: 'F0'
-  }
-  kind: 'azurebot'
-  properties: {
-    displayName: displayName
-    endpoint: messagesEndpoint
-    msaAppId: msaAppId
-    msaAppType: 'UserAssignedMSI'
-    msaAppTenantId: msaAppTenantId
-    msaAppMSIResourceId: msaAppMSIResourceId
-    schemaTransformationVersion: '1.3'
-  }
-}
-
-resource teamsChannel 'Microsoft.BotService/botServices/channels@2022-09-15' = {
-  parent: bot
-  name: 'MsTeamsChannel'
-  location: location
-  properties: {
-    channelName: 'MsTeamsChannel'
-    properties: {
-      isEnabled: true
-    }
-  }
-}
-
-output botId string = bot.properties.msaAppId
-output botName string = bot.name
-```
+Azure Bot Service (F0 SKU) with UAMI auth (`msaAppType: UserAssignedMSI`) and MsTeamsChannel.
 
 ### `infra/bot/aca.bicep`
 
-```bicep
-@description('Name of the container app')
-param name string
+> **Template:** [`templates/infra/bot/aca.bicep`](templates/infra/bot/aca.bicep)
 
-@description('Location')
-param location string = resourceGroup().location
-
-@description('Container app environment resource ID')
-param containerAppEnvironmentId string
-
-@description('Container image')
-param image string
-
-@description('Target port')
-param targetPort int = 80
-
-@description('User-Assigned Managed Identity resource ID')
-param userAssignedIdentityId string
-
-@description('Environment variables')
-param env array = []
-
-@description('Tags')
-param tags object = {}
-
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: name
-  location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${userAssignedIdentityId}': {}
-    }
-  }
-  properties: {
-    managedEnvironmentId: containerAppEnvironmentId
-    configuration: {
-      ingress: {
-        external: true
-        targetPort: targetPort
-        transport: 'auto'
-      }
-    }
-    template: {
-      containers: [
-        {
-          name: 'copilot'
-          image: image
-          env: env
-          resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
-          }
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 3
-      }
-    }
-  }
-}
-
-output fqdn string = containerApp.properties.configuration.ingress.fqdn
-output name string = containerApp.name
-```
+Azure Container App with external ingress, UAMI identity, and env var injection.
 
 ### Bicep integration in `main.bicep`:
 
@@ -538,63 +222,10 @@ module copilotAca 'bot/aca.bicep' = {
 
 ### `copilot/teams_package/manifest.json`
 
-```json
-{
-    "$schema": "https://developer.microsoft.com/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
-    "manifestVersion": "devPreview",
-    "version": "1.0.0",
-    "id": "__BOT_APP_ID__",
-    "developer": {
-        "name": "__DEVELOPER_NAME__",
-        "websiteUrl": "https://example.com",
-        "privacyUrl": "https://example.com/privacy",
-        "termsOfUseUrl": "https://example.com/terms"
-    },
-    "name": {
-        "short": "__AGENT_NAME__",
-        "full": "__AGENT_DESCRIPTION__"
-    },
-    "description": {
-        "short": "__AGENT_DESCRIPTION__",
-        "full": "__AGENT_DESCRIPTION__"
-    },
-    "icons": {
-        "color": "color.png",
-        "outline": "outline.png"
-    },
-    "accentColor": "#0078D4",
-    "copilotAgents": {
-        "customEngineAgents": [
-            {
-                "type": "bot",
-                "id": "__BOT_APP_ID__"
-            }
-        ]
-    },
-    "bots": [
-        {
-            "botId": "__BOT_APP_ID__",
-            "scopes": ["personal"],
-            "commandLists": [
-                {
-                    "scopes": ["personal"],
-                    "commands": [
-                        {
-                            "title": "!reset",
-                            "description": "Reset conversation and start fresh"
-                        }
-                    ]
-                }
-            ],
-            "isNotificationOnly": false,
-            "supportsCalling": false,
-            "supportsVideo": false
-        }
-    ],
-    "permissions": ["identity", "messageTeamMembers"],
-    "validDomains": []
-}
-```
+> **Template:** [`templates/copilot/teams_package/manifest.json`](templates/copilot/teams_package/manifest.json)
+
+Uses `devPreview` schema with `copilotAgents.customEngineAgents` for custom engine agent bots.
+Also provide **color.png** (192×192) and **outline.png** (32×32) icons in the same directory.
 
 **Token replacement:**
 
@@ -605,70 +236,15 @@ module copilotAca 'bot/aca.bicep' = {
 | `__AGENT_DESCRIPTION__` | One-line description | User input |
 | `__DEVELOPER_NAME__` | Developer/org name | User input |
 
-Also provide **color.png** (192×192) and **outline.png** (32×32) icons — use placeholder
-images if the user doesn't provide custom ones.
-
 ---
 
 ## Step 5: Build Teams Package Script
 
 ### `scripts/build_teams_manifest.py`
 
-```python
-"""Build Teams manifest zip for sideloading (postprovision hook)."""
+> **Template:** [`templates/scripts/build_teams_manifest.py`](templates/scripts/build_teams_manifest.py)
 
-import json
-import os
-import zipfile
-from pathlib import Path
-
-
-def build_manifest(
-    bot_client_id: str,
-    agent_name: str,
-    agent_description: str = "",
-    developer_name: str = "",
-    output_dir: str = "copilot",
-):
-    """Build the Teams app package zip, replacing all placeholder tokens."""
-    src = Path("copilot/teams_package")
-    out = Path(output_dir)
-    out.mkdir(exist_ok=True)
-
-    manifest = json.loads((src / "manifest.json").read_text())
-
-    # Replace all tokens
-    manifest["id"] = bot_client_id
-    manifest["copilotAgents"]["customEngineAgents"][0]["id"] = bot_client_id
-    manifest["bots"][0]["botId"] = bot_client_id
-    manifest["name"]["short"] = agent_name
-    if agent_description:
-        manifest["name"]["full"] = agent_description
-        manifest["description"]["short"] = agent_description
-        manifest["description"]["full"] = agent_description
-    if developer_name:
-        manifest["developer"]["name"] = developer_name
-
-    zip_path = out / "copilot_package.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-        for icon in ("color.png", "outline.png"):
-            icon_path = src / icon
-            if icon_path.exists():
-                zf.write(icon_path, icon)
-
-    print(f"Teams package: {zip_path}")
-    return zip_path
-
-
-if __name__ == "__main__":
-    build_manifest(
-        bot_client_id=os.environ.get("BOT_APP_ID", "<uami-client-id>"),
-        agent_name=os.environ.get("AGENT_DISPLAY_NAME", "My Agent"),
-        agent_description=os.environ.get("AGENT_DESCRIPTION", ""),
-        developer_name=os.environ.get("DEVELOPER_NAME", ""),
-    )
-```
+Replaces all placeholder tokens in manifest.json and packages into `copilot_package.zip` for sideloading.
 
 ### Wiring as azd postprovision hook
 
