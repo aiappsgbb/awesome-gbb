@@ -68,6 +68,9 @@ npx skills add aiappsgbb/awesome-gbb --skill <skill-name> -g
 gh skill install aiappsgbb/awesome-gbb <skill-name>
 ```
 
+> [!TIP]
+> Skills like **pptx**, **auto-demo-producer**, and **foundry-hosted-agents** are great candidates for global install (`--scope user` / `-g`) — they're useful across all your projects. Design and deployment skills like **threadlight-design** and **threadlight-deploy** work well at project scope.
+
 > [!NOTE]
 > **Looking to deploy skill-based agents to Microsoft Foundry?** See [threadlight-design](skills/threadlight-design/) to design your agent workflow, [threadlight-deploy](skills/threadlight-deploy/) to generate deployment artifacts, [foundry-hosted-agents](skills/foundry-hosted-agents/) for the refreshed preview reference, and [ghcp-hosted-agents](skills/ghcp-hosted-agents/) for the GitHub Copilot SDK variant.
 
