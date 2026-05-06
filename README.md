@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-7-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-8-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -13,6 +13,7 @@
 - [Skills Catalog](#skills-catalog)
   - [🏗️ Agent Design & Deployment](#️-agent-design--deployment)
   - [📊 Content Generation](#-content-generation)
+  - [🔍 Discovery](#-discovery)
 - [How to Use](#how-to-use)
 - [Repository Structure](#repository-structure)
 - [Contributing](#contributing)
@@ -45,6 +46,12 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 |-------|-------------|
 | [**pptx**](skills/pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
+
+### 🔍 Discovery
+
+| Skill | Description |
+|-------|-------------|
+| [**ip-catalog**](skills/ip-catalog/) | Discover AI Apps GBB IP catalog via MCP — search, list, filter, and inspect intellectual property assets including metadata and READMEs |
 
 ---
 
