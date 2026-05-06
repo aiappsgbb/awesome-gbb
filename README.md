@@ -50,22 +50,22 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 ## How to Use
 
-**Install a skill from GitHub:**
+**Install with `gh` CLI:**
 
 ```bash
-gh skill install aiappsgbb/awesome-gbb/skills/<skill-name>
+gh skill install aiappsgbb/awesome-gbb <skill-name> --scope user
 ```
 
-**Or with npx:**
+**Or with `npx skills`:**
 
 ```bash
-npx @anthropic/copilot-cli skill install aiappsgbb/awesome-gbb/skills/<skill-name>
+npx skills add aiappsgbb/awesome-gbb --skill <skill-name> -g
 ```
 
 **As a project-level skill (scoped to a repo):**
 
 ```bash
-cp -r skills/<skill-name> .github/skills/<skill-name>
+gh skill install aiappsgbb/awesome-gbb <skill-name>
 ```
 
 > [!NOTE]
