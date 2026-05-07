@@ -29,9 +29,9 @@ Turn a vague customer brief into a **durable SpecKit specification**:
 - **Mock data** — `specs/sample-data/*.json` tied to the data models, with migration guide
 - **Implementation artifacts** — AGENTS.md + skills derived from the spec, each tracing
   back to specific business rules
-- **Seller pitch page** — `spec-overview.html`, a self-contained dark-themed HTML page
+- **Seller pitch page** — `specs/overview.html`, a self-contained dark-themed HTML page
   showing the process flow, business rules, data models, integration status badges
-- **Workshop dashboard** — optional React app (`spec-dashboard/`) for interactive
+- **Workshop dashboard** — optional React app (`specs/dashboard/`) for interactive
   exploration with the customer
 
 **Two modes:**
@@ -115,7 +115,7 @@ Every PoC, regardless of mode, ships with these guarantees:
 | **Callable tools** | Mock MCP server for inaccessible systems — agent actually works |
 | **Eval-ready** | Eval dataset from spec scenarios — score the demo on day one |
 | **Deployable** | `azd up` scaffold — one command to hosted agent |
-| **Pitch-ready** | `spec-overview.html` — open in browser, show the customer |
+| **Pitch-ready** | `specs/overview.html` — open in browser, show the customer |
 | **Assumptions documented** | Spec § 12 flags everything assumed (stateless, read-only, etc.) |
 
 ---
@@ -136,8 +136,8 @@ project/
 │   └── {skill-name}/SKILL.md
 ├── AGENTS.md                      # Agent identity, tools, guidelines
 │
-├── spec-overview.html             # Seller pitch page (self-contained)
-├── spec-dashboard/                # Interactive workshop app (optional, React)
+│   ├── overview.html              # Seller pitch page (self-contained)
+│   ├── dashboard/                 # Interactive workshop app (optional, React)
 │
 ├── src/
 │   ├── agent/                     # Hosted agent container (from threadlight-deploy)
@@ -208,7 +208,7 @@ gh skill install aiappsgbb/awesome-gbb foundry-evals --scope user
 # threadlight-design runs:
 # - Loads fsi-kyc-aml.md domain primer
 # - Asks 2-3 essential questions
-# - Generates specs/ + AGENTS.md + skills + spec-overview.html
+# - Generates specs/ + AGENTS.md + skills + specs/overview.html
 # - Proceeds directly to implementation (no checkpoint pause)
 
 > Now deploy it

@@ -439,7 +439,7 @@ Project documentation covering:
 - Mock data status (which systems are mocked, how to replace)
 - Deployment path (reference threadlight-deploy)
 
-#### 7. `spec-overview.html` — Seller Pitch Page
+#### 7. `specs/overview.html` — Seller Pitch Page
 
 Generate a **single self-contained HTML file** (no dependencies, opens in any browser)
 that visualizes the SpecKit spec for non-technical audiences. Use for seller pitches,
@@ -460,13 +460,13 @@ customer walkthroughs, and stakeholder alignment.
 - No external CDN, fonts, or scripts — everything inline
 - Print-friendly (can be saved as PDF from browser)
 
-#### 8. `spec-dashboard/` — Interactive Workshop App (optional)
+#### 8. `specs/dashboard/` — Interactive Workshop App (optional)
 
 For deeper workshops, generate a small React app that lets users explore and edit
 the spec interactively:
 
 ```
-spec-dashboard/
+specs/dashboard/
 ├── index.html          # Entry point
 ├── package.json        # Dependencies (react, react-dom, vite)
 ├── src/
@@ -506,7 +506,7 @@ must catch its own mistakes.
 - [ ] Every eval scenario (S-XXX) in spec § 9 references valid BR-XXX rules
 - [ ] AGENTS.md skills table matches the actual `src/agent/skills/` directories
 - [ ] `specs/manifest.json` matches the generated skills list and BR counts
-- [ ] `spec-overview.html` renders without errors (valid HTML structure)
+- [ ] `specs/overview.html` renders without errors (valid HTML structure)
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
 
