@@ -626,10 +626,67 @@ middleware needed.
 ## Evaluations
 
 > **See the `foundry-evals` skill** for the complete evaluation guide — two-phase
-> invoke+score pattern, 6 built-in evaluators, RBAC for judge models, dataset creation
-> from SpecKit scenarios, tool-use discipline, and score interpretation.
+> invoke+score pattern, 6 built-in evaluators, RBAC for judge models, and score interpretation.
 
-After deployment, validate agent quality using eval scenarios from `specs/SPEC.md` § 9.
+### Generated eval files
+
+If `specs/SPEC.md` § 9 contains evaluation scenarios (S-XXX), generate:
+
+#### `tests/eval_dataset.jsonl`
+
+One line per scenario, derived from spec § 9:
+
+```jsonl
+{"id": "S-001", "query": "Process loan: credit score 780, income $120K, amount $50K", "expected": "Approved", "business_rules": ["BR-001", "BR-003"], "category": "happy-path"}
+{"id": "S-002", "query": "Process loan: credit score 520", "expected": "Declined", "business_rules": ["BR-001"], "category": "negative"}
+{"id": "S-003", "query": "Process loan: credit score 580, DTI 40%", "expected": "Sent to human review", "business_rules": ["BR-001", "BR-002"], "category": "boundary"}
+```
+
+Each line maps directly to a scenario row in the spec.
+
+#### `tests/run_evals.py`
+
+Invoke + score script using the `foundry-evals` two-phase pattern:
+
+```python
+"""Run eval scenarios against the deployed agent."""
+
+import json
+from pathlib import Path
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+PROJECT_ENDPOINT = "<from azd env>"
+AGENT_NAME = "<from agent.yaml>"
+
+project = AIProjectClient(
+    endpoint=PROJECT_ENDPOINT,
+    credential=DefaultAzureCredential(),
+    allow_preview=True,
+)
+oai = project.get_openai_client(agent_name=AGENT_NAME)
+
+# Warm up
+oai.responses.create(input="Hello", stream=False)
+
+# Load dataset
+dataset = [json.loads(line) for line in Path("eval_dataset.jsonl").read_text().splitlines()]
+
+# Phase 1: Invoke
+results = []
+for item in dataset:
+    response = oai.responses.create(input=item["query"], stream=False)
+    results.append({**item, "response": response.output_text})
+    print(f"✓ {item['id']}: {item['query'][:50]}...")
+
+# Phase 2: Score with Foundry evaluators
+# See foundry-evals skill for full scoring setup
+print(f"\n{len(results)} scenarios invoked. Run foundry-evals to score.")
+```
+
+#### `tests/invoke_agent.py`
+
+Simple smoke test — invoke the deployed agent with a single message (already covered).
 
 ---
 
@@ -666,6 +723,7 @@ the output. This skill generates a lot of content — catch mistakes before the 
 - [ ] If Teams bot included: `copilot/bot.py` uses `get_openai_client(agent_name=...)` (NOT `agent_reference`)
 - [ ] `deploy-notes.md` lists all mock systems with swap instructions
 - [ ] If spec exists: `agent.yaml` model deployment matches spec § 10 requirements
+- [ ] If spec § 9 has eval scenarios: `tests/eval_dataset.jsonl` and `tests/run_evals.py` exist
 
 **If any check fails:** fix it before presenting the output. Do not leave broken
 artifacts for the user to debug.
