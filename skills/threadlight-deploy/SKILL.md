@@ -173,6 +173,28 @@ Core deployment inputs:
 - **Use MAF when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions
 - If the spec doesn't indicate either way → use GHCP
 
+#### 1e. Choose model access pattern
+
+| Pattern | When to Use | How |
+|---------|------------|-----|
+| **Direct deployment** (default) | You deploy the model in your own Foundry project | `azure.yaml` `config.deployments` — model created by `azd up` |
+| **AI Gateway (APIM)** | Use an existing model on another Foundry resource, or a shared/governed model pool | `ApiManagement` connection in the Foundry project → APIM routes to backend AI Services |
+
+**Use AI Gateway when:**
+- Customer has existing model deployments they want to reuse
+- A shared model pool is managed centrally (e.g., Citadel hub)
+- Governance requires routing through APIM (logging, rate limiting, policies)
+- You need models from a different Azure region or subscription
+
+> **See `foundry-cross-resource` skill** for the full AI Gateway setup —
+> APIM connection creation, `connectionName/deploymentName` pattern,
+> Bicep for managed connections, and troubleshooting.
+
+When using AI Gateway:
+- Remove the model from `azure.yaml` `config.deployments` (it's already deployed elsewhere)
+- Set `MODEL_DEPLOYMENT_NAME` in `agent.yaml` to `connectionName/deploymentName`
+- Ensure the Foundry project has an `ApiManagement` connection to the APIM gateway
+
 > **See `ghcp-hosted-agents` skill** for the full GHCP reference (container.py template,
 > pyproject.toml, agent.yaml, invocation patterns, troubleshooting).
 > **See `foundry-hosted-agents` skill** for the full MAF reference.
@@ -1290,3 +1312,4 @@ project/
 | [**foundry-evals**](../foundry-evals/) | Evaluate agent quality with Foundry built-in evaluators |
 | [**ghcp-hosted-agents**](../ghcp-hosted-agents/) | Alternative runtime — GHCP SDK with Invocations protocol (for long-running agents >120s) |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Governance and Citadel hub integration |
+| [**foundry-cross-resource**](../foundry-cross-resource/) | AI Gateway (APIM) — use models from another Foundry resource or shared pool |

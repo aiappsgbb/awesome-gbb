@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-13-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-14-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -41,6 +41,7 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate Foundry hosted agents — two-phase invoke+score pattern, 6 built-in evaluators, dataset creation, RBAC, tool-use discipline |
 | [**foundry-iq**](skills/foundry-iq/) | Build enterprise RAG with Foundry IQ — Azure AI Search Knowledge Agents, agentic retrieval, multi-hop reasoning, citation-backed responses |
 | [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (azd) — hooks, postdeploy/postprovision, ACA job deployment, infrastructure scripting conventions |
+| [**foundry-cross-resource**](skills/foundry-cross-resource/) | Cross-resource model invocation via AI Gateway (APIM) — use models from another Foundry resource or shared pool |
 
 > [!NOTE]
 > **Threadlight** (`threadlight-design` + `threadlight-deploy`) is our skill pipeline for rapid PoC delivery: customer brief → spec → mock → deploy → demo. See [THREADLIGHT.md](THREADLIGHT.md) for the full flow and companion skills.
