@@ -757,6 +757,7 @@ Check every file. Mark each ✅ or fix before presenting.
 
 - [ ] `agent.yaml` — `kind: hosted` (top-level), protocols `1.0.0`, resources `{cpu, memory}`, NO `FOUNDRY_PROJECT_ENDPOINT`
 - [ ] `azure.yaml` — `host: azure.ai.agent`, `project: ./src/agent`, model in `config.deployments`, `requiredVersions` for extension
+- [ ] `azure.yaml` — if `src/mcp/` exists: MCP service declared with `host: containerapp`, `project: ./src/mcp`
 - [ ] `deploy-notes.md` — references `azd up`, lists mock systems with swap instructions
 
 #### `infra/` — Bicep scaffold
@@ -1001,7 +1002,7 @@ deployment declaratively. No custom deploy scripts are needed.
 4. **azd up** runs: provision → deploy model → build container (ACR remote) → create agent
 
 ```yaml
-# azure.yaml — agent service declaration
+# azure.yaml — agent + MCP service declaration
 services:
   my-agent:
     project: ./src/agent
@@ -1018,12 +1019,27 @@ services:
         - model:
             format: OpenAI
             name: gpt-5.4-mini
-            version: "2026-03-05"
+            version: "2026-03-17"
           name: gpt-5.4-mini
           sku:
             capacity: 120
             name: GlobalStandard
+
+  # MCP server as ACA (if src/mcp/ exists — mock or Cosmos)
+  mcp:
+    project: ./src/mcp
+    host: containerapp
+    language: python
+    docker:
+      path: ./src/mcp/Dockerfile
+      context: ./src/mcp
+      remoteBuild: true
 ```
+
+> **If `src/mcp/` exists**, the MCP ACA service MUST be in azure.yaml — otherwise
+> `azd up` won't build or deploy it and the agent has no MCP tools at runtime.
+> Set `MCP_SERVER_FQDN` in agent.yaml env vars to `${SERVICE_MCP_FQDN}` (azd
+> resolves this to the deployed ACA's FQDN after provisioning).
 
 ### Install the extension
 
@@ -1211,9 +1227,10 @@ azd up
   │   ├── Builds agent container remotely via ACR
   │   └── Creates hosted agent version in Foundry
   │
-  └── azd deploy → builds bot container, deploys to ACA
-      ├── Builds copilot/ container via ACR remote build
-      └── Deploys to Bot ACA (external ingress)
+  └── azd deploy → builds other containers, deploys to ACA
+      ├── Builds src/mcp/ container via ACR (if MCP service declared)
+      ├── Builds src/bot/ container via ACR (if bot service declared)
+      └── Deploys to ACA (external ingress)
 ```
 
 ### Complete output structure
