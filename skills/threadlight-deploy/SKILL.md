@@ -15,7 +15,7 @@ description: >
 
 # Foundry Hosted Agent Deploy
 
-Take a project folder (containing AGENTS.md, `.github/skills/`, config/, etc.) and enrich
+Take a project folder (containing AGENTS.md, `src/agent/skills/`, config/, etc.) and enrich
 it with all files needed to deploy as a **Microsoft Foundry Hosted Agent**.
 
 **Default runtime: GHCP SDK** (`CopilotClient` + `InvocationAgentServerHost`, Invocations
@@ -51,7 +51,7 @@ For any agent that uses **skills, custom middleware, or complex logic**, you MUS
 
 The input folder MUST have:
 - `AGENTS.md` — agent identity, skills, tools, behavioral guidelines
-- `.github/skills/*/SKILL.md` — one or more skill definitions (or `skills/`)
+- `src/agent/skills/*/SKILL.md` — one or more skill definitions
 
 Recommended (from `threadlight-design`):
 - `specs/SPEC.md` — SpecKit specification (business rules, data models, integrations, compliance)
@@ -213,7 +213,8 @@ Transform AGENTS.md into a runtime system prompt:
 
 ### 2. `src/agent/skills/` Directory
 
-Copy each `.github/skills/*/SKILL.md` → `src/agent/skills/*/SKILL.md`:
+Skills are generated directly by `threadlight-design` into `src/agent/skills/`.
+No copying needed — deploy reads them in place.
 
 ```
 skills/
@@ -661,7 +662,7 @@ the output. This skill generates a lot of content — catch mistakes before the 
 - [ ] `container.py` runtime variant matches the decision in Phase 1 § 1d
 - [ ] `mcp-config.json` includes mock MCP endpoints for all mocked systems (not just warnings)
 - [ ] `copilot-instructions.md` content matches AGENTS.md (not stale)
-- [ ] `skills/` directory matches `.github/skills/` (no missing, no extra)
+- [ ] `src/agent/skills/` has skills matching AGENTS.md (no missing, no extra)
 - [ ] If Teams bot included: `copilot/bot.py` uses `get_openai_client(agent_name=...)` (NOT `agent_reference`)
 - [ ] `deploy-notes.md` lists all mock systems with swap instructions
 - [ ] If spec exists: `agent.yaml` model deployment matches spec § 10 requirements
@@ -1110,7 +1111,6 @@ After all phases, the project should contain:
 ```
 project/
 ├── AGENTS.md               # Original design (unchanged)
-├── .github/skills/          # Original skills (unchanged)
 ├── config/                  # Original config (unchanged)
 ├── specs/                   # SpecKit (from threadlight-design, unchanged)
 │

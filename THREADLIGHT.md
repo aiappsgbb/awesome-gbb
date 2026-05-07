@@ -131,7 +131,8 @@ project/
 │       ├── {entity}.json
 │       └── README.md              # Migration guide (mock → real)
 │
-├── .github/skills/                # Agent skills (derived from spec)
+├── .github/skills/                # Coding/dev skills only (NOT process skills)
+├── .vscode/mcp.json               # Dev-time MCP config (local servers)
 │   └── {skill-name}/SKILL.md
 ├── AGENTS.md                      # Agent identity, tools, guidelines
 ├── skill-manifest.json            # Machine-readable deployment contract
@@ -146,7 +147,7 @@ project/
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   ├── copilot-instructions.md
-│   │   ├── skills/                # Skills copied for container
+│   │   ├── skills/                # Process skills (from threadlight-design)
 │   │   └── mcp-config.json        # Runtime MCP config
 │   │
 │   ├── mcp/                       # Mock MCP server (from foundry-mcp-aca)
@@ -164,9 +165,7 @@ project/
 ├── azure.yaml                     # azd extension config
 ├── infra/                         # Bicep scaffold
 ├── scripts/                       # Infra hooks only (postprovision, postdeploy)
-├── deploy-notes.md                # Deployment guide
-│
-└── .copilot/mcp-config.json       # Dev-time MCP config
+└── deploy-notes.md                # Deployment guide
 ```
 
 ---
