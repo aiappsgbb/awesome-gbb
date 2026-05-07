@@ -376,7 +376,7 @@ Use the template from `references/agents-template.md`. Must include:
 - Behavioral guidelines
 - **Spec reference**: "This agent implements specs/SPEC.md"
 
-#### 3. `config/{name}.json`
+#### 3. `src/agent/config/{name}.json`
 
 Configuration file with parameters and thresholds from the spec.
 

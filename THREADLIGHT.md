@@ -135,7 +135,6 @@ project/
 ├── .vscode/mcp.json               # Dev-time MCP config (local servers)
 │   └── {skill-name}/SKILL.md
 ├── AGENTS.md                      # Agent identity, tools, guidelines
-├── config/{name}.json             # Process configuration
 │
 ├── spec-overview.html             # Seller pitch page (self-contained)
 ├── spec-dashboard/                # Interactive workshop app (optional, React)
@@ -147,6 +146,7 @@ project/
 │   │   ├── pyproject.toml
 │   │   ├── copilot-instructions.md
 │   │   ├── skills/                # Process skills (from threadlight-design)
+│   │   ├── config/                # Process configuration (URLs, thresholds)
 │   │   └── mcp-config.json        # Runtime MCP config
 │   │
 │   ├── mcp/                       # Mock MCP server (from foundry-mcp-aca)

@@ -58,7 +58,7 @@ Recommended (from `threadlight-design`):
 - `specs/manifest.json` — checkpoint metadata (process name, phase, status)
 - `specs/sample-data/*.json` — mock data for inaccessible systems
 - `specs/manifest.json` — machine-readable deployment contract
-- `config/*.json` — process configuration
+- `src/agent/config/*.json` — process configuration
 
 > [!IMPORTANT]
 > **Dependency skills.** This skill references content from other skills instead of
@@ -1009,6 +1009,7 @@ project/
 │   │   ├── pyproject.toml
 │   │   ├── copilot-instructions.md
 │   │   ├── skills/
+│   │   ├── config/
 │   │   └── mcp-config.json
 │   │
 │   ├── mcp/                  # Mock/Cosmos MCP server (if needed)
@@ -1123,7 +1124,8 @@ project/
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   ├── copilot-instructions.md
-│   │   ├── skills/         # Copied from .github/skills/
+│   │   ├── skills/         # Process skills
+│   │   ├── config/         # Process configuration
 │   │   └── mcp-config.json # Runtime MCP config
 │   │
 │   ├── mcp/                # Mock/custom MCP server (if mocked systems or Cosmos)
