@@ -191,9 +191,10 @@ Core deployment inputs:
 > Bicep for managed connections, and troubleshooting.
 
 When using AI Gateway:
-- Remove the model from `azure.yaml` `config.deployments` (it's already deployed elsewhere)
+- **Remove** the model from `azure.yaml` `config.deployments` (it's already deployed elsewhere)
 - Set `MODEL_DEPLOYMENT_NAME` in `agent.yaml` to `connectionName/deploymentName`
 - Ensure the Foundry project has an `ApiManagement` connection to the APIM gateway
+- Works with both GHCP SDK (BYOK) and MAF (FoundryChatClient) — routing is transparent
 
 > **See `ghcp-hosted-agents` skill** for the full GHCP reference (container.py template,
 > pyproject.toml, agent.yaml, invocation patterns, troubleshooting).

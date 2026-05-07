@@ -216,6 +216,73 @@ print(resp.output_text)
 
 ---
 
+## Using AI Gateway with Hosted Agents
+
+The `connectionName/deploymentName` pattern works inside hosted agent containers —
+both GHCP SDK and MAF variants. The Foundry project routes through APIM transparently.
+
+### In `agent.yaml`
+
+```yaml
+environment_variables:
+  - name: MODEL_DEPLOYMENT_NAME
+    value: aigw-fruocco-2/gpt-5.4-mini    # connectionName/deploymentName
+```
+
+### GHCP SDK (BYOK)
+
+The BYOK provider's `base_url` points to the project endpoint. The model name
+is passed to the session and APIM routing happens transparently:
+
+```python
+# In container.py — _get_provider() stays the same
+# Model is set from env var: connectionName/deploymentName
+_model = os.getenv("MODEL_DEPLOYMENT_NAME", "aigw-fruocco-2/gpt-5.4-mini")
+
+# CopilotClient session uses the gateway-routed model
+kwargs = {"model": _model, "provider": provider, ...}
+```
+
+### MAF (FoundryChatClient)
+
+```python
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ.get("MODEL_DEPLOYMENT_NAME", "aigw-fruocco-2/gpt-5.4-mini"),
+    credential=DefaultAzureCredential(),
+)
+```
+
+### azure.yaml — No `config.deployments` needed
+
+When using AI Gateway, the model is already deployed on the remote resource.
+**Remove** the `config.deployments` section from `azure.yaml` — otherwise azd
+tries to create a duplicate deployment locally:
+
+```yaml
+services:
+  my-agent:
+    project: ./src/agent
+    host: azure.ai.agent
+    language: docker
+    docker:
+      remoteBuild: true
+    config:
+      container:
+        resources:
+          cpu: "1"
+          memory: 2Gi
+      # NO deployments section — model comes from AI Gateway
+```
+
+### Requirements
+
+- Foundry project must have an `ApiManagement` connection (see Setup Guide above)
+- The connection's target URL must point to the APIM gateway with the correct API path
+- APIM MI must have `Cognitive Services User` on the remote AI Services resource
+
+---
+
 ## Troubleshooting
 
 | Error | Cause | Fix |
