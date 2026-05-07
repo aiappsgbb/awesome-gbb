@@ -34,14 +34,15 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 | Skill | Description |
 |-------|-------------|
-| [**threadlight-design**](skills/threadlight-design/) | Spec out any business process — produces a durable SpecKit specification (business rules, data models, tool contracts, mock data) then derives AGENTS.md + Skills from it |
-| [**threadlight-deploy**](skills/threadlight-deploy/) | Generate all deployment artifacts for Microsoft Foundry Hosted Agents — container.py, Dockerfile, azd project, Teams bot. One-command deploy via `azd up` |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a Foundry Hosted Agent to Microsoft Teams — bot code, Bicep infrastructure, Teams manifest, UAMI auth, and ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, for long-running tool loops |
-| [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as Azure Container Apps or Azure Functions — Cosmos DB MCPToolKit, Playwright MCP, protocol requirements, auth patterns |
+| [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as Azure Container Apps or Azure Functions — Cosmos DB MCPToolKit, Playwright MCP, mock MCP for demos, protocol requirements |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate Foundry hosted agents — two-phase invoke+score pattern, 6 built-in evaluators, dataset creation, RBAC, tool-use discipline |
 | [**foundry-iq**](skills/foundry-iq/) | Build enterprise RAG with Foundry IQ — Azure AI Search Knowledge Agents, agentic retrieval, multi-hop reasoning, citation-backed responses |
+
+> [!NOTE]
+> **Threadlight** (`threadlight-design` + `threadlight-deploy`) is our skill pipeline for rapid PoC delivery: customer brief → spec → mock → deploy → demo. See [THREADLIGHT.md](THREADLIGHT.md) for the full flow and companion skills.
 
 ### 📊 Content Generation
 
@@ -91,11 +92,6 @@ skills/
     SKILL.md          # Skill definition (frontmatter + instructions)
     README.md         # Optional: extended docs, examples, changelog
 ```
-
----
-
-> [!NOTE]
-> **Threadlight** is our skill pipeline for rapid PoC delivery: customer brief → spec → deploy → demo. See [THREADLIGHT.md](THREADLIGHT.md) for the full flow.
 
 ---
 
