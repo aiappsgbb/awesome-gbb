@@ -160,8 +160,8 @@ project/
 │       ├── build_manifest.py      # Builds copilot_package.zip
 │       └── teams_package/
 │
-├── agent.yaml                     # ContainerAgent definition
-├── azure.yaml                     # azd extension config
+├── agent.yaml                     # ⚠️ MUST be at root (azd ai agent reads this)
+├── azure.yaml                     # ⚠️ MUST be at root (azd reads this)
 ├── infra/                         # Bicep scaffold
 ├── scripts/                       # Infra hooks only (postprovision, postdeploy)
 ├── tests/                         # Test/invocation scripts

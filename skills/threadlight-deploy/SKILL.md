@@ -747,7 +747,13 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] `src/bot/teams_package/manifest.json` — has placeholder tokens ready for postprovision
 - [ ] *(Skip this section entirely if Teams not needed)*
 
-#### Root config files
+#### Root config files (MUST be at repo root — azd requires this)
+
+> **`agent.yaml` and `azure.yaml` stay at repo root**, NOT under `src/`.
+> The `azd ai agent` extension and `azd` CLI look for them at the repo root.
+> Only the *source code* (container.py, Dockerfile, skills, etc.) goes under `src/`.
+> The `project: ./src/agent` field in `azure.yaml` tells azd where the Dockerfile is.
+
 - [ ] `agent.yaml` — `kind: hosted` (top-level), protocols `1.0.0`, resources `{cpu, memory}`, NO `FOUNDRY_PROJECT_ENDPOINT`
 - [ ] `azure.yaml` — `host: azure.ai.agent`, `project: ./src/agent`, model in `config.deployments`, `requiredVersions` for extension
 - [ ] `deploy-notes.md` — references `azd up`, lists mock systems with swap instructions
@@ -1214,13 +1220,12 @@ azd up
 After all phases, the project should contain:
 
 ```
-project/
+project/                    # ← REPO ROOT
 ├── AGENTS.md               # Original design (unchanged)
-├── config/                  # Original config (unchanged)
 ├── specs/                   # SpecKit (from threadlight-design, unchanged)
 │
-├── agent.yaml              # Agent definition (REQUIRED by extension)
-├── azure.yaml              # azd config (extension + services + hooks)
+├── agent.yaml              # ⚠️ MUST be at root — azd ai agent reads this
+├── azure.yaml              # ⚠️ MUST be at root — azd reads this
 │
 ├── src/
 │   ├── agent/              # Hosted agent container
