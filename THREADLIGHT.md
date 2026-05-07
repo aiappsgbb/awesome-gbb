@@ -140,12 +140,6 @@ project/
 ├── spec-overview.html             # Seller pitch page (self-contained)
 ├── spec-dashboard/                # Interactive workshop app (optional, React)
 │
-├── mock-mcp/                      # Mock MCP server (from foundry-mcp-aca)
-│   ├── server.py                  # FastMCP tools backed by sample data
-│   ├── data/                      # Copied from specs/sample-data/
-│   ├── Dockerfile
-│   └── requirements.txt
-│
 ├── src/
 │   ├── agent/                     # Hosted agent container (from threadlight-deploy)
 │   │   ├── container.py           # GHCP SDK runtime (default) or MAF
@@ -154,6 +148,12 @@ project/
 │   │   ├── copilot-instructions.md
 │   │   ├── skills/                # Skills copied for container
 │   │   └── mcp-config.json        # Runtime MCP config
+│   │
+│   ├── mcp/                       # Mock MCP server (from foundry-mcp-aca)
+│   │   ├── server.py              # FastMCP tools backed by sample data
+│   │   ├── data/                  # Copied from specs/sample-data/
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
 │   │
 │   └── bot/                       # Teams bot (optional, from foundry-teams-bot)
 │       ├── bot.py, app.py, Dockerfile

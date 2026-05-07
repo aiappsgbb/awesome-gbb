@@ -252,17 +252,27 @@ Map configured MCP servers for Foundry runtime (NOT local dev):
 - Only include servers accessible from Foundry containers (remote HTTP endpoints)
 - The runtime expands env vars automatically
 
-**Foundry tool → runtime mapping (MAF variant):**
+**Foundry tool → runtime mapping:**
 
-| Design Tool | MAF Runtime | Notes |
-|-------------|-------------|-------|
-| Browser Automation | **MCP ACA** — deploy Playwright as a remote MCP server | Local Playwright cannot run inside hosted agent containers. Use `npx @playwright/mcp` packaged in an ACA. |
-| Web Search | **Foundry Toolbox** — `client.get_toolbox("toolbox-name")` | Create a Toolbox with `web_search` tool via REST API or postprovision hook. No Bing resource needed — it's a built-in Toolbox tool type. |
-| Code Interpreter | **Foundry Toolbox** — add `code_interpreter` to Toolbox | Computation and data processing. Note: file output stays in Toolbox sandbox, NOT agent `$HOME`. |
-| File Generation | **Custom `@tool`** — `save_report` writing to `$HOME` | Agent writes CSV/MD/HTML to `Path.home()`. Downloadable via session files API. For HTML reports, add `markdown` library to convert MD→styled HTML. |
-| Azure AI Search | Foundry Toolbox or custom MCP | Use Toolbox if available, or deploy custom MCP ACA |
-| Cosmos DB | MCP ACA (e.g., .NET MCPToolKit — see MCP ACA reference) | Proven pattern |
-| Custom data store | Custom MCP server (deploy as ACA or Azure Functions) | Proven pattern |
+| Design Tool | Runtime | Notes |
+|-------------|---------|-------|
+| Browser Automation | **MCP ACA** — deploy Playwright as a remote MCP server | Local Playwright cannot run inside hosted agent containers. Use `npx @playwright/mcp` on ACA. |
+| Web Search | **Foundry Toolbox** — `client.get_toolbox("toolbox-name")` | Built-in Toolbox tool type. No Bing resource needed. *MAF only.* |
+| Code Interpreter | **Foundry Toolbox** — add `code_interpreter` to Toolbox | Computation and data processing. *MAF only.* |
+| File Generation | **Custom `@tool`** — `save_report` writing to `$HOME` | Downloadable via session files API. *MAF only.* |
+| **Knowledge sources (docs, policies, KB)** | **Foundry IQ** — Azure AI Search with agentic retrieval | For static/semi-static knowledge (policies, regulations, product docs). See `foundry-iq` skill. Creates Knowledge Base with query planning + citations. |
+| **API data (dynamic, transactional)** | **MCP ACA** — custom or mock MCP server | For live data (CRM, orders, transactions). See `foundry-mcp-aca` skill. |
+| **Cosmos DB** | **MCP ACA** — .NET MCPToolKit (10 tools out of the box) | See `foundry-mcp-aca` Option A. Deploy as `src/mcp/` or shared ACA. |
+| Azure AI Search (direct) | Foundry Toolbox or custom MCP | Use Toolbox if available, or deploy custom MCP ACA |
+| Custom data store | Custom MCP server (deploy as ACA or Azure Functions) | Proven pattern — see `foundry-mcp-aca` |
+
+> **Knowledge vs API data:** Use the spec § 7 (Knowledge Sources) vs § 5 (System Integrations)
+> distinction to choose:
+> - **Knowledge sources** (documents, policies, search indexes) → **Foundry IQ** (agentic retrieval
+>   with query planning, multi-hop reasoning, citations). See `foundry-iq` skill.
+> - **API data** (CRM, ERP, transactional systems) → **MCP server** (mock or real).
+>   See `foundry-mcp-aca` skill.
+> - **Cosmos DB** → MCPToolKit as `src/mcp/` — provides 10 tools, deploy as ACA.
 
 > **Key constraints for MAF hosted agents:**
 >
@@ -837,9 +847,12 @@ For systems marked **mock** in the spec, generate a mock MCP server using
 `foundry-mcp-aca` Option D (Mock MCP). This ensures the demo agent has callable
 tools backed by sample data — the customer sees real MCP tool calls.
 
-1. Run the `foundry-mcp-aca` skill to generate `mock-mcp/` from spec tool contracts
+For systems using **Cosmos DB**, generate a Cosmos MCPToolKit deployment using
+`foundry-mcp-aca` Option A — provides 10 tools out of the box.
+
+1. Run the `foundry-mcp-aca` skill to generate `src/mcp/` from spec tool contracts
 2. Deploy to ACA (or run locally for dev)
-3. Wire the mock endpoint into `mcp-config.json`:
+3. Wire the endpoint into `src/agent/mcp-config.json`:
 
 ```json
 {
@@ -989,13 +1002,19 @@ project/
 ├── agent.yaml                # Agent definition (ContainerAgent schema)
 ├── azure.yaml                # azd config — extension declares agent + bot services
 ├── src/
-│   ├── agent/                # Hosted agent (Phase 2 files go here)
+│   ├── agent/                # Phase 2 files go here
 │   │   ├── container.py
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   ├── copilot-instructions.md
 │   │   ├── skills/
 │   │   └── mcp-config.json
+│   │
+│   ├── mcp/                  # Mock/Cosmos MCP server (if needed)
+│   │   ├── server.py
+│   │   ├── data/
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
 │   │
 │   └── bot/                  # Teams bot (optional)
 │       ├── bot.py
@@ -1104,6 +1123,12 @@ project/
 │   │   ├── copilot-instructions.md
 │   │   ├── skills/         # Copied from .github/skills/
 │   │   └── mcp-config.json # Runtime MCP config
+│   │
+│   ├── mcp/                # Mock/custom MCP server (if mocked systems or Cosmos)
+│   │   ├── server.py       # FastMCP tools backed by sample data
+│   │   ├── data/           # Copied from specs/sample-data/
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
 │   │
 │   └── bot/                # Teams bot (optional)
 │       ├── bot.py

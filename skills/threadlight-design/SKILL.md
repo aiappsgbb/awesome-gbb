@@ -301,10 +301,13 @@ Read the spec and derive the architecture using these deterministic rules:
    - Each approval/escalation flow from spec § 8 maps to approval logic in the relevant skill
    - Conversational interaction points may warrant a dedicated skill
 
-4. **Knowledge sources → retrieval config:**
-   - Each knowledge source from spec § 7 maps to a tool or MCP configuration
-   - Document stores → File Search or Azure AI Search
-   - Databases → MCP or custom tool
+4. **Knowledge sources → Foundry IQ or MCP:**
+   - **Documents, policies, regulations, product docs** (spec § 7) → **Foundry IQ**
+     (Azure AI Search with agentic retrieval — query planning, multi-hop, citations).
+     See `foundry-iq` skill.
+   - **Dynamic/transactional data** (spec § 5 integrations) → **MCP server**
+     (mock for PoC, real for production). See `foundry-mcp-aca` skill.
+   - **Cosmos DB** → MCPToolKit (10 tools out of the box) as `src/mcp/`
 
 5. **Temporal pattern → trigger design:**
    - On-demand → user invocation
@@ -387,8 +390,9 @@ Map spec tool contracts to local MCP servers where possible:
 | Spec Tool Type | Local MCP Server |
 |---------------|-----------------|
 | Web scraping | `@playwright/mcp` |
+| Knowledge retrieval | Azure AI Search SDK (local) → Foundry IQ (deployed) |
+| Cosmos DB | `@azure/mcp` with cosmos namespace → MCPToolKit ACA (deployed) |
 | Azure AI Search | `@azure/mcp` with search namespace |
-| Cosmos DB / SQL | `@azure/mcp` with relevant namespace |
 | Fabric data | `@microsoft/fabric-mcp` |
 | Web search | Tavily MCP (remote HTTP) |
 

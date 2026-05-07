@@ -241,7 +241,7 @@ for their real system.
 4. Deploy to ACA (or run locally for dev) — agent connects via `mcp-config.json`
 5. When real system available: customer deploys a real MCP server, changes the URL
 
-### Generate `mock-mcp/server.py`
+### Generate `src/mcp/server.py`
 
 For each tool contract in `specs/SPEC.md` § 6 that is backed by a system marked **mock**
 in § 5, generate a tool function:
@@ -288,11 +288,11 @@ if __name__ == "__main__":
     mcp.run(transport="streamable-http", host="0.0.0.0", port=8080)
 ```
 
-### Generate `mock-mcp/data/`
+### Generate `src/mcp/data/`
 
-Copy sample data from `specs/sample-data/*.json` into `mock-mcp/data/`.
+Copy sample data from `specs/sample-data/*.json` into `src/mcp/data/`.
 
-### Generate `mock-mcp/Dockerfile`
+### Generate `src/mcp/Dockerfile`
 
 ```dockerfile
 FROM python:3.12-slim
@@ -304,7 +304,7 @@ EXPOSE 8080
 CMD ["python", "server.py"]
 ```
 
-### Generate `mock-mcp/requirements.txt`
+### Generate `src/mcp/requirements.txt`
 
 ```
 fastmcp>=2.0.0
@@ -313,7 +313,7 @@ fastmcp>=2.0.0
 ### Local Development
 
 ```bash
-cd mock-mcp
+cd src/mcp
 pip install -r requirements.txt
 python server.py
 # MCP endpoint: http://localhost:8080/mcp
@@ -322,7 +322,7 @@ python server.py
 ### Deploy to ACA
 
 ```bash
-az acr build --registry <acr> --image mock-mcp:latest ./mock-mcp/
+az acr build --registry <acr> --image mock-mcp:latest ./src/mcp/
 # Then create ACA pointing to the image (see Bicep above)
 ```
 
