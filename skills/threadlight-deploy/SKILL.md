@@ -58,15 +58,14 @@ Recommended (from `threadlight-design`):
 
 > [!IMPORTANT]
 > **Dependency skills.** This skill references content from other skills instead of
-> duplicating it. Before proceeding, check that these companion skills are available
-> (installed or accessible) — they contain details this skill intentionally defers to:
+> duplicating it. Check that companion skills are available:
 >
-> | Skill | Needed for |
-> |-------|-----------|
-> | `foundry-hosted-agents` | RBAC, identity model, agent.yaml schema, dependency versions, troubleshooting |
-> | `foundry-teams-bot` | Teams bot code, Bicep, manifest (if Teams integration needed) |
-> | `foundry-mcp-aca` | Deploying custom MCP servers as ACA or Azure Functions |
-> | `foundry-evals` | Post-deployment evaluation patterns |
+> | Skill | When Needed |
+> |-------|------------|
+> | `foundry-hosted-agents` | **Always** — RBAC, identity model, agent.yaml schema, dependency versions, troubleshooting |
+> | `foundry-teams-bot` | If Teams integration is needed |
+> | `foundry-mcp-aca` | If deploying custom MCP servers as ACA or Azure Functions |
+> | `foundry-evals` | For post-deployment evaluation |
 >
 > Use `/skills list` to check availability. If missing, install from `aiappsgbb/awesome-gbb`.
 
@@ -137,9 +136,11 @@ Machine-readable deployment contract from `threadlight-design`. Provides:
 #### 1b. Read `specs/SPEC.md` (if exists)
 SpecKit specification from `threadlight-design`. Extract:
 - **§ 5 System Integrations** → which are mock vs real → drives MCP config
+- **§ 6 Tool Contracts** → map to Foundry tools or MCP servers
+- **§ 8 Human Interaction Points** → Teams bot needed? Which channels?
+- **§ 9 Success Criteria** → eval scenarios for post-deploy validation (→ `foundry-evals`)
 - **§ 10 Trigger & Run Model** → model capacity, container resources
 - **§ 11 Security/Compliance** → regulatory constraints, data retention
-- **§ 6 Tool Contracts** → map to Foundry tools or MCP servers
 
 #### 1c. Read `AGENTS.md` and all skills (always)
 Core deployment inputs:
