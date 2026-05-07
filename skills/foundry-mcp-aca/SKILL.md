@@ -208,8 +208,8 @@ resource mcpAca 'Microsoft.App/containerApps@2024-03-01' = {
           image: image
           env: env
           resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
+            cpu: json('1.0')
+            memory: '2Gi'
           }
         }
       ]
