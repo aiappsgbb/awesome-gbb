@@ -692,41 +692,65 @@ Simple smoke test — invoke the deployed agent with a single message (already c
 
 ## Phase 3: Validate & Auto-Review (mandatory)
 
-After generating all files, **automatically run a self-review** before presenting
-the output. This skill generates a lot of content — catch mistakes before the user sees them.
+After generating all files, **walk through this checklist item by item**. Every
+generated file must be accounted for. This is the single most important step —
+if you skip it, broken or missing files ship to the user.
 
-### File Validation
+### Output Checklist
 
-- [ ] `copilot-instructions.md` exists and is 500-1500 words
-- [ ] `skills/` has at least one SKILL.md
-- [ ] `container.py` exists and matches the chosen runtime variant (GHCP or MAF)
-- [ ] `pyproject.toml` has correct dependencies for the chosen variant
-- [ ] `pyproject.toml` has `prerelease = "if-necessary-or-explicit"` in `[tool.uv]` (NOT `"allow"`)
-- [ ] `Dockerfile` uses `python:3.12-slim` and `uv sync` (NOT `pip install`)
-- [ ] `Dockerfile` copies `container.py`, `copilot-instructions.md`, `skills/`
-- [ ] `mcp-config.json` only has remote servers (no local-only, no stdio)
-- [ ] `azure.yaml` exists with `host: azure.ai.agent` service and `requiredVersions`
-- [ ] `azure.yaml` has model deployment in `config.deployments` section
-- [ ] `agent.yaml` has `kind: hosted` (top-level), protocols `1.0.0`, resources `{cpu, memory}`
-- [ ] `agent.yaml` does NOT include `FOUNDRY_PROJECT_ENDPOINT` (reserved)
-- [ ] `infra/main.bicep` exists
+Check every file. Mark each ✅ or fix before presenting.
+
+#### `src/agent/` — Hosted agent container
+- [ ] `src/agent/container.py` — exists, matches chosen runtime (GHCP or MAF)
+- [ ] `src/agent/Dockerfile` — uses `python:3.12-slim`, `uv sync`, copies all agent files
+- [ ] `src/agent/pyproject.toml` — correct deps for chosen variant, `prerelease = "if-necessary-or-explicit"`
+- [ ] `src/agent/copilot-instructions.md` — exists, 500-1500 words, matches AGENTS.md
+- [ ] `src/agent/skills/` — has all skills from AGENTS.md, no extra, no missing
+- [ ] `src/agent/config/` — process configuration from spec (if applicable)
+- [ ] `src/agent/mcp-config.json` — only remote HTTP servers, includes mock MCP endpoints for mocked systems, no unresolved `${ENV_VAR}` placeholders
+
+#### `src/mcp/` — MCP server (if mocked systems or Cosmos)
+- [ ] `src/mcp/server.py` — tools match spec § 6 contracts for mocked systems
+- [ ] `src/mcp/data/` — sample data copied from `specs/sample-data/`
+- [ ] `src/mcp/Dockerfile` — builds and runs the MCP server
+- [ ] `src/mcp/requirements.txt` — includes `fastmcp`
+- [ ] *(Skip this section entirely if no mocked systems and no Cosmos)*
+
+#### `src/bot/` — Teams bot (if Teams needed)
+- [ ] `src/bot/bot.py` — uses `get_openai_client(agent_name=...)` (NOT `agent_reference`)
+- [ ] `src/bot/app.py` — aiohttp server with MsalConnectionManager
+- [ ] `src/bot/Dockerfile` — python:3.12-slim, port 80
+- [ ] `src/bot/requirements.txt` — includes microsoft-agents-* + openai
+- [ ] `src/bot/build_manifest.py` — replaces all manifest tokens
+- [ ] `src/bot/teams_package/manifest.json` — has placeholder tokens ready for postprovision
+- [ ] *(Skip this section entirely if Teams not needed)*
+
+#### Root config files
+- [ ] `agent.yaml` — `kind: hosted` (top-level), protocols `1.0.0`, resources `{cpu, memory}`, NO `FOUNDRY_PROJECT_ENDPOINT`
+- [ ] `azure.yaml` — `host: azure.ai.agent`, `project: ./src/agent`, model in `config.deployments`, `requiredVersions` for extension
+- [ ] `deploy-notes.md` — references `azd up`, lists mock systems with swap instructions
+
+#### `infra/` — Bicep scaffold
+- [ ] `infra/main.bicep` — exists
+- [ ] `infra/main.parameters.json` — `ENABLE_CAPABILITY_HOST=false`
+- [ ] `infra/core/` — vendored modules present
+- [ ] `infra/bot/` — present if Teams included, absent if not
+
+#### `scripts/` — Hooks
+- [ ] Postprovision/postdeploy hooks present if needed (Toolbox, RBAC, manifest)
+
+#### `tests/` — Eval and smoke test
+- [ ] `tests/invoke_agent.py` — smoke test script
+- [ ] `tests/eval_dataset.jsonl` — one line per spec § 9 scenario (if spec exists)
+- [ ] `tests/run_evals.py` — invoke+score script (if spec exists)
+
+#### Global checks
 - [ ] No secrets or API keys in any generated file
-- [ ] No local file paths hardcoded
-- [ ] `deploy-notes.md` references `azd up` as the deployment command
+- [ ] No hardcoded local file paths
+- [ ] Runtime variant (GHCP/MAF) consistent across container.py, pyproject.toml, Dockerfile
+- [ ] All `__PLACEHOLDER__` tokens replaced with actual values
 
-### Consistency Review
-
-- [ ] `container.py` runtime variant matches the decision in Phase 1 § 1d
-- [ ] `mcp-config.json` includes mock MCP endpoints for all mocked systems (not just warnings)
-- [ ] `copilot-instructions.md` content matches AGENTS.md (not stale)
-- [ ] `src/agent/skills/` has skills matching AGENTS.md (no missing, no extra)
-- [ ] If Teams bot included: `copilot/bot.py` uses `get_openai_client(agent_name=...)` (NOT `agent_reference`)
-- [ ] `deploy-notes.md` lists all mock systems with swap instructions
-- [ ] If spec exists: `agent.yaml` model deployment matches spec § 10 requirements
-- [ ] If spec § 9 has eval scenarios: `tests/eval_dataset.jsonl` and `tests/run_evals.py` exist
-
-**If any check fails:** fix it before presenting the output. Do not leave broken
-artifacts for the user to debug.
+**If any check fails:** fix it before presenting. Do not leave broken artifacts.
 
 ---
 
