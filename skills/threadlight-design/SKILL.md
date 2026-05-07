@@ -66,19 +66,18 @@ Capture:
 - **One-line description**
 - **Domain** (financial services, healthcare, retail, operations, HR, marketing, etc.)
 
-#### Domain Primer Loading
+#### Domain Primer (optional)
 
-After identifying the domain, check `references/domains/` for a matching primer.
-If one exists, load it to seed discovery with domain-specific knowledge:
-- Typical business rules → suggest during BR-XXX discovery (user confirms/adapts/rejects)
-- Common data models → pre-populate spec § 4 (user reviews and adjusts)
-- Regulatory landscape → feed into compliance screen and spec § 11
-- Common integrations → suggest during system integration discovery
-- Domain vocabulary → use correct terminology throughout the spec
+A primer is a **starting-point cheat sheet**, not a blueprint. Check `references/domains/`
+for a matching file — if one exists, use it as loose inspiration during discovery:
+- Skim for relevant business rules, data models, regulations, and vocabulary
+- Cherry-pick what applies — most use cases only overlap partially with a primer
+- The user's actual process always overrides primer suggestions
 
-Primers are **suggestions, not constraints**. The user always has final say.
+If **no primer exists** for the domain, that's completely fine — the trait-based
+discovery works independently. Primers just save a few questions for well-known scenarios.
 
-See `references/domains/README.md` for available primers and how to contribute new ones.
+Available primers are samples; the team can add more over time. See `references/domains/README.md`.
 
 ### Step 2: Discover via Trait Detection
 
