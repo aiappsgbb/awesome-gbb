@@ -307,6 +307,47 @@ Task Completion) are stable across both judge models.
 | **Gateway timeout (502/504)** | Using Responses protocol for long queries | Switch to Invocations protocol |
 | **Token expired during long query** | BYOK token static per session | Token has ~1h validity; for longer sessions, create new session |
 | **Container can't resolve packages** | pip doesn't handle pre-release deps | Use `uv` with pre-release settings in `[tool.uv]` |
+| **`azd deploy` uses wrong ACR** | `AZURE_CONTAINER_REGISTRY_ENDPOINT` not set or stale from another project | Run `azd env refresh` or verify `AZURE_CONTAINER_REGISTRY_ENDPOINT` in `azd env list`. Must match the ACR created by your project's Bicep. |
+| **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use `remoteBuild: true` in `azure.yaml` (builds via ACR Tasks with the project's MI) |
+
+---
+
+## azure.yaml (required for `azd deploy`)
+
+The `azd ai agent` extension needs `azure.yaml` to know where to build the container:
+
+```yaml
+name: my-project
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: ">=0.1.25-preview"
+
+services:
+  my-agent:
+    project: ./src/agent
+    host: azure.ai.agent
+    language: docker
+    docker:
+      remoteBuild: true
+    config:
+      container:
+        resources:
+          cpu: "1"
+          memory: 2Gi
+      deployments:
+        - model:
+            format: OpenAI
+            name: gpt-5.4-mini
+            version: "2026-03-17"
+          name: gpt-5.4-mini
+          sku:
+            capacity: 120
+            name: GlobalStandard
+```
+
+> **`remoteBuild: true` is critical** — without it, azd tries to build locally with Docker.
+> With it, azd pushes source to ACR and builds remotely via ACR Tasks.
 
 ---
 
