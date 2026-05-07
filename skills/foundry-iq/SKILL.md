@@ -142,7 +142,7 @@ AI_SEARCH_API_VERSION=2025-01-01-preview
 # PolicyBot Configuration
 POLICY_INDEX_NAME=policy-documents
 POLICY_AGENT_NAME=policy-agent
-POLICY_CHAT_MODEL=gpt-4.1
+POLICY_CHAT_MODEL=gpt-5.4-mini
 
 # Document Chunking
 CHUNK_SIZE=1000

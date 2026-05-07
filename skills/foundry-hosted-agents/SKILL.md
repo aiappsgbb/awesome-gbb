@@ -81,7 +81,7 @@ project_client = AIProjectClient(
 )
 
 # Create FoundryChatClient, swap its OpenAI client to the agent-bound one
-sub_client = FoundryChatClient(project_client=project_client, model="gpt-4.1")
+sub_client = FoundryChatClient(project_client=project_client, model="gpt-5.4-mini")
 sub_client.client = project_client.get_openai_client(agent_name="my-sub-agent")
 
 sub_agent = Agent(name="my-sub-agent", client=sub_client)
@@ -89,7 +89,7 @@ sub_agent = Agent(name="my-sub-agent", client=sub_client)
 orchestrator = Agent(
     client=FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model="gpt-4.1",
+        model="gpt-5.4-mini",
         credential=DefaultAzureCredential(),
     ),
     instructions="You orchestrate sub-agents.",

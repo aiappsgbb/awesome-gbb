@@ -35,7 +35,7 @@ class AzureOpenAIClient:
         api_version: str = "2024-12-01-preview"
     ):
         self.endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-        self.deployment = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
+        self.deployment = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini")
         self.api_version = api_version
 
         if not self.endpoint:
