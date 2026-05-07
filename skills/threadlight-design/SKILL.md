@@ -431,6 +431,48 @@ Project documentation covering:
 - Mock data status (which systems are mocked, how to replace)
 - Deployment path (reference threadlight-deploy)
 
+#### 7. `spec-overview.html` — Seller Pitch Page
+
+Generate a **single self-contained HTML file** (no dependencies, opens in any browser)
+that visualizes the SpecKit spec for non-technical audiences. Use for seller pitches,
+customer walkthroughs, and stakeholder alignment.
+
+**Must include:**
+- Process name, domain, and one-line description as hero section
+- Process flow as a visual step diagram (boxes + arrows, color-coded by actor type)
+- Business rules count and summary (collapsible detail)
+- Data models as entity cards (field names, types — no validation details)
+- System integrations table (name, direction, status badge: ✅ available / 🔶 mock)
+- Eval scenarios count with category breakdown (happy-path / edge-case / error)
+- Skill catalog with purposes
+
+**Style:**
+- Dark professional theme (dark navy background, accent blues/cyans)
+- Responsive layout — works on laptop screens and projector
+- No external CDN, fonts, or scripts — everything inline
+- Print-friendly (can be saved as PDF from browser)
+
+#### 8. `spec-dashboard/` — Interactive Workshop App (optional)
+
+For deeper workshops, generate a small React app that lets users explore and edit
+the spec interactively:
+
+```
+spec-dashboard/
+├── index.html          # Entry point
+├── package.json        # Dependencies (react, react-dom, vite)
+├── src/
+│   ├── App.jsx         # Main layout
+│   ├── FlowDiagram.jsx # Interactive process flow
+│   ├── RulesPanel.jsx  # Business rules with search/filter
+│   ├── DataModels.jsx  # Entity schemas with field details
+│   ├── Systems.jsx     # Integration status (mock/real toggle)
+│   └── spec-data.json  # Parsed spec data (from SPEC.md)
+```
+
+Run with `npm install && npm run dev`. This is **optional** — only generate when
+the user asks for an interactive dashboard or workshop tool.
+
 ### Step 7: Review
 
 Walk through the generated structure with the user:
