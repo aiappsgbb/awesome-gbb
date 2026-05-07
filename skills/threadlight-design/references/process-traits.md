@@ -89,6 +89,32 @@ When and how often the process runs.
 
 ---
 
+## Trait: State Model
+
+How the process manages state across steps and over time.
+
+| Variant | Description | Discovery Questions |
+|---------|-------------|---------------------|
+| **Stateless** | Each invocation is independent, no memory | Any caching useful? |
+| **Session-based** | State within a conversation/session, discarded after | Session timeout? What's stored? |
+| **Case-based** | Long-lived case/ticket with lifecycle (open → in-progress → resolved) | Case lifecycle stages? Who can update? SLA per stage? |
+| **Pipeline** | Items flow through ordered stages with checkpointing | What happens if a stage fails? Retry? Skip? Queue? |
+
+---
+
+## Trait: Action Criticality
+
+How consequential the process's actions are — drives approval and safety patterns.
+
+| Variant | Description | Discovery Questions |
+|---------|-------------|---------------------|
+| **Read-only** | Only reads/analyzes data, no side effects | N/A — lowest risk |
+| **Reversible write** | Creates/updates data that can be undone | Undo mechanism? Soft delete? |
+| **Irreversible write** | Financial transactions, notifications, external system writes | Human approval needed? Confirmation step? Audit trail? |
+| **Mixed** | Some actions are safe, some are critical | Which actions need approval? What's the blast radius? |
+
+---
+
 ## Example: Combining Traits
 
 ### Insurance Claims Processing

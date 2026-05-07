@@ -160,12 +160,15 @@ Must include all sections from the template:
 1. **Process Overview** — name, domain, goals, scope, participants
 2. **Process Flow** — step-by-step with actors, inputs, outputs, decision branches
 3. **Business Rules** — numbered BR-XXX, each with condition/action/exception
-4. **Data Models** — all entities with field-level schemas
+4. **Data Models** — all entities with field-level schemas and system of record
 5. **System Integrations** — each external system, direction, auth, availability (including **mock** flag)
 6. **Tool Contracts** — abstract tool definitions (not bound to any runtime)
 7. **Knowledge Sources** — reference documents, policies, search indexes
 8. **Human Interaction Points** — approvals, escalations, conversational flows (if any)
 9. **Success Criteria** — functional, performance, quality targets + evaluation scenarios (S-XXX linked to BR-XXX)
+10. **Trigger & Run Model** — how/when the process executes, volume, SLA
+11. **Security, Compliance & Governance** — PII, auth, retention, regulatory, audit
+12. **Assumptions & Open Questions** — what's given, what needs stakeholder input
 
 #### `specs/sample-data/{entity}.json` — Mock data (for systems marked "mock")
 
@@ -202,6 +205,20 @@ After generating `specs/`, present the spec summary to the user:
   specs/sample-data/README.md
 ```
 
+Then also generate `specs/manifest.json` for resume durability:
+
+```json
+{
+  "process_name": "{name}",
+  "spec_version": "1.0",
+  "status": "checkpoint",
+  "phase_reached": "A",
+  "generated_files": ["specs/SPEC.md", "specs/sample-data/..."],
+  "traits": ["{trait-1}", "{trait-2}"],
+  "created_at": "{ISO date}"
+}
+```
+
 Then tell the user:
 
 > **Checkpoint reached.** You can:
@@ -220,18 +237,52 @@ If `specs/SPEC.md` exists, read it. If not, run Phase A first.
 
 ### Step 5: Design Architecture from Spec
 
-Read the spec and derive:
+Read the spec and derive the architecture using these deterministic rules:
 
-1. **Skill decomposition** — one skill per major workflow phase or domain area
-   - Each skill's procedure traces back to spec business rules (BR-XXX)
-   - Each skill's operational contract derives from spec tool contracts
+#### Skill Derivation Recipe
 
-2. **Tool mapping** — map spec tool contracts to concrete implementations:
-   - Foundry built-in tools (Browser Automation, File Search, Code Interpreter, etc.)
-   - MCP servers (local for dev, remote for deployment)
-   - Custom function tools (only if built-ins insufficient)
+1. **Map process steps to candidate skills:**
+   - Group consecutive steps that share the same actor type into a skill
+   - Steps with different actor types (agent vs system vs human) usually split into separate skills
+   - A single step that is complex enough (multiple sub-actions, branching) can be its own skill
 
-3. **Architecture summary** — present to user before generating
+2. **Create an orchestrator when:**
+   - There are 3+ domain skills
+   - The process flow has decision branches or parallel paths
+   - There's a defined order of operations across skills
+
+3. **Human interaction points → dedicated handling:**
+   - Each approval/escalation flow from spec § 8 maps to approval logic in the relevant skill
+   - Conversational interaction points may warrant a dedicated skill
+
+4. **Knowledge sources → retrieval config:**
+   - Each knowledge source from spec § 7 maps to a tool or MCP configuration
+   - Document stores → File Search or Azure AI Search
+   - Databases → MCP or custom tool
+
+5. **Temporal pattern → trigger design:**
+   - On-demand → user invocation
+   - Scheduled → Azure Functions or cron
+   - Event-driven → webhook or message queue trigger
+
+6. **Validation checklist (every item must pass):**
+   - [ ] Every BR-XXX rule is covered by at least one skill's procedure
+   - [ ] Every tool contract from spec § 6 has a concrete implementation (Foundry tool, MCP, or mock)
+   - [ ] Every mocked system has sample data in `specs/sample-data/`
+   - [ ] Every eval scenario (S-XXX) can be tested with the generated skills + mock data
+   - [ ] No orphan skills — every skill is reachable from the orchestrator or a user trigger
+
+#### Feasibility Preflight
+
+Before generating files, verify:
+- [ ] Required tools are available (Foundry tools, MCP servers, or viable mock alternatives)
+- [ ] Auth patterns identified for all non-mock system integrations
+- [ ] Storage strategy defined for any persistent state (no local filesystem in production)
+- [ ] Model capability matches needs (tool count, context window, reasoning depth)
+
+#### Architecture Summary
+
+Present to user before generating:
 
 ```
 📋 Process: {name} (from specs/SPEC.md)
@@ -295,8 +346,9 @@ Map spec tool contracts to local MCP servers where possible:
 | Fabric data | `@microsoft/fabric-mcp` |
 | Web search | Tavily MCP (remote HTTP) |
 
-For tools backed by mock data: note in comments that these use sample data files
-and will need real MCP/API connections later.
+For tools backed by mock data: document in the project README which tools use
+sample data files and will need real MCP/API connections later. Do NOT put
+comments in JSON config files.
 
 #### 5. `skill-manifest.json`
 
@@ -361,13 +413,17 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 
 ## Reference Files
 
-| File | Purpose |
-|------|---------|
-| `references/speckit-template.md` | Template for SpecKit specification documents |
-| `references/process-traits.md` | Composable trait catalog for process pattern detection |
-| `references/skill-template.md` | Template for generated SKILL.md files |
-| `references/agents-template.md` | Template for generated AGENTS.md |
-| `references/compliance-checklist.md` | Privacy/legal/regulatory screening checklist |
+| File | Purpose | Status |
+|------|---------|--------|
+| `references/speckit-template.md` | Template for SpecKit specification documents | ✅ Included |
+| `references/process-traits.md` | Composable trait catalog for process pattern detection | ✅ Included |
+| `references/skill-template.md` | Template for generated SKILL.md files | 📎 From upstream `threadlight-skills` repo |
+| `references/agents-template.md` | Template for generated AGENTS.md | 📎 From upstream `threadlight-skills` repo |
+| `references/compliance-checklist.md` | Privacy/legal/regulatory screening checklist | 📎 From upstream `threadlight-skills` repo |
+
+> **📎 Upstream references:** Some reference files live in the full `threadlight-skills` repo
+> and are loaded when the skill is installed there. For standalone use from this repo,
+> follow the SpecKit template structure — it embeds the compliance questions inline.
 
 ---
 

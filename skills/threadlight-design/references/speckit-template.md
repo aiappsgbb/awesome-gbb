@@ -84,8 +84,12 @@ Define the entities the process works with. These become the schema for mock dat
 |-------|------|----------|------------|-------------|
 | | string / int / float / bool / enum / datetime | yes/no | constraints | |
 
+- **System of record**: [Which system from § 5 owns this entity — or "internal" if agent-managed]
+
 > Include all entities: inputs, outputs, intermediate state, reference data.
 > For enum fields, list valid values in the Validation column.
+> The `System of record` links entities to integrations — entities backed by
+> **mock** systems in § 5 will get sample data generated in `specs/sample-data/`.
 
 ---
 
@@ -170,6 +174,43 @@ Where humans are involved — approvals, escalations, input requests, feedback l
 |----|----------|-------|-----------------|----------------|----------|
 | S-001 | | | | BR-XXX | happy-path / edge-case / error / approval |
 
-> Each scenario should trace back to one or more BR-XXX rules.
-> These scenarios drive testing and evaluation after deployment.
+---
+
+## 10. Trigger & Run Model
+
+How and when the process executes.
+
+- **Trigger**: [on-demand / scheduled / event-driven / continuous]
+- **Schedule**: [If scheduled — cron expression or cadence]
+- **Event source**: [If event-driven — what triggers it]
+- **Expected volume**: [Requests per hour/day]
+- **Latency/SLA**: [Max acceptable response time]
+- **Concurrency**: [Parallel execution expected?]
+
+---
+
+## 11. Security, Compliance & Governance
+
+- **PII involved**: yes / no — [if yes, what fields]
+- **Auth model**: [How users/systems authenticate]
+- **Data retention**: [How long to keep data, deletion policy]
+- **Regulatory**: [GDPR, HIPAA, SOX, industry-specific — or none]
+- **Access control**: [Who can run this, who can see results]
+- **Audit requirements**: [What must be logged for auditability]
+
+---
+
+## 12. Assumptions & Open Questions
+
+### Assumptions
+- [Assumption 1 — something taken as given]
+- [Assumption 2]
+
+### Open Questions
+- [Question 1 — needs stakeholder input]
+- [Question 2]
+
+### Dependencies
+- [Dependency 1 — external system, team, or timeline]
+- [Dependency 2]
 ```
