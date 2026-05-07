@@ -186,6 +186,70 @@ resource processingJob 'Microsoft.App/jobs@2023-11-02-preview' = {
     type: 'UserAssigned'
     userAssignedIdentities: { '${uamiResourceId}': {} }
   }
+
+---
+
+## Shared UAMI Pattern
+
+All deployed resources (ACA services, ACA jobs, Azure Functions) should share
+**one User-Assigned Managed Identity** rather than using system-assigned MIs.
+
+### Why
+
+- **One identity, one set of RBAC assignments** — no need to grant roles to N different principals
+- **Predictable** — `AZURE_CLIENT_ID` is the same across all resources
+- **Debuggable** — one principal to check in RBAC, one token to trace
+- **Portable** — UAMI survives resource recreation (system MI doesn't)
+
+### Bicep
+
+```bicep
+// infra/identity/uami.bicep
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${prefix}-id'
+  location: location
+}
+
+output id string = identity.id
+output clientId string = identity.properties.clientId
+output principalId string = identity.properties.principalId
+```
+
+### Wire to all ACAs
+
+```bicep
+// Every ACA gets the same UAMI
+identity: {
+  type: 'UserAssigned'
+  userAssignedIdentities: { '${uami.outputs.id}': {} }
+}
+
+// Every ACA gets AZURE_CLIENT_ID pointing to the shared UAMI
+env: [
+  { name: 'AZURE_CLIENT_ID', value: uami.outputs.clientId }
+  // ... other env vars
+]
+```
+
+### RBAC — assign once, applies to all resources
+
+```bicep
+resource aiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().subscriptionId, uami.outputs.principalId, 'ai-user')
+  scope: foundryAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '...')
+    principalId: uami.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+```
+
+### Exception: Hosted agent containers
+
+Hosted agent containers get a **platform-managed dedicated identity** (instance + blueprint)
+at deploy time — you don't assign a UAMI to them. The shared UAMI is for everything
+else: bot ACA, MCP ACA, jobs, hooks, etc.
   properties: {
     environmentId: containerAppEnv.id
     configuration: {

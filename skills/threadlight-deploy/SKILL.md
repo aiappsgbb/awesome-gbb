@@ -635,11 +635,20 @@ files = requests.get(f"{endpoint}/agents/{name}/endpoint/sessions/{sid}/files?pa
 ## Authentication
 
 - **KEYLESS ONLY** — never use API keys for Azure services
-- Each hosted agent gets a **dedicated Entra identity** at deploy time
-- `FoundryChatClient` uses `DefaultAzureCredential` in the container
-- Bot uses User-Assigned Managed Identity (UAMI) for Bot Service auth
-- Grant downstream resource RBAC to the **agent's identity** (not project MI)
+- Each hosted agent gets a **dedicated Entra identity** at deploy time (platform-managed)
+- `FoundryChatClient` / `CopilotClient` uses `DefaultAzureCredential` in the container
+- **Shared UAMI for all other resources**: Bot ACA, MCP ACA, postprovision hooks, and
+  any other deployed resource should share **one User-Assigned Managed Identity**:
+  - Created by `infra/bot/uami.bicep` (or a shared `infra/identity/uami.bicep`)
+  - Assigned to: Bot ACA, MCP ACA, and any other ACA/Function
+  - `AZURE_CLIENT_ID` env var set on all ACAs pointing to the shared UAMI
+  - RBAC: assign `Azure AI User` on Foundry account + project, `Cognitive Services OpenAI User`,
+    plus any data-plane roles (Cosmos, Search, etc.) to this single UAMI
 - **Azure AI Project Manager** role required at project scope to deploy
+
+> **Why one shared UAMI?** Multiple system-assigned MIs mean multiple RBAC assignments
+> to manage. A single shared UAMI simplifies RBAC, Bicep, and troubleshooting —
+> one identity, one set of role assignments, one place to debug auth failures.
 
 ## Health Probes
 
@@ -779,6 +788,7 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] No hardcoded local file paths
 - [ ] Runtime variant (GHCP/MAF) consistent across container.py, pyproject.toml, Dockerfile
 - [ ] All `__PLACEHOLDER__` tokens replaced with actual values
+- [ ] Shared UAMI: one UAMI for bot + MCP ACA + hooks; `AZURE_CLIENT_ID` set on all ACAs
 
 **If any check fails:** fix it before presenting. Do not leave broken artifacts.
 
