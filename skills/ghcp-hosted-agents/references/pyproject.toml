@@ -9,6 +9,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[tool.setuptools]
+packages = []
+
 [tool.uv]
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 prerelease = "if-necessary-or-explicit"

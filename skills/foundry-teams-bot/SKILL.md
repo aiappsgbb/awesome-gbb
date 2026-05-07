@@ -253,7 +253,7 @@ Add to `azure.yaml`:
 ```yaml
 hooks:
   postprovision:
-    shell: sh
+    shell: pwsh
     run: >
       python scripts/build_teams_manifest.py
     env:

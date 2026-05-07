@@ -1301,6 +1301,11 @@ project/                    # ← REPO ROOT
 | **Two identities in `azd ai agent show`** | Refreshed preview creates `instance_identity` + `blueprint` per agent | Both need RBAC — assign same roles to both principal IDs |
 | **MCP `server_url` invalid URI error** | `${ENV_VAR}` in mcp-config.json not set → expands to empty string → `/mcp` is not a valid URI | **Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. The container skips empty URLs, but `FoundryChatClient.get_mcp_tool()` registers them and Foundry rejects at runtime.** |
 | **Deployer needs `Azure AI Project Manager`** | The extension postdeploy hook auto-assigns `Azure AI User` to agent identity, but needs role-assignment permission to do so | **Assign `Azure AI Project Manager` to deployer on Foundry project scope. Also set `AZURE_TENANT_ID` in azd env.** |
+| **Missing `[tool.setuptools] packages = []`** | GHCP SDK pyproject.toml needs it for uv to resolve correctly | Add `[tool.setuptools]\npackages = []` to pyproject.toml |
+| **Bicep missing `AZURE_AI_PROJECT_ID` output** | Postprovision/postdeploy hooks need the ARM resource ID | Bicep must output `AZURE_AI_PROJECT_ID` (full ARM resource ID, not just endpoint) |
+| **CognitiveServices API version wrong** | Using old `2024-10-01` API | Use `2025-10-01-preview` for connections and agent management |
+| **Hooks fail on Windows** | `shell: sh` in azure.yaml hooks | Use `shell: pwsh` for cross-platform compatibility |
+| **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content | Default to `gpt-5.4-mini` |
 
 > **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
 > and detailed RBAC scenarios.

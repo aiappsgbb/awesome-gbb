@@ -307,6 +307,10 @@ Task Completion) are stable across both judge models.
 | **Gateway timeout (502/504)** | Using Responses protocol for long queries | Switch to Invocations protocol |
 | **Token expired during long query** | BYOK token static per session | Token has ~1h validity; for longer sessions, create new session |
 | **Container can't resolve packages** | pip doesn't handle pre-release deps | Use `uv` with pre-release settings in `[tool.uv]` |
+| **Missing `[tool.setuptools] packages = []`** | uv resolution fails without it | Add to pyproject.toml (see `references/pyproject.toml`) |
+| **Bicep missing `AZURE_AI_PROJECT_ID`** | Postdeploy hooks need the ARM resource ID | Bicep must output full ARM resource ID, not just endpoint |
+| **CognitiveServices API version wrong** | Using old `2024-10-01` | Use `2025-10-01-preview` for agent management APIs |
+| **Hooks fail on Windows** | `shell: sh` in azure.yaml | Use `shell: pwsh` for cross-platform |
 | **`azd deploy` uses wrong ACR** | `AZURE_CONTAINER_REGISTRY_ENDPOINT` not set or stale from another project | Run `azd env refresh` or verify `AZURE_CONTAINER_REGISTRY_ENDPOINT` in `azd env list`. Must match the ACR created by your project's Bicep. |
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use `remoteBuild: true` in `azure.yaml` (builds via ACR Tasks with the project's MI) |
 
