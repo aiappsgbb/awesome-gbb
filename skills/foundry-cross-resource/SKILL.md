@@ -34,11 +34,26 @@ resp = oai.responses.create(model=model, input="...", max_output_tokens=50)
 
 ---
 
+> [!IMPORTANT]
+> **Before using AI Gateway, ALL of the following must be in place.** If any is missing,
+> you'll get 404/401/500 errors. Check each one:
+>
+> 1. ✅ **Remote resource exists** with the model deployed (e.g., `gpt-5.4-mini` on a Sweden Central AI Services account). Not all models are available in all regions — verify with `az cognitiveservices account list-models`.
+> 2. ✅ **APIM instance** exists (BasicV2+ or StandardV2) with **system-assigned managed identity enabled**
+> 3. ✅ **APIM MI has RBAC** — `Cognitive Services User` on the remote AI Services resource
+> 4. ✅ **APIM has an API** with `serviceUrl` pointing to `https://<remote-resource>.services.ai.azure.com`
+> 5. ✅ **APIM API policy** has MI auth + api-version stripping (see Step 1c below)
+> 6. ✅ **Foundry project has an `ApiManagement` connection** (NOT `AIServices`, NOT `AzureOpenAI`) pointing to `https://<apim>.azure-api.net/<api-path>/openai/v1` with APIM subscription key
+> 7. ✅ **Connection has `modelDiscovery` metadata** configured (dynamic or static — see Step 2)
+> 8. ✅ **`MODEL_DEPLOYMENT_NAME`** in agent.yaml is `connectionName/deploymentName` (e.g., `remote-gw/gpt-5.4-mini`)
+>
+> **Most common failure:** step 6 — the connection doesn't exist on the Foundry project. Check in Portal → Project Settings → Connections, or `az resource show` on the project's connections.
+
 ## Prerequisites
 
 | Component | Requirement |
 |-----------|-------------|
-| **Remote resource** | Azure AI Services account with model deployments |
+| **Remote resource** | Azure AI Services account with model deployments (check region availability!) |
 | **APIM instance** | Azure API Management (StandardV2 or BasicV2+) with system-assigned managed identity |
 | **APIM MI RBAC** | `Cognitive Services User` role on the remote AI Services resource |
 | **Source project** | Foundry project where you want to USE the remote models |
