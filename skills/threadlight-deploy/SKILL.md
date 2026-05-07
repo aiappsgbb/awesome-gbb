@@ -56,6 +56,20 @@ Recommended (from `threadlight-design`):
 - `skill-manifest.json` — machine-readable deployment contract
 - `config/*.json` — process configuration
 
+> [!IMPORTANT]
+> **Dependency skills.** This skill references content from other skills instead of
+> duplicating it. Before proceeding, check that these companion skills are available
+> (installed or accessible) — they contain details this skill intentionally defers to:
+>
+> | Skill | Needed for |
+> |-------|-----------|
+> | `foundry-hosted-agents` | RBAC, identity model, agent.yaml schema, dependency versions, troubleshooting |
+> | `foundry-teams-bot` | Teams bot code, Bicep, manifest (if Teams integration needed) |
+> | `foundry-mcp-aca` | Deploying custom MCP servers as ACA or Azure Functions |
+> | `foundry-evals` | Post-deployment evaluation patterns |
+>
+> Use `/skills list` to check availability. If missing, install from `aiappsgbb/awesome-gbb`.
+
 ## Workflow
 
 ```
