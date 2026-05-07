@@ -59,7 +59,8 @@ For backend systems you can't access (SAP, Oracle, CRM, corporate DBs):
 
 Generate all Foundry deployment artifacts from the spec + agents:
 
-- `container.py` — MAF runtime (Agent + FoundryChatClient + ResponsesHostServer)
+- `container.py` — GHCP SDK runtime by default (CopilotClient + InvocationAgentServerHost);
+  falls back to MAF (Agent + FoundryChatClient + ResponsesHostServer) when Toolbox needed
 - `Dockerfile` — uv-based, python:3.12-slim
 - `pyproject.toml` — with prerelease handling for hosting packages
 - `agent.yaml` + `azure.yaml` — azd ai agent extension scaffold

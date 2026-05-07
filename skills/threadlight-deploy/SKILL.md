@@ -16,10 +16,14 @@ description: >
 # Foundry Hosted Agent Deploy
 
 Take a project folder (containing AGENTS.md, `.github/skills/`, config/, etc.) and enrich
-it with all files needed to deploy as a **Microsoft Foundry Hosted Agent** using the
-Microsoft Agent Framework (MAF) variant. Uses the **`azd ai agent` extension** for
-declarative deployment — `azure.yaml` defines agent configuration, model deployments,
-and container resources; `azd up` handles everything (provision, build, deploy, create agent).
+it with all files needed to deploy as a **Microsoft Foundry Hosted Agent**.
+
+**Default runtime: GHCP SDK** (`CopilotClient` + `InvocationAgentServerHost`, Invocations
+protocol). Falls back to **MAF** (`Agent` + `FoundryChatClient` + `ResponsesHostServer`,
+Responses protocol) when Toolbox tools or custom `@tool` functions are needed.
+
+Uses the **`azd ai agent` extension** for declarative deployment — `azure.yaml` defines
+agent configuration, model deployments, and container resources; `azd up` handles everything.
 
 ## When to Use
 
@@ -150,6 +154,28 @@ Core deployment inputs:
 3. **Storage strategy** (Cosmos via MCP, AI Search, Blob, etc.)
 5. **Model requirements** (which model deployment, TPM needs)
 6. **Skills list** (for SkillsProvider registration)
+
+#### 1d. Choose runtime variant
+
+| | **GHCP SDK (default)** | **MAF (fallback)** |
+|--|----------------------|-------------------|
+| **Runtime** | `CopilotClient` + `InvocationAgentServerHost` | `Agent` + `FoundryChatClient` + `ResponsesHostServer` |
+| **Protocol** | Invocations (SSE streaming) | Responses |
+| **Skill loading** | `SkillsProvider` (progressive) | `_load_skills()` (all at startup) |
+| **MCP** | `mcp_servers` parameter | `client.get_mcp_tool()` |
+| **Custom `@tool`** | ❌ Not supported | ✅ Supported |
+| **Foundry Toolbox** | ❌ Not available | ✅ `client.get_toolbox()` |
+| **Tool loop timeout** | No limit (SSE keeps alive) | 120s gateway timeout |
+| **Auth** | BYOK (`DefaultAzureCredential` → bearer token) | `DefaultAzureCredential` → `FoundryChatClient` |
+
+**Decision rules:**
+- **Default to GHCP** — preferred runtime, progressive skills, no timeout limits
+- **Use MAF when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions
+- If the spec doesn't indicate either way → use GHCP
+
+> **See `ghcp-hosted-agents` skill** for the full GHCP reference (container.py template,
+> pyproject.toml, agent.yaml, invocation patterns, troubleshooting).
+> **See `foundry-hosted-agents` skill** for the full MAF reference.
 
 ---
 
@@ -307,28 +333,41 @@ hooks:
 
 The hook script creates the Toolbox, RAI policy, and Teams manifest idempotently.
 
-### 4. `container.py` — MAF Runtime
+### 4. `container.py` — Agent Runtime
 
-**Copy the reference template** at `references/container-runtime-template.py` into the
-project root as `container.py`. Then adapt:
+Generate the container runtime based on the chosen variant (see Phase 1 § 1d).
 
-- Model: set `AZURE_AI_MODEL_DEPLOYMENT_NAME` env var default to match agent's target model
-- Instructions: loaded from `copilot-instructions.md` at startup
-- Skills: loaded from `skills/` directory and appended to instructions
-- MCP: loaded from `mcp-config.json` → `client.get_mcp_tool()` for each server
+#### GHCP SDK variant (default)
 
-The runtime uses `Agent` + `FoundryChatClient` + `ResponsesHostServer` from the
-Microsoft Agent Framework. Auth is handled by `DefaultAzureCredential` passed to
-`FoundryChatClient` — no BYOK workarounds needed.
+**Copy the reference template** from the `ghcp-hosted-agents` skill's
+`references/container.py` and adapt:
 
-The runtime handles:
+- Model provider: BYOK with `DefaultAzureCredential` → bearer token
+- Instructions: loaded from `copilot-instructions.md`
+- Skills: loaded via `SkillsProvider` from `skills/` directory (progressive discovery)
+- MCP: configured via `mcp_servers` parameter
+
+The runtime uses `CopilotClient` + `InvocationAgentServerHost`:
+1. `CopilotClient` with BYOK auth (DefaultAzureCredential → bearer token)
+2. `SkillsProvider` reads `skills/` directory for progressive skill loading
+3. MCP servers configured via `mcp_servers` parameter
+4. `InvocationAgentServerHost` serves the Invocations protocol (SSE streaming)
+5. Diagnostic HTTP server on import failure (keeps container alive for debugging)
+
+#### MAF variant (when Toolbox or custom @tool needed)
+
+**Copy the reference template** from the `foundry-hosted-agents` skill or
+`references/container-runtime-template.py` and adapt:
+
+The runtime uses `Agent` + `FoundryChatClient` + `ResponsesHostServer`:
 1. `FoundryChatClient` with `DefaultAzureCredential` for Foundry auth
 2. `_load_skills()` reads all SKILL.md files and appends to instructions
 3. `_create_mcp_tools()` creates tools via `client.get_mcp_tool()`
 4. `ResponsesHostServer(agent).run()` serves the Responses protocol
-5. Diagnostic HTTP server on import failure (keeps container alive for debugging)
+5. Diagnostic HTTP server on import failure
 
-**Do NOT write the container runtime from scratch** — always start from the reference template.
+**Do NOT write the container runtime from scratch** — always start from the reference
+template in the corresponding skill.
 
 #### Custom Tools (Function Tools)
 
@@ -632,14 +671,19 @@ If it's a simple Q&A agent with built-in tools → Prompt Agent is simpler.
 - **Smaller context** — instructions stay short; details load when needed
 - **Modularity** — add/remove skills without changing copilot-instructions.md
 
-### Why MAF (Microsoft Agent Framework)?
+### Why GHCP SDK (Default Runtime)?
 
-- **Official path**: All Foundry hosted agent samples use `Agent` + `FoundryChatClient`
-- **Simple auth**: `DefaultAzureCredential` passed to `FoundryChatClient` — no BYOK hacks
-- **MCP integration**: `client.get_mcp_tool()` is cleaner than `MCPStreamableHTTPTool`
-- **ResponsesHostServer**: Native Responses protocol bridge, handles liveness probes
-- **Custom tools**: `@tool(approval_mode="never_require")` with Annotated type hints
-- **Dedicated identity**: Each agent gets its own Entra identity at deploy time
+- **Progressive skill loading**: `SkillsProvider` loads skills on-demand, not all at once
+- **No timeout**: Invocations protocol uses SSE — no 120s gateway timeout on long tool loops
+- **Streaming**: SSE event stream for real-time output
+- **Simpler MCP**: `mcp_servers` parameter vs manual `get_mcp_tool()` calls
+- **Smaller context**: Skills loaded progressively, instructions stay lean
+
+### When to Use MAF Instead
+
+- Agent needs **Foundry Toolbox** (`web_search`, `code_interpreter`) — only available via `client.get_toolbox()`
+- Agent needs **custom `@tool` Python functions** — GHCP doesn't support them
+- Agent needs **Toolbox + MCP** in the same runtime
 
 ### Tool-Use Discipline
 
@@ -652,8 +696,27 @@ This is CRITICAL for eval scores — without it, agents over-call tools
 
 ## Reference: Container Runtime Architecture
 
+### GHCP SDK variant (default)
+
 ```
-container.py (MAF variant — self-contained)
+container.py (GHCP variant)
+│
+├── _load_instructions()
+│   └── Read copilot-instructions.md
+│
+├── SkillsProvider(skills_directory="skills/")
+│   └── Progressive skill loading on demand
+│
+├── CopilotClient(model_provider=BYOK, mcp_servers=[...])
+│   └── DefaultAzureCredential → bearer token
+│
+└── InvocationAgentServerHost(agent).run()  →  port 8088 (SSE)
+```
+
+### MAF variant (fallback)
+
+```
+container.py (MAF variant)
 │
 ├── _load_instructions()
 │   └── Read copilot-instructions.md
