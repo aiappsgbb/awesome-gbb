@@ -3,10 +3,14 @@ Azure OpenAI Client for Foundry IQ
 
 Provides chat completions with grounding context from agentic retrieval.
 Handles reasoning model specifics (o4-mini, gpt-4.1, etc.).
+
+Auth: DefaultAzureCredential (keyless) by default. Falls back to API key if
+AZURE_OPENAI_API_KEY is set.
 """
 
 import os
 from typing import List, Dict, Any, Optional
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
 
 
@@ -31,18 +35,29 @@ class AzureOpenAIClient:
         api_version: str = "2024-12-01-preview"
     ):
         self.endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-        self.api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
         self.deployment = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
         self.api_version = api_version
 
-        if not all([self.endpoint, self.api_key]):
-            raise ValueError("AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are required")
+        if not self.endpoint:
+            raise ValueError("AZURE_OPENAI_ENDPOINT is required")
 
-        self.client = AzureOpenAI(
-            azure_endpoint=self.endpoint,
-            api_key=self.api_key,
-            api_version=self.api_version
-        )
+        key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+        if key:
+            self.client = AzureOpenAI(
+                azure_endpoint=self.endpoint,
+                api_key=key,
+                api_version=self.api_version,
+            )
+        else:
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            self.client = AzureOpenAI(
+                azure_endpoint=self.endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version=self.api_version,
+            )
 
     def _is_reasoning_model(self, model: str = None) -> bool:
         """Check if the model is a reasoning model with parameter restrictions."""

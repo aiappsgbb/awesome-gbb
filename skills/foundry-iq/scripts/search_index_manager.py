@@ -3,9 +3,13 @@ Azure AI Search Index Manager
 
 Creates and manages search indexes with vector search and semantic configuration
 for Foundry IQ agentic retrieval.
+
+Auth: DefaultAzureCredential (keyless) by default. Falls back to API key if
+AI_SEARCH_KEY is set.
 """
 
 import os
+from azure.identity import DefaultAzureCredential
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
@@ -24,21 +28,27 @@ from azure.search.documents.indexes.models import (
 )
 
 
+def _search_credential():
+    """DefaultAzureCredential (keyless) first, API key as fallback."""
+    api_key = os.environ.get("AI_SEARCH_KEY")
+    if api_key:
+        return AzureKeyCredential(api_key)
+    return DefaultAzureCredential()
+
+
 class SearchIndexManager:
     """Manages Azure AI Search indexes for Foundry IQ."""
 
     def __init__(
         self,
         endpoint: str = None,
-        api_key: str = None,
+        credential=None,
     ):
         self.endpoint = endpoint or os.environ.get("AI_SEARCH_ENDPOINT")
-        self.api_key = api_key or os.environ.get("AI_SEARCH_KEY")
+        if not self.endpoint:
+            raise ValueError("AI_SEARCH_ENDPOINT is required")
 
-        if not self.endpoint or not self.api_key:
-            raise ValueError("AI_SEARCH_ENDPOINT and AI_SEARCH_KEY are required")
-
-        self.credential = AzureKeyCredential(self.api_key)
+        self.credential = credential or _search_credential()
         self.client = SearchIndexClient(
             endpoint=self.endpoint,
             credential=self.credential

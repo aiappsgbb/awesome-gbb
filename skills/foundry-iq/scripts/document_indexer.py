@@ -3,15 +3,27 @@ Document Indexer for Foundry IQ
 
 Indexes documents into Azure AI Search with text chunking and embeddings
 for vector search and agentic retrieval.
+
+Auth: DefaultAzureCredential (keyless) by default. Falls back to API key if
+AI_SEARCH_KEY / AZURE_OPENAI_API_KEY are set.
 """
 
 import os
 import uuid
 import hashlib
 from typing import List, Dict, Any, Optional
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from openai import AzureOpenAI
+
+
+def _search_credential():
+    """DefaultAzureCredential first, API key as fallback."""
+    api_key = os.environ.get("AI_SEARCH_KEY")
+    if api_key:
+        return AzureKeyCredential(api_key)
+    return DefaultAzureCredential()
 
 
 class DocumentIndexer:
@@ -20,36 +32,44 @@ class DocumentIndexer:
     def __init__(
         self,
         search_endpoint: str = None,
-        search_key: str = None,
         index_name: str = "policy-documents",
         openai_endpoint: str = None,
-        openai_key: str = None,
         embedding_deployment: str = "text-embedding-ada-002",
     ):
         self.search_endpoint = search_endpoint or os.environ.get("AI_SEARCH_ENDPOINT")
-        self.search_key = search_key or os.environ.get("AI_SEARCH_KEY")
         self.index_name = index_name
         self.openai_endpoint = openai_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-        self.openai_key = openai_key or os.environ.get("AZURE_OPENAI_API_KEY")
         self.embedding_deployment = embedding_deployment
 
-        if not all([self.search_endpoint, self.search_key]):
-            raise ValueError("AI_SEARCH_ENDPOINT and AI_SEARCH_KEY are required")
+        if not self.search_endpoint:
+            raise ValueError("AI_SEARCH_ENDPOINT is required")
 
         self.search_client = SearchClient(
             endpoint=self.search_endpoint,
             index_name=self.index_name,
-            credential=AzureKeyCredential(self.search_key)
+            credential=_search_credential()
         )
 
-        # Azure OpenAI client for embeddings (optional - can use without embeddings)
+        # Azure OpenAI client for embeddings (optional)
         self.openai_client = None
-        if self.openai_endpoint and self.openai_key:
-            self.openai_client = AzureOpenAI(
-                azure_endpoint=self.openai_endpoint,
-                api_key=self.openai_key,
-                api_version="2024-12-01-preview"
-            )
+        if self.openai_endpoint:
+            openai_key = os.environ.get("AZURE_OPENAI_API_KEY")
+            if openai_key:
+                self.openai_client = AzureOpenAI(
+                    azure_endpoint=self.openai_endpoint,
+                    api_key=openai_key,
+                    api_version="2024-12-01-preview"
+                )
+            else:
+                credential = DefaultAzureCredential()
+                token_provider = get_bearer_token_provider(
+                    credential, "https://cognitiveservices.azure.com/.default"
+                )
+                self.openai_client = AzureOpenAI(
+                    azure_endpoint=self.openai_endpoint,
+                    azure_ad_token_provider=token_provider,
+                    api_version="2024-12-01-preview"
+                )
 
     def chunk_text(
         self,

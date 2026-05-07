@@ -124,17 +124,19 @@ project-root/
 
 ## Environment Variables
 
-All configuration should be externalized to `.env`:
+All configuration should be externalized to `.env`.
+**Keyless auth (DefaultAzureCredential) is the default** — only set API keys if
+you cannot use managed identity or `az login`.
 
 ```bash
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-AZURE_OPENAI_API_KEY=<api-key>
+# AZURE_OPENAI_API_KEY=            # Optional — omit for keyless auth
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
 
 # Azure AI Search Configuration
 AI_SEARCH_ENDPOINT=https://<service>.search.windows.net
-AI_SEARCH_KEY=<admin-key>
+# AI_SEARCH_KEY=                    # Optional — omit for keyless auth
 AI_SEARCH_API_VERSION=2025-01-01-preview
 
 # PolicyBot Configuration
@@ -312,9 +314,14 @@ result = agent_client.retrieve(retrieval_request=req)
 ### Direct REST API (Alternative)
 
 ```python
-# Used in KnowledgeAgentService
+# Used in KnowledgeAgentService — keyless with DefaultAzureCredential
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+token = credential.get_token("https://search.azure.com/.default").token
+
 url = f"{endpoint}/agents/{agent_name}/retrieve?api-version=2025-01-01-preview"
-headers = {"Content-Type": "application/json", "api-key": api_key}
+headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
 
 request_body = {
     "messages": [

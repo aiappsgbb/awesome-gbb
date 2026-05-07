@@ -4,13 +4,29 @@ Knowledge Agent Manager for Foundry IQ
 Creates and manages Azure AI Search Knowledge Agents for agentic retrieval.
 Knowledge Agents enable query planning, multi-hop reasoning, and intelligent
 answer synthesis.
+
+Auth: DefaultAzureCredential (keyless) by default. Falls back to API key if
+AI_SEARCH_KEY is set.
 """
 
 import os
 import json
 from typing import Optional, Dict, Any, List
-import requests
-from azure.core.credentials import AzureKeyCredential
+
+from azure.identity import DefaultAzureCredential
+
+
+def _get_search_headers(api_key: str = None) -> Dict[str, str]:
+    """Build headers: API key if provided, else bearer token from DefaultAzureCredential."""
+    headers = {"Content-Type": "application/json"}
+    key = api_key or os.environ.get("AI_SEARCH_KEY")
+    if key:
+        headers["api-key"] = key
+    else:
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://search.azure.com/.default").token
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 class KnowledgeAgentManager:
@@ -30,19 +46,13 @@ class KnowledgeAgentManager:
         api_version: str = "2025-01-01-preview"
     ):
         self.endpoint = endpoint or os.environ.get("AI_SEARCH_ENDPOINT")
-        self.api_key = api_key or os.environ.get("AI_SEARCH_KEY")
         self.api_version = api_version
 
-        if not self.endpoint or not self.api_key:
-            raise ValueError("AI_SEARCH_ENDPOINT and AI_SEARCH_KEY are required")
+        if not self.endpoint:
+            raise ValueError("AI_SEARCH_ENDPOINT is required")
 
-        # Remove trailing slash
         self.endpoint = self.endpoint.rstrip("/")
-
-        self.headers = {
-            "Content-Type": "application/json",
-            "api-key": self.api_key
-        }
+        self.headers = _get_search_headers(api_key)
 
     def _make_request(
         self,
@@ -181,19 +191,14 @@ class KnowledgeAgentRetriever:
         api_version: str = "2025-01-01-preview"
     ):
         self.endpoint = endpoint or os.environ.get("AI_SEARCH_ENDPOINT")
-        self.api_key = api_key or os.environ.get("AI_SEARCH_KEY")
         self.agent_name = agent_name
         self.api_version = api_version
 
-        if not self.endpoint or not self.api_key:
-            raise ValueError("AI_SEARCH_ENDPOINT and AI_SEARCH_KEY are required")
+        if not self.endpoint:
+            raise ValueError("AI_SEARCH_ENDPOINT is required")
 
         self.endpoint = self.endpoint.rstrip("/")
-
-        self.headers = {
-            "Content-Type": "application/json",
-            "api-key": self.api_key
-        }
+        self.headers = _get_search_headers(api_key)
 
         # Conversation history for multi-turn
         self.messages: List[Dict[str, str]] = []
