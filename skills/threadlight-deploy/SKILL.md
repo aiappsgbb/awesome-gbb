@@ -1021,6 +1021,7 @@ project/
 │       ├── app.py
 │       ├── Dockerfile
 │       ├── requirements.txt
+│       ├── build_manifest.py # Builds copilot_package.zip for sideloading
 │       └── teams_package/
 │           ├── manifest.json
 │           ├── color.png
@@ -1042,8 +1043,9 @@ project/
 │       ├── search/
 │       └── storage/
 │
-└── scripts/
-    └── build_teams_manifest.py
+├── scripts/                # Infra hooks only (postprovision, postdeploy)
+│
+└── src/bot/                # build_manifest.py lives with bot code
 ```
 
 ### Step 2: Replace placeholder tokens
@@ -1089,7 +1091,7 @@ azd up
   │   └── Azure Bot Service + MsTeamsChannel (bot/bot-service.bicep)
   │
   ├── postprovision hook → builds Teams manifest package
-  │   └── scripts/build_teams_manifest.py → copilot/copilot_package.zip
+  │   └── scripts/build_manifest.py → src/bot/copilot_package.zip
   │
   ├── azd ai agent extension (automatic) →
   │   ├── Deploys model from azure.yaml config.deployments
@@ -1135,6 +1137,7 @@ project/
 │       ├── app.py
 │       ├── Dockerfile
 │       ├── requirements.txt
+│       ├── build_manifest.py  # Builds copilot_package.zip
 │       └── teams_package/  # Manifest + icons
 │
 ├── infra/                  # Bicep scaffold
@@ -1143,7 +1146,7 @@ project/
 │   ├── core/               # Vendored from azd-ai-starter-basic
 │   └── bot/                # Bot infra (optional)
 │
-├── scripts/                # Hooks (postprovision, postdeploy)
+├── scripts/                # Infra hooks only (postprovision, postdeploy)
 │
 └── deploy-notes.md         # Deployment guide
 ```

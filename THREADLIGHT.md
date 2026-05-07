@@ -157,12 +157,13 @@ project/
 │   │
 │   └── bot/                       # Teams bot (optional, from foundry-teams-bot)
 │       ├── bot.py, app.py, Dockerfile
+│       ├── build_manifest.py      # Builds copilot_package.zip
 │       └── teams_package/
 │
 ├── agent.yaml                     # ContainerAgent definition
 ├── azure.yaml                     # azd extension config
 ├── infra/                         # Bicep scaffold
-├── scripts/                       # Hooks
+├── scripts/                       # Infra hooks only (postprovision, postdeploy)
 ├── deploy-notes.md                # Deployment guide
 │
 └── .copilot/mcp-config.json       # Dev-time MCP config
