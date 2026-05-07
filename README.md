@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-11-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-12-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -41,6 +41,7 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, for long-running tool loops |
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as Azure Container Apps or Azure Functions — Cosmos DB MCPToolKit, Playwright MCP, protocol requirements, auth patterns |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate Foundry hosted agents — two-phase invoke+score pattern, 6 built-in evaluators, dataset creation, RBAC, tool-use discipline |
+| [**foundry-iq**](skills/foundry-iq/) | Build enterprise RAG with Foundry IQ — Azure AI Search Knowledge Agents, agentic retrieval, multi-hop reasoning, citation-backed responses |
 
 ### 📊 Content Generation
 
