@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-8-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-11-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -39,6 +39,8 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a Foundry Hosted Agent to Microsoft Teams — bot code, Bicep infrastructure, Teams manifest, UAMI auth, and ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, for long-running tool loops |
+| [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as Azure Container Apps or Azure Functions — Cosmos DB MCPToolKit, Playwright MCP, protocol requirements, auth patterns |
+| [**foundry-evals**](skills/foundry-evals/) | Evaluate Foundry hosted agents — two-phase invoke+score pattern, 6 built-in evaluators, dataset creation, RBAC, tool-use discipline |
 
 ### 📊 Content Generation
 
