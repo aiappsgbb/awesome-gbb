@@ -757,15 +757,34 @@ available for this subscription"` during `azd deploy`, try a different region.
 > as Azure Container Apps or Azure Functions — including Cosmos DB MCPToolKit, Playwright MCP,
 > protocol requirements, Bicep modules, and authentication patterns.
 
-When generating `mcp-config.json` for the runtime, only include MCP servers with
-deployed remote HTTP endpoints. For systems marked **mock** in the spec, do NOT
-generate MCP entries — instead add a warning in `deploy-notes.md`:
+### Mock Systems → Mock MCP Server
+
+For systems marked **mock** in the spec, generate a mock MCP server using
+`foundry-mcp-aca` Option D (Mock MCP). This ensures the demo agent has callable
+tools backed by sample data — the customer sees real MCP tool calls.
+
+1. Run the `foundry-mcp-aca` skill to generate `mock-mcp/` from spec tool contracts
+2. Deploy to ACA (or run locally for dev)
+3. Wire the mock endpoint into `mcp-config.json`:
+
+```json
+{
+  "servers": {
+    "mock-tools": {
+      "type": "http",
+      "url": "${MOCK_MCP_URL}/mcp"
+    }
+  }
+}
+```
+
+4. Add to `deploy-notes.md`:
 
 ```
-⚠️ Mock Systems (not yet connected):
-  - {system-name}: using specs/sample-data/{entity}.json
-    → Deploy an MCP server when the real system becomes available.
-    → See foundry-mcp-aca skill for deployment patterns.
+📎 Mock Systems (demo data — swap when onboarding):
+  - {system-name}: mock MCP at ${MOCK_MCP_URL}
+    → See foundry-mcp-aca skill to deploy real MCP when system is accessible.
+    → Tool contracts stay the same — only the endpoint URL changes.
 ```
 
 ---

@@ -35,12 +35,26 @@ Clarify → Discover → SpecKit (CHECKPOINT — stop/resume here)
                         Agents.md + Skills (derived from spec)
 ```
 
-Two-phase, one checkpoint:
-1. **Phase A** — Discovery → SpecKit docs (business-facing, reviewable by stakeholders)
-2. **Phase B** — SpecKit → AGENTS.md + Skills (implementation-facing, ready for development)
+**Two modes:**
 
-The user can stop after Phase A, review/edit the specs, share with stakeholders, and
-resume later. Phase B reads the specs and generates implementation artifacts.
+| Mode | When | Flow |
+|------|------|------|
+| **Full** | Production-bound work, stakeholder review needed | Full discovery → checkpoint → review → Phase B |
+| **Fast-PoC** | Demos, rapid prototyping, customer-facing PoCs | Essential questions → assume defaults → generate everything in one pass |
+
+To activate fast-PoC mode, the user says "quick PoC", "fast demo", or similar.
+The skill can also suggest it when the brief is short or vague.
+
+### Fast-PoC Minimum Baseline
+
+Every PoC, regardless of mode, MUST have:
+- ✅ **Keyless auth** (`DefaultAzureCredential`) — no API keys
+- ✅ **At least one MCP server** (mock or real) — agent must have callable tools
+- ✅ **Mock MCP server** for inaccessible systems — FastMCP backed by sample data, customer swaps endpoint later
+- ✅ **SpecKit spec** with assumptions documented in § 12
+- ✅ **AGENTS.md + skills** derived from spec
+- ✅ **Deployable scaffold** (`azd up` ready)
+- ✅ **Eval dataset** from spec § 9 scenarios — so the demo can be scored
 
 ---
 
@@ -130,6 +144,23 @@ Reference: `references/process-traits.md`
    - Scheduled (daily, weekly)
    - Event-driven
    - Continuous / streaming
+
+7. **Does this process track cases with a lifecycle?** (State Model trait)
+   - Stateless — each request is independent
+   - Session-based — state within a conversation, discarded after
+   - Case-based — long-lived cases (open → in-progress → resolved)
+   - Pipeline — items flow through ordered stages
+
+   > **Fast-PoC default:** If the user doesn't know yet, assume **stateless** and
+   > flag in spec § 12 Assumptions: "Assumed stateless — review for case lifecycle needs."
+
+8. **Does the agent take consequential actions?** (Action Criticality trait)
+   - Read-only — only reads/analyzes data
+   - Reversible writes — creates/updates data that can be undone
+   - Irreversible actions — payments, approvals, notifications, external writes
+
+   > **Fast-PoC default:** If the user doesn't know yet, assume **read-only** and
+   > flag in spec § 12: "Assumed read-only — review before adding write/approval actions."
 
 #### Trait-Driven Branching
 
@@ -239,6 +270,8 @@ Then tell the user:
 > - **Share** the specs with stakeholders for feedback
 > - **Continue** to Phase B to generate AGENTS.md + Skills from these specs
 > - **Stop here** and resume later — just say "generate agents from specs" in a future session
+
+**In fast-PoC mode:** Skip the checkpoint — proceed directly to Phase B.
 
 ---
 
