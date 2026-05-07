@@ -1,16 +1,16 @@
 ---
 name: threadlight-deploy
 description: >
-  Take a designed agent project folder (AGENTS.md, skills, config) and generate all
-  deployment artifacts for Microsoft Foundry Hosted Agents: container.py (Agent +
-  FoundryChatClient + ResponsesHostServer), Dockerfile (uv-based), pyproject.toml,
-  copilot-instructions.md, mcp-config.json, skills/, full azd project (azure.yaml,
-  vendored Bicep, Teams bot), and deploy-notes.md. One-command deployment via `azd up`.
+  Take a designed agent project (from threadlight-design or manually crafted) and generate
+  all deployment artifacts for Microsoft Foundry Hosted Agents. Reads specs/SPEC.md,
+  AGENTS.md, and skills to produce container.py, Dockerfile, pyproject.toml, azd project,
+  and deploy-notes.md. One-command deployment via `azd up`.
   USE FOR: deploy to Foundry, make this deployable, generate deployment files, Foundry hosted agent,
-  containerize agent, prepare for Foundry, create Dockerfile for agent, package agent,
-  deploy agent, make it runnable, hosted deployment, agent deployment, MCP tools in Foundry,
-  Teams integration, Teams bot, connect to Teams, Teams channel, azd deploy, azd up.
-  DO NOT USE FOR: designing the process (use threadlight-design), running evals (use testing-and-evals).
+  containerize agent, prepare for Foundry, package agent, deploy agent, hosted deployment,
+  agent deployment, azd deploy, azd up.
+  DO NOT USE FOR: designing the process (use threadlight-design), running evals (use foundry-evals),
+  Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
+  GHCP SDK variant (use ghcp-hosted-agents).
 ---
 
 # Foundry Hosted Agent Deploy
@@ -48,7 +48,13 @@ For any agent that uses **skills, custom middleware, or complex logic**, you MUS
 The input folder MUST have:
 - `AGENTS.md` — agent identity, skills, tools, behavioral guidelines
 - `.github/skills/*/SKILL.md` — one or more skill definitions (or `skills/`)
-- `config/*.json` — process configuration (optional but recommended)
+
+Recommended (from `threadlight-design`):
+- `specs/SPEC.md` — SpecKit specification (business rules, data models, integrations, compliance)
+- `specs/manifest.json` — checkpoint metadata (process name, phase, status)
+- `specs/sample-data/*.json` — mock data for inaccessible systems
+- `skill-manifest.json` — machine-readable deployment contract
+- `config/*.json` — process configuration
 
 ## Workflow
 
@@ -106,12 +112,27 @@ For data stores not covered by Foundry built-ins, deploy your own MCP server:
 
 ## Phase 1: Analyze the Design
 
-Read `AGENTS.md` and all skills to determine:
+Read all available input files in this priority order:
+
+#### 1a. Read `skill-manifest.json` (if exists)
+Machine-readable deployment contract from `threadlight-design`. Provides:
+- Process name, traits, business rule count
+- Mock systems list → flag for deploy-notes warnings
+- Compliance constraints → inform model/region selection
+
+#### 1b. Read `specs/SPEC.md` (if exists)
+SpecKit specification from `threadlight-design`. Extract:
+- **§ 5 System Integrations** → which are mock vs real → drives MCP config
+- **§ 10 Trigger & Run Model** → model capacity, container resources
+- **§ 11 Security/Compliance** → regulatory constraints, data retention
+- **§ 6 Tool Contracts** → map to Foundry tools or MCP servers
+
+#### 1c. Read `AGENTS.md` and all skills (always)
+Core deployment inputs:
 
 1. **Which Foundry tools are needed** (from the "Foundry Tools Required" table)
 2. **Which MCP servers are needed** (custom tools beyond built-ins)
-3. **MCP servers needed** (custom tools beyond built-ins, deployed as ACA or Azure Functions)
-4. **Storage strategy** (Cosmos via MCP, AI Search, Blob, etc.)
+3. **Storage strategy** (Cosmos via MCP, AI Search, Blob, etc.)
 5. **Model requirements** (which model deployment, TPM needs)
 6. **Skills list** (for SkillsProvider registration)
 
@@ -539,51 +560,11 @@ middleware needed.
 
 ## Evaluations
 
-After deployment, run Foundry evaluations. **Important:** The SDK's `azure_ai_agent`
-target type does NOT correctly route to hosted agent endpoints — it sends requests to
-the project endpoint instead of the agent's dedicated endpoint. Use a **two-phase approach**:
+> **See the `foundry-evals` skill** for the complete evaluation guide — two-phase
+> invoke+score pattern, 6 built-in evaluators, RBAC for judge models, dataset creation
+> from SpecKit scenarios, tool-use discipline, and score interpretation.
 
-### Phase 1: Invoke the agent sequentially
-```python
-project = AIProjectClient(endpoint=..., credential=..., allow_preview=True)
-oai = project.get_openai_client(agent_name="my-agent")
-
-# Warm up (cold start takes 15-30s)
-oai.responses.create(input="Hello", stream=False)
-
-# Invoke each query
-for query in test_queries:
-    response = oai.responses.create(input=query, stream=False)
-    results.append({"query": query, "response": response.output_text})
-```
-
-### Phase 2: Score with Foundry evaluators
-```python
-client = project.get_openai_client()  # NOT agent-bound
-evaluation = client.evals.create(
-    name="my-eval",
-    data_source_config={"type": "custom", "item_schema": {...}},
-    testing_criteria=[
-        {"type": "azure_ai_evaluator", "evaluator_name": "builtin.task_adherence",
-         "data_mapping": {"query": "{{item.query}}", "response": "{{item.response}}"}},
-    ],
-)
-run = client.evals.runs.create(
-    eval_id=evaluation.id,
-    data_source={"type": "jsonl", "source": {"type": "file_content", "content": [{"item": r} for r in results]}},
-)
-```
-
-### Evaluator RBAC
-The eval judges need model access. Assign `Cognitive Services OpenAI User` on the
-AI account to: your user identity, account managed identity, and project managed identity.
-
-### Recommended evaluators
-- `builtin.task_adherence` — follows system instructions?
-- `builtin.task_completion` — completed the task?
-- `builtin.intent_resolution` — understood user intent?
-- `builtin.coherence` — logical and well-structured?
-```
+After deployment, validate agent quality using eval scenarios from `specs/SPEC.md` § 9.
 
 ---
 
@@ -703,106 +684,18 @@ container.py (MAF variant — self-contained)
 
 ---
 
-## Reference: Identity & RBAC (Refreshed Preview)
+## Reference: Identity & RBAC
 
-The refreshed hosted agents preview (April 2026) changed the identity model significantly.
+> **See the `foundry-hosted-agents` skill** for the complete RBAC reference — identity model,
+> required role assignments for deployer/project MI/agent identities, manual assignment
+> commands, and RBAC propagation timing.
 
-### Identity Model
-
-Each hosted agent gets **two identities** at deploy time:
-
-| Identity | Field in `azd ai agent show` | Purpose |
-|----------|------------------------------|---------|
-| **Instance identity** | `instance_identity.principal_id` | The agent's dedicated Entra service principal. Used for runtime operations. |
-| **Blueprint identity** | `blueprint.principal_id` | Agent blueprint identity. Used by the platform for internal operations. |
-
-Both identities are created automatically when the agent is deployed — no manual setup needed.
-The project also has its own **managed identity** (separate from the agent identities).
-
-### Required RBAC Assignments
-
-**For the deploying user/principal** (you):
-
-| Role | Scope | Purpose |
-|------|-------|---------|
-| `Azure AI Project Manager` | Foundry project | Create agents, deploy versions |
-| `Azure AI User` | Foundry account + project | Invoke agents, access models |
-| `Contributor` | Resource group | Create Azure resources (Bicep) |
-| `Container Registry Repository Writer` | ACR | Push container images |
-
-**For the project managed identity** (auto-assigned by Bicep if permissions allow):
-
-| Role | Scope | Purpose |
-|------|-------|---------|
-| `Azure AI User` | Foundry account | Model inference via project endpoint |
-| `Container Registry Repository Reader` | ACR | Pull container images at runtime |
-| `Log Analytics Data Reader` | Log Analytics workspace | Telemetry for evaluations |
-
-**For the agent identities** (instance + blueprint — both need the same roles):
-
-| Role | Scope | Purpose |
-|------|-------|---------|
-| `Azure AI User` | Foundry account | Model inference |
-| `Azure AI User` | Foundry project | Access project-scoped APIs (storage, history) |
-| `Cognitive Services OpenAI User` | Foundry account | Direct OpenAI endpoint access |
-
-> **CRITICAL:** The agent's identities need `Azure AI User` on BOTH the account AND the
-> project. Missing either causes `PermissionDenied` / 401 errors at runtime — the platform's
-> internal `FoundryStorageProvider` calls `storage/history/item_ids` and gets 401 if RBAC
-> is missing.
->
-> **RBAC propagation takes 5-15 minutes** for newly created Entra service principals.
-> If you get persistent 401s after deploying, wait and retry. If still failing after 15 min,
-> redeploy the agent (`azd deploy <service>`) to force a new session.
-
-### How to assign RBAC post-deploy
-
-After `azd up` deploys the agent, read the identity from `azd ai agent show`:
-
-```bash
-# Get agent identities
-azd ai agent show
-# Look for instance_identity.principal_id and blueprint.principal_id
-
-# Assign to both identities (replace <PRINCIPAL_ID> with each)
-ACCOUNT_SCOPE="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
-PROJECT_SCOPE="$ACCOUNT_SCOPE/projects/<project>"
-
-az role assignment create --assignee <PRINCIPAL_ID> --role "Azure AI User" --scope $ACCOUNT_SCOPE
-az role assignment create --assignee <PRINCIPAL_ID> --role "Azure AI User" --scope $PROJECT_SCOPE
-az role assignment create --assignee <PRINCIPAL_ID> --role "Cognitive Services OpenAI User" --scope $ACCOUNT_SCOPE
-```
-
-> **Reference**: [Hosted agent permissions](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions)
-
-### Agent Invocation (Refreshed Preview)
-
-```python
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
-
-project = AIProjectClient(
-    endpoint="<project_endpoint>",
-    credential=DefaultAzureCredential(),
-    allow_preview=True,  # REQUIRED for agent_name parameter
-)
-
-# Agent-bound client — routes to dedicated endpoint automatically
-oai = project.get_openai_client(agent_name="my-agent")
-response = oai.responses.create(input="Hello!", stream=False)
-print(response.output_text)
-```
-
-> **Note:** `allow_preview=True` is required on `AIProjectClient` for the `agent_name`
-> parameter. Without it, the SDK doesn't route to the agent's dedicated endpoint.
->
-> **REST invocation** requires the `Foundry-Features: HostedAgents=V1Preview` header:
-> ```
-> curl -X POST "$BASE_URL/agents/my-agent/endpoint/protocols/openai/responses?api-version=2025-11-15-preview" \
->   -H "Authorization: Bearer $TOKEN" \
->   -H "Foundry-Features: HostedAgents=V1Preview" \
->   -d '{"input": "Hello!", "stream": false}'
-> ```
+**Essential for deploy (quick reference):**
+- Each hosted agent gets **two Entra identities** at deploy time (instance + blueprint)
+- Both need `Azure AI User` on Foundry account AND project
+- Deployer needs `Azure AI Project Manager` on the project
+- Set `AZURE_TENANT_ID` in azd env for postdeploy RBAC auto-assignment
+- RBAC propagation takes 5-15 minutes for new service principals
 
 ---
 
@@ -845,50 +738,20 @@ available for this subscription"` during `azd deploy`, try a different region.
 
 ## Reference: MCP ACA Deployment
 
-For Cosmos DB or custom data stores, deploy an MCP server as an Azure Container App.
+> **See the dedicated `foundry-mcp-aca` skill** for full details on deploying MCP servers
+> as Azure Container Apps or Azure Functions — including Cosmos DB MCPToolKit, Playwright MCP,
+> protocol requirements, Bicep modules, and authentication patterns.
 
-### Option A: Shared .NET MCPToolKit (Cosmos DB)
+When generating `mcp-config.json` for the runtime, only include MCP servers with
+deployed remote HTTP endpoints. For systems marked **mock** in the spec, do NOT
+generate MCP entries — instead add a warning in `deploy-notes.md`:
 
-A pre-built .NET Cosmos DB MCPToolKit image provides 10 tools:
-
-| Tool | Type | Purpose |
-|------|------|---------|
-| `list_databases` | Read | List all Cosmos databases |
-| `list_collections` | Read | List containers in a database |
-| `find_document_by_id` | Read | Get single document by id |
-| `text_search` | Read | Text search across documents |
-| `query_documents` | Read | SQL query against a container |
-| `get_approximate_schema` | Read | Infer schema from sample docs |
-| `get_recent_documents` | Read | Get N most recent documents |
-| `vector_search` | Read | Semantic vector search |
-| `upsert_document` | Write | Create or update a document |
-| `delete_document` | Write | Delete a document by id |
-
-Deploy per-project ACA with env vars: `COSMOS_ENDPOINT`, `COSMOS_DATABASE`,
-`COSMOS_AUTH_KEY`, `DEV_BYPASS_AUTH`. Source: `cosmos-mcp-toolkit/` in repo root.
-
-### Option B: Azure Functions (Consumption)
-
-```bash
-azd init --template remote-mcp-functions-python -e my-mcp-server
-func start                    # Test locally
-azd up                        # Deploy to Azure
-# Endpoint: https://{app}.azurewebsites.net/runtime/webhooks/mcp
 ```
-
-### Option C: Custom ACA
-
-Build a custom Docker image with your MCP tools and deploy as ACA.
-The agent connects via `mcp-config.json` with `${ENV_VAR}` URLs.
-
-### MCP Server Requirements (for container-level MCP)
-
-- Must handle ALL 6 JSON-RPC methods (initialize, notifications/initialized,
-  tools/list, prompts/list, resources/list, logging/setlevel)
-- Must return HTTP 200 for all methods (even if body is empty `{}`)
-- Use Streamable HTTP transport (HTTP POST with JSON-RPC at `/mcp`)
-- Port 8080 is convention for ACA MCP servers
-- Health endpoint at `/health` (separate from MCP protocol)
+⚠️ Mock Systems (not yet connected):
+  - {system-name}: using specs/sample-data/{entity}.json
+    → Deploy an MCP server when the real system becomes available.
+    → See foundry-mcp-aca skill for deployment patterns.
+```
 
 ---
 
@@ -980,31 +843,19 @@ version = client.agents.create_version(
 
 ---
 
-## Phase 4: Teams Bot (included in scaffold)
+## Phase 4: Teams Bot (optional)
 
-The Teams bot is deployed automatically as part of the scaffold (Phase 5). The bot
-code lives in `copilot/` and connects Teams users to the Foundry hosted agent.
+> **See the `foundry-teams-bot` skill** for complete Teams integration — bot.py, app.py,
+> Dockerfile, Bicep modules (UAMI, Bot Service, ACA), Teams manifest, and sideloading.
 
-> **Full code templates**: See `references/scaffold/copilot/` for bot.py, app.py,
-> Dockerfile, and requirements.txt. See `references/teams-bot-reference.md` for
-> additional details on manifest and sideloading.
+Teams integration is **optional** — only include it if:
+- The spec's § 8 Human Interaction Points specifies Teams as a channel
+- The user explicitly asks for Teams exposure
+- The `skill-manifest.json` includes conversational interaction traits
 
-### Architecture
-
-```
-Teams → Azure Bot Service (UAMI) → Bot ACA (copilot/bot.py) → Foundry Hosted Agent
-```
-
-### What the scaffold provides:
-
-1. **`copilot/bot.py`** — Streams responses from the hosted agent to Teams
-   - Uses `get_openai_client(agent_name=...)` for agent-bound invocation
-   - Collects all chunks into a single message before sending
-2. **`copilot/app.py`** — aiohttp server on port 80 with `/api/messages` and JWT auth
-3. **`copilot/Dockerfile`** — python:3.12-slim, port 80
-4. **`copilot/requirements.txt`** — microsoft-agents-* SDK + azure-identity + openai
-5. **`infra/bot/bot-service.bicep`** — Azure Bot Service with UAMI auth + MsTeamsChannel
-6. **`infra/bot/aca.bicep`** — ACA environment + bot container app (external ingress)
+If included, the scaffold adds `copilot/` (bot code) and `infra/bot/` (Bicep) to
+the azd project. The `foundry-teams-bot` skill's `templates/` directory provides
+ready-to-copy files.
 
 ---
 
@@ -1075,35 +926,11 @@ Replace these tokens **in all copied files**:
 > **Note**: Model deployment is now declared in `azure.yaml` `config.deployments` —
 > NOT in Bicep. The `azd ai agent` extension handles model creation via pre-provision hooks.
 
-#### Model Version Lookup Table
+#### Model Version Lookup
 
-**`__MODEL_VERSION__` depends on the model** — using the wrong version causes
-`DeploymentModelNotSupported` errors. Look up the correct version here:
+> **See the `foundry-hosted-agents` skill** for the complete model version lookup table.
 
-| Model Name | Version | SKU |
-|-----------|---------|-----|
-| `gpt-5.4` | `2026-03-05` | GlobalStandard |
-| `gpt-5.4-pro` | `2026-03-05` | GlobalStandard |
-| `gpt-5.4-mini` | `2026-03-17` | GlobalStandard |
-| `gpt-5.4-nano` | `2026-03-17` | GlobalStandard |
-| `gpt-5.3-codex` | `2026-02-24` | GlobalStandard |
-| `gpt-5.3-chat` | `2026-03-03` | GlobalStandard |
-| `gpt-5.2` | `2025-12-11` | GlobalStandard |
-| `gpt-5.2-codex` | `2026-01-14` | GlobalStandard |
-| `gpt-5.2-chat` | `2025-12-11` | GlobalStandard |
-| `gpt-5.1` | `2025-11-13` | GlobalStandard |
-| `gpt-5.1-codex` | `2025-11-13` | GlobalStandard |
-| `gpt-5` | `2025-08-07` | GlobalStandard |
-| `gpt-5-mini` | `2025-08-07` | GlobalStandard |
-| `gpt-5-nano` | `2025-08-07` | GlobalStandard |
-| `gpt-4.1` | `2025-04-14` | GlobalStandard |
-| `gpt-4.1-mini` | `2025-04-14` | GlobalStandard |
-| `gpt-4.1-nano` | `2025-04-14` | GlobalStandard |
-
-> **Source**: [Azure OpenAI Models](https://learn.microsoft.com/azure/ai-services/openai/concepts/models).
-> Versions change when new model releases are published — always verify against the
-> current catalog before deploying. If unsure, run:
-> `az cognitiveservices account list-models --resource-group <rg> --name <account> --query "[?contains(model.name,'gpt-5.4')].{name:model.name,version:model.version}" -o table`
+Verify with: `az cognitiveservices account list-models --resource-group <rg> --name <account> -o table`
 
 ### Step 3: Generate `deploy-notes.md`
 
@@ -1197,3 +1024,20 @@ project/
 | **Two identities in `azd ai agent show`** | Refreshed preview creates `instance_identity` + `blueprint` per agent | Both need RBAC — assign same roles to both principal IDs |
 | **MCP `server_url` invalid URI error** | `${ENV_VAR}` in mcp-config.json not set → expands to empty string → `/mcp` is not a valid URI | **Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. The container skips empty URLs, but `FoundryChatClient.get_mcp_tool()` registers them and Foundry rejects at runtime.** |
 | **Deployer needs `Azure AI Project Manager`** | The extension postdeploy hook auto-assigns `Azure AI User` to agent identity, but needs role-assignment permission to do so | **Assign `Azure AI Project Manager` to deployer on Foundry project scope. Also set `AZURE_TENANT_ID` in azd env.** |
+
+> **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
+> and detailed RBAC scenarios.
+
+---
+
+## See Also
+
+| Skill | Use When |
+|-------|----------|
+| [**threadlight-design**](../threadlight-design/) | Spec out the business process first (produces specs/ + AGENTS.md + skills that this skill consumes) |
+| [**foundry-hosted-agents**](../foundry-hosted-agents/) | Reference for RBAC, identity model, agent.yaml schema, dependencies, troubleshooting |
+| [**foundry-teams-bot**](../foundry-teams-bot/) | Deep dive on Teams bot integration (bot.py, manifest, Bicep, sideloading) |
+| [**foundry-mcp-aca**](../foundry-mcp-aca/) | Deploy custom MCP servers as ACA or Azure Functions |
+| [**foundry-evals**](../foundry-evals/) | Evaluate agent quality with Foundry built-in evaluators |
+| [**ghcp-hosted-agents**](../ghcp-hosted-agents/) | Alternative runtime — GHCP SDK with Invocations protocol (for long-running agents >120s) |
+| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Governance and Citadel hub integration |
