@@ -214,6 +214,30 @@ Must include all sections from the template:
 11. **Security, Compliance & Governance** — PII, auth, retention, regulatory, audit
 12. **Assumptions & Open Questions** — what's given, what needs stakeholder input
 
+#### Generating Evaluation Scenarios (§ 9)
+
+Every business rule (BR-XXX) must have **at least one** eval scenario. Derive them
+systematically:
+
+| For each BR-XXX | Generate these scenarios |
+|-----------------|------------------------|
+| **Happy path** | Input that satisfies the condition → verify the action fires correctly |
+| **Boundary** | Input at the exact threshold → verify correct branch |
+| **Negative** | Input that violates the condition → verify the exception/rejection |
+| **Missing data** | Input with required fields missing → verify graceful handling |
+
+**Naming:** `S-{NNN}` linked to `BR-{NNN}`. Example:
+- BR-001: "Credit score < 580 → auto-decline"
+- S-001: Happy path — score 780 → approved
+- S-002: Boundary — score 580 → edge of auto-decline
+- S-003: Negative — score 520 → auto-declined
+- S-004: Missing — no credit score available → error handling
+
+**Minimum coverage:** At least 3 scenarios per business rule (happy + boundary/negative + error).
+For a spec with 10 rules, expect 30-50 eval scenarios.
+
+These scenarios feed directly into `foundry-evals` for post-deployment scoring.
+
 #### `specs/sample-data/{entity}.json` — Mock data (for systems marked "mock")
 
 For each entity in § 4 Data Models where the backing system is marked "mock" in § 5:
@@ -292,10 +316,12 @@ Read the spec and derive the architecture using these deterministic rules:
    - Steps with different actor types (agent vs system vs human) usually split into separate skills
    - A single step that is complex enough (multiple sub-actions, branching) can be its own skill
 
-2. **Create an orchestrator when:**
-   - There are 3+ domain skills
-   - The process flow has decision branches or parallel paths
-   - There's a defined order of operations across skills
+2. **Do NOT create "orchestrator" skills.** Orchestration is the agent's job (via
+   AGENTS.md instructions), not a skill's job. Skills are domain-specific knowledge
+   and procedures — they don't coordinate other skills. If you need orchestration logic,
+   put it in `copilot-instructions.md` as behavioral guidelines, e.g.:
+   - "When the user asks for X, first use skill A to gather data, then skill B to analyze"
+   - "If risk score > threshold, escalate to human review"
 
 3. **Human interaction points → dedicated handling:**
    - Each approval/escalation flow from spec § 8 maps to approval logic in the relevant skill
@@ -319,7 +345,7 @@ Read the spec and derive the architecture using these deterministic rules:
    - [ ] Every tool contract from spec § 6 has a concrete implementation (Foundry tool, MCP, or mock)
    - [ ] Every mocked system has sample data in `specs/sample-data/`
    - [ ] Every eval scenario (S-XXX) can be tested with the generated skills + mock data
-   - [ ] No orphan skills — every skill is reachable from the orchestrator or a user trigger
+   - [ ] No orphan skills — every skill is reachable from the agent's instructions
 
 #### Feasibility Preflight
 
@@ -339,7 +365,6 @@ Present to user before generating:
 📁 Skill Structure:
   - {skill-1}: {purpose} (implements BR-001, BR-003)
   - {skill-2}: {purpose} (implements BR-002, BR-004, BR-005)
-  - {skill-3}: {purpose} (orchestrator)
 
 🔧 Tools:
   - {tool-1} → {Foundry tool or MCP server}
