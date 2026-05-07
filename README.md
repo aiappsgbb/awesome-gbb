@@ -34,7 +34,7 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 | Skill | Description |
 |-------|-------------|
-| [**threadlight-design**](skills/threadlight-design/) | Design agentic workflows — turn any business process into a structured folder of Skills + AGENTS.md, ready for Foundry deployment |
+| [**threadlight-design**](skills/threadlight-design/) | Spec out any business process — produces a durable SpecKit specification (business rules, data models, tool contracts, mock data) then derives AGENTS.md + Skills from it |
 | [**threadlight-deploy**](skills/threadlight-deploy/) | Generate all deployment artifacts for Microsoft Foundry Hosted Agents — container.py, Dockerfile, azd project, Teams bot. One-command deploy via `azd up` |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a Foundry Hosted Agent to Microsoft Teams — bot code, Bicep infrastructure, Teams manifest, UAMI auth, and ACA deployment |

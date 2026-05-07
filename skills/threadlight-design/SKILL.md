@@ -1,335 +1,302 @@
 ---
 name: threadlight-design
 description: >
-  Take a business process or personal automation request and produce a properly-structured
-  folder with AGENTS.md, flat GitHub Copilot Skills (.github/skills/*/SKILL.md), and a
-  Foundry deployment manifest. Designed for Microsoft Foundry hosted agent deployment.
-  USE FOR: design a process, automate a workflow, create skills for X, build an agent for Y,
-  turn this process into skills, threadlight design, process automation, skill factory,
-  agent design, workflow automation, competitive intelligence setup, data pipeline design,
-  monitoring system design, reporting automation.
-  DO NOT USE FOR: running existing skills, executing code, general Q&A.
+  Spec out any business process or customer use case, then generate agent architecture
+  (AGENTS.md + Skills). Produces a durable SpecKit specification first (process flow,
+  business rules, data models, tool contracts, mock data), then derives implementation
+  artifacts from the spec. Works for any domain — CX front desks, document processing,
+  content research, backend automation, monitoring, reporting, and beyond.
+  USE FOR: design a process, spec out a use case, create agent architecture, automate a
+  workflow, threadlight design, skill factory, business process specification, speckit,
+  define a customer scenario, mock backend systems, design an agent for any workflow.
+  DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
+  general Q&A.
 ---
 
 # Threadlight Design
 
-Turn any business process or personal automation need into a properly-structured folder of
-GitHub Copilot Skills + AGENTS.md, ready for Microsoft Foundry hosted agent deployment.
+Turn any business process or customer use case into a **durable specification** (SpecKit)
+and then derive **AGENTS.md + Skills** from it — ready for development and deployment.
 
 ## When to Use
 
 Invoke this skill when the user wants to:
-- Design a new process automation from scratch
-- Turn an existing manual workflow into agent-powered skills
-- Create a structured skill folder for a business task
-- Design an agent system for competitive intelligence, monitoring, reporting, etc.
-- Set up a Foundry-deployable agent workflow
+- Spec out a business process or customer scenario (any domain)
+- Design agent architecture for a workflow
+- Create a structured skill folder with formal specification
+- Mock backend systems they can't access yet (SAP, CRM, corporate DBs)
+- Turn vague requirements into a concrete, reviewable spec
 
 ## Workflow Overview
 
 ```
-Clarify Purpose → Discover → Feasibility + Architecture → Generate + Review
+Clarify → Discover → SpecKit (CHECKPOINT — stop/resume here)
+                                    ↓
+                        Agents.md + Skills (derived from spec)
 ```
 
+Two-phase, one checkpoint:
+1. **Phase A** — Discovery → SpecKit docs (business-facing, reviewable by stakeholders)
+2. **Phase B** — SpecKit → AGENTS.md + Skills (implementation-facing, ready for development)
+
+The user can stop after Phase A, review/edit the specs, share with stakeholders, and
+resume later. Phase B reads the specs and generates implementation artifacts.
+
 ---
 
-## Phase 1: Clarify Purpose
+## Phase A: Discovery → SpecKit
 
-**Goal**: Understand what the user wants to automate. Be helpful, not gatekeeping.
+### Step 1: Clarify Purpose
 
-### Ask the user:
+**Goal**: Understand what the user wants to build. Be helpful, not gatekeeping.
 
-> What process or workflow would you like to automate? Give me a brief description
-> of what it does, what triggers it, and what outcome you expect.
+Ask the user:
 
-### Guidance:
-- Accept any business process, personal automation, or workflow systematization request
+> What process or use case would you like to design? Give me a brief description
+> of what it does, who's involved, and what outcome you expect.
+
+Guidance:
+- Accept anything — customer service flows, document processing, backend automation,
+  content research, monitoring, reporting, internal ops, or anything else
 - Help the user articulate their need if they start vague — ask clarifying follow-ups
-- Only gently redirect if the ask is clearly unrelated (e.g., "write a poem", "solve this math problem")
 - It's fine to be broad at this stage — discovery will sharpen scope
 
-### Capture:
+Capture:
 - **Process name** (suggest one if user doesn't provide)
 - **One-line description**
-- **Domain** (competitive intelligence, HR, finance, operations, marketing, R&D, etc.)
+- **Domain** (financial services, healthcare, retail, operations, HR, marketing, etc.)
 
----
+### Step 2: Discover via Trait Detection
 
-## Phase 2: Discover
+**Goal**: Progressive interview driven by detected traits. Start simple, branch as needed.
 
-**Goal**: Progressive interview to understand the full process. Start simple, branch as needed.
+Reference: `references/process-traits.md`
 
-### Core Questions (always ask):
+#### Core Questions (always ask):
 
-1. **What triggers this process?**
-   - Schedule (daily, weekly, on-demand)?
-   - Event (new data, user request, webhook)?
-   - Manual invocation?
+1. **Who's involved?** (Participants)
+   - End users / customers
+   - Internal staff / operators
+   - External systems (APIs, databases, SaaS)
+   - Other agents
 
-2. **Where does data come from?**
-   - Websites (→ Browser Automation / Playwright)
-   - APIs (→ OpenAPI tool)
-   - Databases (→ MCP or Azure AI Search)
-   - Files/documents (→ File Search)
-   - Manual input from user
-   - Corporate systems (SharePoint, Teams, etc.)
+2. **Where does data come from?** (Data Sourcing traits)
+   - Websites → Web scraping trait
+   - APIs / external systems → API integration trait
+   - Documents / files → Document intake trait
+   - Databases / corporate systems → Database query trait
+   - Web search / research → Search/research trait
+   - User provides it conversationally → User input trait
+   - Events / webhooks / messages → Event-driven trait
 
-3. **What's the data availability?**
-   - **Public & accessible** — data is freely available, no auth needed
-   - **Auth required** — APIs or sites that need credentials/tokens
-   - **Internal only** — corporate databases, SharePoint, internal APIs
-   - **No data yet** — need to mock data for development and testing
+3. **What happens to the data?** (Processing Style traits)
+   - Extract → Extraction trait
+   - Transform / normalize → Transformation trait
+   - Compare / rank → Comparison trait
+   - Analyze / score / assess → Analysis trait
+   - Summarize / synthesize → Synthesis trait
+   - Validate / check → Validation trait
+   - Route / triage → Routing trait
 
-   > **If user has no real data sources yet:** Offer to generate mock data as JSON
-   > files in `config/mock-data/` with realistic sample records matching the expected
-   > schema. This lets the agent be developed and tested locally before real sources
-   > are connected.
-   >
-   > **Mock data files:**
-   > - `config/mock-data/{source-name}.json` — sample records per data source
-   > - `config/mock-data/README.md` — explains the mock data structure and how to
-   >   replace it with real data or an MCP server connection
-   >
-   > **Migration note:** When real data becomes available, skills can be updated to
-   > call an MCP server instead of reading local JSON files. The skill's procedure
-   > section should document both paths (local file fallback vs MCP tool call).
-
-4. **What happens to the data?**
-   - Extract specific fields
-   - Compare across sources
-   - Summarize / condense
-   - Transform / normalize
-   - Detect changes from last run
-   - Generate visualizations
-
-5. **What gets produced?**
-   - Reports (Markdown, PPTX, PDF)
-   - Structured data (JSON, CSV)
+4. **What gets produced?** (Output Mode traits)
+   - Reports / documents
+   - Structured data / records
    - Notifications / alerts
-   - Dashboard updates
-   - API calls to other systems
+   - Decisions / recommendations
+   - Conversations / responses
+   - Actions in external systems
 
-6. **Who consumes the output?**
-   - Internal team / stakeholders
-   - External clients
-   - Other systems / APIs
-   - Dashboard / BI tool
+5. **How are humans involved?** (Interaction Model traits)
+   - Fully automated (no human)
+   - Human approves at key points
+   - Real-time conversation
+   - Human reviews output periodically
 
-### Archetype Detection
+6. **When does it run?** (Temporal Pattern traits)
+   - On-demand / user-triggered
+   - Scheduled (daily, weekly)
+   - Event-driven
+   - Continuous / streaming
 
-Based on answers, identify the primary pattern (see `references/process-archetypes.md`):
+#### Trait-Driven Branching
 
-| If data comes from... | And the goal is... | Primary archetype |
-|-----------------------|--------------------|--------------------|
-| Websites | Extract & compare | **Web Intelligence** |
-| Websites / APIs | Detect changes & alert | **Data Monitoring** |
-| Documents / files | Extract & summarize | **Document Processing** |
-| APIs / systems | Transform & sync | **API Integration** |
-| Multiple sources | Analyze & report | **Reporting & Analysis** |
-| Web + databases | Research & synthesize | **Customer/Market Research** |
+Based on detected traits, ask the relevant follow-up questions from `references/process-traits.md`.
+Don't ask all questions — only those relevant to the detected traits.
 
-Then ask **archetype-specific branching questions**:
+#### Data Availability Check
 
-#### Web Intelligence branches:
-- What websites/domains need to be scraped?
-- Are any geo-restricted, age-gated, or behind logins?
-- What languages are the target sites in?
-- What data structure do you need from each site?
+For each system integration identified:
 
-#### Data Monitoring branches:
-- How often should sources be checked?
-- What constitutes a "change" worth alerting on?
-- Where should alerts go (email, Teams, webhook)?
+- **Available** — you have access, credentials, API docs
+- **Auth required** — exists but you need credentials/tokens
+- **Internal only** — corporate system, need VPN/network access
+- **Mock** — system exists but you can't access it for development
 
-#### Document Processing branches:
-- What document formats (PDF, Word, HTML)?
-- What entities/data to extract?
-- Is summarization needed or just extraction?
+> **For systems marked "mock":** The spec will define data models and sample data
+> so the agent can be developed and tested without the real system. When the real
+> system becomes available, replace mock data with an MCP server or API connection.
 
-#### API Integration branches:
-- What APIs are involved? Do you have OpenAPI specs?
-- What's the sync direction (pull, push, bidirectional)?
-- Rate limits or throttling constraints?
-
-#### Reporting branches:
-- What metrics / KPIs to track?
-- Report format and distribution channel?
-- What's the reporting cadence?
-
-### Compliance Screen (always run)
-
-Reference: `references/compliance-checklist.md`
+#### Compliance Screen
 
 At minimum, confirm:
 1. **Data sources**: All public, or some require auth?
 2. **PII**: Any personal data involved?
 3. **Secrets**: Any API keys or credentials needed?
-4. **Regulatory**: Any legal/regulatory constraints? (GDPR, industry-specific)
+4. **Regulatory**: Any legal/regulatory constraints? (GDPR, HIPAA, industry-specific)
 5. **Retention**: How long to keep data?
 6. **Access**: Who can run this and see results?
 
----
+### Step 3: Generate SpecKit
 
-## Phase 3: Feasibility + Architecture
+**Goal**: Produce the specification documents from discovery findings.
 
-**Goal**: Design the skill structure, validate tool availability, present for approval.
+Use the template from `references/speckit-template.md`.
 
-### Step 1: Map to Foundry Tools
+Create in the project directory:
 
-Reference: `references/foundry-tools-catalog.md`
+#### `specs/SPEC.md` — The full SpecKit document
 
-For each capability needed, map to a Foundry built-in tool:
+Must include all sections from the template:
+1. **Process Overview** — name, domain, goals, scope, participants
+2. **Process Flow** — step-by-step with actors, inputs, outputs, decision branches
+3. **Business Rules** — numbered BR-XXX, each with condition/action/exception
+4. **Data Models** — all entities with field-level schemas
+5. **System Integrations** — each external system, direction, auth, availability (including **mock** flag)
+6. **Tool Contracts** — abstract tool definitions (not bound to any runtime)
+7. **Knowledge Sources** — reference documents, policies, search indexes
+8. **Human Interaction Points** — approvals, escalations, conversational flows (if any)
+9. **Success Criteria** — functional, performance, quality targets + evaluation scenarios (S-XXX linked to BR-XXX)
 
-| Capability | Foundry Tool |
-|-----------|-------------|
-| Web scraping | **Browser Automation** ⭐ |
-| Web search / news | **Grounding with Bing Search** or **Web Search** |
-| Scoped domain search | **Bing Custom Search** |
-| Document analysis | **File Search** |
-| Data processing | **Code Interpreter** |
-| API integration | **OpenAPI** |
-| Custom functions | **Function Calling** |
-| Persistent storage | **Azure AI Search** |
-| Corporate docs | **SharePoint** |
-| Multi-agent | **Agent2Agent** |
-| Scheduled tasks | **Azure Functions** |
-| Custom tools | **MCP** (only if built-ins insufficient) |
+#### `specs/sample-data/{entity}.json` — Mock data (for systems marked "mock")
 
-### Step 2: Design Skill Decomposition
+For each entity in § 4 Data Models where the backing system is marked "mock" in § 5:
+- Generate 5-10 realistic sample records matching the schema
+- Include varied data (different values, edge cases, some optional fields missing)
+- Add a `_meta` field with generation date and schema version
 
-Follow the 3-layer pattern:
+#### `specs/sample-data/README.md` — Migration guide
 
-1. **Primitives** — Reusable extraction/handling logic
-   - e.g., `handle-blockers`, `extract-products`, `transform-data`
+Explains:
+- What each sample file represents and which system it mocks
+- The expected schema (references SPEC.md § 4)
+- How to replace mock data with a real MCP server or API connection
+- Example: "When SAP becomes accessible, replace `specs/sample-data/orders.json` with
+  an MCP tool call to `sap_get_orders` — the schema stays the same"
 
-2. **Domain Skills** — Source/topic-specific procedures
-   - e.g., `scan-competitor-x`, `monitor-price-feed`, `ingest-patents`
+### Step 4: Checkpoint
 
-3. **Orchestrators** — Coordination and workflow management
-   - e.g., `scan-all`, `generate-weekly-report`, `run-full-pipeline`
-
-### Step 3: Validate Feasibility
-
-Check against `references/foundry-constraints.md`:
-
-- [ ] All required Foundry tools available in target region?
-- [ ] Selected model supports all needed tools?
-- [ ] Any custom code required? → Flag with developer warning
-- [ ] Runtime storage strategy defined? (no local files for persistence!)
-- [ ] Authentication patterns identified for all data sources?
-- [ ] Rate limiting / throttling strategy for web sources?
-
-### Step 4: Present Architecture
-
-Present the proposed architecture to the user before generating:
+After generating `specs/`, present the spec summary to the user:
 
 ```
-📋 Process: {name}
-📌 Primary archetype: {archetype} + {secondary capabilities}
+📋 SpecKit: {name}
+📌 Traits: {detected traits}
 
-🔧 Foundry Tools:
-  - Browser Automation (web scraping)
-  - Code Interpreter (data processing)
-  - Azure AI Search (storage)
-  - ...
+📊 Business Rules: {count} (BR-001 through BR-{N})
+📦 Data Models: {list of entities}
+🔌 Integrations: {list — marking which are mocked}
+🧪 Eval Scenarios: {count}
+
+📁 Generated:
+  specs/SPEC.md
+  specs/sample-data/{entity}.json (× {count})
+  specs/sample-data/README.md
+```
+
+Then tell the user:
+
+> **Checkpoint reached.** You can:
+> - **Review and edit** the specs before continuing
+> - **Share** the specs with stakeholders for feedback
+> - **Continue** to Phase B to generate AGENTS.md + Skills from these specs
+> - **Stop here** and resume later — just say "generate agents from specs" in a future session
+
+---
+
+## Phase B: SpecKit → Agents.md + Skills
+
+**Goal**: Read the specs and derive implementation artifacts.
+
+If `specs/SPEC.md` exists, read it. If not, run Phase A first.
+
+### Step 5: Design Architecture from Spec
+
+Read the spec and derive:
+
+1. **Skill decomposition** — one skill per major workflow phase or domain area
+   - Each skill's procedure traces back to spec business rules (BR-XXX)
+   - Each skill's operational contract derives from spec tool contracts
+
+2. **Tool mapping** — map spec tool contracts to concrete implementations:
+   - Foundry built-in tools (Browser Automation, File Search, Code Interpreter, etc.)
+   - MCP servers (local for dev, remote for deployment)
+   - Custom function tools (only if built-ins insufficient)
+
+3. **Architecture summary** — present to user before generating
+
+```
+📋 Process: {name} (from specs/SPEC.md)
 
 📁 Skill Structure:
-  Primitives:
-    - {skill-1}: {purpose}
-    - {skill-2}: {purpose}
-  Domain:
-    - {skill-3}: {purpose}
-  Orchestrators:
-    - {skill-4}: {purpose}
+  - {skill-1}: {purpose} (implements BR-001, BR-003)
+  - {skill-2}: {purpose} (implements BR-002, BR-004, BR-005)
+  - {skill-3}: {purpose} (orchestrator)
 
-💾 Storage: Azure AI Search (indexed data) + {other}
-⚠️ Custom code needed: {yes/no — if yes, what and why}
+🔧 Tools:
+  - {tool-1} → {Foundry tool or MCP server}
+  - {tool-2} → {Foundry tool or MCP server}
+  - {tool-3} → mock data (specs/sample-data/{entity}.json)
+
+⚠️ Mock systems: {list — will need real integration later}
 ```
 
-**Wait for user approval before proceeding to generation.**
+**Wait for user approval before generating files.**
 
----
+### Step 6: Generate Implementation Artifacts
 
-## Phase 4: Generate + Review
-
-**Goal**: Create the complete folder structure with all files.
-
-### Step 1: Choose Location
-
-Ask the user:
-> Where should I create the project folder?
-> - Use the current directory (`{cwd}`)
-> - Create a new folder (provide name)
-
-### Step 2: Generate Files
-
-Create in this order:
-
-#### 1. `config/{name}.json`
-Configuration file with source URLs, parameters, thresholds, etc. based on discovery.
-
-#### 1b. `config/mock-data/` (if user chose mock data)
-
-Generate mock data files when the user has no real data sources:
-
-- One JSON file per data source: `config/mock-data/{source-name}.json`
-- Each file contains 5-10 realistic sample records matching the expected schema
-- Include varied data (different values, edge cases, missing fields where appropriate)
-- Add a `_meta` field with generation timestamp and schema version
-
-Also generate `config/mock-data/README.md` explaining:
-- What each mock file represents
-- The expected schema for real data
-- How to replace mock data with an MCP server connection
-- Example MCP tool call that would replace the file read
-
-#### 2.`.github/skills/{skill-name}/SKILL.md` (for each skill)
-
-> **Convention:** `.github/skills/` is the canonical skill format. The deploy skill
-> will copy these to `skills/` when packaging for Foundry runtime. Never create a
-> separate `skills/` directory at design time — that's a deploy artifact only.
+#### 1. `.github/skills/{skill-name}/SKILL.md` (for each skill)
 
 Use the template from `references/skill-template.md`. Each skill MUST have:
 - YAML frontmatter with `name` and `description` (include USE FOR / DO NOT USE FOR)
-- Operational contract (inputs, outputs, deps, idempotency, failure behavior, Foundry tools)
-- Step-by-step procedure
-- Output schema
-- Known issues & workarounds
+- **Spec traceability**: "Implements BR-001, BR-003" in the header
+- Operational contract (inputs, outputs, deps, idempotency, failure behavior)
+- Step-by-step procedure (derived from spec process flow)
+- Output schema (derived from spec data models)
 
-#### 3. `AGENTS.md`
+> **Convention:** `.github/skills/` is the canonical skill format. The deploy skill
+> copies these to `skills/` when packaging for Foundry runtime.
+
+#### 2. `AGENTS.md`
 
 Use the template from `references/agents-template.md`. Must include:
-- Agent identity and purpose
-- Available skills table
-- Foundry tools required (with justification)
-- Custom MCP servers (only if needed)
+- Agent identity and purpose (derived from spec § 1)
+- Available skills table (derived from step 5 decomposition)
+- Foundry tools required (derived from spec § 6 tool contracts)
 - Data & storage strategy
 - Behavioral guidelines
-- Compliance & constraints
-- Deployment notes
+- **Spec reference**: "This agent implements specs/SPEC.md"
 
-#### 4. `mcp-config.json` (MCP server configuration)
+#### 3. `config/{name}.json`
 
-Generate MCP config files so GitHub Copilot CLI and VS Code auto-discover required tools.
-Refer to `references/local-development.md` for the template and rules.
+Configuration file with parameters and thresholds from the spec.
 
-**MUST generate both:**
+#### 4. `mcp-config.json`
+
+MCP server configuration for development. Generate both:
 - `.copilot/mcp-config.json` — for GitHub Copilot CLI
 - `.vscode/mcp.json` — for VS Code Agent Mode
 
-Only include MCP servers the process actually needs. Map capabilities to local MCP first:
+Map spec tool contracts to local MCP servers where possible:
 
-| Need | Local MCP Server |
-|------|-----------------|
-| Web scraping / browser automation | `@playwright/mcp` (local) |
-| Azure AI Search queries | `@azure/mcp` with `--namespace search` (local) |
-| Blob storage / Cosmos DB / SQL | `@azure/mcp` with relevant namespace (local) |
-| Fabric data | `@microsoft/fabric-mcp` (local) |
+| Spec Tool Type | Local MCP Server |
+|---------------|-----------------|
+| Web scraping | `@playwright/mcp` |
+| Azure AI Search | `@azure/mcp` with search namespace |
+| Cosmos DB / SQL | `@azure/mcp` with relevant namespace |
+| Fabric data | `@microsoft/fabric-mcp` |
 | Web search | Tavily MCP (remote HTTP) |
-| Foundry agent/model management | `https://mcp.ai.azure.com` (remote HTTP) |
 
-If a capability has NO local MCP equivalent (Code Interpreter, File Search, Bing Grounding,
-Agent2Agent, etc.), note it in AGENTS.md as "Foundry-deployment only" and suggest local workarounds.
+For tools backed by mock data: note in comments that these use sample data files
+and will need real MCP/API connections later.
 
 #### 5. `skill-manifest.json`
 
@@ -339,90 +306,78 @@ Machine-readable deployment contract:
 {
   "name": "{process-name}",
   "version": "1.0.0",
+  "speckit": "specs/SPEC.md",
   "description": "{one-line description}",
-  "archetype": {
-    "primary": "{archetype}",
-    "secondary": ["{secondary-1}", "{secondary-2}"]
-  },
-  "foundry_tools": {
-    "required": ["browser_automation", "code_interpreter", "azure_ai_search"],
-    "optional": ["bing_search", "openapi"]
-  },
-  "custom_mcp": [],
-  "mcp_servers": {
-    "local": ["@playwright/mcp", "@azure/mcp"],
-    "remote": ["https://mcp.ai.azure.com"]
-  },
+  "traits": ["{trait-1}", "{trait-2}", "{trait-3}"],
+  "business_rules_count": 0,
   "skills": [
-    {"name": "{skill-1}", "type": "primitive"},
-    {"name": "{skill-2}", "type": "domain"},
-    {"name": "{skill-3}", "type": "orchestrator"}
+    {"name": "{skill-1}", "implements": ["BR-001", "BR-003"]},
+    {"name": "{skill-2}", "implements": ["BR-002"]}
   ],
-  "storage": {
-    "runtime_state": "{e.g., azure_ai_search}",
-    "output_artifacts": "{e.g., sharepoint}",
-    "configuration": "config/"
-  },
-  "custom_code_required": false,
+  "mock_systems": ["{system-1}"],
   "compliance": {
     "pii": false,
     "auth_required_sources": [],
-    "regulatory": [],
-    "retention_days": null
-  },
-  "recommended_region": "swedencentral",
-  "recommended_model": "gpt-5.4-mini"
+    "regulatory": []
+  }
 }
 ```
 
 #### 6. `README.md`
 
 Project documentation covering:
-- What this agent does
-- Architecture diagram (text-based)
-- Skill catalog with purposes
+- What this agent does (from spec § 1)
+- Architecture overview (text-based diagram)
+- Skill catalog with purposes and spec traceability
 - Configuration guide
-- Deployment instructions (Foundry)
-- Usage examples
+- Mock data status (which systems are mocked, how to replace)
+- Deployment path (reference threadlight-deploy)
 
-### Step 3: Review
+### Step 7: Review
 
 Walk through the generated structure with the user:
-1. Explain each skill and its purpose
-2. Highlight any custom code requirements (⚠️ developer callouts)
-3. Explain the **local vs remote tool split** — reference `references/local-development.md`:
-   - Which tools work locally via MCP (Playwright, Azure MCP, Fabric MCP)
-   - Which are Foundry-deployment only (Code Interpreter, Bing, File Search, Agent2Agent)
-   - Local workarounds for remote-only tools
-4. Walk through the generated `mcp-config.json` — explain each server and why it's included
-5. Explain Foundry deployment migration path (local MCP → Foundry built-in tools)
-6. Suggest improvements or extensions
+1. Explain each skill and which business rules it implements
+2. Highlight mock systems that need real integration later
+3. Explain the spec↔implementation boundary:
+   - **`specs/`** = WHAT the business needs (reviewable by stakeholders)
+   - **`.github/skills/` + `AGENTS.md`** = HOW the agent implements it
+   - **Deploy artifacts** = generated separately by `threadlight-deploy`
+4. Suggest next steps (test locally, deploy, iterate)
+
+---
+
+## Spec ↔ Agent Boundary
+
+| Layer | Location | Audience | Purpose |
+|-------|----------|----------|---------|
+| **Specification** | `specs/` | Business stakeholders, architects | WHAT the process does — business rules, data models, success criteria |
+| **Implementation** | `.github/skills/`, `AGENTS.md` | Developers, agent runtime | HOW the agent does it — skills, tools, operational contracts |
+| **Deployment** | `container.py`, `Dockerfile`, etc. | DevOps, platform | WHERE it runs — generated by `threadlight-deploy`, not this skill |
+
+The spec is durable and runtime-agnostic. You can derive different implementations
+(Foundry hosted agent, GHCP SDK, standalone scripts) from the same spec.
 
 ---
 
 ## Reference Files
 
-This skill includes reference files that are auto-loaded for context:
-
 | File | Purpose |
 |------|---------|
+| `references/speckit-template.md` | Template for SpecKit specification documents |
+| `references/process-traits.md` | Composable trait catalog for process pattern detection |
 | `references/skill-template.md` | Template for generated SKILL.md files |
 | `references/agents-template.md` | Template for generated AGENTS.md |
-| `references/foundry-tools-catalog.md` | Foundry Agent Service built-in tools catalog |
-| `references/foundry-constraints.md` | Foundry deployment constraints |
-| `references/process-archetypes.md` | Process pattern definitions with starter structures |
 | `references/compliance-checklist.md` | Privacy/legal/regulatory screening checklist |
-| `references/local-development.md` | Local dev & testing with Foundry tools (Entra ID auth, SDK examples) |
 
 ---
 
 ## Design Principles
 
-1. **Foundry-native**: Map to built-in Foundry tools first. Only use custom MCP when built-ins are insufficient.
-2. **Browser Automation first**: For any web scraping need, Browser Automation (Playwright) is the primary tool.
-3. **Remote-first state**: Never rely on local filesystem for persistent data. Use Azure AI Search, SharePoint, or MCP-backed storage.
-4. **Operational contracts**: Every skill declares inputs, outputs, dependencies, and failure behavior.
-5. **Progressive discovery**: Don't overwhelm users with questions. Start simple, branch by need.
-6. **Compliance by default**: Always screen for PII, secrets, regulatory, and retention requirements.
-7. **Developer transparency**: If custom code is needed, say so clearly with requirements.
-8. **Evidence-first**: All extracted data should include source URLs, timestamps, and raw text for auditability.
+1. **Spec-first**: Always produce a durable specification before implementation artifacts
+2. **Trait-based**: Detect process patterns dynamically from composable traits, not fixed archetypes
+3. **Business rules are king**: Every skill, every eval scenario traces back to numbered BR-XXX rules
+4. **Mock what you can't reach**: For inaccessible systems, define data models + sample data in the spec
+5. **Clear boundaries**: Specs are business-facing; agents+skills are implementation-facing; deploy is separate
+6. **Progressive discovery**: Start simple, branch by detected traits — don't overwhelm with questions
+7. **Compliance by default**: Always screen for PII, secrets, regulatory, and retention
+8. **Evidence-first**: All extracted data should include source references for auditability
