@@ -126,7 +126,7 @@ Every PoC, regardless of mode, ships with these guarantees:
 project/
 ├── specs/
 │   ├── SPEC.md                    # SpecKit specification (the durable source of truth)
-│   ├── manifest.json              # Checkpoint metadata
+│   ├── manifest.json              # Machine-readable deployment contract
 │   └── sample-data/               # Mock data for inaccessible systems
 │       ├── {entity}.json
 │       └── README.md              # Migration guide (mock → real)
@@ -135,7 +135,6 @@ project/
 ├── .vscode/mcp.json               # Dev-time MCP config (local servers)
 │   └── {skill-name}/SKILL.md
 ├── AGENTS.md                      # Agent identity, tools, guidelines
-├── skill-manifest.json            # Machine-readable deployment contract
 ├── config/{name}.json             # Process configuration
 │
 ├── spec-overview.html             # Seller pitch page (self-contained)
@@ -165,6 +164,8 @@ project/
 ├── azure.yaml                     # azd extension config
 ├── infra/                         # Bicep scaffold
 ├── scripts/                       # Infra hooks only (postprovision, postdeploy)
+├── tests/                         # Test/invocation scripts
+│   └── invoke_agent.py            # Smoke test — invoke the deployed agent
 └── deploy-notes.md                # Deployment guide
 ```
 

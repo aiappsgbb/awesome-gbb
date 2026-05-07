@@ -57,7 +57,7 @@ Recommended (from `threadlight-design`):
 - `specs/SPEC.md` — SpecKit specification (business rules, data models, integrations, compliance)
 - `specs/manifest.json` — checkpoint metadata (process name, phase, status)
 - `specs/sample-data/*.json` — mock data for inaccessible systems
-- `skill-manifest.json` — machine-readable deployment contract
+- `specs/manifest.json` — machine-readable deployment contract
 - `config/*.json` — process configuration
 
 > [!IMPORTANT]
@@ -131,7 +131,7 @@ For data stores not covered by Foundry built-ins, deploy your own MCP server:
 
 Read all available input files in this priority order:
 
-#### 1a. Read `skill-manifest.json` (if exists)
+#### 1a. Read `specs/manifest.json` (if exists)
 Machine-readable deployment contract from `threadlight-design`. Provides:
 - Process name, traits, business rule count
 - Mock systems list → flag for deploy-notes warnings
@@ -974,7 +974,7 @@ version = client.agents.create_version(
 Teams integration is **optional** — only include it if:
 - The spec's § 8 Human Interaction Points specifies Teams as a channel
 - The user explicitly asks for Teams exposure
-- The `skill-manifest.json` includes conversational interaction traits
+- The `specs/manifest.json` includes conversational interaction traits
 
 If included, the scaffold adds `copilot/` (bot code) and `infra/bot/` (Bicep) to
 the azd project. The `foundry-teams-bot` skill's `templates/` directory provides
@@ -1147,6 +1147,9 @@ project/
 │   └── bot/                # Bot infra (optional)
 │
 ├── scripts/                # Infra hooks only (postprovision, postdeploy)
+│
+├── tests/                  # Test/invocation scripts
+│   └── invoke_agent.py     # Smoke test — invoke deployed agent
 │
 └── deploy-notes.md         # Deployment guide
 ```

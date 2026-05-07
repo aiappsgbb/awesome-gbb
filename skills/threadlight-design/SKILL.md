@@ -404,9 +404,9 @@ For tools backed by mock data: document in the project README which tools use
 sample data files and will need real MCP/API connections later. Do NOT put
 comments in JSON config files.
 
-#### 5. `skill-manifest.json`
+#### 5. `specs/manifest.json`
 
-Machine-readable deployment contract:
+Machine-readable deployment contract (lives with the spec):
 
 ```json
 {
@@ -505,7 +505,7 @@ must catch its own mistakes.
 - [ ] Every mocked system in spec § 5 has sample data in `specs/sample-data/`
 - [ ] Every eval scenario (S-XXX) in spec § 9 references valid BR-XXX rules
 - [ ] AGENTS.md skills table matches the actual `src/agent/skills/` directories
-- [ ] `skill-manifest.json` matches the generated skills list and BR counts
+- [ ] `specs/manifest.json` matches the generated skills list and BR counts
 - [ ] `spec-overview.html` renders without errors (valid HTML structure)
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
