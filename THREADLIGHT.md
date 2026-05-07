@@ -146,20 +146,24 @@ project/
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── container.py                   # MAF runtime (from threadlight-deploy)
-├── Dockerfile                     # Agent container
-├── pyproject.toml                 # Dependencies
-├── copilot-instructions.md        # Runtime system prompt
-├── skills/                        # Skills copied for container
-├── mcp-config.json                # Runtime MCP config
+├── src/
+│   ├── agent/                     # Hosted agent container (from threadlight-deploy)
+│   │   ├── container.py           # GHCP SDK runtime (default) or MAF
+│   │   ├── Dockerfile
+│   │   ├── pyproject.toml
+│   │   ├── copilot-instructions.md
+│   │   ├── skills/                # Skills copied for container
+│   │   └── mcp-config.json        # Runtime MCP config
+│   │
+│   └── bot/                       # Teams bot (optional, from foundry-teams-bot)
+│       ├── bot.py, app.py, Dockerfile
+│       └── teams_package/
+│
 ├── agent.yaml                     # ContainerAgent definition
 ├── azure.yaml                     # azd extension config
 ├── infra/                         # Bicep scaffold
+├── scripts/                       # Hooks
 ├── deploy-notes.md                # Deployment guide
-│
-├── copilot/                       # Teams bot (optional, from foundry-teams-bot)
-│   ├── bot.py, app.py, Dockerfile
-│   └── teams_package/
 │
 └── .copilot/mcp-config.json       # Dev-time MCP config
 ```

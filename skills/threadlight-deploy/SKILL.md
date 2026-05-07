@@ -183,7 +183,7 @@ Core deployment inputs:
 
 Create these files in the project root:
 
-### 1. `copilot-instructions.md` — Agent System Prompt
+### 1. `src/agent/copilot-instructions.md` — Agent System Prompt
 
 Transform AGENTS.md into a runtime system prompt:
 
@@ -211,9 +211,9 @@ Transform AGENTS.md into a runtime system prompt:
 - Focus on WHAT the agent should DO, not how it's implemented
 - Include tool-use discipline directive (see reference)
 
-### 2. `skills/` Directory
+### 2. `src/agent/skills/` Directory
 
-Copy each `.github/skills/*/SKILL.md` → `skills/*/SKILL.md`:
+Copy each `.github/skills/*/SKILL.md` → `src/agent/skills/*/SKILL.md`:
 
 ```
 skills/
@@ -228,7 +228,7 @@ skills/
 These are loaded at startup by `_load_skills()` and appended to instructions.
 The agent discovers all skill content through its system prompt.
 
-### 3. `mcp-config.json` — MCP Server Configuration
+### 3. `src/agent/mcp-config.json` — MCP Server Configuration
 
 > **NOTE:** This config is used by the container runtime. At startup, `_load_mcp_config()`
 > reads this file, expands `${ENV_VAR}` placeholders, and creates tools via `client.get_mcp_tool()`.
@@ -333,7 +333,7 @@ hooks:
 
 The hook script creates the Toolbox, RAI policy, and Teams manifest idempotently.
 
-### 4. `container.py` — Agent Runtime
+### 4. `src/agent/container.py` — Agent Runtime
 
 Generate the container runtime based on the chosen variant (see Phase 1 § 1d).
 
@@ -411,7 +411,7 @@ agent = Agent(
 > For example, if you need web search but can't use MCP, define a custom tool that
 > calls a search API (Tavily, SerpAPI, etc.) directly from Python.
 
-### 5. `pyproject.toml` — Python Dependencies
+### 5. `src/agent/pyproject.toml` — Python Dependencies
 
 **Copy from `references/pyproject-template.toml`** and replace `__PROJECT_NAME__`:
 
@@ -464,7 +464,7 @@ azure-monitor-opentelemetry>=1.6.4
 opentelemetry-sdk>=1.27.0
 ```
 
-### 6. `Dockerfile` — Self-Contained Container
+### 6. `src/agent/Dockerfile` — Self-Contained Container
 
 **Copy from `references/dockerfile-template`** and adapt:
 
@@ -516,7 +516,7 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 │  │  Foundry Platform                │    │
 │  │  ┌───────────────────────────┐  │    │
 │  │  │  Hosted Agent Container    │  │    │
-│  │  │  - container.py (MAF)      │  │    │
+│  │  │  - src/agent/container.py  │  │    │
 │  │  │  - copilot-instructions.md │  │    │
 │  │  │  - skills/                 │  │    │
 │  │  └──────────┬────────────────┘  │    │
@@ -879,6 +879,7 @@ deployment declaratively. No custom deploy scripts are needed.
 # azure.yaml — agent service declaration
 services:
   my-agent:
+    project: ./src/agent
     host: azure.ai.agent
     language: docker
     docker:
@@ -985,34 +986,45 @@ This adds:
 
 ```
 project/
-├── agent.yaml                # Agent definition (ContainerAgent schema — kind/protocols/resources at TOP LEVEL)
+├── agent.yaml                # Agent definition (ContainerAgent schema)
 ├── azure.yaml                # azd config — extension declares agent + bot services
+├── src/
+│   ├── agent/                # Hosted agent (Phase 2 files go here)
+│   │   ├── container.py
+│   │   ├── Dockerfile
+│   │   ├── pyproject.toml
+│   │   ├── copilot-instructions.md
+│   │   ├── skills/
+│   │   └── mcp-config.json
+│   │
+│   └── bot/                  # Teams bot (optional)
+│       ├── bot.py
+│       ├── app.py
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       └── teams_package/
+│           ├── manifest.json
+│           ├── color.png
+│           └── outline.png
+│
 ├── infra/
-│   ├── main.bicep            # Subscription-scope orchestrator (starter-basic + bot)
-│   ├── main.parameters.json  # azd env var bindings
-│   ├── abbreviations.json    # azd naming conventions
-│   ├── bot/                  # Teams bot infrastructure
-│   │   ├── uami.bicep        # User-Assigned Managed Identity (for Bot Service auth)
-│   │   ├── aca.bicep         # ACA environment + bot container app
-│   │   ├── bot-service.bicep # Azure Bot Service + MsTeamsChannel
-│   │   └── fetch-container-image.bicep  # Prevents image overwrite on reprovision
+│   ├── main.bicep
+│   ├── main.parameters.json
+│   ├── abbreviations.json
+│   ├── bot/                  # Teams bot infrastructure (optional)
+│   │   ├── uami.bicep
+│   │   ├── aca.bicep
+│   │   ├── bot-service.bicep
+│   │   └── fetch-container-image.bicep
 │   └── core/                 # Vendored from azd-ai-starter-basic (DO NOT MODIFY)
-│       ├── ai/               # Foundry project, connections, ACR role assignment
-│       ├── host/             # ACR creation
-│       ├── monitor/          # Log Analytics + Application Insights
-│       ├── search/           # AI Search + Bing (optional, used if configured)
-│       └── storage/          # Storage account (optional, used if configured)
-├── scripts/
-│   └── build_teams_manifest.py  # postprovision: builds copilot_package.zip for Teams sideloading
-└── copilot/                  # Teams bot code
-    ├── bot.py                # Streaming handler (Foundry → Teams via AIProjectClient)
-    ├── app.py                # aiohttp server (/api/messages + JWT auth)
-    ├── Dockerfile            # python:3.12-slim, port 80
-    ├── requirements.txt      # microsoft-agents-* + azure-ai-projects SDK
-    └── teams_package/        # Teams manifest template (filled at postprovision)
-        ├── manifest.json     # devPreview schema with __BOT_APP_ID__ placeholders
-        ├── color.png         # 192×192 app icon
-        └── outline.png       # 32×32 outline icon
+│       ├── ai/
+│       ├── host/
+│       ├── monitor/
+│       ├── search/
+│       └── storage/
+│
+└── scripts/
+    └── build_teams_manifest.py
 ```
 
 ### Step 2: Replace placeholder tokens
@@ -1021,15 +1033,15 @@ Replace these tokens **in all copied files**:
 
 | Token | Value | Source | Files |
 |-------|-------|--------|-------|
-| `__PROJECT_NAME__` | kebab-case agent name (e.g., `tech-news-digest`) | AGENTS.md | `agent.yaml`, `azure.yaml`, `copilot/bot.py`, `pyproject.toml` |
+| `__PROJECT_NAME__` | kebab-case agent name (e.g., `tech-news-digest`) | AGENTS.md | `agent.yaml`, `azure.yaml`, `src/bot/bot.py`, `pyproject.toml` |
 | `__AGENT_DESCRIPTION__` | One-line agent description | AGENTS.md | `agent.yaml` |
 | `__AGENT_NAME__` | Display name (e.g., `Tech News Digest`) | AGENTS.md | `infra/bot/bot-service.bicep` |
 | `__MODEL_NAME__` | Model name (default: `gpt-5.4`) | AGENTS.md or default | `azure.yaml` |
 | `__MODEL_DEPLOYMENT_NAME__` | Model deployment name (default: same as `__MODEL_NAME__`) | AGENTS.md or default | `agent.yaml` |
 | `__MODEL_VERSION__` | Model version — **must match model name** (see lookup table below) | Azure model catalog | `azure.yaml` |
 | `__MODEL_CAPACITY__` | TPM capacity (default: `120`) | Default | `azure.yaml` |
-| `__DEVELOPER_NAME__` | Developer/org name for Teams manifest | User/org | `copilot/teams_package/manifest.json` |
-| `__BOT_APP_ID__` | UAMI client ID for bot (replaced at postprovision) | Bicep output | `copilot/teams_package/manifest.json` |
+| `__DEVELOPER_NAME__` | Developer/org name for Teams manifest | User/org | `src/bot/teams_package/manifest.json` |
+| `__BOT_APP_ID__` | UAMI client ID for bot (replaced at postprovision) | Bicep output | `src/bot/teams_package/manifest.json` |
 
 > **Note**: Model deployment is now declared in `azure.yaml` `config.deployments` —
 > NOT in Bicep. The `azd ai agent` extension handles model creation via pre-provision hooks.
@@ -1079,22 +1091,36 @@ project/
 ├── AGENTS.md               # Original design (unchanged)
 ├── .github/skills/          # Original skills (unchanged)
 ├── config/                  # Original config (unchanged)
+├── specs/                   # SpecKit (from threadlight-design, unchanged)
 │
-├── agent.yaml              # Phase 5: agent definition (REQUIRED by extension)
-├── azure.yaml              # Phase 5: azd config (extension + bot + postprovision hook)
-├── infra/                  # Phase 5: vendored Bicep (core/ + bot/)
-├── scripts/
-│   └── build_teams_manifest.py  # Phase 5: postprovision → copilot_package.zip
-├── copilot/                # Phase 5: Teams bot (4 files + teams_package/)
-│   └── teams_package/      # Teams manifest template + icons
+├── agent.yaml              # Agent definition (REQUIRED by extension)
+├── azure.yaml              # azd config (extension + services + hooks)
 │
-├── container.py            # Phase 2: MAF runtime (Agent + FoundryChatClient + ResponsesHostServer)
-├── Dockerfile              # Phase 2: agent container (uv-based)
-├── pyproject.toml          # Phase 2: agent dependencies (uv + prerelease)
-├── copilot-instructions.md # Phase 2: runtime system prompt
-├── skills/                 # Phase 2: copied skills (loaded into instructions at startup)
-├── mcp-config.json         # Phase 2: MCP server config
-└── deploy-notes.md         # Phase 5: deployment guide
+├── src/
+│   ├── agent/              # Hosted agent container
+│   │   ├── container.py    # Runtime (GHCP default or MAF fallback)
+│   │   ├── Dockerfile
+│   │   ├── pyproject.toml
+│   │   ├── copilot-instructions.md
+│   │   ├── skills/         # Copied from .github/skills/
+│   │   └── mcp-config.json # Runtime MCP config
+│   │
+│   └── bot/                # Teams bot (optional)
+│       ├── bot.py
+│       ├── app.py
+│       ├── Dockerfile
+│       ├── requirements.txt
+│       └── teams_package/  # Manifest + icons
+│
+├── infra/                  # Bicep scaffold
+│   ├── main.bicep
+│   ├── main.parameters.json
+│   ├── core/               # Vendored from azd-ai-starter-basic
+│   └── bot/                # Bot infra (optional)
+│
+├── scripts/                # Hooks (postprovision, postdeploy)
+│
+└── deploy-notes.md         # Deployment guide
 ```
 
 ---
