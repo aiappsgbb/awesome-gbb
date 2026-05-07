@@ -622,31 +622,42 @@ After deployment, validate agent quality using eval scenarios from `specs/SPEC.m
 
 ---
 
-## Phase 3: Validate
+## Phase 3: Validate & Auto-Review (mandatory)
 
-After generating files, validate:
+After generating all files, **automatically run a self-review** before presenting
+the output. This skill generates a lot of content — catch mistakes before the user sees them.
+
+### File Validation
 
 - [ ] `copilot-instructions.md` exists and is 500-1500 words
 - [ ] `skills/` has at least one SKILL.md
-- [ ] `container.py` exists and uses `Agent` + `FoundryChatClient` + `ResponsesHostServer`
-- [ ] `pyproject.toml` includes split packages: `agent-framework-core`, `agent-framework-foundry`, `agent-framework-foundry-hosting`
+- [ ] `container.py` exists and matches the chosen runtime variant (GHCP or MAF)
+- [ ] `pyproject.toml` has correct dependencies for the chosen variant
 - [ ] `pyproject.toml` has `prerelease = "if-necessary-or-explicit"` in `[tool.uv]` (NOT `"allow"`)
-- [ ] `pyproject.toml` pins `azure-identity>=1.19.0,<1.26.0a0` (prevent beta pull)
-- [ ] `Dockerfile` uses `python:3.12-slim` (NOT a custom base image)
-- [ ] `Dockerfile` uses `uv sync` (NOT `pip install`)
+- [ ] `Dockerfile` uses `python:3.12-slim` and `uv sync` (NOT `pip install`)
 - [ ] `Dockerfile` copies `container.py`, `copilot-instructions.md`, `skills/`
 - [ ] `mcp-config.json` only has remote servers (no local-only, no stdio)
-- [ ] `azure.yaml` exists with `host: azure.ai.agent` service and `requiredVersions` for extension
+- [ ] `azure.yaml` exists with `host: azure.ai.agent` service and `requiredVersions`
 - [ ] `azure.yaml` has model deployment in `config.deployments` section
-- [ ] `agent.yaml` exists with `kind: hosted` (top-level, ContainerAgent schema), protocols (version `1.0.0`), resources `{cpu, memory}`
-- [ ] `agent.yaml` does NOT include `FOUNDRY_PROJECT_ENDPOINT` env var (reserved — platform injects it)
-- [ ] `agent.yaml` does NOT nest under `template:` — `kind`, `protocols`, `resources` are top-level
-- [ ] `infra/main.bicep` exists (subscription-scope Bicep)
-- [ ] `copilot/bot.py` and `copilot/app.py` exist
-- [ ] `copilot/bot.py` uses `get_openai_client(agent_name=...)` (NOT `agent_reference`)
+- [ ] `agent.yaml` has `kind: hosted` (top-level), protocols `1.0.0`, resources `{cpu, memory}`
+- [ ] `agent.yaml` does NOT include `FOUNDRY_PROJECT_ENDPOINT` (reserved)
+- [ ] `infra/main.bicep` exists
 - [ ] No secrets or API keys in any generated file
 - [ ] No local file paths hardcoded
 - [ ] `deploy-notes.md` references `azd up` as the deployment command
+
+### Consistency Review
+
+- [ ] `container.py` runtime variant matches the decision in Phase 1 § 1d
+- [ ] `mcp-config.json` includes mock MCP endpoints for all mocked systems (not just warnings)
+- [ ] `copilot-instructions.md` content matches AGENTS.md (not stale)
+- [ ] `skills/` directory matches `.github/skills/` (no missing, no extra)
+- [ ] If Teams bot included: `copilot/bot.py` uses `get_openai_client(agent_name=...)` (NOT `agent_reference`)
+- [ ] `deploy-notes.md` lists all mock systems with swap instructions
+- [ ] If spec exists: `agent.yaml` model deployment matches spec § 10 requirements
+
+**If any check fails:** fix it before presenting the output. Do not leave broken
+artifacts for the user to debug.
 
 ---
 

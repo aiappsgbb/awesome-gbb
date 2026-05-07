@@ -484,6 +484,27 @@ Walk through the generated structure with the user:
    - **Deploy artifacts** = generated separately by `threadlight-deploy`
 4. Suggest next steps (test locally, deploy, iterate)
 
+### Step 8: Auto-Review (mandatory)
+
+After all files are generated, **automatically run a self-review** before presenting
+the final summary. This is not optional — the skill generates a lot of content and
+must catch its own mistakes.
+
+**Review checklist:**
+
+- [ ] Every BR-XXX in `specs/SPEC.md` § 3 is referenced by at least one skill's procedure
+- [ ] Every tool contract in spec § 6 has a matching tool in AGENTS.md
+- [ ] Every mocked system in spec § 5 has sample data in `specs/sample-data/`
+- [ ] Every eval scenario (S-XXX) in spec § 9 references valid BR-XXX rules
+- [ ] AGENTS.md skills table matches the actual `.github/skills/` directories
+- [ ] `skill-manifest.json` matches the generated skills list and BR counts
+- [ ] `spec-overview.html` renders without errors (valid HTML structure)
+- [ ] No hardcoded secrets, API keys, or personal data in any file
+- [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
+
+**If any check fails:** fix it before presenting the output to the user. Do not
+ask the user to fix generated content — that's the skill's responsibility.
+
 ---
 
 ## Spec ↔ Agent Boundary
