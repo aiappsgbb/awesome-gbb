@@ -66,6 +66,20 @@ Capture:
 - **One-line description**
 - **Domain** (financial services, healthcare, retail, operations, HR, marketing, etc.)
 
+#### Domain Primer Loading
+
+After identifying the domain, check `references/domains/` for a matching primer.
+If one exists, load it to seed discovery with domain-specific knowledge:
+- Typical business rules → suggest during BR-XXX discovery (user confirms/adapts/rejects)
+- Common data models → pre-populate spec § 4 (user reviews and adjusts)
+- Regulatory landscape → feed into compliance screen and spec § 11
+- Common integrations → suggest during system integration discovery
+- Domain vocabulary → use correct terminology throughout the spec
+
+Primers are **suggestions, not constraints**. The user always has final say.
+
+See `references/domains/README.md` for available primers and how to contribute new ones.
+
 ### Step 2: Discover via Trait Detection
 
 **Goal**: Progressive interview driven by detected traits. Start simple, branch as needed.
@@ -417,6 +431,7 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 |------|---------|--------|
 | `references/speckit-template.md` | Template for SpecKit specification documents | ✅ Included |
 | `references/process-traits.md` | Composable trait catalog for process pattern detection | ✅ Included |
+| `references/domains/` | Optional domain primers for industry-specific acceleration | ✅ Included |
 | `references/skill-template.md` | Template for generated SKILL.md files | 📎 From upstream `threadlight-skills` repo |
 | `references/agents-template.md` | Template for generated AGENTS.md | 📎 From upstream `threadlight-skills` repo |
 | `references/compliance-checklist.md` | Privacy/legal/regulatory screening checklist | 📎 From upstream `threadlight-skills` repo |

@@ -4,12 +4,16 @@ description: >
   Onboard a GenAI app or Microsoft Foundry project as a spoke into an existing
   AI Citadel Governance Hub. Covers Access Contracts, Foundry APIM connections,
   Key Vault secret wiring, product policies, JWT auth, and networking.
-  USE FOR: citadel spoke, onboard agent to citadel, access contract, connect
-  foundry to citadel, APIM connection, citadel onboarding, govern agent,
-  AI gateway spoke, citadel compliant agent, citadel access contract,
-  connect to governance hub, citadel JWT auth, citadel product policy.
+  USE FOR: citadel spoke, citadel spoke onboarding, onboard agent to citadel,
+  onboard foundry project to citadel, onboard genai app to citadel, access contract,
+  ai hub gateway access contract, connect foundry to citadel, APIM connection,
+  foundry apim connection citadel, bring your own ai gateway foundry,
+  citadel onboarding, govern agent, AI gateway spoke, citadel compliant agent,
+  citadel access contract, connect to governance hub, citadel JWT auth,
+  citadel product policy, citadel key vault secrets, citadel validation notebook.
   DO NOT USE FOR: deploying the Citadel hub itself, APIM infrastructure,
-  hub networking, hub provisioning, hub sizing.
+  hub networking, hub provisioning, hub sizing, llm backend onboarding,
+  deploying model backends, apim backend pools, hub policy fragment deployment.
 ---
 
 # Citadel Spoke Onboarding — Reference Guide
@@ -102,8 +106,10 @@ param useCase = {
 }
 
 // ── Map service codes → APIM API IDs ──
+// ⚠️ Order matters: endpoint secret stores the gateway URL for the FIRST API.
+//    Put the API matching your SDK first (e.g. azure-openai-api for AzureOpenAI SDK).
 param apiNameMapping = {
-  LLM: ['universal-llm-api', 'azure-openai-api', 'unified-ai-api']
+  LLM: ['azure-openai-api', 'universal-llm-api', 'unified-ai-api']
 }
 
 // ── Services to onboard ──
@@ -189,6 +195,10 @@ az keyvault secret list `
 
 ### Option A: Key Vault (Traditional Apps)
 
+> **Secret name normalization:** The Bicep module lowercases names and replaces
+> underscores with hyphens. E.g. `MYAGENT-LLM-ENDPOINT` → `myagent-llm-endpoint`.
+> Use the normalized name when retrieving secrets.
+
 ```python
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -196,10 +206,10 @@ from azure.keyvault.secrets import SecretClient
 credential = DefaultAzureCredential()
 kv = SecretClient(vault_url="https://<kv-name>.vault.azure.net/", credential=credential)
 
-endpoint = kv.get_secret("MYAGENT-LLM-ENDPOINT").value
-api_key  = kv.get_secret("MYAGENT-LLM-KEY").value
+endpoint = kv.get_secret("myagent-llm-endpoint").value   # normalized name
+api_key  = kv.get_secret("myagent-llm-key").value
 
-# Use with OpenAI SDK
+# Use with Azure OpenAI SDK (requires azure-openai-api FIRST in apiNameMapping)
 from openai import AzureOpenAI
 client = AzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version="2024-12-01-preview")
 response = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":"Hello"}])
@@ -227,6 +237,20 @@ agent = client.agents.create_agent(
 ```
 
 ### Option C: Direct Output (CI/CD Pipelines)
+
+When not using Key Vault, set `useTargetAzureKeyVault = false` but still provide
+a placeholder `keyVault` object (Bicep validation requires it):
+
+```bicep
+param useTargetAzureKeyVault = false
+param keyVault = {
+  subscriptionId: '00000000-0000-0000-0000-000000000000'
+  resourceGroupName: 'placeholder'
+  name: 'placeholder'
+}
+```
+
+Retrieve credentials from deployment output:
 
 ```powershell
 $output = az deployment sub show `
@@ -265,24 +289,44 @@ Add to your `ai-product-policy.xml`:
 
 ### Acquiring the JWT
 
+Two distinct identities are involved:
+- **Gateway audience** (`<GATEWAY-APP-ID>`): The Entra app registration configured in the hub's APIM. The hub team provides this.
+- **Spoke client identity**: Your app's own service principal or managed identity, which must be granted access to the gateway app role.
+
+**Service principal client:**
+
 ```python
 from azure.identity import ClientSecretCredential
 
 credential = ClientSecretCredential(
     tenant_id="<TENANT-ID>",
-    client_id="<APP-REGISTRATION-CLIENT-ID>",
-    client_secret="<CLIENT-SECRET>"            # from Key Vault: ENTRA-APP-CLIENT-SECRET
+    client_id="<SPOKE-CLIENT-APP-ID>",           # your app's identity
+    client_secret="<SPOKE-CLIENT-SECRET>"         # your app's secret
 )
-token = credential.get_token("api://<APP-REGISTRATION-CLIENT-ID>/.default").token
+token = credential.get_token("api://<GATEWAY-APP-ID>/.default").token
 # Pass as: Authorization: Bearer {token}
 ```
+
+**Managed identity client (recommended on Azure):**
+
+```python
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+token = credential.get_token("api://<GATEWAY-APP-ID>/.default").token
+```
+
+> ⚠️ Your spoke identity must be granted the required app role (e.g. `Models.Read`)
+> on the gateway app registration. Ask the platform team to assign this via Entra ID.
+> See `guides/jwt-client-identity-permissions.md` for full details.
 
 ---
 
 ## Foundry APIM Connection (Standalone)
 
 If you only need to wire a Foundry project to the APIM gateway **without** a full
-Access Contract (e.g. the product/subscription already exists):
+Access Contract (e.g. the product/subscription already exists), use the
+`foundry-integration/main.bicep` template:
 
 ```bash
 cd bicep/infra/foundry-integration
@@ -297,17 +341,20 @@ az deployment group create \
   --parameters my-connection.bicepparam
 ```
 
-Key parameters:
+Key parameters (`foundry-integration/main.bicepparam`):
 
 | Parameter | Description |
 |-----------|-------------|
-| `projectResourceId` | Full resource ID of the AI Foundry project |
-| `apimResourceId` | Full resource ID of the APIM service |
-| `apiName` | APIM API name to connect to |
-| `apimSubscriptionName` | Subscription name for API key (default: `master`) |
+| `aiFoundryAccountName` | Name of the AI Foundry account |
+| `aiFoundryProjectName` | Name of the AI Foundry project |
+| `connectionName` | Name for the connection (e.g. `citadel-hub-connection`) |
+| `apimGatewayUrl` | APIM gateway URL (e.g. `https://<apim>.azure-api.net`) |
+| `apiPath` | APIM API path (e.g. `models`, `openai`) |
+| `apimSubscriptionKey` | Valid APIM subscription key for API access |
 | `deploymentInPath` | `'true'` = model in URL path, `'false'` = model in body |
-| `inferenceAPIVersion` | API version for inference calls |
+| `inferenceAPIVersion` | API version for inference calls (e.g. `2024-02-01`) |
 | `staticModels` | Array of model objects (alternative to dynamic discovery) |
+| `customHeaders` | Additional headers for requests |
 
 Verify in Foundry portal: **Project → Operate → Admin → Connected resources**.
 
@@ -334,12 +381,106 @@ The spoke connects to the Citadel hub gateway over the network. Two patterns:
 | **Hub-based** | Citadel runs inside the hub VNet | Spoke has direct peering or routes through hub firewall |
 | **Spoke-based** | Citadel runs in a dedicated spoke VNet | Spoke routes via hub firewall → Citadel spoke VNet |
 
-In both cases, spoke agents reach the APIM gateway via private endpoint or
-VNet-integrated DNS. Ensure:
+As a spoke owner, verify DNS, routing, and firewall/NSG access to the APIM
+gateway. The platform team owns the hub-side VNet/APIM/private endpoint config.
 
 - ✅ DNS resolution for `<apim-name>.azure-api.net` resolves to private IP
 - ✅ NSG rules allow HTTPS (443) to the APIM subnet
 - ✅ If using private endpoints, the relevant Private DNS Zones are linked to your spoke VNet
+
+---
+
+## Multi-Service Bundles
+
+A single access contract can onboard multiple AI services. Each service entry
+creates a **separate** APIM product, subscription key, endpoint secret, and API key secret.
+
+```bicep
+param apiNameMapping = {
+  LLM: ['azure-openai-api', 'universal-llm-api']
+  DOC: ['document-intelligence-api', 'document-intelligence-api-legacy']
+  SRCH: ['azure-ai-search-index-api']
+}
+
+param services = [
+  {
+    code: 'LLM'
+    endpointSecretName: 'MYAPP-LLM-ENDPOINT'
+    apiKeySecretName: 'MYAPP-LLM-KEY'
+    policyXml: loadTextContent('llm-policy.xml')
+  }
+  {
+    code: 'DOC'
+    endpointSecretName: 'MYAPP-DOC-ENDPOINT'
+    apiKeySecretName: 'MYAPP-DOC-KEY'
+    policyXml: loadTextContent('doc-policy.xml')
+  }
+  {
+    code: 'SRCH'
+    endpointSecretName: 'MYAPP-SEARCH-ENDPOINT'
+    apiKeySecretName: 'MYAPP-SEARCH-KEY'
+    policyXml: ''   // use default
+  }
+]
+```
+
+> ⚠️ Mixed bundles require policy awareness — LLM uses token-per-minute limits,
+> non-LLM services use request-per-minute limits. Use separate policy XMLs per code.
+
+---
+
+## Advanced Policy Capabilities
+
+Beyond model access and token limits, these policy snippets are available for
+spoke product policies. See `citadel-access-contracts-policy.md` for full details.
+
+| Capability | Key Variable / Snippet | When to Use |
+|------------|----------------------|-------------|
+| Model access control | `allowedModels` via `validate-model-access` fragment | Restrict which models a spoke can call |
+| Token limits | `llm-token-limit` (TPM + monthly quota) | Budget control per subscription |
+| Content Safety | Hub-level fragments | Prompt Shield, content filtering |
+| JWT per-product | `jwtRequired=true` | Layered auth on top of API key |
+| JWT custom audience | `jwtAudience`, `jwtIssuer`, `jwtOpenIdConfigUrl` | Non-default identity provider per product |
+| App role authorization | `requiredRoles` | Require specific Entra app roles |
+| Usage attribution | `appId`, `customDimension1`, `customDimension2` | Chargeback and usage analytics |
+| Response debug headers | `enableResponseHeaders` | Troubleshooting in dev/test |
+| PII masking/blocking | PII policy fragments | Data protection compliance |
+| Throttling events | `raise-throttling-events` | Custom handling of rate-limit events |
+
+---
+
+## Validation Notebooks
+
+After deploying an access contract, use the source repo's validation notebooks
+(under `validation/`) to verify end-to-end connectivity:
+
+| Need to Validate | Notebook |
+|-----------------|----------|
+| Access contract deployment + keys | `citadel-access-contracts-tests.ipynb` |
+| Foundry / LangChain / Microsoft Agent Framework consumption | `citadel-agent-frameworks-tests.ipynb` |
+| JWT + role enforcement | `citadel-jwt-authentication-tests.ipynb` |
+| PII masking/blocking policies | `citadel-pii-processing-tests.ipynb` |
+| Unified AI API routing across providers | `citadel-unified-ai-api-tests.ipynb` |
+
+> Requires Python with `openai`, `requests`, `matplotlib` and other packages from
+> `validation/requirements.txt`.
+
+---
+
+## Platform Team Handoff
+
+When onboarding a new spoke, request the following from the Citadel platform team:
+
+- APIM subscription ID, resource group, and APIM instance name
+- Available APIM API IDs and paths (to populate `apiNameMapping`)
+- Supported model names and deployment formats
+- Whether `/deployments` discovery is enabled on the gateway
+- Whether JWT, PII, Content Safety, or custom IdP support is configured
+- Gateway app registration ID (if using JWT auth)
+- Network routing: private endpoint DNS, firewall rules, VNet peering status
+
+Reference `guides/LLM-Backend-Onboarding-Guide.md` for platform-team context
+on how backends are onboarded to the hub (not a spoke deployment step).
 
 ---
 
