@@ -386,7 +386,26 @@ This was validated on 2026-03-29 with:
 
 ## Official Documentation
 
+### Foundry Samples (authoritative reference for connection setup)
+
+- [**APIM and ModelGateway Integration Guide**](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md) — choose between APIM and ModelGateway connection types
+- [**APIM Connection Objects**](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/APIM-Connection-Objects.md) — full schema: deploymentInPath, modelDiscovery, authConfig, customHeaders
+- [**ModelGateway Connection Objects**](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/model-gateway/ModelGateway-Connection-Objects.md) — for non-APIM gateways (Kong, MuleSoft, custom, direct OpenAI)
+- [**APIM Setup Bicep templates**](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/01-connections/apim) — Bicep for creating APIM connections
+- [**ModelGateway Bicep templates**](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/01-connections/model-gateway) — Bicep for creating ModelGateway connections
+
+### Azure Docs
+
 - [Connect an AI gateway to Foundry Agent Service (preview)](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/ai-gateway)
-- [APIM Connection Objects specification](https://github.com/azure-ai-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/APIM-Connection-Objects.md)
-- [Foundry samples: APIM and ModelGateway integration guide](https://github.com/azure-ai-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md)
 - [Red Teaming docs (connectionName/deploymentName format)](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/run-ai-red-teaming-cloud#configure-your-target-model)
+
+### Connection Types Quick Reference
+
+| Gateway Type | Connection Category | When to Use |
+|-------------|-------------------|-------------|
+| **Azure API Management** | `ApiManagement` | APIM as gateway — supports AAD + ApiKey auth |
+| **Any other gateway** (Kong, MuleSoft, custom, direct OpenAI) | `ModelGateway` | Non-APIM gateways — ApiKey auth only (for now) |
+
+> **ModelGateway** is useful when you don't have APIM but want to route through
+> another gateway, or connect directly to OpenAI/third-party endpoints. Currently
+> only supports ApiKey auth — AAD auth is APIM-only for now.
