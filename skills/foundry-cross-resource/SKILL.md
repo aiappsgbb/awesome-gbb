@@ -1,103 +1,155 @@
 ---
 name: foundry-cross-resource
 description: >
-  Cross-resource model invocation in Microsoft Foundry via AI Gateway (APIM).
-  USE FOR: connectionName/deploymentName, cross-resource model access, AI Gateway,
-  APIM connection, ApiManagement connection, remote model invocation, Foundry gateway,
-  use models from another resource, cross-project model access, APIM AI gateway setup,
-  Foundry Agent Service gateway, model gateway connection, remote deployment.
-  DO NOT USE FOR: single-resource model calls, Azure tenant isolation (use azure-tenant-isolation),
-  Foundry project creation, APIM creation from scratch.
+  Cross-resource model invocation in Microsoft Foundry via an Azure APIM AI
+  Gateway, using the `connectionName/deploymentName` model string. Documents
+  the verified ApiKey and ProjectManagedIdentity (PMI) auth paths, three
+  invocation patterns (Responses API, PromptAgentDefinition, refreshed-preview
+  hosted-agent client), the exact APIM inbound policy XML, and the connection
+  ARM/REST schema with the metadata-stringification quirk that catches everyone
+  out. USE FOR: connectionName/deploymentName, cross-resource model access,
+  AI Gateway, APIM connection, ApiManagement connection, remote model
+  invocation, Foundry gateway, use models from another Foundry project, APIM AI
+  gateway setup, Foundry Agent Service gateway, model gateway connection,
+  remote deployment, ProjectManagedIdentity APIM, AI Foundry APIM ApiKey.
+  DO NOT USE FOR: single-resource model calls (use the project's own
+  AzureOpenAI/AIServices connection), Azure tenant isolation
+  (use azure-tenant-isolation), Foundry project creation, APIM creation
+  from scratch.
 ---
 
 # Cross-Resource Model Invocation via Foundry AI Gateway
 
-## Overview
+> **Status — verified live on 2026-04-23** with Foundry account
+> `xtest-foundry-mr5kfi` / project `xtest-proj-mr5kfi` (Sweden Central) calling
+> deployment `gpt-4o-mini` hosted on a different Azure OpenAI account
+> (`emea-aigbb-demos-oai`) through APIM `emea-gbb-ai-apim`. Both **ApiKey** and
+> **ProjectManagedIdentity** auth paths returned `PONG` on all three
+> invocation patterns. See "Verified working configuration" at the end.
 
-This skill documents how to invoke AI models deployed on a **different** Microsoft Foundry resource/project using the `connectionName/deploymentName` pattern routed through an **Azure API Management (APIM) AI Gateway**.
+---
 
-### Architecture
+## 1. What this skill solves
+
+You have a Foundry project ("**consumer**") that needs to invoke models
+deployed on a **different** Azure OpenAI / AI Services account ("**backend**"),
+fronted by an Azure API Management instance acting as the AI Gateway. You want
+to address those models via the Foundry-native string
+`connectionName/deploymentName` so the application code is identical to a
+local-deployment call.
 
 ```
-Source Project (your project)
-  → ApiManagement connection (category: "ApiManagement")
-    → APIM Gateway (azure-api.net)
-      → Backend AI Services resource (remote resource with models)
+┌────────────────────────┐                ┌──────────────────────────┐                ┌─────────────────────────────┐
+│  Consumer Foundry      │                │  APIM AI Gateway         │                │  Backend AI/OpenAI account  │
+│  project               │  Foundry MI    │  emea-gbb-ai-apim        │   APIM MI →    │  emea-aigbb-demos-oai       │
+│  xtest-proj-mr5kfi     ├───or────────► │   /xtest-aoai            ├──Bearer───────►│  gpt-4o-mini deployment     │
+│  (Sweden Central)      │  ApiKey        │   /xtest-aoai-pmi        │  (msi token)   │  (East US 2)                │
+│                        │                │                          │                │                             │
+│  ApiManagement         │                │  validate token /        │                │  Cognitive Services User RBAC│
+│  connection            │                │  enforce subscription    │                │  granted to APIM MI         │
+│  category=ApiManagement│                │  set-backend-service     │                │                             │
+│  target=APIM API URL   │                │  authentication-managed- │                │                             │
+│  authType=ApiKey | PMI │                │   identity → backend     │                │                             │
+└────────────────────────┘                └──────────────────────────┘                └─────────────────────────────┘
 ```
 
-### Key Pattern
+The consumer project never holds the backend's API key or RBAC. APIM is the
+trust boundary.
 
-```python
-model = "connection-name/deployment-name"  # e.g. "remote-gw/gpt-5.4-mini"
-resp = oai.responses.create(model=model, input="...", max_output_tokens=50)
+---
+
+## 2. The 100% reliable checklist
+
+Before any agent call, ALL of these must be true. Cross them off in order; the
+test scripts in `files\test_phase3_apikey.py` / `test_phase4_pmi.py`
+(this session's workspace) verify each step.
+
+| # | Item | How to verify |
+|---|------|---------------|
+| 1 | Backend AI Services / Azure OpenAI account exists with the model deployed | `az cognitiveservices account deployment list -g <rg> -n <backend>` |
+| 2 | APIM exists (any SKU; Developer is fine for testing, Standard v2/Premium for prod) and has system-assigned managed identity enabled | `az apim show -g <rg> -n <apim> --query identity` |
+| 3 | APIM MI has `Cognitive Services User` (or `Cognitive Services OpenAI User`) on the backend account | `az role assignment list --assignee <apim-mi-objectId> --scope <backend-id>` |
+| 4 | APIM has an API whose path you'll target (e.g., `/xtest-aoai`) with **inbound policy that calls `set-backend-service` + `authentication-managed-identity` + Bearer header injection** (see §6) | `Invoke-RestMethod -Uri https://<apim>.azure-api.net/<api>/deployments/<dep>/chat/completions?api-version=2024-10-21 -Headers @{api-key='<sub-key>';...}` returns 200 |
+| 5 | (ApiKey only) An APIM subscription scoped to that API (or to a product the API is in) exists; you have the primary key | `az apim subscription show ...` |
+| 6 | (PMI only) APIM API has `subscriptionRequired: false` AND inbound policy includes `<validate-azure-ad-token>` with `<client-application-ids>` containing the **consumer project MI's client/app ID** | API GET shows `subscriptionRequired:false`; policy GET shows the GUID |
+| 7 | Consumer Foundry project exists, has Azure AI User RBAC for the caller, and (PMI) has system-assigned managed identity enabled | `az cognitiveservices account project show ... --query identity` |
+| 8 | An `ApiManagement` connection exists on the consumer project (NOT `AzureOpenAI`, NOT `AIServices`) | See §5 for the verified PUT body |
+| 9 | The connection's `metadata.models` is a **JSON-stringified** array (NOT a real array) and `metadata.deploymentInPath` matches the backend style | See §5 — this is the most common silent error |
+| 10 | Caller code uses `model="<connectionName>/<deploymentName>"` and calls `responses.create(...)` (NOT `chat.completions.create`) | See §7 |
+
+If step 4 doesn't return 200 outside Foundry, no Foundry call will work. Always
+smoke-test the gateway directly first.
+
+---
+
+## 3. Decision tree
+
+```
+                          ┌──────────────────────────────────────┐
+                          │ What backend does APIM forward to?   │
+                          └─────────────┬────────────────────────┘
+                                        │
+              ┌─────────────────────────┴────────────────────────┐
+              │                                                  │
+   AOAI / AI Services on /openai                       OpenAI v1 (/v1/...)  
+   (most common — Azure OpenAI)                        or Anthropic etc.    
+              │                                                  │
+              ▼                                                  ▼
+   metadata.deploymentInPath = "true"           metadata.deploymentInPath = "false"
+   metadata.inferenceAPIVersion = "2024-10-21"  metadata.inferenceAPIVersion = ""  (or omit)
+   models[].properties.model.format = "OpenAI"  models[].properties.model.format = "OpenAI"|"Anthropic"|"NonOpenAI"
+                                                modelDiscovery.listModelsEndpoint = "/models"
+                                                modelDiscovery.deploymentProvider = "AzureOpenAI"|"OpenAI"|"Anthropic"|"NonOpenAI"
+
+                          ┌──────────────────────────────────────┐
+                          │ How do callers prove identity to APIM?│
+                          └─────────────┬────────────────────────┘
+                                        │
+              ┌─────────────────────────┼────────────────────────┐
+              │                         │                        │
+        APIM subscription key   Project Managed Identity    Both (dual-auth)
+              │                  (no static secrets)               │
+              ▼                         ▼                        ▼
+   authType: "ApiKey"           authType: "ProjectManagedIdentity"  Two connections OR
+   credentials.key: <key>       credentials: {}                     APIM <choose><when>
+   APIM api: subscription req   audience:                           policy that branches
+   APIM policy: pass-through      "https://cognitiveservices.azure.com"
+                                APIM policy: validate-azure-ad-token
+                                  with <client-application-ids>
+                                  containing project MI clientId
+                                APIM api: subscriptionRequired=false
 ```
 
 ---
 
-> [!IMPORTANT]
-> **Before using AI Gateway, ALL of the following must be in place.** If any is missing,
-> you'll get 404/401/500 errors. Check each one:
->
-> 1. ✅ **Remote resource exists** with the model deployed (e.g., `gpt-5.4-mini` on a Sweden Central AI Services account). Not all models are available in all regions — verify with `az cognitiveservices account list-models`.
-> 2. ✅ **APIM instance** exists (BasicV2+ or StandardV2) with **system-assigned managed identity enabled**
-> 3. ✅ **APIM MI has RBAC** — `Cognitive Services User` on the remote AI Services resource
-> 4. ✅ **APIM has an API** with `serviceUrl` pointing to `https://<remote-resource>.services.ai.azure.com`
-> 5. ✅ **APIM API policy** has MI auth + api-version stripping (see Step 1c below)
-> 6. ✅ **Foundry project has an `ApiManagement` connection** (NOT `AIServices`, NOT `AzureOpenAI`) pointing to `https://<apim>.azure-api.net/<api-path>/openai/v1` with APIM subscription key
-> 7. ✅ **Connection has `modelDiscovery` metadata** configured (dynamic or static — see Step 2)
-> 8. ✅ **`MODEL_DEPLOYMENT_NAME`** in agent.yaml is `connectionName/deploymentName` (e.g., `remote-gw/gpt-5.4-mini`)
->
-> **Most common failure:** step 6 — the connection doesn't exist on the Foundry project. Check in Portal → Project Settings → Connections, or `az resource show` on the project's connections.
+## 4. APIM-side configuration
 
-## Prerequisites
+### 4.1 Service URL on the API
 
-| Component | Requirement |
-|-----------|-------------|
-| **Remote resource** | Azure AI Services account with model deployments (check region availability!) |
-| **APIM instance** | Azure API Management (StandardV2 or BasicV2+) with system-assigned managed identity |
-| **APIM MI RBAC** | `Cognitive Services User` role on the remote AI Services resource |
-| **Source project** | Foundry project where you want to USE the remote models |
-| **SDK** | `azure-ai-projects >= 2.0.0` and `openai` |
+The Foundry connection target is `https://<apim>.azure-api.net/<apiPath>`.
+Inside the API's inbound policy you `set-backend-service` to the backend
+account. Foundry then appends `/deployments/{dep}/chat/completions?api-version=...`
+(or `/v1/responses` etc.) to the gateway URL.
 
----
+Operations on the API (i.e., the routes Foundry will call) must therefore
+match the AOAI / OpenAI surface. The simplest setup is **catch-all** with one
+operation per HTTP verb on the wildcard path `/{*path}`. For Azure OpenAI
+backends, all of the following must reach the inbound policy and 200:
 
-## Setup Guide
-
-### Step 1: Configure the APIM Gateway
-
-The APIM instance needs three things:
-
-#### 1a. API with serviceUrl pointing to the remote backend
-
-```powershell
-# The API should have:
-# - path: e.g. "my-api-prefix"
-# - serviceUrl: "https://<remote-resource>.services.ai.azure.com"
-# - subscriptionRequired: true
-# - subscriptionKeyParameterNames.header: "api-key"
+```
+POST /deployments/{deployment-id}/chat/completions?api-version=2024-10-21
+POST /deployments/{deployment-id}/embeddings?api-version=2024-10-21
+POST /v1/responses?api-version=preview          (Responses API)
+GET  /models?api-version=2024-10-21             (model catalogue, used for dynamic discovery)
 ```
 
-#### 1b. System-assigned Managed Identity with RBAC
-
-```powershell
-# APIM MI needs "Cognitive Services User" on the remote AI Services resource
-az role assignment create \
-  --assignee <APIM-MI-principal-id> \
-  --role "Cognitive Services User" \
-  --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<remote-resource>
-```
-
-#### 1c. API Policy with MI authentication and api-version stripping
-
-This is **critical**. The APIM must:
-1. Authenticate to the backend using its managed identity
-2. Strip the `api-version` query parameter (the `/openai/v1/` endpoints reject it)
+### 4.2 ApiKey-only inbound policy (verified working — `xtest-aoai`)
 
 ```xml
 <policies>
     <inbound>
         <base />
-        <!-- Authenticate to backend with APIM's managed identity -->
+        <set-backend-service base-url="https://emea-aigbb-demos-oai.openai.azure.com/openai" />
         <authentication-managed-identity
             resource="https://cognitiveservices.azure.com"
             output-token-variable-name="msi-access-token"
@@ -105,307 +157,483 @@ This is **critical**. The APIM must:
         <set-header name="Authorization" exists-action="override">
             <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
         </set-header>
-        <!-- Strip api-version: /openai/v1/ endpoints don't accept it -->
-        <set-query-parameter name="api-version" exists-action="delete" />
     </inbound>
-    <backend>
-        <base />
-    </backend>
-    <outbound>
-        <base />
-    </outbound>
-    <on-error>
-        <base />
-    </on-error>
+    <backend><base /></backend>
+    <outbound><base /></outbound>
+    <on-error><base /></on-error>
 </policies>
 ```
 
-**Common mistakes:**
-- Missing `serviceUrl` on the API → APIM doesn't know where to forward
-- Missing MI auth policy → backend returns 401/500
-- NOT stripping `api-version` → backend returns "API version not supported"
-- Wrong MI resource scope (must be `https://cognitiveservices.azure.com`, NOT `https://ai.azure.com/`)
+Subscription enforcement is at the API/product level (set
+`subscriptionRequired: true` and configure `subscriptionKeyParameterNames.header`
+to `api-key` so the caller sends `api-key: <key>`, not
+`Ocp-Apim-Subscription-Key`). Foundry sends the `api-key` header.
 
-### Step 2: Create the ApiManagement Connection on Source Project
+### 4.3 PMI-only inbound policy (verified working — `xtest-aoai-pmi`)
 
-**CRITICAL: The connection category MUST be `ApiManagement`** — NOT `AIServices` or `AzureOpenAI`. Those categories do NOT support the `connectionName/deploymentName` pattern.
-
-#### Option A: AAD Auth (Recommended — no Key Vault needed)
-
-Uses the project's managed identity to authenticate to APIM. **No credentials to store →
-no Key Vault required.** This is the keyless approach and should be your default.
-
-**Prerequisite:** APIM must accept the project MI. Assign `API Management Service Reader`
-or a custom role on the APIM instance to the project's managed identity.
-
-```powershell
-$connBody = @{
-    properties = @{
-        category = "ApiManagement"
-        target = "https://<apim-name>.azure-api.net/<api-path>/openai/v1"
-        authType = "AAD"
-        metadata = @{
-            deploymentInPath = "false"
-            modelDiscovery = '{"listModelsEndpoint":"/models","getModelEndpoint":"/models/{deploymentName}","deploymentProvider":"OpenAI"}'
-        }
-        isSharedToAll = $true
-    }
-} | ConvertTo-Json -Depth 5
-
-$connUri = "https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<resource>/connections/<conn-name>?api-version=2025-10-01-preview"
-
-Invoke-RestMethod -Uri $connUri -Method Put -Headers $headers -Body $connBody
+```xml
+<policies>
+    <inbound>
+        <base />
+        <validate-azure-ad-token
+            tenant-id="<your-tenant-id>"
+            header-name="Authorization"
+            failed-validation-httpcode="401"
+            failed-validation-error-message="Unauthorized: token did not match expected audience or application">
+            <client-application-ids>
+                <application-id><consumer-project-MI-clientId></application-id>
+            </client-application-ids>
+            <audiences>
+                <audience>https://cognitiveservices.azure.com</audience>
+                <audience>https://cognitiveservices.azure.com/</audience>
+            </audiences>
+        </validate-azure-ad-token>
+        <set-backend-service base-url="https://emea-aigbb-demos-oai.openai.azure.com/openai" />
+        <authentication-managed-identity
+            resource="https://cognitiveservices.azure.com"
+            output-token-variable-name="msi-access-token"
+            ignore-error="false" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
+        </set-header>
+    </inbound>
+    <backend><base /></backend>
+    <outbound><base /></outbound>
+    <on-error><base /></on-error>
+</policies>
 ```
 
-#### Option B: API Key Auth (needs Key Vault on the project)
+PMI API also needs `subscriptionRequired: false` on the API resource
+(otherwise APIM rejects with 401 before the policy runs).
 
-Uses an APIM subscription key. The platform stores the key in the project's credential
-store (Key Vault). **If the project was created via Bicep without a Key Vault, this
-will fail with 500 Internal Server Error** (credential store → Key Vault → token failure).
+> **Why `<client-application-ids>` and not `<required-claims>` with `xms_mirid`?**
+> Both mechanisms work in principle, but the `xms_mirid` value Foundry's
+> project MI puts in its token is **not** the project ARM ID — it varies by
+> resource provider and current APIs.  The MI's `appid` claim is universally
+> present and stable, so `<client-application-ids>` is the documented and
+> most reliable check. (Verified 2026-04-23: a policy requiring
+> `xms_mirid = <project ARM ID>` returned 401; switching to `<client-application-ids>` returned 200.)
 
-> **Known issue:** Projects created via our minimal Bicep scaffold do NOT have a Key Vault.
-> The platform auto-provisions one when creating via Portal, but not via raw Bicep.
-> If you need ApiKey auth, either create the project via Portal first, or provision
-> a Key Vault separately and link it manually.
+### 4.4 Dual-auth inbound policy (ApiKey OR PMI)
 
-```powershell
-$connBody = @{
-    properties = @{
-        category = "ApiManagement"
-        target = "https://<apim-name>.azure-api.net/<api-path>/openai/v1"
-        authType = "ApiKey"
-        credentials = @{
-            key = "<APIM-subscription-key>"
-        }
-        metadata = @{
-            deploymentInPath = "false"
-            modelDiscovery = '{"listModelsEndpoint":"/models","getModelEndpoint":"/models/{deploymentName}","deploymentProvider":"OpenAI"}'
-        }
-        isSharedToAll = $true
-    }
-} | ConvertTo-Json -Depth 5
-
-# Deploy via ARM API on the Foundry v2 project
-$connUri = "https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<resource>/projects/<project>/connections/<conn-name>?api-version=2025-04-01-preview"
-
-Invoke-RestMethod -Uri $connUri -Method Put -Headers $headers -Body $connBody
+```xml
+<policies>
+    <inbound>
+        <base />
+        <choose>
+            <when condition="@(context.Subscription == null)">
+                <validate-azure-ad-token
+                    tenant-id="<your-tenant-id>"
+                    header-name="Authorization"
+                    failed-validation-httpcode="401">
+                    <client-application-ids>
+                        <application-id><consumer-project-MI-clientId></application-id>
+                    </client-application-ids>
+                    <audiences>
+                        <audience>https://cognitiveservices.azure.com</audience>
+                        <audience>https://cognitiveservices.azure.com/</audience>
+                    </audiences>
+                </validate-azure-ad-token>
+            </when>
+        </choose>
+        <set-backend-service base-url="https://<backend>.openai.azure.com/openai" />
+        <authentication-managed-identity
+            resource="https://cognitiveservices.azure.com"
+            output-token-variable-name="msi-access-token" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
+        </set-header>
+    </inbound>
+</policies>
 ```
 
-#### Connection Configuration Details
+API must have `subscriptionRequired: false` (so PMI calls aren't rejected up
+front); the `<choose>` branch enforces token validation only when no
+subscription was used.
 
-| Field | Value | Why |
-|-------|-------|-----|
-| `category` | `"ApiManagement"` | Only this category enables `connectionName/deploymentName` routing |
-| `target` | `https://<apim>.azure-api.net/<api-path>/openai/v1` | Must include `/openai/v1` suffix for OpenAI-compatible endpoints |
-| `authType` | `"ApiKey"` | APIM subscription key authentication |
-| `deploymentInPath` | `"false"` | Model name goes in request body, NOT URL path |
-| `modelDiscovery` | OpenAI provider with `/models` endpoints | Agent Service validates models via discovery before inference |
+---
 
-#### Model Discovery Configuration (IMPORTANT)
+## 5. Connection schema (verified live)
 
-The Agent Service **always** validates the model before making inference calls. Without correct model discovery config, you get `"Connection not found"` or `"Failed to parse deployment response"` errors.
+ARM type:
+`Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview`.
+Reachable also via the Foundry data-plane endpoint
+`https://<account>.services.ai.azure.com/api/projects/<project>/connections/<name>?api-version=v1`.
 
-**Two options:**
+> ⚠ **The `metadata.models` and `metadata.modelDiscovery` fields are
+> JSON-encoded strings, not real JSON objects.** This is because Azure
+> connection metadata is a flat string→string dictionary. Pass the JSON as a
+> `string` value or your PUT will be silently ignored / rejected.
 
-**Option A: Dynamic discovery (recommended)** — Agent Service calls `/models` endpoint:
+### 5.1 ApiKey connection — verified working PUT body
+
 ```json
 {
-  "modelDiscovery": {
-    "listModelsEndpoint": "/models",
-    "getModelEndpoint": "/models/{deploymentName}",
-    "deploymentProvider": "OpenAI"
+  "properties": {
+    "category": "ApiManagement",
+    "target": "https://emea-gbb-ai-apim.azure-api.net/xtest-aoai",
+    "authType": "ApiKey",
+    "credentials": { "key": "<APIM subscription primary key>" },
+    "isSharedToAll": true,
+    "metadata": {
+      "deploymentInPath": "true",
+      "inferenceAPIVersion": "2024-10-21",
+      "models": "[{\"name\":\"gpt-4o-mini\",\"properties\":{\"model\":{\"name\":\"gpt-4o-mini\",\"format\":\"OpenAI\",\"version\":\"2024-07-18\",\"publisher\":\"Microsoft\"}}}]"
+    }
   }
 }
 ```
 
-**Option B: Static discovery** — pre-define the model list:
+PUT URL:
+
+```
+https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/
+Microsoft.CognitiveServices/accounts/<consumer-acct>/projects/<consumer-proj>/
+connections/<connectionName>?api-version=2025-04-01-preview
+```
+
+Or via the data plane:
+
+```
+PUT https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>/connections/<name>?api-version=v1
+```
+
+### 5.2 PMI connection — verified working PUT body
+
 ```json
 {
-  "models": [
-    {
-      "name": "gpt-5.4-mini",
-      "properties": {
-        "model": {
-          "name": "gpt-5.4-mini",
-          "version": "",
-          "format": "OpenAI"
-        }
-      }
+  "properties": {
+    "category": "ApiManagement",
+    "target": "https://emea-gbb-ai-apim.azure-api.net/xtest-aoai-pmi",
+    "authType": "ProjectManagedIdentity",
+    "credentials": {},
+    "audience": "https://cognitiveservices.azure.com",
+    "isSharedToAll": true,
+    "metadata": {
+      "deploymentInPath": "true",
+      "inferenceAPIVersion": "2024-10-21",
+      "models": "[{\"name\":\"gpt-4o-mini\",\"properties\":{\"model\":{\"name\":\"gpt-4o-mini\",\"format\":\"OpenAI\",\"version\":\"2024-07-18\",\"publisher\":\"Microsoft\"}}}]"
     }
-  ]
+  }
 }
 ```
 
-**CRITICAL: `deploymentProvider` must be `"OpenAI"`, NOT `"AzureOpenAI"`.**
-The `/openai/v1/` endpoints return OpenAI-format responses. Using `AzureOpenAI` causes `"Failed to parse deployment response"` errors because it expects a different JSON structure.
+`audience` lives at `properties.audience`, NOT in metadata. The data-plane
+GET strips it from the response, but it is required on PUT and is what Foundry
+uses when requesting the MI token.
 
-### Step 3: Use in Code
+### 5.3 Metadata reference (full)
+
+| Field | Type | Required | Default | Purpose |
+|-------|------|----------|---------|---------|
+| `deploymentInPath` | string `"true"`/`"false"` | Yes (in practice — without it: `Upstream gateway returned NotFound`) | none | `"true"` → AOAI shape `/deployments/{dep}/chat/completions`. `"false"` → OpenAI v1 shape with model in body. |
+| `inferenceAPIVersion` | string | Recommended for AOAI | none | Appended as `?api-version=...`. Use `2024-10-21` (or newer GA) for AOAI; leave empty for `/v1/responses` style backends. |
+| `deploymentAPIVersion` | string | Optional | `inferenceAPIVersion` | Used for `modelDiscovery` list calls. |
+| `models` | **string** (JSON array, escaped) | Required if no `modelDiscovery` | none | Static catalogue. Must be JSON-stringified. |
+| `modelDiscovery` | **string** (JSON object, escaped) | Required if no `models` | none | Dynamic discovery. Must be JSON-stringified. Defaults: `listModelsEndpoint=/deployments`, `getModelEndpoint=/deployments/{deploymentName}`, `deploymentProvider=AzureOpenAI`. Override to `/models` and `OpenAI` for OpenAI-v1 style backends. |
+| `customHeaders` | string (JSON object) | Optional | none | Adds extra HTTP headers on every Foundry-to-APIM call. |
+| `authConfig` | string (JSON object) | Optional | none | For non-`Authorization`-header auth (e.g., gateway expects `x-api-key: Bearer <key>`). |
+
+`models[].properties.model.format` accepts `OpenAI`, `Anthropic`, `NonOpenAI`.
+For Azure OpenAI deployments use `OpenAI`.
+
+### 5.4 What does NOT work (verified failures)
+
+| Connection variant | Result |
+|--------------------|--------|
+| Connection with **no** `metadata` at all | `400 Model gateway error: Upstream gateway returned NotFound` |
+| Connection with `metadata.modelDiscovery` (stringified) but **no** `models` | `400 Model gateway error: Upstream gateway returned NotFound` (against AOAI backends — AOAI's `/deployments` data-plane endpoint isn't a list) |
+| `models` passed as a real JSON array (not stringified) | Foundry stores it but inference returns `Upstream gateway returned NotFound`; this is a silent footgun |
+| `authType: "AAD"` (legacy alias) | Inconsistent — sometimes accepted, sometimes rejected. Always use `ProjectManagedIdentity`. |
+
+---
+
+## 6. Setup paths
+
+### 6.1 Bicep (recommended for production)
+
+Use the official module from
+[`microsoft-foundry/foundry-samples/infrastructure/infrastructure-setup-bicep/01-connections/apim/`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/01-connections/apim).
+Files of interest:
+
+- `connection-apim.bicep` — top-level module
+- `modules/apim-connection-common.bicep` — actual `connections` resource declaration
+- `samples/parameters-static-models.json` — ApiKey + static models
+- `samples/parameters-dynamic-discovery.json` — dynamic via `/models`
+- `samples/parameters-custom-headers.json`
+- `samples/parameters-custom-auth-config.json`
+
+When using Bicep, you write `models` as a real Bicep array; the module
+JSON-stringifies it before assigning to `metadata.models`. Check
+`apim-connection-common.bicep` to confirm — do NOT hand-stringify if you go
+through Bicep, only if you call ARM/REST directly.
+
+### 6.2 PowerShell REST (operational scripts)
+
+```powershell
+$tenant = '<tenant-id>'
+$proj   = 'https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>'
+$apim   = 'https://emea-gbb-ai-apim.azure-api.net/xtest-aoai'
+
+# Token for Foundry data plane (use the AI resource audience)
+$tok = az account get-access-token --resource 'https://ai.azure.com' --query accessToken -o tsv
+
+$models = @(@{
+    name = 'gpt-4o-mini'
+    properties = @{
+      model = @{ name='gpt-4o-mini'; format='OpenAI'; version='2024-07-18'; publisher='Microsoft' }
+    }
+}) | ConvertTo-Json -Depth 6 -Compress
+
+$body = @{
+  properties = @{
+    category      = 'ApiManagement'
+    target        = $apim
+    authType      = 'ApiKey'
+    credentials   = @{ key = '<APIM subscription primary key>' }
+    isSharedToAll = $true
+    metadata      = @{
+      deploymentInPath    = 'true'
+      inferenceAPIVersion = '2024-10-21'
+      models              = $models    # already a JSON string thanks to ConvertTo-Json
+    }
+  }
+} | ConvertTo-Json -Depth 8
+
+Invoke-RestMethod -Method Put `
+  -Uri "$proj/connections/aigw-strmeta?api-version=v1" `
+  -Headers @{ Authorization = "Bearer $tok"; 'Content-Type' = 'application/json' } `
+  -Body $body
+```
+
+For PMI: replace `authType` with `'ProjectManagedIdentity'`, set
+`credentials = @{}`, and add `audience = 'https://cognitiveservices.azure.com'`
+inside `properties`.
+
+### 6.3 Foundry Portal (manual / quick check)
+
+Operate → **Admin console** → All projects → click parent AI Services
+account → **Admin-connected models** tab → **Add** → choose **API Management**
+→ wizard fills:
+
+- Display name (becomes connection name)
+- Source = APIM service (drop-down lists APIMs in the same tenant)
+- API = drop-down of APIs on that APIM
+- Auth = ApiKey or PMI
+- Discovery = Static models or Auto-discover (calls `listModelsEndpoint`)
+- For Static: enter model name(s), pick format
+
+Portal also writes the connection with stringified metadata under the hood.
+
+---
+
+## 7. Invocation patterns (Python — `azure-ai-projects >= 2.0.0`, `openai >= 2.0.0`)
+
+All three patterns succeed against both ApiKey and PMI connections (verified
+2026-04-23). The model string is **always** `<connectionName>/<deploymentName>`,
+where `<deploymentName>` is the `name` field inside `metadata.models[]`
+(NOT the backend's actual deployment id, unless they happen to match).
+
+### 7.1 Pattern A — Direct Responses API (PRIMARY)
 
 ```python
-import os
-os.environ["AZURE_CONFIG_DIR"] = r"C:\Users\ricchi\.azure-tenants\<alias>"
-
-from azure.identity import AzureCliCredential
 from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 
-endpoint = "https://<resource>.services.ai.azure.com/api/projects/<project>"
-credential = AzureCliCredential(process_timeout=30)
-client = AIProjectClient(endpoint=endpoint, credential=credential)
-oai = client.get_openai_client()
+project = AIProjectClient(
+    endpoint="https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>",
+    credential=DefaultAzureCredential(),
+)
+oai = project.get_openai_client()
 
-# The magic: connectionName/deploymentName
-model = "<connection-name>/<deployment-name>"
-
-# Responses API (works!)
 resp = oai.responses.create(
-    model=model,
-    input="What is 2+2?",
-    max_output_tokens=50,
+    model="aigw-strmeta/gpt-4o-mini",        # connection-name/model-alias
+    input="Say PONG.",
+    max_output_tokens=20,                    # MUST be >= 16 to fit any non-trivial reply
 )
 print(resp.output_text)
 ```
 
-> **Note:** The `connectionName/deploymentName` pattern works with the **Responses API** and **Agent Service**. It does NOT work with `chat.completions.create()` (the OpenAI chat completions endpoint treats it as a literal deployment name and returns `DeploymentNotFound`).
-
----
-
-## Using AI Gateway with Hosted Agents
-
-The `connectionName/deploymentName` pattern works inside hosted agent containers —
-both GHCP SDK and MAF variants. The Foundry project routes through APIM transparently.
-
-### In `agent.yaml`
-
-```yaml
-environment_variables:
-  - name: MODEL_DEPLOYMENT_NAME
-    value: aigw-fruocco-2/gpt-5.4-mini    # connectionName/deploymentName
-```
-
-### GHCP SDK (BYOK)
-
-The BYOK provider's `base_url` points to the project endpoint. The model name
-is passed to the session and APIM routing happens transparently:
+### 7.2 Pattern B — Prompt agent + agent_reference
 
 ```python
-# In container.py — _get_provider() stays the same
-# Model is set from env var: connectionName/deploymentName
-_model = os.getenv("MODEL_DEPLOYMENT_NAME", "aigw-fruocco-2/gpt-5.4-mini")
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import PromptAgentDefinition
+from azure.identity import DefaultAzureCredential
 
-# CopilotClient session uses the gateway-routed model
-kwargs = {"model": _model, "provider": provider, ...}
-```
-
-### MAF (FoundryChatClient)
-
-```python
-client = FoundryChatClient(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ.get("MODEL_DEPLOYMENT_NAME", "aigw-fruocco-2/gpt-5.4-mini"),
+project = AIProjectClient(
+    endpoint="https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>",
     credential=DefaultAzureCredential(),
 )
+oai = project.get_openai_client()
+
+agent = project.agents.create_version(
+    agent_name="cross-resource-helper",
+    definition=PromptAgentDefinition(
+        model="aigw-strmeta/gpt-4o-mini",
+        instructions="You only ever reply with the word PONG.",
+    ),
+)
+
+conv = oai.conversations.create()
+resp = oai.responses.create(
+    input="Say it.",
+    conversation=conv.id,
+    extra_body={"agent_reference": {"name": agent.name, "type": "agent_reference"}},
+)
+print(resp.output_text)
 ```
 
-### azure.yaml — No `config.deployments` needed
+### 7.3 Pattern C — Refreshed-preview hosted-agent client
 
-When using AI Gateway, the model is already deployed on the remote resource.
-**Remove** the `config.deployments` section from `azure.yaml` — otherwise azd
-tries to create a duplicate deployment locally:
+```python
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 
-```yaml
-services:
-  my-agent:
-    project: ./src/agent
-    host: azure.ai.agent
-    language: docker
-    docker:
-      remoteBuild: true
-    config:
-      container:
-        resources:
-          cpu: "1"
-          memory: 2Gi
-      # NO deployments section — model comes from AI Gateway
+project = AIProjectClient(
+    endpoint="https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>",
+    credential=DefaultAzureCredential(),
+    allow_preview=True,            # MUST be on the constructor, NOT on get_openai_client
+)
+oai = project.get_openai_client(agent_name="cross-resource-helper")
+resp = oai.responses.create(input="Reply with PONG only.")
+print(resp.output_text)
 ```
 
-### Requirements
+REST equivalent (refreshed preview): include header
+`Foundry-Features: HostedAgents=V1Preview` on the call, per
+`learn.microsoft.com/azure/foundry/agents/how-to/migrate-hosted-agent-preview`.
 
-- Foundry project must have an `ApiManagement` connection (see Setup Guide above)
-- The connection's target URL must point to the APIM gateway with the correct API path
-- APIM MI must have `Cognitive Services User` on the remote AI Services resource
+### 7.4 Negative pattern — DOES NOT work
 
----
+```python
+# 404 DeploymentNotFound — Foundry only routes the conn/dep alias on /v1/responses,
+# never on the legacy /chat/completions endpoint.
+oai.chat.completions.create(model="aigw-strmeta/gpt-4o-mini", messages=[...])
+```
 
-## Troubleshooting
+If you have legacy code that must use `chat.completions`, point it at the
+backend resource directly (with proper RBAC) — not at the Foundry project's
+OpenAI surface.
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Connection 'X' not found` | Connection category is `AIServices` or `AzureOpenAI` | Recreate as `ApiManagement` category |
-| `Model gateway error: Upstream gateway returned InternalServerError` | APIM can't authenticate to backend | Add MI auth policy, verify RBAC |
-| `Model gateway error: Upstream gateway returned NotFound` | Model discovery fails or wrong path | Set `modelDiscovery` with `"deploymentProvider": "OpenAI"` and `/models` endpoints |
-| `Failed to parse deployment response for 'X' from provider 'AzureOpenAI'` | Discovery uses wrong provider format | Set `deploymentProvider: "OpenAI"` (not `AzureOpenAI`) |
-| `API version not supported` | `api-version` query param sent to `/openai/v1/` endpoints | Add APIM policy: `<set-query-parameter name="api-version" exists-action="delete" />` |
-| `DeploymentNotFound` | Using `chat.completions.create()` | Use `responses.create()` instead — chat completions doesn't support `connectionName/deploymentName` |
-| APIM returns 500 | `serviceUrl` is null on the API | Set `serviceUrl` to the remote backend URL |
-| **PUT connection 500: credential store → Key Vault token failure** | Project created via Bicep without a Key Vault. `authType: "ApiKey"` needs KV to store the subscription key. | **Use `authType: "AAD"` instead (recommended)** — no Key Vault needed. Or create project via Portal (auto-provisions KV). See Step 2 Options A/B. |
+### 7.5 Hosted Agents container (`MODEL_DEPLOYMENT_NAME`)
 
----
-
-## Reference: Verified Working Configuration
-
-This was validated on 2026-03-29 with:
-
-| Component | Details |
-|-----------|---------|
-| **Source project** | `tlnext-agents-proj` on `tlnext-agents-tlnext` (North Central US) |
-| **Remote resource** | `global-aiapps-gbb-sw` (Sweden Central) |
-| **APIM gateway** | `global-aiapps-gbb-aigw` (BasicV2, Sweden Central) |
-| **Connection name** | `remote-gw` |
-| **Connection category** | `ApiManagement` |
-| **Target** | `https://global-aiapps-gbb-aigw.azure-api.net/global-aiapps-gbb-sw/openai/v1` |
-| **Model used** | `remote-gw/gpt-5.4-mini` |
-| **SDK** | `azure-ai-projects 2.0.1`, `openai` (latest) |
-| **API** | Responses API (`oai.responses.create()`) |
-
-### ThreadLight tl2-prd Configuration (validated 2026-04-14)
-
-| Component | Details |
-|-----------|---------|
-| **Source project** | `aiprj-4f31f390` on `tl2-hub-ah3f7giaicvzu` (North Central US) |
-| **Remote resource** | `emea-aigbb-demos-oai-fruocco-2` (Sweden Central, has `gpt-5.4-mini`) |
-| **APIM gateway** | `aigw-fruocco-2` (BasicV2, Sweden Central) in RG `rg-infra-fruocco-2`, sub `2c745a8f-9d37-45e3-8506-80797e89735e` |
-| **Connection name** | `aigw-fruocco-2` |
-| **Connection category** | `ApiManagement` |
-| **Target** | `https://aigw-fruocco-2.azure-api.net/emea-aigbb-demos-oai-fruocco-2/openai/v1` |
-| **APIM subscription** | `tl2-prd-agents` (scoped to API) |
-| **Model used** | `aigw-fruocco-2/gpt-5.4-mini` |
-| **Env var** | `AZURE_OPENAI_AGENT_MODEL=aigw-fruocco-2/gpt-5.4-mini` |
-| **Code** | `_ensure_aigw_connection()` in `azure_loader.py`, `upsert_agent()` uses `config.AZURE_OPENAI_AGENT_MODEL` |
+For Foundry Hosted Agents (MAF + ResponsesHostServer, or GHCP SDK
+InvocationAgentServerHost), set `MODEL_DEPLOYMENT_NAME` in the agent's
+container env to the same `connectionName/deploymentName` string. Remove any
+`config.deployments` / model-deployment block from `azure.yaml` — the runtime
+dispatches via the connection. See `foundry-hosted-agents` and
+`ghcp-hosted-agents` skills.
 
 ---
 
-## Official Documentation
+## 8. Validation
 
-### Foundry Samples (authoritative reference for connection setup)
+### 8.1 Pre-Foundry: smoke-test APIM directly
 
-- [**APIM and ModelGateway Integration Guide**](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim-and-modelgateway-integration-guide.md) — choose between APIM and ModelGateway connection types
-- [**APIM Connection Objects**](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/APIM-Connection-Objects.md) — full schema: deploymentInPath, modelDiscovery, authConfig, customHeaders
-- [**ModelGateway Connection Objects**](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/model-gateway/ModelGateway-Connection-Objects.md) — for non-APIM gateways (Kong, MuleSoft, custom, direct OpenAI)
-- [**APIM Setup Bicep templates**](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/01-connections/apim) — Bicep for creating APIM connections
-- [**ModelGateway Bicep templates**](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/01-connections/model-gateway) — Bicep for creating ModelGateway connections
+```powershell
+$apim = 'https://emea-gbb-ai-apim.azure-api.net/xtest-aoai'
+$key  = '<subscription primary key>'
 
-### Azure Docs
+Invoke-RestMethod -Method Post `
+  -Uri "$apim/deployments/gpt-4o-mini/chat/completions?api-version=2024-10-21" `
+  -Headers @{ 'api-key' = $key; 'Content-Type' = 'application/json' } `
+  -Body (@{ messages=@(@{role='user';content='Say PONG.'}); max_tokens=20 } | ConvertTo-Json -Depth 5)
+```
 
-- [Connect an AI gateway to Foundry Agent Service (preview)](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/ai-gateway)
-- [Red Teaming docs (connectionName/deploymentName format)](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/run-ai-red-teaming-cloud#configure-your-target-model)
+Expected: HTTP 200 with `choices[0].message.content`. If this fails, fix APIM
+before touching Foundry.
 
-### Connection Types Quick Reference
+### 8.2 Foundry probe: `test_apim_connection.py`
 
-| Gateway Type | Connection Category | When to Use |
-|-------------|-------------------|-------------|
-| **Azure API Management** | `ApiManagement` | APIM as gateway — supports AAD + ApiKey auth |
-| **Any other gateway** (Kong, MuleSoft, custom, direct OpenAI) | `ModelGateway` | Non-APIM gateways — ApiKey auth only (for now) |
+[`microsoft-foundry/foundry-samples/.../apim/test_apim_connection.py`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/test_apim_connection.py)
+is the official validator — it issues a probe `/models` (or `/deployments`)
+request and surfaces auth / discovery / target reachability problems before
+agent calls.
 
-> **ModelGateway** is useful when you don't have APIM but want to route through
-> another gateway, or connect directly to OpenAI/third-party endpoints. Currently
-> only supports ApiKey auth — AAD auth is APIM-only for now.
+### 8.3 Field-tested test scripts (this session)
+
+`files\test_phase3_apikey.py` and `files\test_phase4_pmi.py` (in this
+session's workspace) exercise all three invocation patterns plus the negative
+chat.completions case for both auth modes. Reuse them as regression tests
+when you provision new APIM/Foundry combinations.
+
+---
+
+## 9. Troubleshooting matrix (reproduced root causes)
+
+| Symptom | Root cause | Fix |
+|---------|-----------|-----|
+| `400 Model gateway error: Upstream gateway returned NotFound` on EVERY call | Connection `metadata` is missing or `models`/`modelDiscovery` not stringified | PUT a connection that matches §5.1 verbatim. Stringify `models`. |
+| `404 DeploymentNotFound` from `chat.completions.create()` with `model="conn/dep"` | Foundry routes `conn/dep` only on the Responses API | Use `responses.create()` (Pattern A) or one of the agent patterns. |
+| `401 Access denied due to missing subscription key` (ApiKey path) | `api-key` header missing OR API/product `subscriptionRequired=false` is set | Either ensure connection holds the key (`credentials.key`) and APIM API requires sub; or switch to PMI and clear `subscriptionRequired`. |
+| `401 Invalid token (audience or xms_mirid claim mismatch)` (PMI path) | Either audience mismatch or `xms_mirid` required-claim doesn't match Foundry's actual MI token | Validate using `<client-application-ids>` with the project MI clientId. (See §4.3 — `xms_mirid` value from Foundry is unreliable.) |
+| Connection PUT with KV reference fails: "Azure Key Vault connections can only be created or updated at the workspace hub level" | Trying to store API key in a project-level KV connection on a Foundry V2 project | Don't. The 2025-04-01-preview ARM API stores ApiKey credentials inline. KV is not required. |
+| Connection accepts `metadata.models` as real JSON array but inference still 404s | `models` stored as native dict, not stringified — silent footgun | JSON-stringify (`json.dumps(...)` then assign as the metadata value). |
+| `BadRequest: API version not supported` calling `/connections` data plane | Wrong api-version. Foundry data plane uses `?api-version=v1`, not the ARM `2025-04-01-preview` | Use `?api-version=v1` for `/api/projects/<p>/connections/...`. ARM `2025-04-01-preview` works only at `https://management.azure.com/...`. |
+| `ValueError: get_openai_client(...agent_name) requires allow_preview=True` | Set `allow_preview` on `get_openai_client()` instead of on the constructor | Move `allow_preview=True` to `AIProjectClient(...)`. |
+| Pattern A returns `r.output_text == ""` | `max_output_tokens` too small; reasoning tokens consumed budget | Set `max_output_tokens >= 16` for "PONG"-style smoke tests; higher for real traffic. |
+| Foundry call returns `500 server_error: Model gateway error: backend returned a non-200 response` | Custom APIM policy returned anything other than HTTP 200 | Foundry only accepts 200 from upstream. Don't try to short-circuit with `<return-response>`. |
+
+---
+
+## 10. Network isolation
+
+For private VNet deployments (private endpoint on AI Services + private
+endpoint on APIM + DNS), see template
+[`16-private-network-standard-agent-apim-setup-preview`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup-preview).
+Conceptually identical to the public path — the connection target becomes
+`https://<apim-private-host>/<api-path>`; Foundry resolves it through the
+project's outbound private DNS zone.
+
+---
+
+## 11. Verified working configuration (2026-04-23)
+
+This section captures the exact resources used in the live verification of
+this skill. Reproducible end-to-end.
+
+| Component | Value |
+|-----------|-------|
+| Subscription | `3f67d949-7954-461f-867c-a8d3058b4d9a` (fruocco-1) |
+| Tenant | `cd150465-0cc5-4f78-869c-f4f803671e78` (`me-mngenv`) |
+| Backend account | `emea-aigbb-demos-oai` (Azure OpenAI, `rg-infra`, East US 2) |
+| Backend deployment | `gpt-4o-mini` v `2024-07-18` |
+| APIM | `emea-gbb-ai-apim` (`rg-infra`, Developer SKU, system-assigned MI) |
+| APIM MI principal | `b17a4023-f79b-4047-bf64-907100375401` |
+| APIM MI RBAC | `Cognitive Services OpenAI User` on backend account |
+| APIM API (ApiKey) | `xtest-aoai`, `subscriptionRequired=true`, header `api-key` |
+| APIM API (PMI) | `xtest-aoai-pmi`, `subscriptionRequired=false`, AAD-token-validated |
+| Consumer account | `xtest-foundry-mr5kfi` (`rg-foundry-xtest-mr5kfi`, Sweden Central) |
+| Consumer project | `xtest-proj-mr5kfi` |
+| Consumer project MI clientId | `525b43a3-474e-4777-9d62-06ee330d46fc` |
+| Consumer project endpoint | `https://xtest-foundry-mr5kfi.services.ai.azure.com/api/projects/xtest-proj-mr5kfi` |
+| Connection (ApiKey) | `aigw-strmeta`, `target=https://emea-gbb-ai-apim.azure-api.net/xtest-aoai` |
+| Connection (PMI) | `aigw-pmi`, `target=https://emea-gbb-ai-apim.azure-api.net/xtest-aoai-pmi`, `audience=https://cognitiveservices.azure.com` |
+| Test result (ApiKey) | Pattern A ✅ Pattern B ✅ Pattern C ✅ Negative chat.completions → 404 ✅ |
+| Test result (PMI) | Pattern A ✅ Pattern B ✅ Pattern C ✅ |
+
+SDK versions used: `azure-ai-projects 2.1.0`, `openai 2.36.0`,
+`azure-identity 1.x`. Compatible with `azure-ai-projects >= 2.0.0`.
+
+---
+
+## 12. References
+
+Authoritative sources backing every claim in this skill:
+
+- **MS Learn** — [`AI Gateway connection (Foundry agents)`](https://learn.microsoft.com/azure/foundry/agents/how-to/ai-gateway)
+- **MS Learn** — [`Refreshed hosted agent preview`](https://learn.microsoft.com/azure/foundry/agents/how-to/migrate-hosted-agent-preview)
+- **GitHub `microsoft-foundry/foundry-samples`** —
+  - [`connection-apim.bicep`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/connection-apim.bicep)
+  - [`apim-connection-common.bicep`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/modules/apim-connection-common.bicep)
+  - [`APIM-Connection-Objects.md`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/APIM-Connection-Objects.md)
+  - [`apim-setup-guide-for-agents.md`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/apim-setup-guide-for-agents.md)
+  - [`troubleshooting-guide.md`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/troubleshooting-guide.md)
+  - [`test_apim_connection.py`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/test_apim_connection.py)
+  - [`16-private-network-standard-agent-apim-setup-preview/`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/16-private-network-standard-agent-apim-setup-preview)
+- **ARM** — `Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview`
+- **APIM** — [`validate-azure-ad-token` policy reference](https://learn.microsoft.com/azure/api-management/validate-azure-ad-token-policy)
+- **APIM** — [`authentication-managed-identity` policy reference](https://learn.microsoft.com/azure/api-management/authentication-managed-identity-policy)
+- **Related skills** — `foundry-hosted-agents`, `ghcp-hosted-agents`,
+  `azure-tenant-isolation`, `azd-patterns`, `foundry-mcp-aca`
