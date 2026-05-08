@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py app.py ./
-COPY teams_package/ ./teams_package/
+# Copy all bot files (add .dockerignore to exclude __pycache__, .env, etc.)
+COPY . .
 
 EXPOSE 80
 CMD ["python", "app.py"]

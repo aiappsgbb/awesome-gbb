@@ -6,6 +6,7 @@ import asyncio
 import aiohttp
 import traceback
 
+from dotenv import load_dotenv
 from azure.identity.aio import DefaultAzureCredential
 from azure.ai.projects.aio import AIProjectClient
 
@@ -22,10 +23,18 @@ from microsoft_agents.activity import load_configuration_from_env
 
 agents_sdk_config = load_configuration_from_env(os.environ)
 
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
-AGENT_NAME = os.getenv("AGENT_NAME", "__PROJECT_NAME__")
-PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
+AGENT_NAME = os.environ.get("AGENT_NAME", "__PROJECT_NAME__")
+PROJECT_ENDPOINT = os.environ.get("PROJECT_ENDPOINT", "")
+
+# Fail fast on missing critical config
+if not PROJECT_ENDPOINT or PROJECT_ENDPOINT == "":
+    raise ValueError("PROJECT_ENDPOINT env var is required")
+if AGENT_NAME == "__PROJECT_NAME__":
+    logger.warning("AGENT_NAME still has placeholder value — update agent.yaml or env var")
 REPORT_EXTENSIONS = {".html", ".csv", ".md", ".json"}
 
 
@@ -62,13 +71,22 @@ async def _send_session_files(context: TurnContext, session_id: str):
 
                 if len(content) < 28000:
                     text = content.decode("utf-8", errors="replace")
-                    await context.send_activity(
-                        f"📎 **{name}** ({len(content):,} bytes)\n\n```\n{text[:20000]}\n```"
-                    )
+                    if ext == ".html":
+                        await context.send_activity(
+                            f"📎 **{name}** ({len(content):,} bytes)\n\n"
+                            f"Copy the content below and save as `{name}` to open in your browser:\n\n"
+                            f"```html\n{text[:20000]}\n```"
+                        )
+                    else:
+                        await context.send_activity(
+                            f"📎 **{name}** ({len(content):,} bytes)\n\n```\n{text[:20000]}\n```"
+                        )
                 else:
                     await context.send_activity(
-                        f"📎 **{name}** ({len(content):,} bytes) — too large for inline display."
+                        f"📎 **{name}** ({len(content):,} bytes) — too large for inline display. "
+                        f"Download via: `azd ai agent files download --file {name}`"
                     )
+                logger.info("Sent file: %s (%d bytes)", name, len(content))
     except Exception as exc:
         logger.warning("Could not send session files: %s", exc)
 
@@ -130,6 +148,7 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
         user_message = (context.activity.text or "").strip()
         if not user_message:
             return
+        logger.info("Received message: %s", user_message)
 
         # !reset — clear conversation
         if user_message.lower() == "!reset":
