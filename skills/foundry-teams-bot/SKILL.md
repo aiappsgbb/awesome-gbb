@@ -182,10 +182,10 @@ if response_text:
 
 **Which pattern to use:**
 
-| Agent Runtime | Bot Pattern | API |
-|--------------|-------------|-----|
-| **MAF** (ResponsesHostServer) | `oai.responses.create(stream=True)` | Responses API ✅ |
-| **GHCP SDK** (InvocationAgentServerHost) | Direct HTTP POST + SSE parsing | Invocations endpoint ✅ |
+| Agent Runtime | Bot Pattern | Template |
+|--------------|-------------|----------|
+| **MAF** (ResponsesHostServer) | `oai.responses.create(stream=True)` | [`templates/copilot/bot.py`](templates/copilot/bot.py) |
+| **GHCP SDK** (InvocationAgentServerHost) | Direct HTTP POST + SSE parsing | [`templates/copilot/bot-invocations.py`](templates/copilot/bot-invocations.py) |
 
 ### `copilot/app.py`
 
