@@ -1421,6 +1421,11 @@ project/                    # ← REPO ROOT
 | **Hooks fail on Windows** | `shell: sh` in azure.yaml hooks | Use `shell: pwsh` for cross-platform compatibility |
 | **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content | Default to `gpt-5.4-mini` |
 | **Evals show no telemetry** | AppInsights not connected to Foundry project | Create an `ApplicationInsights` connection on the project (see Monitoring section) |
+| **`azd up --no-prompt` fails with multiple subs** | azd can't auto-select subscription | Set `AZURE_SUBSCRIPTION_ID` in azd env: `azd env set AZURE_SUBSCRIPTION_ID <sub-id>` |
+| **`config.deployments` fails silently — no model created** | Extension creates model during provision but doesn't error if it fails | Verify with `az cognitiveservices account deployment list --resource-group <rg> --name <account> -o table` after `azd provision` |
+| **Cross-RG ACR needs manual AcrPull** | ACR in different resource group from ACA | Manually assign `AcrPull` to the shared UAMI on the ACR. Bicep auto-assignment only works same RG. |
+| **ACA missing `azd-service-name` tag** | azd can't find the ACA for updates on redeploy | Add `azd-service-name: <service>` tag to all ACA resources in Bicep |
+| **MCP ACA needs `registries` config in ACA** | ACA can't pull image from ACR without registry auth | Add `registries: [{ server: acrEndpoint, identity: uami.id }]` to ACA configuration in Bicep (NOT admin creds, NOT system MI) |
 
 > **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
 > and detailed RBAC scenarios.

@@ -389,6 +389,7 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 | `task_adherence` drops when tools added | Known trade-off — evaluator penalizes tool call overhead | Expected 5-15% drop; focus on tool_selection + tool_output_utilization being 80%+ |
 | `task_adherence` recovers with conversation format | Using plain string query instead of conversation-format + tool_definitions | Use conversation-format query (messages array) and always include `tool_definitions` — evaluator scores improve significantly |
 | BYOK token expires during long eval | Many sequential invocations exhaust the ~1h token | Refresh BYOK token per invocation: mint fresh `_get_provider()` every ~30 scenarios or create new session |
+| `task_completion` = 0% but agent works | MCP tools not deployed — agent can't complete tasks that need tool calls | This is a deployment gap, not a quality failure. Deploy MCP server first, then re-run evals. |
 
 ---
 
