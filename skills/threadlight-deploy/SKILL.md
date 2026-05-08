@@ -740,6 +740,7 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] `src/agent/skills/` — has all skills from AGENTS.md, no extra, no missing
 - [ ] `src/agent/config/` — process configuration from spec (if applicable)
 - [ ] `src/agent/mcp-config.json` — only remote HTTP servers, includes mock MCP endpoints for mocked systems, no unresolved `${ENV_VAR}` placeholders
+- [ ] `src/agent/agent.yaml` — copy of root `agent.yaml` (must be in both locations)
 
 #### `src/mcp/` — MCP server (if mocked systems or Cosmos)
 - [ ] `src/mcp/server.py` — tools match spec § 6 contracts for mocked systems
@@ -763,6 +764,10 @@ Check every file. Mark each ✅ or fix before presenting.
 > The `azd ai agent` extension and `azd` CLI look for them at the repo root.
 > Only the *source code* (container.py, Dockerfile, skills, etc.) goes under `src/`.
 > The `project: ./src/agent` field in `azure.yaml` tells azd where the Dockerfile is.
+>
+> **`agent.yaml` must ALSO be copied to `src/agent/`** — the extension reads it from
+> root for agent creation, but the container build context needs it in the service dir
+> for the hosted agent version to resolve correctly. Keep both in sync.
 
 - [ ] `agent.yaml` — `kind: hosted` (top-level), protocols `1.0.0`, resources `{cpu, memory}`, NO `FOUNDRY_PROJECT_ENDPOINT`
 - [ ] `azure.yaml` — `host: azure.ai.agent`, `project: ./src/agent`, model in `config.deployments`, `requiredVersions` for extension
@@ -1257,7 +1262,7 @@ project/                    # ← REPO ROOT
 ├── AGENTS.md               # Original design (unchanged)
 ├── specs/                   # SpecKit (from threadlight-design, unchanged)
 │
-├── agent.yaml              # ⚠️ MUST be at root — azd ai agent reads this
+├── agent.yaml              # ⚠️ MUST be at root AND copied to src/agent/
 ├── azure.yaml              # ⚠️ MUST be at root — azd reads this
 │
 ├── src/

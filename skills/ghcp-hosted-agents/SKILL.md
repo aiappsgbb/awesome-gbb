@@ -306,6 +306,7 @@ Task Completion) are stable across both judge models.
 | **Agent crashes on startup** | Missing `azure-ai-agentserver-invocations` | Add to dependencies, use `prerelease = "if-necessary-or-explicit"` |
 | **Gateway timeout (502/504)** | Using Responses protocol for long queries | Switch to Invocations protocol |
 | **Token expired during long query** | BYOK token static per session | Token has ~1h validity; for longer sessions, create new session |
+| **Token expired during eval runs** | Long eval runs (many scenarios) exhaust the BYOK token | Refresh the provider token per invocation: call `_get_provider()` fresh before each `_ensure_session()`, or create a new session every ~30 min |
 | **Container can't resolve packages** | pip doesn't handle pre-release deps | Use `uv` with pre-release settings in `[tool.uv]` |
 | **Missing `[tool.setuptools] packages = []`** | uv resolution fails without it | Add to pyproject.toml (see `references/pyproject.toml`) |
 | **Bicep missing `AZURE_AI_PROJECT_ID`** | Postdeploy hooks need the ARM resource ID | Bicep must output full ARM resource ID, not just endpoint |

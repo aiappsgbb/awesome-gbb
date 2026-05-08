@@ -363,6 +363,8 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 | Scenario fails but agent is correct | Eval scenario references data not in seed/mock data | Align scenario IDs with actual sample data (e.g., S-003 uses LA-1011 but only LA-1001..1003 exist) |
 | Broad query causes >5min tool loop | No tool budget in instructions | Add tool budget directive: "max 5 tool calls per message" |
 | `task_adherence` drops when tools added | Known trade-off — evaluator penalizes tool call overhead | Expected 5-15% drop; focus on tool_selection + tool_output_utilization being 80%+ |
+| `task_adherence` recovers with conversation format | Using plain string query instead of conversation-format + tool_definitions | Use conversation-format query (messages array) and always include `tool_definitions` — evaluator scores improve significantly |
+| BYOK token expires during long eval | Many sequential invocations exhaust the ~1h token | Refresh BYOK token per invocation: mint fresh `_get_provider()` every ~30 scenarios or create new session |
 
 ---
 
