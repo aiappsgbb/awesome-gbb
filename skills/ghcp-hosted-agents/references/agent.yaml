@@ -10,11 +10,11 @@ metadata:
 protocols:
   - protocol: invocations    # GHCP SDK SSE streaming (container runtime)
     version: 1.0.0
-  - protocol: responses      # For bot (oai.responses.create) and azd ai agent invoke
-    version: 1.0.0
-# ⚠️ UNTESTED: dual protocol declaration. If this doesn't work, the bot must
-# call via the Invocations protocol (SSE) instead of Responses API, OR the
-# agent must switch to MAF runtime (ResponsesHostServer) which natively serves responses.
+# NOTE: Do NOT add protocol: responses here. InvocationAgentServerHost only
+# serves /invocations — the /responses endpoint returns 404 even if declared.
+# External callers (bot, azd invoke) must use the Invocations SSE endpoint.
+# If you need Responses API (e.g., for a Teams bot using oai.responses.create()),
+# switch to MAF runtime (ResponsesHostServer) instead.
 environment_variables:
   - name: MODEL_DEPLOYMENT_NAME
     value: gpt-5.4
