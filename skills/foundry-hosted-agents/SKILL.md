@@ -420,6 +420,7 @@ Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/con
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` | Passed in `HostedAgentDefinition.environment_variables` | Remove it — platform injects telemetry config |
+| Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` | Assign to BOTH `instance_identity` and `blueprint` principal IDs on the Application Insights resource. Project MI needs `Log Analytics Data Reader` on Log Analytics workspace. Also create `ApplicationInsights` connection on Foundry project. |
 | ACA job uses old code after deploy | Postdeploy hook fails (`AZURE_AI_PROJECT_ENDPOINT not set`) | Run `cd infra/scripts && uv run deploy_job.py` manually after each `azd deploy` |
 | Container starts but `agent_reference` errors in logs | `FoundryAgent` used for sub-agents | Replace with client-swap pattern |
 | Protocol version error | Using `"v1"` | Use semver `"1.0.0"` |

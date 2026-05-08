@@ -688,10 +688,28 @@ the Foundry project** for eval telemetry and agent tracing to work.
      --api-version 2025-10-01-preview
    ```
 
-2. **Assign RBAC for eval telemetry:**
+2. **RBAC for telemetry — ALL identities need access:**
 
-   The project managed identity needs `Log Analytics Data Reader` on the Log Analytics
-   workspace to read telemetry for evaluations.
+   | Identity | Role | Scope | Why |
+   |----------|------|-------|-----|
+   | **Agent instance identity** | `Monitoring Metrics Publisher` | Application Insights | Agent container writes telemetry |
+   | **Agent blueprint identity** | `Monitoring Metrics Publisher` | Application Insights | Platform internal telemetry |
+   | **Project managed identity** | `Log Analytics Data Reader` | Log Analytics workspace | Read telemetry for evaluations |
+   | **Shared UAMI** (bot, MCP) | `Log Analytics Data Reader` | Log Analytics workspace | Postdeploy hooks read telemetry |
+
+   Get agent identities from `azd ai agent show` → `instance_identity.principal_id`
+   and `blueprint.principal_id`. Assign to both.
+
+   ```bash
+   APPINSIGHTS_ID="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Insights/components/<appinsights>"
+
+   # Agent identities (both instance + blueprint) — WRITE telemetry
+   az role assignment create --assignee <INSTANCE_PRINCIPAL_ID> --role "Monitoring Metrics Publisher" --scope $APPINSIGHTS_ID
+   az role assignment create --assignee <BLUEPRINT_PRINCIPAL_ID> --role "Monitoring Metrics Publisher" --scope $APPINSIGHTS_ID
+
+   # Project MI — READ telemetry for evals
+   az role assignment create --assignee <PROJECT_MI_PRINCIPAL_ID> --role "Log Analytics Data Reader" --scope $LOG_ANALYTICS_ID
+   ```
 
 ### OpenTelemetry in container (optional)
 
