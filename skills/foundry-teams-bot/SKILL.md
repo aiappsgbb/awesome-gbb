@@ -702,3 +702,4 @@ user_token = result["access_token"]
 | Bot image overwritten on reprovision | Bicep resets container image | Use `fetch-container-image.bicep` + `SERVICE_BOT_RESOURCE_EXISTS` param |
 | `server_error` in Teams | Stale conversation from previous agent version | Type `!reset` in Teams chat — bot auto-retries with fresh conversation |
 | Manifest validation fails on length | `name.full` > 100 chars or `description.short` > 80 chars | Use separate short/full tokens. Build script auto-truncates but keep inputs concise. |
+| Bot crashes after pip install | microsoft-agents-* 0.9.x has breaking changes | Pin to `>=0.8.0,<0.9.0` in requirements.txt (tested with 0.8.0) |

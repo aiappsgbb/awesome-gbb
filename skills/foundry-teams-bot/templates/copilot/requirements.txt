@@ -1,10 +1,11 @@
 # Microsoft Agents SDK (Bot Framework successor)
-microsoft-agents-activity>=0.8.0
-microsoft-agents-authentication-msal>=0.8.0
-microsoft-agents-hosting-aiohttp>=0.8.0
-microsoft-agents-hosting-core>=0.8.0
-microsoft-agents-hosting-teams>=0.8.0
-microsoft-agents-storage-blob>=0.8.0
+# Pin to 0.8.x — 0.9.x has breaking changes (tested with 0.8.0)
+microsoft-agents-activity>=0.8.0,<0.9.0
+microsoft-agents-authentication-msal>=0.8.0,<0.9.0
+microsoft-agents-hosting-aiohttp>=0.8.0,<0.9.0
+microsoft-agents-hosting-core>=0.8.0,<0.9.0
+microsoft-agents-hosting-teams>=0.8.0,<0.9.0
+microsoft-agents-storage-blob>=0.8.0,<0.9.0
 
 # Azure AI + OpenAI
 azure-ai-projects>=2.0.0
