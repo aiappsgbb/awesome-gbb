@@ -389,17 +389,51 @@ agent_input = f"[User: {user_name}] {user_message}"
 
 ## Sending Files to Teams
 
-### Pattern 1: Inline code blocks (current, simple)
+### Pattern 1: FileConsentCard (recommended, personal chat)
 
-After the agent responds, check for files in the Foundry session and send as
-inline text. Works for text/HTML/CSV under ~28KB (Teams message limit).
+The proper way to send files from bot to Teams. The bot asks user for permission
+to upload, then writes the file to the user's OneDrive. The user sees a clickable
+file card they can preview or download.
+
+> **Limitation:** Only works in `personal` context (1:1 chat), NOT channels or group chats.
+> Requires `supportsFiles: true` in the Teams manifest.
+
+**Flow:** Agent generates file → bot downloads from session files API → bot sends
+FileConsentCard → user accepts → bot uploads to OneDrive URL → bot sends FileCard.
 
 ```python
-import aiohttp
-from azure.identity.aio import DefaultAzureCredential
+from microsoft_agents.activity import Activity, ActivityTypes, Attachment
 
-async def _send_session_files(context: TurnContext, session_id: str):
-    """Check for files in agent session and send to Teams."""
+# Step 1: Download file from Foundry session
+file_bytes = await _download_session_file(session_id, filename)
+
+# Step 2: Send consent card
+consent = Attachment(
+    content_type="application/vnd.microsoft.teams.card.file.consent",
+    name=filename,
+    content={
+        "description": "Agent-generated report",
+        "sizeInBytes": len(file_bytes),
+        "acceptContext": {"filename": filename, "session_id": session_id},
+        "declineContext": {},
+    },
+)
+await context.send_activity(Activity(type=ActivityTypes.message, attachments=[consent]))
+
+# Step 3: Handle the invoke when user accepts (in a separate handler):
+# context.activity.name == "fileConsent/invoke"
+# context.activity.value["action"] == "accept"
+# Upload file_bytes to: context.activity.value["uploadInfo"]["uploadUrl"]
+# Then send FileCard confirmation
+```
+
+### Downloading files from Foundry session
+
+Both patterns need to get files from the agent session first:
+
+```python
+async def _download_session_file(session_id: str, filename: str) -> bytes:
+    """Download a file from the Foundry agent session."""
     cred = DefaultAzureCredential()
     token = await cred.get_token("https://ai.azure.com/.default")
     await cred.close()
@@ -409,64 +443,31 @@ async def _send_session_files(context: TurnContext, session_id: str):
         "Authorization": f"Bearer {token.token}",
         "Foundry-Features": "HostedAgents=V1Preview",
     }
-
+    url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files/content?api-version=v1&path={filename}"
     async with aiohttp.ClientSession() as http:
-        # List files in session
-        list_url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files?api-version=v1&path=."
-        async with http.get(list_url, headers=headers) as resp:
-            if resp.status != 200:
-                return
-            files_data = await resp.json()
-
-        for entry in files_data.get("entries", []):
-            name = entry.get("name", "")
-            # Download file
-            dl_url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files/content?api-version=v1&path={name}"
-            async with http.get(dl_url, headers=headers) as resp:
-                if resp.status != 200:
-                    continue
-                content = await resp.read()
-
-            if len(content) < 28000:
-                text = content.decode("utf-8", errors="replace")
-                await context.send_activity(
-                    f"📎 **{name}** ({len(content):,} bytes)\n\n```\n{text[:20000]}\n```"
-                )
-            else:
-                await context.send_activity(
-                    f"📎 **{name}** ({len(content):,} bytes) — too large for inline display."
-                )
+        async with http.get(url, headers=headers) as resp:
+            return await resp.read()
 ```
 
-### Pattern 2: FileConsentCard (personal chat only)
-
-For proper file sharing, use the Teams FileConsentCard flow. The bot asks the user
-for permission to upload, then writes the file to the user's OneDrive.
-
-> **Limitation:** Only works in `personal` context (1:1 chat), NOT channels or group chats.
-> Requires `supportsFiles: true` in the Teams manifest.
+### Listing session files
 
 ```python
-from microsoft_agents.activity import Activity, ActivityTypes, Attachment
-
-# Send consent card
-consent = Attachment(
-    content_type="application/vnd.microsoft.teams.card.file.consent",
-    name="report.csv",
-    content={
-        "description": "Monthly expense report",
-        "sizeInBytes": len(file_bytes),
-        "acceptContext": {"filename": "report.csv"},
-        "declineContext": {},
-    },
-)
-await context.send_activity(Activity(type=ActivityTypes.message, attachments=[consent]))
-
-# Handle the invoke when user accepts (in a separate handler):
-# context.activity.name == "fileConsent/invoke"
-# context.activity.value["action"] == "accept"
-# Upload to: context.activity.value["uploadInfo"]["uploadUrl"]
+list_url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files?api-version=v1&path=."
+# Returns: {"entries": [{"name": "report.csv", "size": 1234}, ...]}
 ```
+
+### Fallback: Inline code blocks (text-only, primitive)
+
+For small text files (<28KB) where FileConsentCard isn't available (e.g., group chats),
+fall back to inline code blocks. Only useful for plain text or code snippets:
+
+```python
+if len(content) < 28000:
+    text = content.decode("utf-8", errors="replace")
+    await context.send_activity(f"📎 **{name}**\n\n```\n{text[:20000]}\n```")
+```
+
+> This is a last-resort fallback — not suitable for binary files, images, or reports.
 
 ---
 
