@@ -609,28 +609,10 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 
 ## Bot Implementation Notes
 
-The Teams bot (`copilot/bot.py`) MUST use the refreshed preview invocation pattern:
-```python
-# CORRECT — agent-bound client (refreshed preview)
-oai_client = project_client.get_openai_client(agent_name=AGENT_NAME)
-response = await oai_client.responses.create(input=user_message, stream=True)
+> **See the `foundry-teams-bot` skill** for complete bot implementation — code patterns,
+> file sending, user identity, Bicep wiring, re-provision safety, and troubleshooting.
 
-# WRONG — old agent_reference pattern (silently fails)
-# response = await oai_client.responses.create(
-#     input=user_message,
-#     extra_body={"agent_reference": {"name": AGENT_NAME, "type": "agent_reference"}}
-# )
-```
-
-**Retry pattern:** The bot should reset `ConversationState.thread_id` and retry on
-`server_error` — stale conversations break after agent version updates.
-
-**Session files:** After response, check for report files in the session and send inline:
-```python
-# List files in agent session
-files = requests.get(f"{endpoint}/agents/{name}/endpoint/sessions/{sid}/files?path=.", ...)
-# Download and send as code block in Teams (data URI attachments are rejected by Teams)
-```
+Key rule: bot MUST use `get_openai_client(agent_name=...)` — NOT the old `agent_reference` pattern.
 
 ## Authentication
 
