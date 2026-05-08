@@ -348,6 +348,150 @@ The bot's UAMI needs these role assignments to call the Foundry Hosted Agent:
 
 ---
 
+## User Identity
+
+Extract the Teams user's identity from the incoming activity to tell the agent who's
+talking. This is **NOT OBO** (On-Behalf-Of) — just reading metadata from the Bot Framework
+activity. The bot still authenticates as the UAMI service principal.
+
+```python
+async def _on_message(self, context: TurnContext, state: TurnState) -> bool:
+    user = context.activity.from_property
+    user_name = user.name if user else "Unknown"
+    aad_id = user.aad_object_id if user else None
+
+    # Inject user context into agent prompt
+    user_message = context.activity.text or ""
+    agent_input = f"[User: {user_name}] {user_message}"
+
+    # Send to Foundry agent with user context
+    stream = oai.responses.create(input=agent_input, stream=True)
+```
+
+**Available fields on `context.activity.from_property`:**
+
+| Field | Value | Example |
+|-------|-------|---------|
+| `id` | Teams user ID | `29:U1a2b3c...` |
+| `name` | Display name | `John Smith` |
+| `aad_object_id` | Azure AD UUID | `12345678-abcd-...` |
+
+> To resolve UPN (email) from `aad_object_id`, you'd need a Graph API call —
+> that's a separate concern, not covered here.
+
+---
+
+## Sending Files to Teams
+
+### Pattern 1: Inline code blocks (current, simple)
+
+After the agent responds, check for files in the Foundry session and send as
+inline text. Works for text/HTML/CSV under ~28KB (Teams message limit).
+
+```python
+import aiohttp
+from azure.identity.aio import DefaultAzureCredential
+
+async def _send_session_files(context: TurnContext, session_id: str):
+    """Check for files in agent session and send to Teams."""
+    cred = DefaultAzureCredential()
+    token = await cred.get_token("https://ai.azure.com/.default")
+    await cred.close()
+
+    endpoint = os.environ["PROJECT_ENDPOINT"]
+    headers = {
+        "Authorization": f"Bearer {token.token}",
+        "Foundry-Features": "HostedAgents=V1Preview",
+    }
+
+    async with aiohttp.ClientSession() as http:
+        # List files in session
+        list_url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files?api-version=v1&path=."
+        async with http.get(list_url, headers=headers) as resp:
+            if resp.status != 200:
+                return
+            files_data = await resp.json()
+
+        for entry in files_data.get("entries", []):
+            name = entry.get("name", "")
+            # Download file
+            dl_url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files/content?api-version=v1&path={name}"
+            async with http.get(dl_url, headers=headers) as resp:
+                if resp.status != 200:
+                    continue
+                content = await resp.read()
+
+            if len(content) < 28000:
+                text = content.decode("utf-8", errors="replace")
+                await context.send_activity(
+                    f"📎 **{name}** ({len(content):,} bytes)\n\n```\n{text[:20000]}\n```"
+                )
+            else:
+                await context.send_activity(
+                    f"📎 **{name}** ({len(content):,} bytes) — too large for inline display."
+                )
+```
+
+### Pattern 2: FileConsentCard (personal chat only)
+
+For proper file sharing, use the Teams FileConsentCard flow. The bot asks the user
+for permission to upload, then writes the file to the user's OneDrive.
+
+> **Limitation:** Only works in `personal` context (1:1 chat), NOT channels or group chats.
+> Requires `supportsFiles: true` in the Teams manifest.
+
+```python
+from microsoft_agents.activity import Activity, ActivityTypes, Attachment
+
+# Send consent card
+consent = Attachment(
+    content_type="application/vnd.microsoft.teams.card.file.consent",
+    name="report.csv",
+    content={
+        "description": "Monthly expense report",
+        "sizeInBytes": len(file_bytes),
+        "acceptContext": {"filename": "report.csv"},
+        "declineContext": {},
+    },
+)
+await context.send_activity(Activity(type=ActivityTypes.message, attachments=[consent]))
+
+# Handle the invoke when user accepts (in a separate handler):
+# context.activity.name == "fileConsent/invoke"
+# context.activity.value["action"] == "accept"
+# Upload to: context.activity.value["uploadInfo"]["uploadUrl"]
+```
+
+---
+
+## Receiving Files from Teams (investigation notes)
+
+When a user sends a file in Teams personal chat, the bot receives an activity with
+attachments. The file is uploaded to the user's OneDrive automatically by Teams.
+
+```python
+if context.activity.attachments:
+    for att in context.activity.attachments:
+        if att.content_type == "application/vnd.microsoft.teams.file.download.info":
+            filename = att.name
+            download_url = att.content.get("downloadUrl")  # Pre-signed URL
+
+            # Download the file (no extra auth needed — URL is pre-signed)
+            async with aiohttp.ClientSession() as http:
+                async with http.get(download_url) as resp:
+                    file_bytes = await resp.read()
+
+            # Forward to agent as context
+            agent_input = f"User uploaded file '{filename}' ({len(file_bytes)} bytes). Content: {file_bytes.decode('utf-8', errors='replace')[:5000]}"
+```
+
+> **Status: Investigation only.** This pattern documents how file attachments arrive.
+> Forwarding binary files to the Foundry agent's Responses API (which expects text input)
+> needs further design — likely upload to blob storage and pass URL, or base64-encode
+> for small files.
+
+---
+
 ## Gotchas & Hard-Won Lessons
 
 | Issue | Cause | Fix |
