@@ -655,6 +655,63 @@ files = requests.get(f"{endpoint}/agents/{name}/endpoint/sessions/{sid}/files?pa
 `ResponsesHostServer` handles liveness and readiness probes natively — no custom
 middleware needed.
 
+## Monitoring & Telemetry
+
+The Bicep scaffold creates Application Insights + Log Analytics workspace when
+`ENABLE_MONITORING=true` (default). But you also need to **connect AppInsights to
+the Foundry project** for eval telemetry and agent tracing to work.
+
+### What the scaffold provides
+
+- `infra/core/monitor/` — creates Application Insights + Log Analytics workspace
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` — **RESERVED by the platform** for hosted
+  agents. Do NOT set it in agent.yaml — the platform injects it automatically.
+
+### What you must do manually (or via postprovision hook)
+
+1. **Create a Foundry project connection to Application Insights:**
+
+   The Foundry project needs an `ApplicationInsights` connection so that eval runs
+   and agent traces appear in the Foundry portal. This is NOT automatic.
+
+   ```bash
+   # Via Azure CLI (or Bicep)
+   az resource create \
+     --resource-type "Microsoft.CognitiveServices/accounts/projects/connections" \
+     --name "<connection-name>" \
+     --properties '{
+       "category": "ApplicationInsights",
+       "target": "<appinsights-connection-string>",
+       "authType": "ApiKey",
+       "credentials": { "key": "<appinsights-instrumentation-key>" }
+     }' \
+     --api-version 2025-10-01-preview
+   ```
+
+2. **Assign RBAC for eval telemetry:**
+
+   The project managed identity needs `Log Analytics Data Reader` on the Log Analytics
+   workspace to read telemetry for evaluations.
+
+### OpenTelemetry in container (optional)
+
+For custom tracing beyond what the platform provides, add to `pyproject.toml`:
+
+```toml
+azure-monitor-opentelemetry>=1.6.4
+opentelemetry-sdk>=1.27.0
+```
+
+And initialize in `container.py`:
+
+```python
+from azure.monitor.opentelemetry import configure_azure_monitor
+configure_azure_monitor()  # Reads APPLICATIONINSIGHTS_CONNECTION_STRING from env
+```
+
+> **Note:** The platform injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted
+> agent containers automatically. Do NOT declare it in agent.yaml — it's reserved.
+
 ## Evaluations
 
 > **See the `foundry-evals` skill** for the complete evaluation guide — two-phase
@@ -794,6 +851,7 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] Runtime variant (GHCP/MAF) consistent across container.py, pyproject.toml, Dockerfile
 - [ ] All `__PLACEHOLDER__` tokens replaced with actual values
 - [ ] Shared UAMI: one UAMI for bot + MCP ACA + hooks; `AZURE_CLIENT_ID` set on all ACAs
+- [ ] AppInsights connection to Foundry project exists (or postprovision hook creates it)
 
 **If any check fails:** fix it before presenting. Do not leave broken artifacts.
 
@@ -1344,6 +1402,7 @@ project/                    # ← REPO ROOT
 | **CognitiveServices API version wrong** | Using old `2024-10-01` API | Use `2025-10-01-preview` for connections and agent management |
 | **Hooks fail on Windows** | `shell: sh` in azure.yaml hooks | Use `shell: pwsh` for cross-platform compatibility |
 | **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content | Default to `gpt-5.4-mini` |
+| **Evals show no telemetry** | AppInsights not connected to Foundry project | Create an `ApplicationInsights` connection on the project (see Monitoring section) |
 
 > **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
 > and detailed RBAC scenarios.

@@ -314,6 +314,7 @@ Task Completion) are stable across both judge models.
 | **Hooks fail on Windows** | `shell: sh` in azure.yaml | Use `shell: pwsh` for cross-platform |
 | **`azd deploy` uses wrong ACR** | `AZURE_CONTAINER_REGISTRY_ENDPOINT` not set or stale from another project | Run `azd env refresh` or verify `AZURE_CONTAINER_REGISTRY_ENDPOINT` in `azd env list`. Must match the ACR created by your project's Bicep. |
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use `remoteBuild: true` in `azure.yaml` (builds via ACR Tasks with the project's MI) |
+| **Evals show no telemetry** | AppInsights not connected to Foundry project | Create `ApplicationInsights` connection on the project. `APPLICATIONINSIGHTS_CONNECTION_STRING` is reserved — platform injects it. |
 
 ---
 
