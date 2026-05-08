@@ -246,16 +246,19 @@ Also provide **color.png** (192×192) and **outline.png** (32×32) icons in the 
 
 Replaces all placeholder tokens in manifest.json and packages into `copilot_package.zip` for sideloading.
 
-### Wiring as azd postprovision hook
+### Wiring as azd postprovision hook (REQUIRED)
 
-Add to `azure.yaml`:
+> **This is NOT optional.** Without the postprovision hook, the Teams manifest
+> won't be built and sideloading will fail.
+
+Add to `azure.yaml` hooks section:
 
 ```yaml
 hooks:
   postprovision:
     shell: pwsh
     run: >
-      python scripts/build_teams_manifest.py
+      python src/bot/build_manifest.py
     env:
       BOT_APP_ID: ${AZURE_BOT_APP_ID}
       AGENT_DISPLAY_NAME: "My Agent"
@@ -263,25 +266,30 @@ hooks:
       DEVELOPER_NAME: "My Org"
 ```
 
-`AZURE_BOT_APP_ID` is set by Bicep output → azd env during provisioning.
+`AZURE_BOT_APP_ID` comes from Bicep output — `bot-service.bicep` must output:
+```bicep
+output botId string = bot.properties.msaAppId
+```
+azd automatically maps Bicep outputs to env vars in hooks.
 
 ---
 
 ## Step 6: azure.yaml Integration
 
-Add the copilot service to the project's `azure.yaml`:
+Add the bot service to the project's `azure.yaml`:
 
 ```yaml
 services:
   # ... existing hosted agent service ...
 
-  copilot:
-    project: ./copilot
+  bot:
+    project: ./src/bot
     language: py
     host: containerapp
     docker:
-      path: ./copilot/Dockerfile
-      context: ./copilot
+      path: ./src/bot/Dockerfile
+      context: ./src/bot
+      remoteBuild: true
 ```
 
 Or deploy manually:
@@ -305,6 +313,99 @@ az containerapp create \
         CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=<uami-client-id> \
         CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=<tenant-id> \
         CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity
+```
+
+---
+
+## Re-Provision Safety
+
+> **Template:** [`templates/infra/bot/fetch-container-image.bicep`](templates/infra/bot/fetch-container-image.bicep)
+
+On re-provision, Bicep will overwrite the bot ACA's image with a blank default.
+To prevent this, use `fetch-container-image.bicep` with a `botAppExists` parameter:
+
+```bicep
+// In main.bicep:
+param botAppExists bool  // azd manages this automatically
+
+module fetchBotImage 'bot/fetch-container-image.bicep' = {
+  name: 'fetch-bot-image'
+  params: {
+    exists: botAppExists
+    name: 'bot-${environmentName}'
+  }
+}
+
+// Pass the preserved image to aca.bicep:
+module botAca 'bot/aca.bicep' = {
+  params: {
+    image: botAppExists ? fetchBotImage.outputs.image : '${acrEndpoint}/bot:latest'
+    // ... other params
+  }
+}
+```
+
+## Main Bicep Wiring
+
+The bot modules must be called from `main.bicep` and wired together:
+
+```bicep
+// 1. UAMI
+module uami 'bot/uami.bicep' = { params: { name: 'id-${environmentName}' } }
+
+// 2. Bot Service
+module bot 'bot/bot-service.bicep' = {
+  params: {
+    name: 'bot-${environmentName}'
+    displayName: '__AGENT_NAME__'
+    msaAppId: uami.outputs.clientId
+    msaAppTenantId: tenant().tenantId
+    msaAppMSIResourceId: uami.outputs.id
+    messagesEndpoint: 'https://${botAca.outputs.fqdn}/api/messages'
+  }
+}
+
+// 3. RBAC — UAMI needs Azure AI Developer on Foundry project
+resource aiDevRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().subscriptionId, uami.outputs.principalId, 'ai-developer')
+  scope: aiProject
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')
+    principalId: uami.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// 4. UAMI → AcrPull on ACR
+resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().subscriptionId, uami.outputs.principalId, 'acr-pull')
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    principalId: uami.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// 5. Bot ACA
+module botAca 'bot/aca.bicep' = {
+  params: {
+    name: 'bot-${environmentName}'
+    image: botAppExists ? fetchBotImage.outputs.image : '${acrEndpoint}/bot:latest'
+    userAssignedIdentityId: uami.outputs.id
+    env: [
+      { name: 'AZURE_CLIENT_ID', value: uami.outputs.clientId }
+      { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
+      { name: 'FOUNDRY_AGENT_NAME', value: '__PROJECT_NAME__' }
+      { name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID', value: uami.outputs.clientId }
+      { name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID', value: tenant().tenantId }
+      { name: 'CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE', value: 'UserManagedIdentity' }
+    ]
+  }
+}
+
+// 6. Output bot app ID for postprovision hook
+output AZURE_BOT_APP_ID string = uami.outputs.clientId
 ```
 
 ---
