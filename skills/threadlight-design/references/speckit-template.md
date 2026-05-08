@@ -14,6 +14,7 @@
 **Name**: [Full process name]
 **Domain**: [Industry or business domain]
 **Description**: [2-3 sentences describing the process end-to-end]
+**Target Persona**: [Who will see the demo — CIO, CFO, COO, CDO, CISO, Developer, or mixed]
 
 ### Goals
 - [Primary goal — what outcome does this deliver?]

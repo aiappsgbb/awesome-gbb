@@ -79,6 +79,14 @@ Capture:
 - **Process name** (suggest one if user doesn't provide)
 - **One-line description**
 - **Domain** (financial services, healthcare, retail, operations, HR, marketing, etc.)
+- **Target persona** (optional) — who will see the demo/PoC?
+  - CIO/CTO → emphasize architecture, governance, platform fit
+  - CFO → emphasize ROI, cost reduction, efficiency gains
+  - COO/LOB VP → emphasize the workflow, before/after, process improvement
+  - CDO → emphasize data strategy, semantic models, lineage
+  - CISO → emphasize security, compliance, audit trail
+  - Developer → emphasize technical architecture, APIs, extensibility
+  - If unknown, design for a mixed audience (default)
 
 #### Domain Primer (optional)
 
@@ -470,6 +478,20 @@ Generate a **single self-contained HTML file** (no dependencies, opens in any br
 that visualizes the SpecKit spec for non-technical audiences. Use for seller pitches,
 customer walkthroughs, and stakeholder alignment.
 
+**Narrative arc** — the page should tell a story, not just list spec content:
+
+1. **The Pain** — open with the customer's current problem (from spec § 1 goals + § 3 pain points implied by business rules). Make it specific to their domain.
+2. **The Process** — show the step-by-step flow as a visual diagram (from spec § 2). Color-code by actor type (agent / human / system).
+3. **The Agents at Work** — show which skills handle which steps (from the generated skills). This is the "watch the team solve the problem" moment.
+4. **The Architecture** — reveal the tools, integrations, and data sources that make it possible (from spec § 5, § 6, § 7). Show mock vs real status.
+5. **The Outcomes** — connect to success criteria and expected improvements (from spec § 9). Quantify if possible.
+
+**If target persona was captured**, adapt emphasis:
+- CIO/CTO → expand architecture section, add governance notes
+- CFO → lead with outcomes/ROI, show cost of current vs automated
+- COO → expand the process flow, show before/after
+- CISO → highlight compliance (spec § 11), audit trail, data boundaries
+
 **Must include:**
 - Process name, domain, and one-line description as hero section
 - Process flow as a visual step diagram (boxes + arrows, color-coded by actor type)
@@ -505,6 +527,32 @@ specs/dashboard/
 
 Run with `npm install && npm run dev`. This is **optional** — only generate when
 the user asks for an interactive dashboard or workshop tool.
+
+#### 9. `specs/prep-guide.md` — Seller Prep Guide
+
+A lean companion document for the person presenting the demo. Helps them prepare
+for the customer conversation, anticipate questions, and suggest next steps.
+
+**Sections:**
+
+1. **Use Case Summary** — one paragraph: what the agent does, for whom, why it matters
+2. **Discovery Questions** — 5-8 questions to deepen the conversation with the customer:
+   - "What does this process look like today? Where are the bottlenecks?"
+   - "Which systems hold the data the agent would need?"
+   - "Who approves / escalates? What are the SLAs?"
+   - Tailor to the domain and business rules
+3. **Expected Objections** — 3-5 likely pushbacks and suggested responses:
+   - "How do we trust the agent's decisions?" → point to human-in-the-loop + audit trail
+   - "What about our legacy systems?" → point to mock MCP → real swap path
+   - "How long to production?" → point to fast-PoC → deploy → eval pipeline
+4. **Suggested Next Steps** — what to propose after the demo:
+   - Connect real data sources (replace mocks)
+   - Run evals with customer-provided test scenarios
+   - Deploy to Citadel landing zone (if governed)
+   - Expand to additional process variants
+
+> This is intentionally lean — NOT a 14-section seller enablement deck.
+> Just enough to prepare for the conversation.
 
 ### Step 7: Review
 
