@@ -40,14 +40,15 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-AGENT_NAME = os.environ.get("AGENT_NAME", "__PROJECT_NAME__")
+AGENT_NAME = os.environ.get("AGENT_NAME", "bat-scraper")
 PROJECT_ENDPOINT = os.environ.get("PROJECT_ENDPOINT", "")
-AGENT_PROTOCOL = os.environ.get("AGENT_PROTOCOL", "responses").lower()
+AGENT_PROTOCOL = os.environ.get("AGENT_PROTOCOL", "invocations").lower()
+
+if AGENT_NAME == "__PROJECT_NAME__":
+    logger.warning("AGENT_NAME still has placeholder value")
 
 if not PROJECT_ENDPOINT:
     raise ValueError("PROJECT_ENDPOINT env var is required")
-if AGENT_NAME == "__PROJECT_NAME__":
-    logger.warning("AGENT_NAME still has placeholder value — update agent.yaml or env var")
 
 
 # ---------------------------------------------------------------------------
@@ -153,20 +154,30 @@ async def _stream_invocations(
                         args = data.get("arguments", {})
                         if tool_name in ("web_fetch", "browser_navigate") and args.get("url"):
                             domain = args["url"].split("//")[-1].split("/")[0]
-                            label = f"🌐 Browsing {domain}..."
+                            label = f"🌐 Browsing {domain}"
                         elif tool_name == "web_search" and args.get("query"):
                             label = f"🔍 Searching: {args['query'][:60]}"
                         elif tool_name == "browser_snapshot":
-                            label = "📸 Reading page content..."
+                            label = "📸 Reading page content"
                         elif tool_name == "browser_click":
-                            label = "🖱️ Clicking element..."
+                            label = "🖱️ Clicking element"
+                        elif tool_name == "report_intent":
+                            label = f"📋 {args.get('intent', 'Planning')}"
                         else:
-                            label = f"🔧 {tool_name}..."
+                            label = f"🔧 {tool_name}"
                         yield StatusUpdate(f"{label} ({tool_count})")
+                    elif event_type == "tool.execution_complete":
+                        ok = "✅" if data.get("success") else "⚠️"
+                        yield StatusUpdate(f"{ok} Done ({tool_count})")
+                    elif event_type == "permission.requested":
+                        yield StatusUpdate(f"🔐 Requesting permission... ({tool_count})")
+                    elif event_type == "permission.completed":
+                        yield StatusUpdate(f"✅ Permission granted ({tool_count})")
+                    elif event_type == "assistant.turn_start":
+                        yield StatusUpdate("🤔 Thinking...")
                     elif event_type == "assistant.reasoning_delta":
-                        # First reasoning chunk → show thinking indicator
                         if content and tool_count == 0:
-                            yield StatusUpdate("🤔 Thinking...")
+                            yield StatusUpdate("🤔 Analyzing...")
                 except json.JSONDecodeError:
                     continue
 
