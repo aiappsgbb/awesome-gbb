@@ -11,6 +11,16 @@ description: >
 
 # AI Apps GBB IP Catalog — MCP Discovery
 
+> [!IMPORTANT]
+> **This skill requires an MCP server connection to work.** The tools below call
+> the IP catalog MCP server — without it connected, the skill has no tools available.
+>
+> **Setup:** Run `/mcp add` in Copilot CLI and configure the server below, OR
+> ask the skill to set it up for you: *"set up the ip-catalog MCP server"*.
+>
+> **API Key:** Ask the AI Apps GBB admin team for the `MCP_API_KEY`. The key is
+> managed in Azure Container Apps secrets — it's not publicly available.
+
 ## MCP Server Connection
 
 The IP catalog is exposed as an MCP server with Bearer token authentication.
@@ -29,24 +39,43 @@ All requests require a Bearer token in the `Authorization` header:
 Authorization: Bearer <MCP_API_KEY>
 ```
 
-### MCP Client Configuration
+### Auto-Setup
 
-Add to your MCP client config (e.g. `mcp.json`, VS Code settings, or agent config):
+If the MCP server is not yet connected, add it to your config. The skill should
+offer to do this automatically by writing to the appropriate config file:
 
+**For GitHub Copilot CLI** (`~/.copilot/mcp-config.json`):
 ```json
 {
   "mcpServers": {
     "ip-catalog": {
       "url": "https://admin-mcp-t7l5hqkuhsv2s.kindbay-2d11d96b.eastus2.azurecontainerapps.io/mcp",
       "headers": {
-        "Authorization": "Bearer <MCP_API_KEY>"
+        "Authorization": "Bearer ${MCP_API_KEY}"
       }
     }
   }
 }
 ```
 
+**For VS Code** (`.vscode/mcp.json` or user settings):
+```json
+{
+  "mcpServers": {
+    "ip-catalog": {
+      "url": "https://admin-mcp-t7l5hqkuhsv2s.kindbay-2d11d96b.eastus2.azurecontainerapps.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Set `MCP_API_KEY` as an environment variable, or replace `${MCP_API_KEY}` with the actual key.
+
 > **Note:** The API key is stored in Azure Container Apps secrets and managed by the admin team.
+> Contact the AI Apps GBB admins to get access.
 
 ---
 
