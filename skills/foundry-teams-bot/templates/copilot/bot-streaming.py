@@ -15,7 +15,8 @@ import logging
 import os
 import asyncio
 import traceback
-from typing import AsyncGenerator
+from dataclasses import dataclass
+from typing import AsyncGenerator, Union
 
 import aiohttp
 from dotenv import load_dotenv
@@ -50,11 +51,28 @@ if AGENT_NAME == "__PROJECT_NAME__":
 
 
 # ---------------------------------------------------------------------------
+# Stream event types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TextChunk:
+    """Text content to stream to Teams."""
+    text: str
+
+@dataclass
+class StatusUpdate:
+    """Informative status update (shown as typing indicator)."""
+    text: str
+
+StreamEvent = Union[TextChunk, StatusUpdate]
+
+
+# ---------------------------------------------------------------------------
 # Protocol-specific streaming generators
 # ---------------------------------------------------------------------------
 
-async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGenerator[str, None]:
-    """Yield text chunks from Responses API streaming (MAF agents)."""
+async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGenerator[StreamEvent, None]:
+    """Yield events from Responses API streaming (MAF agents)."""
     stream = await oai_client.responses.create(
         conversation=thread_id,
         input=query,
@@ -67,11 +85,17 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
         if event_type == "response.output_text.delta":
             chunk = getattr(event, "delta", "")
             if chunk:
-                yield chunk
+                yield TextChunk(chunk)
         elif event_type == "response.output_text.done":
             text = getattr(event, "text", "")
             if text:
-                yield text
+                yield TextChunk(text)
+        elif event_type == "response.function_call_arguments.start":
+            name = getattr(event, "name", "tool")
+            yield StatusUpdate(f"🔧 Calling {name}...")
+        elif event_type == "response.mcp_call.in_progress":
+            name = getattr(event, "name", None) or "tool"
+            yield StatusUpdate(f"🔧 Using {name}...")
         elif event_type == "response.failed":
             resp = getattr(event, "response", None)
             err = getattr(resp, "error", None) if resp else None
@@ -84,8 +108,12 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
 
 async def _stream_invocations(
     endpoint: str, credential, agent_name: str, query: str
-) -> AsyncGenerator[str, None]:
-    """Yield text chunks from Invocations SSE endpoint (GHCP SDK agents)."""
+) -> AsyncGenerator[StreamEvent, None]:
+    """Yield events from Invocations SSE endpoint (GHCP SDK agents).
+
+    Emits StatusUpdate for tool calls so Teams shows progress during
+    long tool loops (web search, Playwright browsing, etc.).
+    """
     token = await credential.get_token("https://ai.azure.com/.default")
     url = f"{endpoint}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
 
@@ -104,6 +132,7 @@ async def _stream_invocations(
                 body = await resp.text()
                 raise RuntimeError(f"Invocations returned {resp.status}: {body[:500]}")
 
+            tool_count = 0
             async for line_bytes in resp.content:
                 line = line_bytes.decode("utf-8", errors="replace").strip()
                 if not line or not line.startswith("data: "):
@@ -111,12 +140,21 @@ async def _stream_invocations(
                 try:
                     event = json.loads(line[6:])
                     event_type = event.get("type", "")
-                    content = event.get("data", {}).get("content", "")
+                    data = event.get("data", {})
+                    content = data.get("content", "")
 
                     if event_type == "assistant.message_delta" and content:
-                        yield content
+                        yield TextChunk(content)
                     elif event_type == "assistant.message" and content:
-                        yield content
+                        yield TextChunk(content)
+                    elif event_type == "tool.execution_start":
+                        tool_count += 1
+                        name = data.get("name", data.get("tool", "tool"))
+                        yield StatusUpdate(f"🔧 Using {name}... ({tool_count})")
+                    elif event_type == "assistant.reasoning_delta":
+                        # First reasoning chunk → show thinking indicator
+                        if content and tool_count == 0:
+                            yield StatusUpdate("🤔 Thinking...")
                 except json.JSONDecodeError:
                     continue
 
@@ -218,12 +256,14 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                         state.set_value("ConversationState.thread_id", thread_id)
                     gen = _stream_responses(oai_client, thread_id, user_message)
 
-                # Stream chunks to Teams
+                # Stream events to Teams
                 has_content = False
-                async for chunk in gen:
-                    if chunk:
-                        sr.queue_text_chunk(chunk)
+                async for event in gen:
+                    if isinstance(event, TextChunk) and event.text:
+                        sr.queue_text_chunk(event.text)
                         has_content = True
+                    elif isinstance(event, StatusUpdate) and event.text:
+                        sr.queue_informative_update(event.text)
 
                 if has_content:
                     await sr.end_stream()
