@@ -194,6 +194,7 @@ When using AI Gateway:
 - **Remove** the model from `azure.yaml` `config.deployments` (it's already deployed elsewhere)
 - Set `MODEL_DEPLOYMENT_NAME` in `agent.yaml` to `connectionName/deploymentName`
 - Ensure the Foundry project has an `ApiManagement` connection to the APIM gateway
+- **Use `authType: "AAD"` (recommended)** — no Key Vault needed. ApiKey auth requires a Key Vault on the project, which our Bicep scaffold doesn't create.
 - Works with both GHCP SDK (BYOK) and MAF (FoundryChatClient) — routing is transparent
 
 > **See `ghcp-hosted-agents` skill** for the full GHCP reference (container.py template,

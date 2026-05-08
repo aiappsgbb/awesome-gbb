@@ -130,10 +130,48 @@ This is **critical**. The APIM must:
 
 **CRITICAL: The connection category MUST be `ApiManagement`** — NOT `AIServices` or `AzureOpenAI`. Those categories do NOT support the `connectionName/deploymentName` pattern.
 
+#### Option A: AAD Auth (Recommended — no Key Vault needed)
+
+Uses the project's managed identity to authenticate to APIM. **No credentials to store →
+no Key Vault required.** This is the keyless approach and should be your default.
+
+**Prerequisite:** APIM must accept the project MI. Assign `API Management Service Reader`
+or a custom role on the APIM instance to the project's managed identity.
+
 ```powershell
 $connBody = @{
     properties = @{
-        category = "ApiManagement"   # <-- THIS IS THE KEY
+        category = "ApiManagement"
+        target = "https://<apim-name>.azure-api.net/<api-path>/openai/v1"
+        authType = "AAD"
+        metadata = @{
+            deploymentInPath = "false"
+            modelDiscovery = '{"listModelsEndpoint":"/models","getModelEndpoint":"/models/{deploymentName}","deploymentProvider":"OpenAI"}'
+        }
+        isSharedToAll = $true
+    }
+} | ConvertTo-Json -Depth 5
+
+$connUri = "https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<resource>/connections/<conn-name>?api-version=2025-10-01-preview"
+
+Invoke-RestMethod -Uri $connUri -Method Put -Headers $headers -Body $connBody
+```
+
+#### Option B: API Key Auth (needs Key Vault on the project)
+
+Uses an APIM subscription key. The platform stores the key in the project's credential
+store (Key Vault). **If the project was created via Bicep without a Key Vault, this
+will fail with 500 Internal Server Error** (credential store → Key Vault → token failure).
+
+> **Known issue:** Projects created via our minimal Bicep scaffold do NOT have a Key Vault.
+> The platform auto-provisions one when creating via Portal, but not via raw Bicep.
+> If you need ApiKey auth, either create the project via Portal first, or provision
+> a Key Vault separately and link it manually.
+
+```powershell
+$connBody = @{
+    properties = @{
+        category = "ApiManagement"
         target = "https://<apim-name>.azure-api.net/<api-path>/openai/v1"
         authType = "ApiKey"
         credentials = @{
@@ -309,6 +347,7 @@ services:
 | `API version not supported` | `api-version` query param sent to `/openai/v1/` endpoints | Add APIM policy: `<set-query-parameter name="api-version" exists-action="delete" />` |
 | `DeploymentNotFound` | Using `chat.completions.create()` | Use `responses.create()` instead — chat completions doesn't support `connectionName/deploymentName` |
 | APIM returns 500 | `serviceUrl` is null on the API | Set `serviceUrl` to the remote backend URL |
+| **PUT connection 500: credential store → Key Vault token failure** | Project created via Bicep without a Key Vault. `authType: "ApiKey"` needs KV to store the subscription key. | **Use `authType: "AAD"` instead (recommended)** — no Key Vault needed. Or create project via Portal (auto-provisions KV). See Step 2 Options A/B. |
 
 ---
 
