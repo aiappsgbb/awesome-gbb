@@ -124,6 +124,69 @@ Replace `__PROJECT_NAME__` with the Foundry agent name.
 - `!reset` command clears stale conversations (break after agent version updates)
 - Auto-retry on `server_error` by resetting thread_id
 
+### Invocations Protocol Agents (GHCP SDK)
+
+> **If the hosted agent uses GHCP SDK (`InvocationAgentServerHost`)**, the bot
+> CANNOT use `oai.responses.create()` — the Responses API returns 400/404.
+> This only affects GHCP agents. MAF agents (ResponsesHostServer) work fine
+> with the Responses API.
+
+For GHCP agents, the bot must POST directly to the Invocations SSE endpoint
+and parse the event stream:
+
+```python
+import aiohttp
+import json
+
+async def _invoke_invocations(endpoint: str, credential, agent_name: str, query: str) -> str:
+    """Call a GHCP (Invocations protocol) hosted agent via SSE."""
+    token = await credential.get_token("https://ai.azure.com/.default")
+    url = f"{endpoint}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
+
+    message_text = ""
+    delta_text = ""
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url,
+            json={"input": query},
+            headers={
+                "Authorization": f"Bearer {token.token}",
+                "Foundry-Features": "HostedAgents=V1Preview",
+            },
+            timeout=aiohttp.ClientTimeout(total=600),
+        ) as resp:
+            async for line_bytes in resp.content:
+                line = line_bytes.decode("utf-8").strip()
+                if not line.startswith("data: "):
+                    continue
+                event = json.loads(line[6:])
+                etype = event.get("type", "")
+                content = event.get("data", {}).get("content", "")
+                if etype == "assistant.message" and content:
+                    message_text += content
+                elif etype == "assistant.message_delta" and content:
+                    delta_text += content
+
+    return message_text if message_text else delta_text
+```
+
+**In `on_message`**, replace `oai_client.responses.create(...)` with:
+```python
+response_text = await _invoke_invocations(
+    PROJECT_ENDPOINT, credential, AGENT_NAME, user_message
+)
+if response_text:
+    await context.send_activity(response_text)
+```
+
+**Which pattern to use:**
+
+| Agent Runtime | Bot Pattern | API |
+|--------------|-------------|-----|
+| **MAF** (ResponsesHostServer) | `oai.responses.create(stream=True)` | Responses API ✅ |
+| **GHCP SDK** (InvocationAgentServerHost) | Direct HTTP POST + SSE parsing | Invocations endpoint ✅ |
+
 ### `copilot/app.py`
 
 > **Template:** [`templates/copilot/app.py`](templates/copilot/app.py)
@@ -768,3 +831,4 @@ user_token = result["access_token"]
 | Manifest validation fails on length | `name.full` > 100 chars or `description.short` > 80 chars | Use separate short/full tokens. Build script auto-truncates but keep inputs concise. |
 | Bot crashes after pip install | microsoft-agents-* 0.9.x has breaking changes | Pin to `>=0.8.0,<0.9.0` in requirements.txt (tested with 0.8.0) |
 | Bot crashes: MsalConnectionManager can't find CONNECTIONS__ vars | `MsalConnectionManager()` called without config | Must use `load_configuration_from_env(os.environ)` and pass `**config` to `MsalConnectionManager()`. See app.py template. |
+| Bot gets 400 "responses protocol not declared" | Agent uses GHCP SDK (Invocations) but bot calls `oai.responses.create()` | **CONFIRMED:** `InvocationAgentServerHost` only serves `/invocations`. Bot must use direct HTTP POST to `/protocols/invocations` endpoint with SSE parsing. See "Invocations Protocol Agents" section. |
