@@ -499,6 +499,88 @@ if context.activity.attachments:
 
 ---
 
+## Future: OBO Authentication (investigation — NOT TESTED)
+
+> [!WARNING]
+> **This section is speculative.** OBO for Teams → Foundry hosted agents has NOT been
+> tested or validated. It is documented here as an investigation reference for when
+> user-delegated access becomes a requirement. **Do NOT implement this without first
+> confirming with Microsoft that the Foundry hosted agent API accepts user-delegated
+> bearer tokens.**
+
+### Why OBO?
+
+Current model: bot authenticates as UAMI (app identity). The Foundry agent doesn't
+know which Teams user is talking. For production scenarios you may need:
+- User-scoped data filtering (agent sees who's calling)
+- Per-user RBAC on the Foundry project
+- Audit trail with real user identity
+
+### How it would work (theoretical)
+
+```
+Teams User → SSO token from Teams Bot Framework
+  → Bot exchanges via Entra OBO flow
+  → Gets user-delegated token (scope: https://ai.azure.com/.default)
+  → Wraps in custom BearerTokenCredential
+  → AIProjectClient(credential=user_credential)
+  → Foundry validates user's Entra identity + RBAC
+```
+
+### What would change
+
+| Component | Current (UAMI) | OBO (user-delegated) |
+|-----------|----------------|---------------------|
+| Bot Service auth | `msaAppType: UserAssignedMSI` | `msaAppType: MultiTenant` + client secret |
+| Entra app | UAMI only | App registration with delegated `ai.azure.com` permissions |
+| Bot code | `DefaultAzureCredential()` | SSO token extraction → OBO exchange → custom credential |
+| Foundry RBAC | UAMI has `Azure AI User` | Each user needs `Azure AI User` on account + project |
+| Credential | `DefaultAzureCredential` | Custom `BearerTokenCredential` wrapping user token |
+
+### Custom credential wrapper (concept)
+
+```python
+from azure.core.credentials import AccessToken, TokenCredential
+
+class BearerTokenCredential(TokenCredential):
+    """Wrap a user-delegated OBO token as a TokenCredential."""
+    def __init__(self, token: str, expires_on: int):
+        self._token = token
+        self._expires_on = expires_on
+
+    def get_token(self, *scopes, **kwargs) -> AccessToken:
+        return AccessToken(self._token, self._expires_on)
+```
+
+### OBO token exchange (concept)
+
+```python
+import msal
+
+app = msal.ConfidentialClientApplication(
+    client_id=BOT_APP_ID,
+    client_credential=BOT_APP_SECRET,
+    authority=f"https://login.microsoftonline.com/{TENANT_ID}",
+)
+
+# Exchange Teams SSO token for Foundry-scoped user token
+result = app.acquire_token_on_behalf_of(
+    user_assertion=teams_sso_token,  # From Teams Bot Framework token exchange
+    scopes=["https://ai.azure.com/.default"],
+)
+user_token = result["access_token"]
+```
+
+### Open questions
+
+1. **Does Foundry accept user-delegated tokens?** All current docs/samples use app identity only. Needs Microsoft confirmation.
+2. **What RBAC roles does the user need?** Likely `Azure AI User` on account + project, but untested.
+3. **Does `get_openai_client(agent_name=...)` work with user tokens?** The SDK uses `TokenCredential` abstractly, so it should — but not validated.
+4. **Consent flow:** Users would need to consent to `ai.azure.com` permissions. How does this interact with Teams SSO?
+5. **Token refresh:** OBO tokens expire (~1h). Long conversations need refresh logic.
+
+---
+
 ## Gotchas & Hard-Won Lessons
 
 | Issue | Cause | Fix |
