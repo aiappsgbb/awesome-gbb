@@ -8,7 +8,9 @@ metadata:
     - ghcp-sdk
     - hosted-agent
 protocols:
-  - protocol: invocations    # NOT responses — required for GHCP SDK SSE streaming
+  - protocol: invocations    # GHCP SDK SSE streaming (container runtime)
+    version: 1.0.0
+  - protocol: responses      # Required for bot (oai.responses.create) and azd ai agent invoke
     version: 1.0.0
 environment_variables:
   - name: MODEL_DEPLOYMENT_NAME
