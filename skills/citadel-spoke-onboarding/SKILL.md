@@ -22,7 +22,8 @@ How to connect a GenAI application or Microsoft Foundry project to an
 **existing** AI Citadel Governance Hub so that all AI traffic is governed,
 observable, and compliant.
 
-> Source accelerator: <https://aka.ms/ai-hub-gateway> (branch `citadel-v1`)
+> **Source repo:** [Azure-Samples/ai-hub-gateway-solution-accelerator](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) (branch `citadel-v1`)
+> **Quick link:** <https://aka.ms/ai-hub-gateway>
 
 ---
 
@@ -64,10 +65,17 @@ observable, and compliant.
 
 ### 1. Scaffold the Contract Folder
 
-Follow the pattern `contracts/<businessunit-usecasename>/<environment>/`:
+Clone or init the accelerator, then follow the pattern `contracts/<businessunit-usecasename>/<environment>/`:
 
 ```powershell
-# From the citadel-access-contracts root
+# Option A: clone the accelerator
+git clone -b citadel-v1 https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator.git
+cd ai-hub-gateway-solution-accelerator/bicep/infra/citadel-access-contracts
+
+# Option B: if using azd
+azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator -e my-citadel --branch citadel-v1
+
+# Create contract folder
 mkdir -p contracts/myteam-myagent/dev
 cd contracts/myteam-myagent/dev
 
@@ -75,6 +83,9 @@ cd contracts/myteam-myagent/dev
 cp ../../../main.bicepparam main.bicepparam
 cp ../../../policies/default-ai-product-policy.xml ai-product-policy.xml
 ```
+
+> 📂 Full contract folder structure and samples:
+> [citadel-access-contracts/](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/bicep/infra/citadel-access-contracts)
 
 ### 2. Configure the Parameter File
 
@@ -147,15 +158,92 @@ param foundryConfig = {
 
 ### 3. Customise the Product Policy (Optional)
 
-The default policy includes model restrictions, token limits, and content safety.
-For custom policies, edit `ai-product-policy.xml`. Available policy snippets:
+The [default policy](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/bicep/infra/citadel-access-contracts/policies/default-ai-product-policy.xml) includes model restrictions, token limits, and content safety.
+For custom policies, edit `ai-product-policy.xml`. Full policy reference:
+[citadel-access-contracts-policy.md](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/bicep/infra/citadel-access-contracts/citadel-access-contracts-policy.md)
 
-| Snippet | Purpose | Key Variables |
-|---------|---------|---------------|
-| `set-llm-requested-model` + `validate-model-access` | Restrict allowed models | `allowedModels` (comma-separated, no spaces) |
-| `llm-token-limit` | Token-per-minute and monthly quota | `tokens-per-minute`, `token-quota`, `token-quota-period` |
-| Content Safety fragments | Prompt Shield, content filtering | Configured at hub level |
-| `jwt-auth.xml` snippet | Require JWT Bearer on top of API key | Sets `jwtRequired=true` |
+**Recommended policy ordering in `<inbound>`:**
+
+```xml
+<inbound>
+    <base />
+
+    <!-- 1. JWT Authentication (optional) -->
+    <set-variable name="jwtRequired" value="true" />
+
+    <!-- 2. App Role Authorization (optional, requires JWT) -->
+    <set-variable name="requiredRoles" value="Models.Read" />
+
+    <!-- 3. Model extraction and access control -->
+    <include-fragment fragment-id="set-llm-requested-model" />
+    <set-variable name="allowedModels" value="gpt-4o,gpt-4o-mini" />
+    <include-fragment fragment-id="validate-model-access" />
+
+    <!-- 4. Capacity management (subscription level) -->
+    <llm-token-limit counter-key="@(context.Subscription.Id)"
+        tokens-per-minute="5000"
+        estimate-prompt-tokens="false"
+        tokens-consumed-header-name="consumed-tokens"
+        remaining-tokens-header-name="remaining-tokens"
+        token-quota="100000"
+        token-quota-period="Monthly"
+        retry-after-header-name="retry-after" />
+
+    <!-- 5. Usage attribution (optional) -->
+    <set-variable name="appId" value="@(context.Request.Headers.GetValueOrDefault("x-app-id", context.Subscription?.Id ?? "Portal-Admin"))" />
+    <set-variable name="customDimension1" value="@(context.Request.Headers.GetValueOrDefault("x-sub-agent-id", "general-agent"))" />
+    <set-variable name="customDimension2" value="@(context.Request.Headers.GetValueOrDefault("x-enduser-id", "anonymous-enduser"))" />
+
+    <!-- 6. PII Anonymization (optional) -->
+    <set-variable name="piiAnonymizationEnabled" value="true" />
+
+    <!-- 7. Content Safety (optional) -->
+    <llm-content-safety backend-id="content-safety-backend" shield-prompt="true">
+        <categories output-type="EightSeverityLevels">
+            <category name="Hate" threshold="3" />
+            <category name="Violence" threshold="3" />
+        </categories>
+    </llm-content-safety>
+
+    <!-- 8. Response debug headers (dev/test only) -->
+    <set-variable name="enableResponseHeaders" value="@(true)" />
+</inbound>
+```
+
+**Per-model capacity limits** (instead of flat subscription-level):
+
+```xml
+<include-fragment fragment-id="set-llm-requested-model" />
+<choose>
+    <when condition="@((string)context.Variables["requestedModel"] == "gpt-4o")">
+        <llm-token-limit counter-key="@(context.Subscription.Id + "-gpt-4o")"
+            tokens-per-minute="10000" token-quota="100000" token-quota-period="Monthly"
+            estimate-prompt-tokens="false" />
+    </when>
+    <when condition="@((string)context.Variables["requestedModel"] == "DeepSeek-R1")">
+        <llm-token-limit counter-key="@(context.Subscription.Id + "-DeepSeek-R1")"
+            tokens-per-minute="2000" token-quota="10000" token-quota-period="Weekly"
+            estimate-prompt-tokens="false" />
+    </when>
+    <otherwise>
+        <llm-token-limit counter-key="@(context.Subscription.Id + "-default")"
+            tokens-per-minute="1000" token-quota="5000" token-quota-period="Monthly"
+            estimate-prompt-tokens="false" />
+    </otherwise>
+</choose>
+```
+
+**Throttling alerts** (in `<on-error>` section):
+
+```xml
+<on-error>
+    <base />
+    <set-variable name="productName" value="@(context.Product?.Name?.ToString() ?? "Portal-Admin")" />
+    <set-variable name="deploymentName" value="@((string)context.Variables.GetValueOrDefault<string>("requestedModel", "DefaultModel"))" />
+    <set-variable name="appId" value="@((string)context.Variables.GetValueOrDefault<string>("appId", context.Subscription?.Id ?? "Portal-Admin-Sub"))" />
+    <include-fragment fragment-id="raise-throttling-events" />
+</on-error>
+```
 
 ### 4. Validate and Deploy
 
@@ -318,7 +406,42 @@ token = credential.get_token("api://<GATEWAY-APP-ID>/.default").token
 
 > ⚠️ Your spoke identity must be granted the required app role (e.g. `Models.Read`)
 > on the gateway app registration. Ask the platform team to assign this via Entra ID.
-> See `guides/jwt-client-identity-permissions.md` for full details.
+>
+> **Guides:**
+> - [JWT Authentication Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/entraid-auth-validation.md)
+> - [JWT Client Identity & Permissions](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/jwt-client-identity-permissions.md)
+
+### Custom Identity Provider Override
+
+Access contracts can override gateway JWT defaults per product:
+
+```xml
+<inbound>
+    <base />
+    <set-variable name="jwtRequired" value="true" />
+    <!-- Override for Auth0, Okta, or separate Entra tenant -->
+    <set-variable name="jwtAudience" value="https://my-custom-api-audience" />
+    <set-variable name="jwtIssuer" value="https://my-idp.example.com/" />
+    <set-variable name="jwtOpenIdConfigUrl" value="https://my-idp.example.com/.well-known/openid-configuration" />
+</inbound>
+```
+
+| Variable | Falls Back To (APIM Named Value) |
+|----------|----------------------------------|
+| `jwtAudience` | `JWT-AppRegistrationId` |
+| `jwtIssuer` | `JWT-Issuer` |
+| `jwtOpenIdConfigUrl` | `JWT-OpenIdConfigUrl` |
+
+### App Role Authorization
+
+Require specific Entra app roles (enforced after JWT validation, OR logic):
+
+```xml
+<set-variable name="jwtRequired" value="true" />
+<set-variable name="requiredRoles" value="Models.Read,Agent.Read" />
+```
+
+Available gateway app roles: `Task.ReadWrite`, `Models.Read`, `MCP.Read`, `Agent.Read`.
 
 ---
 
@@ -326,7 +449,7 @@ token = credential.get_token("api://<GATEWAY-APP-ID>/.default").token
 
 If you only need to wire a Foundry project to the APIM gateway **without** a full
 Access Contract (e.g. the product/subscription already exists), use the
-`foundry-integration/main.bicep` template:
+[`foundry-integration/main.bicep`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/bicep/infra/foundry-integration) template:
 
 ```bash
 cd bicep/infra/foundry-integration
@@ -431,39 +554,84 @@ param services = [
 
 ## Advanced Policy Capabilities
 
-Beyond model access and token limits, these policy snippets are available for
-spoke product policies. See `citadel-access-contracts-policy.md` for full details.
+Full policy reference with XML snippets:
+[citadel-access-contracts-policy.md](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/bicep/infra/citadel-access-contracts/citadel-access-contracts-policy.md)
 
 | Capability | Key Variable / Snippet | When to Use |
 |------------|----------------------|-------------|
 | Model access control | `allowedModels` via `validate-model-access` fragment | Restrict which models a spoke can call |
-| Token limits | `llm-token-limit` (TPM + monthly quota) | Budget control per subscription |
-| Content Safety | Hub-level fragments | Prompt Shield, content filtering |
+| Token limits (subscription) | `llm-token-limit` (TPM + monthly quota) | Budget control per subscription |
+| Token limits (per model) | `llm-token-limit` with `choose` on `requestedModel` | Different budgets per model |
+| Content Safety | `llm-content-safety` with category thresholds | Prompt Shield, content filtering (10K char limit) |
 | JWT per-product | `jwtRequired=true` | Layered auth on top of API key |
-| JWT custom audience | `jwtAudience`, `jwtIssuer`, `jwtOpenIdConfigUrl` | Non-default identity provider per product |
-| App role authorization | `requiredRoles` | Require specific Entra app roles |
-| Usage attribution | `appId`, `customDimension1`, `customDimension2` | Chargeback and usage analytics |
-| Response debug headers | `enableResponseHeaders` | Troubleshooting in dev/test |
-| PII masking/blocking | PII policy fragments | Data protection compliance |
-| Throttling events | `raise-throttling-events` | Custom handling of rate-limit events |
+| JWT custom IdP | `jwtAudience`, `jwtIssuer`, `jwtOpenIdConfigUrl` | Auth0, Okta, or separate Entra tenant |
+| App role authorization | `requiredRoles` (comma-separated, OR logic) | Require `Models.Read`, `Agent.Read`, etc. |
+| Usage attribution | `appId`, `customDimension1`, `customDimension2` | Chargeback via `x-app-id`, `x-sub-agent-id`, `x-enduser-id` headers |
+| Response debug headers | `enableResponseHeaders = @(true)` | Exposes `UAIG-*` headers (auth type, model, backend, cache, region) |
+| PII anonymization | `piiAnonymizationEnabled`, confidence, exclusions, regex | Replace PII with placeholders before LLM, restore in response |
+| PII audit logging | `piiStateSavingEnabled` via `pii-state-saving` fragment | Log PII processing to Event Hub for compliance |
+| Throttling alerts | `raise-throttling-events` in `<on-error>` | Feed 429 events to App Insights for alerting |
+
+### PII Anonymization Setup
+
+PII works in two phases: inbound anonymization → outbound deanonymization.
+
+```xml
+<!-- Inbound: detect and replace PII -->
+<set-variable name="piiAnonymizationEnabled" value="true" />
+<set-variable name="piiConfidenceThreshold" value="0.8" />
+<set-variable name="piiEntityCategoryExclusions" value="PersonType" />
+<set-variable name="piiDetectionLanguage" value="en" />     <!-- "auto" for multilingual -->
+<set-variable name="piiInputContent" value="@(context.Request.Body.As<string>(preserveContent: true))" />
+<include-fragment fragment-id="pii-anonymization" />
+<set-body>@(context.Variables.GetValueOrDefault<string>("piiAnonymizedContent"))</set-body>
+```
+
+```xml
+<!-- Outbound: restore original PII -->
+<set-variable name="piiDeanonymizeContentInput" value="@(context.Response.Body.As<string>(preserveContent: true))" />
+<include-fragment fragment-id="pii-deanonymization" />
+<set-variable name="piiStateSavingEnabled" value="true" />  <!-- optional: audit log -->
+<include-fragment fragment-id="pii-state-saving" />
+<set-body>@(context.Variables.GetValueOrDefault<string>("piiDeanonymizedContentOutput"))</set-body>
+```
+
+Custom regex patterns can extend NLP detection for domain-specific PII (credit cards, passport numbers, etc.).
+See [PII Masking Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/pii-masking-apim.md) for full details.
+
+### Response Debug Headers (`UAIG-*`)
+
+When `enableResponseHeaders` is `true`, these headers are injected in the response:
+
+| Header | Description |
+|--------|-------------|
+| `UAIG-Auth-Type` | `api-key`, `jwt`, `api-key-jwt`, or `none` |
+| `UAIG-Model-Id` | Requested model name |
+| `UAIG-Backend` | Selected backend pool |
+| `UAIG-Cache-Operation` | Cache hit/miss/skip |
+| `UAIG-Is-Streaming` | Whether streaming was used |
+| `UAIG-Request-Id` | APIM correlation ID |
+| `UAIG-Gateway-Region` | Gateway Azure region |
+
+> ⚠️ Disable in production — these headers expose internal gateway state.
 
 ---
 
 ## Validation Notebooks
 
-After deploying an access contract, use the source repo's validation notebooks
-(under `validation/`) to verify end-to-end connectivity:
+After deploying an access contract, use the repo's
+[validation notebooks](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/validation)
+to verify end-to-end connectivity:
 
 | Need to Validate | Notebook |
 |-----------------|----------|
-| Access contract deployment + keys | `citadel-access-contracts-tests.ipynb` |
-| Foundry / LangChain / Microsoft Agent Framework consumption | `citadel-agent-frameworks-tests.ipynb` |
-| JWT + role enforcement | `citadel-jwt-authentication-tests.ipynb` |
-| PII masking/blocking policies | `citadel-pii-processing-tests.ipynb` |
-| Unified AI API routing across providers | `citadel-unified-ai-api-tests.ipynb` |
+| Access contract deployment + keys | [`citadel-access-contracts-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-access-contracts-tests.ipynb) |
+| Foundry / LangChain / MAF consumption | [`citadel-agent-frameworks-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-agent-frameworks-tests.ipynb) |
+| JWT + role enforcement | [`citadel-jwt-authentication-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-jwt-authentication-tests.ipynb) |
+| PII masking/blocking policies | [`citadel-pii-processing-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-pii-processing-tests.ipynb) |
+| Unified AI API routing across providers | [`citadel-unified-ai-api-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-unified-ai-api-tests.ipynb) |
 
-> Requires Python with `openai`, `requests`, `matplotlib` and other packages from
-> `validation/requirements.txt`.
+> Requires Python with packages from [`validation/requirements.txt`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/requirements.txt).
 
 ---
 
@@ -479,8 +647,14 @@ When onboarding a new spoke, request the following from the Citadel platform tea
 - Gateway app registration ID (if using JWT auth)
 - Network routing: private endpoint DNS, firewall rules, VNet peering status
 
-Reference `guides/LLM-Backend-Onboarding-Guide.md` for platform-team context
+Reference the [LLM Backend Onboarding Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/LLM-Backend-Onboarding-Guide.md) for platform-team context
 on how backends are onboarded to the hub (not a spoke deployment step).
+
+> **Additional guides:**
+> - [Full Deployment Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/full-deployment-guide.md)
+> - [Network Approach Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/network-approach.md)
+> - [Citadel Sizing Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/citadel-sizing-guide.md)
+> - [Parameters Usage Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/parameters-usage-guide.md)
 
 ---
 

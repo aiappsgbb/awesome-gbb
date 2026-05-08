@@ -11,10 +11,10 @@
     },
     "name": {
         "short": "__AGENT_NAME__",
-        "full": "__AGENT_DESCRIPTION__"
+        "full": "__AGENT_NAME_FULL__"
     },
     "description": {
-        "short": "__AGENT_DESCRIPTION__",
+        "short": "__AGENT_DESCRIPTION_SHORT__",
         "full": "__AGENT_DESCRIPTION__"
     },
     "icons": {

@@ -20,15 +20,15 @@ def build_manifest(
 
     manifest = json.loads((src / "manifest.json").read_text())
 
-    # Replace all tokens
+    # Replace all tokens — respect Teams manifest length limits
     manifest["id"] = bot_client_id
     manifest["copilotAgents"]["customEngineAgents"][0]["id"] = bot_client_id
     manifest["bots"][0]["botId"] = bot_client_id
-    manifest["name"]["short"] = agent_name
+    manifest["name"]["short"] = agent_name[:30]            # max 30 chars
+    manifest["name"]["full"] = agent_name[:100]             # max 100 chars
     if agent_description:
-        manifest["name"]["full"] = agent_description
-        manifest["description"]["short"] = agent_description
-        manifest["description"]["full"] = agent_description
+        manifest["description"]["short"] = agent_description[:80]   # max 80 chars
+        manifest["description"]["full"] = agent_description[:4000]  # max 4000 chars
     if developer_name:
         manifest["developer"]["name"] = developer_name
 

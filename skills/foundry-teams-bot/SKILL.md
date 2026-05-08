@@ -229,12 +229,17 @@ Also provide **color.png** (192×192) and **outline.png** (32×32) icons in the 
 
 **Token replacement:**
 
-| Token | Value | Source |
-|-------|-------|--------|
-| `__BOT_APP_ID__` | UAMI client ID (filled at postprovision) | Bicep output |
-| `__AGENT_NAME__` | Display name | User input |
-| `__AGENT_DESCRIPTION__` | One-line description | User input |
-| `__DEVELOPER_NAME__` | Developer/org name | User input |
+| Token | Value | Max Length | Source |
+|-------|-------|-----------|--------|
+| `__BOT_APP_ID__` | UAMI client ID (filled at postprovision) | — | Bicep output |
+| `__AGENT_NAME__` | Short display name | **30 chars** | User input |
+| `__AGENT_NAME_FULL__` | Full display name | **100 chars** | User input |
+| `__AGENT_DESCRIPTION_SHORT__` | Short description | **80 chars** | User input |
+| `__AGENT_DESCRIPTION__` | Full description | 4000 chars | User input |
+| `__DEVELOPER_NAME__` | Developer/org name | — | User input |
+
+> **Teams manifest has strict length limits.** The build script auto-truncates,
+> but keep descriptions concise to avoid cut-off text.
 
 ---
 
@@ -696,3 +701,4 @@ user_token = result["access_token"]
 | Bot SDK auth fails | Wrong `msaAppType` in bot.bicep | Must be `UserAssignedMSI` (not `SingleTenant` or `MultiTenant`) |
 | Bot image overwritten on reprovision | Bicep resets container image | Use `fetch-container-image.bicep` + `SERVICE_BOT_RESOURCE_EXISTS` param |
 | `server_error` in Teams | Stale conversation from previous agent version | Type `!reset` in Teams chat — bot auto-retries with fresh conversation |
+| Manifest validation fails on length | `name.full` > 100 chars or `description.short` > 80 chars | Use separate short/full tokens. Build script auto-truncates but keep inputs concise. |
