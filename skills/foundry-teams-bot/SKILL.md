@@ -417,7 +417,7 @@ output AZURE_BOT_APP_ID string = uami.outputs.clientId
 
 ## Step 7: Sideload into Teams
 
-1. Run `python scripts/build_teams_manifest.py` (or let postprovision hook run it)
+1. Run `python src/bot/build_manifest.py` (or let postprovision hook run it)
 2. Open **Microsoft Teams** → **Apps** → **Manage your apps**
 3. Click **Upload an app** → **Upload a custom app**
 4. Select `copilot_package.zip`
@@ -426,6 +426,70 @@ output AZURE_BOT_APP_ID string = uami.outputs.clientId
 
 > **Note**: Sideloading must be enabled by your Teams admin. For production,
 > publish via the Teams App Catalog or Microsoft AppSource.
+
+---
+
+## Testing via DirectLine (Smoke Test)
+
+Before sideloading into Teams, test the bot directly via the Azure Bot Service's
+**DirectLine** channel. This works from any HTTP client — no Teams needed.
+
+### 1. Get the DirectLine secret
+
+In the Azure Portal → Bot Service → **Channels** → **Direct Line** → copy the **Secret key**.
+
+Or via CLI:
+```bash
+az bot directline show --name <bot-name> --resource-group <rg> --with-secrets true \
+  --query "properties.properties.sites[0].key" -o tsv
+```
+
+### 2. Start a conversation
+
+```bash
+# Start conversation
+CONVERSATION=$(curl -s -X POST \
+  https://directline.botframework.com/v3/directline/conversations \
+  -H "Authorization: Bearer <DIRECTLINE_SECRET>" \
+  -H "Content-Type: application/json" | jq -r '.conversationId')
+
+echo "Conversation: $CONVERSATION"
+```
+
+### 3. Send a message
+
+```bash
+curl -s -X POST \
+  "https://directline.botframework.com/v3/directline/conversations/${CONVERSATION}/activities" \
+  -H "Authorization: Bearer <DIRECTLINE_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "message", "from": {"id": "smoke-test"}, "text": "Hello, what can you do?"}'
+```
+
+### 4. Read response
+
+```bash
+curl -s \
+  "https://directline.botframework.com/v3/directline/conversations/${CONVERSATION}/activities" \
+  -H "Authorization: Bearer <DIRECTLINE_SECRET>" | jq '.activities[-1].text'
+```
+
+### 5. Check bot logs
+
+If the bot doesn't respond, check the ACA container logs:
+
+```bash
+# Stream logs from bot ACA
+az containerapp logs show --name <bot-aca-name> --resource-group <rg> --follow
+
+# Or via portal: Container Apps → bot ACA → Log stream
+```
+
+Common issues visible in logs:
+- `MsalConnectionManager` errors → CONNECTIONS__ env vars missing or wrong
+- `Agent not reachable` → hosted agent not deployed or RBAC not propagated
+- `401 Unauthorized` → UAMI missing roles on Foundry project
+- `ConnectionError` → PROJECT_ENDPOINT wrong or ACA can't reach Foundry
 
 ---
 
