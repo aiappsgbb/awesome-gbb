@@ -651,23 +651,34 @@ the Foundry project** for eval telemetry and agent tracing to work.
 
 ### What you must do manually (or via postprovision hook)
 
-1. **Create a Foundry project connection to Application Insights:**
+1. **Create an AppInsights connection on the Foundry ACCOUNT (not project):**
 
-   The Foundry project needs an `ApplicationInsights` connection so that eval runs
-   and agent traces appear in the Foundry portal. This is NOT automatic.
+   The Foundry **account** needs an `AppInsights` connection so that agent traces
+   and eval telemetry appear in the Foundry portal. This is NOT automatic.
+
+   > **Key details:**
+   > - Category is `AppInsights` (NOT `ApplicationInsights`)
+   > - Target is the **ARM resource ID** (NOT the connection string)
+   > - Metadata must include `ApiType: Azure`
+   > - Connection is at **account level**, not project level
 
    ```bash
-   # Via Azure CLI (or Bicep)
-   az resource create \
-     --resource-type "Microsoft.CognitiveServices/accounts/projects/connections" \
-     --name "<connection-name>" \
-     --properties '{
-       "category": "ApplicationInsights",
-       "target": "<appinsights-connection-string>",
-       "authType": "ApiKey",
-       "credentials": { "key": "<appinsights-instrumentation-key>" }
-     }' \
-     --api-version 2025-10-01-preview
+   # Via Azure REST API
+   ACCOUNT_SCOPE="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
+   APPINSIGHTS_ARM_ID="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Insights/components/<appinsights>"
+
+   az rest --method PUT \
+     --url "${ACCOUNT_SCOPE}/connections/<connection-name>?api-version=2025-10-01-preview" \
+     --body '{
+       "properties": {
+         "category": "AppInsights",
+         "target": "'${APPINSIGHTS_ARM_ID}'",
+         "authType": "AAD",
+         "metadata": {
+           "ApiType": "Azure"
+         }
+       }
+     }'
    ```
 
 2. **RBAC for telemetry — ALL identities need access:**
@@ -1402,7 +1413,7 @@ project/                    # ← REPO ROOT
 | **CognitiveServices API version wrong** | Using old `2024-10-01` API | Use `2025-10-01-preview` for connections and agent management |
 | **Hooks fail on Windows** | `shell: sh` in azure.yaml hooks | Use `shell: pwsh` for cross-platform compatibility |
 | **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content | Default to `gpt-5.4-mini` |
-| **Evals show no telemetry** | AppInsights not connected to Foundry project | Create an `ApplicationInsights` connection on the project (see Monitoring section) |
+| **Evals show no telemetry** | AppInsights not connected to Foundry account | Create `AppInsights` connection on the **account** (not project). Category: `AppInsights`, target: ARM resource ID, metadata: `ApiType: Azure`. See Monitoring section. |
 | **`azd up --no-prompt` fails with multiple subs** | azd can't auto-select subscription | Set `AZURE_SUBSCRIPTION_ID` in azd env: `azd env set AZURE_SUBSCRIPTION_ID <sub-id>` |
 | **`config.deployments` fails silently — no model created** | Extension creates model during provision but doesn't error if it fails | Verify with `az cognitiveservices account deployment list --resource-group <rg> --name <account> -o table` after `azd provision` |
 | **Cross-RG ACR needs manual AcrPull** | ACR in different resource group from ACA | Manually assign `AcrPull` to the shared UAMI on the ACR. Bicep auto-assignment only works same RG. |
