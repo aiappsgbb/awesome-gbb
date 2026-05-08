@@ -193,6 +193,11 @@ if response_text:
 
 aiohttp server with SDK-managed Bot Framework auth via `MsalConnectionManager`.
 
+**⚠️ Critical pattern:** Use `Application(middlewares=[jwt_authorization_middleware])` with
+a manual `entry_point()` handler that calls `start_agent_process(req, agent, adapter)`.
+Do NOT use `start_agent_process()` at the application level — it must be called per-request.
+Older samples may show a different pattern — the template has the working approach.
+
 ### `copilot/requirements.txt`
 
 > **Template:** [`templates/copilot/requirements.txt`](templates/copilot/requirements.txt)

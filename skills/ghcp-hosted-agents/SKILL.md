@@ -111,10 +111,13 @@ events flow throughout.
 - `description` — your agent description
 - `environment_variables` — add MCP server FQDNs if needed
 
-**Critical:** Declare **both** `invocations` AND `responses` protocols. The container runtime
-uses Invocations (SSE), but external callers (bot, `azd ai agent invoke`, Responses API)
-need the `responses` protocol declared too — otherwise you get
-*"Endpoint-scoped responses require the 'responses' protocol to be declared"*.
+**Critical:**
+- Use `protocol: invocations` only — **do NOT** add `responses`. `InvocationAgentServerHost`
+  only serves `/invocations`; the `/responses` path returns 404 even if declared in agent.yaml.
+- External callers (bot, eval scripts) must POST to the Invocations SSE endpoint directly.
+  If you need `oai.responses.create()` for a Teams bot, use MAF runtime instead.
+- `agent.yaml` must live in the **service directory** referenced by `azure.yaml` (e.g., `src/agent/agent.yaml`),
+  not just the project root — the `azd ai agent` extension looks for it relative to the service path.
 
 ---
 
@@ -320,6 +323,8 @@ Task Completion) are stable across both judge models.
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use `remoteBuild: true` in `azure.yaml` (builds via ACR Tasks with the project's MI) |
 | **Evals show no telemetry** | AppInsights not connected to Foundry account | Create `AppInsights` connection on the **account** (not project). Category: `AppInsights`, target: ARM resource ID, metadata: `ApiType: Azure`. `APPLICATIONINSIGHTS_CONNECTION_STRING` is reserved — platform injects it. |
 | **Agent traces missing** | Agent identity lacks telemetry RBAC | Assign `Monitoring Metrics Publisher` on AppInsights to BOTH `instance_identity` and `blueprint` principal IDs (from `azd ai agent show`). Project MI needs `Log Analytics Data Reader` on Log Analytics workspace. |
+| **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content required by GHCP SDK | Default to `gpt-5.4-mini` or `gpt-5.4`. Update `MODEL_DEPLOYMENT_NAME` in agent.yaml. |
+| **agent.yaml not found by azd** | agent.yaml in project root but `azure.yaml` service points to a subdirectory | agent.yaml must be in the **service directory** (e.g., `src/agent/agent.yaml`), not just the project root. The `azd ai agent` extension looks relative to the service path. |
 
 ---
 
