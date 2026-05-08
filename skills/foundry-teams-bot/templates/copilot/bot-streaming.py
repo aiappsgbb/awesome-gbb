@@ -149,8 +149,20 @@ async def _stream_invocations(
                         yield TextChunk(content)
                     elif event_type == "tool.execution_start":
                         tool_count += 1
-                        name = data.get("name", data.get("tool", "tool"))
-                        yield StatusUpdate(f"🔧 Using {name}... ({tool_count})")
+                        tool_name = data.get("toolName", "tool")
+                        args = data.get("arguments", {})
+                        if tool_name in ("web_fetch", "browser_navigate") and args.get("url"):
+                            domain = args["url"].split("//")[-1].split("/")[0]
+                            label = f"🌐 Browsing {domain}..."
+                        elif tool_name == "web_search" and args.get("query"):
+                            label = f"🔍 Searching: {args['query'][:60]}"
+                        elif tool_name == "browser_snapshot":
+                            label = "📸 Reading page content..."
+                        elif tool_name == "browser_click":
+                            label = "🖱️ Clicking element..."
+                        else:
+                            label = f"🔧 {tool_name}..."
+                        yield StatusUpdate(f"{label} ({tool_count})")
                     elif event_type == "assistant.reasoning_delta":
                         # First reasoning chunk → show thinking indicator
                         if content and tool_count == 0:
