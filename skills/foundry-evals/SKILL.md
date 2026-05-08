@@ -77,95 +77,115 @@ for query in test_queries:
 
 ## Phase 2: Score with Foundry Evaluators
 
+Foundry evals have two concepts:
+- **Eval definition** — the evaluator configuration (metrics, data schema, judge model).
+  Create this **once**, reuse across runs. Only recreate when changing metrics.
+- **Eval run** — a single execution against a dataset. Create a new run for each
+  test cycle, agent version, or dataset update.
+
+### Step 2a: Create eval definition (once)
+
 ```python
 # Use a NON-agent-bound client for evals
 client = project.get_openai_client()  # NOT agent_name=...
 
 # Judge model — MUST be gpt-5.4-mini (see quirks below)
 JUDGE_MODEL = "gpt-5.4-mini"
+EVAL_NAME = "my-agent-eval"
 
-evaluation = client.evals.create(
-    name="my-agent-eval",
-    data_source_config={
-        "type": "custom",
-        "item_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "object"}}]},
-                "response": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "object"}}]},
-                "tool_definitions": {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]},
-            },
-            "required": ["query", "response"],
-        },
-        "include_sample_schema": True,
-    },
-    testing_criteria=[
-        # Non-tool evaluators (query + response only)
-        {
-            "type": "azure_ai_evaluator",
-            "evaluator_name": "builtin.intent_resolution",
-            "initialization_parameters": {"deployment_name": JUDGE_MODEL},
-            "data_mapping": {
-                "query": "{{item.query}}",
-                "response": "{{item.response}}",
-                "tool_definitions": "{{item.tool_definitions}}",
-            },
-        },
-        {
-            "type": "azure_ai_evaluator",
-            "evaluator_name": "builtin.task_adherence",
-            "initialization_parameters": {"deployment_name": JUDGE_MODEL},
-            "data_mapping": {
-                "query": "{{item.query}}",
-                "response": "{{item.response}}",
-                "tool_definitions": "{{item.tool_definitions}}",
-            },
-        },
-        {
-            "type": "azure_ai_evaluator",
-            "evaluator_name": "builtin.task_completion",
-            "initialization_parameters": {"deployment_name": JUDGE_MODEL},
-            "data_mapping": {
-                "query": "{{item.query}}",
-                "response": "{{item.response}}",
-                "tool_definitions": "{{item.tool_definitions}}",
-            },
-        },
-        {
-            "type": "azure_ai_evaluator",
-            "evaluator_name": "builtin.coherence",
-            "initialization_parameters": {"deployment_name": JUDGE_MODEL},
-            "data_mapping": {
-                "query": "{{item.query}}",
-                "response": "{{item.response}}",
-            },
-        },
-        # Tool evaluators (require tool_definitions)
-        {
-            "type": "azure_ai_evaluator",
-            "evaluator_name": "builtin.tool_selection",
-            "initialization_parameters": {"deployment_name": JUDGE_MODEL},
-            "data_mapping": {
-                "query": "{{item.query}}",
-                "response": "{{item.response}}",
-                "tool_definitions": "{{item.tool_definitions}}",
-            },
-        },
-        {
-            "type": "azure_ai_evaluator",
-            "evaluator_name": "builtin.tool_output_utilization",
-            "initialization_parameters": {"deployment_name": JUDGE_MODEL},
-            "data_mapping": {
-                "query": "{{item.query}}",
-                "response": "{{item.response}}",
-                "tool_definitions": "{{item.tool_definitions}}",
-            },
-        },
-    ],
-)
+# Check if definition already exists
+existing_evals = list(client.evals.list())
+eval_def = next((e for e in existing_evals if e.name == EVAL_NAME), None)
 
+if not eval_def:
+    eval_def = client.evals.create(
+        name=EVAL_NAME,
+        data_source_config={
+            "type": "custom",
+            "item_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "object"}}]},
+                    "response": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "object"}}]},
+                    "tool_definitions": {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]},
+                },
+                "required": ["query", "response"],
+            },
+            "include_sample_schema": True,
+        },
+        testing_criteria=[
+            {
+                "type": "azure_ai_evaluator",
+                "evaluator_name": "builtin.intent_resolution",
+                "initialization_parameters": {"deployment_name": JUDGE_MODEL},
+                "data_mapping": {
+                    "query": "{{item.query}}",
+                    "response": "{{item.response}}",
+                    "tool_definitions": "{{item.tool_definitions}}",
+                },
+            },
+            {
+                "type": "azure_ai_evaluator",
+                "evaluator_name": "builtin.task_adherence",
+                "initialization_parameters": {"deployment_name": JUDGE_MODEL},
+                "data_mapping": {
+                    "query": "{{item.query}}",
+                    "response": "{{item.response}}",
+                    "tool_definitions": "{{item.tool_definitions}}",
+                },
+            },
+            {
+                "type": "azure_ai_evaluator",
+                "evaluator_name": "builtin.task_completion",
+                "initialization_parameters": {"deployment_name": JUDGE_MODEL},
+                "data_mapping": {
+                    "query": "{{item.query}}",
+                    "response": "{{item.response}}",
+                    "tool_definitions": "{{item.tool_definitions}}",
+                },
+            },
+            {
+                "type": "azure_ai_evaluator",
+                "evaluator_name": "builtin.coherence",
+                "initialization_parameters": {"deployment_name": JUDGE_MODEL},
+                "data_mapping": {
+                    "query": "{{item.query}}",
+                    "response": "{{item.response}}",
+                },
+            },
+            {
+                "type": "azure_ai_evaluator",
+                "evaluator_name": "builtin.tool_selection",
+                "initialization_parameters": {"deployment_name": JUDGE_MODEL},
+                "data_mapping": {
+                    "query": "{{item.query}}",
+                    "response": "{{item.response}}",
+                    "tool_definitions": "{{item.tool_definitions}}",
+                },
+            },
+            {
+                "type": "azure_ai_evaluator",
+                "evaluator_name": "builtin.tool_output_utilization",
+                "initialization_parameters": {"deployment_name": JUDGE_MODEL},
+                "data_mapping": {
+                    "query": "{{item.query}}",
+                    "response": "{{item.response}}",
+                    "tool_definitions": "{{item.tool_definitions}}",
+                },
+            },
+        ],
+    )
+    print(f"Created eval definition: {eval_def.id}")
+else:
+    print(f"Reusing eval definition: {eval_def.id}")
+```
+
+### Step 2b: Create eval run (every time)
+
+```python
+# Create a new run against the existing definition
 run = client.evals.runs.create(
-    eval_id=evaluation.id,
+    eval_id=eval_def.id,
     data_source={
         "type": "jsonl",
         "source": {
@@ -177,6 +197,10 @@ run = client.evals.runs.create(
 
 print(f"Eval run: {run.id} — status: {run.status}")
 ```
+
+> **Do NOT call `client.evals.create()` every run.** The definition is reusable —
+> only the dataset changes between runs. Creating a new definition per run clutters
+> the eval dashboard and makes trending impossible.
 
 ### JSONL Data Format
 
@@ -441,13 +465,16 @@ MAF is chattier (6.0 tool calls/scenario vs 3.7) but less precise with tool outp
 
 ## Eval Trending
 
-Track scores over time to catch regressions:
+Track scores over time by creating new **runs** against the same **definition**:
 
 ```python
-# Compare runs
-runs = client.evals.runs.list(eval_id=evaluation.id)
+# List all runs for a definition — shows score progression
+runs = client.evals.runs.list(eval_id=eval_def.id)
 for run in runs:
     print(f"{run.created_at}: {run.metrics}")
 ```
+
+This only works when reusing the same eval definition. If you create a new definition
+per run, each has only one run and trending is impossible.
 
 Re-run evals after each agent version update to ensure quality doesn't regress.
