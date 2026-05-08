@@ -137,6 +137,7 @@ project/
 ├── AGENTS.md                      # Agent identity, tools, guidelines
 │
 │   ├── overview.html              # Seller pitch page (self-contained)
+│   ├── prep-guide.html           # ⚠️ INTERNAL ONLY — seller prep (add to .gitignore)
 │   ├── dashboard/                 # Interactive workshop app (optional, React)
 │
 ├── src/

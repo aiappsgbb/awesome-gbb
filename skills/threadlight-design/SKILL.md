@@ -528,7 +528,15 @@ specs/dashboard/
 Run with `npm install && npm run dev`. This is **optional** — only generate when
 the user asks for an interactive dashboard or workshop tool.
 
-#### 9. `specs/prep-guide.md` — Seller Prep Guide
+#### 9. `specs/prep-guide.html` — Seller Prep Guide
+
+> [!WARNING]
+> **INTERNAL / MICROSOFT CONFIDENTIAL.** This file is for the seller only — do NOT
+> share with the customer or include in any code repository shared externally.
+> Add `specs/prep-guide.html` to `.gitignore` if the repo may be shared.
+
+Generate as a **self-contained HTML file** (same as overview.html — opens in browser,
+can be saved as PDF via Print → Save as PDF). Sellers can't read markdown.
 
 A lean companion document for the person presenting the demo. Helps them prepare
 for the customer conversation, anticipate questions, and suggest next steps.
@@ -550,6 +558,9 @@ for the customer conversation, anticipate questions, and suggest next steps.
    - Run evals with customer-provided test scenarios
    - Deploy to Citadel landing zone (if governed)
    - Expand to additional process variants
+
+**Style:** Same dark theme as overview.html but with an "INTERNAL USE ONLY" banner
+at the top. Print-friendly (saves as clean PDF).
 
 > This is intentionally lean — NOT a 14-section seller enablement deck.
 > Just enough to prepare for the conversation.
