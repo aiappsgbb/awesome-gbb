@@ -296,6 +296,33 @@ dataset = [
 A common eval failure: agents over-call tools (e.g., `list_databases`, `get_schema`)
 on every turn, causing `tool_selection` scores of 30-50% instead of 80%+.
 
+### Tool Budget
+
+Broad queries like "tell me everything about customer X" can trigger **>5 minute tool loops**
+where the agent chains 10-20 tool calls. This is expensive (tokens + latency) and hurts
+eval scores. Add a tool budget directive:
+
+```
+## Tool Budget
+
+Limit yourself to a maximum of 5 tool calls per user message. If you need more data,
+ask the user to narrow their question. Do NOT exhaustively scan all collections or
+databases — target the specific data you need.
+```
+
+Adjust the budget (3-8 calls) based on the process complexity. Simpler processes
+need fewer; complex multi-step workflows may need more.
+
+### Task Adherence vs Tools Trade-off
+
+> **Known trade-off:** `task_adherence` scores tend to **drop 5-15%** when the agent
+> has many tools available. The evaluator penalizes the agent for spending tokens on
+> tool calls instead of directly addressing the user's question.
+>
+> This is expected — don't chase 100% task_adherence if the agent needs tools to do
+> its job. Focus on `tool_selection` + `tool_output_utilization` being high (80%+)
+> alongside reasonable task_adherence (70%+).
+
 **Fix:** Add a tool-use discipline directive to the agent's system instructions:
 
 ```
@@ -334,6 +361,8 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 | Eval run fails | RBAC missing on judge model | Assign `Cognitive Services OpenAI User` |
 | Inconsistent scores | Low TPM causing rate limits | Increase to ≥300K TPM |
 | Scenario fails but agent is correct | Eval scenario references data not in seed/mock data | Align scenario IDs with actual sample data (e.g., S-003 uses LA-1011 but only LA-1001..1003 exist) |
+| Broad query causes >5min tool loop | No tool budget in instructions | Add tool budget directive: "max 5 tool calls per message" |
+| `task_adherence` drops when tools added | Known trade-off — evaluator penalizes tool call overhead | Expected 5-15% drop; focus on tool_selection + tool_output_utilization being 80%+ |
 
 ---
 
