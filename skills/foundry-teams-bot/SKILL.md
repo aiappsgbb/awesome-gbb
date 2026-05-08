@@ -350,23 +350,11 @@ The bot's UAMI needs these role assignments to call the Foundry Hosted Agent:
 
 ## User Identity
 
-Extract the Teams user's identity from the incoming activity to tell the agent who's
-talking. This is **NOT OBO** (On-Behalf-Of) — just reading metadata from the Bot Framework
-activity. The bot still authenticates as the UAMI service principal.
+The Teams user's identity is available from the incoming activity. This is **NOT OBO**
+(On-Behalf-Of) — just metadata from the Bot Framework activity.
 
-```python
-async def _on_message(self, context: TurnContext, state: TurnState) -> bool:
-    user = context.activity.from_property
-    user_name = user.name if user else "Unknown"
-    aad_id = user.aad_object_id if user else None
-
-    # Inject user context into agent prompt
-    user_message = context.activity.text or ""
-    agent_input = f"[User: {user_name}] {user_message}"
-
-    # Send to Foundry agent with user context
-    stream = oai.responses.create(input=agent_input, stream=True)
-```
+Useful when the agent needs to filter data by user (e.g., "show MY orders") or for
+audit logging.
 
 **Available fields on `context.activity.from_property`:**
 
@@ -375,6 +363,24 @@ async def _on_message(self, context: TurnContext, state: TurnState) -> bool:
 | `id` | Teams user ID | `29:U1a2b3c...` |
 | `name` | Display name | `John Smith` |
 | `aad_object_id` | Azure AD UUID | `12345678-abcd-...` |
+
+**Example — reading identity:**
+
+```python
+user = context.activity.from_property
+if user:
+    user_name = user.name              # "John Smith"
+    aad_id = user.aad_object_id        # Azure AD UUID
+    logger.info(f"Message from {user_name} (AAD: {aad_id})")
+```
+
+**If the agent needs user context** (e.g., for data filtering), the bot can inject
+the identity into the prompt. This is optional — only do it when the business process
+requires user-scoped data:
+
+```python
+agent_input = f"[User: {user_name}] {user_message}"
+```
 
 > To resolve UPN (email) from `aad_object_id`, you'd need a Graph API call —
 > that's a separate concern, not covered here.

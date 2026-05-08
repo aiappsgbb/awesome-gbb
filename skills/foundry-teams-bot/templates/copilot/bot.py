@@ -37,11 +37,6 @@ class AgentBot(AgentApplication):
         if not user_message.strip():
             return True
 
-        # Extract user identity from Teams activity
-        user = context.activity.from_property
-        user_name = user.name if user else "Unknown"
-        agent_input = f"[User: {user_name}] {user_message}"
-
         # Handle reset command
         if user_message.strip().lower() == "!reset":
             state["thread_id"] = None
@@ -65,7 +60,7 @@ class AgentBot(AgentApplication):
                     # Stream response from Foundry Hosted Agent
                     collected_text = []
                     stream = oai.responses.create(
-                        input=agent_input,
+                        input=user_message,
                         stream=True,
                     )
 
