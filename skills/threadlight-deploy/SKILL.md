@@ -1396,6 +1396,7 @@ project/                    # ← REPO ROOT
 | Skills not loading | Wrong directory path | Must be `skills/` relative to `/app/` |
 | Import errors crash container | Missing dependency in pyproject.toml | Diagnostic HTTP server keeps container alive |
 | Bot returns "Response could not be saved" | Old-style `agent_reference` invocation | Use `get_openai_client(agent_name=...)` with `allow_preview=True` |
+| Bot gets 400 "responses protocol not declared" | **CONFIRMED:** GHCP SDK agent only serves `/invocations`. Bot's `oai.responses.create()` fails. | Bot must use direct HTTP POST to `/protocols/invocations` + SSE parsing for GHCP agents. OR use MAF runtime. See `foundry-teams-bot` skill. |
 | Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 3 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
