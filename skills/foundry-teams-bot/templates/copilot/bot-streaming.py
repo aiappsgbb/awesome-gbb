@@ -88,9 +88,9 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
             if chunk:
                 yield TextChunk(chunk)
         elif event_type == "response.output_text.done":
-            text = getattr(event, "text", "")
-            if text:
-                yield TextChunk(text)
+            # Do NOT yield TextChunk on response.output_text.done — that event carries the
+            # full accumulated text, which would duplicate every delta we already streamed.
+            continue
         elif event_type == "response.function_call_arguments.start":
             name = getattr(event, "name", "tool")
             yield StatusUpdate(f"🔧 Calling {name}...")
@@ -134,6 +134,7 @@ async def _stream_invocations(
                 raise RuntimeError(f"Invocations returned {resp.status}: {body[:500]}")
 
             tool_count = 0
+            delta_seen = False
             async for line_bytes in resp.content:
                 line = line_bytes.decode("utf-8", errors="replace").strip()
                 if not line or not line.startswith("data: "):
@@ -144,10 +145,14 @@ async def _stream_invocations(
                     data = event.get("data", {})
                     content = data.get("content", "")
 
-                    if event_type == "assistant.message_delta" and content:
-                        yield TextChunk(content)
+                    if event_type == "assistant.message_delta":
+                        delta_seen = True
+                        if content:
+                            yield TextChunk(content)
                     elif event_type == "assistant.message" and content:
-                        yield TextChunk(content)
+                        # Final assistant.message carries the full text; only use it for non-delta backends.
+                        if not delta_seen:
+                            yield TextChunk(content)
                     elif event_type == "tool.execution_start":
                         tool_count += 1
                         tool_name = data.get("toolName", "tool")
@@ -174,6 +179,7 @@ async def _stream_invocations(
                     elif event_type == "permission.completed":
                         yield StatusUpdate(f"✅ Permission granted ({tool_count})")
                     elif event_type == "assistant.turn_start":
+                        delta_seen = False
                         yield StatusUpdate("🤔 Thinking...")
                     elif event_type == "assistant.reasoning_delta":
                         if content and tool_count == 0:

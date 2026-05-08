@@ -136,7 +136,8 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework>=1.1.0",
+    "agent-framework-core==1.1.1",
+    "agent-framework-foundry==1.1.1",
     "agent-framework-foundry-hosting>=1.0.0a260421",
     "azure-ai-projects>=2.1.0",
     "azure-identity>=1.19.0",
@@ -147,6 +148,12 @@ dependencies = [
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 prerelease = "if-necessary-or-explicit"
 ```
+
+**Do NOT use `agent-framework>=1.1.0` as a meta-package.** On linux/amd64 it resolves
+to 1.3.0, which renames `Agent` and breaks `from agent_framework import Agent`.
+Pin `agent-framework-core==1.1.1` and `agent-framework-foundry==1.1.1` exactly
+instead; they provide the same surface (`Agent`, `@tool`, and `FoundryChatClient`
+via `agent-framework-foundry`). Verified working on linux/amd64 as of 2026-04-23.
 
 **`prerelease = "if-necessary-or-explicit"` is correct** — packages with explicit
 prerelease markers (e.g. `>=1.0.0a260421`) resolve to prereleases; everything else

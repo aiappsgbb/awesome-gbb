@@ -881,6 +881,8 @@ user_token = result["access_token"]
 | Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 3 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
+| Teams shows the bot's reply twice (full message appended after streaming completes) | Yielding `TextChunk` on both `response.output_text.delta` and `response.output_text.done` | Only yield from deltas; the done event is metadata/final accumulated text, not a separate content payload |
+| Teams shows Invocations replies twice after streaming | Yielding `TextChunk` on both `assistant.message_delta` and final `assistant.message` | Track whether deltas were streamed; if yes, ignore final `assistant.message`, otherwise use it for non-delta backends |
 | Sideload fails | manifest schema wrong | Use `manifestVersion: "devPreview"` with `copilotAgents.customEngineAgents` |
 | Bot crashes on first message | `PROJECT_ENDPOINT` not set | Must include full path: `https://acct.services.ai.azure.com/api/projects/proj` |
 | Thread state lost between restarts | Using MemoryStorage | Switch to BlobStorage for production (`microsoft-agents-storage-blob`) |

@@ -27,20 +27,38 @@ Deploy Foundry hosted agents using the **GitHub Copilot SDK** with BYOK
 | **Auth** | `DefaultAzureCredential` → `FoundryChatClient` | BYOK: `DefaultAzureCredential` → bearer token |
 | **Protocol** | Responses API (request/response) | Invocations (SSE streaming) |
 | **Tool loop limit** | ~120s (Foundry gateway timeout) | ♾️ (SSE keeps connection alive) |
+| **Per-query overhead** | Low (1-3 internal turns) | High (20-34 internal tool calls per query) |
 | **Skill discovery** | Manual (load into instructions) | `SkillsProvider` progressive loading |
 | **Custom tools** | `@tool` decorator | Not supported (use MCP servers instead) |
 | **Toolbox** | `client.get_toolbox()` | Not directly available |
 | **Maturity** | Production-proven | Validated (identical eval scores) |
 
 **Use GHCP SDK when:**
-- Agent has tool-heavy workflows taking >120s (web scraping, multi-site scanning)
-- You need streaming output (events flow continuously to the caller)
-- You want `SkillsProvider` progressive skill discovery
+- Slow tools mask the per-query overhead: web scraping, long-running tools, or multi-site scans.
+- You need streaming progress events to the caller for workflows that run beyond the ~120s Responses gateway limit.
+- The workload looks like **bat-scraper**: Playwright/tool calls take 30-60s each, so GHCP SDK orchestration overhead is acceptable.
 
 **Use MAF when:**
-- Agent needs custom `@tool` functions
-- Agent needs Foundry Toolbox (`web_search`, `code_interpreter`)
-- Simpler deployment (fewer moving parts)
+- Tools are fast: data queries, MCP retrieval, or single-shot tools where orchestration overhead dominates latency.
+- You need the faster runtime path; field measurements show MAF at **~19s** vs GHCP SDK at **>220s** for the same fast-MCP workload (~10x faster).
+- Agent needs custom `@tool` functions, Foundry Toolbox (`web_search`, `code_interpreter`), or simpler deployment.
+
+---
+
+## ⚠️ Performance Caveat: Per-Query Overhead
+
+Each `CopilotClient` query generates **20-34 internal tool calls** for planning,
+skill discovery, tool selection, and related orchestration.
+That happens regardless of how many user-facing tool calls the agent actually makes.
+The overhead lives in `CopilotClient` itself; `SkillsProvider` is **NOT** the cause.
+Removing `SkillsProvider` does not eliminate the extra internal turns.
+Field measurement on an identical agent (`gpt-5.4`, same MCP tool set, same query)
+ran in **~19s on MAF** but **>220s on GHCP SDK** when MCP tools were fast.
+The overhead is masked when tools are slow: bat-scraper Playwright calls take
+30-60s each, so 20 internal calls vanish in the noise.
+Decision rule: if your slowest tool is <2s, you almost certainly want MAF.
+If your slowest tool is >30s and you need streaming progress events to the caller,
+GHCP SDK is the better fit.
 
 ---
 
@@ -114,6 +132,9 @@ events flow throughout.
 **Critical:**
 - Use `protocol: invocations` only — **do NOT** add `responses`. `InvocationAgentServerHost`
   only serves `/invocations`; the `/responses` path returns 404 even if declared in agent.yaml.
+  See the troubleshooting row **"responses protocol not declared" (bot 400)** — dual protocols don't work.
+  **WHY:** `InvocationAgentServerHost` is the only server type the GHCP SDK runtime ships with;
+  serving Responses requires switching to the MAF runtime (`ResponsesHostServer`) entirely.
 - External callers (bot, eval scripts) must POST to the Invocations SSE endpoint directly.
   If you need `oai.responses.create()` for a Teams bot, use MAF runtime instead.
 - `agent.yaml` must live in the **service directory** referenced by `azure.yaml` (e.g., `src/agent/agent.yaml`),
@@ -306,6 +327,7 @@ Task Completion) are stable across both judge models.
 | **`send_and_wait()` timeout** | 60s default + 120s gateway limit | Use Invocations protocol instead of ResponsesHostServer |
 | **SSE response 0 chars** | Parser only captures `assistant.message` | Also capture `assistant.message_delta` as fallback |
 | **Task Adherence eval 0%** | Using `gpt-5.4` as judge model | Use `gpt-5.4-mini` as judge |
+| **Agent feels much slower than expected** | CopilotClient internal-turn overhead (20-34 internal calls per query) | Use MAF runtime instead — see `## ⚠️ Performance Caveat: Per-Query Overhead` |
 | **CopilotClient needs GITHUB_TOKEN** | Not using BYOK provider | Pass `provider` dict to `create_session()` |
 | **`system_message` ignored** | Passed as string | Must be dict: `{"mode": "replace", "content": "..."}` |
 | **Skills not loading** | Wrong path format | Use absolute paths in `skill_directories` list |
