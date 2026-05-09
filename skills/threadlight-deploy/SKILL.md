@@ -10,7 +10,7 @@ description: >
   agent deployment, azd deploy, azd up.
   DO NOT USE FOR: designing the process (use threadlight-design), running evals (use foundry-evals),
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
-  GHCP SDK variant (use ghcp-hosted-agents).
+  GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 ---
 
 # Foundry Hosted Agent Deploy
@@ -579,6 +579,12 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 - `azd ai agent` extension: `azd extension install azure.ai.agents` (≥0.1.27-preview)
 - Azure subscription with Contributor + **Azure AI Project Manager** on Foundry project
 - Set `AZURE_TENANT_ID` in azd env: `azd env set AZURE_TENANT_ID <your-tenant-id>`
+
+> **Tenant hygiene before `azd up`.** If you work across multiple Azure
+> tenants, set up per-tenant `AZURE_CONFIG_DIR` / `AZD_CONFIG_DIR` in
+> the calling shell **first** — see the **`azure-tenant-isolation`**
+> skill. Without isolation, an `azd up` here may silently deploy into
+> whatever subscription another shell last `az account set` against.
 
 ## Deploy Steps
 
@@ -1447,3 +1453,5 @@ project/                    # ← REPO ROOT
 | [**ghcp-hosted-agents**](../ghcp-hosted-agents/) | Alternative runtime — GHCP SDK with Invocations protocol (for long-running agents >120s) |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Governance and Citadel hub integration |
 | [**foundry-cross-resource**](../foundry-cross-resource/) | AI Gateway (APIM) — use models from another Foundry resource or shared pool |
+| [**azure-tenant-isolation**](../azure-tenant-isolation/) | Per-tenant `AZURE_CONFIG_DIR` / `AZD_CONFIG_DIR` so `azd up` always lands in the right tenant + subscription |
+| [**azd-patterns**](../azd-patterns/) | `azd` hooks (`postdeploy`, `postprovision`), ACA job deployment, cross-platform deploy script conventions |
