@@ -507,7 +507,72 @@ customer walkthroughs, and stakeholder alignment.
 - No external CDN, fonts, or scripts — everything inline
 - Print-friendly (can be saved as PDF from browser)
 
-#### 8. `specs/dashboard/` — Interactive Workshop App (optional)
+#### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (recommended)
+
+A second seller-facing artifact that complements `overview.html`. Where the
+overview is a **brief**, the experience is a **bespoke journey** that makes
+the customer feel the pain, the intervention, the outcome, and the trust
+posture of *this* process — through visuals native to *its* domain.
+
+> **Generate this whenever the user asks for a "demo", "customer journey",
+> "walkthrough", "story", "cinematic", or "experience"** — or whenever the
+> process is intended for live customer presentations or executive
+> walkthroughs. Skip for purely internal automation specs.
+
+> ⚠️ **Bespoke per process — not a template.** The single biggest mistake in
+> `experience.html` generation is reusing the same 4-act layout for every
+> process. The 4-act narrative scroll is the right paradigm for KYC; it is
+> *not* the right paradigm for a Kanban-shaped order-fallout flow, a
+> graph-shaped network-fault triage, or a geography-shaped supplier-risk
+> monitor. Each process gets its own visual paradigm derived from its
+> protagonist, artifact, and moment of truth. The cinematic toolkit (GSAP,
+> palettes, transitions) is a **kit of parts** — not a recipe to fill.
+
+**The bespoke design discipline:**
+
+1. **Extract the process DNA** from SPEC.md / AGENTS.md / overview.html:
+   protagonist, artifact, moment of truth, backlog number, hard guardrail.
+2. **Pick the visual paradigm** from the catalog (or invent a new one).
+   Examples in the reference doc: 4-act narrative scroll · live topology
+   graph · live Kanban pipeline · world dot-density map · dossier binder ·
+   dispatch console split · ledger + regulatory clock · editorial campaign
+   cover · magazine spread · conveyor belt · tender document compose · CAD
+   blueprint annotated · control-room dual-dashboard.
+3. **Compose three felt movements:** density that hurts → zoom into one →
+   the wave processed (with humans in the loop). Land softly on a trust panel.
+4. **Use the cinematic toolkit** (GSAP 3.12.5 + ScrollTrigger from CDN, **no
+   `defer`**, inline head gating script with 2.5s fallback, mandatory
+   `prefers-reduced-motion: reduce` override) — pick 3-5 motion primitives
+   that fit your paradigm (entrance staggers, scroll-scrub, pin-and-scroll,
+   SVG path drawing, color crossfade, camera pull-back).
+5. **Land on a trust panel** (visual inversion, 6 pillars with BR-XXX badges,
+   skill catalog from manifest.json, 3 CTAs to overview/SPEC/back).
+
+**Required validation (mandatory before declaring done):**
+
+- HTMLParser parses with zero errors
+- Whitelabel deny-list grep returns zero hits (file is customer-facing) —
+  including process-domain vendor names (NetCracker / Amdocs / Genie for
+  telco; Moneta / ARGUS for FSI)
+- **Bespoke check:** no `id="act-1"`..`"act-4"` (those are KYC's), no
+  `giant-counter` element (KYC's signature), no copy-of-KYC color palette
+  unless the process is KYC
+- Playwright at 1440×900: the **signature interaction** of your paradigm
+  visibly works (counter scrubs / topology heals / pages assemble / dashboard
+  transitions / map heats), bidirectional scroll works, reduced-motion
+  honored
+- `overview.html` has hero CTA linking to `experience.html`
+- Root catalog `index.html` has "🎬 Experience" button on the process card
+
+**Read the full playbook:** [`references/experience-template.md`](references/experience-template.md) —
+includes the bespoke design discipline, the paradigm catalog with 13
+exemplars, the cinematic toolkit (CDN scripts, head gating script,
+reduced-motion override, color palettes, typography palettes, GSAP motion
+vocabulary, transition layer), the whitelabel deny-list, the validation
+checklist, and the anti-pattern list (do-not-reuse-act-IDs,
+do-not-reuse-giant-counter, do-not-blend-paradigms, etc.).
+
+#### 9. `specs/dashboard/` — Interactive Workshop App (optional)
 
 For deeper workshops, generate a small React app that lets users explore and edit
 the spec interactively:
@@ -528,7 +593,7 @@ specs/dashboard/
 Run with `npm install && npm run dev`. This is **optional** — only generate when
 the user asks for an interactive dashboard or workshop tool.
 
-#### 9. `specs/prep-guide.html` — Seller Prep Guide
+#### 10. `specs/prep-guide.html` — Seller Prep Guide
 
 > [!WARNING]
 > **INTERNAL / MICROSOFT CONFIDENTIAL.** This file is for the seller only — do NOT
@@ -591,6 +656,7 @@ must catch its own mistakes.
 - [ ] AGENTS.md skills table matches the actual `src/agent/skills/` directories
 - [ ] `specs/manifest.json` matches the generated skills list and BR counts
 - [ ] `specs/overview.html` renders without errors (valid HTML structure)
+- [ ] If `specs/experience.html` was generated: HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
 
