@@ -5,8 +5,8 @@ description: >
   Gateway, using the `connectionName/deploymentName` model string. Documents
   the verified ApiKey and ProjectManagedIdentity (PMI) auth paths, three
   invocation patterns (Responses API, PromptAgentDefinition, refreshed-preview
-  hosted-agent client), the exact APIM inbound policy XML, and the connection
-  ARM/REST schema with the metadata-stringification quirk that catches everyone
+  hosted-agent client), the APIM inbound policy XML, and the connection
+  ARM/REST schema with the metadata-stringification quirk that catches users
   out. USE FOR: connectionName/deploymentName, cross-resource model access,
   AI Gateway, APIM connection, ApiManagement connection, remote model
   invocation, Foundry gateway, use models from another Foundry project, APIM AI
