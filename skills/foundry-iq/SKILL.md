@@ -1,9 +1,45 @@
 ---
 name: foundry-iq
-description: Build enterprise RAG solutions using Foundry IQ with Azure AI Search agentic retrieval. Use when implementing policy assistants, knowledge bases with citations, or multi-hop question answering systems.
+description: >
+  Build enterprise RAG into every threadlight process via Foundry IQ — Azure AI Search
+  Knowledge Bases with agentic retrieval (multi-hop reasoning, query planning,
+  citation-backed responses). DEFAULT knowledge retrieval pattern for every
+  threadlight process; SPEC § 7 must declare a Knowledge Base for the process domain.
+  USE FOR: knowledge base, RAG, agentic retrieval, policy assistant, citations,
+  multi-hop QA, Knowledge Agent, AI Search Knowledge Base, document grounding,
+  semantic retrieval, foundry-iq, knowledge index, hybrid search, vector search.
+  DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
+  MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
 ---
 
 # Foundry IQ Agent Framework Integration Skill
+
+> **Default knowledge retrieval pattern for EVERY threadlight process.**
+> SPEC § 7 (Knowledge Sources) must declare at least one Knowledge Base per process,
+> with `Backing service: foundry-iq` (the default — alternatives are `mcp-search`
+> or `inline-context` only when foundry-iq is genuinely overkill, e.g., a process
+> with literally zero domain documents).
+>
+> See `threadlight-design/SKILL.md` → "Knowledge sources (default = foundry-iq)"
+> for the rule. This skill is the implementation of that default.
+
+## Input contract / Output artifacts
+
+| Reads | From |
+|-------|------|
+| **SPEC.md § 7 Knowledge Sources** (Backing service, sources list, expected query patterns) | `threadlight-design` |
+| Documents from blob storage / SharePoint / GitHub (sources declared in § 7) | Customer / `threadlight-demo-data-factory` for demo seed corpus |
+
+| Produces | At |
+|----------|-----|
+| Azure AI Search index | One per Knowledge Base in SPEC § 7 |
+| Knowledge Agent (in Foundry project) | One per Knowledge Base; reasoning effort per § 7 spec |
+| `infra/modules/foundry-iq-index.bicep` | Composed by `azd-patterns` Bicep library; included by `threadlight-deploy` Phase 6 when SPEC § 7 declares foundry-iq |
+| `infra/scripts/bootstrap_foundry_iq.py` | Postprovision hook that creates the index + uploads documents + creates the Knowledge Agent |
+| `src/agent/skills/<knowledge-skill>/SKILL.md` | Skill that wraps the Knowledge Agent retrieval call as a tool |
+| `agent.yaml` env vars | `FOUNDRY_IQ_INDEX`, `FOUNDRY_IQ_AGENT_NAME`, `AI_SEARCH_ENDPOINT` |
+
+---
 
 ## Folder Contents
 
@@ -436,8 +472,22 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 ## Extension Ideas
 
 1. **Add SharePoint source**: Connect document libraries as knowledge sources
-2. **Multi-agent orchestration**: Specialized agents for different domains
+2. **Skill-based orchestration**: Wrap the Knowledge Agent retrieval in a dedicated `src/agent/skills/<knowledge-skill>/SKILL.md` so the threadlight agent (single-agent, skill-based pattern) can call it as a tool — this is the orchestration model `threadlight-design` uses, NOT a separate retrieval agent
 3. **Streaming responses**: Real-time token streaming with Gradio UI
 4. **Custom functions**: Email escalation, ticket creation, etc.
 5. **Caching layer**: Redis for conversation history and frequent queries
 6. **Observability**: OpenTelemetry tracing for request flow visibility
+
+---
+
+## See Also
+
+| Skill | Use When |
+|-------|----------|
+| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 7 Knowledge Sources — the input contract for this skill |
+| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 (Module Composer) wires `foundry-iq-index.bicep` when SPEC § 7 declares `Backing service: foundry-iq` |
+| [**azd-patterns**](../azd-patterns/) | Owns the `foundry-iq-index.bicep` module shape |
+| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Pairs with this skill: extract structured text from raw docs (foundry-doc-vision-speech) → index it for retrieval (foundry-iq) |
+| [**foundry-mcp-aca**](../foundry-mcp-aca/) | Alternative knowledge backing (`mcp-search`) when foundry-iq is genuinely overkill — prefer foundry-iq by default |
+| [**foundry-evals**](../foundry-evals/) | Evaluates retrieval precision, citation accuracy, multi-hop reasoning quality |
+| [**foundry-hosted-agents**](../foundry-hosted-agents/) | The hosted agent that calls this Knowledge Agent as a tool |

@@ -519,3 +519,231 @@ This only works when reusing the same eval definition. If you create a new defin
 per run, each has only one run and trending is impossible.
 
 Re-run evals after each agent version update to ensure quality doesn't regress.
+
+---
+
+## Continuous Evaluation Loop (production telemetry → KPIs)
+
+One-shot pre-deploy evaluation tells you "the agent shipped working".
+**Continuous evaluation** tells you "the agent is *still* working in production
+six weeks later". Wire this for every threadlight pilot — it's how the customer
+proves the agent earned its budget at the next steering committee.
+
+### Architecture
+
+```
+┌──────────────┐  spans  ┌──────────────┐  pull   ┌──────────────────┐
+│ Hosted Agent │ ──────► │ App Insights │ ◄────── │ continuous-eval  │
+│   (production)         │   (telemetry) │         │   ACA Job (cron) │
+└──────────────┘         └──────────────┘         └─────────┬────────┘
+                                                            │
+                                                  ┌─────────▼────────┐
+                                                  │ score with       │
+                                                  │ Foundry          │
+                                                  │ evaluators       │
+                                                  └─────────┬────────┘
+                                                            │
+                                              ┌─────────────┼──────────────┐
+                                              ▼             ▼              ▼
+                                       ┌──────────┐  ┌──────────┐  ┌──────────┐
+                                       │ AppInsights │ Foundry │  │ Threshold│
+                                       │  workbook   │ Eval Run │  │  alert   │
+                                       │  (KPI dash) │ (history)│  │ (Action  │
+                                       │             │          │  │  Group)  │
+                                       └──────────┘  └──────────┘  └──────────┘
+```
+
+### Step 1 — Read SPEC § 9 KPI table
+
+Every threadlight SPEC's § 9 contains a **KPI table mapping business rules to
+measurable outcomes**. Example:
+
+```yaml
+# specs/SPEC.md § 9 (excerpted)
+kpis:
+  - id: KPI-001
+    business_rule: BR-001
+    name: "Approval rate"
+    metric: count(audit.decision == 'approved') / count(audit.decision != null)
+    target: ">= 0.65"
+    direction: higher-is-better
+  - id: KPI-002
+    business_rule: BR-007
+    name: "SLA-met rate"
+    metric: count(audit.sla.status == 'met') / count(audit.sla != null)
+    target: ">= 0.95"
+    direction: higher-is-better
+  - id: KPI-003
+    business_rule: BR-003
+    name: "Tool-selection precision"
+    metric: foundry_eval.tool_selection.f1
+    target: ">= 0.85"
+    direction: higher-is-better
+```
+
+The continuous-eval ACA Job translates each row into a query against App
+Insights traces + Cosmos audit container, computes the metric, and writes to
+both an App Insights workbook (for dashboarding) AND a Foundry eval run
+(for trending).
+
+### Step 2 — Generate the ACA Job (delegates to threadlight-event-triggers)
+
+Use the `aca-job-cron` scaffold from `threadlight-event-triggers`. The job
+runs every N minutes (default: 15) and:
+
+```python
+# infra/jobs/continuous_eval/job.py
+import asyncio
+from datetime import datetime, timedelta, timezone
+from azure.monitor.query.aio import LogsQueryClient
+from azure.cosmos.aio import CosmosClient
+from azure.ai.evaluation import evaluate
+
+KPI_TABLE = load_yaml("specs/kpis.yaml")  # extracted from SPEC § 9
+
+async def run():
+    window_end = datetime.now(timezone.utc)
+    window_start = window_end - timedelta(minutes=15)
+
+    spans = await fetch_spans(window_start, window_end)
+    audits = await fetch_audits(window_start, window_end)
+
+    metrics = {}
+    for kpi in KPI_TABLE:
+        value = await compute_metric(kpi, spans, audits)
+        metrics[kpi["id"]] = value
+
+        # Threshold check
+        if breaches_threshold(value, kpi):
+            await raise_alert(kpi, value, window_start, window_end)
+
+    # Write to App Insights workbook table (custom telemetry)
+    await emit_kpi_telemetry(metrics, window_end)
+
+    # Write to Foundry eval run for trending
+    await record_foundry_eval_run(metrics, window_end)
+
+asyncio.run(run())
+```
+
+Idempotency: each window is keyed by `(window_start, window_end)` so re-running
+the job for the same window doesn't double-count. Use the dedup pattern from
+`threadlight-event-triggers/references/idempotency-patterns.md`.
+
+### Step 3 — Threshold alerts
+
+For each KPI with `direction: higher-is-better`, alert if value drops below
+target by more than 10% for 2 consecutive windows. For `lower-is-better`,
+inverse. Wire alerts via Azure Monitor Action Groups → Teams channel webhook
+or PagerDuty.
+
+```yaml
+# infra/modules/alerts.bicep (Phase 6 wires this if SPEC § 9 has KPIs)
+resource alertRule 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = [for kpi in kpis: {
+  name: 'kpi-${kpi.id}-breach'
+  properties: {
+    criteria: {
+      allOf: [{
+        query: 'customMetrics | where name == "${kpi.id}" | summarize avg(value) by bin(timestamp, 30m) | where avg_value < ${kpi.target}'
+        threshold: 0
+        operator: 'GreaterThan'
+        timeAggregation: 'Count'
+      }]
+    }
+    actions: { actionGroups: [actionGroup.id] }
+    evaluationFrequency: 'PT15M'
+    windowSize: 'PT1H'
+  }
+}]
+```
+
+### Step 4 — App Insights workbook (the customer-facing KPI dashboard)
+
+Generate a `infra/modules/kpi-workbook.bicep` that creates an App Insights
+workbook with one tile per KPI:
+
+- **Big number** with current value + target threshold
+- **Trend line** over last 7 days
+- **Color band** green / amber / red based on threshold proximity
+- **Drill-down** to the underlying spans / audit records
+
+This is the dashboard the customer's COO opens at the steering committee.
+Make it look like the customer's brand (workbook themes are configurable).
+
+### Step 5 — Foundry eval trending (long-term quality drift)
+
+Beyond the per-window KPI dashboard, also push each window's results to a
+Foundry eval run so the long-term scoring history is preserved:
+
+```python
+async def record_foundry_eval_run(metrics, window_end):
+    # Reuse the SAME eval definition for trending (per § Eval Trending above)
+    run = await client.evals.runs.create(
+        eval_id=PRODUCTION_EVAL_DEF_ID,
+        name=f"continuous-{window_end.isoformat()}",
+        data_source={
+            "type": "telemetry",
+            "appinsights_id": APPINSIGHTS_RESOURCE_ID,
+            "window_start": (window_end - timedelta(minutes=15)).isoformat(),
+            "window_end": window_end.isoformat(),
+        },
+    )
+    return run
+```
+
+This gives the customer an "eval score over time" chart in Foundry portal
+alongside per-window KPI tiles in App Insights.
+
+### Cost guardrails
+
+A 15-minute cron job is ~96 runs/day = ~2900 runs/month. Each run pulls ~15
+minutes of spans (typically <100 traces per process), scores them with
+Foundry evaluators (~$0.05/run for `gpt-5.4-mini` judge), and emits ~15
+custom metric data points. **Estimated cost: ~$5/month per process.**
+
+If the customer wants to slow it down (e.g., hourly), change cron to `0 * * * *`
+in the SPEC § 10b trigger declaration. The job re-reads SPEC at startup so no
+code change.
+
+### Troubleshooting
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Continuous-eval job has no spans to score | App Insights connection on Foundry account missing | See `Eval Trending` section + threadlight-deploy gotchas |
+| Foundry evaluator 429 | Judge model TPM exhausted from concurrent windows | Use a dedicated judge deployment with 100K TPM |
+| KPI workbook shows blank | Custom metric not emitted | Check `emit_kpi_telemetry()` actually called `track_metric()` |
+| Alert never fires | Threshold off by ratio (forgot `* 100` for percentage) | Test with manual `customMetrics` query first |
+| Trending shows flat line | Same eval definition not reused | Hardcode `PRODUCTION_EVAL_DEF_ID` env var; never recreate the def |
+
+---
+
+## Input contract / Output artifacts
+
+| Reads | From |
+|-------|------|
+| **SPEC.md § 9 KPI table** | `threadlight-design` (per-BR KPI mapping) |
+| **SPEC.md § 10b Triggers** (cron schedule for continuous loop) | `threadlight-design` |
+| App Insights spans (live) | The deployed agent |
+| Cosmos `case_audit` container (live) | `threadlight-hitl-patterns` writes these |
+
+| Produces | At |
+|----------|-----|
+| `tests/eval-dataset.json` | Pre-deploy eval dataset |
+| `infra/jobs/continuous_eval/job.py` | The cron job entry point |
+| `infra/jobs/continuous_eval/Dockerfile` | Container for the ACA Job |
+| `infra/modules/kpi-workbook.bicep` | App Insights workbook |
+| `infra/modules/alerts.bicep` | Per-KPI scheduled query alert rules |
+| `agent.yaml` env vars | `EVAL_DEFINITION_ID`, `KPI_WORKBOOK_ID` |
+| `specs/kpis.yaml` | Extracted from SPEC § 9 — single source of truth at runtime |
+
+---
+
+## See Also
+
+| Skill | Use When |
+|-------|----------|
+| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 9 KPI table — the input contract for the continuous loop |
+| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 wires `kpi-workbook.bicep` and `alerts.bicep` if SPEC § 9 has KPIs |
+| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Owns the `aca-job-cron` scaffold this loop runs on |
+| [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Writes the `case_audit` records this loop reads for KPI computation |
+| [**foundry-hosted-agents**](../foundry-hosted-agents/) | App Insights connection on Foundry account is prerequisite |

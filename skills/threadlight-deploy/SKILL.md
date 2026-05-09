@@ -67,17 +67,77 @@ Recommended (from `threadlight-design`):
 > | Skill | When Needed |
 > |-------|------------|
 > | `foundry-hosted-agents` | **Always** — RBAC, identity model, agent.yaml schema, dependency versions, troubleshooting |
+> | `threadlight-design` | **Always** — produces SPEC.md sections this skill consumes (§ 5b, § 7b, § 8, § 8b, § 9, § 10b, § 11b, § 11c, § 11d) |
+> | `azd-patterns` | **Always** — Bicep module library that Phase 6 (Module Composer) reads from |
+> | `foundry-iq` | **Default for every process** — provisions the Knowledge Agent + AI Search index for SPEC § 7 knowledge sources |
 > | `foundry-teams-bot` | If Teams integration is needed |
 > | `foundry-mcp-aca` | If deploying custom MCP servers as ACA or Azure Functions |
-> | `foundry-evals` | For post-deployment evaluation |
+> | `threadlight-workspace-ui` | If SPEC § 8b specifies an operator workspace |
+> | `threadlight-hitl-patterns` | If SPEC § 8 declares any human action gate (approve/edit-and-approve/reject/escalate/signoff/audit-view/request-info) |
+> | `threadlight-event-triggers` | If SPEC § 10b declares any event-driven, scheduled, or webhook trigger |
+> | `threadlight-demo-data-factory` | If SPEC § 5 marks any system as `mock` (almost always true for pilots) |
+> | `foundry-doc-vision-speech` | If SPEC § 7b selects any vision / DocIntel / Speech model |
+> | `foundry-evals` | For post-deployment evaluation AND continuous-eval ACA Job (Phase 6 includes the cron job if SPEC § 9 has a KPI table) |
+> | `citadel-spoke-onboarding` | **Phase 7 (opt-in)** — runs ONLY when SPEC § 11b sets `citadel.required: yes` |
 >
 > Use `/skills list` to check availability. If missing, install from `aiappsgbb/awesome-gbb`.
 
 ## Workflow
 
 ```
-Read AGENTS.md → Map tools → Choose MCP strategy → Generate runtime files → Validate → Generate azd project (extension scaffold) → Deploy notes
+Phase 0  →  Phase 1   →  Phase 2  →  Phase 3   →  Phase 4   →  Phase 5  →  Phase 6  →  Phase 7
+Poly-repo   Analyze      Generate    Validate     Teams Bot    azd        Module      Citadel
+guard       SPEC +       runtime     scaffold     (optional)   project    composer    handoff
+            AGENTS.md    files                                  scaffold   (Bicep)     (opt-in)
 ```
+
+---
+
+## Phase 0: Poly-Repo Guard (mandatory pre-flight)
+
+**Rule**: each threadlight process gets ONE repo. ONE repo = ONE process = ONE
+`azd up`. **Never multi-process repos.**
+
+### Why
+
+We learned this the hard way on `threadlight-v1` and `threadlight-v2`. Multi-process
+repos:
+- Inflate Bicep into one giant template with 70% `if` blocks
+- Force unrelated processes to share azd env, breaking iteration
+- Make customer hand-off awkward (they only want one process; they get all 13)
+- Concentrate blast radius — one botched deploy takes down siblings
+
+### Pre-flight checklist (run this FIRST, before Phase 1)
+
+Inspect the input folder. If ANY of these are true, **stop and ask the user
+to split the repo before proceeding**:
+
+- More than one `specs/SPEC.md` exists at any depth
+- More than one `AGENTS.md` exists at any depth
+- The folder name contains a plural / catalog noun (`processes/`, `catalog/`, `pilots/`)
+- The folder contains nested `specs/<process-slug>/SPEC.md` siblings
+- A previous run produced an `azure.yaml` with multiple `services:` entries that
+  point to different agent containers
+
+### How to split
+
+```
+Before (rejected):                  After (each is its own azd up):
+threadlight-pilots/                  fsi-kyc-onboarding/
+├── kyc-onboarding/                  ├── specs/
+│   ├── specs/                       │   └── SPEC.md
+│   └── src/                         ├── src/
+├── pim-enrichment/                  └── azure.yaml
+│   ├── specs/
+│   └── src/                         retail-pim-enrichment/
+└── azure.yaml  (← shared)           ├── specs/
+                                     │   └── SPEC.md
+                                     ├── src/
+                                     └── azure.yaml
+```
+
+The `threadlight-design` skill respects this by default — it generates one
+self-contained subtree per process. This skill enforces it.
 
 ---
 
@@ -1389,6 +1449,193 @@ project/                    # ← REPO ROOT
 
 ---
 
+## Phase 6: Module Composer (Bicep) — read SPEC § 11c, include exactly the right modules
+
+Phase 5 above bootstraps the agent / azd skeleton. Phase 6 wires the
+**process-specific infrastructure** by reading SPEC § 11c (Tech Stack module
+selectors) and composing only the modules that process actually needs.
+
+### Why a composer (not one big main.bicep)
+
+Each of the 13 catalog processes uses a different mix of services:
+- KYC needs `cosmos + search + foundry-iq + doc-intel + speech` (no event-grid)
+- Order Fallout needs `cosmos + service-bus + aca-job + aca-mcp` (no doc-intel/speech)
+- Supplier Risk needs `cosmos + foundry-iq + event-grid + storage-blob`
+
+A monolithic `main.bicep` would be 70% `if` blocks. The composer pattern
+includes **only the modules SPEC § 11c explicitly selects**, plus the
+always-on baseline (`uami` + `acr` + `app-insights` + `foundry-account`).
+
+### Step 1 — Read SPEC § 11c
+
+The spec writes it as a YAML-style block under § 11c. Example:
+
+```yaml
+tech_stack:
+  cosmos: { sku: serverless }
+  search: { sku: basic }
+  foundryIQ:
+    knowledgeBases:
+      - name: kyc-policies
+        sources: [{ type: blob, container: policies, prefix: kyc/ }]
+  vision: { model: gpt-5.4-mini }
+  acaJobs:
+    - { name: sla-watcher, trigger: cron, schedule: "*/15 * * * *" }
+  mcpServers:
+    - { name: customer-data-mcp, image: customer-mcp:latest }
+  teamsBot: { enabled: true }
+```
+
+### Step 2 — Resolve module set (canonical inclusion order)
+
+Always include: `uami → acr → key-vault → app-insights → foundry-account → cosmos`.
+
+Conditionally include based on SPEC § 11c keys:
+- `search` present → include `search.bicep`
+- `foundryIQ` present → include `foundry-iq-index.bicep` (delegates to `foundry-iq` skill)
+- `vision`/`docIntel`/`speech` present → include corresponding modules (delegates to `foundry-doc-vision-speech` skill)
+- `eventGrid`/`serviceBus`/`storage-blob` present → include corresponding modules
+- `mcpServers` non-empty → include `aca-mcp.bicep` per server (delegates to `foundry-mcp-aca` skill)
+- `acaJobs` non-empty → include `aca-job.bicep` per job (delegates to `threadlight-event-triggers` skill)
+- `teamsBot.enabled: true` → include `aca-bot.bicep` (delegates to `foundry-teams-bot` skill)
+
+### Step 3 — Compose `infra/main.bicep`
+
+Generate `infra/main.bicep` as a thin orchestrator that calls each included
+module in order, threads outputs through, and emits the env vars the agent
+container needs. Every output the agent reads at runtime MUST appear in
+`agent.yaml`'s `environment_variables:` block.
+
+```bicep
+// infra/main.bicep — generated by Phase 6
+module uami 'modules/uami.bicep' = { /* always */ }
+module acr 'modules/acr.bicep' = { /* always */ }
+module keyVault 'modules/key-vault.bicep' = { /* always */ }
+module appInsights 'modules/app-insights.bicep' = { /* always */ }
+module cosmos 'modules/cosmos.bicep' = { /* default */ }
+
+module search 'modules/search.bicep' = if (deploySearch) { /* ... */ }
+module foundryIQ 'modules/foundry-iq-index.bicep' = if (deployFoundryIQ) {
+  params: { searchService: search.outputs.serviceName, knowledgeBases: knowledgeBases }
+}
+module vision 'modules/vision.bicep' = if (deployVision) { /* ... */ }
+// ... and so on for each selected module ...
+
+module foundryAccount 'modules/foundry-account.bicep' = { /* always, last */ }
+```
+
+### Step 4 — Wire outputs to `agent.yaml`
+
+Map every infra output the container needs:
+
+```yaml
+# agent.yaml (Phase 6 amends)
+environment_variables:
+  COSMOS_ENDPOINT:        ${cosmos.outputs.endpoint}
+  COSMOS_DATABASE:        ${cosmos.outputs.databaseName}
+  SEARCH_ENDPOINT:        ${search.outputs.endpoint}
+  FOUNDRY_IQ_INDEX:       ${foundryIQ.outputs.indexNames[0]}
+  VISION_DEPLOYMENT_NAME: ${vision.outputs.deploymentName}
+  MCP_CUSTOMER_DATA_URL:  ${aca_mcp_customer_data.outputs.endpoint}
+  APPINSIGHTS_CONNSTR:    ${appInsights.outputs.connectionString}
+```
+
+### Step 5 — Hook scripts (postprovision / postdeploy)
+
+If SPEC § 11c selects modules that need post-provision wiring (e.g.,
+`foundry-iq` needs to run a Knowledge Agent provisioning script after AI
+Search is up; `aca-job` needs `publish_aca` to push the job image), Phase 6
+adds the corresponding hooks:
+
+```yaml
+# azure.yaml (Phase 6 amends)
+hooks:
+  postprovision:
+    shell: pwsh
+    run: 'cd infra/scripts && uv sync --frozen && uv run bootstrap_foundry_iq.py'
+  postdeploy:
+    shell: pwsh
+    run: 'cd infra/scripts && uv sync --frozen && uv run publish_aca_jobs.py'
+```
+
+These scripts are **vendored into the project** so they don't depend on
+network access at deploy time. The factory shapes are defined by `azd-patterns`.
+
+### Step 6 — Validation
+
+Phase 6 ends with `bicep build infra/main.bicep` (compile check) and
+`az deployment sub what-if` (dry run). Both must pass before Phase 7 starts.
+
+> **The full Bicep module catalog** lives in `azd-patterns/SKILL.md` →
+> "Composable Bicep Module Library". This skill orchestrates inclusion;
+> azd-patterns owns the module shapes.
+
+---
+
+## Phase 7: Citadel Handoff (opt-in)
+
+**Trigger**: SPEC § 11b sets `citadel.required: yes`.
+
+If the customer wants the deployed agent to land as a **spoke under their
+Citadel governance hub** (centralized model gateway, key vault inheritance,
+APIM policies, JWT auth), Phase 7 invokes the `citadel-spoke-onboarding`
+skill AFTER the base deployment is provisioned.
+
+### Why this is opt-in (not default)
+
+- Citadel adds APIM connection wiring + product policy + JWT auth steps that
+  are unnecessary for cx who just want a PoC running in their tenant
+- Customers with no Citadel hub in place would face an extra dependency
+- Pilot stage usually doesn't need governance — that comes when production-bound
+- Adding Citadel later is a clean, additive change (no rewrite); doing it
+  early when not needed is wasted setup
+
+### When SPEC § 11b sets `citadel.required: yes`
+
+Phase 7 reads SPEC § 11b for the rest of the Citadel posture:
+
+```yaml
+# specs/SPEC.md § 11b (when citadel.required: yes)
+governance:
+  citadel:
+    required: yes
+    hub_endpoint: https://citadel-prod.contoso-apim.azure-api.net
+    access_contracts:
+      - hub-llm-gateway
+      - hub-knowledge-search
+    secrets_via_keyvault: true
+    jwt_auth: true
+```
+
+Then it hands off to `citadel-spoke-onboarding`:
+
+```
+1. Run base azd up (Phase 5 + 6 complete) — agent deploys to its own tenant
+2. Invoke citadel-spoke-onboarding skill with:
+   - hub_endpoint
+   - access_contracts list
+   - the agent's UAMI principal (so APIM can grant it product subscription)
+3. citadel-spoke-onboarding produces:
+   - APIM connection in the Foundry project pointing to hub gateway
+   - Key Vault references replacing direct AOAI keys
+   - Updated agent.yaml with `MODEL_DEPLOYMENT_NAME = connectionName/deploymentName`
+   - JWT validation policy on the agent endpoint
+   - Validation notebook to prove end-to-end works
+4. Redeploy agent (azd deploy <service>) to pick up the new MODEL_DEPLOYMENT_NAME
+```
+
+### When `citadel.required: no` (or missing)
+
+Phase 7 is a **no-op** — log "Citadel onboarding skipped per SPEC § 11b" and
+end. Customer can re-enable later by setting `citadel.required: yes` in
+SPEC § 11b and running `threadlight-deploy` Phase 7 again (it is
+incrementally re-runnable).
+
+> **See `citadel-spoke-onboarding` skill** for the full step-by-step onboarding
+> procedure, APIM access contract details, and validation notebook.
+
+---
+
 ## Gotchas & Hard-Won Lessons
 
 | Issue | Cause | Fix |
@@ -1447,11 +1694,17 @@ project/                    # ← REPO ROOT
 |-------|----------|
 | [**threadlight-design**](../threadlight-design/) | Spec out the business process first (produces specs/ + AGENTS.md + skills that this skill consumes) |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | Reference for RBAC, identity model, agent.yaml schema, dependencies, troubleshooting |
+| [**foundry-iq**](../foundry-iq/) | **Default for every process** — provisions the AI Search index + Knowledge Agent (consumed in Phase 6 via `foundry-iq-index.bicep`) |
+| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Vision / Document Intelligence / Speech models — consumed in Phase 6 when SPEC § 7b selects them |
 | [**foundry-teams-bot**](../foundry-teams-bot/) | Deep dive on Teams bot integration (bot.py, manifest, Bicep, sideloading) |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Deploy custom MCP servers as ACA or Azure Functions |
-| [**foundry-evals**](../foundry-evals/) | Evaluate agent quality with Foundry built-in evaluators |
+| [**foundry-evals**](../foundry-evals/) | Evaluate agent quality + continuous-eval ACA Job (reads SPEC § 9 KPI table) |
+| [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Generates the operator workspace from SPEC § 8b (case-list, inbox, dashboard, console, kanban, map) |
+| [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Generates Adaptive Cards + audit trail for SPEC § 8 action gates |
+| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Generates trigger receivers from SPEC § 10b (ACA Job cron/manual, Functions, ACA consumer) |
+| [**threadlight-demo-data-factory**](../threadlight-demo-data-factory/) | Generates realistic demo data when SPEC § 5 marks any system as `mock` |
 | [**ghcp-hosted-agents**](../ghcp-hosted-agents/) | Alternative runtime — GHCP SDK with Invocations protocol (for long-running agents >120s) |
-| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Governance and Citadel hub integration |
+| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | **Phase 7 (opt-in)** — onboards as spoke under Citadel hub when SPEC § 11b sets `citadel.required: yes` |
 | [**foundry-cross-resource**](../foundry-cross-resource/) | AI Gateway (APIM) — use models from another Foundry resource or shared pool |
 | [**azure-tenant-isolation**](../azure-tenant-isolation/) | Per-tenant `AZURE_CONFIG_DIR` / `AZD_CONFIG_DIR` so `azd up` always lands in the right tenant + subscription |
-| [**azd-patterns**](../azd-patterns/) | `azd` hooks (`postdeploy`, `postprovision`), ACA job deployment, cross-platform deploy script conventions |
+| [**azd-patterns**](../azd-patterns/) | `azd` hooks, ACA job deployment, **Composable Bicep Module Library** (the source of every module Phase 6 includes) |

@@ -22,6 +22,14 @@ How to connect a GenAI application or Microsoft Foundry project to an
 **existing** AI Citadel Governance Hub so that all AI traffic is governed,
 observable, and compliant.
 
+> **Threadlight integration**: This skill is the **opt-in Phase 7** of
+> `threadlight-deploy`. It runs ONLY when SPEC § 11b sets
+> `citadel.required: yes`. The base agent deploy (Phase 5 + 6) lands in the
+> customer's tenant first; this skill onboards it as a Citadel spoke
+> afterwards as an additive step. Read SPEC § 11b for the per-process
+> Citadel posture (hub endpoint, access contracts, JWT requirements,
+> Key Vault wiring).
+
 > **Source repo:** [Azure-Samples/ai-hub-gateway-solution-accelerator](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) (branch `citadel-v1`)
 > **Quick link:** <https://aka.ms/ai-hub-gateway>
 
@@ -176,7 +184,7 @@ For custom policies, edit `ai-product-policy.xml`. Full policy reference:
 
     <!-- 3. Model extraction and access control -->
     <include-fragment fragment-id="set-llm-requested-model" />
-    <set-variable name="allowedModels" value="gpt-4o,gpt-4o-mini" />
+    <set-variable name="allowedModels" value="gpt-5.4-mini,gpt-5.4-nano" />
     <include-fragment fragment-id="validate-model-access" />
 
     <!-- 4. Capacity management (subscription level) -->
@@ -215,8 +223,8 @@ For custom policies, edit `ai-product-policy.xml`. Full policy reference:
 ```xml
 <include-fragment fragment-id="set-llm-requested-model" />
 <choose>
-    <when condition="@((string)context.Variables["requestedModel"] == "gpt-4o")">
-        <llm-token-limit counter-key="@(context.Subscription.Id + "-gpt-4o")"
+    <when condition="@((string)context.Variables["requestedModel"] == "gpt-5.4-mini")">
+        <llm-token-limit counter-key="@(context.Subscription.Id + "-gpt-5.4-mini")"
             tokens-per-minute="10000" token-quota="100000" token-quota-period="Monthly"
             estimate-prompt-tokens="false" />
     </when>
@@ -300,7 +308,7 @@ api_key  = kv.get_secret("myagent-llm-key").value
 # Use with Azure OpenAI SDK (requires azure-openai-api FIRST in apiNameMapping)
 from openai import AzureOpenAI
 client = AzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version="2024-12-01-preview")
-response = client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":"Hello"}])
+response = client.chat.completions.create(model="gpt-5.4-mini", messages=[{"role":"user","content":"Hello"}])
 ```
 
 ### Option B: Foundry Connection (Foundry Agents)
@@ -311,7 +319,7 @@ from azure.identity import DefaultAzureCredential
 
 # Connection name pattern: <BU>-<UseCase>-<ENV>-<ServiceCode>
 connection_name = "MyTeam-MyAgent-DEV-LLM"
-model_deployment = f"{connection_name}/gpt-4o"
+model_deployment = f"{connection_name}/gpt-5.4-mini"
 
 client = AIProjectClient(
     credential=DefaultAzureCredential(),
@@ -488,7 +496,7 @@ Verify in Foundry portal: **Project → Operate → Admin → Connected resource
 | Method | When to Use | Config |
 |--------|-------------|--------|
 | **APIM Defaults** (recommended) | Standard Citadel hub | Leave `staticModels` empty, no custom discovery params |
-| **Static Models** | Fixed known model set | `staticModels = [{ name: 'gpt-4o', properties: { model: { name: 'gpt-4o', version: '...', format: 'OpenAI' }}}]` |
+| **Static Models** | Fixed known model set | `staticModels = [{ name: 'gpt-5.4-mini', properties: { model: { name: 'gpt-5.4-mini', version: '...', format: 'OpenAI' }}}]` |
 | **Custom Discovery** | Non-standard endpoints | Set `listModelsEndpoint`, `getModelEndpoint`, `deploymentProvider` |
 
 > ⚠️ Cannot use both static models and dynamic discovery simultaneously.
