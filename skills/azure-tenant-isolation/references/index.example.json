@@ -1,5 +1,4 @@
 {
-  "$schema": "https://aiappsgbb.github.io/awesome-gbb/azure-tenant-index.schema.json",
   "version": 1,
   "default_alias": "prod",
   "tenants": {

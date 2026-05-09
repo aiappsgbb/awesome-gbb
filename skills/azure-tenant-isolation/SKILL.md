@@ -122,9 +122,9 @@ Schema (excerpt — full example: [`references/index.example.json`](references/i
 | `default_alias` | string | Alias used when none is specified. |
 | `tenants.<alias>.tenant_id` | string | Azure AD tenant GUID. |
 | `tenants.<alias>.description` | string | Human note (free text). |
-| `tenants.<alias>.config_dir` | string\|null | Override for `AZURE_CONFIG_DIR`. `null` → derive `~/.azure-tenants/<alias>`. |
-| `tenants.<alias>.default_subscription` | string | Subscription name (or id) to set after login. |
-| `tenants.<alias>.allowed_subscriptions` | string[] | Names (or ids) the assertion accepts. Empty → any. |
+| `tenants.<alias>.config_dir` | string\|null | Override for `AZURE_CONFIG_DIR`. `null` → derive `~/.azure-tenants/<alias>`. **`~` is NOT expanded automatically by JSON readers — consumers must expand it themselves** (see "How to read values from the index" below). |
+| `tenants.<alias>.default_subscription` | string | Subscription name (or id) passed to `az account set` after login. |
+| `tenants.<alias>.allowed_subscriptions` | string[] | Whitelist for the strict assertion (membership test — see "Assertion variants" below). Empty/missing → only `default_subscription` is accepted. |
 
 ### Bootstrap — manual, no scripts
 
@@ -157,10 +157,52 @@ excludes `.azure-tenants/` so the file never lands in a repo.
 All commands below are bare `az` invocations. The only shell-specific lines
 are the env-var exports (which cannot be wrapped).
 
+### How to read values from the index
+
+The skill ships **no wrapper scripts**, but reading values out of a JSON
+file is a pure read — not a wrapper — and it's needed every time you set
+up a shell. Use the platform's built-in JSON reader:
+
+Unix (Python is already a hard dependency of `az` CLI, so no extra install):
+
+```bash
+ALIAS=prod
+INDEX="${AZURE_TENANT_INDEX:-$HOME/.azure-tenants/index.json}"
+
+# Extract values
+TENANT_ID=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); print(d['tenants']['$ALIAS']['tenant_id'])")
+DEFAULT_SUB=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); print(d['tenants']['$ALIAS']['default_subscription'])")
+CONFIG_DIR=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); v=d['tenants']['$ALIAS']['config_dir']; print(os.path.expanduser(v) if v else os.path.expanduser('~/.azure-tenants/$ALIAS'))")
+
+echo "Tenant: $TENANT_ID  Sub: $DEFAULT_SUB  ConfigDir: $CONFIG_DIR"
+```
+
+Windows (PowerShell has `ConvertFrom-Json` built-in):
+
+```powershell
+$alias = 'prod'
+$indexPath = if ($env:AZURE_TENANT_INDEX) { $env:AZURE_TENANT_INDEX } else { "$env:USERPROFILE\.azure-tenants\index.json" }
+$idx = Get-Content $indexPath -Raw | ConvertFrom-Json
+
+$tenantId   = $idx.tenants.$alias.tenant_id
+$defaultSub = $idx.tenants.$alias.default_subscription
+$configDir  = if ($idx.tenants.$alias.config_dir) {
+    $idx.tenants.$alias.config_dir -replace '^~', $env:USERPROFILE
+} else {
+    "$env:USERPROFILE\.azure-tenants\$alias"
+}
+
+"Tenant: $tenantId  Sub: $defaultSub  ConfigDir: $configDir"
+```
+
+> **`~` is not auto-expanded.** JSON values are plain strings; both shells
+> need an explicit expansion step (`os.path.expanduser` in Python,
+> `-replace '^~', $env:USERPROFILE` in PowerShell). The snippets above do it.
+
 ### One-time tenant setup
 
 Read the alias's `tenant_id`, `default_subscription`, and `config_dir` from
-your `~/.azure-tenants/index.json`. Substitute them into the commands below.
+your `~/.azure-tenants/index.json` (using the snippet above), then:
 
 Unix:
 
@@ -206,6 +248,12 @@ $env:AZURE_CONFIG_DIR = "$env:USERPROFILE\.azure-tenants\dev"
 $env:AZD_CONFIG_DIR   = "$env:USERPROFILE\.azd-tenants\dev"
 az account show --query "{tenantId:tenantId, sub:name}" -o table
 ```
+
+> **First-time use of a config dir:** `az account show` will fail with
+> `Please run 'az login' to setup account.` That just means this config
+> dir has never been authenticated yet — go back to the **One-time tenant
+> setup** flow above (run `az login --tenant <id>` then `az account set
+> --subscription <name>`). It is **not** a leaked-tenant problem.
 
 ### Inspecting the current context
 
@@ -290,6 +338,44 @@ az account set --subscription acme-prod
 azd up
 ```
 
+### Assertion variants — strict vs whitelist
+
+The simple snippet above checks against a **single expected subscription**
+(typically the alias's `default_subscription`). When an alias legitimately
+covers more than one subscription (`allowed_subscriptions` has multiple
+entries), use the membership variant instead:
+
+Unix:
+
+```bash
+EXPECTED_TENANT=00000000-0000-0000-0000-000000000001
+ALLOWED_SUBS=("acme-dev" "acme-test")     # from index.tenants.<alias>.allowed_subscriptions
+
+ACTUAL_TENANT=$(az account show --query tenantId -o tsv)
+ACTUAL_SUB=$(az account show --query name -o tsv)
+
+[ "$ACTUAL_TENANT" = "$EXPECTED_TENANT" ] || { echo "❌ Tenant mismatch"; exit 1; }
+printf '%s\n' "${ALLOWED_SUBS[@]}" | grep -qx "$ACTUAL_SUB" \
+  || { echo "❌ Sub '$ACTUAL_SUB' not in allowed list: ${ALLOWED_SUBS[*]}"; exit 1; }
+```
+
+Windows:
+
+```powershell
+$expectedTenant = '00000000-0000-0000-0000-000000000002'
+$allowedSubs    = @('acme-dev','acme-test')   # from index.tenants.<alias>.allowed_subscriptions
+
+$actualTenant = az account show --query tenantId -o tsv
+$actualSub    = az account show --query name     -o tsv
+
+if ($actualTenant -ne $expectedTenant) { Write-Error "Tenant mismatch"; exit 1 }
+if ($allowedSubs -notcontains $actualSub) { Write-Error "Sub '$actualSub' not in allowed list: $($allowedSubs -join ', ')"; exit 1 }
+```
+
+Pick the strict (single-value) form for production and the whitelist form
+when an alias spans multiple subs (e.g. `dev` covers both `acme-dev` and
+`acme-test`).
+
 ---
 
 ## AZD specifics
@@ -304,7 +390,8 @@ Unix:
 export AZURE_CONFIG_DIR=~/.azure-tenants/prod
 export AZD_CONFIG_DIR=~/.azd-tenants/prod
 azd auth login --tenant-id 00000000-0000-0000-0000-000000000001
-azd env select prod-env
+azd env new prod-env      # first time only
+azd env select prod-env   # subsequent runs
 azd up
 ```
 
@@ -314,7 +401,8 @@ Windows:
 $env:AZURE_CONFIG_DIR = "$env:USERPROFILE\.azure-tenants\prod"
 $env:AZD_CONFIG_DIR   = "$env:USERPROFILE\.azd-tenants\prod"
 azd auth login --tenant-id 00000000-0000-0000-0000-000000000001
-azd env select prod-env
+azd env new prod-env      # first time only
+azd env select prod-env   # subsequent runs
 azd up
 ```
 
