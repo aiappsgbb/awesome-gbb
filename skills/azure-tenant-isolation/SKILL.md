@@ -102,6 +102,7 @@ Schema (excerpt — full example: [`references/index.example.json`](references/i
       "tenant_id": "00000000-0000-0000-0000-000000000001",
       "description": "Production tenant",
       "config_dir": null,
+      "azd_config_dir": null,
       "default_subscription": "acme-prod",
       "allowed_subscriptions": ["acme-prod"]
     },
@@ -109,6 +110,7 @@ Schema (excerpt — full example: [`references/index.example.json`](references/i
       "tenant_id": "00000000-0000-0000-0000-000000000002",
       "description": "Development tenant",
       "config_dir": null,
+      "azd_config_dir": null,
       "default_subscription": "acme-dev",
       "allowed_subscriptions": ["acme-dev", "acme-test"]
     }
@@ -122,7 +124,8 @@ Schema (excerpt — full example: [`references/index.example.json`](references/i
 | `default_alias` | string | Alias used when none is specified. |
 | `tenants.<alias>.tenant_id` | string | Azure AD tenant GUID. |
 | `tenants.<alias>.description` | string | Human note (free text). |
-| `tenants.<alias>.config_dir` | string\|null | Override for `AZURE_CONFIG_DIR`. `null` → derive `~/.azure-tenants/<alias>`. **`~` is NOT expanded automatically by JSON readers — consumers must expand it themselves** (see "How to read values from the index" below). |
+| `tenants.<alias>.config_dir` | string\|null | Override for `AZURE_CONFIG_DIR` (used by `az`). `null` → derive `~/.azure-tenants/<alias>`. **`~` is NOT expanded automatically by JSON readers — consumers must expand it themselves** (see "How to read values from the index" below). |
+| `tenants.<alias>.azd_config_dir` | string\|null | Override for `AZD_CONFIG_DIR` (used by `azd`). `null` → derive `~/.azd-tenants/<alias>`. Same `~`-expansion caveat as `config_dir`. **Keep this in lock-step with `config_dir`** — overriding one without the other splits the alias's two halves into different folders, which is almost never what you want. |
 | `tenants.<alias>.default_subscription` | string | Subscription name (or id) passed to `az account set` after login. |
 | `tenants.<alias>.allowed_subscriptions` | string[] | Whitelist for the strict assertion (membership test — see "Assertion variants" below). Empty/missing → only `default_subscription` is accepted. |
 
@@ -131,7 +134,7 @@ Schema (excerpt — full example: [`references/index.example.json`](references/i
 Unix:
 
 ```bash
-mkdir -p ~/.azure-tenants
+mkdir -p ~/.azure-tenants ~/.azd-tenants
 curl -fsSL -o ~/.azure-tenants/index.json \
   https://raw.githubusercontent.com/aiappsgbb/awesome-gbb/main/skills/azure-tenant-isolation/references/index.example.json
 $EDITOR ~/.azure-tenants/index.json   # replace placeholder GUIDs / sub names
@@ -141,14 +144,22 @@ Windows (PowerShell):
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.azure-tenants" | Out-Null
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.azd-tenants"   | Out-Null
 Invoke-WebRequest `
   -Uri 'https://raw.githubusercontent.com/aiappsgbb/awesome-gbb/main/skills/azure-tenant-isolation/references/index.example.json' `
   -OutFile "$env:USERPROFILE\.azure-tenants\index.json"
 notepad "$env:USERPROFILE\.azure-tenants\index.json"
 ```
 
+Both `~/.azure-tenants/<alias>/` and `~/.azd-tenants/<alias>/` are created
+on demand the first time you `az login` / `azd auth login` against them, so
+you don't have to pre-create per-alias subfolders. The two top-level
+folders above just hold the index file and serve as the parent for those
+auto-created per-alias dirs.
+
 Make sure your global `.gitignore_global` (or repo-level `.gitignore`)
-excludes `.azure-tenants/` so the file never lands in a repo.
+excludes both `.azure-tenants/` and `.azd-tenants/` so the files (and
+tokens!) never land in a repo.
 
 ---
 
@@ -169,12 +180,15 @@ Unix (Python is already a hard dependency of `az` CLI, so no extra install):
 ALIAS=prod
 INDEX="${AZURE_TENANT_INDEX:-$HOME/.azure-tenants/index.json}"
 
-# Extract values
+# Extract values (config_dir + azd_config_dir are both nullable -> derive on null)
 TENANT_ID=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); print(d['tenants']['$ALIAS']['tenant_id'])")
 DEFAULT_SUB=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); print(d['tenants']['$ALIAS']['default_subscription'])")
-CONFIG_DIR=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); v=d['tenants']['$ALIAS']['config_dir']; print(os.path.expanduser(v) if v else os.path.expanduser('~/.azure-tenants/$ALIAS'))")
+CONFIG_DIR=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); v=d['tenants']['$ALIAS'].get('config_dir');     print(os.path.expanduser(v) if v else os.path.expanduser('~/.azure-tenants/$ALIAS'))")
+AZD_CONFIG_DIR=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); v=d['tenants']['$ALIAS'].get('azd_config_dir'); print(os.path.expanduser(v) if v else os.path.expanduser('~/.azd-tenants/$ALIAS'))")
 
-echo "Tenant: $TENANT_ID  Sub: $DEFAULT_SUB  ConfigDir: $CONFIG_DIR"
+echo "Tenant: $TENANT_ID  Sub: $DEFAULT_SUB"
+echo "AZURE_CONFIG_DIR: $CONFIG_DIR"
+echo "AZD_CONFIG_DIR:   $AZD_CONFIG_DIR"
 ```
 
 Windows (PowerShell has `ConvertFrom-Json` built-in):
@@ -183,26 +197,42 @@ Windows (PowerShell has `ConvertFrom-Json` built-in):
 $alias = 'prod'
 $indexPath = if ($env:AZURE_TENANT_INDEX) { $env:AZURE_TENANT_INDEX } else { "$env:USERPROFILE\.azure-tenants\index.json" }
 $idx = Get-Content $indexPath -Raw | ConvertFrom-Json
+$t   = $idx.tenants.$alias
 
-$tenantId   = $idx.tenants.$alias.tenant_id
-$defaultSub = $idx.tenants.$alias.default_subscription
-$configDir  = if ($idx.tenants.$alias.config_dir) {
-    $idx.tenants.$alias.config_dir -replace '^~', $env:USERPROFILE
+$tenantId   = $t.tenant_id
+$defaultSub = $t.default_subscription
+$configDir = if ($t.config_dir) {
+    $t.config_dir -replace '^~', $env:USERPROFILE
 } else {
     "$env:USERPROFILE\.azure-tenants\$alias"
 }
+$azdConfigDir = if ($t.azd_config_dir) {
+    $t.azd_config_dir -replace '^~', $env:USERPROFILE
+} else {
+    "$env:USERPROFILE\.azd-tenants\$alias"
+}
 
-"Tenant: $tenantId  Sub: $defaultSub  ConfigDir: $configDir"
+"Tenant: $tenantId  Sub: $defaultSub"
+"AZURE_CONFIG_DIR: $configDir"
+"AZD_CONFIG_DIR:   $azdConfigDir"
 ```
 
 > **`~` is not auto-expanded.** JSON values are plain strings; both shells
 > need an explicit expansion step (`os.path.expanduser` in Python,
-> `-replace '^~', $env:USERPROFILE` in PowerShell). The snippets above do it.
+> `-replace '^~', $env:USERPROFILE` in PowerShell). The snippets above do
+> it for both `config_dir` and `azd_config_dir`.
+
+> **Always extract both paths together.** Setting only `AZURE_CONFIG_DIR`
+> from the index while letting `AZD_CONFIG_DIR` fall back to its default
+> is a silent split — `az` ends up isolated, `azd` ends up in the global
+> `~/.azd`. The snippets above do both in lock-step; if you copy them,
+> keep them paired.
 
 ### One-time tenant setup
 
-Read the alias's `tenant_id`, `default_subscription`, and `config_dir` from
-your `~/.azure-tenants/index.json` (using the snippet above), then:
+Read the alias's `tenant_id`, `default_subscription`, `config_dir`, and
+`azd_config_dir` from your `~/.azure-tenants/index.json` (using the
+snippet above), then:
 
 Unix:
 
