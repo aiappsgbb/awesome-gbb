@@ -65,14 +65,21 @@ Number all rules BR-XXX. These drive evaluation scenarios and skill logic.
 - **Condition**: [When does this rule apply?]
 - **Action**: [What must happen?]
 - **Exception**: [Any exceptions to the rule?]
+- **KPI** (optional but recommended — see § 9 Business KPIs): [Name of the metric this rule influences, e.g. `auto_decline_rate`]
 
 ### BR-002: [Rule Name]
 - **Condition**:
 - **Action**:
 - **Exception**:
+- **KPI**:
 
 > Business rules are the backbone of the spec. Every skill procedure and
 > evaluation scenario should trace back to one or more BR-XXX rules.
+>
+> **Continuous evaluation contract:** every BR-XXX should map to at least one
+> measurable KPI in § 9. The KPI is what the `foundry-evals` continuous loop
+> watches week-over-week — `eval_dataset.jsonl` (one-shot) only proves the
+> agent works in lab; KPIs prove it keeps working in production.
 
 ---
 
@@ -111,6 +118,37 @@ External systems the process needs to interact with.
 
 ---
 
+## 5b. External Systems & Mocks (MCP contract)
+
+> **INPUT CONTRACT for `foundry-mcp-aca`.** This section drives the FastMCP server
+> generation. Every tool the agent calls against an external system must be declared
+> here with its endpoint shape, response semantics, and reset behavior.
+
+For each system from § 5 that the agent will reach **via an MCP tool** (mock or real),
+specify:
+
+### [System Name]
+- **MCP server**: `mock` (FastMCP backed by sample data) | `real` (deployed MCP) | `cosmos-toolkit` (10 built-in tools) | `playwright` (browser automation)
+- **Endpoint shape**:
+  - Style: `request-response` | `streaming` (SSE) | `webhook` (push from system)
+  - Pagination: `none` | `cursor` | `offset-limit` | `keyset`
+  - Idempotency key field: `[field name or "none"]`
+- **Tools exposed** (one row per MCP tool — match § 6 contracts):
+  | Tool name | Read/Write | Latency budget | Notes |
+  |-----------|-----------|----------------|-------|
+  | `get_customer_by_id` | R | <100ms | Backed by `customers.json` |
+- **Mock data scale**: rows per entity (e.g. `customers: 50, orders: 200, ledger: 1000`)
+- **Reset semantics**: `idempotent` (re-seed wipes + repopulates) | `append-only` (history preserved across runs) | `none` (read-only)
+- **Demo state machine** (if any): list discrete demo states the data should cycle through (e.g. `pristine → mid-incident → resolved`) so the same seed file can drive a story.
+- **Real-system swap notes**: what changes when the real backend appears (URL, auth header, schema differences).
+
+> **Why a separate section?** § 5 is the business-level inventory ("we talk to SAP").
+> § 5b is the developer-level contract ("here's exactly what the MCP server returns,
+> at what shape, and how to reset it for a clean demo run"). The first is for stakeholders;
+> the second is what `foundry-mcp-aca` reads to generate code.
+
+---
+
 ## 6. Tool Contracts
 
 Define the tools the agent will use. These are abstract — not bound to any specific runtime.
@@ -138,6 +176,51 @@ Reference documents, policies, or data the agent needs for reasoning.
 - **Content**: [What information does it contain?]
 - **Format**: PDF / DOCX / HTML / JSON / structured DB
 - **Update Frequency**: [How often does it change?]
+- **Backing service**: `foundry-iq` (Azure AI Search Knowledge Agent — agentic retrieval, query planning, citations) | `mcp-search` (live API search) | `inline-context` (small enough to paste into instructions)
+- **Reasoning effort** (for foundry-iq): `minimal` | `low` | `medium` — drives Knowledge Agent config
+- **Citation requirement**: `mandatory` (every answer must cite ≥1 source) | `recommended` | `optional`
+
+> **Static / semi-static knowledge → `foundry-iq`.** Policies, regulations,
+> product docs, brand guidelines, runbooks, technical specs — anything that
+> changes monthly-or-slower and benefits from query planning + citations
+> belongs in a Foundry IQ Knowledge Base. This is the **default knowledge
+> retrieval pattern** for every threadlight process — even processes that
+> primarily query transactional data should ship with a Foundry IQ index for
+> their domain policies. See the `foundry-iq` skill for index design,
+> document chunking, and Knowledge Agent reasoning levels.
+
+---
+
+## 7b. AI Services & Model Selection
+
+> **INPUT CONTRACT for `foundry-doc-vision-speech` and the model declarations in
+> `azure.yaml` `config.deployments`.** Every model-backed capability the agent uses
+> must be declared here so deployment can provision the right model SKU and capacity.
+
+For each AI capability the agent needs:
+
+### [Capability Name]
+- **Capability type**: `chat-reasoning` | `vision-structured-extract` | `vision-unstructured-reason` | `document-extract` | `speech-to-text` | `text-to-speech` | `embeddings`
+- **Service**: `Azure OpenAI` (chat / vision / embeddings) | `Document Intelligence v4` (forms, IDs, invoices) | `Azure Speech` (STT / TTS) | `Azure Vision` (OCR, image analysis)
+- **Model + version** (current as of 2026-05):
+  | Use case | Recommended model | Notes |
+  |----------|-------------------|-------|
+  | Default chat reasoning | `gpt-5.4-mini` (2026-03-17) | 400K context, vision-capable, best cost/quality |
+  | High-stakes reasoning + vision | `gpt-5.4` (2026-03-05) | 1M context, premium |
+  | Premium reasoning + vision | `gpt-5.4-pro` (2026-03-05) | When vision feeds multi-step reasoning |
+  | Bulk / cheap vision | `gpt-5.4-nano` (2026-03-17) | Returns triage, photo screening |
+  | Code-related multimodal | `gpt-5.3-codex` (2026-02-24) | Diagrams → code |
+  | Structured doc extract (passport, invoice, ID) | Document Intelligence v4 prebuilt | Use prebuilt when possible |
+  | Custom doc extract | Document Intelligence v4 custom model | Train when prebuilt doesn't fit |
+  | Voice intake | Azure Speech-to-Text (real-time) | n/a |
+- **Capacity (TPM)**: e.g. `120K` for default, `300K+` for high-volume
+- **Reasoning effort** (for capable models): `minimal` | `low` | `medium` | `high` (default `medium`)
+
+> **Do NOT use `GPT-4o` or `GPT-4o Vision`** — both are legacy as of May 2026.
+> The `gpt-5.4` family supersedes them in every dimension (context, latency, vision
+> quality, cost). If a SPEC carries forward a `GPT-4o` reference from an older
+> template, that's a bug — sweep to `gpt-5.4-mini` (default) or pick from the
+> table above based on the capability profile.
 
 ---
 
@@ -152,9 +235,36 @@ Where humans are involved — approvals, escalations, input requests, feedback l
 - **Data Presented**: [What the human sees]
 - **Options**: [What actions can the human take?]
 - **Timeout/SLA**: [How long before escalation?]
+- **Action gate** (use the canonical taxonomy below): `approve` | `edit-and-approve` | `reject` | `escalate` | `signoff` | `audit-view` | `request-info`
+  | Gate | Semantics | Typical UX |
+  |------|-----------|------------|
+  | `approve` | Yes/no on a proposed action | Adaptive Card with two buttons |
+  | `edit-and-approve` | Human can amend the agent's proposal before approving | Editable form fields + approve button |
+  | `reject` | Human refuses the action with a reason | Reason picker + free-text |
+  | `escalate` | Human routes the case to a higher authority | Role/queue picker |
+  | `signoff` | Human attests they reviewed (no veto) | Single confirm button + signature trail |
+  | `audit-view` | Read-only inspection (no action taken) | Detail pane with audit log |
+  | `request-info` | Human asks the customer/external party for more data | Templated message composer |
+- **Linked business rules**: [BR-XXX list] — which rules require this gate
 
-> Not all processes have human interaction points. Skip this section for
-> fully automated flows.
+> **INPUT CONTRACT for `threadlight-hitl-patterns`.** The action gate
+> drives Adaptive Card generation and bot UX. The linked BR-XXX list drives
+> the audit trail wiring.
+
+---
+
+## 8b. Human Interaction (Workspace UX)
+
+> **INPUT CONTRACT for `threadlight-workspace-ui`.** This section describes the
+> case-management surface that humans use day-to-day — independent of the chat/Teams
+> approval gates above. Skip this section if humans only interact via approval cards.
+
+- **Workspace shape**: `case-list` (queue of items, filter/sort, click into detail) | `inbox` (chronological stream) | `dashboard` (KPI tiles + drill-down) | `console` (live ops with action toolbar) | `kanban` (stages with drag) | `map` (geo) | `none`
+- **Primary filters**: list (e.g. status, owner, age, risk-band)
+- **Detail pane sections** (top to bottom): list (e.g. summary card, agent reasoning trace, tool call log, decision history, action toolbar, audit viewer)
+- **Action toolbar** — gates from § 8 that appear here (subset)
+- **Audit viewer**: `inline` (always visible) | `drawer` (open on demand) | `none`
+- **Bulk operations**: list (e.g. assign-to-me, batch-reject) — or `none`
 
 ---
 
@@ -175,6 +285,25 @@ Where humans are involved — approvals, escalations, input requests, feedback l
 |----|----------|-------|-----------------|----------------|----------|
 | S-001 | | | | BR-XXX | happy-path / edge-case / error / approval |
 
+### Business KPIs (BR → KPI mapping)
+
+> **INPUT CONTRACT for `foundry-evals` continuous-loop.** Every BR-XXX should
+> map to at least one **measurable KPI** that can be computed from agent traces
+> (Application Insights). This is what the continuous evaluation dashboard
+> watches week-over-week — not just the binary scenario pass/fail.
+
+| BR | KPI Name | Formula (computable from traces) | Target | Alert threshold |
+|----|----------|-----------------------------------|--------|-----------------|
+| BR-001 | `auto_decline_rate` | `count(decisions where outcome=auto_decline) / count(decisions)` | 5–15% | <2% or >25% |
+| BR-007 | `policy_citation_rate` | `count(answers where citations≥1) / count(answers)` | 100% | <95% |
+| BR-012 | `human_escalation_rate` | `count(escalated) / count(decisions)` | 10–20% | <5% or >30% |
+
+> Trace fields the agent must emit (declared in the skills' procedures):
+> `decision.outcome`, `decision.business_rules_fired`, `answer.citations[]`,
+> `escalation.reason`, etc. The continuous-loop ACA job pulls these from
+> App Insights, computes KPIs, and writes back to a workbook + raises
+> alerts on threshold breaches.
+
 ---
 
 ## 10. Trigger & Run Model
@@ -188,6 +317,23 @@ How and when the process executes.
 - **Latency/SLA**: [Max acceptable response time]
 - **Concurrency**: [Parallel execution expected?]
 
+### 10b. Triggers (Receiver contract)
+
+> **INPUT CONTRACT for `threadlight-event-triggers`.** For event-driven and
+> scheduled processes, declare the receiver shape so the right ACA job /
+> Function / Event Grid sub / Service Bus consumer can be scaffolded.
+
+| Trigger source | Receiver type | Idempotency key | Dedup window | Dead-letter rule |
+|----------------|---------------|-----------------|--------------|------------------|
+| Cron `0 6 * * *` | ACA Job | run timestamp | n/a | retry 3× then alert |
+| Event Grid topic `orders/created` | Function (HTTP receiver) | `event.id` | 5 min | DLQ to Storage Queue |
+| Service Bus queue `claims-incoming` | ACA consumer (Service Bus binding) | `MessageId` | 24h | move to `claims-poison` after 5 attempts |
+| Webhook from external system | ACA Job (HTTP-triggered) | `X-Request-Id` header | 10 min | return 5xx to trigger sender retry |
+
+> **Note for pilots:** event-driven triggers are **worth declaring** but **not mandatory
+> to build for the first pilot** — the customer often integrates with their own event
+> bus on their own terms. Ship the contract; let the integration follow.
+
 ---
 
 ## 11. Security, Compliance & Governance
@@ -198,6 +344,66 @@ How and when the process executes.
 - **Regulatory**: [GDPR, HIPAA, SOX, industry-specific — or none]
 - **Access control**: [Who can run this, who can see results]
 - **Audit requirements**: [What must be logged for auditability]
+
+### 11b. Governance Posture (Citadel opt-in)
+
+> **INPUT CONTRACT for the `citadel-spoke-onboarding` handoff in
+> `threadlight-deploy`.** Every regulated process should declare whether it
+> needs to land as a Citadel spoke. The deploy flow generates the standalone
+> agent first; if `citadel.required` is true, deploy then runs the
+> onboarding handoff as a separate, opt-in step.
+
+- **Citadel required**: `yes` (FSI, healthcare, regulated supplier risk) | `no` (PoC, internal automation)
+- **Reason**: [Why — regulator audit, central LLM gateway policy, Key Vault federation, RAI policy enforcement, etc.]
+- **Spoke artifacts needed**: list (e.g. `Access Contract`, `APIM connection`, `Key Vault secret federation`, `Product Policy`, `JWT auth`, `network whitelist`)
+- **Tenant strategy**: `shared demo tenant` (default) | `dedicated customer tenant` | `customer-deferred`
+
+---
+
+## 11c. Tech Stack (Module selectors)
+
+> **INPUT CONTRACT for `azd-patterns` Bicep module library and the composer in
+> `threadlight-deploy`.** Declare which infra modules the process needs — the
+> composer reads this list and wires the right Bicep modules into `infra/main.bicep`.
+> Don't list modules the process doesn't need (every selected module costs money).
+
+| Module | Selected? | Purpose in this process |
+|--------|-----------|-------------------------|
+| `cosmos-db` | yes/no | Persistent case state, audit log, agent memory |
+| `ai-search` | yes/no | Foundry IQ Knowledge Base backing |
+| `doc-intel` | yes/no | Structured document extraction |
+| `azure-vision` | yes/no | OCR / image analysis (when not using GPT vision) |
+| `azure-speech` | yes/no | Voice intake / TTS responses |
+| `event-grid` | yes/no | Pub/sub for trigger events |
+| `service-bus` | yes/no | Reliable queueing for case workflow |
+| `storage-blob` | yes/no | Document upload, large artifacts, dataset hosting |
+| `key-vault` | yes/no | Secrets (only when not using managed identity end-to-end) |
+| `app-insights` | yes (default) | Telemetry — required for continuous evals |
+| `aca-job` | yes/no | Scheduled / event-triggered batch work |
+| `aca-mcp` | yes/no | Custom MCP server (mock or real) |
+| `aca-bot` | yes/no | Teams bot |
+| `foundry-iq-index` | yes/no | Pre-provisioned Knowledge Base + chunked corpus |
+
+> The shared UAMI, Foundry project, and ACR are always created — they're not
+> selectable. Selecting `aca-bot` implies `aca-mcp` (bot may need MCP for case
+> lookups). Selecting `event-grid` or `service-bus` implies `aca-job`.
+
+---
+
+## 11d. Demo Data (Realism rules)
+
+> **INPUT CONTRACT for `threadlight-demo-data-factory`.** Sample data shape
+> beyond the basic schema in § 4.
+
+- **Per-entity volume**: e.g. `customers: 50, orders: 200, alerts: 1000`
+- **Distribution**: realistic skew (e.g. `80% low-risk / 15% medium / 5% high`)
+- **Golden cases** (named, hand-curated for the demo script): e.g. `acme-corp` (premium customer, edge-case credit), `fault-incident-2026-04-15` (cascading failure for the dashboard demo)
+- **Reset semantics**: `idempotent` | `append-only` | `none` (see § 5b)
+- **Realism rules** (industry-specific — see `references/data-realism/{industry}.md`):
+  - PII: [allowed / synthetic-only / none]
+  - Vendor / brand names: [synonym-shifted / fully fictional]
+  - Regulatory identifiers (SSN, IBAN, etc.): [valid-format-fake / pattern-only]
+  - Geographic distribution: [single-country / multi-region / global]
 
 ---
 
