@@ -363,6 +363,10 @@ Also provide **color.png** (192×192) and **outline.png** (32×32) icons in the 
 > **Teams manifest has strict length limits.** The build script auto-truncates,
 > but keep descriptions concise to avoid cut-off text.
 
+> **File delivery:** If the agent generates downloadable files (reports, exports),
+> add `"supportsFiles": true` to the `bots[0]` object in the manifest. This enables
+> the FileConsentCard flow (see [Sending Files to Teams](#sending-files-to-teams)).
+
 ---
 
 ## Step 5: Build Teams Package Script
@@ -693,31 +697,185 @@ file card they can preview or download.
 **Flow:** Agent generates file → bot downloads from session files API → bot sends
 FileConsentCard → user accepts → bot uploads to OneDrive URL → bot sends FileCard.
 
-```python
-from microsoft_agents.activity import Activity, ActivityTypes, Attachment
+#### Step 1: Add `supportsFiles` to manifest
 
-# Step 1: Download file from Foundry session
-file_bytes = await _download_session_file(session_id, filename)
+In the `bots` array of `manifest.json`:
 
-# Step 2: Send consent card
-consent = Attachment(
-    content_type="application/vnd.microsoft.teams.card.file.consent",
-    name=filename,
-    content={
-        "description": "Agent-generated report",
-        "sizeInBytes": len(file_bytes),
-        "acceptContext": {"filename": filename, "session_id": session_id},
-        "declineContext": {},
-    },
-)
-await context.send_activity(Activity(type=ActivityTypes.message, attachments=[consent]))
-
-# Step 3: Handle the invoke when user accepts (in a separate handler):
-# context.activity.name == "fileConsent/invoke"
-# context.activity.value["action"] == "accept"
-# Upload file_bytes to: context.activity.value["uploadInfo"]["uploadUrl"]
-# Then send FileCard confirmation
+```json
+{
+  "botId": "__BOT_APP_ID__",
+  "scopes": ["personal"],
+  "supportsFiles": true,
+  ...
+}
 ```
+
+#### Step 2: Pending-file cache and consent card sender
+
+The bot must hold file bytes in memory between sending the consent card and receiving
+the invoke callback. Use a simple dict keyed by UUID:
+
+```python
+import uuid
+from microsoft_agents.activity import Activity, ActivityTypes, Attachment, InvokeResponse
+
+REPORT_EXTENSIONS = {".xlsx", ".csv", ".html", ".json", ".md", ".txt", ".pdf"}
+
+# Pending files awaiting user consent (file_id → (filename, bytes))
+_pending_files: dict[str, tuple[str, bytes]] = {}
+
+
+async def _send_session_files(context, session_id: str):
+    """Download generated files from the agent session and offer via FileConsentCard."""
+    cred = DefaultAzureCredential()
+    token = await cred.get_token("https://ai.azure.com/.default")
+    await cred.close()
+
+    headers = {
+        "Authorization": f"Bearer {token.token}",
+        "Foundry-Features": "HostedAgents=V1Preview",
+    }
+
+    async with aiohttp.ClientSession() as http:
+        list_url = (
+            f"{PROJECT_ENDPOINT}/agents/{AGENT_NAME}/endpoint/sessions"
+            f"/{session_id}/files?api-version=v1&path=."
+        )
+        async with http.get(list_url, headers=headers) as resp:
+            if resp.status != 200:
+                return
+            files_data = await resp.json()
+
+        for entry in files_data.get("entries", []):
+            name = entry.get("name", "")
+            ext = ("." + name.rsplit(".", 1)[-1]).lower() if "." in name else ""
+            if ext not in REPORT_EXTENSIONS:
+                continue
+
+            dl_url = (
+                f"{PROJECT_ENDPOINT}/agents/{AGENT_NAME}/endpoint/sessions"
+                f"/{session_id}/files/content?api-version=v1&path={name}"
+            )
+            async with http.get(dl_url, headers=headers) as resp:
+                if resp.status != 200:
+                    continue
+                content = await resp.read()
+
+            # Store file and send FileConsentCard
+            file_id = str(uuid.uuid4())
+            _pending_files[file_id] = (name, content)
+
+            consent_card = Attachment(
+                content_type="application/vnd.microsoft.teams.card.file.consent",
+                name=name,
+                content={
+                    "description": f"Agent-generated report ({len(content):,} bytes)",
+                    "sizeInBytes": len(content),
+                    "acceptContext": {"file_id": file_id, "filename": name},
+                    "declineContext": {"file_id": file_id},
+                },
+            )
+            await context.send_activity(
+                Activity(type=ActivityTypes.message, attachments=[consent_card])
+            )
+```
+
+#### Step 3: Invoke handler for file consent
+
+Register an invoke handler in the `setup()` function alongside the message handler:
+
+```python
+@AGENT_APP.activity("invoke")
+async def on_invoke(context: TurnContext, state: TurnState):
+    if context.activity.name == "fileConsent/invoke":
+        await _handle_file_consent(context)
+    else:
+        # Acknowledge unknown invokes to avoid Teams errors
+        await context.send_activity(
+            Activity(type=ActivityTypes.invoke_response, value=InvokeResponse(status=200))
+        )
+
+
+async def _handle_file_consent(context):
+    """Handle fileConsent/invoke — upload on accept, clean up on decline."""
+    value = context.activity.value or {}
+    action = value.get("action", "")
+    accept_ctx = value.get("context") or value.get("acceptContext") or {}
+    file_id = accept_ctx.get("file_id", "")
+    upload_info = value.get("uploadInfo") or value.get("upload_info") or {}
+
+    if action == "accept":
+        if file_id not in _pending_files:
+            await context.send_activity("⚠️ File expired — please regenerate the report.")
+            return
+
+        filename, content = _pending_files.pop(file_id)
+        upload_url = upload_info.get("uploadUrl") or upload_info.get("upload_url", "")
+
+        if not upload_url:
+            await context.send_activity("⚠️ No upload URL received from Teams.")
+            return
+
+        # Upload to OneDrive (simple PUT for files < 4 MB)
+        async with aiohttp.ClientSession() as http:
+            put_headers = {
+                "Content-Type": "application/octet-stream",
+                "Content-Range": f"bytes 0-{len(content) - 1}/{len(content)}",
+            }
+            async with http.put(upload_url, data=content, headers=put_headers) as resp:
+                if resp.status not in (200, 201):
+                    await context.send_activity(f"⚠️ Upload failed ({resp.status}).")
+                    return
+
+        # Send FileInfoCard — Teams renders this as a clickable file
+        ext = filename.rsplit(".", 1)[-1] if "." in filename else "file"
+        file_card = Attachment(
+            content_type="application/vnd.microsoft.teams.card.file.info",
+            name=filename,
+            content_url=upload_info.get("contentUrl") or upload_info.get("content_url", ""),
+            content={
+                "uniqueId": upload_info.get("uniqueId") or upload_info.get("unique_id", ""),
+                "fileType": ext,
+            },
+        )
+        await context.send_activity(
+            Activity(type=ActivityTypes.message, attachments=[file_card])
+        )
+
+    elif action == "decline":
+        _pending_files.pop(file_id, None)
+        await context.send_activity("File upload cancelled.")
+
+    # Always send invoke response to acknowledge
+    await context.send_activity(
+        Activity(type=ActivityTypes.invoke_response, value=InvokeResponse(status=200))
+    )
+```
+
+#### Step 4: Wire into the message handler
+
+After the streaming response completes, check for session files:
+
+```python
+# In on_message, after sr.end_stream():
+if agent_session_id:
+    await _send_session_files(context, agent_session_id)
+```
+
+The `agent_session_id` comes from the `response.completed` event (Responses protocol):
+
+```python
+elif event_type == "response.completed":
+    resp = getattr(event, "response", None)
+    if resp:
+        sid = getattr(resp, "agent_session_id", None)
+        if sid:
+            yield SessionInfo(session_id=sid)
+```
+
+> **Validated pattern** — tested with XLSX (openpyxl) and PDF (fpdf2) file delivery
+> in Imperial Commercial Sales PoC (May 2026). Files appear as clickable OneDrive
+> cards in Teams with preview support.
 
 ### Downloading files from Foundry session
 

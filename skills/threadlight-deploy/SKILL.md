@@ -170,7 +170,8 @@ Core deployment inputs:
 
 **Decision rules:**
 - **Default to GHCP** — preferred runtime, progressive skills, no timeout limits
-- **Use MAF when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions
+- **Use MAF when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions OR **file generation** (save_report → XLSX/PDF/CSV)
+- **Use MAF when**: agent primarily does data queries with fast MCP tools — MAF is 10-20x faster for these (19s vs 220s+), because GHCP's SkillsProvider adds 20-34 extra `load_skill` calls per query
 - If the spec doesn't indicate either way → use GHCP
 
 #### 1e. Choose model access pattern
@@ -284,7 +285,7 @@ Map configured MCP servers for Foundry runtime (NOT local dev):
 | Browser Automation | **MCP ACA** — deploy Playwright as a remote MCP server | Local Playwright cannot run inside hosted agent containers. Use `npx @playwright/mcp` on ACA. |
 | Web Search | **Foundry Toolbox** — `client.get_toolbox("toolbox-name")` | Built-in Toolbox tool type. No Bing resource needed. *MAF only.* |
 | Code Interpreter | **Foundry Toolbox** — add `code_interpreter` to Toolbox | Computation and data processing. *MAF only.* |
-| File Generation | **Custom `@tool`** — `save_report` writing to `$HOME` | Downloadable via session files API. *MAF only.* |
+| File Generation | **Custom `@tool`** — `save_report` writing to `$HOME` | XLSX (openpyxl), PDF (fpdf2), CSV/HTML (text). Downloadable via session files API + FileConsentCard in Teams. *MAF only.* See `foundry-hosted-agents` skill § File Generation. |
 | **Knowledge sources (docs, policies, KB)** | **Foundry IQ** — Azure AI Search with agentic retrieval | For static/semi-static knowledge (policies, regulations, product docs). See `foundry-iq` skill. Creates Knowledge Base with query planning + citations. |
 | **API data (dynamic, transactional)** | **MCP ACA** — custom or mock MCP server | For live data (CRM, orders, transactions). See `foundry-mcp-aca` skill. |
 | **Cosmos DB** | **MCP ACA** — .NET MCPToolKit (10 tools out of the box) | See `foundry-mcp-aca` Option A. Deploy as `src/mcp/` or shared ACA. |
@@ -902,7 +903,9 @@ If it's a simple Q&A agent with built-in tools → Prompt Agent is simpler.
 
 - Agent needs **Foundry Toolbox** (`web_search`, `code_interpreter`) — only available via `client.get_toolbox()`
 - Agent needs **custom `@tool` Python functions** — GHCP doesn't support them
+- Agent needs **file generation** (`save_report` @tool → XLSX/PDF/CSV via session files API)
 - Agent needs **Toolbox + MCP** in the same runtime
+- Agent primarily does **data queries with fast MCP tools** — MAF is 10-20x faster because GHCP's `load_skill` overhead dominates (20-34 extra tool calls per query). Benchmark: MAF+gpt-5.4-mini = 19s vs GHCP+gpt-5.4-mini = 220s for the same data query.
 
 ### Tool-Use Discipline
 
@@ -1196,6 +1199,11 @@ Teams integration is **optional** — only include it if:
 If included, the scaffold adds `copilot/` (bot code) and `infra/bot/` (Bicep) to
 the azd project. The `foundry-teams-bot` skill's `templates/` directory provides
 ready-to-copy files.
+
+**If the agent generates files** (XLSX/PDF reports via `save_report` @tool):
+- Add `"supportsFiles": true` to the manifest bot config
+- The bot must implement the full FileConsentCard flow (see `foundry-teams-bot` skill § Sending Files to Teams)
+- The bot captures `agent_session_id` from `response.completed`, lists/downloads files from the session files API, then sends FileConsentCard → invoke handler → OneDrive upload → FileInfoCard
 
 ---
 
