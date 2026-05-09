@@ -47,7 +47,8 @@
             ],
             "isNotificationOnly": false,
             "supportsCalling": false,
-            "supportsVideo": false
+            "supportsVideo": false,
+            "supportsFiles": true
         }
     ],
     "permissions": ["identity", "messageTeamMembers"],

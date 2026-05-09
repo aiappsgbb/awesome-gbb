@@ -126,6 +126,88 @@ agent = Agent(client=client, tools=[my_tool, mcp_tool], ...)
 > `${ENV_VAR}` placeholders that expand to empty strings cause `invalid_payload`
 > errors at runtime.
 
+### File Generation (@tool pattern)
+
+Agents can generate downloadable files (XLSX, PDF, CSV, HTML) using a custom `@tool`.
+Files are written to `$HOME` inside the container; the hosting platform exposes them
+via the session files API, and the Teams bot delivers them via FileConsentCard
+(see [foundry-teams-bot skill](#sending-files-to-teams)).
+
+```python
+@tool(approval_mode="never_require")
+def save_report(
+    filename: Annotated[str, Field(description="Filename (e.g. report.xlsx, summary.pdf)")],
+    content: Annotated[str, Field(description="File content: CSV text, JSON for XLSX, HTML for pdf")],
+    format: Annotated[str, Field(description="Format: csv, xlsx, html, or pdf")] = "csv",
+) -> str:
+    """Save a report file that the user can download."""
+    from pathlib import Path
+    home = Path.home()
+    filepath = home / filename
+
+    if format == "xlsx":
+        import openpyxl
+        import json as _json
+        data = _json.loads(content)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        if data and isinstance(data, list):
+            ws.append(list(data[0].keys()))
+            for row in data:
+                ws.append(list(row.values()))
+        wb.save(str(filepath))
+    elif format == "pdf":
+        from fpdf import FPDF
+        import re
+        # Strip CSS but keep structural HTML for write_html()
+        cleaned = re.sub(r"<style[^>]*>.*?</style>", "", content, flags=re.DOTALL)
+        cleaned = re.sub(r'\s+(class|style|id)="[^"]*"', "", cleaned)
+        cleaned = cleaned.replace("<table", '<table border="1" width="100%"')
+        cleaned = cleaned.replace("<th", '<th bgcolor="#d0d0d0"')
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        pdf.set_font("Helvetica", "", 10)
+        pdf.write_html(cleaned)
+        pdf.output(str(filepath))
+    else:
+        filepath.write_text(content, encoding="utf-8")
+
+    return f"Report saved: {filename} ({filepath.stat().st_size:,} bytes). User can download it."
+```
+
+**Required dependencies** in `pyproject.toml`:
+
+```toml
+dependencies = [
+    # ... agent-framework packages ...
+    "openpyxl>=3.1.0",   # XLSX generation
+    "fpdf2>=2.8.0",      # PDF generation (pure Python, no system deps)
+]
+```
+
+**Instructions directive** — add to `copilot-instructions.md`:
+
+```markdown
+## Report Generation
+
+You have a `save_report` tool for generating downloadable files:
+- **XLSX**: JSON array of objects → `save_report(filename="report.xlsx", content=json_data, format="xlsx")`
+- **PDF**: HTML content → `save_report(filename="report.pdf", content=html, format="pdf")`
+- **CSV**: Raw CSV text → `save_report(filename="report.csv", content=csv, format="csv")`
+- **HTML**: HTML content → `save_report(filename="report.html", content=html, format="html")`
+```
+
+**Key points:**
+- `fpdf2` is pure Python — no Playwright, wkhtmltopdf, or headless Chrome needed
+- `fpdf2.write_html()` renders HTML tables with borders and header highlighting
+- Files written to `Path.home()` are automatically available via the session files API
+- The bot captures `agent_session_id` from the `response.completed` event to locate files
+- Wrap each format in try/except to return a clean error if generation fails
+
+> **Validated** — XLSX and PDF file delivery tested end-to-end in Imperial Commercial
+> Sales PoC (May 2026). FileConsentCard renders clickable OneDrive cards in Teams.
+
 ---
 
 ## Dependencies (pyproject.toml)
@@ -142,6 +224,9 @@ dependencies = [
     "azure-ai-projects>=2.1.0",
     "azure-identity>=1.19.0",
     "python-dotenv>=1.0.0",
+    # Add these if using save_report file generation:
+    # "openpyxl>=3.1.0",   # XLSX
+    # "fpdf2>=2.8.0",      # PDF (pure Python)
 ]
 
 [tool.uv]

@@ -72,6 +72,35 @@ for query in test_queries:
 - **Warm up first** — send a throwaway "Hello" before the real queries
 - **Use `stream=False`** — simpler for eval; streaming works but adds complexity
 - **agent-bound client** — `get_openai_client(agent_name=...)` routes to the dedicated endpoint
+- **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
+
+### Alternative: Direct SSE Invocations (GHCP SDK agents)
+
+If the agent uses the Invocations protocol (GHCP SDK), you can't use
+`oai.responses.create()`. Use the raw SSE endpoint instead:
+
+```python
+import aiohttp
+
+url = f"{endpoint}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
+
+async with aiohttp.ClientSession() as session:
+    async with session.post(url, json={"input": query}, headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Foundry-Features": "HostedAgents=V1Preview",
+    }) as resp:
+        full_text = ""
+        async for line in resp.content:
+            line = line.decode().strip()
+            if line.startswith("data: "):
+                event = json.loads(line[6:])
+                if event.get("type") == "assistant.message_delta":
+                    full_text += event.get("data", {}).get("content", "")
+```
+
+> **Prefer the Responses API pattern** (agent-bound OpenAI client) unless the agent
+> specifically only supports Invocations. It's simpler and handles conversation state.
 
 ---
 
