@@ -73,6 +73,17 @@ for query in test_queries:
 - **Use `stream=False`** — simpler for eval; streaming works but adds complexity
 - **agent-bound client** — `get_openai_client(agent_name=...)` routes to the dedicated endpoint
 - **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
+- **Pace invocations** — add a 2s `time.sleep()` between calls. Rapid-fire requests produce empty responses even after warm-up
+- **Retry on empty** — `output_text` can return empty when the agent does tool calls but the response structure varies. Retry once after a 3s pause. Also scan `response.output` items for message text as a fallback:
+
+```python
+text = response.output_text or ""
+if not text and response.output:
+    for item in response.output:
+        if getattr(item, "type", "") == "message":
+            for content in getattr(item, "content", []):
+                text += getattr(content, "text", "")
+```
 
 ### Alternative: Direct SSE Invocations (GHCP SDK agents)
 
