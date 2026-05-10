@@ -955,7 +955,225 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] Shared UAMI: one UAMI for bot + MCP ACA + hooks; `AZURE_CLIENT_ID` set on all ACAs
 - [ ] AppInsights connection to Foundry project exists (or postprovision hook creates it)
 
+#### SPEC § 11c module-selector cross-check (MANDATORY)
+
+> **Why this exists.** The card-dispute-investigation v3 PoC shipped
+> with `infra/bot/aca.bicep`, `infra/bot/bot-service.bicep`, and a
+> `src/workspace/index.html` ` but `azure.yaml` only declared two
+> services (`agent` + `mcp`), `infra/main.bicep` only wired `mcpApp`,
+> and the workspace had no `Dockerfile`. Result: SPEC § 11c said
+> `aca-bot: yes` and `aca-job: yes`; deployment ended up with **0 bot
+> resources, 0 jobs, 0 workspace ACAs** ` and the deploy still
+> reported success. This check would have caught it.
+
+For **every `yes` row** in SPEC § 11c, walk this matrix:
+
+| Selector | Must exist in `azure.yaml` services | Must be referenced from `infra/main.bicep` | Must have source under `src/` |
+|---|---|---|---|
+| `aca-mcp` | `host: containerapp`, `project: ./src/mcp` | `module mcpApp '<host>/container-app.bicep'` | `src/mcp/Dockerfile` + `server.py` |
+| `aca-bot` | `host: containerapp`, `project: ./src/bot` | `module botAca 'bot/aca.bicep'` AND `module botService 'bot/bot-service.bicep'` | `src/bot/Dockerfile` + `bot.py` + `app.py` + `teams_package/manifest.json` |
+| `aca-job` | `host: containerapp.job` (or postdeploy `az containerapp job create`) | `module job 'jobs/aca-job.bicep'` (or `core/host/container-app-job.bicep`) | `src/jobs/<name>/Dockerfile` + `main.py` (cron entrypoint) |
+| `workspace-ui` (SPEC § 8b non-empty) | `host: containerapp`, `project: ./src/workspace` | `module workspaceAca 'core/host/container-app.bicep'` | `src/workspace/Dockerfile` + ACA-served HTML/SPA. **NOT just a static `index.html` opened from `file://`** ` see `threadlight-workspace-ui` Hosting section |
+| `foundry-iq-index` | n/a (provisioned by `postprovision` hook) | `module knowledge 'modules/ai-search.bicep'` (the index) | `scripts/postprovision.py` calls `provision_knowledge_base()` |
+
+For **every `yes` selector**, all three columns MUST be checked. If any
+is missing: **STOP**, fix the gap, do not proceed to `azd up`.
+
+#### Bicep-module orphan check (MANDATORY)
+
+For every `infra/<dir>/*.bicep` file in the repo, run:
+
+```bash
+# From repo root
+for f in $(find infra -name '*.bicep' -not -path '*/core/*' -not -path '*/modules/*'); do
+    base=$(basename "$f" .bicep)
+    if ! grep -q "module .*'.*$base\.bicep'" infra/main.bicep; then
+        echo "ORPHAN: $f is not referenced from infra/main.bicep"
+    fi
+done
+```
+
+Orphan modules confuse future readers ("is this needed? was the deploy
+broken?"). Either **wire them in** or **delete them**. No middle
+ground. The card-dispute-investigation PoC carried orphan
+`infra/bot/aca.bicep` and `infra/bot/bot-service.bicep` for an entire
+deploy cycle ` they looked deployed when reading `infra/`, but
+weren't.
+
+#### `src/`-folder orphan check (MANDATORY)
+
+Mirror of the above for source code. For every `src/<dir>/`:
+
+| Source folder | Must be declared in `azure.yaml` services | Action if not |
+|---|---|---|
+| `src/agent/` | `host: azure.ai.agent` | required ` always present |
+| `src/mcp/` | `host: containerapp` (named `mcp`) | wire it OR delete `src/mcp/` |
+| `src/bot/` | `host: containerapp` (named `bot`) | wire it OR delete `src/bot/` |
+| `src/workspace/` | `host: containerapp` (named `workspace`) **AND** must have `Dockerfile` | wire it OR explicitly mark in SPEC § 8b as "demo-only static page" with no ACA hosting |
+| `src/jobs/<name>/` | `host: containerapp.job` (named `<name>`) OR postdeploy `az containerapp job create` | wire it OR delete |
+
+Same rule: orphan source folders are a deploy bug. Either ship them or
+remove them.
+
 **If any check fails:** fix it before presenting. Do not leave broken artifacts.
+
+---
+
+## Phase 3.5: Post-deploy completeness gate (MANDATORY)
+
+> **Why this is non-negotiable.** "PoC complete" is NOT the same as
+> "`azd up` returned 0". It means **every Azure resource declared by
+> SPEC § 11c is in `az resource list`, every channel declared by SPEC
+> § 8 is reachable, and every scheduled job is running**. Without
+> this gate, the card-dispute-investigation PoC was reported "deployed
+> and evaluated" with `aca-bot`, `aca-job`, and `workspace-ui` all
+> silently missing. Run this gate **before** announcing success.
+
+### Step 1 ` capture deployed state
+
+```bash
+# Make sure azure-tenant-isolation env vars are set first
+RG=$(azd env get-value AZURE_RESOURCE_GROUP)
+az resource list -g "$RG" \
+   --query "[].{type:type, name:name}" -o json > tests/deployed-resources.json
+az containerapp list -g "$RG" \
+   --query "[].{name:name, fqdn:properties.configuration.ingress.fqdn, state:properties.runningStatus}" \
+   -o json > tests/deployed-containerapps.json
+az containerapp job list -g "$RG" \
+   --query "[].{name:name, schedule:properties.configuration.scheduleTriggerConfig.cronExpression}" \
+   -o json > tests/deployed-jobs.json
+```
+
+### Step 2 ` build expected list from SPEC
+
+For every `yes` row in SPEC § 11c, look up the expected resource
+type(s):
+
+| Selector | Expected `Microsoft.*` resource types |
+|---|---|
+| `foundry-account` | `Microsoft.CognitiveServices/accounts` (account + nested project) |
+| `cosmos-db` | `Microsoft.DocumentDB/databaseAccounts` |
+| `ai-search` | `Microsoft.Search/searchServices` |
+| `app-insights` | `Microsoft.Insights/components` + `Microsoft.OperationalInsights/workspaces` |
+| `acr` | `Microsoft.ContainerRegistry/registries` |
+| `uami` | `Microsoft.ManagedIdentity/userAssignedIdentities` |
+| `aca-environment` | `Microsoft.App/managedEnvironments` |
+| `aca-mcp` | `Microsoft.App/containerApps` (1 named `*-mcp-*` or `ca-mcp-*`) |
+| `aca-bot` | `Microsoft.App/containerApps` (1 named `*-bot-*`) **AND** `Microsoft.BotService/botServices` |
+| `aca-job` | `Microsoft.App/jobs` (1 per cron entry) |
+| `workspace-ui` | `Microsoft.App/containerApps` (1 named `*-workspace-*` or `*-ui-*`) |
+| `event-grid` | `Microsoft.EventGrid/topics` (or `systemTopics`) |
+| `service-bus` | `Microsoft.ServiceBus/namespaces` |
+| `key-vault` | `Microsoft.KeyVault/vaults` (only if explicitly `yes` ` keyless-by-default) |
+| `storage-blob` | `Microsoft.Storage/storageAccounts` |
+| `foundry-iq-index` | `Microsoft.Search/searchServices` (named `*-iq-*`) AND `azd env get-value FOUNDRY_IQ_KB_NAME` resolves |
+
+### Step 3 ` diff and assert
+
+```python
+# tests/postdeploy_gate.py ` make this part of the deploy script.
+import json, sys
+from pathlib import Path
+
+deployed = json.loads(Path("tests/deployed-resources.json").read_text())
+deployed_types = {r["type"] for r in deployed}
+
+# Build expected from SPEC § 11c. Hand-maintain this list per process,
+# or read it from specs/manifest.json -> deployment_manifest.expected_resource_types
+expected = {
+    "Microsoft.CognitiveServices/accounts",
+    "Microsoft.DocumentDB/databaseAccounts",
+    "Microsoft.Search/searchServices",
+    "Microsoft.App/managedEnvironments",
+    "Microsoft.App/containerApps",     # mcp + bot + workspace
+    "Microsoft.App/jobs",              # deadline-watcher cron
+    "Microsoft.BotService/botServices",
+    "Microsoft.ManagedIdentity/userAssignedIdentities",
+    "Microsoft.ContainerRegistry/registries",
+    "Microsoft.Insights/components",
+}
+
+missing = expected - deployed_types
+if missing:
+    print(f"GAP: missing resource types: {missing}")
+    sys.exit(1)
+
+# Per-app instance checks for the ACAs (counts matter ` 3 ACAs expected)
+acas = json.loads(Path("tests/deployed-containerapps.json").read_text())
+aca_names = {a["name"] for a in acas}
+required_aca_patterns = {"mcp": False, "bot": False, "workspace": False}
+for n in aca_names:
+    for k in required_aca_patterns:
+        if k in n.lower(): required_aca_patterns[k] = True
+unmet = [k for k, v in required_aca_patterns.items() if not v]
+if unmet:
+    print(f"GAP: missing required ACA roles: {unmet}")
+    sys.exit(1)
+
+print("OK - post-deploy completeness gate passed")
+```
+
+### Step 4 ` channel reachability
+
+For every Human Interaction channel in SPEC § 8, run a smoke check:
+
+```bash
+# Workspace UI ` HTTP 200 on the FQDN
+WORKSPACE_FQDN=$(jq -r '.[] | select(.name | contains("workspace")) | .fqdn' tests/deployed-containerapps.json)
+[ -n "$WORKSPACE_FQDN" ] && curl -fsSL "https://$WORKSPACE_FQDN/" -o /dev/null && echo "workspace OK"
+
+# Bot ` ACA running + Bot Service registered
+BOT_NAME=$(jq -r '.[] | select(.name | contains("bot")) | .name' tests/deployed-containerapps.json)
+[ -n "$BOT_NAME" ] && az containerapp show -g "$RG" -n "$BOT_NAME" --query properties.runningStatus -o tsv
+
+# Scheduled jobs ` cron expression matches SPEC § 10b
+az containerapp job list -g "$RG" --query "[].{name:name, schedule:properties.configuration.scheduleTriggerConfig.cronExpression}" -o table
+```
+
+### Step 5 ` write the gate result
+
+Persist `tests/postdeploy-manifest.json`:
+
+```json
+{
+  "deployed_at": "2026-05-10T22:30:00Z",
+  "rg": "rg-card-dispute-poc",
+  "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui"],
+  "deployed_resources": ["` types ` "],
+  "channels": [
+    { "name": "Analyst Workspace", "fqdn": "ca-workspace-`.`.azurecontainerapps.io", "status": "OK" },
+    { "name": "Teams adaptive card", "bot_name": "ca-bot-`", "status": "OK" }
+  ],
+  "scheduled_jobs": [
+    { "name": "deadline-watcher", "schedule": "*/15 * * * *", "status": "OK" }
+  ],
+  "gaps": []
+}
+```
+
+> **`gaps` MUST be empty for "PoC complete".** If non-empty, the
+> deploy is incomplete ` either fix the gap (preferred) or update
+> SPEC § 11c to flip the selector to `no` with a documented reason
+> ("scheduled job deferred to v2"). Silently shipping with gaps is
+> the failure mode this whole gate exists to prevent.
+
+### Anti-pattern: "the agent runs in the portal so we're done"
+
+The PoC is **NOT done** when:
+- Only the hosted agent + 1 MCP ACA are deployed but SPEC § 11c
+  declared more (`aca-bot`, `aca-job`, `workspace-ui`).
+- The smoke probe / eval invokes the agent successfully but the
+  agent's deployed surface area doesn't match SPEC § 8 channels.
+- Bicep modules are present in `infra/` but not wired into
+  `main.bicep` (orphans).
+- Source folders exist under `src/` but aren't declared in
+  `azure.yaml` services.
+- `tests/postdeploy-manifest.json` doesn't exist or has non-empty
+  `gaps[]`.
+
+If any of the above is true, the PoC is partial. Communicate that
+honestly to the user (with the gap list) instead of declaring
+victory.
 
 ---
 

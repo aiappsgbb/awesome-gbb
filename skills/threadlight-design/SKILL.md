@@ -500,9 +500,68 @@ Machine-readable deployment contract (lives with the spec):
     "pii": false,
     "auth_required_sources": [],
     "regulatory": []
+  },
+  "deployment_manifest": {
+    "module_selectors": {
+      "foundry-account":  "yes",
+      "cosmos-db":        "yes",
+      "ai-search":        "yes",
+      "foundry-iq-index": "yes",
+      "aca-mcp":          "yes",
+      "aca-bot":          "yes",
+      "aca-job":          "yes",
+      "workspace-ui":     "yes",
+      "key-vault":        "no",
+      "event-grid":       "no"
+    },
+    "services": [
+      {"name": "agent",     "host": "azure.ai.agent",   "src": "src/agent"},
+      {"name": "mcp",       "host": "containerapp",     "src": "src/mcp"},
+      {"name": "bot",       "host": "containerapp",     "src": "src/bot"},
+      {"name": "workspace", "host": "containerapp",     "src": "src/workspace"}
+    ],
+    "scheduled_jobs": [
+      {"name": "{job-name}", "schedule": "*/15 * * * *", "tool": "{tool-name}", "src": "src/jobs/{job-name}"}
+    ],
+    "channels": [
+      {"name": "Analyst Workspace",      "type": "web",            "service": "workspace"},
+      {"name": "Teams adaptive card",    "type": "teams",          "service": "bot"},
+      {"name": "Email deadline alerts",  "type": "email",          "service": "{service or external}"}
+    ],
+    "expected_resource_types": [
+      "Microsoft.CognitiveServices/accounts",
+      "Microsoft.DocumentDB/databaseAccounts",
+      "Microsoft.Search/searchServices",
+      "Microsoft.App/managedEnvironments",
+      "Microsoft.App/containerApps",
+      "Microsoft.App/jobs",
+      "Microsoft.BotService/botServices",
+      "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "Microsoft.ContainerRegistry/registries",
+      "Microsoft.Insights/components"
+    ]
   }
 }
 ```
+
+> **`deployment_manifest` is a contract `threadlight-deploy` reads
+> mechanically.** The deploy skill's Phase 3 module-selector check
+> walks `module_selectors`, confirms each service maps to a folder
+> under `src/` with a Dockerfile, and confirms every `infra/*.bicep`
+> module is wired in `main.bicep`. Phase 3.5 then takes
+> `expected_resource_types` and asserts every entry is in
+> `az resource list -g <RG>` after `azd up`. If you flip a selector
+> from `yes` to `no` mid-pilot, **delete the corresponding source
+> folder and Bicep module too** ` orphans break the orphan check.
+
+> **Required for every process where `aca-bot`, `aca-job`,
+> `workspace-ui`, or any other selector that produces a deployable
+> service is `yes`.** Without `deployment_manifest`, the deploy gate
+> can't tell missing services from intentionally-skipped ones, and
+> ships partial PoCs as if they were complete (this happened on
+> card-dispute-investigation v3 ` `aca-bot` and `aca-job` shipped
+> as `yes` in SPEC § 11c, deployed as zero resources, and weren't
+> noticed until the user opened the resource group).
 
 #### 6. `README.md`
 

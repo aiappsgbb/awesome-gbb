@@ -413,6 +413,134 @@ npx playwright screenshot \
 
 ---
 
+## Hosting: ACA-mandatory for any non-trivial workspace
+
+> **A workspace that exists only as `file:///.../index.html` opened
+> from the analyst's laptop is NOT a deployed PoC.** It is a
+> developer-mode preview. PoCs that ship without ACA hosting cannot
+> demonstrate Easy Auth, MSAL sign-in, multi-user audit, or the
+> "click the URL we sent you" demo flow ` and they fail the
+> `threadlight-deploy` Phase 3.5 post-deploy completeness gate
+> (workspace ACA missing from `az resource list`).
+
+### When ACA hosting is REQUIRED
+
+Any of these triggers mandate ACA:
+
+- SPEC § 8b Workspace UX is non-empty (case-list, inbox, dashboard, console, kanban, map ` any of them).
+- SPEC § 8 lists "Analyst Workspace" or any web-channel as a Human Interaction channel.
+- SPEC's `deployment_manifest.module_selectors.workspace-ui` is `yes`.
+- Any audit-writing action runs from the workspace (Easy Auth or MSAL is the only way to populate the actor identity ` `file://` cannot).
+
+### When file:// preview is acceptable
+
+Only:
+- One-shot stakeholder mock-ups with no audit, no MCP calls, no auth.
+- Internal grooming of UX shape **before** wiring into the deploy pipeline.
+
+If this is your case, mark it explicitly in SPEC § 8b ("demo-only static
+preview, no ACA hosting") so the deploy gate doesn't flag it.
+
+### Required ACA-deployment artifacts
+
+When ACA hosting is required, ship all of these in the same commit
+as `index.html` ` not as a follow-up:
+
+```
+src/workspace/
++- index.html                # the workspace SPA (single page)
++- seed-data.js              # generated from sample-data
++- components/               # reusable HTML partials (if extracted)
++- assets/                   # css/js/images (no CDN)
++- Dockerfile                # MANDATORY ` see template below
++- nginx.conf                # MANDATORY ` see template below
++- .dockerignore             # excludes node_modules, dist/, screenshots/
+```
+
+Minimal `Dockerfile` (nginx-alpine, ~12 MB, sub-second cold start):
+
+```dockerfile
+# src/workspace/Dockerfile
+FROM nginx:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY index.html  /usr/share/nginx/html/
+COPY seed-data.js /usr/share/nginx/html/
+COPY components/ /usr/share/nginx/html/components/
+COPY assets/    /usr/share/nginx/html/assets/
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost/ || exit 1
+```
+
+Minimal `nginx.conf`:
+
+```
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    location /health { return 200 "ok\n"; add_header Content-Type text/plain; }
+    location / { try_files $uri $uri/ /index.html; }
+}
+```
+
+### Wiring into `azure.yaml`
+
+The deploy skill's Phase 3 `src/`-orphan check requires this entry:
+
+```yaml
+# azure.yaml
+services:
+    workspace:
+        project: ./src/workspace
+        host: containerapp
+        language: docker
+        docker:
+            remoteBuild: true
+```
+
+And the corresponding Bicep wiring in `infra/main.bicep`:
+
+```bicep
+module workspaceAca 'core/host/container-app.bicep' = {
+  name: 'workspace-aca'
+  scope: rg
+  params: {
+    name: '${abbrs.appContainerApps}workspace-${resourceToken}'
+    location: location
+    containerAppEnvironmentId: acaEnvironment.outputs.id
+    targetPort: 80
+    userAssignedIdentityId: sharedUami.outputs.id
+    containerRegistryEndpoint: ai.outputs.acrLoginServer
+    image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'   // overridden by `azd deploy workspace`
+    env: [
+      // workspace is static + reads `/api/*` from `bot` ACA via Easy Auth-forwarded headers
+    ]
+  }
+}
+```
+
+### Easy Auth: the right default for ACA-hosted workspaces
+
+Postprovision hook turns on AAD auth so the workspace gets
+`X-MS-CLIENT-PRINCIPAL` for the audit-actor pattern documented above:
+
+```bash
+# scripts/postprovision/enable_easy_auth.sh
+WORKSPACE_FQDN=$(az containerapp show -g "$RG" -n "$WORKSPACE_NAME" --query properties.configuration.ingress.fqdn -o tsv)
+az containerapp auth update -g "$RG" -n "$WORKSPACE_NAME" \
+   --enabled true --action RedirectToLoginPage \
+   --redirect-provider AzureActiveDirectory
+az containerapp auth microsoft update -g "$RG" -n "$WORKSPACE_NAME" \
+   --client-id "$ENTRA_APP_ID" --tenant-id "$TENANT_ID"
+```
+
+> **Why nginx and not the Python http.server?** ACA cold-starts a
+> nginx container in <1s; Python takes 3-5s and burns more CPU.
+> Reviewers click the link and expect snappy. Use nginx.
+
+---
+
 ## Framework-rebuild guidance
 
 `README.md` includes copy-paste-ready snippets for the four most common
