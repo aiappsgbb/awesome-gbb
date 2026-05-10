@@ -99,22 +99,38 @@ What kind of unstructured input?
 
 ## Per-Modality Wiring
 
-### Vision (default `gpt-5.4-mini` via Responses API)
+### Vision (default `gpt-5.4-mini` via the Foundry Responses endpoint)
 
-The Responses API on Foundry handles vision input as content parts in the
+The Foundry Responses endpoint handles vision input as content parts in the
 message. No separate model deployment unless SPEC § 7b explicitly upgrades.
+
+There are two equally-valid client patterns — pick by **who owns the agent
+loop**:
+
+**Pattern A — Foundry-hosted agent calling vision as a tool** (recommended for
+threadlight processes; the agent definition lives in Foundry):
 
 ```python
 # src/agent/skills/<skill>/handler.py
-from agent_framework_foundry import Agent
+from typing import Annotated
+from agent_framework import tool
 
-async def analyze_damage_photo(image_url: str) -> dict:
-    response = await agent.responses.create(
+@tool(approval_mode="never_require")
+async def analyze_damage_photo(
+    image_url: Annotated[str, "Public/SAS URL of the damaged-product photo"],
+    claim_id: Annotated[str, "Claim case_id this photo belongs to"],
+) -> dict:
+    """Score damage 1-10 and extract visible fields from the photo."""
+    # The hosted agent's chat model handles the vision content part;
+    # this tool just preps the input and returns a structured result.
+    from openai import AsyncAzureOpenAI
+    # The Foundry Responses endpoint accepts standard OpenAI client calls
+    response = await openai_client.responses.create(
         model="gpt-5.4-mini",
         input=[{
             "role": "user",
             "content": [
-                {"type": "input_text", "text": "Score the damage 1-10 and extract visible fields."},
+                {"type": "input_text", "text": "Score the damage 1-10 and extract visible fields. Return JSON."},
                 {"type": "input_image", "image_url": image_url},
             ],
         }],
@@ -123,8 +139,58 @@ async def analyze_damage_photo(image_url: str) -> dict:
     return json.loads(response.output_text)
 ```
 
+The `openai_client` is obtained at agent startup. The Foundry Responses endpoint
+exposes Async OpenAI client calls; create it with the async AIProjectClient and
+pass `agent_name=` so calls are routed to the bound hosted agent:
+
+```python
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity.aio import DefaultAzureCredential
+
+async with (
+    DefaultAzureCredential() as cred,
+    AIProjectClient(
+        endpoint=PROJECT_ENDPOINT,
+        credential=cred,
+        allow_preview=True,   # required when using agent_name on get_openai_client
+    ) as project,
+):
+    openai_client = project.get_openai_client(agent_name=AGENT_NAME)
+    # Inject openai_client into the agent runtime / tool registry
+    ...
+```
+
+**Pattern B — Standalone agent with `FoundryChatClient`** (when your app owns
+the agent loop, instructions, tools — e.g., from a receiver scaffold or batch
+job):
+
+```python
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+
+agent = Agent(
+    client=FoundryChatClient(
+        project_endpoint=PROJECT_ENDPOINT,
+        model="gpt-5.4-mini",
+        credential=AzureCliCredential(),
+    ),
+    name="DamageAnalyzer",
+    instructions="You score photos for damage and extract visible fields.",
+)
+response = await agent.run([
+    {"type": "input_text", "text": "Score 1-10 and extract."},
+    {"type": "input_image", "image_url": image_url},
+])
+```
+
 For the high-stakes path (e.g., medical, structural defect, fraud-detect),
-swap to `gpt-5.4-pro` — same shape, different deployment name.
+swap the model to `gpt-5.4-pro` — same API shape, different deployment name.
+
+> **SDK version pin (May 2026)**: `agent-framework`, `agent-framework-foundry`,
+> `azure-ai-projects>=2.0.0`. Imports moved out of the legacy `agent_framework.azure`
+> namespace — use `from agent_framework.foundry import FoundryChatClient` (not the
+> old `AzureAIAgentClient`).
 
 ### Document Intelligence v4 (prebuilt)
 
@@ -135,21 +201,31 @@ W-2, tax forms, layout. Returns structured JSON + confidence scores.
 # src/agent/skills/<skill>/handler.py
 from azure.ai.documentintelligence.aio import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+from azure.identity.aio import DefaultAzureCredential
 
 async def extract_invoice(blob_url: str) -> dict:
-    poller = await client.begin_analyze_document(
-        model_id="prebuilt-invoice",
-        analyze_request=AnalyzeDocumentRequest(url_source=blob_url),
-    )
-    result = await poller.result()
+    async with (
+        DefaultAzureCredential() as cred,
+        DocumentIntelligenceClient(endpoint=DOC_INTEL_ENDPOINT, credential=cred) as client,
+    ):
+        # NOTE: the modern SDK uses positional `body=` (not `analyze_request=`)
+        poller = await client.begin_analyze_document(
+            model_id="prebuilt-invoice",
+            body=AnalyzeDocumentRequest(url_source=blob_url),
+        )
+        result = await poller.result()
     fields = result.documents[0].fields
     return {
         "invoice_number": fields["InvoiceId"].value_string,
         "vendor": fields["VendorName"].value_string,
         "total": float(fields["InvoiceTotal"].value_currency.amount),
-        "_confidence": min(f.confidence for f in fields.values() if f.confidence),
+        "_confidence": min((f.confidence for f in fields.values() if f.confidence), default=0.0),
     }
 ```
+
+> **SDK version pin**: `azure-ai-documentintelligence>=1.0.2`. The v4 REST surface is
+> `2024-11-30 (GA)`. The package was renamed from `azure-ai-formrecognizer` —
+> do NOT pull the legacy package.
 
 Threshold rule: if `_confidence < 0.85`, escalate to vision LLM for double-check
 (exposes the field to the human action gate via `request-info`).
@@ -180,15 +256,26 @@ For voice-driven processes (FNOL, call center QA, IVR). Two patterns:
 ```python
 # Real-time streaming (inside an MCP tool that proxies audio)
 import azure.cognitiveservices.speech as speechsdk
+from azure.identity import DefaultAzureCredential
 
+# Modern AAD pattern: pass token_credential directly + custom-domain endpoint
+# (NOT the older auth_token="aad#..." pattern, which is still supported but deprecated).
+# Speech resource MUST have a custom subdomain enabled (one-time:
+#   az cognitiveservices account update --custom-domain <name>).
+credential = DefaultAzureCredential()
 speech_config = speechsdk.SpeechConfig(
-    endpoint=os.environ["SPEECH_ENDPOINT"],
-    auth_token=token,  # AAD via DefaultAzureCredential
+    token_credential=credential,
+    endpoint=os.environ["SPEECH_ENDPOINT"],  # https://<custom-name>.cognitiveservices.azure.com/
 )
 recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, language="en-US")
-result = await recognizer.recognize_once_async()
+result = await asyncio.to_thread(recognizer.recognize_once)
 transcript = result.text
 ```
+
+> **RBAC pin**: assign `Cognitive Services Speech User` (or `Speech Contributor`)
+> to the UAMI on the Speech account scope.
+> **SDK version pin**: `azure-cognitiveservices-speech>=1.40.0` for `token_credential`
+> support on `SpeechConfig`. Older versions silently ignore it.
 
 For batch (e.g., a 5-minute FNOL voicemail), use the Speech Batch Transcription
 API — submits a job, returns transcript JSON when complete.

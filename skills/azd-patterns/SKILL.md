@@ -179,13 +179,39 @@ module fetchLatestImage './fetch-container-image.bicep' = {
   }
 }
 
-resource processingJob 'Microsoft.App/jobs@2023-11-02-preview' = {
+resource processingJob 'Microsoft.App/jobs@2024-03-01' = {
   name: '${prefix}-job-${uniqueId}'
   location: location
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: { '${uamiResourceId}': {} }
   }
+  properties: {
+    environmentId: containerAppEnv.id
+    configuration: {
+      replicaTimeout: 300
+      triggerType: 'Schedule'  // or 'Manual'
+      scheduleTriggerConfig: { cronExpression: '0 6 * * *' }
+      registries: [{
+        server: '${acr}.azurecr.io'
+        identity: uamiResourceId
+      }]
+    }
+    template: {
+      containers: [{
+        name: 'job'
+        image: jobExists ? fetchLatestImage.outputs.containers[0].image : emptyContainerImage
+        resources: { cpu: 1, memory: '2Gi' }
+        env: [ /* ... */ ]
+      }]
+    }
+  }
+}
+```
+
+The `fetch-container-image.bicep` module is used to read the current image from an existing resource so that `azd provision` doesn't reset it to the placeholder.
+
+> **API version note:** `Microsoft.App/jobs@2024-03-01` is the current GA API version (verified May 2026). Older preview versions (`2023-11-02-preview`) still work but lack newer fields like `replicaRetryLimit`.
 
 ---
 
@@ -250,30 +276,6 @@ resource aiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 Hosted agent containers get a **platform-managed dedicated identity** (instance + blueprint)
 at deploy time — you don't assign a UAMI to them. The shared UAMI is for everything
 else: bot ACA, MCP ACA, jobs, hooks, etc.
-  properties: {
-    environmentId: containerAppEnv.id
-    configuration: {
-      replicaTimeout: 300
-      triggerType: 'Schedule'  // or 'Manual'
-      scheduleTriggerConfig: { cronExpression: '0 6 * * *' }
-      registries: [{
-        server: '${acr}.azurecr.io'
-        identity: uamiResourceId
-      }]
-    }
-    template: {
-      containers: [{
-        name: 'job'
-        image: jobExists ? fetchLatestImage.outputs.containers[0].image : emptyContainerImage
-        resources: { cpu: 1, memory: '2Gi' }
-        env: [ /* ... */ ]
-      }]
-    }
-  }
-}
-```
-
-The `fetch-container-image.bicep` module is used to read the current image from an existing resource so that `azd provision` doesn't reset it to the placeholder.
 
 ---
 

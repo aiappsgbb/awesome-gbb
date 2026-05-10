@@ -164,17 +164,52 @@ resource subscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024
 ### Step 5: Invoke the agent
 
 The receiver's actual work is to construct an agent invocation and call it.
+Pick by **who owns the agent definition**:
+
+**Pattern A — invoke a Foundry-hosted agent** (recommended; the agent lives in Foundry):
 
 ```python
-from azure.ai.projects import AIProjectClient
+from agent_framework.foundry import FoundryAgent
+from azure.identity.aio import AzureCliCredential
+
+async def invoke_agent(payload):
+    async with AzureCliCredential() as cred:
+        agent = FoundryAgent(
+            project_endpoint=PROJECT_ENDPOINT,
+            agent_name=AGENT_NAME,
+            credential=cred,
+            allow_preview=True,   # opt into the preview Responses surface for hosted agents
+            version="v2",
+        )
+        return await agent.run(format_input(payload))
+```
+
+**Pattern B — call the Foundry Responses endpoint directly** (when you don't
+want the agent_framework dependency, e.g., a tiny Function receiver):
+
+```python
+from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 
 async def invoke_agent(payload):
     async with DefaultAzureCredential() as cred:
-        async with AIProjectClient(endpoint=PROJECT_ENDPOINT, credential=cred, allow_preview=True) as project:
-            oai = project.get_openai_client(agent_name=AGENT_NAME)
-            return await oai.responses.create(input=format_input(payload), stream=False)
+        # allow_preview=True opens the Responses-on-hosted-agents surface
+        async with AIProjectClient(
+            endpoint=PROJECT_ENDPOINT,
+            credential=cred,
+            allow_preview=True,
+        ) as project:
+            # agent_name binds the OpenAI client to a specific hosted agent
+            openai_client = project.get_openai_client(agent_name=AGENT_NAME)
+            return await openai_client.responses.create(
+                input=format_input(payload),
+                stream=False,
+            )
 ```
+
+> **SDK version pins (May 2026)**: `azure-ai-projects>=2.0.0`,
+> `agent-framework-foundry` (only Pattern A). The legacy
+> `agent_framework.azure.AzureAIAgentClient` was removed — do NOT use it.
 
 For long-running receivers (e.g. nightly batch over thousands of cases):
 batch invocations with controlled concurrency (default `max_concurrent=4`).
