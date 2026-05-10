@@ -74,6 +74,8 @@ for query in test_queries:
 - **agent-bound client** — `get_openai_client(agent_name=...)` routes to the dedicated endpoint
 - **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
 - **Pace invocations** — add a 2s `time.sleep()` between calls. Rapid-fire requests produce empty responses even after warm-up
+- **ASCII-only logging on Windows** — see `Eval scripts on Windows: cp1252 trap` below. The default Windows console encoding is **cp1252**, not UTF-8. Any `print('→')`, `print('×')`, or `print('·')` in `run_evals.py` blows up with `UnicodeEncodeError` mid-run, killing partial results. Use `->`, `x`, `::` (or set `PYTHONUTF8=1` in the venv bootstrap; see fix below).
+- **Tolerate gateway flake on Phase 1** — Foundry's gateway can enter 5-10 minute sticky `internal_server_error` windows under burst load (especially mid-cold-start). 30-60s exponential backoff is **not** enough on bad days. See `Gateway flakiness during Phase 1` below for the resume-after-cooldown pattern.
 - **Retry on empty** — `output_text` can return empty when the agent does tool calls but the response structure varies. Retry once after a 3s pause. Also scan `response.output` items for message text as a fallback:
 
 ```python
@@ -112,6 +114,109 @@ async with aiohttp.ClientSession() as session:
 
 > **Prefer the Responses API pattern** (agent-bound OpenAI client) unless the agent
 > specifically only supports Invocations. It's simpler and handles conversation state.
+
+### Eval scripts on Windows: cp1252 trap
+
+The default Windows Python console uses **cp1252**, not UTF-8. Any
+non-Latin1 character in a `print(...)` call mid-eval produces:
+
+```
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192'
+in position 14: character maps to <undefined>
+```
+
+…and kills the eval run. We've burned an hour on this twice. Two
+defenses, in priority order:
+
+**1. ASCII-only logging in `eval/run_evals.py`** (the right fix)
+
+```python
+# BAD — fails on Windows cp1252
+print(f"  -> {ms}ms · {len(text)} chars · attempt {attempt}")
+
+# GOOD — works on every platform
+print(f"  -> {ms}ms :: {len(text)} chars :: attempt {attempt}")
+```
+
+Banned characters: `→ × · ✓ ✗ ❌ ✅ ▶ ▲ ▼ ←  ° €` and any em-dash /
+en-dash. Replacements: `-> x :: PASS FAIL ! [done] etc.`
+
+**2. PYTHONUTF8=1 in the venv bootstrap** (defense in depth)
+
+If you can't audit every `print` (e.g., a vendored library prints
+arrows), force the interpreter into UTF-8 mode at process start. This
+MUST be in the parent shell **before** Python launches:
+
+```powershell
+# scripts/setup_eval_env.ps1
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+uv venv .venv
+.\.venv\Scripts\Activate.ps1
+uv pip sync requirements.txt
+```
+
+```bash
+# scripts/setup_eval_env.sh
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+uv venv .venv
+source .venv/bin/activate
+uv pip sync requirements.txt
+```
+
+Setting these inside the script (`os.environ["PYTHONUTF8"] = "1"`)
+**does not work** — by the time the assignment runs, Python's stdio
+encoding is already locked.
+
+The same trap kills `az acr build` log streaming on Windows; fix
+there is `--no-logs` (separate skill: `foundry-mcp-aca`).
+
+### Gateway flakiness during Phase 1
+
+Foundry's gateway occasionally enters 5-10+ minute sticky windows of
+`internal_server_error` (or `503 model overloaded`) — typically right
+after a cold-start burst, or when an upstream model deployment is
+being reconfigured. The 30-60s exponential backoff most retry libraries
+ship with is **not enough** on bad days.
+
+Two patterns:
+
+**Pattern A — Resume-after-cooldown (recommended for batches > 5
+scenarios).** Persist results-so-far to disk after every successful
+case, and add a `--resume` flag that skips already-completed `case_id`s.
+Then a sticky-flake window just means "wait 10 min, re-run; it picks
+up where it left off". `eval/run_evals.py` should look like:
+
+```python
+results_path = Path("eval/results.partial.json")
+done_ids = set()
+if results_path.exists() and "--resume" in sys.argv:
+    done_ids = {r["case_id"] for r in json.loads(results_path.read_text())}
+
+for case in cases:
+    if case["case_id"] in done_ids:
+        print(f"  [skip] {case['case_id']} already done")
+        continue
+    try:
+        result = invoke_with_retry(case, max_retries=3, base_delay=60)
+    except GatewayFlakeException:
+        print(f"  [defer] {case['case_id']} -- gateway sticky, re-run with --resume")
+        break  # don't burn budget
+    append_result(results_path, result)
+```
+
+**Pattern B — Skip-and-mark.** If the SLA is "best 5 of 6" rather than
+"all 6", record gateway failures as `status: GATEWAY_FLAKE` (NOT
+`FAIL`), exclude them from scoring, and report the count in the run
+summary. Don't let infrastructure noise pollute the agent-quality
+signal.
+
+> Both patterns are about **separating gateway flake from agent
+> quality**. A failed retry on `internal_server_error` is not an
+> eval-quality failure; it's a Foundry-side incident. Score them
+> separately or you'll spend a day debugging a "regression" that
+> turns out to be a 7-minute gateway window.
 
 ---
 
@@ -223,9 +328,14 @@ else:
 ### Step 2b: Create eval run (every time)
 
 ```python
-# Create a new run against the existing definition
+# Create a new run against the existing definition.
+# `name=` is REQUIRED as of the late-2026 Foundry preview ` omitting it returns
+# `400 UserError: Evaluation display name is required is invalid`.
+import time
+
 run = client.evals.runs.create(
     eval_id=eval_def.id,
+    name=f"{EVAL_NAME}-run-{int(time.time())}",   # required
     data_source={
         "type": "jsonl",
         "source": {
@@ -235,8 +345,13 @@ run = client.evals.runs.create(
     },
 )
 
-print(f"Eval run: {run.id} — status: {run.status}")
+print(f"Eval run: {run.id} ` status: {run.status}")
 ```
+
+> **`name=` field is mandatory.** The skill's earlier examples didn't
+> include it because the API used to accept `name=None`. Current preview
+> rejects the run. Always pass a unique display name (timestamped is
+> simplest) so the run appears in the Foundry portal eval list.
 
 > **Do NOT call `client.evals.create()` every run.** The definition is reusable —
 > only the dataset changes between runs. Creating a new definition per run clutters
@@ -269,6 +384,99 @@ to work. Extract tool definitions from the agent's MCP tools or `@tool` function
 > **Without `tool_definitions`**, `tool_selection` and `tool_output_utilization`
 > evaluators silently return 0% — they can't assess tool usage without knowing
 > what tools were available.
+
+### Enriched dataset shape (recommended for tool-using agents)
+
+`tool_definitions` tells the judge which tools exist. It does NOT tell
+the judge **what each tool returned for this query**. Without that
+context, `tool_output_utilization` flags any tool-derived fact in the
+response (mailing addresses pulled from `get_customer`, citations
+emitted by `lookup_rule`, account numbers, dates) as **fabricated** ` and
+the score craters.
+
+Capture the agent's tool transcript during Phase 1 invoke and emit it
+on every row:
+
+```json
+{
+    "query": "Process dispute dc-001",
+    "response": "Based on Reg E ` 1005.11(c)(1), provisional credit is required ` ",
+    "tool_definitions": [
+        { "name": "get_dispute_case", "type": "function", "parameters": {"} },
+        { "name": "lookup_reg_rule",  "type": "function", "parameters": {"} }
+    ],
+    "tool_calls": [
+        {
+            "id": "call_001",
+            "type": "tool_call",
+            "name": "get_dispute_case",
+            "arguments": {"case_id": "dc-001"}
+        },
+        {
+            "id": "call_002",
+            "type": "tool_call",
+            "name": "lookup_reg_rule",
+            "arguments": {"jurisdiction": "us", "rule_id": "12 CFR 1005.11(c)(1)"}
+        }
+    ],
+    "tool_outputs": [
+        {
+            "tool_call_id": "call_001",
+            "output": "{\"case_id\":\"dc-001\",\"customer_address\":\"248 Westbridge Road, Concord MA\",}"
+        },
+        {
+            "tool_call_id": "call_002",
+            "output": "{\"text\":\"The financial institution shall provisionally credit ` within 10 business days `\"}"
+        }
+    ]
+}
+```
+
+The `data_source_config.item_schema` and per-evaluator `template`
+mapping must thread `tool_calls` + `tool_outputs` through to each
+evaluator that uses them ` add the same `{{item.tool_calls}}` /
+`{{item.tool_outputs}}` tokens you already use for `{{item.tool_definitions}}`.
+
+Capture pattern in `eval/run_evals.py`:
+
+```python
+# During Phase 1 invoke, scrape the tool transcript from the response
+def extract_tool_transcript(response):
+    calls, outputs = [], []
+    for item in response.output:
+        if getattr(item, "type", None) == "function_call":
+            calls.append({
+                "id": item.call_id,
+                "type": "tool_call",
+                "name": item.name,
+                "arguments": json.loads(item.arguments),
+            })
+        elif getattr(item, "type", None) == "function_call_output":
+            outputs.append({
+                "tool_call_id": item.call_id,
+                "output": item.output,
+            })
+    return calls, outputs
+
+# Then emit them on the JSONL row:
+calls, outputs = extract_tool_transcript(response)
+results.append({
+    "case_id": case["case_id"],
+    "query":   case["query"],
+    "response": response.output_text,
+    "tool_definitions": case["tool_definitions"],
+    "tool_calls":   calls,
+    "tool_outputs": outputs,
+})
+```
+
+> **Without `tool_outputs`**, `tool_output_utilization` will FLAG every
+> grounded answer as fabricated ` even when the response is verbatim
+> from a tool result. We hit this on the `card-dispute-investigation`
+> reference PoC: 6/6 cases FLAGed despite the agent emitting real
+> mailing addresses, real CFR citations, and real Reg E timer values
+> straight from `get_dispute_case` + `lookup_reg_rule`. Adding the
+> transcript flipped the same 6 cases to PASS.
 
 ---
 
@@ -401,6 +609,68 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 
 ---
 
+## Reading the run results
+
+> **Trap.** `run.result_counts` and `output_items[*].results[*].passed`
+> are unreliable in the current preview ` they consistently return
+> `passed=0 / failed=0 / errored=0 / total=N` and `passed=None` even
+> on runs that actually scored fine. The real verdicts live one level
+> deeper.
+
+The actual scores live in `output_items[*].results[*].sample.output[0]`
+under the `content` field, as a JSON-encoded string (or `<S2>n</S2>`
+markers for `coherence`). Extract them yourself:
+
+```python
+import json, re
+
+def extract_score(result, evaluator_name: str):
+    """Pull the real score from a Foundry eval result row."""
+    out = (result.get("sample") or {}).get("output") or []
+    if not out:
+        return None
+    content = out[0].get("content") or ""
+    # Coherence emits `<S2>n</S2>` markers
+    if "coherence" in evaluator_name:
+        m = re.search(r"<S2>(\d)</S2>", content)
+        return int(m.group(1)) if m else None
+    # All other evaluators emit JSON
+    try:
+        verdict = json.loads(content)
+        # Score field name varies: "score", "label", "verdict", "passed"
+        return verdict.get("score") or verdict.get("label") or verdict.get("verdict")
+    except json.JSONDecodeError:
+        return None
+
+# Aggregate per evaluator across all rows
+run = client.evals.runs.retrieve(eval_id=eval_def.id, run_id=run.id)
+items = client.evals.runs.output_items.list(
+    eval_id=eval_def.id, run_id=run.id,
+)
+
+per_evaluator = {}
+for item in items:
+    for result in item.get("results", []):
+        ev = result.get("name") or result.get("evaluator")
+        score = extract_score(result, ev)
+        per_evaluator.setdefault(ev, []).append(score)
+
+for ev, scores in per_evaluator.items():
+    ok = [s for s in scores if s is not None]
+    print(f"{ev}: {len(ok)}/{len(scores)} scored ` values: {ok}")
+```
+
+> **Why both layers exist.** The `result_counts` API is for binary
+> pass/fail evaluators that haven't been GA'd yet. The built-in judges
+> (intent_resolution, task_adherence, etc.) are scoring evaluators ` they
+> emit a 1-5 score, a label like `FLAG/FAIL`, or a `<S2>n</S2>` block
+> in `content`. The pass/fail summary is therefore always 0/0/0/N.
+> Use the extractor above for any production reporting.
+
+A reusable `eval/compile_scores.py` helper that does this end-to-end
+(per-case  per-evaluator matrix) is in the
+`card-dispute-investigation` reference PoC.
+
 ## Interpreting Results
 
 | Score Range | Quality | Action |
@@ -418,6 +688,7 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 | Low `tool_selection` | Agent calls tools unnecessarily | Add tool-use discipline directive |
 | Low `tool_selection` (MAF) | Tool name prefix mismatch — MCP tools exposed without `mcp-tools-` prefix but JSONL tool_definitions use prefixed names | Include both prefixed and unprefixed names in tool_definitions, or normalize in JSONL |
 | Low `tool_output_utilization` | Agent reads tool output but hallucinated data references | Check model precision — gpt-5.4-mini may hallucinate rule numbers; try gpt-5.4 |
+| `tool_output_utilization` FAILs every case despite grounded answers | Dataset only ships `query` + `response` ` evaluator can't see the actual tool output, so it flags tool-derived facts as fabricated. Add `tool_calls` + `tool_outputs` arrays to each JSONL row (see "Enriched dataset shape" below) | Capture the agent's tool transcript during Phase 1 invoke and pass it through to Phase 2 |
 | Low `intent_resolution` | Agent misunderstands domain terms | Add domain vocabulary to instructions |
 | All scores 0 | Empty responses | Concurrent eval requests; switch to sequential |
 | `task_adherence` 0% specifically | Using wrong judge model (gpt-5.4 instead of gpt-5.4-mini) | **Must use gpt-5.4-mini as judge** — gpt-5.4 penalizes tool claims it can't verify |

@@ -420,6 +420,7 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 | `invalid_payload` error | `${ENV_VAR}` in mcp-config.json not resolved → empty URL | Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. |
 | Tools listed but calls fail | Tool call timeout (>100s) | Optimize tool implementation or increase ACA resources |
 | `prompts/list` not implemented | Server doesn't handle this method | Return `{"prompts": []}` — agent-framework requires it |
+| MCP container `404` log noise after demo | MAF client occasionally fires 1-3 stray POSTs to `/mcp` after `DELETE` of the session — the server is gone, so they 404. Cosmos calls succeeded; this is post-mortem chatter, not a runtime problem. | Either accept the noise (no functional impact) or suppress in the FastMCP server with a no-op handler that returns 204 for any POST hitting an unknown session id. Document for whoever reads `az containerapp logs show` so they don't chase it as a real bug. |
 
 ---
 
@@ -463,6 +464,124 @@ with a call to the factory:
 # New (skill-driven):
 uv run scripts/seed_data.py --to src/mcp/data/   # threadlight-demo-data-factory
 ```
+
+---
+
+## Validate-or-reject (the canonical pattern for stateful tools)
+
+> **Highest-leverage pattern in the toolchain.** Discovered during the
+> card-dispute v3 PoC: lifted recommendation quality from "junk packet
+> with `confidence: 0`" to "well-cited `confidence: 0.93` packet" with
+> a single server-side change. Apply this to **every** MCP tool that
+> commits a decision, persists state, or returns a high-stakes
+> artifact (recommendation, approval, payment, allocation, contract).
+
+### The failure mode this fixes
+
+When a hosted agent runs a long instruction chain (10+ steps), even
+strong models occasionally call a "build the answer" tool **before**
+calling the evidence-gathering tools. With a permissive server, this
+returns a hollow object — no transactions, no merchant lookup, no rule
+citations — and the agent confidently emits it as the final answer.
+
+The most reliable fix is **NOT** to add more text to the agent's
+instructions ("ALWAYS call X before Y"). It's to make the server
+**physically incapable** of producing a hollow answer.
+
+### The pattern
+
+Every commit-style tool validates that its `evidence_bundle` (or
+equivalent input) contains the required fields. If anything is missing,
+return a structured error with a `next_steps` array that names exactly
+which tools to call. The agent reads this and self-corrects on the
+next iteration.
+
+```python
+# src/mcp/server.py — applies to ANY commit-style tool
+@mcp.tool()
+async def build_recommendation(
+    case_id: str,
+    evidence_bundle: dict,   # the agent assembles this from prior tool calls
+) -> str:
+    """Build the final recommendation packet. REQUIRES complete evidence."""
+
+    REQUIRED = {
+        "transactions": "get_transaction_history",
+        "merchant_profile": "get_merchant_profile",
+        "prior_cases": "search_prior_cases",
+        "rule_citations": "lookup_reg_rule + lookup_network_rule",
+    }
+
+    missing = []
+    for field, source_tool in REQUIRED.items():
+        v = evidence_bundle.get(field)
+        if not v or (isinstance(v, list) and len(v) == 0):
+            missing.append({"field": field, "call_tool": source_tool})
+
+    if missing:
+        return json.dumps({
+            "error": "INSUFFICIENT_EVIDENCE",
+            "case_id": case_id,
+            "missing": missing,
+            "next_steps": [
+                f"Call `{m['call_tool']}` to populate evidence_bundle.{m['field']}"
+                for m in missing
+            ],
+            "guidance": (
+                "Do not retry build_recommendation until every "
+                "missing field is populated."
+            ),
+        }, indent=2)
+
+    # ... real recommendation construction here ...
+    return json.dumps(packet, indent=2)
+```
+
+### What good looks like (acceptance criteria)
+
+| Test | Expected |
+|------|----------|
+| Call commit-tool with empty `evidence_bundle` | Returns `INSUFFICIENT_EVIDENCE` with full `missing` + `next_steps` (HTTP 200, error in payload — never raise) |
+| Call commit-tool with partial evidence | Returns `INSUFFICIENT_EVIDENCE` listing only the missing fields |
+| Call commit-tool with complete evidence | Returns the real packet |
+| Smoke test on the agent end-to-end | Agent never emits a hollow packet — when it tries, it self-corrects within 1-2 extra tool calls |
+
+### Why structured (`error` + `missing` + `next_steps`), not free-form
+
+A free-form `"please call get_transaction_history first"` works *some*
+of the time. The structured shape is the difference between "works
+3/3" and "works 1/3" in the v3 PoC reproducibility runs. Models
+parse structured payloads more reliably than English instructions in
+tool outputs.
+
+### Severity & error semantics
+
+- Always return HTTP 200 with the error in the JSON body. **Never raise**
+  — Foundry's MCP client will treat HTTP errors as a tool failure and
+  retry with the same arguments, which doesn't help.
+- Use a stable `error` enum (`INSUFFICIENT_EVIDENCE`, `NOT_FOUND`,
+  `STATE_CONFLICT`, etc.) so the agent can pattern-match.
+- `next_steps` MUST name the exact tool name the agent has access to —
+  do not write "go look it up", write `"Call \`get_transaction_history\`
+  with customer_id=…"`.
+
+### When NOT to apply this pattern
+
+- Pure-read tools (`get_transaction_history`, `lookup_*`) — no state,
+  no commit, no need to gate.
+- Trivial tools that take only the inputs they validate (e.g.,
+  `compute_business_days(start, end)`) — there's nothing to gate
+  against.
+- Tools whose entire purpose IS to fail-fast on missing args (the
+  validation IS the answer).
+
+### Cross-reference
+
+This pattern combines with `threadlight-design` SPEC § 6 tool contracts:
+each commit-style tool's contract should explicitly enumerate its
+required `evidence_bundle` fields and the `error` enums it can return.
+The MCP server then mirrors those contracts as the validate-or-reject
+guard above.
 
 ---
 

@@ -646,6 +646,29 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 > skill. Without isolation, an `azd up` here may silently deploy into
 > whatever subscription another shell last `az account set` against.
 
+> **`azd` has its own auth chain — `az login` is not enough.**
+> `azd ai agent show`, `azd deploy`, and the rest of the `azd` family
+> use **`AzureDeveloperCliCredential`**, which reads tokens from
+> `$AZD_CONFIG_DIR/auth/` — completely separate from the `az` CLI
+> token cache under `$AZURE_CONFIG_DIR`. Even with both env vars
+> pointed at the same alias, an `az login --tenant <id>` does **NOT**
+> satisfy `azd`. You must run **`azd auth login --tenant-id <id>`**
+> in addition to `az login`. Symptoms when missed: `azd ai agent show`
+> hangs or returns `ERROR: not logged in. Try running 'azd auth
+> login'`, even though `az account show` works fine. This is the #2
+> "what changed?" trap after the multi-sub gotcha — bake both into
+> your shell startup script.
+>
+> Verified working sequence (per-shell, after the alias env vars are
+> exported per `azure-tenant-isolation`):
+>
+> ```bash
+> az login --tenant "$TENANT_ID"
+> az account set --subscription "$DEFAULT_SUB"
+> azd auth login --tenant-id "$TENANT_ID"   # NOT optional
+> az account show --query "{tenant:tenantId, sub:name}" -o table
+> ```
+
 ## Deploy Steps
 
 1. **Deploy everything with one command:**
@@ -1235,7 +1258,7 @@ definition = HostedAgentDefinition(
     environment_variables={
         # NOTE: FOUNDRY_PROJECT_ENDPOINT is RESERVED — platform auto-injects it
         "AZURE_AI_PROJECT_ENDPOINT": "https://...",
-        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "gpt-5.4-mini",
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "gpt-5.4",  # default for production agents; gpt-5.4-mini only for trivial 1-2-step flows
     },
 )
 
@@ -1770,6 +1793,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | **Model deployments not created** | **`azd deploy` doesn't create model deployments — only `azd provision`** | **Run `azd up` (full) or `azd provision` to create model deployments** |
 | **Compute not starting** | Agent not invoked yet | Refreshed preview provisions compute on first request; deprovisions after 15min idle |
 | **Protocol version error** | Using old `"v1"` format | Use semver `"1.0.0"` in agent.yaml and SDK code |
+| **`azd ai agent show` hangs or says "not logged in"** | `azd` has its own auth chain (`AzureDeveloperCliCredential`) — `az login` does NOT populate it, even with `AZURE_CONFIG_DIR` set | Run `azd auth login --tenant-id <id>` in the same shell. The `azd` token cache lives in `$AZD_CONFIG_DIR/auth/`, separate from `az`'s. Bake both `az login` and `azd auth login` into your shell startup script. |
 | **`postdeploy` fails with AZURE_TENANT_ID** | Extension postdeploy hook expects tenant ID for RBAC auto-assignment | **Set `AZURE_TENANT_ID` in azd env. Without it, postdeploy can't assign `Azure AI User` to agent identity → runtime 401 on storage** |
 | **Two identities in `azd ai agent show`** | Refreshed preview creates `instance_identity` + `blueprint` per agent | Both need RBAC — assign same roles to both principal IDs |
 | **MCP `server_url` invalid URI error** | `${ENV_VAR}` in mcp-config.json not set → expands to empty string → `/mcp` is not a valid URI | **Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. The container skips empty URLs, but `FoundryChatClient.get_mcp_tool()` registers them and Foundry rejects at runtime.** |

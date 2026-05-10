@@ -205,22 +205,22 @@ For each AI capability the agent needs:
 - **Model + version** (current as of 2026-05):
   | Use case | Recommended model | Notes |
   |----------|-------------------|-------|
-  | Default chat reasoning | `gpt-5.4-mini` (2026-03-17) | 400K context, vision-capable, best cost/quality |
-  | High-stakes reasoning + vision | `gpt-5.4` (2026-03-05) | 1M context, premium |
+  | **Default for threadlight pilots (7+ skills, 10+ tool calls)** | `gpt-5.4` (2026-03-05) | 1M context, vision-capable. Tool-call discipline holds up under long chains — verified card-dispute v3 PoC: 3/3 strict-smoke reproducibility on a 7-skill flow vs 1/3 with gpt-5.4-mini |
+  | Trivial chat / 1-2 step flows | `gpt-5.4-mini` (2026-03-17) | 400K context, vision-capable, lower cost. Use ONLY when the agent has ≤2 tool calls per turn — degrades on long instruction chains (skips evidence-gathering tools, emits hollow commit-tool outputs) |
   | Premium reasoning + vision | `gpt-5.4-pro` (2026-03-05) | When vision feeds multi-step reasoning |
   | Bulk / cheap vision | `gpt-5.4-nano` (2026-03-17) | Returns triage, photo screening |
   | Code-related multimodal | `gpt-5.3-codex` (2026-02-24) | Diagrams → code |
   | Structured doc extract (passport, invoice, ID) | Document Intelligence v4 prebuilt | Use prebuilt when possible |
   | Custom doc extract | Document Intelligence v4 custom model | Train when prebuilt doesn't fit |
   | Voice intake | Azure Speech-to-Text (real-time) | n/a |
-- **Capacity (TPM)**: e.g. `120K` for default, `300K+` for high-volume
+- **Capacity (TPM)**: e.g. `50K` GlobalStandard for `gpt-5.4`, `120K` for `gpt-5.4-mini`, `300K+` for high-volume
 - **Reasoning effort** (for capable models): `minimal` | `low` | `medium` | `high` (default `medium`)
 
 > **Do NOT use `GPT-4o` or `GPT-4o Vision`** — both are legacy as of May 2026.
 > The `gpt-5.4` family supersedes them in every dimension (context, latency, vision
 > quality, cost). If a SPEC carries forward a `GPT-4o` reference from an older
-> template, that's a bug — sweep to `gpt-5.4-mini` (default) or pick from the
-> table above based on the capability profile.
+> template, that's a bug — sweep to **`gpt-5.4`** (default for pilots) or pick from
+> the table above based on the capability profile.
 
 ---
 

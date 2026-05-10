@@ -352,7 +352,64 @@ the data-access boundary should do this once.
 ✅ Whitelabel deny-list grep returns zero hits
 ✅ Sample data loads without console errors
 ✅ Reset-demo button restores pristine state
+✅ Playwright screenshot at HIGH-RES — see "Playwright validation: high-res
+   screenshot mandate" below
 ```
+
+### Playwright validation: high-res screenshot mandate
+
+The workspace screenshot is a **slide-deck deliverable** — it lands in
+exec briefings, partner decks, and release readouts. A 1280×720 viewport
+at DPR 1 (default Playwright) produces ~92 DPI bitmaps that look
+**fuzzy** when projected on a meeting-room screen, and unusable when
+sized down to a quarter-slide thumbnail.
+
+**Required.** Every workspace Playwright capture MUST use:
+
+- **Viewport**: ≥ **1920 × 1080** (1080p). Bigger is fine — 2560 × 1440
+  is the sweet spot for a workspace UI with sidebar + detail-pane.
+- **deviceScaleFactor**: **2** (Retina-equivalent). This makes text
+  pixel-perfect and SVG icons crisp.
+- **fullPage: true** when the workspace scrolls below the fold; the
+  reviewer can crop, but the artifact must capture the entire UI.
+
+```python
+# scripts/capture_workspace_screenshot.py
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},   # 1080p minimum
+        device_scale_factor=2,                       # Retina equivalent
+    )
+    page = context.new_page()
+    page.goto("http://localhost:8000/?session=demo-001")
+    page.wait_for_selector("[data-testid='case-list']")
+    page.locator("[data-case-id='dc-001']").click()  # open detail pane
+    page.wait_for_selector("[data-testid='detail-pane']")
+    page.screenshot(
+        path="docs/screenshots/workspace.png",
+        full_page=True,
+    )
+    browser.close()
+```
+
+Or the equivalent `npx playwright` flag if you're scripting in TS:
+
+```bash
+npx playwright screenshot \
+  --viewport-size=1920,1080 \
+  --device-scale-factor=2 \
+  --full-page \
+  http://localhost:8000/?session=demo-001 docs/screenshots/workspace.png
+```
+
+> **Quality check.** Open the captured PNG in a viewer at 100% — text
+> should read crisply, no anti-aliasing fuzz. If it looks soft, you
+> shipped at DPR 1; redo with `device_scale_factor=2`. The PNG file
+> for a fully-rendered workspace at 1920×1080 DPR-2 should be
+> **≥ 600 KB** — anything smaller is a red flag.
 
 ---
 

@@ -26,6 +26,23 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 
 ## Runtime Pattern (MAF Variant)
 
+> **Model selection (verified May 2026, card-dispute v3 PoC).** Default
+> to **`gpt-5.4`** for production agents that run instruction chains
+> with 10+ tool steps (case investigation, multi-source RAG synthesis,
+> regulatory drafting). Use **`gpt-5.4-mini`** only for trivial
+> 1-2-step flows (single-tool lookups, formatters). The mini variant's
+> tool-call discipline degrades sharply on long chains: in the v3 PoC,
+> strict-smoke reproducibility on a 7-skill flow went from **1/3** with
+> gpt-5.4-mini to **3/3** with gpt-5.4 (same MCP server, same prompts).
+> The mini variant tends to call commit-style tools before evidence is
+> gathered — partially mitigated by the validate-or-reject pattern in
+> `foundry-mcp-aca`, but gpt-5.4 still fixes the root cause.
+>
+> **Cost/latency note.** `gpt-5.4` GlobalStandard at 50 capacity costs
+> a few cents per scenario at idle the deployment ticks negligibly,
+> so the typical pilot cost is dominated by the scenarios you actually
+> run. Don't downgrade to mini just to save on the deployment standby.
+
 ```python
 import os
 from agent_framework import Agent, tool
@@ -288,7 +305,7 @@ protocols:
     version: 1.0.0
 environment_variables:
   - name: MODEL_DEPLOYMENT_NAME
-    value: gpt-5.4-mini
+    value: gpt-5.4   # default for production; use gpt-5.4-mini only for trivial 1-2-step flows
 resources:
   cpu: "1"
   memory: 2Gi
@@ -334,11 +351,11 @@ services:
       deployments:
         - model:
             format: OpenAI
-            name: gpt-5.4-mini
-            version: "2026-03-17"
-          name: gpt-5.4-mini
+            name: gpt-5.4
+            version: "2026-03-05"
+          name: gpt-5.4
           sku:
-            capacity: 120
+            capacity: 50
             name: GlobalStandard
 
 infra:
@@ -510,6 +527,7 @@ Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/con
 | `PermissionDenied: Principal does not have access` | Agent identity missing `Azure AI User` (53ca6127) on account AND project | Assign on both scopes; `_assign_agent_identity_roles()` does this automatically |
 | `Experience not available for this subscription` | Region doesn't support hosted agents, or `ENABLE_CAPABILITY_HOST=true` | Set `ENABLE_CAPABILITY_HOST=false`, try `northcentralus` |
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
+| Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. The PoC ran 1/3 reproducibility with mini + permissive MCP, **3/3 with gpt-5.4 + validate-or-reject**. |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` | Passed in `HostedAgentDefinition.environment_variables` | Remove it — platform injects telemetry config |
 | Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` OR AppInsights connection missing on account | Assign RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
