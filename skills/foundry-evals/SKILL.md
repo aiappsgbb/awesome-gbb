@@ -587,8 +587,17 @@ with (
     )
 ```
 
-**Required RBAC**: assign the **Azure AI User** role to the Foundry project's
-managed identity (the project itself runs the evaluators).
+**Required RBAC** (keyless throughout):
+- The Foundry **project's own managed identity** needs **Azure AI User**
+  (role ID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) on the project itself.
+  This is what runs the evaluators server-side. **Not your agent's UAMI;
+  not your user account — the project's MI.**
+- The project MI also needs `Cognitive Services OpenAI User` on whichever
+  AOAI account hosts the **judge model** (typically `gpt-5.4` or `gpt-5.4-mini`),
+  so the LLM-as-judge calls succeed.
+- Verify with `az role assignment list --assignee <project-mi-principalId> --scope <project-resource-id>`
+  before declaring the rule ready — silent failures here look like "no eval
+  runs ever appear" with no error logged.
 
 **Where results show up:**
 - Foundry portal → agent → **Monitor** tab → evaluation charts

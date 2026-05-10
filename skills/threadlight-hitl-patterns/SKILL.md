@@ -234,6 +234,31 @@ async def route(activity):
 }
 ```
 
+**Keyless Cosmos pattern (mandatory for threadlight pilots):**
+
+```python
+# src/bot/cards/audit_trail.py
+from azure.cosmos.aio import CosmosClient
+from azure.identity.aio import DefaultAzureCredential
+
+# Cosmos account MUST be provisioned with disableLocalAuth: true (see azd-patterns).
+# Pass DefaultAzureCredential() — NOT a connection string, NOT a master key.
+async def write_audit(record: dict) -> None:
+    async with (
+        DefaultAzureCredential() as credential,
+        CosmosClient(url=COSMOS_ENDPOINT, credential=credential) as client,
+    ):
+        container = client.get_database_client(DB_NAME).get_container_client("case_audit")
+        await container.create_item(body=record)
+```
+
+> **Keyless RBAC pin**: assign `Cosmos DB Built-in Data Contributor`
+> (`00000000-0000-0000-0000-000000000002`) to the bot's UAMI on the Cosmos
+> account scope. **NOT** `DocumentDB Account Contributor` — that's
+> control-plane only. See `azd-patterns` § Shared UAMI for the Bicep wiring.
+> Verify with `az cosmosdb sql role assignment list --account-name <acct>
+> --resource-group <rg>` after deploy.
+
 This audit trail powers:
 - The workspace UI's audit viewer (see `threadlight-workspace-ui`)
 - The continuous-eval KPIs (see `foundry-evals` continuous loop)

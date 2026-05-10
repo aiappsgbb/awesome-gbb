@@ -113,10 +113,11 @@ hosted tools (web search, code interpreter, file search, image generation).
   live in the portal — no env-var fan-out across containers
 - **Versioning**: change toolbox config, test with `version="v3"`, promote
   to default — no agent redeploy
-- **Auth handled server-side** for the upstream services (e.g. Speech account
-  key or Foundry MI scope is configured once at toolbox creation)
+- **Auth handled server-side** for the upstream services (Speech / DocIntel
+  account credentials are configured **once** at toolbox creation; the
+  consumer only needs an Entra token to the Toolbox endpoint itself)
 - **MCP-compatible consumption**: works with any agent runtime (MAF, GHCP
-  SDK, LangGraph, custom code)
+  SDK via bridge, LangGraph, custom code)
 - **Same code across processes**: a healthcare KYC and an FSI claim agent
   can both consume the same `vision_doc_speech_toolbox`
 
@@ -132,62 +133,231 @@ hosted tools (web search, code interpreter, file search, image generation).
 - High-volume batch (e.g., 100k invoices/night) — toolbox introduces a network
   hop the SDK doesn't
 
-**Consumption — Pattern 0a: native (FoundryAgent / FoundryChatClient)**
+### Pattern 0a — DEFAULT: MCP consumption (works with ALL runtimes)
 
-For a Foundry hosted agent, attach the toolbox in the **portal** when defining
-the agent — zero client-side wiring needed. For a `FoundryChatClient` (your
-app owns the agent loop), fetch and pass:
+**Always start here.** `MCPStreamableHTTPTool` (or your runtime's equivalent
+MCP client) talks to the Toolbox endpoint over HTTPS. This is the path the
+Foundry team officially documents for MAF, GHCP (via bridge), LangGraph,
+and custom code.
+
+**Working sample (MAF — direct, with mandatory workarounds):**
 
 ```python
+import os, asyncio
+from typing import Any
+from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework.foundry import FoundryChatClient
+
+# 1. Build a refreshing Entra token provider for the Toolbox MCP endpoint.
+#    Scope MUST be https://ai.azure.com/.default — wrong scope = 401.
+credential = DefaultAzureCredential()  # reads AZURE_CLIENT_ID for UAMI
+token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
+
+# 2. Build the MCP tool.
+#    Endpoint format (note the "toolboxes/.../versions/.../mcp" shape — pin a version):
+#    https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/versions/<version>/mcp?api-version=v1
+mcp_tool = MCPStreamableHTTPTool(
+    name="vision_doc_speech_mcp",
+    url=os.environ["TOOLBOX_MCP_ENDPOINT"],
+    # Use header_provider (NOT static `headers=`) so tokens refresh on expiry
+    header_provider=lambda: {"Authorization": f"Bearer {token_provider()}"},
+    load_prompts=False,         # GOTCHA #1: Foundry MCP returns 500 on prompts/list
+)
+
+# 3. GOTCHA #2: MAF's MCPStreamableHTTPTool._ensure_connected() calls send_ping(),
+#    which the Foundry MCP server rejects with 500. Override to a no-op.
+async def _no_ping(*args: Any, **kwargs: Any) -> None: return None
+mcp_tool._ensure_connected = _no_ping  # type: ignore[assignment]
+
+async def main() -> None:
+    async with mcp_tool, Agent(
+        client=FoundryChatClient(credential=credential, model="gpt-5.4-mini"),
+        name="ClaimsIntake",
+        tools=[mcp_tool],
+    ) as agent:
+        # GOTCHA #3: Toolbox MCP requires stream=True on tools/call.
+        # MAF Agent.run streams by default — explicitly avoid stream=False overrides.
+        result = await agent.run("Transcribe the call and extract claim details.")
+        print(result.text)
+
+asyncio.run(main())
+```
+
+**Working sample (GHCP — via the official MCP bridge):**
+
+GHCP rejects dots in tool names; Foundry MCP returns names as
+`{server_label}.{tool_name}`. The official sample at
+`https://aka.ms/foundry-toolbox-copilotsdk` provides an MCP bridge that
+replaces `.` → `_` automatically. Use that bridge — do NOT roll your own.
+
+> **GHCP cannot use Pattern 0b (native).** Native toolbox attachment
+> (`tools=toolbox` directly) is a MAF-specific surface that has no
+> equivalent in the GitHub Copilot SDK. For GHCP, **Pattern 0a is the
+> only option** — and you must use the published bridge.
+
+**MCP gotcha cheat-sheet** (from official troubleshoot, all confirmed
+May 2026 — these WILL bite if ignored):
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `401` on MCP calls | Wrong/expired token | Scope MUST be `https://ai.azure.com/.default`; use `header_provider` (refreshes), not static `headers` |
+| `500` on `send_ping()` | Foundry MCP doesn't implement `ping` | Override `MCPStreamableHTTPTool._ensure_connected` to a no-op (see sample) |
+| `500` on `prompts/list` | Foundry MCP doesn't implement prompts | Pass `load_prompts=False` |
+| `500` on `tools/call` | Non-streaming not supported | Use `stream=True` (MAF default; explicitly verify if you override) |
+| `400 Multiple tools without identifiers` | Two unnamed tools of same type in toolbox | Toolbox creator must add `server_label`/`name` to each MCP tool |
+| Tool name not found / GHCP error | Foundry returns `{server_label}.{tool_name}`; GHCP rejects dots | GHCP: use the bridge that swaps `.` → `_`. MAF: use the dotted name as-is |
+| Custom env var silently overwritten | Platform reserves `FOUNDRY_*` prefix | Rename your env vars (e.g. `TOOLBOX_MCP_ENDPOINT`, NOT `FOUNDRY_TOOLBOX_ENDPOINT`) |
+
+### Pattern 0b — Native (MAF-only, **EXPERIMENTAL — verify before shipping**)
+
+Pass the toolbox object directly as `tools=` to a MAF `FoundryChatClient`
+or attach it server-side to a `FoundryAgent` in the Foundry portal. This
+path is cleaner code-wise but:
+
+- **GHCP SDK does NOT support this** — use Pattern 0a with the bridge instead
+- **MAF support is preview** — `agent-framework-foundry` Toolbox APIs are
+  flagged experimental; surface may change between releases
+- **Behaviour drift between native and MCP** has been observed in preview
+  builds — always smoke-test the agent before declaring the pilot ready
+
+If you're on MAF and want to try it:
+
+```python
+# MAF only — preview, verify in your env before committing
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient, select_toolbox_tools
 from azure.identity.aio import AzureCliCredential
 
 async with AzureCliCredential() as credential:
     client = FoundryChatClient(credential=credential)
-    # Pin the version explicitly to avoid the default-resolve round-trip
     toolbox = await client.get_toolbox("vision_doc_speech_toolbox", version="v3")
-
-    # Optionally narrow: only expose Speech + DocIntel to this agent
     tools = select_toolbox_tools(toolbox, include_names=["azure_speech", "document_intelligence"])
-
     async with Agent(client=client, name="ClaimsIntake", tools=tools) as agent:
-        result = await agent.run("Transcribe the attached call and extract claim details.")
+        result = await agent.run("Transcribe and extract claim details.")
 ```
 
-**Consumption — Pattern 0b: MCP (any agent runtime, including non-MAF)**
+If something silently misbehaves (tools listed but never invoked, partial
+schemas, schema-inference errors), **fall back to Pattern 0a (MCP)** — it
+exercises the same upstream Toolbox endpoint with strictly fewer SDK
+abstractions in between.
 
-```python
-from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
-from agent_framework import Agent, MCPStreamableHTTPTool
+### Keyless RBAC for Toolbox consumption
 
-credential = DefaultAzureCredential()
-token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
+Everything below assumes **keyless** auth — no API keys are passed anywhere
+in the threadlight chain (we set `disableLocalAuth: true` on every Cognitive
+Services resource at provisioning time per `azd-patterns`).
 
-# MCP endpoint URL is shown in the Foundry portal; format:
-# https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1
-mcp_tool = MCPStreamableHTTPTool(
-    name="vision_doc_speech_mcp",
-    url=os.environ["TOOLBOX_MCP_ENDPOINT"],
-    header_provider=lambda: {"Authorization": f"Bearer {token_provider()}"},
-)
+| Identity | Role | Scope | Why |
+|----------|------|-------|-----|
+| **Consuming agent's UAMI** | `Azure AI User` | Foundry project | Required to mint tokens for `https://ai.azure.com/.default` and read the toolbox MCP endpoint |
+| **Toolbox creator (one-time, not runtime)** | `Azure AI Project Manager` | Foundry project | Needed to create/update toolbox versions and assign `Azure AI User` to consumers |
+| **Foundry project's own MI** | `Azure AI User` | Foundry account | Project proxies inference + reads upstream tool credentials configured in toolbox |
+| **Upstream service identities** (Speech / DocIntel / Vision MI) | per-service role (see Pattern A/B below) | each Cognitive Services resource | Configured ONCE at toolbox creation — consumers never see these |
 
-async with Agent(client=client, name="ClaimsIntake", tools=[mcp_tool]) as agent:
-    ...
-```
-
-> **SDK version pins**: `agent-framework-foundry` (consumption) +
-> `azure-ai-projects>=2.1.0` (creation/update). Toolbox APIs are flagged
-> **experimental** — surface may change. Caching of `get_toolbox()` is
-> caller-owned (no framework cache, because portal-side default version
-> can rotate).
+> **Why `Azure AI User` and not `Azure AI Developer`?** `Azure AI Developer`
+> is scoped to the legacy AML / Foundry-hub world; hosted-agent + toolbox
+> resources need `Azure AI User` (or higher: `Azure AI Project Manager`).
 
 **Toolbox catalog reference**: [Foundry tool catalog](https://learn.microsoft.com/azure/foundry/agents/concepts/tool-catalog)
 · [Toolbox how-to (Python)](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox)
+· [Toolbox troubleshoot](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox#troubleshoot)
+· [Hosted-agent permissions](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions)
 · [Azure Speech MCP](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/azure-ai-speech)
+· [GHCP toolbox bridge sample](https://aka.ms/foundry-toolbox-copilotsdk)
+· [MAF toolbox MCP sample](https://aka.ms/foundry-toolbox-maf)
 
 If Toolbox doesn't fit (network-secured project, custom model, high-volume
 batch), continue with Pattern A/B per modality below.
+
+---
+
+## ⚠️ Keyless / RBAC Matrix (every modality, every pattern)
+
+Threadlight pilots are **keyless by default**. Every Cognitive Services
+resource (`AIServices`, `DocumentIntelligence`, `SpeechServices`) is
+provisioned with `properties.disableLocalAuth: true` per `azd-patterns`,
+and runtime auth is via UAMI + Entra token. **No `KEY1` / `subscription_key`
+appears anywhere in the chain.** When a customer needs to roll back to keyed
+auth (rare — typically air-gapped lab), they explicitly opt in.
+
+### The matrix
+
+| Modality | Identity | Role assignment | Token scope | Notes |
+|----------|----------|-----------------|-------------|-------|
+| **Foundry chat (Responses endpoint)** | Agent's UAMI | `Azure AI User` on the **Foundry project** | `https://ai.azure.com/.default` | Project proxies inference using its own MI; this is the threadlight default |
+| **Direct AOAI account endpoint** (bypassing project) | Agent's UAMI | `Cognitive Services OpenAI User` on the **Foundry account** | `https://cognitiveservices.azure.com/.default` | Only when you must hit the account endpoint — rare |
+| **Foundry Toolbox via MCP** | Agent's UAMI | `Azure AI User` on Foundry project | `https://ai.azure.com/.default` | Toolbox creator (one-time) needs `Azure AI Project Manager` |
+| **Vision via Foundry Responses** | Same as chat | Same as chat | Same as chat | Vision is a content-part on the chat call — no extra role |
+| **Document Intelligence (direct SDK)** | Agent's UAMI | `Cognitive Services User` on the **DocIntel resource** | `https://cognitiveservices.azure.com/.default` | **NOT `Cognitive Services Contributor`** — Contributor only allows listing keys, and is denied at runtime when `disableLocalAuth: true`. Verified May 2026. |
+| **Azure Speech (direct SDK)** | Agent's UAMI | `Cognitive Services Speech User` (or `Speech Contributor`) on the **Speech resource** | `https://cognitiveservices.azure.com/.default` | **REQUIRES custom subdomain** (one-time, **IRREVERSIBLE** — see Speech section) |
+| **Azure AI Search (foundry-iq RAG)** | Agent's UAMI | `Search Index Data Reader` on Search service | `https://search.azure.com/.default` | Add `Search Service Contributor` for index management roles only |
+| **Foundry continuous-eval** (Plan A built-in) | **Foundry project's own MI** (NOT the agent's UAMI) | `Azure AI User` on the project | n/a (server-side) | Project MI runs the scheduled evaluators against the agent — no consumer code |
+| **Continuous-eval (Plan B ACA Job)** | Job's UAMI | `Azure AI User` on project + `Storage Blob Data Contributor` on results container | `https://ai.azure.com/.default` | Only if Plan A doesn't yet support your hosted-agent type |
+
+### Why these specific roles (don't substitute)
+
+- **`Azure AI Developer` is INSUFFICIENT** for hosted agents — it's scoped to
+  the legacy AML/Foundry-hub world, not Foundry-project resources used by
+  hosted agents. Use `Azure AI User` instead.
+- **`Cognitive Services Contributor` does NOT work for keyless data-plane**:
+  Contributor lists/regenerates keys; when `disableLocalAuth: true`, the
+  data-plane explicitly rejects requests authenticated via Contributor.
+  You need the `*User` data-plane role.
+- **`Azure AI Project Manager` and `Azure AI Account Owner`** can ONLY assign
+  `Azure AI User` to other principals (Microsoft-imposed constraint). They
+  CANNOT grant arbitrary custom roles. If your customer needs a custom role,
+  use `Owner` or `User Access Administrator` for the role-assignment step.
+
+### Bicep wiring (pattern, per `azd-patterns`)
+
+```bicep
+// infra/modules/rbac.bicep — assign UAMI to each Cognitive Services resource
+resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: docIntelAccount  // resource symbolic name
+  name: guid(docIntelAccount.id, agentUami.id, cognitiveServicesUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'  // Cognitive Services User
+    )
+    principalId: agentUami.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource speechUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: speechAccount
+  name: guid(speechAccount.id, agentUami.id, speechUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'f2dc8367-1007-4938-bd23-fe263f013447'  // Cognitive Services Speech User
+    )
+    principalId: agentUami.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource projectAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: foundryProject
+  name: guid(foundryProject.id, agentUami.id, azureAiUserRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '53ca6127-db72-4b80-b1b0-d745d6d5456d'  // Azure AI User
+    )
+    principalId: agentUami.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+```
+
+> **Verification step (always run before declaring the pilot ready):**
+> from inside the running container, `az login --identity --client-id $AZURE_CLIENT_ID`
+> then `az rest --method GET --uri "<resource-endpoint>/health"` to confirm
+> the token works against each Cognitive Services data-plane. Don't ship a
+> pilot where you've never proven RBAC end-to-end.
 
 ---
 
@@ -320,6 +490,9 @@ async def extract_invoice(blob_url: str) -> dict:
 > **SDK version pin**: `azure-ai-documentintelligence>=1.0.2`. The v4 REST surface is
 > `2024-11-30 (GA)`. The package was renamed from `azure-ai-formrecognizer` —
 > do NOT pull the legacy package.
+> **Keyless RBAC pin**: assign `Cognitive Services User` (NOT Contributor — see
+> matrix above) to the agent UAMI on the DocIntel resource scope. `DefaultAzureCredential`
+> picks up the UAMI via `AZURE_CLIENT_ID` env var injected by ACA.
 
 Threshold rule: if `_confidence < 0.85`, escalate to vision LLM for double-check
 (exposes the field to the human action gate via `request-info`).
@@ -347,6 +520,27 @@ Studio. Output is a custom model ID you reference in `prebuilt-invoice`'s slot.
 
 For voice-driven processes (FNOL, call center QA, IVR). Two patterns:
 
+> ### ⚠️ ONE-WAY DOOR: Custom subdomain is IRREVERSIBLE
+>
+> Keyless auth on Speech resources **requires a custom subdomain**. The
+> only way to set one is:
+>
+> ```bash
+> az cognitiveservices account update \
+>   --name <speech-acct> --resource-group <rg> \
+>   --custom-domain <unique-subdomain-name>
+> ```
+>
+> **Once set, you cannot remove it.** The regional endpoint
+> (`eastus.api.cognitive.microsoft.com`) is permanently disabled for that
+> account — only the custom endpoint (`<your-name>.cognitiveservices.azure.com`)
+> works. To revert, you must **delete the resource and re-create it**
+> (which is destructive — costs include re-training custom voice models,
+> re-issuing client SDK endpoints, etc.).
+>
+> Surface this warning in the deploy script and force a `--confirm-irreversible`
+> flag before running it. Don't bury it in docs the operator will skim past.
+
 ```python
 # Real-time streaming (inside an MCP tool that proxies audio)
 import azure.cognitiveservices.speech as speechsdk
@@ -354,8 +548,7 @@ from azure.identity import DefaultAzureCredential
 
 # Modern AAD pattern: pass token_credential directly + custom-domain endpoint
 # (NOT the older auth_token="aad#..." pattern, which is still supported but deprecated).
-# Speech resource MUST have a custom subdomain enabled (one-time:
-#   az cognitiveservices account update --custom-domain <name>).
+# Speech resource MUST have a custom subdomain enabled (see warning above).
 credential = DefaultAzureCredential()
 speech_config = speechsdk.SpeechConfig(
     token_credential=credential,
@@ -366,10 +559,14 @@ result = await asyncio.to_thread(recognizer.recognize_once)
 transcript = result.text
 ```
 
-> **RBAC pin**: assign `Cognitive Services Speech User` (or `Speech Contributor`)
-> to the UAMI on the Speech account scope.
+> **Keyless RBAC pin**: assign `Cognitive Services Speech User`
+> (role ID `f2dc8367-1007-4938-bd23-fe263f013447`) to the UAMI on the
+> Speech account scope. `Speech Contributor` also works but is broader —
+> prefer least privilege.
 > **SDK version pin**: `azure-cognitiveservices-speech>=1.40.0` for `token_credential`
-> support on `SpeechConfig`. Older versions silently ignore it.
+> support on `SpeechConfig`. Older versions silently ignore it and fall back to
+> key auth, which then fails with `disableLocalAuth: true`.
+> **Custom subdomain**: see one-way-door warning above.
 
 For batch (e.g., a 5-minute FNOL voicemail), use the Speech Batch Transcription
 API — submits a job, returns transcript JSON when complete.

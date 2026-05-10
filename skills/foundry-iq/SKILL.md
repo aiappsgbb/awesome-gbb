@@ -164,15 +164,42 @@ All configuration should be externalized to `.env`.
 **Keyless auth (DefaultAzureCredential) is the default** — only set API keys if
 you cannot use managed identity or `az login`.
 
+> ### ⚠️ Threadlight pilots: keyless is MANDATORY (not optional)
+>
+> For threadlight processes deployed via `threadlight-deploy`, the keyed
+> fallback path **must not ship** in production:
+>
+> - Provision Azure AI Search with `disableLocalAuth: true`
+> - Provision AOAI with `disableLocalAuth: true`
+> - Assign UAMI roles per the matrix below — NOT keys, NOT shared admin keys
+> - Strip `AZURE_OPENAI_API_KEY` and `AI_SEARCH_KEY` from the deployed `.env` (they're for local dev only)
+>
+> Required RBAC for foundry-iq runtime (assign to the agent's UAMI):
+>
+> | Resource | Role | Role ID |
+> |----------|------|---------|
+> | Azure AI Search service | `Search Index Data Reader` | `1407120a-92aa-4202-b7e9-c0e197c71c8f` |
+> | Azure AI Search service | `Search Index Data Contributor` (only for indexer/builder UAMI) | `8ebe5a00-799e-43f5-93ac-243d3dce84a7` |
+> | Azure OpenAI account | `Cognitive Services OpenAI User` | `5e0bd9bd-7b93-4f28-af87-19fc36ad61bd` |
+> | Foundry project (if using Knowledge Agent) | `Azure AI User` | `53ca6127-db72-4b80-b1b0-d745d6d5456d` |
+>
+> Plus: `Search Service Contributor` (`7ca78c08-252a-4471-8644-bb5ff32d4ba0`)
+> on the Search service for the **deploy-time** identity that creates indexes,
+> indexers, and knowledge agents (separate from the runtime UAMI; least
+> privilege at runtime).
+>
+> See `foundry-doc-vision-speech` for the full keyless RBAC matrix across
+> all Cognitive Services.
+
 ```bash
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-# AZURE_OPENAI_API_KEY=            # Optional — omit for keyless auth
+# AZURE_OPENAI_API_KEY=            # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
 
 # Azure AI Search Configuration
 AI_SEARCH_ENDPOINT=https://<service>.search.windows.net
-# AI_SEARCH_KEY=                    # Optional — omit for keyless auth
+# AI_SEARCH_KEY=                    # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
 AI_SEARCH_API_VERSION=2025-01-01-preview
 
 # PolicyBot Configuration

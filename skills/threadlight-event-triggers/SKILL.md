@@ -259,6 +259,27 @@ async def invoke_agent(payload):
 > **SDK version pins (May 2026)**: `azure-ai-projects>=2.0.0`,
 > `agent-framework-foundry` (only Pattern A). The legacy
 > `agent_framework.azure.AzureAIAgentClient` was removed — do NOT use it.
+>
+> ### ⚠️ Keyless RBAC for the receiver UAMI
+>
+> The receiver (ACA Job or ACA App) authenticates to Foundry via its UAMI.
+> `DefaultAzureCredential` / `AzureCliCredential` (in dev) inside the
+> container will pick up the UAMI from `AZURE_CLIENT_ID` automatically.
+> Required role assignments (assign at Bicep provisioning time):
+>
+> | Resource | Role | Role ID |
+> |----------|------|---------|
+> | **Foundry project** | `Azure AI User` | `53ca6127-db72-4b80-b1b0-d745d6d5456d` |
+> | Service Bus namespace (Shape #2) | `Azure Service Bus Data Receiver` | `4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0` |
+> | Event Grid topic (Shape #3, push delivery) | `EventGrid Data Sender` (on the source) | n/a — see Event Grid CloudEvents docs |
+> | Storage Blob (if processing blobs) | `Storage Blob Data Reader` | `2a2b9908-6ea1-4ae2-8e65-a410df84e7d1` |
+> | Cosmos DB (audit writes — paired with `threadlight-hitl-patterns`) | `Cosmos DB Built-in Data Contributor` | `00000000-0000-0000-0000-000000000002` |
+>
+> **Do NOT** use `Azure AI Developer` for the project — it's scoped to the
+> legacy AML/Foundry-hub world. **Do NOT** use connection strings or shared
+> access keys for Service Bus / Storage / Cosmos — managed identity only.
+> Verify with `az role assignment list --assignee <uami-principal-id>` before
+> declaring the trigger ready.
 
 For long-running receivers (e.g. nightly batch over thousands of cases):
 batch invocations with controlled concurrency (default `max_concurrent=4`).
