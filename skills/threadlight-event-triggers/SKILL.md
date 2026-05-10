@@ -2,13 +2,14 @@
 name: threadlight-event-triggers
 description: >
   Scaffold non-interactive trigger receivers for a threadlight process —
-  ACA jobs (cron / manual), Azure Functions (HTTP / Event Grid / Service
-  Bus / Timer / Blob), Event Grid subscriptions, Service Bus consumers,
-  webhook receivers. Reads spec § 10b Triggers (Receiver contract) and
-  produces the receiver scaffold + idempotency / dead-letter wiring.
+  ACA-first (jobs, app HTTP receivers, KEDA-scaled consumers) with Azure
+  Functions only when narrow constraints demand it. Reads spec § 10b
+  Triggers (Receiver contract) and produces the receiver scaffold +
+  idempotency / dead-letter wiring.
   USE FOR: scheduled trigger, event-driven trigger, ACA job scaffold,
-  webhook receiver, Service Bus consumer, Event Grid subscription, cron
-  trigger, idempotency key, dead-letter queue, threadlight triggers.
+  ACA app webhook, ACA consumer, KEDA scaler, Service Bus consumer, Event
+  Grid subscription, cron trigger, idempotency key, dead-letter queue,
+  threadlight triggers.
   DO NOT USE FOR: chat / on-demand triggers (those go through the agent
   directly), bot infrastructure (use foundry-teams-bot), MCP server
   deployment (use foundry-mcp-aca).
@@ -16,8 +17,8 @@ description: >
 
 # Threadlight Event Triggers
 
-Generate non-interactive trigger receivers (ACA jobs, Functions, Event Grid
-subs, Service Bus consumers, webhook receivers) for a threadlight process,
+Generate non-interactive trigger receivers (ACA jobs, ACA HTTP apps, ACA
+consumers with KEDA, optionally Functions) for a threadlight process,
 based on `specs/SPEC.md` § 10b.
 
 > **Why a separate skill from `azd-patterns`?** `azd-patterns` documents
@@ -44,13 +45,42 @@ based on `specs/SPEC.md` § 10b.
 
 ---
 
+## ACA-first stance
+
+Every receiver in this skill defaults to **Azure Container Apps**. We chose
+this for production-grade threadlight pilots over Azure Functions for
+boring-but-real reasons:
+
+| Functions pain in production | ACA equivalent / mitigation |
+|------------------------------|-----------------------------|
+| Cold starts (5-10s on Consumption; better-but-not-zero on Flex) | ACA `minReplicas: 1` keeps a warm replica; Jobs are launched on demand without an idle tax |
+| Programming-model split (v1 vs v2 Python decorators, in-proc vs isolated .NET) | One model: a regular container running your framework of choice |
+| `host.json` / `local.settings.json` / `function.json` politics | One `Dockerfile`, one `azure.yaml`, one Bicep |
+| Bindings hide failures behind generic 500s; `func` runtime lags Azure | Direct SDK calls in the container; same code runs locally with `docker run` |
+| Identity / UAMI sometimes silently ignored by the binding extension | UAMI is a first-class `identity:` block on the container; predictable |
+| Time-bound (10 min default, 60 min Premium) — kills long agent loops | Jobs `replicaTimeout` up to 24h; apps run indefinitely |
+| Scaling rules less expressive than KEDA | ACA *is* KEDA — full scaler catalog (SB, Event Grid, Cosmos, Kafka, Cron, custom) |
+| App Insights auto-instrumentation conflicts with manual OTel | Bring your own OTel SDK, exports cleanly to App Insights / Foundry traces |
+
+**This is not "Functions are bad"** — they're great for hobby-scale or
+narrowly-scoped HTTP webhooks where a customer is already deeply invested
+in the Functions ecosystem. But the threadlight value prop ("we deliver
+this reliably") is undermined when day-3 of the pilot turns into a
+debug-the-binding session.
+
+ACA is the default. Functions appear in this skill only as **escape-hatch
+shapes** — call them out explicitly if you reach for one (see § "When to
+choose Functions anyway" below).
+
+---
+
 ## Input contract / Output artifacts
 
 **Input contract**:
 
 - `specs/SPEC.md` § 10b **Triggers (Receiver contract)** — required:
   - `Trigger source` (cron expression, event topic, queue name, webhook URL)
-  - `Receiver type` (ACA Job / Function / ACA consumer)
+  - `Receiver type` (ACA Job / ACA App / ACA Consumer / Function — last only when justified)
   - `Idempotency key` (field name or `none`)
   - `Dedup window`
   - `Dead-letter rule`
@@ -67,12 +97,10 @@ src/triggers/
 ├── {trigger-name}/
 │   ├── receiver.py            # The receiver entry point
 │   ├── pyproject.toml         # uv-managed deps
-│   ├── Dockerfile             # for ACA Job receivers
-│   ├── host.json              # for Function receivers
-│   ├── function.json          # for Function receivers
+│   ├── Dockerfile             # for ALL ACA receivers (Job / App / Consumer)
 │   └── README.md              # how to test locally + idempotency notes
 infra/triggers/
-├── {trigger-name}.bicep       # ACA Job / Function / Event Grid sub / Service Bus consumer
+├── {trigger-name}.bicep       # ACA Job / App / Consumer / (Function escape hatch)
 └── dead-letter.bicep          # Storage Queue / SB DLQ / etc.
 ```
 
@@ -83,19 +111,39 @@ Plus updates to:
 
 ---
 
-## The five receiver shapes
+## The receiver shapes (ACA-first)
 
-| Shape | When | Where it runs |
-|-------|------|---------------|
-| **ACA Job (cron)** | Periodic batch; latency tolerance >1 min | Container Apps Job, scheduled trigger |
-| **ACA Job (manual)** | Webhook receiver invokes via REST; or part of a workflow | Container Apps Job, manual trigger via REST |
-| **Azure Function (HTTP)** | Lightweight webhook; consumption billing | Function App (Flex Consumption) |
-| **Azure Function (Service Bus / Event Grid)** | Bound to a message queue or event topic | Function App with binding |
-| **ACA consumer** | High-throughput SB / Event Hubs consumer; long-running stateful | Container App with KEDA scaler |
+| # | Shape | When | Where it runs |
+|---|-------|------|---------------|
+| 1 | **ACA Job (cron)** | Periodic batch; latency tolerance >1 min | Container Apps Job, scheduled trigger |
+| 2 | **ACA Job (manual)** | Webhook receiver invokes via REST; or part of a workflow | Container Apps Job, manual trigger via REST `start` |
+| 3 | **ACA App (HTTP)** | Webhook receiver; low-medium throughput; needs sub-second response | Container App with HTTP ingress, `minReplicas: 1` |
+| 4 | **ACA Consumer (KEDA)** | Service Bus / Event Grid / Event Hubs / Cosmos change feed / Kafka | Container App with KEDA scaler; scales to zero between events |
+| 5 | **Function (escape hatch)** | See § "When to choose Functions anyway" — narrow cases only | Function App (Flex Consumption preferred) |
 
-Default for most threadlight processes: **ACA Job (cron)** for scheduled,
-**Azure Function (HTTP)** for webhook, **ACA consumer** for high-volume
-event streams.
+**Default for most threadlight processes**:
+- Scheduled → **#1 ACA Job (cron)**
+- Webhook → **#3 ACA App (HTTP)**
+- High-volume event stream → **#4 ACA Consumer (KEDA)**
+
+### When to choose Functions anyway
+
+Pick Function (#5) only if at least one of these is true. Document the reason
+in the spec § 11d (Open Questions) and the receiver's README:
+
+- **Customer already operates a Function App** for related workloads and the
+  ops team has refused another runtime
+- **Sub-second cold-start NOT required** AND request volume is so low (e.g.,
+  <10/day) that the consumption-plan free-tier dominates cost rationale
+- **Native binding required** to a service ACA can't reach as cleanly (very
+  rare in 2026; Cosmos change feed, Service Bus, Event Grid, Event Hubs all
+  have first-class KEDA scalers)
+- **Customer policy forbids container ingress** but allows Function endpoints
+  (sometimes seen in heavily-regulated tenants)
+
+If you DO scaffold a Function, prefer **Flex Consumption** (Linux, Python 3.11+,
+managed identity, VNet integration, no cold-start penalty in steady state).
+Avoid Premium plan and avoid the legacy v1 programming model.
 
 ---
 
@@ -185,7 +233,8 @@ async def invoke_agent(payload):
 ```
 
 **Pattern B — call the Foundry Responses endpoint directly** (when you don't
-want the agent_framework dependency, e.g., a tiny Function receiver):
+want the agent_framework dependency, e.g., a tiny ACA App receiver where
+adding `agent-framework-foundry` is overkill):
 
 ```python
 from azure.ai.projects.aio import AIProjectClient
@@ -216,10 +265,11 @@ batch invocations with controlled concurrency (default `max_concurrent=4`).
 
 ### Step 6: Bicep + azure.yaml registration
 
-Generate `infra/triggers/{trigger-name}.bicep`:
+Generate `infra/triggers/{trigger-name}.bicep`. Pick the template by shape:
+
+**Shape #1 — ACA Job (cron)**:
 
 ```bicep
-// ACA Job (cron)
 resource job 'Microsoft.App/jobs@2024-03-01' = {
   name: '${prefix}-${triggerName}'
   location: location
@@ -250,13 +300,109 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
 }
 ```
 
-Add to `azure.yaml`:
+**Shape #3 — ACA App (HTTP webhook)**:
+
+```bicep
+resource webhookApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: '${prefix}-${triggerName}'
+  location: location
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${uami}': {} } }
+  properties: {
+    environmentId: containerAppEnv.id
+    configuration: {
+      ingress: {
+        external: true   // false if behind APIM / Front Door
+        targetPort: 8080
+        transport: 'auto'
+        allowInsecure: false
+      }
+      registries: [{ server: '${acr}.azurecr.io', identity: uami }]
+    }
+    template: {
+      containers: [{
+        name: 'receiver'
+        image: appExists ? fetchLatestImage.outputs.containers[0].image : emptyContainerImage
+        resources: { cpu: '0.5', memory: '1Gi' }
+        env: [
+          { name: 'AZURE_CLIENT_ID', value: uamiClientId }
+          { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
+          { name: 'AGENT_NAME', value: agentName }
+          { name: 'COSMOS_ENDPOINT', value: cosmosEndpoint }
+        ]
+      }]
+      scale: {
+        minReplicas: 1   // KEY: keep one warm — this is the cold-start cure
+        maxReplicas: 10
+        rules: [{
+          name: 'http-scale'
+          http: { metadata: { concurrentRequests: '50' } }
+        }]
+      }
+    }
+  }
+  tags: { 'azd-service-name': triggerName }
+}
+```
+
+**Shape #4 — ACA Consumer (KEDA — Service Bus example)**:
+
+```bicep
+resource consumerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: '${prefix}-${triggerName}'
+  location: location
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${uami}': {} } }
+  properties: {
+    environmentId: containerAppEnv.id
+    configuration: {
+      registries: [{ server: '${acr}.azurecr.io', identity: uami }]
+      // No ingress block — this app pulls from Service Bus, not via HTTP
+    }
+    template: {
+      containers: [{
+        name: 'receiver'
+        image: appExists ? fetchLatestImage.outputs.containers[0].image : emptyContainerImage
+        resources: { cpu: 1, memory: '2Gi' }
+        env: [
+          { name: 'AZURE_CLIENT_ID', value: uamiClientId }
+          { name: 'SERVICEBUS_NAMESPACE', value: serviceBusNamespace }
+          { name: 'SERVICEBUS_QUEUE', value: queueName }
+          { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
+          { name: 'AGENT_NAME', value: agentName }
+        ]
+      }]
+      scale: {
+        minReplicas: 0   // Scale to zero between events
+        maxReplicas: 30
+        rules: [{
+          name: 'sb-keda'
+          custom: {
+            type: 'azure-servicebus'
+            // KEDA workload identity binding (TriggerAuthentication wired separately)
+            identity: uami
+            metadata: {
+              namespace: serviceBusNamespace
+              queueName: queueName
+              messageCount: '5'   // scale up when ≥5 unprocessed msgs per replica
+            }
+          }
+        }]
+      }
+    }
+  }
+  tags: { 'azd-service-name': triggerName }
+}
+```
+
+Add to `azure.yaml` — pick `host:` by shape:
 
 ```yaml
 services:
   trigger-{trigger-name}:
     project: ./src/triggers/{trigger-name}
-    host: containerapp   # or 'function'
+    # ACA App (#3) and ACA Consumer (#4) → containerapp
+    # ACA Job (#1, #2)                  → containerapp  (azd treats jobs the same; the bicep distinguishes)
+    # Function escape hatch (#5)         → function
+    host: containerapp
     language: python
     docker:
       remoteBuild: true
@@ -322,14 +468,16 @@ or Service Bus DLQ) — not a fire-and-forget log entry.
 
 | File | Purpose |
 |------|---------|
-| `references/scaffolds/aca-job-cron/` | Cron-triggered ACA Job receiver scaffold |
-| `references/scaffolds/aca-job-manual/` | Manual-triggered ACA Job (REST entry) |
-| `references/scaffolds/function-http/` | Azure Function HTTP webhook receiver |
-| `references/scaffolds/function-servicebus/` | Azure Function Service Bus binding |
-| `references/scaffolds/function-eventgrid/` | Azure Function Event Grid binding |
-| `references/scaffolds/aca-consumer/` | ACA consumer with KEDA scaler |
+| `references/scaffolds/aca-job-cron/` | Cron-triggered ACA Job receiver scaffold (default for scheduled) |
+| `references/scaffolds/aca-job-manual/` | Manual-triggered ACA Job (REST `start` entry) |
+| `references/scaffolds/aca-app-http/` | ACA App HTTP webhook receiver — replaces Function-HTTP for production webhooks |
+| `references/scaffolds/aca-consumer-keda/` | ACA consumer with KEDA scaler (Service Bus / Event Grid / Event Hubs / Cosmos / Kafka) |
+| `references/scaffolds/function-http/` | Azure Function HTTP webhook (escape hatch — see § "When to choose Functions anyway") |
+| `references/scaffolds/function-servicebus/` | Azure Function Service Bus binding (escape hatch) |
+| `references/scaffolds/function-eventgrid/` | Azure Function Event Grid binding (escape hatch) |
 | `references/idempotency-patterns.md` | Cosmos / Redis / Storage Table backed dedup |
 | `references/dead-letter-patterns.md` | DLQ destinations and replay tooling |
+| `references/aca-vs-functions.md` | Long-form rationale for the ACA-first stance, with the prod quirk catalogue |
 
 ---
 
@@ -338,8 +486,14 @@ or Service Bus DLQ) — not a fire-and-forget log entry.
 - ❌ **Skip idempotency.** Every receiver MUST be idempotent. The customer
   WILL replay events; the source WILL retry; without idempotency you'll
   ship a demo that double-charges, double-approves, double-emails.
-- ❌ **Use Function HTTP for high-throughput streams.** Use ACA consumer or
-  Function with Event Hubs binding — HTTP doesn't backpressure.
+- ❌ **Reach for an Azure Function by default.** Functions are the escape
+  hatch (#5), not the default. Pick ACA App / Job / Consumer first; only
+  fall back to Functions when one of the documented justifications applies.
+- ❌ **Use a Function HTTP webhook for anything that matters.** Cold starts
+  + binding quirks + ops-team-needs-to-learn-Functions cost more than the
+  perceived "simplicity" savings. Use ACA App (HTTP) with `minReplicas: 1`.
+- ❌ **Use Function HTTP for high-throughput streams.** Use ACA Consumer
+  with KEDA — Function HTTP doesn't backpressure.
 - ❌ **Hide the DLQ.** A DLQ that nobody can see is worse than no DLQ. Wire
   alerts on DLQ depth >0.
 - ❌ **Inline business logic in the receiver.** The receiver's job is

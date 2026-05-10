@@ -97,7 +97,101 @@ What kind of unstructured input?
 
 ---
 
-## Per-Modality Wiring
+## Pattern 0 — Foundry Toolbox (recommended starting point, May 2026)
+
+Before wiring SDK calls per modality, **check whether a Foundry Toolbox can
+do the job**. The Foundry Toolbox is a server-side, versioned bundle of
+hosted tool configurations curated in the Foundry portal and exposed as a
+single MCP-compatible endpoint. As of May 2026, the catalog includes
+**Speech, Document Intelligence, Vision, Content Understanding, Translator,
+Language, Content Safety, Custom Vision, Azure AI Search**, plus generic
+hosted tools (web search, code interpreter, file search, image generation).
+
+**Why prefer Toolbox over per-modality SDK code:**
+
+- **Centralized config**: connection strings, SAS containers, model IDs all
+  live in the portal — no env-var fan-out across containers
+- **Versioning**: change toolbox config, test with `version="v3"`, promote
+  to default — no agent redeploy
+- **Auth handled server-side** for the upstream services (e.g. Speech account
+  key or Foundry MI scope is configured once at toolbox creation)
+- **MCP-compatible consumption**: works with any agent runtime (MAF, GHCP
+  SDK, LangGraph, custom code)
+- **Same code across processes**: a healthcare KYC and an FSI claim agent
+  can both consume the same `vision_doc_speech_toolbox`
+
+**When NOT to use Toolbox** (fall back to direct SDK in Pattern A/B):
+
+- You need fine-grained control over a SDK feature not exposed by the toolbox
+  tool wrapper (e.g., DocIntel custom-trained model, Speech batch transcription
+  with diarization, real-time streaming audio frames)
+- Network-secured Foundry: **Azure Speech MCP doesn't support network-secured
+  Foundry projects** as of May 2026 — you must use direct SDK in Pattern A/B
+- Toolbox is preview (`azure-ai-projects>=2.1.0`); customer policy may forbid
+  preview-tier features in prod
+- High-volume batch (e.g., 100k invoices/night) — toolbox introduces a network
+  hop the SDK doesn't
+
+**Consumption — Pattern 0a: native (FoundryAgent / FoundryChatClient)**
+
+For a Foundry hosted agent, attach the toolbox in the **portal** when defining
+the agent — zero client-side wiring needed. For a `FoundryChatClient` (your
+app owns the agent loop), fetch and pass:
+
+```python
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient, select_toolbox_tools
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential:
+    client = FoundryChatClient(credential=credential)
+    # Pin the version explicitly to avoid the default-resolve round-trip
+    toolbox = await client.get_toolbox("vision_doc_speech_toolbox", version="v3")
+
+    # Optionally narrow: only expose Speech + DocIntel to this agent
+    tools = select_toolbox_tools(toolbox, include_names=["azure_speech", "document_intelligence"])
+
+    async with Agent(client=client, name="ClaimsIntake", tools=tools) as agent:
+        result = await agent.run("Transcribe the attached call and extract claim details.")
+```
+
+**Consumption — Pattern 0b: MCP (any agent runtime, including non-MAF)**
+
+```python
+from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+from agent_framework import Agent, MCPStreamableHTTPTool
+
+credential = DefaultAzureCredential()
+token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
+
+# MCP endpoint URL is shown in the Foundry portal; format:
+# https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1
+mcp_tool = MCPStreamableHTTPTool(
+    name="vision_doc_speech_mcp",
+    url=os.environ["TOOLBOX_MCP_ENDPOINT"],
+    header_provider=lambda: {"Authorization": f"Bearer {token_provider()}"},
+)
+
+async with Agent(client=client, name="ClaimsIntake", tools=[mcp_tool]) as agent:
+    ...
+```
+
+> **SDK version pins**: `agent-framework-foundry` (consumption) +
+> `azure-ai-projects>=2.1.0` (creation/update). Toolbox APIs are flagged
+> **experimental** — surface may change. Caching of `get_toolbox()` is
+> caller-owned (no framework cache, because portal-side default version
+> can rotate).
+
+**Toolbox catalog reference**: [Foundry tool catalog](https://learn.microsoft.com/azure/foundry/agents/concepts/tool-catalog)
+· [Toolbox how-to (Python)](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox)
+· [Azure Speech MCP](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/azure-ai-speech)
+
+If Toolbox doesn't fit (network-secured project, custom model, high-volume
+batch), continue with Pattern A/B per modality below.
+
+---
+
+## Per-Modality Wiring (direct SDK — fallback when Toolbox doesn't fit)
 
 ### Vision (default `gpt-5.4-mini` via the Foundry Responses endpoint)
 
