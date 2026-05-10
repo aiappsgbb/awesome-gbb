@@ -957,6 +957,18 @@ Check every file. Mark each ✅ or fix before presenting.
 
 #### SPEC § 11c module-selector cross-check (MANDATORY)
 
+> **Use the consolidated `threadlight-safe-check` skill** for the
+> mechanical implementation of this check (and Phase 3.5 below). The
+> manual matrix below is preserved for documentation; the canonical
+> automation is:
+>
+> ```bash
+> python -m threadlight.safe_check --phase pre-deploy
+> ```
+>
+> Wire it as an `azd hooks predeploy` so missing services abort the
+> docker build before wasting an ACR push.
+
 > **Why this exists.** The card-dispute-investigation v3 PoC shipped
 > with `infra/bot/aca.bicep`, `infra/bot/bot-service.bicep`, and a
 > `src/workspace/index.html` ` but `azure.yaml` only declared two
@@ -964,7 +976,8 @@ Check every file. Mark each ✅ or fix before presenting.
 > and the workspace had no `Dockerfile`. Result: SPEC § 11c said
 > `aca-bot: yes` and `aca-job: yes`; deployment ended up with **0 bot
 > resources, 0 jobs, 0 workspace ACAs** ` and the deploy still
-> reported success. This check would have caught it.
+> reported success. `threadlight-safe-check --phase pre-deploy` would
+> have caught this.
 
 For **every `yes` row** in SPEC § 11c, walk this matrix:
 
@@ -1020,6 +1033,12 @@ remove them.
 ---
 
 ## Phase 3.5: Post-deploy completeness gate (MANDATORY)
+
+> **Canonical implementation: `threadlight-safe-check` skill.** Invoke as
+> `python -m threadlight.safe_check --phase post-deploy` immediately after
+> `azd up` returns 0 (and wire as `azd hooks postdeploy`). The detailed
+> step-by-step below is preserved for understanding what the gate does;
+> in practice run the consolidated CLI rather than reimplementing.
 
 > **Why this is non-negotiable.** "PoC complete" is NOT the same as
 > "`azd up` returned 0". It means **every Azure resource declared by

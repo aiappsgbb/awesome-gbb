@@ -550,7 +550,10 @@ Machine-readable deployment contract (lives with the spec):
 > under `src/` with a Dockerfile, and confirms every `infra/*.bicep`
 > module is wired in `main.bicep`. Phase 3.5 then takes
 > `expected_resource_types` and asserts every entry is in
-> `az resource list -g <RG>` after `azd up`. If you flip a selector
+> `az resource list -g <RG>` after `azd up`. The mechanical
+> implementation is the **`threadlight-safe-check`** skill — invoke
+> `python -m threadlight.safe_check --phase {design|pre-deploy|post-deploy}`
+> at the corresponding lifecycle points. If you flip a selector
 > from `yes` to `no` mid-pilot, **delete the corresponding source
 > folder and Bicep module too** ` orphans break the orphan check.
 
