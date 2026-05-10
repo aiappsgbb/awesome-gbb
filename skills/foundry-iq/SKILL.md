@@ -62,6 +62,32 @@ description: >
 
 Foundry IQ is Microsoft's enterprise-grade RAG solution that treats retrieval as a reasoning task. It uses Azure AI Search Knowledge Bases with agentic retrieval to enable multi-hop reasoning, query planning, and citation-backed responses.
 
+> ### Knowledge Bases migration callout (May 2026)
+>
+> Two control-plane surfaces exist side by side; **they are NOT
+> interchangeable** and you must pin to one consciously:
+>
+> | Surface | api-version | Endpoint shape | Wire shape |
+> |---------|-------------|----------------|------------|
+> | **Legacy "Knowledge Agents"** | `2025-01-01-preview` | `PUT /agents/<name>` | `configuration: { reasoningEffort, outputMode }` (nested) |
+> | **New "Knowledge Bases"** | `2025-11-01-preview` | `PUT /knowledgebases/<name>` | top-level `retrievalReasoningEffort` + `outputConfiguration: { modality }` (flat) |
+>
+> The scripts in this skill are pinned to the legacy `/agents/` surface
+> for compatibility with tenants that haven't yet been migrated. To opt
+> into Knowledge Bases:
+> 1. Bump `AI_SEARCH_API_VERSION` to `2025-11-01-preview`.
+> 2. Replace the `/agents/<name>` path with `/knowledgebases/<name>` in
+>    `KnowledgeAgentManager._make_request` callers and
+>    `KnowledgeAgentRetriever.retrieve`.
+> 3. The wire shape change in step 1 is already implemented in
+>    `knowledge_agent_manager.create_agent` (see the wire-format note
+>    inline in the function), but the legacy endpoint will reject the
+>    flat shape — the two MUST move together.
+>
+> Output mode values are also camelCase on the wire — `extractiveData`,
+> NOT `extractive_data`. The previous snake_case form was a docs typo
+> that the legacy endpoint silently ignored.
+
 ---
 
 ## Architecture
@@ -195,11 +221,14 @@ you cannot use managed identity or `az login`.
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
 # AZURE_OPENAI_API_KEY=            # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
+AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 # Azure AI Search Configuration
 AI_SEARCH_ENDPOINT=https://<service>.search.windows.net
 # AI_SEARCH_KEY=                    # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
+# Pin to match the endpoint surface you use:
+#   2025-01-01-preview → /agents/<name>             (legacy; configuration-nested)
+#   2025-11-01-preview → /knowledgebases/<name>     (new; flat retrievalReasoningEffort)
 AI_SEARCH_API_VERSION=2025-01-01-preview
 
 # PolicyBot Configuration
@@ -211,9 +240,9 @@ POLICY_CHAT_MODEL=gpt-5.4-mini
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 
-# Agentic Retrieval
+# Agentic Retrieval — wire format is camelCase (NOT snake_case)
 REASONING_EFFORT=medium       # minimal | low | medium
-OUTPUT_MODE=extractive_data
+OUTPUT_MODE=extractiveData    # extractiveData | answerSynthesis
 
 # Server Configuration
 API_HOST=0.0.0.0
@@ -480,9 +509,9 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| API Version mismatch | Using old version | Use `2025-01-01-preview` for Knowledge Agents |
+| API Version mismatch | Using old version | Pin `AI_SEARCH_API_VERSION=2025-01-01-preview` for legacy `/agents/` endpoint OR `2025-11-01-preview` for the new `/knowledgebases/` endpoint. The two are NOT interchangeable — see Knowledge Bases migration callout above. |
 | Missing index | Index not created | Run `/setup` endpoint first |
-| Authentication failed | Bad credentials | Check API keys in `.env` |
+| Authentication failed | 401 / 403 from Search or AOAI | Threadlight pilots are **keyless-by-mandate** — verify the agent's UAMI has the required Entra roles (Search Index Data Reader, Cognitive Services OpenAI User, Azure AI User on the Foundry project) AND that `AZURE_CLIENT_ID` is exported into the container so DefaultAzureCredential picks the UAMI (not the dev-loop user). Do NOT bypass by setting `AI_SEARCH_KEY` or `AZURE_OPENAI_API_KEY`. |
 | No results | Empty index | Index sample documents first |
 | Timeout | Large retrieval | Reduce reasoning effort or chunk size |
 

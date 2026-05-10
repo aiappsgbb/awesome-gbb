@@ -435,8 +435,10 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 
 ## Tool Evaluator Quirks (Hard-Won Lessons)
 
-These were discovered through dual-variant benchmarking (GHCP vs MAF, 11 scenarios,
-6 evaluators each). See the full analysis at `threadlight-vnext/docs/dual-variant-eval-analysis.md`.
+These were discovered through dual-variant benchmarking (GHCP vs MAF, 11
+scenarios, 6 evaluators each) during the threadlight pilot run. The
+findings below are the durable, evaluator-side conclusions — there is no
+public companion analysis to link to.
 
 ### 1. Judge Model: MUST be gpt-5.4-mini
 
@@ -702,9 +704,19 @@ runs every N minutes (default: 15) and:
 # infra/jobs/continuous_eval/job.py
 import asyncio
 from datetime import datetime, timedelta, timezone
+from azure.identity.aio import DefaultAzureCredential
 from azure.monitor.query.aio import LogsQueryClient
 from azure.cosmos.aio import CosmosClient
-from azure.ai.evaluation import evaluate
+from azure.monitor.opentelemetry import configure_azure_monitor
+from opentelemetry import metrics as otel_metrics
+
+# These five helpers are co-located with this job in
+# infra/jobs/continuous_eval/ — generated alongside job.py from the
+# scaffolds documented in references/continuous-eval-job.md (this skill).
+from .config import load_yaml
+from .telemetry import emit_kpi_telemetry, raise_alert, record_foundry_eval_run
+from .compute import compute_metric, breaches_threshold
+from .sources import fetch_spans, fetch_audits
 
 KPI_TABLE = load_yaml("specs/kpis.yaml")  # extracted from SPEC § 9
 
@@ -739,10 +751,24 @@ the job for the same window doesn't double-count. Use the dedup pattern from
 
 #### Step 3 — Threshold alerts
 
-For each KPI with `direction: higher-is-better`, alert if value drops below
-target by more than 10% for 2 consecutive windows. For `lower-is-better`,
-inverse. Wire alerts via Azure Monitor Action Groups → Teams channel webhook
-or PagerDuty.
+For each KPI, the SPEC § 9 KPI table records the **direction** and **threshold
+comparator** explicitly. The Bicep templater MUST split the threshold into a
+KQL operator + numeric value — concatenating a string like `">= 0.65"` into a
+KQL `where` clause yields `where avg_value < >= 0.65` and the rule fails to
+deploy. KPI rows look like:
+
+```yaml
+# specs/SPEC.md § 9 (excerpt)
+kpis:
+  - id: alert_to_case_conversion_rate
+    target_operator: ">="    # >= | <= | > | <
+    target_value: 0.65       # numeric only
+    direction: higher-is-better
+    breach_operator: "<"     # KQL operator used in the alert query
+```
+
+Then the Bicep alert template uses `breach_operator` literally and
+`target_value` as a number — never a glued string:
 
 ```yaml
 # infra/modules/alerts.bicep (Phase 6 wires this if SPEC § 9 has KPIs)
@@ -751,7 +777,7 @@ resource alertRule 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = [for kp
   properties: {
     criteria: {
       allOf: [{
-        query: 'customMetrics | where name == "${kpi.id}" | summarize avg(value) by bin(timestamp, 30m) | where avg_value < ${kpi.target}'
+        query: 'customMetrics | where name == "${kpi.id}" | summarize avg_value=avg(value) by bin(timestamp, 30m) | where avg_value ${kpi.breach_operator} ${kpi.target_value}'
         threshold: 0
         operator: 'GreaterThan'
         timeAggregation: 'Count'
@@ -763,6 +789,9 @@ resource alertRule 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = [for kp
   }
 }]
 ```
+
+Wire alerts via Azure Monitor Action Groups → Teams channel webhook or
+PagerDuty.
 
 #### Step 4 — App Insights workbook (the customer-facing KPI dashboard)
 

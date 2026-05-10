@@ -145,7 +145,11 @@ and custom code.
 ```python
 import os, asyncio
 from typing import Any
-from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+# Use the SYNC azure.identity here — get_bearer_token_provider in the sync
+# module returns a callable that returns a string when invoked. Using the
+# .aio variant here returns a coroutine that gets f-string-formatted as
+# "Bearer <coroutine object _provider at 0x...>" and the server returns 401.
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
 
@@ -160,12 +164,14 @@ token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.de
 mcp_tool = MCPStreamableHTTPTool(
     name="vision_doc_speech_mcp",
     url=os.environ["TOOLBOX_MCP_ENDPOINT"],
-    # Use header_provider (NOT static `headers=`) so tokens refresh on expiry
-    header_provider=lambda: {"Authorization": f"Bearer {token_provider()}"},
-    load_prompts=False,         # GOTCHA #1: Foundry MCP returns 500 on prompts/list
+    # GOTCHA: MAF calls header_provider(kwargs) — it MUST accept one positional
+    # arg, not zero. Verified against agent_framework/_mcp.py in 1.x.
+    # Use header_provider (NOT static `headers=`) so tokens refresh on expiry.
+    header_provider=lambda kwargs: {"Authorization": f"Bearer {token_provider()}"},
+    load_prompts=False,         # GOTCHA: Foundry MCP returns 500 on prompts/list
 )
 
-# 3. GOTCHA #2: MAF's MCPStreamableHTTPTool._ensure_connected() calls send_ping(),
+# 3. GOTCHA: MAF's MCPStreamableHTTPTool._ensure_connected() calls send_ping(),
 #    which the Foundry MCP server rejects with 500. Override to a no-op.
 async def _no_ping(*args: Any, **kwargs: Any) -> None: return None
 mcp_tool._ensure_connected = _no_ping  # type: ignore[assignment]
@@ -176,7 +182,7 @@ async def main() -> None:
         name="ClaimsIntake",
         tools=[mcp_tool],
     ) as agent:
-        # GOTCHA #3: Toolbox MCP requires stream=True on tools/call.
+        # GOTCHA: Toolbox MCP requires stream=True on tools/call.
         # MAF Agent.run streams by default — explicitly avoid stream=False overrides.
         result = await agent.run("Transcribe the call and extract claim details.")
         print(result.text)
@@ -388,7 +394,11 @@ async def analyze_damage_photo(
     # The hosted agent's chat model handles the vision content part;
     # this tool just preps the input and returns a structured result.
     from openai import AsyncAzureOpenAI
-    # The Foundry Responses endpoint accepts standard OpenAI client calls
+    # The Foundry Responses endpoint accepts standard OpenAI client calls.
+    # Vision JSON-mode on the Responses API uses `text={"format": {...}}`,
+    # NOT the Chat-Completions `response_format=` kwarg. Verified against
+    # openai-python (responses.py) — passing response_format silently degrades
+    # to free-form text and breaks json.loads downstream.
     response = await openai_client.responses.create(
         model="gpt-5.4-mini",
         input=[{
@@ -398,7 +408,7 @@ async def analyze_damage_photo(
                 {"type": "input_image", "image_url": image_url},
             ],
         }],
-        response_format={"type": "json_object"},
+        text={"format": {"type": "json_object"}},
     )
     return json.loads(response.output_text)
 ```

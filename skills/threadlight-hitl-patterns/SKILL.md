@@ -184,44 +184,86 @@ sla = interaction["timeout_sla"]
 
 ### Step 3: Generate the handler
 
+Generate `src/bot/cards/{gate}_handler.py` with the **canonical handler
+contract** (matches what `card_router.route()` invokes — see Step 4).
+
 ```python
-# {gate}-handler.py
-async def handle({decision_kwargs}):
-    """Handles Action.Submit for this gate."""
-    # 1. Validate caller's identity (Teams provides it via Bot Framework)
-    # 2. Load the case from Cosmos (via MCP call or direct SDK)
-    # 3. Apply the gate decision (write back to Cosmos, fire downstream action)
-    # 4. Write audit trail (gate, decision, actor, timestamp, linked_rules, ...)
-    # 5. Return updated card (success or error message)
-    pass
+# {gate}_handler.py
+from botbuilder.core import TurnContext
+from botbuilder.schema import Activity
+
+async def handle(turn_context: TurnContext,
+                 activity: Activity,
+                 value: dict) -> Activity | None:
+    """Handle Action.Submit for the {gate} gate.
+
+    Args:
+        turn_context: Bot Framework turn context (for replying / continuing).
+        activity:     Original Action.Submit activity (for actor / channel data).
+        value:        activity.value parsed dict (gate, case_id, decision, edits, ...).
+
+    Returns:
+        Activity to send back as the card update, or None if no update needed
+        (e.g. handler queued an async escalation and will reply later).
+    """
+    case_id = value["case_id"]            # spec § 8 mandates case_id round-trip
+    actor = _actor_from(turn_context)     # Easy Auth / Bot Framework identity
+    # 1. Load the case from Cosmos (via MCP tool call or direct SDK with UAMI)
+    # 2. Apply the gate decision (write back to Cosmos, fire downstream action)
+    # 3. Write audit trail (gate, decision, actor, timestamp, linked_rules, ...)
+    # 4. Return updated card (success or error message)
+    raise NotImplementedError
 ```
+
+> The handler signature is **stable** across all gates (`approve`,
+> `edit-and-approve`, `reject`, `escalate`, `signoff`, `audit-view`,
+> `request-info`) so the router stays simple.
 
 ### Step 4: Wire into the bot
 
 Update `src/bot/cards/card_router.py` to map gate names to handlers:
 
 ```python
+import importlib
+import logging
+
+log = logging.getLogger(__name__)
+
 HANDLERS = {
-    "approve": "skills.kyc_decision.cards.approve_handler",
+    "approve":          "skills.kyc_decision.cards.approve_handler",
     "edit-and-approve": "skills.kyc_decision.cards.edit_and_approve_handler",
-    # ... one per gate ...
+    "reject":           "skills.kyc_decision.cards.reject_handler",
+    "escalate":         "skills.kyc_decision.cards.escalate_handler",
+    "signoff":          "skills.kyc_decision.cards.signoff_handler",
+    "audit-view":       "skills.kyc_decision.cards.audit_view_handler",
+    "request-info":     "skills.kyc_decision.cards.request_info_handler",
 }
 
-async def route(activity):
-    gate = activity.value.get("gate")
+async def route(turn_context, activity):
+    value = activity.value or {}
+    gate = value.get("gate")
     if not gate or gate not in HANDLERS:
-        return error_card("unknown gate")
-    handler = importlib.import_module(HANDLERS[gate]).handle
-    return await handler(**activity.value)
+        return error_card("unknown-gate", details=f"Got {gate!r}")
+    try:
+        handler = importlib.import_module(HANDLERS[gate]).handle
+    except (ImportError, AttributeError) as e:
+        log.exception("Handler import failed for gate=%s", gate)
+        return error_card("handler-unavailable", details=str(e))
+    return await handler(turn_context, activity, value)
 ```
+
+`error_card(code, details=None)` is a small helper that builds an
+Adaptive Card with a short red-banner error message and a "Try again"
+button — define it once in `src/bot/cards/_error.py` and import.
 
 ### Step 5: Generate the audit-trail writer
 
-`src/bot/cards/audit_trail.py` writes every gate outcome to Cosmos with this schema:
+`src/bot/cards/audit_trail.py` writes every gate outcome to Cosmos with
+this schema:
 
 ```json
 {
-  "id": "audit-{uuid}",
+  "id": "audit-{case_id}-{gate}-{activity_id}",
   "case_id": "...",
   "gate": "approve | edit-and-approve | reject | escalate | signoff | audit-view | request-info",
   "decision": "approved | declined | cancelled | escalated_to | acknowledged | viewed | requested",
@@ -234,22 +276,41 @@ async def route(activity):
 }
 ```
 
+> **Deterministic id, not `uuid4`.** The `id` is composed from the case
+> id, the gate name, and the source `activity.id` from Bot Framework.
+> This makes the write **idempotent** under Bot Framework retries (Teams
+> is at-least-once for outgoing card submissions when the bot times out)
+> — a duplicate Action.Submit collapses into a single audit row instead
+> of double-booking the case. Pair with `upsert_item` not `create_item`.
+
 **Keyless Cosmos pattern (mandatory for threadlight pilots):**
 
 ```python
 # src/bot/cards/audit_trail.py
+import os
 from azure.cosmos.aio import CosmosClient
 from azure.identity.aio import DefaultAzureCredential
 
-# Cosmos account MUST be provisioned with disableLocalAuth: true (see azd-patterns).
-# Pass DefaultAzureCredential() — NOT a connection string, NOT a master key.
+# Module-level singletons — created once at bot startup, reused for the
+# bot's lifetime. Re-creating CosmosClient per request is a known cause
+# of socket exhaustion under load (Cosmos SDK opens up to 100 sockets
+# per client; reuse keeps it bounded).
+_credential = DefaultAzureCredential()
+_client = CosmosClient(url=os.environ["COSMOS_ENDPOINT"], credential=_credential)
+_container = (
+    _client.get_database_client(os.environ["COSMOS_DB"])
+           .get_container_client("case_audit")
+)
+
 async def write_audit(record: dict) -> None:
-    async with (
-        DefaultAzureCredential() as credential,
-        CosmosClient(url=COSMOS_ENDPOINT, credential=credential) as client,
-    ):
-        container = client.get_database_client(DB_NAME).get_container_client("case_audit")
-        await container.create_item(body=record)
+    # Deterministic id: see audit-schema.md for the rationale.
+    # upsert is idempotent under Bot Framework retries.
+    await _container.upsert_item(body=record)
+
+async def aclose() -> None:
+    """Call from bot shutdown hook to release sockets cleanly."""
+    await _client.close()
+    await _credential.close()
 ```
 
 > **Keyless RBAC pin**: assign `Cosmos DB Built-in Data Contributor`
@@ -283,8 +344,10 @@ For gates with a `Timeout/SLA` in spec § 8:
 - **Never include free-form chat in an action card.** That's a different
   surface (chat inside Teams).
 - **Always include case-id.** The handler needs to round-trip it.
-- **Use Adaptive Cards 1.5+.** Older versions lack `Input.ChoiceSet`'s
-  `wrap` and `Action.Submit`'s `data` shape we depend on.
+- **Use Adaptive Cards 1.5+.** v1.5 adds `carouselPage`, table layout,
+  `Action.Execute` with refresh, and `targetWidth` responsive overrides
+  that we depend on for the workspace UI's adaptive width. Teams supports
+  v1.5 in current desktop / mobile / web clients.
 
 ---
 
@@ -295,7 +358,7 @@ Gates with SLAs need a follow-up watcher:
 ```
 spec § 8 says: "Approve within 4h, otherwise escalate to manager"
        ↓
-ACA Job (cron */15 min): scan Cosmos for cases where:
+ACA Job (cron `*/15 * * * *` — every 15 minutes): scan Cosmos for cases where:
   status='awaiting_approval' AND created_at < now() - 4h
        ↓
 For each match:
@@ -311,17 +374,18 @@ declarations harvested by this skill.
 
 ## Reference files
 
-| File | Purpose |
-|------|---------|
-| `references/cards/approve.json` | Canonical approve card template |
-| `references/cards/edit-and-approve.json` | Canonical edit-and-approve card template |
-| `references/cards/reject.json` | Canonical reject card template |
-| `references/cards/escalate.json` | Canonical escalate card template |
-| `references/cards/signoff.json` | Canonical signoff card template |
-| `references/cards/audit-view.json` | Canonical audit-view card template |
-| `references/cards/request-info.json` | Canonical request-info card template |
-| `references/audit-schema.md` | Full audit-trail JSON schema |
-| `references/sla-watchers.md` | How SLA watchers wire to `threadlight-event-triggers` |
+| File | Purpose | Status |
+|------|---------|--------|
+| `references/cards/README.md` | Per-gate card schemas (one section per gate, embedded) | shipped |
+| `references/audit-schema.md` | Full audit-trail JSON schema + deterministic-id rationale | shipped |
+
+> Card templates and SLA-watcher wiring details live inside the two files
+> above (one consolidated reference per concern keeps the templates in
+> sync with the gate-vocabulary changes documented in
+> `threadlight-design/references/speckit-template.md` § 8). SLA-watcher
+> Bicep + cron wiring is generated by `threadlight-event-triggers` and
+> consumes only the SLA fields written by this skill — there is no
+> separate `sla-watchers.md` reference.
 
 ---
 

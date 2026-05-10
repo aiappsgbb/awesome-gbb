@@ -53,7 +53,7 @@ Failing to handle any of these causes `FoundryChatClient.get_mcp_tool()` to sile
 | `tools/list` | Discover available tools | Must return tool definitions |
 | `prompts/list` | List prompts | Required by agent-framework (return empty list) |
 | `resources/list` | List resources | Required by agent-framework (return empty list) |
-| `logging/setlevel` | Set log level | **Must be lowercase** — `logging/setlevel` not `logging/setLevel` |
+| `logging/setLevel` | Set log level | Per [MCP spec § Logging](https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging) — camelCase `setLevel` (capital L). Lowercase `setlevel` returns `-32601 Method not found` from spec-compliant clients. |
 
 **Transport requirements:**
 - Foundry only accepts **remote HTTP** MCP endpoints (no stdio, no local)
@@ -84,14 +84,24 @@ A pre-built .NET Cosmos DB MCPToolKit image provides 10 tools out of the box:
 
 ### Deployment
 
-Deploy as a per-project ACA with these environment variables:
+Deploy as a per-project ACA. **Threadlight pilots are keyless-by-mandate** —
+prefer managed identity over Cosmos keys.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `COSMOS_ENDPOINT` | ✅ | Cosmos DB account endpoint |
 | `COSMOS_DATABASE` | ✅ | Default database name |
-| `COSMOS_AUTH_KEY` | ✅ | Cosmos DB key (store in ACA secrets) |
-| `DEV_BYPASS_AUTH` | No | Set `true` for dev (skip auth on MCP endpoint) |
+| `AZURE_CLIENT_ID` | ✅ (keyless) | UAMI client ID — the MCPToolKit's Cosmos SDK uses `DefaultAzureCredential` which reads this |
+| `COSMOS_AUTH_KEY` | ❌ avoid | Cosmos master key. Only for local dev; for ACA, **disable account keys** at the Cosmos resource (`disableLocalAuth: true`) and grant the UAMI `Cosmos DB Built-in Data Contributor` (data-plane RBAC, NOT control-plane Contributor) on the database scope |
+| `DEV_BYPASS_AUTH` | No | Set `true` only for local dev; never in prod |
+
+> **RBAC pin (verified May 2026).** Cosmos DB SQL API data-plane access is
+> NOT granted by control-plane roles like `Contributor` or
+> `DocumentDB Account Contributor`. You MUST assign the data-plane role
+> `Cosmos DB Built-in Data Contributor`
+> (`00000000-0000-0000-0000-000000000002`) via `az cosmosdb sql role
+> assignment create`. This is the same gotcha called out in
+> `threadlight-hitl-patterns` — keep both wirings consistent.
 
 ### Agent Configuration
 
@@ -183,23 +193,43 @@ param location string = resourceGroup().location
 @description('Container app environment ID')
 param containerAppEnvironmentId string
 
-@description('Container image')
+@description('Container image (in the ACR; pulled with the UAMI below)')
 param image string
 
 @description('Environment variables')
 param env array = []
 
+@description('User-assigned managed identity resource ID (for ACR pull + downstream RBAC)')
+param userAssignedIdentityId string
+
+@description('Container Registry name (no FQDN — just the resource name)')
+param acrName string
+
 resource mcpAca 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${userAssignedIdentityId}': {} }
+  }
   properties: {
     managedEnvironmentId: containerAppEnvironmentId
     configuration: {
       ingress: {
         external: true
         targetPort: 8080
-        transport: 'auto'
+        // Use 'http' (HTTP/1.1 + Streamable HTTP) explicitly. 'auto' was
+        // deprecated for new container apps in early 2026 — leaving it
+        // here makes new revisions fail at deploy time with
+        // `InvalidParameterValueInContainerTemplate`.
+        transport: 'http'
       }
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: userAssignedIdentityId
+        }
+      ]
     }
     template: {
       containers: [
@@ -211,6 +241,24 @@ resource mcpAca 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
+          // Liveness + startup probes — Foundry's MCP client only flips
+          // the server "healthy" if /health returns 200; missing probes
+          // mean cold-start tool calls 502 until the first scrape.
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: { path: '/health', port: 8080 }
+              initialDelaySeconds: 5
+              periodSeconds: 10
+            }
+            {
+              type: 'Startup'
+              httpGet: { path: '/health', port: 8080 }
+              initialDelaySeconds: 2
+              periodSeconds: 3
+              failureThreshold: 30
+            }
+          ]
         }
       ]
       scale: {
@@ -367,7 +415,7 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | MCP tools not appearing in agent | Server returns 400/404 on protocol methods | All 6 JSON-RPC methods must return HTTP 200 |
-| `logging/setLevel` error | Case-sensitive method name | Use lowercase: `logging/setlevel` |
+| `logging/setLevel` returns -32601 Method not found | Server didn't implement the optional logging capability OR used wrong casing | Either implement the method per [MCP spec § Logging](https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging) (camelCase `setLevel`) and declare `capabilities.logging`, or simply omit the capability — Foundry's MCP client tolerates servers that don't expose logging. |
 | MCP connection timeout | ACA not started (cold start) | Runtime retries automatically; set `minReplicas: 1` for always-on |
 | `invalid_payload` error | `${ENV_VAR}` in mcp-config.json not resolved → empty URL | Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. |
 | Tools listed but calls fail | Tool call timeout (>100s) | Optimize tool implementation or increase ACA resources |

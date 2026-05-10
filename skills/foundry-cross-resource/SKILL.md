@@ -60,9 +60,10 @@ trust boundary.
 
 ## 2. The 100% reliable checklist
 
-Before any agent call, ALL of these must be true. Cross them off in order; the
-test scripts in `files\test_phase3_apikey.py` / `test_phase4_pmi.py`
-(this session's workspace) verify each step.
+Before any agent call, ALL of these must be true. Cross them off in order;
+the official validator script
+[`test_apim_connection.py`](https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/test_apim_connection.py)
+plus the field-tested probes in §8 below verify each step end-to-end.
 
 | # | Item | How to verify |
 |---|------|---------------|
@@ -551,12 +552,37 @@ is the official validator — it issues a probe `/models` (or `/deployments`)
 request and surfaces auth / discovery / target reachability problems before
 agent calls.
 
-### 8.3 Field-tested test scripts (this session)
+### 8.3 Field-tested probes
 
-`files\test_phase3_apikey.py` and `files\test_phase4_pmi.py` (in this
-session's workspace) exercise all three invocation patterns plus the negative
-chat.completions case for both auth modes. Reuse them as regression tests
-when you provision new APIM/Foundry combinations.
+Stand up two minimal probe scripts under `tests/` in your consumer project
+— one per auth mode — that exercise all three invocation patterns plus
+the negative `chat.completions` case for `ApiKey`. Pattern shape:
+
+```python
+# tests/probe_apim_apikey.py  (and probe_apim_pmi.py — same shape, different connection)
+import os
+from azure.identity import DefaultAzureCredential
+from azure.ai.projects import AIProjectClient
+
+CONNECTION = os.environ["APIM_CONNECTION_NAME"]   # aigw-strmeta or aigw-pmi
+DEPLOYMENT = os.environ["APIM_DEPLOYMENT_NAME"]   # e.g. gpt-5.4-mini
+
+project = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+    allow_preview=True,
+)
+oai = project.inference.get_openai_client(api_version="v1")
+
+# Pattern A — Responses
+r = oai.responses.create(model=f"{CONNECTION}/{DEPLOYMENT}",
+                         input="Say PONG", max_output_tokens=16)
+assert r.output_text, "Pattern A returned empty output"
+
+# Pattern B/C — see §6 for full hosted-agent invocation shapes
+```
+
+Run them as a regression gate when you provision new APIM/Foundry combinations.
 
 ---
 
@@ -588,30 +614,37 @@ project's outbound private DNS zone.
 
 ---
 
-## 11. Verified working configuration (2026-04-23)
+## 11. Verified working configuration shape
 
-This section captures the exact resources used in the live verification of
-this skill. Reproducible end-to-end.
+This section captures the resource shape used in live verification of
+this skill (subscriptions, principal IDs, and resource names redacted —
+the recipe is reproducible from the placeholders).
 
 | Component | Value |
 |-----------|-------|
-| Subscription | `3f67d949-7954-461f-867c-a8d3058b4d9a` (fruocco-1) |
-| Tenant | `cd150465-0cc5-4f78-869c-f4f803671e78` (`me-mngenv`) |
-| Backend account | `emea-aigbb-demos-oai` (Azure OpenAI, `rg-infra`, East US 2) |
-| Backend deployment | `gpt-4o-mini` v `2024-07-18` |
-| APIM | `emea-gbb-ai-apim` (`rg-infra`, Developer SKU, system-assigned MI) |
-| APIM MI principal | `b17a4023-f79b-4047-bf64-907100375401` |
+| Subscription | `<your-subscription-guid>` |
+| Tenant | `<your-tenant-guid>` |
+| Backend account | `<backend>-oai` (Azure OpenAI, `<rg-infra>`, East US 2) |
+| Backend deployment | `gpt-5.4-mini` (or `gpt-4o-mini` v `2024-07-18` — both verified; gpt-4o-mini is legacy and reaches end-of-support per Azure OpenAI lifecycle calendar) |
+| APIM | `<apim>` (`<rg-infra>`, Developer SKU is fine for testing; Standard v2 / Premium for prod, system-assigned MI) |
+| APIM MI principal | `<apim-mi-objectId>` |
 | APIM MI RBAC | `Cognitive Services OpenAI User` on backend account |
 | APIM API (ApiKey) | `xtest-aoai`, `subscriptionRequired=true`, header `api-key` |
 | APIM API (PMI) | `xtest-aoai-pmi`, `subscriptionRequired=false`, AAD-token-validated |
-| Consumer account | `xtest-foundry-mr5kfi` (`rg-foundry-xtest-mr5kfi`, Sweden Central) |
-| Consumer project | `xtest-proj-mr5kfi` |
-| Consumer project MI clientId | `525b43a3-474e-4777-9d62-06ee330d46fc` |
-| Consumer project endpoint | `https://xtest-foundry-mr5kfi.services.ai.azure.com/api/projects/xtest-proj-mr5kfi` |
-| Connection (ApiKey) | `aigw-strmeta`, `target=https://emea-gbb-ai-apim.azure-api.net/xtest-aoai` |
-| Connection (PMI) | `aigw-pmi`, `target=https://emea-gbb-ai-apim.azure-api.net/xtest-aoai-pmi`, `audience=https://cognitiveservices.azure.com` |
+| Consumer account | `<consumer-foundry>` (`<rg-foundry>`, Sweden Central) |
+| Consumer project | `<consumer-project>` |
+| Consumer project MI clientId | `<consumer-project-mi-clientId>` |
+| Consumer project endpoint | `https://<consumer-foundry>.services.ai.azure.com/api/projects/<consumer-project>` |
+| Connection (ApiKey) | `aigw-strmeta`, `target=https://<apim>.azure-api.net/xtest-aoai` |
+| Connection (PMI) | `aigw-pmi`, `target=https://<apim>.azure-api.net/xtest-aoai-pmi`, `audience=https://cognitiveservices.azure.com` |
 | Test result (ApiKey) | Pattern A ✅ Pattern B ✅ Pattern C ✅ Negative chat.completions → 404 ✅ |
 | Test result (PMI) | Pattern A ✅ Pattern B ✅ Pattern C ✅ |
+
+> **Model currency note.** The verification originally ran on
+> `gpt-4o-mini`. For new pilots, prefer `gpt-5.4-mini` (current
+> Foundry-routable chat-mini family as of May 2026). The Pattern A/B/C
+> behaviour is identical; only the deployment name in the
+> `chat.completions` / `responses.create` call changes.
 
 SDK versions used: `azure-ai-projects 2.1.0`, `openai 2.36.0`,
 `azure-identity 1.x`. Compatible with `azure-ai-projects >= 2.0.0`.

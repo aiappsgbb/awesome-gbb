@@ -1,31 +1,34 @@
 ---
 name: threadlight-design
 description: >
-  Spec out any business process or customer use case, then generate agent architecture
-  (AGENTS.md + Skills). Produces a durable SpecKit specification first (process flow,
-  business rules, data models, tool contracts, mock data), then derives implementation
-  artifacts from the spec. Works for any domain — CX front desks, document processing,
-  content research, backend automation, monitoring, reporting, and beyond.
-  USE FOR: design a process, spec out a use case, create agent architecture, automate a
-  workflow, threadlight design, skill factory, business process specification, speckit,
-  define a customer scenario, mock backend systems, design an agent for any workflow.
+  Spec out a business process or customer use case for an enterprise pilot, then
+  generate agent architecture (AGENTS.md + Skills) — a durable SpecKit specification
+  first (process flow, business rules, data models, tool contracts, mock data,
+  KPIs, governance), then implementation artifacts derived from the spec. Targets
+  named LOB processes in regulated industries (FSI, Mfg, Retail, Telco, Healthcare,
+  Utilities) where a customer SME will judge the SPEC on industry realism before
+  the demo even runs.
+  USE FOR: design a process, spec out a use case, create agent architecture, automate
+  a regulated workflow, threadlight design, skill factory, business process
+  specification, speckit, define a customer scenario, mock backend systems.
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
-  general Q&A.
+  general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 ---
 
 # Threadlight Design
 
-Turn any business process or customer use case into a **durable specification** (SpecKit)
-and then derive **AGENTS.md + Skills** from it — ready for development and deployment.
+Turn a business process or customer use case into a **durable specification** (SpecKit)
+and then derive **AGENTS.md + Skills** from it — ready for a credible enterprise pilot
+that holds up in front of an industry SME.
 
 ## When to Use
 
 Invoke this skill when the user wants to:
-- Spec out a business process or customer scenario (any domain)
-- Design agent architecture for a workflow
-- Create a structured skill folder with formal specification
-- Mock backend systems they can't access yet (SAP, CRM, corporate DBs)
-- Turn vague requirements into a concrete, reviewable spec
+- Spec out a business process or customer scenario (any regulated LOB domain)
+- Design agent architecture for a workflow that will face a CIO / CCO / COO / CDO
+- Create a structured skill folder with a formal, audit-ready specification
+- Mock backend systems they can't access yet (SAP, CRM, core banking, OSS/BSS)
+- Turn vague requirements into a concrete, reviewable spec with cited industry data
 
 ## Workflow Overview
 
@@ -159,16 +162,22 @@ Reference: `references/process-traits.md`
    - Case-based — long-lived cases (open → in-progress → resolved)
    - Pipeline — items flow through ordered stages
 
-   > **Fast-PoC default:** If the user doesn't know yet, assume **stateless** and
-   > flag in spec § 12 Assumptions: "Assumed stateless — review for case lifecycle needs."
+   > **Default:** If the user doesn't know yet, **ask** rather than assume.
+   > Stateless is the wrong default for any regulated process — assume
+   > **case-based** for FSI / Healthcare / regulated supplier risk and
+   > flag in spec § 12: "Defaulted to case-based; confirm lifecycle with
+   > stakeholder."
 
 8. **Does the agent take consequential actions?** (Action Criticality trait)
    - Read-only — only reads/analyzes data
    - Reversible writes — creates/updates data that can be undone
    - Irreversible actions — payments, approvals, notifications, external writes
 
-   > **Fast-PoC default:** If the user doesn't know yet, assume **read-only** and
-   > flag in spec § 12: "Assumed read-only — review before adding write/approval actions."
+   > **Default:** Read-only is the right default **only for the first
+   > pilot iteration**. For any second-iteration spec, **ask** the user
+   > which writes are in scope and document them in § 8 (Human Interaction
+   > Points) with their action gates. A regulated process whose write
+   > surface stays at "read-only" forever is a tutorial, not a pilot.
 
 #### Trait-Driven Branching
 
@@ -224,7 +233,7 @@ Must include all sections from the template:
 10. **Trigger & Run Model** — how/when the process executes, volume, SLA
 10b. **Triggers (Receiver contract)** — receiver type, idempotency key, dedup window, dead-letter rule. **INPUT CONTRACT for `threadlight-event-triggers`.** *Required for event-driven and scheduled processes.*
 11. **Security, Compliance & Governance** — PII, auth, retention, regulatory, audit
-11b. **Governance Posture (Citadel opt-in)** — `citadel.required` flag + spoke artifacts needed. **INPUT CONTRACT for the `citadel-spoke-onboarding` handoff in `threadlight-deploy`.** *Required for every regulated process.*
+11b. **Governance Posture (AI Governance Hub spoke — opt-in)** — `governance_hub.required` flag + spoke artifacts needed. **INPUT CONTRACT for the optional governance-hub spoke handoff in `threadlight-deploy`.** *Required for every regulated process.*
 11c. **Tech Stack (Module selectors)** — Bicep module on/off list (cosmos, search, doc-intel, speech, event-grid, service-bus, foundry-iq-index, etc.). **INPUT CONTRACT for the `azd-patterns` Bicep module library and the composer in `threadlight-deploy`.** *Required for every process.*
 11d. **Demo Data (Realism rules)** — per-entity volumes, distribution, golden cases, reset semantics, industry realism rules. **INPUT CONTRACT for `threadlight-demo-data-factory`.** *Required for every process with mocked systems.*
 12. **Assumptions & Open Questions** — what's given, what needs stakeholder input
@@ -262,9 +271,24 @@ These scenarios feed directly into `foundry-evals` for post-deployment scoring.
 #### `specs/sample-data/{entity}.json` — Mock data (for systems marked "mock")
 
 For each entity in § 4 Data Models where the backing system is marked "mock" in § 5:
-- Generate 5-10 realistic sample records matching the schema
-- Include varied data (different values, edge cases, some optional fields missing)
-- Add a `_meta` field with generation date and schema version
+- Generate **enough records to be credible at the scale named in § 11d**:
+  the quick-rough default is **≥ 50 records per entity** for narrative
+  walkthrough and **≥ 10K records** for executive scale-conversation.
+  See `references/data-realism/{industry}.md` § "Production-realism
+  volume + SLA defaults" for industry-specific volumes — those values
+  win when they conflict with this default.
+- Include varied data, hand-curated golden cases (named, story-bearing),
+  some optional fields missing, and skewed distributions matching
+  reality (no random uniform).
+- Wrap each file as `{"_meta": {...}, "records": [...]}`. Do not put
+  `_meta` as a sibling key to records — `threadlight-demo-data-factory`
+  and `threadlight-workspace-ui` both depend on the wrapper shape.
+
+> **Heavy lift goes to `threadlight-demo-data-factory`.** This skill
+> writes the seed JSONs at narrative scale; the factory skill generates
+> additional records to scale-conversation volume on demand using
+> deterministic seeds, capped concurrency, and the per-industry
+> distributions documented in `references/data-realism/{industry}.md`.
 
 #### `specs/sample-data/README.md` — Migration guide
 

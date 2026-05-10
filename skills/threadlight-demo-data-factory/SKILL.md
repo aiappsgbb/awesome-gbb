@@ -120,6 +120,7 @@ Run: uv run scripts/seed_data.py [--seed 42]
 Output: specs/sample-data/*.json (deterministic with --seed)
 """
 import json, random
+from datetime import datetime, timezone
 from pathlib import Path
 from faker import Faker
 
@@ -153,9 +154,23 @@ if __name__ == "__main__":
     for entity in ENTITIES:
         records = ENTITY_GENERATORS[entity](VOLUMES[entity])
         path = DATA_DIR / f"{entity}.json"
-        # Always include _meta for traceability
-        meta = {"_meta": {"generated_at": datetime.utcnow().isoformat(), "seed": 42, "version": "1.0", "entity": entity, "count": len(records)}}
-        path.write_text(json.dumps([meta] + records, indent=2))
+        # Wrap shape: top-level object with _meta + records — NOT a list
+        # of [meta, record, record, ...]. Loaders MUST do
+        # `json.load(f)["records"]` and `json.load(f)["_meta"]` rather than
+        # filter "is the first element a meta?". The list-with-meta-prepended
+        # form silently breaks any consumer that iterates the JSON as a flat
+        # array (eval scenarios, the workspace UI dataset loader, etc.).
+        out = {
+            "_meta": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "seed": 42,
+                "version": "1.0",
+                "entity": entity,
+                "count": len(records),
+            },
+            "records": records,
+        }
+        path.write_text(json.dumps(out, indent=2))
         print(f"  wrote {path} ({len(records)} records)")
 ```
 
@@ -169,23 +184,55 @@ Safe to run while the agent is up — completes in <30s for live demo recovery.
 
 Usage: uv run scripts/reset_data.py [--container <name>]
 """
-import asyncio, json
+import asyncio, json, os
 from pathlib import Path
 from azure.identity.aio import DefaultAzureCredential
 from azure.cosmos.aio import CosmosClient
 
 DATA_DIR = Path(__file__).parent.parent / "specs" / "sample-data"
+COSMOS_ENDPOINT = os.environ["COSMOS_ENDPOINT"]
+DB_NAME = os.environ["COSMOS_DATABASE"]
+
+# Cap concurrent Cosmos requests so the SDK doesn't exhaust connections
+# under "wipe + reload 5 containers x ~1000 docs each" parallel fan-out.
+SEM = asyncio.Semaphore(8)
+
+async def _bounded(coro):
+    async with SEM:
+        return await coro
 
 async def reset_container(client, db_name: str, container_name: str, entity_file: str):
     db = client.get_database_client(db_name)
     container = db.get_container_client(container_name)
-    # Delete all items (chunked)
-    async for item in container.read_all_items():
-        await container.delete_item(item["id"], partition_key=item.get("partition_key", item["id"]))
-    # Reload from JSON
-    records = json.loads((DATA_DIR / entity_file).read_text())
-    records = [r for r in records if not r.get("_meta")]
-    await asyncio.gather(*[container.upsert_item(r) for r in records])
+
+    # Read the partition-key path from container metadata so we use the
+    # CORRECT field, not a guessed `partition_key` attribute. Docs can
+    # legitimately omit the partition_key value (it's derived from the path).
+    container_props = await container.read()
+    pk_path = container_props["partitionKey"]["paths"][0].lstrip("/")
+
+    def _pk_value(item):
+        # nested-path support — pk_path can be `tenant_id` or `org/tenant_id`
+        cursor = item
+        for part in pk_path.split("/"):
+            cursor = cursor.get(part) if isinstance(cursor, dict) else None
+        return cursor if cursor is not None else item["id"]
+
+    # Load fresh records FIRST — if loading fails, abort BEFORE deleting,
+    # so a malformed JSON doesn't leave the container empty mid-demo.
+    payload = json.loads((DATA_DIR / entity_file).read_text())
+    records = payload["records"] if isinstance(payload, dict) else [
+        r for r in payload if not r.get("_meta")  # back-compat for old shape
+    ]
+
+    # Wipe (bounded concurrency)
+    await asyncio.gather(*[
+        _bounded(container.delete_item(item["id"], partition_key=_pk_value(item)))
+        async for item in container.read_all_items()
+    ])
+
+    # Reload (bounded concurrency)
+    await asyncio.gather(*[_bounded(container.upsert_item(r)) for r in records])
     print(f"  reset {container_name}: {len(records)} records")
 
 async def main():
@@ -201,7 +248,8 @@ if __name__ == "__main__":
 ```
 
 For `append-only`: delete only items with `_meta.demo: true` — preserve
-human-introduced records.
+human-introduced records. Use the same partition-key-discovery pattern;
+do NOT assume a field name.
 
 For `none`: skip generating reset_data.py (read-only datasets).
 

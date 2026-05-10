@@ -291,12 +291,27 @@ Where humans are involved — approvals, escalations, input requests, feedback l
 > map to at least one **measurable KPI** that can be computed from agent traces
 > (Application Insights). This is what the continuous evaluation dashboard
 > watches week-over-week — not just the binary scenario pass/fail.
+>
+> **Use the industry-native KPI vocabulary** from `references/data-realism/{industry}.md` § "<industry>-native KPIs". Generic names like `auto_decline_rate` should be the exception — most processes have a domain-recognized KPI an SME will accept on first read.
+
+**Industry exemplars** (replace these with KPIs from the relevant industry file):
+
+| Industry | Example KPI (good) | Example KPI (bad) |
+|----------|--------------------|-------------------|
+| FSI / AML | `alert_to_case_conversion_rate`, `l1_false_positive_rate`, `sar_filing_cycle_days_p50` | `decline_rate` |
+| FSI / KYC | `edd_throughput_cases_per_analyst_per_day`, `first_touch_resolution_pct` | `auto_decline_rate` |
+| Mfg / Plant | `oee_pct`, `first_pass_yield_pct`, `dpmo`, `capa_closure_cycle_days_p50` | `quality_score` |
+| Mfg / Supply | `otif_pct_inbound`, `single_source_pct_of_spend` | `supply_score` |
+| Retail / PIM | `pim_completeness_pct`, `time_to_publish_hours_p95` | `enrichment_rate` |
+| Retail / Returns | `return_cycle_time_business_days_p50`, `restock_a_pct` | `return_resolution_rate` |
+| Telco / Order | `order_fallout_rate_pct`, `fallout_mttr_hours_p50` | `order_success_rate` |
+| Telco / Network | `mttr_hours_p1`, `first_call_resolution_pct` | `incident_resolution_rate` |
 
 | BR | KPI Name | Formula (computable from traces) | Target | Alert threshold |
 |----|----------|-----------------------------------|--------|-----------------|
-| BR-001 | `auto_decline_rate` | `count(decisions where outcome=auto_decline) / count(decisions)` | 5–15% | <2% or >25% |
+| BR-001 | `<industry-native-kpi>` | `count(decisions where outcome=...) / count(decisions)` | (industry benchmark from data-realism file) | (alert when off-baseline) |
 | BR-007 | `policy_citation_rate` | `count(answers where citations≥1) / count(answers)` | 100% | <95% |
-| BR-012 | `human_escalation_rate` | `count(escalated) / count(decisions)` | 10–20% | <5% or >30% |
+| BR-012 | `human_escalation_rate` | `count(escalated) / count(decisions)` | (industry-realistic band) | (off-baseline) |
 
 > Trace fields the agent must emit (declared in the skills' procedures):
 > `decision.outcome`, `decision.business_rules_fired`, `answer.citations[]`,
@@ -338,22 +353,56 @@ How and when the process executes.
 
 ## 11. Security, Compliance & Governance
 
-- **PII involved**: yes / no — [if yes, what fields]
-- **Auth model**: [How users/systems authenticate]
-- **Data retention**: [How long to keep data, deletion policy]
-- **Regulatory**: [GDPR, HIPAA, SOX, industry-specific — or none]
-- **Access control**: [Who can run this, who can see results]
-- **Audit requirements**: [What must be logged for auditability]
+- **PII involved**: yes / no — [if yes, what fields, with citation to the
+  governing regime (HIPAA Safe Harbor § 164.514, GDPR Art 9, CPNI 47 CFR
+  Part 64 Subpart U, PCI-DSS v4.0, etc.)]
+- **Auth model**: [How users/systems authenticate — keyless / managed
+  identity end-to-end is the default; any deviation is a flag]
+- **Data residency**: [Customer expectation — `EU`, `US`, `UK`, `India`,
+  `multi-region`. Names the Azure regions chosen. GDPR / PIPL / DPDPA
+  compliance implications.]
+- **Data retention**: [How long to keep agent traces, case data, audit
+  events; deletion policy; right-to-be-forgotten path]
+- **Regulatory**: [GDPR, HIPAA, SOX, FFIEC, MiFID II, PCI-DSS, ISO 27001,
+  SOC 2 Type II, IATF 16949, GxP, ITAR/EAR, industry-specific — or
+  `none` for internal automation only]
+- **Access control**: [RBAC matrix — who can run this, who can see
+  results. Reference Easy Auth / Entra ID groups by name.]
+- **Audit requirements**: [What must be logged for auditability —
+  decision rationale, citations, model+prompt version, human-overrides,
+  upstream/downstream data lineage. Default: 7-year retention for
+  regulated; 90-day for unregulated.]
+- **Responsible AI posture**: [Risk tier per Microsoft RAI Standard v2
+  (`limited`, `general`, `consequential`, `restricted`); applicable RAI
+  goals — fairness, reliability, privacy, transparency, accountability;
+  GDPR Art 22 (automated-decision rights) implications if applicable]
+- **Model governance**: [Model + prompt version pinning; promotion gate
+  from dev→prod (eval pass threshold); rollback procedure; drift
+  monitoring cadence]
+- **Customer onboarding RACI**: [Who on the customer side is **R**esponsible /
+  **A**ccountable / **C**onsulted / **I**nformed for this process —
+  business sponsor, IT owner, security/compliance signoff, legal/privacy,
+  ops handoff. Demos that don't name a sponsor don't fund.]
+- **ROI hypothesis**: [Quantifiable lever — `FTE-hours × loaded-rate`,
+  `revenue-at-risk × probability`, `regulator-fine-avoided`, `cycle-time-
+  compression × volume`. Cite the formula explicitly so the customer can
+  replace the inputs with their own numbers.]
+- **Change management**: [Org-side adoption plan — who trains the L1/L2
+  analysts, how the agent's recommendations enter the existing workflow
+  (parallel-run period? shadow-mode? full cutover?), what KPIs prove
+  adoption stuck.]
 
-### 11b. Governance Posture (Citadel opt-in)
+### 11b. AI Governance Hub Posture (opt-in spoke)
 
-> **INPUT CONTRACT for the `citadel-spoke-onboarding` handoff in
-> `threadlight-deploy`.** Every regulated process should declare whether it
-> needs to land as a Citadel spoke. The deploy flow generates the standalone
-> agent first; if `citadel.required` is true, deploy then runs the
-> onboarding handoff as a separate, opt-in step.
+> **INPUT CONTRACT for the optional governance-hub spoke handoff in
+> `threadlight-deploy`.** Every regulated process should declare whether
+> it needs to land as a spoke against an AI Governance Hub (e.g. an
+> internal central LLM gateway / policy plane). The deploy flow generates
+> the standalone agent first; if `governance_hub.required` is true,
+> deploy then runs the spoke-onboarding handoff as a separate, opt-in
+> step.
 
-- **Citadel required**: `yes` (FSI, healthcare, regulated supplier risk) | `no` (PoC, internal automation)
+- **Governance hub spoke required**: `yes` (FSI, healthcare, regulated supplier risk) | `no` (PoC, internal automation)
 - **Reason**: [Why — regulator audit, central LLM gateway policy, Key Vault federation, RAI policy enforcement, etc.]
 - **Spoke artifacts needed**: list (e.g. `Access Contract`, `APIM connection`, `Key Vault secret federation`, `Product Policy`, `JWT auth`, `network whitelist`)
 - **Tenant strategy**: `shared demo tenant` (default) | `dedicated customer tenant` | `customer-deferred`
@@ -362,31 +411,50 @@ How and when the process executes.
 
 ## 11c. Tech Stack (Module selectors)
 
-> **INPUT CONTRACT for `azd-patterns` Bicep module library and the composer in
-> `threadlight-deploy`.** Declare which infra modules the process needs — the
-> composer reads this list and wires the right Bicep modules into `infra/main.bicep`.
-> Don't list modules the process doesn't need (every selected module costs money).
+> **INPUT CONTRACT for `azd-patterns` Bicep module library and the
+> composer in `threadlight-deploy`.** This selector vocabulary is the
+> **canonical source of truth** — both the `azd-patterns` module library
+> and the `threadlight-deploy` Phase-6 composer must read from this list
+> verbatim. If you change a selector name, change it here first.
+>
+> Declare which infra modules the process needs. Don't list modules the
+> process doesn't need (every selected module costs money).
 
 | Module | Selected? | Purpose in this process |
 |--------|-----------|-------------------------|
-| `cosmos-db` | yes/no | Persistent case state, audit log, agent memory |
+| `cosmos-db` | yes/no | Persistent case state, audit log, agent memory (no for stateless single-call agents) |
 | `ai-search` | yes/no | Foundry IQ Knowledge Base backing |
-| `doc-intel` | yes/no | Structured document extraction |
+| `doc-intel` | yes/no | Structured document extraction (passport, invoice, ID — when prebuilt model fits) |
 | `azure-vision` | yes/no | OCR / image analysis (when not using GPT vision) |
 | `azure-speech` | yes/no | Voice intake / TTS responses |
 | `event-grid` | yes/no | Pub/sub for trigger events |
 | `service-bus` | yes/no | Reliable queueing for case workflow |
 | `storage-blob` | yes/no | Document upload, large artifacts, dataset hosting |
-| `key-vault` | yes/no | Secrets (only when not using managed identity end-to-end) |
 | `app-insights` | yes (default) | Telemetry — required for continuous evals |
 | `aca-job` | yes/no | Scheduled / event-triggered batch work |
 | `aca-mcp` | yes/no | Custom MCP server (mock or real) |
 | `aca-bot` | yes/no | Teams bot |
 | `foundry-iq-index` | yes/no | Pre-provisioned Knowledge Base + chunked corpus |
 
-> The shared UAMI, Foundry project, and ACR are always created — they're not
-> selectable. Selecting `aca-bot` implies `aca-mcp` (bot may need MCP for case
-> lookups). Selecting `event-grid` or `service-bus` implies `aca-job`.
+**Always-created** (not selectable): shared **UAMI** (managed identity),
+the **Foundry project** + agent definition, the **ACR** for container
+images.
+
+**Implications** (the composer enforces these — declare them so SPEC
+review can sanity-check):
+- Selecting `aca-bot` implies `aca-mcp` (bot needs MCP for case lookups)
+- Selecting `event-grid` or `service-bus` implies `aca-job` (you need a
+  receiver)
+- Selecting `foundry-iq-index` implies `ai-search` and `storage-blob`
+- Selecting `azure-speech` with custom voice / custom model implies
+  `azure-speech-custom-subdomain` (**IRREVERSIBLE** flag — the deploy
+  script must surface a `--confirm-irreversible` confirmation)
+
+**Keyless by mandate.** `key-vault` is **not** in the always-created or
+default-selected list. Threadlight pilots use managed identity end-to-end
+per the keyless-mandate; add Key Vault only when the process integrates
+with a customer-side service that demands a literal API key (and document
+that integration explicitly in § 5).
 
 ---
 
@@ -397,7 +465,7 @@ How and when the process executes.
 
 - **Per-entity volume**: e.g. `customers: 50, orders: 200, alerts: 1000`
 - **Distribution**: realistic skew (e.g. `80% low-risk / 15% medium / 5% high`)
-- **Golden cases** (named, hand-curated for the demo script): e.g. `acme-corp` (premium customer, edge-case credit), `fault-incident-2026-04-15` (cascading failure for the dashboard demo)
+- **Golden cases** (named, hand-curated for the demo script): e.g. `kyc-cardinal-aerospace-holdings` (premium corporate onboarding, edge-case UBO chain), `fault-pinewood-gnb-overload-2026-04-15` (cascading failure for the dashboard demo). Naming **must** follow the two-token-shift rule from `references/data-realism/README.md` — no `acme-*` or `contoso-*`.
 - **Reset semantics**: `idempotent` | `append-only` | `none` (see § 5b)
 - **Realism rules** (industry-specific — see `references/data-realism/{industry}.md`):
   - PII: [allowed / synthetic-only / none]

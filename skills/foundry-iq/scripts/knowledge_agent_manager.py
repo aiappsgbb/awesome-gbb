@@ -5,14 +5,17 @@ Creates and manages Azure AI Search Knowledge Agents for agentic retrieval.
 Knowledge Agents enable query planning, multi-hop reasoning, and intelligent
 answer synthesis.
 
-Auth: DefaultAzureCredential (keyless) by default. Falls back to API key if
-AI_SEARCH_KEY is set.
+Auth: DefaultAzureCredential (keyless) by default. Falls back to API key
+ONLY when AI_SEARCH_KEY is set, AND the deploy posture explicitly allows
+keys (Threadlight pilots are keyless-by-mandate — see SKILL.md § Keyless
+RBAC).
 """
 
 import os
 import json
 from typing import Optional, Dict, Any, List
 
+import requests
 from azure.identity import DefaultAzureCredential
 
 
@@ -101,7 +104,7 @@ class KnowledgeAgentManager:
         description: str = None,
         target_indexes: List[str] = None,
         reasoning_effort: str = "medium",
-        output_mode: str = "extractive_data"
+        output_mode: str = "extractiveData"
     ) -> Dict[str, Any]:
         """
         Create a Knowledge Agent for agentic retrieval.
@@ -112,7 +115,8 @@ class KnowledgeAgentManager:
             description: Optional description of the agent
             target_indexes: Additional indexes to include as knowledge sources
             reasoning_effort: Query planning effort level (minimal, low, medium)
-            output_mode: How to return results (extractive_data, text)
+            output_mode: How to return results — wire format is camelCase:
+                "extractiveData" or "answerSynthesis" (NOT snake_case)
 
         Returns:
             Created agent configuration
@@ -135,15 +139,21 @@ class KnowledgeAgentManager:
                     "indexName": idx_name
                 })
 
+        # NOTE on wire format (2025-11-01-preview): top-level
+        # `retrievalReasoningEffort` and `outputConfiguration.modality` —
+        # NOT nested under `configuration`. The legacy /agents/ endpoint
+        # at api-version 2025-01-01-preview accepted the `configuration`
+        # nesting; the new /knowledgebases/ endpoint at 2025-11-01-preview
+        # rejects it. Switch this manager to /knowledgebases/ once your
+        # tenant is migrated; until then, callers MUST pin the matching
+        # api_version+endpoint pair.
         agent_config = {
             "name": agent_name,
             "description": description or f"Knowledge Agent for {index_name}",
             "knowledgeSources": knowledge_sources,
             "targetIndexes": [index_name] + (target_indexes or []),
-            "configuration": {
-                "reasoningEffort": reasoning_effort,
-                "outputMode": output_mode
-            }
+            "retrievalReasoningEffort": reasoning_effort,
+            "outputConfiguration": {"modality": output_mode},
         }
 
         return self._make_request("PUT", f"/agents/{agent_name}", agent_config)
@@ -172,7 +182,7 @@ class KnowledgeAgentManager:
             index_name=index_name,
             description="PolicyBot Knowledge Agent for HR and company policy Q&A",
             reasoning_effort="medium",  # Enable full query planning
-            output_mode="extractive_data"  # Let calling agent synthesize
+            output_mode="extractiveData"  # Let calling agent synthesize
         )
 
 

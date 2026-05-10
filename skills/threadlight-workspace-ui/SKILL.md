@@ -273,6 +273,72 @@ Generate `src/workspace/README.md` with:
 The point isn't to ship the React version — the customer's React expert can
 re-implement in 1 day. The point is that the **shape is right**.
 
+### Step 5.5: Document the state model + identity boundary
+
+Two surfaces that ALWAYS need spelling out — they're the two questions
+the customer's lead engineer asks within the first 10 minutes of opening
+this workspace:
+
+**State model (in-memory + URL session anchor)**
+
+Generate the workspace as a stateless front-end backed by an in-memory
+store rebuilt from `specs/sample-data/*.json` on page load. Persist a
+single anchor — the demo's "session" — in the URL query string:
+
+```
+/index.html?session=<uuid-v4>
+```
+
+That session ID:
+- seeds RNG for any UI-side randomness so a refresh shows the same case
+  ordering / shuffle
+- scopes the `localStorage` key for in-progress action drafts
+  (`workspace:<sessionId>:drafts`) so two demo browser tabs don't
+  fight each other
+- gets logged into every audit record this workspace writes (see below)
+
+When the SPEC § 8b includes a `reset_demo` action, the button generates
+a fresh UUID, replaces the URL with `history.replaceState`, and triggers
+the seed-data reload. There is NO server-side session; persistence is
+the customer's job in their rebuild.
+
+**Identity / audit-actor boundary**
+
+The workspace MUST surface the human actor on every audit-writing
+action — never write `actor: "demo"` or anonymous. Two patterns to ship:
+
+1. **Behind Easy Auth (default for ACA-hosted demo)**: the platform
+   injects `X-MS-CLIENT-PRINCIPAL` (Base64-JSON) into every request.
+   The workspace reads it via a tiny `/.auth/me` proxy or by decoding
+   the header in the page-loading HTML wrapper. Map
+   `claims.preferred_username` (or `email`, or `oid` as fallback) into
+   a global `currentActor` object surfaced to the audit writer.
+
+2. **Public demo (no Easy Auth)**: ship a one-line MSAL.js loader that
+   prompts for AAD sign-in on first load using the customer's tenant
+   (or a Microsoft tenant for internal-only demos). Block all
+   audit-writing actions until `currentActor` is populated.
+
+Either way, the SHAPE the audit writer expects is:
+
+```json
+{
+  "actor": {
+    "kind": "human",
+    "id": "<oid|upn>",
+    "display": "<full name>",
+    "tenant": "<tenant-id>",
+    "session": "<sessionId from URL>"
+  }
+}
+```
+
+Sample-data filtering: any record returned from the in-memory store MUST
+strip the wrapper `_meta` block (per `threadlight-demo-data-factory`'s
+`{"_meta", "records"}` shape) before binding to the UI — the meta block
+is for traceability, not display. A single `loadEntity(name)` helper at
+the data-access boundary should do this once.
+
 ### Step 6: Validate
 
 ```

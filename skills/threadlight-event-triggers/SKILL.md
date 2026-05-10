@@ -165,30 +165,22 @@ Copy from `references/scaffolds/{receiver-type}/` into `src/triggers/{trigger-na
 
 ### Step 3: Wire idempotency
 
-Every receiver needs an idempotency check before invoking the agent:
+Every receiver needs an idempotency check before invoking the agent.
+**Use the verified `IdempotencyStore` class from
+[references/idempotency-patterns.md](references/idempotency-patterns.md)
+verbatim** — copy-paste it into `src/triggers/_shared/idempotency.py`
+and import.
 
-```python
-# Pattern: Cosmos-backed idempotency table
-from datetime import timedelta
+Why a reference instead of inlining: the store has subtle correctness
+properties (correct Cosmos data-plane API, `CosmosResourceNotFoundError`
+catch on the read, `datetime.now(timezone.utc)` not deprecated `utcnow`,
+TTL math from the *passed* window not a closure variable) that prior
+versions of this skill got wrong inline. The reference file is the
+single source of truth.
 
-async def is_already_processed(key: str, window: timedelta) -> bool:
-    """Check if we've seen this key within the dedup window."""
-    entry = await cosmos.read_item(container="trigger_idempotency", id=key, partition_key=key)
-    if not entry:
-        return False
-    seen_at = datetime.fromisoformat(entry["seen_at"])
-    return (datetime.utcnow() - seen_at) < window
-
-async def mark_processed(key: str):
-    await cosmos.upsert_item(container="trigger_idempotency", body={
-        "id": key,
-        "seen_at": datetime.utcnow().isoformat(),
-        "ttl": int(window.total_seconds() * 2),  # auto-expire after 2x window
-    })
-```
-
-The Cosmos `trigger_idempotency` container has `partitionKey: /id` and a TTL
-matched to 2× the dedup window so the table self-cleans.
+The Cosmos `trigger_idempotency` container has `partitionKey: /id` and a
+TTL set to ≥ 2× the dedup window so the table self-cleans without the
+receiver having to delete rows.
 
 ### Step 4: Wire dead-letter
 
@@ -211,36 +203,24 @@ resource subscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024
 
 ### Step 5: Invoke the agent
 
-The receiver's actual work is to construct an agent invocation and call it.
-Pick by **who owns the agent definition**:
+The receiver's actual work is to construct an agent invocation and call
+the hosted agent. Use the `AIProjectClient` + `get_openai_client(agent_name=...)`
+pattern — this is the **only** runtime-supported path for invoking a
+Foundry-hosted agent from a containerized receiver as of May 2026.
 
-**Pattern A — invoke a Foundry-hosted agent** (recommended; the agent lives in Foundry):
-
-```python
-from agent_framework.foundry import FoundryAgent
-from azure.identity.aio import AzureCliCredential
-
-async def invoke_agent(payload):
-    async with AzureCliCredential() as cred:
-        agent = FoundryAgent(
-            project_endpoint=PROJECT_ENDPOINT,
-            agent_name=AGENT_NAME,
-            credential=cred,
-            allow_preview=True,   # opt into the preview Responses surface for hosted agents
-            version="v2",
-        )
-        return await agent.run(format_input(payload))
-```
-
-**Pattern B — call the Foundry Responses endpoint directly** (when you don't
-want the agent_framework dependency, e.g., a tiny ACA App receiver where
-adding `agent-framework-foundry` is overkill):
+> ⚠️ **Do NOT use `agent_framework.foundry.FoundryAgent` or the legacy
+> `agent_framework.azure.AzureAIAgentClient`.** Both have been removed
+> from agent-framework as of the April 2026 hosted-agents preview
+> refresh. The canonical pattern lives in `foundry-hosted-agents` SKILL —
+> copy from there.
 
 ```python
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 
 async def invoke_agent(payload):
+    # Container's UAMI is picked up via AZURE_CLIENT_ID env var.
+    # AzureCliCredential is for local dev only — never inside a container.
     async with DefaultAzureCredential() as cred:
         # allow_preview=True opens the Responses-on-hosted-agents surface
         async with AIProjectClient(
@@ -256,15 +236,21 @@ async def invoke_agent(payload):
             )
 ```
 
-> **SDK version pins (May 2026)**: `azure-ai-projects>=2.0.0`,
-> `agent-framework-foundry` (only Pattern A). The legacy
-> `agent_framework.azure.AzureAIAgentClient` was removed — do NOT use it.
+> **SDK version pins (May 2026)**: `azure-ai-projects>=2.0.0`. The legacy
+> `agent_framework.azure.AzureAIAgentClient` was removed in agent-framework
+> 1.0 — do NOT use it. Likewise, `agent_framework.foundry.FoundryAgent`
+> was removed in the April 2026 hosted-agents preview refresh.
 >
 > ### ⚠️ Keyless RBAC for the receiver UAMI
 >
 > The receiver (ACA Job or ACA App) authenticates to Foundry via its UAMI.
-> `DefaultAzureCredential` / `AzureCliCredential` (in dev) inside the
-> container will pick up the UAMI from `AZURE_CLIENT_ID` automatically.
+> `DefaultAzureCredential` inside the container will pick up the UAMI
+> from `AZURE_CLIENT_ID` automatically. **`AzureCliCredential` is for
+> local dev only** — it requires `~/.azure/` state from `az login` which
+> a container does not have, and it does **not** read `AZURE_CLIENT_ID`.
+> Use `DefaultAzureCredential` everywhere; the credential chain will pick
+> ManagedIdentityCredential in-container and `AzureCliCredential` locally.
+>
 > Required role assignments (assign at Bicep provisioning time):
 >
 > | Resource | Role | Role ID |
@@ -290,6 +276,13 @@ Generate `infra/triggers/{trigger-name}.bicep`. Pick the template by shape:
 
 **Shape #1 — ACA Job (cron)**:
 
+> **Bicep helper symbols** (`jobExists`, `appExists`, `fetchLatestImage`,
+> `emptyContainerImage`) are **expected to be passed in as params or
+> defined in your `infra/main.bicep`**. They come from the canonical
+> azd-Bicep helper pattern documented in `azd-patterns/SKILL.md`
+> § "Helper symbols for image-aware deployment". Don't redefine them
+> ad-hoc in this module; reuse the parent's.
+
 ```bicep
 resource job 'Microsoft.App/jobs@2024-03-01' = {
   name: '${prefix}-${triggerName}'
@@ -298,6 +291,8 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
   properties: {
     environmentId: containerAppEnv.id
     configuration: {
+      // 1800s = 30 min default. For long agent loops, bump to 7200 (2h) or up to 86400 (24h).
+      // The right value is the p99 of one full agent invocation, with headroom.
       replicaTimeout: 1800
       triggerType: 'Schedule'
       scheduleTriggerConfig: { cronExpression: triggerSource }
@@ -334,7 +329,10 @@ resource webhookApp 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: {
         external: true   // false if behind APIM / Front Door
         targetPort: 8080
-        transport: 'auto'
+        // 'http' = HTTP/1.1 + HTTP/2 (default; works for FastAPI, aiohttp).
+        // Use 'http2' if you need explicit HTTP/2-only (rare), 'tcp' for non-HTTP.
+        // 'auto' is deprecated — prefer explicit 'http'.
+        transport: 'http'
         allowInsecure: false
       }
       registries: [{ server: '${acr}.azurecr.io', identity: uami }]
@@ -398,9 +396,16 @@ resource consumerApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'sb-keda'
           custom: {
             type: 'azure-servicebus'
-            // KEDA workload identity binding (TriggerAuthentication wired separately)
-            identity: uami
+            // KEDA workload identity binding. The `identity` value MUST be
+            // the UAMI's full resource ID, not its client ID — KEDA looks up
+            // the principal at scale time. The TriggerAuthentication is
+            // wired by the Container Apps environment automatically when
+            // this `identity:` field is populated.
+            identity: uami   // UAMI resource ID, e.g. /subscriptions/.../userAssignedIdentities/{name}
             metadata: {
+              // namespace MUST be the FQDN host without https:// prefix and
+              // without a trailing slash, e.g. 'mybus.servicebus.windows.net'
+              // — bare 'mybus' will silently fail to scale.
               namespace: serviceBusNamespace
               queueName: queueName
               messageCount: '5'   // scale up when ≥5 unprocessed msgs per replica
@@ -487,18 +492,26 @@ or Service Bus DLQ) — not a fire-and-forget log entry.
 
 ## Reference files
 
-| File | Purpose |
-|------|---------|
-| `references/scaffolds/aca-job-cron/` | Cron-triggered ACA Job receiver scaffold (default for scheduled) |
-| `references/scaffolds/aca-job-manual/` | Manual-triggered ACA Job (REST `start` entry) |
-| `references/scaffolds/aca-app-http/` | ACA App HTTP webhook receiver — replaces Function-HTTP for production webhooks |
-| `references/scaffolds/aca-consumer-keda/` | ACA consumer with KEDA scaler (Service Bus / Event Grid / Event Hubs / Cosmos / Kafka) |
-| `references/scaffolds/function-http/` | Azure Function HTTP webhook (escape hatch — see § "When to choose Functions anyway") |
-| `references/scaffolds/function-servicebus/` | Azure Function Service Bus binding (escape hatch) |
-| `references/scaffolds/function-eventgrid/` | Azure Function Event Grid binding (escape hatch) |
-| `references/idempotency-patterns.md` | Cosmos / Redis / Storage Table backed dedup |
-| `references/dead-letter-patterns.md` | DLQ destinations and replay tooling |
-| `references/aca-vs-functions.md` | Long-form rationale for the ACA-first stance, with the prod quirk catalogue |
+| File | Purpose | Status |
+|------|---------|--------|
+| `references/scaffolds/aca-job-cron/` | Cron-triggered ACA Job receiver scaffold (default for scheduled) | shipped |
+| `references/scaffolds/aca-job-manual/` | Manual-triggered ACA Job (REST `start` entry) | shipped |
+| `references/scaffolds/aca-consumer/` | ACA Consumer Job with KEDA scaler (Service Bus / Event Grid / Event Hubs / Cosmos / Kafka). Use as the base for `aca-app-http` and `aca-consumer-keda` variants below — clone and edit `containerApp.bicep`'s `scale.rules` block. | shipped |
+| `references/scaffolds/function-http/` | Azure Function HTTP webhook (escape hatch — see § "When to choose Functions anyway") | shipped |
+| `references/scaffolds/function-servicebus/` | Azure Function Service Bus binding (escape hatch) | shipped |
+| `references/scaffolds/function-eventgrid/` | Azure Function Event Grid binding (escape hatch) | shipped |
+| `references/idempotency-patterns.md` | Cosmos / Redis / Storage Table backed dedup (single source of truth — copied verbatim into `src/triggers/_shared/idempotency.py`) | shipped |
+
+> **DLQ wiring** lives inline in the relevant scaffold's `containerApp.bicep`
+> + `consumer.py` files (Service Bus dead-letter; Event Grid retry +
+> dead-letter to a Storage Queue; HTTP receiver returning 5xx to trigger
+> sender retry then persisting to a Storage Queue). There is no separate
+> `dead-letter-patterns.md` reference — the patterns are scaffold-bound
+> because the right shape depends on the upstream binding.
+>
+> **ACA vs Functions** — see § "When to choose Functions anyway" earlier
+> in this SKILL for the rationale. There is no separate `aca-vs-functions.md`
+> reference.
 
 ---
 

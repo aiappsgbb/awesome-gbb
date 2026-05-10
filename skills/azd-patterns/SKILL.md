@@ -260,11 +260,21 @@ env: [
 ### RBAC — assign once, applies to all resources
 
 ```bicep
+// Role definition GUIDs are stable across tenants — the one below is
+// `Azure AI User` (`53ca6127-db72-4b80-b1b0-d745d6d5456d`). Substitute
+// other built-in role GUIDs as needed (e.g. `Search Index Data Reader`
+// = `1407120a-92aa-4202-b7e9-c0e197c71c8f`). NEVER ship `'...'` as a
+// placeholder — Bicep will compile but the deploy will fail with
+// `RoleDefinitionDoesNotExist` at apply-time, after every other
+// resource has provisioned.
 resource aiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(subscription().subscriptionId, uami.outputs.principalId, 'ai-user')
   scope: foundryAccount
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '...')
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '53ca6127-db72-4b80-b1b0-d745d6d5456d'   // Azure AI User
+    )
     principalId: uami.outputs.principalId
     principalType: 'ServicePrincipal'
   }
@@ -309,52 +319,55 @@ Every module lives at `infra/modules/<name>.bicep` in the generated repo.
 Ship them as **a single self-contained Bicep file per module** (no nested
 modules) so they can be vendored independently.
 
-| Module | File | Selector (SPEC § 11c key) | Outputs (always) | When to include |
-|--------|------|---------------------------|------------------|-----------------|
-| **cosmos** | `infra/modules/cosmos.bicep` | `cosmos: { sku: 'serverless' \| 'autoscale' }` | `endpoint`, `accountName`, `databaseName`, `containerNames[]` | Any process that needs case state, audit, or agent memory (default for ALL processes) |
-| **search** | `infra/modules/search.bicep` | `search: { sku: 'basic' \| 'standard' }` | `endpoint`, `serviceName`, `indexNames[]`, `apiVersion` | Knowledge retrieval (paired with `foundry-iq` index Bicep below) |
-| **doc-intel** | `infra/modules/doc-intel.bicep` | `docIntel: { tier: 'S0' }` | `endpoint`, `accountName` | Structured-doc ingestion (KYC IDs, invoices, claims forms) |
-| **vision** | `infra/modules/vision.bicep` | `vision: { model: 'gpt-5.4-pro' \| 'gpt-5.4' \| 'gpt-5.4-mini' }` | `endpoint`, `deploymentName` | Image / damage-photo / blueprint analysis |
-| **speech** | `infra/modules/speech.bicep` | `speech: { tier: 'S0' }` | `endpoint`, `accountName`, `region` | STT for FNOL / call recordings, TTS for IVR responses |
-| **event-grid** | `infra/modules/event-grid.bicep` | `eventGrid: { topics: [...] }` | `topicEndpoints{}`, `topicResourceIds{}` | Event-driven triggers (Supplier Risk news, Order Fallout) |
-| **service-bus** | `infra/modules/service-bus.bicep` | `serviceBus: { tier: 'standard' \| 'premium', queues: [...], topics: [...] }` | `namespace`, `queueNames[]`, `topicNames[]` | Async work queues (PIM enrichment batch, Card Dispute case routing) |
-| **storage-blob** | `infra/modules/storage-blob.bicep` | `blob: { containers: [...] }` | `accountName`, `containerNames[]`, `endpoint` | Document/image/audio storage for vision / doc-intel / speech |
-| **key-vault** | `infra/modules/key-vault.bicep` | `keyVault: { enabled: bool }` | `vaultName`, `vaultUri` | Required when external API keys must be secured (e.g., third-party data sources) |
-| **app-insights** | `infra/modules/app-insights.bicep` | (always included — non-optional for Foundry agents) | `connectionString`, `instrumentationKey`, `appId` | Always — required for `foundry-evals` continuous loop |
-| **aca-job** | `infra/modules/aca-job.bicep` | `acaJobs: [{ name, trigger: 'cron' \| 'manual', ... }]` | `jobName`, `jobResourceId` per entry | Wired by `threadlight-event-triggers` for receivers |
-| **aca-mcp** | `infra/modules/aca-mcp.bicep` | `mcpServers: [{ name, image, ... }]` | `mcpEndpoints{}`, `mcpFqdns{}` | Wired by `foundry-mcp-aca` for each mocked or custom MCP server |
-| **aca-bot** | `infra/modules/aca-bot.bicep` | `teamsBot: { enabled: bool, manifest: ... }` | `botFqdn`, `botResourceId`, `botAppId` | Wired by `foundry-teams-bot` when SPEC § 8 includes Teams |
-| **foundry-iq-index** | `infra/modules/foundry-iq-index.bicep` | `foundryIQ: { knowledgeBases: [...] }` | `indexNames[]`, `agentNames[]` | **Default for every process** (per `foundry-iq` skill rule) — provisions the AI Search index + Knowledge Agent |
+| Module | File | Selector (SPEC § 11c kebab-case key) | Outputs (always) | When to include |
+|--------|------|---------------------------------------|------------------|-----------------|
+| **cosmos-db** | `infra/modules/cosmos-db.bicep` | `cosmos-db: yes` (params: `sku: 'serverless' \| 'autoscale'`) | `endpoint`, `accountName`, `databaseName`, `containerNames[]` | Any process that needs case state, audit, or agent memory (default for case-based / regulated processes) |
+| **ai-search** | `infra/modules/ai-search.bicep` | `ai-search: yes` (params: `sku: 'basic' \| 'standard'`) | `endpoint`, `serviceName`, `indexNames[]`, `apiVersion` | Knowledge retrieval (paired with `foundry-iq-index` below) |
+| **doc-intel** | `infra/modules/doc-intel.bicep` | `doc-intel: yes` (params: `tier: 'S0'`) | `endpoint`, `accountName` | Structured-doc ingestion (KYC IDs, invoices, claims forms) |
+| **azure-vision** | `infra/modules/azure-vision.bicep` | `azure-vision: yes` (params: `model: 'gpt-5.4-pro' \| 'gpt-5.4' \| 'gpt-5.4-mini'`) | `endpoint`, `deploymentName` | Image / damage-photo / blueprint analysis |
+| **azure-speech** | `infra/modules/azure-speech.bicep` | `azure-speech: yes` (params: `tier: 'S0'`, `customSubdomain: ...`) | `endpoint`, `accountName`, `region` | STT for FNOL / call recordings, TTS for IVR responses. **Custom subdomain is IRREVERSIBLE** — surface a `--confirm-irreversible` flag |
+| **event-grid** | `infra/modules/event-grid.bicep` | `event-grid: yes` (params: `topics: [...]`) | `topicEndpoints{}`, `topicResourceIds{}` | Event-driven triggers (Supplier Risk news, Order Fallout) |
+| **service-bus** | `infra/modules/service-bus.bicep` | `service-bus: yes` (params: `tier: 'standard' \| 'premium'`, `queues: [...]`, `topics: [...]`) | `namespace`, `queueNames[]`, `topicNames[]` | Async work queues (PIM enrichment batch, Card Dispute case routing) |
+| **storage-blob** | `infra/modules/storage-blob.bicep` | `storage-blob: yes` (params: `containers: [...]`) | `accountName`, `containerNames[]`, `endpoint` | Document/image/audio storage for vision / doc-intel / speech |
+| **key-vault** | `infra/modules/key-vault.bicep` | `key-vault: yes` (params: `enabled: bool`) | `vaultName`, `vaultUri` | Required ONLY when external API keys must be secured (e.g., third-party data sources). NOT in always-include — threadlight pilots are keyless-by-mandate. |
+| **app-insights** | `infra/modules/app-insights.bicep` | (always — non-optional) | `connectionString`, `instrumentationKey`, `appId` | Always — required for `foundry-evals` continuous loop |
+| **aca-job** | `infra/modules/aca-job.bicep` | `aca-job: yes` (params: `[{ name, trigger: 'cron' \| 'manual', ... }]`) | `jobName`, `jobResourceId` per entry | Wired by `threadlight-event-triggers` for receivers |
+| **aca-mcp** | `infra/modules/aca-mcp.bicep` | `aca-mcp: yes` (params: `[{ name, image, ... }]`) | `mcpEndpoints{}`, `mcpFqdns{}` | Wired by `foundry-mcp-aca` for each mocked or custom MCP server |
+| **aca-bot** | `infra/modules/aca-bot.bicep` | `aca-bot: yes` (params: `manifest: ...`) | `botFqdn`, `botResourceId`, `botAppId` | Wired by `foundry-teams-bot` when SPEC § 8 includes Teams |
+| **foundry-iq-index** | `infra/modules/foundry-iq-index.bicep` | `foundry-iq-index: yes` (params: `knowledgeBases: [...]`) | `indexNames[]`, `agentNames[]` | Provisions the AI Search index + Knowledge Agent. Implies `ai-search` and `storage-blob` |
 | **uami** | `infra/modules/uami.bicep` | (always included) | `uamiResourceId`, `uamiPrincipalId`, `uamiClientId` | Always — single shared identity per app (see Shared UAMI Pattern above) |
-| **acr** | `infra/modules/acr.bicep` | `acr: { sku: 'Standard' \| 'Premium' }` | `acrEndpoint`, `acrName`, `acrResourceId` | Required when MCP / receiver / bot containers are deployed |
+| **acr** | `infra/modules/acr.bicep` | (always included for poly-repo agents) (params: `sku: 'Standard' \| 'Premium'`) | `acrEndpoint`, `acrName`, `acrResourceId` | Always — required for the agent container itself; reused for MCP / bot / job containers |
 | **foundry-account** | `infra/modules/foundry-account.bicep` | (always included for the hosted agent) | `accountName`, `projectName`, `endpoint` | Always — hosts the agent itself |
 
 ### Selector grammar (SPEC § 11c)
 
-The SPEC § 11c table is read as a **selector dictionary**. Each top-level key
-matches a module name; the value is the module's input parameter shape. The
-composer iterates and includes only present keys:
+The SPEC § 11c table is read as a **selector table** — kebab-case rows
+mapping module name → `yes`/`no` + optional params. The composer iterates
+rows where `selected: yes` and includes only those modules. The vocabulary
+is the source of truth for both this catalog and `threadlight-deploy`
+Phase 6.
 
-```yaml
-# specs/SPEC.md § 11c (excerpted)
-tech_stack:
-  cosmos: { sku: serverless }
-  search: { sku: basic }
-  foundryIQ:
-    knowledgeBases:
-      - name: kyc-policies
-        sources: [{ type: blob, container: policies, prefix: kyc/ }]
-  vision: { model: gpt-5.4-mini }
-  acaJobs:
-    - { name: sla-watcher, trigger: cron, schedule: "*/15 * * * *" }
-  mcpServers:
-    - { name: customer-data-mcp, image: customer-mcp:latest }
-  teamsBot: { enabled: true }
-  citadel: { required: false }   # opt-in via citadel-spoke-onboarding
+```markdown
+# specs/SPEC.md § 11c (excerpted, canonical kebab-case shape)
+
+| Module             | Selected? | Purpose / params                                            |
+| `cosmos-db`        | yes       | sku: serverless                                              |
+| `ai-search`        | yes       | sku: basic                                                   |
+| `foundry-iq-index` | yes       | knowledgeBases: [{ name: kyc-policies, sources: [...] }]    |
+| `azure-vision`     | yes       | model: gpt-5.4-mini                                          |
+| `aca-job`          | yes       | [{ name: sla-watcher, trigger: cron, schedule: "*/15 * * * *" }] |
+| `aca-mcp`          | yes       | [{ name: customer-data-mcp, image: customer-mcp:latest }]   |
+| `aca-bot`          | yes       | manifest: ...                                                |
+| `key-vault`        | no        | (threadlight: keyless-by-mandate)                            |
 ```
 
-Resulting `infra/main.bicep` includes (in canonical order):
-`uami → acr → key-vault → app-insights → cosmos → search → foundry-iq-index → vision → doc-intel → speech → storage-blob → event-grid → service-bus → aca-mcp → aca-job → foundry-account → aca-bot`.
+Resulting `infra/main.bicep` includes (in canonical inclusion order):
+`uami → acr → app-insights → cosmos-db → ai-search → foundry-iq-index → azure-vision → doc-intel → azure-speech → storage-blob → event-grid → service-bus → aca-mcp → aca-job → foundry-account → aca-bot`.
+
+> **`key-vault` is NOT in the always-include set.** Threadlight pilots
+> are keyless end-to-end. Include `key-vault` ONLY when SPEC § 11c
+> explicitly selects `key-vault: yes` for an external integration that
+> demands a literal API key.
 
 ### Why composable modules (not one big main.bicep)
 
@@ -365,7 +378,7 @@ Resulting `infra/main.bicep` includes (in canonical order):
   account they want to reuse; replacing one module file is cleaner than editing
   a monolith.
 - **Each module is independently versionable** — when AI Search v2025-09 ships
-  a new index schema, only `search.bicep` changes.
+  a new index schema, only `ai-search.bicep` changes.
 
 ### How a new module gets added to the library
 

@@ -2,10 +2,13 @@
 Azure OpenAI Client for Foundry IQ
 
 Provides chat completions with grounding context from agentic retrieval.
-Handles reasoning model specifics (o4-mini, gpt-4.1, etc.).
+Handles reasoning model specifics (gpt-5.4-mini, o4-mini, etc.).
 
-Auth: DefaultAzureCredential (keyless) by default. Falls back to API key if
-AZURE_OPENAI_API_KEY is set.
+Auth: DefaultAzureCredential (keyless) by default.
+
+Threadlight pilots are KEYLESS-BY-MANDATE — the key fallback below exists
+only for non-threadlight reuse of this script. Do not set
+AZURE_OPENAI_API_KEY in a threadlight pilot environment.
 """
 
 import os
@@ -24,15 +27,23 @@ class AzureOpenAIClient:
     - Streaming responses
     """
 
-    # Models that don't support temperature parameter
-    REASONING_MODELS = {"o4-mini", "o1-mini", "o1-preview", "o3-mini"}
+    # Reasoning models — they reject `temperature` and use `max_completion_tokens`
+    # instead of `max_tokens`. Update this set when you adopt a new family.
+    REASONING_MODELS = {
+        "o4-mini", "o1", "o1-mini", "o1-preview", "o3-mini", "o3",
+        # gpt-5.4 family — reasoning-grade chat models (May 2026)
+        "gpt-5.4", "gpt-5.4-mini", "gpt-5.5",
+    }
 
     def __init__(
         self,
         endpoint: str = None,
         api_key: str = None,
         deployment: str = None,
-        api_version: str = "2024-12-01-preview"
+        # Pin a Foundry-supported preview that exposes the responses API +
+        # gpt-5.x routing. Bump as new previews land; do not let callers
+        # silently inherit a stale default that drops chat features.
+        api_version: str = "2025-04-01-preview"
     ):
         self.endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
         self.deployment = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini")
@@ -158,8 +169,13 @@ User Question: {query}
 
 Based ONLY on the context above, provide a helpful answer with citations."""
 
-        # Build messages
-        messages = conversation_history or []
+        # IMPORTANT: don't mutate caller's list. The previous form
+        # `messages = conversation_history or []; messages.append(...)`
+        # appended into the SAME object every call when the caller passed
+        # in their own history — creating exponential context growth and
+        # turning the bot's "history" into a hall-of-mirrors of repeated
+        # grounded queries. Always copy to a fresh list.
+        messages = list(conversation_history) if conversation_history else []
         messages.append({"role": "user", "content": grounded_query})
 
         return self.chat_completion(
@@ -172,7 +188,7 @@ Based ONLY on the context above, provide a helpful answer with citations."""
     def generate_embedding(
         self,
         text: str,
-        model: str = "text-embedding-ada-002"
+        model: str = "text-embedding-3-small"
     ) -> List[float]:
         """
         Generate an embedding for text.
