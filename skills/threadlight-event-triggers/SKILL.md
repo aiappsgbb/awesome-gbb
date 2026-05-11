@@ -547,5 +547,6 @@ or Service Bus DLQ) — not a fire-and-forget log entry.
 | [`threadlight-design`](../threadlight-design/) | Produces spec § 10b that this skill consumes |
 | [`azd-patterns`](../azd-patterns/) | The ACA Job deployment pattern (Bicep + postdeploy hook) |
 | [`threadlight-deploy`](../threadlight-deploy/) | The orchestrator that calls this skill when § 10b is non-empty |
+| [`threadlight-safe-check`](../threadlight-safe-check/) | Probes the receivers generated here (last 5 ACA Job executions must not all be Failed) in the post-deploy phase |
 | [`threadlight-hitl-patterns`](../threadlight-hitl-patterns/) | The SLA watcher receiver type (cron job that escalates stale approvals) |
 | [`foundry-mcp-aca`](../foundry-mcp-aca/) | If the receiver also exposes a webhook *into* the system (mock receiver) |

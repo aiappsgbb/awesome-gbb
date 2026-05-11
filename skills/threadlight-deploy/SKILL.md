@@ -1408,7 +1408,7 @@ For systems using **Cosmos DB**, generate a Cosmos MCPToolKit deployment using
 > **When to use.** A **static showroom** (lobby + catalog + cinematic process
 > walkthroughs) is a classic adjacent need to a hosted-agent pilot — the
 > seller wants a single URL to put on a slide that gates by Entra ID.
-> Same `azure-tenant-isolation` discipline, same `aigbbemea` ACR, same
+> Same `azure-tenant-isolation` discipline, same `acme-shared` ACR, same
 > Communication Blue brand bar — but the **runtime is nginx, not an agent**,
 > and the **2-phase Easy Auth wiring** below is non-negotiable. This is
 > NOT modeled in SPEC § 11c (it's not a per-process agent repo); ship it
@@ -2269,6 +2269,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | [**foundry-teams-bot**](../foundry-teams-bot/) | Deep dive on Teams bot integration (bot.py, manifest, Bicep, sideloading) |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Deploy custom MCP servers as ACA or Azure Functions |
 | [**foundry-evals**](../foundry-evals/) | Evaluate agent quality + **continuous evaluation**: Plan A (default) Foundry built-in scheduled evals, Plan B (fallback) ACA Job (reads SPEC § 9 KPI table) |
+| [**threadlight-safe-check**](../threadlight-safe-check/) | **Mandatory post-deploy completeness gate** — invoked from `predeploy` / `postdeploy` hooks; verifies every SPEC § 11c selector maps to deployed resources, all channels reach, all jobs are wired. Run this before declaring victory or kicking off `foundry-evals` |
 | [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Generates the operator workspace from SPEC § 8b (case-list, inbox, dashboard, console, kanban, map) |
 | [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Generates Adaptive Cards + audit trail for SPEC § 8 action gates |
 | [**threadlight-event-triggers**](../threadlight-event-triggers/) | Generates trigger receivers from SPEC § 10b (ACA Job cron/manual, Functions, ACA consumer) |
