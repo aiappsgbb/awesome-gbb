@@ -241,6 +241,48 @@ async def on_message(context, state):
 | `set_attachments([Attachment(...)])` | Adds attachments to final message |
 | `get_message()` | Returns accumulated text so far |
 
+### Stream Cancellation Fallback (CRITICAL for long queries)
+
+Teams cancels streams after **~2 minutes** by sending `403 ContentStreamNotAllowed`.
+The SDK catches this and sets `sr._cancelled = True`. After cancellation, no more
+streaming chunks can reach the user.
+
+**What gets cancelled:** Only the **Teams streaming display** — the Foundry agent
+stream between bot→agent continues uninterrupted. The bot keeps receiving chunks
+from the agent, it just can't stream them to Teams anymore.
+
+**The `bot-streaming.py` template handles this automatically:**
+
+```python
+async for event in gen:
+    # Check on EVERY event, not just TextChunk
+    # (tool calls have 10-30s gaps with no text — must check during those too)
+    if not stream_cancelled and sr._cancelled:
+        stream_cancelled = True
+        await context.send_activity("⏳ Still working — full answer coming shortly...")
+
+    if isinstance(event, TextChunk):
+        accumulated_text += event.text
+        if not stream_cancelled:
+            sr.queue_text_chunk(event.text)
+    # ... StatusUpdate, SessionComplete ...
+
+# After generator completes:
+if stream_cancelled:
+    await context.send_activity(accumulated_text)  # Full response as regular message
+else:
+    await sr.end_stream()
+
+# Then deliver files
+if session_id:
+    await _send_session_files(context, session_id)
+```
+
+**Common mistake:** Only checking `sr._cancelled` after `queue_text_chunk()`. During
+tool calls (web search, Playwright), no text chunks flow for 10-30s. If the 403
+arrives during a tool call, you won't detect it until text resumes — by then the
+user has been staring at a dead screen for minutes. **Check on every event type.**
+
 ### `copilot/app.py`
 
 > **Template:** [`templates/copilot/app.py`](templates/copilot/app.py)
@@ -1051,3 +1093,8 @@ user_token = result["access_token"]
 | Bot crashes after pip install | microsoft-agents-* 0.9.x has breaking changes | Pin to `>=0.8.0,<0.9.0` in requirements.txt (tested with 0.8.0) |
 | Bot crashes: MsalConnectionManager can't find CONNECTIONS__ vars | `MsalConnectionManager()` called without config | Must use `load_configuration_from_env(os.environ)` and pass `**config` to `MsalConnectionManager()`. See app.py template. |
 | Bot gets 400 "responses protocol not declared" | Agent uses GHCP SDK (Invocations) but bot calls `oai.responses.create()` | **CONFIRMED:** `InvocationAgentServerHost` only serves `/invocations`. Bot must use direct HTTP POST to `/protocols/invocations` endpoint with SSE parsing. See "Invocations Protocol Agents" section. |
+| Courtesy message appears only at end, not when stream cancelled | `sr._cancelled` only checked after `queue_text_chunk()` — no text flows during tool calls | **Check `sr._cancelled` on EVERY event** in the generator loop (TextChunk, StatusUpdate, SessionComplete). Tool calls have 10-30s gaps. See "Stream Cancellation Fallback" section. |
+| FileConsentCard not working | Manifest has `supportsFiles: false` | Set `"supportsFiles": true` in `bots[0]` in manifest.json. Re-sideload the updated zip. |
+| "Questa risposta è stata arrestata" (stream killed) | Teams 2-min streaming timeout (403 ContentStreamNotAllowed) | Expected for long queries. `bot-streaming.py` catches this, sends courtesy message, then delivers full response as regular message. |
+| Stream cancelled but Foundry still running | Normal — Teams cancels the **display**, not the agent | Bot keeps consuming the Foundry stream. After agent finishes, sends full response via `context.send_activity()`. |
+| SDK 0.9.x pin warning in troubleshooting | Outdated — 0.9.x MsalConnectionManager is backward-compatible | `>=0.9.0` is safe. `streaming_response` requires it. |
