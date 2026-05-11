@@ -10,7 +10,8 @@ description: >
   foundry apim connection citadel, bring your own ai gateway foundry,
   citadel onboarding, govern agent, AI gateway spoke, citadel compliant agent,
   citadel access contract, connect to governance hub, citadel JWT auth,
-  citadel product policy, citadel key vault secrets, citadel validation notebook.
+  citadel product policy, citadel key vault secrets, citadel validation notebook,
+  unified ai api, openai compatible gateway, agent governance toolkit, citadel AGT.
   DO NOT USE FOR: deploying the Citadel hub itself, APIM infrastructure,
   hub networking, hub provisioning, hub sizing, llm backend onboarding,
   deploying model backends, apim backend pools, hub policy fragment deployment.
@@ -103,8 +104,10 @@ cp ../../../main.bicepparam main.bicepparam
 cp ../../../policies/default-ai-product-policy.xml ai-product-policy.xml
 ```
 
-> 📂 Full contract folder structure and samples:
+> 📂 Full contract folder structure and module reference:
 > [citadel-access-contracts/](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/bicep/infra/citadel-access-contracts)
+>
+> ⚠️ Sample contracts were removed from the repo. Use `main.bicepparam` as your template base.
 
 ### 2. Configure the Parameter File
 
@@ -538,6 +541,10 @@ gateway. The platform team owns the hub-side VNet/APIM/private endpoint config.
 - ✅ NSG rules allow HTTPS (443) to the APIM subnet
 - ✅ If using private endpoints, the relevant Private DNS Zones are linked to your spoke VNet
 
+> **Foundry Network Injection:** The hub now supports `foundryNetworkInjectionEnabled`,
+> which injects Foundry instances into the hub VNet with private endpoints. If your
+> platform team has enabled this, Foundry-to-APIM traffic stays fully private.
+
 ---
 
 ## Multi-Service Bundles
@@ -657,6 +664,7 @@ to verify end-to-end connectivity:
 | JWT + role enforcement | [`citadel-jwt-authentication-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-jwt-authentication-tests.ipynb) |
 | PII masking/blocking policies | [`citadel-pii-processing-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-pii-processing-tests.ipynb) |
 | Unified AI API routing across providers | [`citadel-unified-ai-api-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-unified-ai-api-tests.ipynb) |
+| Universal LLM API all-models validation | [`citadel-universal-llm-api-all-models-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-universal-llm-api-all-models-tests.ipynb) |
 
 > Requires Python with packages from [`validation/requirements.txt`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/requirements.txt).
 
@@ -674,7 +682,7 @@ When onboarding a new spoke, request the following from the Citadel platform tea
 - Gateway app registration ID (if using JWT auth)
 - Network routing: private endpoint DNS, firewall rules, VNet peering status
 
-Reference the [LLM Backend Onboarding Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/LLM-Backend-Onboarding-Guide.md) for platform-team context
+Reference the [LLM Backend Onboarding module](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/bicep/infra/llm-backend-onboarding) for platform-team context
 on how backends are onboarded to the hub (not a spoke deployment step).
 
 > **Additional guides:**
@@ -682,6 +690,9 @@ on how backends are onboarded to the hub (not a spoke deployment step).
 > - [Network Approach Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/network-approach.md)
 > - [Citadel Sizing Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/citadel-sizing-guide.md)
 > - [Parameters Usage Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/parameters-usage-guide.md)
+> - [OpenAI Compatible API Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/openai-compatible-api-guide.md) *(NEW)*
+> - [Unified AI API Type Onboarding](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/unified-ai-api-type-onboarding.md) *(NEW)*
+> - [Agent Governance Toolkit Integration](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/agent-governance-toolkit-integration.md) *(NEW)*
 
 ---
 
@@ -691,12 +702,66 @@ Default APIM API mappings provisioned by the Citadel hub:
 
 | Code | APIs | Description |
 |------|------|-------------|
-| `LLM` | `azure-openai-api`, `universal-llm-api`, `unified-ai-api` | Large language model inference |
+| `LLM` | `azure-openai-api`, `universal-llm-api`, `unified-ai-api` | Large language model inference (OpenAI V1 compatible) |
 | `OAIRT` | `openai-realtime-ws-api` | OpenAI realtime WebSocket API |
 | `DOC` | `document-intelligence-api`, `document-intelligence-api-legacy` | Document Intelligence |
 | `SRCH` | `azure-ai-search-index-api` | Azure AI Search |
 
+The **Unified AI API** (`unified-ai-api`) now supports multi-provider routing including
+Azure OpenAI, Foundry Models, and Amazon Bedrock — all through a single OpenAI-compatible
+endpoint at `https://<apim-gateway>/unified-ai/v1/*`. See the
+[OpenAI Compatible API Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/openai-compatible-api-guide.md).
+
 Custom APIs can be added to `apiNameMapping` as long as they exist in APIM.
+
+---
+
+## Unified AI API (OpenAI-Compatible Endpoint)
+
+The Unified AI API provides a single OpenAI-compatible surface that routes across
+multiple backend providers. Spoke apps can use standard OpenAI SDKs without code changes.
+
+**Base URL:** `https://<apim-gateway>/unified-ai/v1`
+
+```python
+from openai import OpenAI
+
+# Works with any backend behind the gateway (Azure OpenAI, Foundry, Bedrock)
+client = OpenAI(
+    base_url="https://<apim-gateway>/unified-ai/v1",
+    api_key="<your-apim-subscription-key>"
+)
+response = client.chat.completions.create(
+    model="gpt-4o",          # model alias or deployment name
+    messages=[{"role": "user", "content": "Hello"}]
+)
+```
+
+Key features:
+- **Multi-provider routing** — Azure OpenAI, Foundry Models, Amazon Bedrock behind one endpoint
+- **Model aliases** — `priority` (failover) and `weighted` (load distribution) routing
+- **Cross-model fallback** — automatic retry across backends
+- **Responses API** — supported via stateful `responses_id` caching
+
+> See [OpenAI Compatible API Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/openai-compatible-api-guide.md) for full details.
+
+---
+
+## Agent Governance Toolkit (AGT) Integration
+
+For advanced agent-level governance beyond API gateway controls, spoke agents can
+integrate the [Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit)
+with Citadel.
+
+| Capability | What It Adds |
+|------------|-------------|
+| **Agent identity** | Ed25519 / SPIFFE-based cryptographic identity per agent |
+| **Runtime policy enforcement** | Agent-level policies beyond APIM (tool restrictions, data access) |
+| **Trust scoring** | Dynamic trust assessment for agent actions |
+| **Tamper-evident audit** | Immutable audit logs with correlation via `x-ms-request-id` |
+| **Citadel correlation** | `CitadelAuditExporter` links AGT traces to Citadel gateway telemetry |
+
+> See [AGT Integration Guide](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/agent-governance-toolkit-integration.md) for setup.
 
 ---
 
