@@ -82,7 +82,7 @@ copilot/
 ├── requirements.txt            # Python dependencies
 ├── Dockerfile                  # Container for ACA deployment
 └── teams_package/
-    ├── manifest.json           # Teams app manifest (devPreview)
+    ├── manifest.json           # Teams app manifest (v1.21 — required for M365 Copilot CEA GA)
     ├── color.png               # 192×192 color icon (provide your own)
     └── outline.png             # 32×32 outline icon (provide your own)
 
@@ -388,7 +388,31 @@ module copilotAca 'bot/aca.bicep' = {
 
 > **Template:** [`templates/copilot/teams_package/manifest.json`](templates/copilot/teams_package/manifest.json)
 
-Uses `devPreview` schema with `copilotAgents.customEngineAgents` for custom engine agent bots.
+Uses `1.21` schema with `copilotAgents.customEngineAgents` for custom engine agent bots
+(M365 Copilot CEA went GA in May 2025 and **requires manifest version 1.21 or later** —
+`devPreview` is no longer accepted by the Teams admin center for new uploads).
+
+**Bot scopes are `["personal", "copilot"]`.** Per the Microsoft Learn validation
+guidelines for agents, "Custom engine agents must include `copilot` in `bot.scopes`
+and `bot.commandList.scopes` to ensure proper surfacing and full platform support."
+`personal` is required for 1:1 chat in Teams; `copilot` is required for the Microsoft
+365 Copilot Chat surface. Both nodes (`bot.scopes` AND `bot.commandLists[].scopes`)
+must match. Add `"team"` only if your bot needs channel-mention support; do NOT add
+`"groupChat"` because prompt starters are documented as "only supported for one-on-one
+chat bots".
+
+**Prompt starters live in `bots[0].commandLists[0].commands[]`**, NOT in a
+`conversationStarters` array. The Teams v1.21 schema declares `additionalProperties:
+false` on each `customEngineAgents` item with only `id` + `type` allowed — adding
+`conversationStarters` there causes schema-invalid manifests that Teams admin center
+rejects at sideload. The correct field per Microsoft Learn ("Create prompt suggestions"
+— bots/how-to/conversations/prompt-suggestions) is a `{title, description}` entry in
+`commandLists[].commands[]`. The template ships with 3 placeholder slots
+`__STARTER_<N>_TITLE__` / `__STARTER_<N>_PROMPT__` (alongside the built-in `!reset`
+command). `build_teams_manifest.py` reads `STARTER_<N>_TITLE` / `STARTER_<N>_PROMPT`
+env vars (N=1..3): present → replaces the placeholder; absent → strips the placeholder
+slot entirely so the bot ships only with `!reset`.
+
 Also provide **color.png** (192×192) and **outline.png** (32×32) icons in the same directory.
 
 **Token replacement:**
@@ -1083,7 +1107,11 @@ user_token = result["access_token"]
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
 | Teams shows the bot's reply twice (full message appended after streaming completes) | Yielding `TextChunk` on both `response.output_text.delta` and `response.output_text.done` | Only yield from deltas; the done event is metadata/final accumulated text, not a separate content payload |
 | Teams shows Invocations replies twice after streaming | Yielding `TextChunk` on both `assistant.message_delta` and final `assistant.message` | Track whether deltas were streamed; if yes, ignore final `assistant.message`, otherwise use it for non-delta backends |
-| Sideload fails | manifest schema wrong | Use `manifestVersion: "devPreview"` with `copilotAgents.customEngineAgents` |
+| Sideload fails | manifest schema wrong | Use `manifestVersion: "1.21"` (not `devPreview` — `devPreview` is rejected for new CEA uploads since GA May 2025) with `copilotAgents.customEngineAgents` |
+| Sideload fails with "Schema validation error" on `customEngineAgents` | Manifest had a `conversationStarters` field on the customEngineAgent | Remove it. Schema requires `additionalProperties: false` on customEngineAgents items (only `id` + `type` allowed). Prompt starters belong in `bots[0].commandLists[0].commands[]` with `{title, description}` |
+| Sideload fails with "Schema validation error" on `bots[].scopes` | Used lowercase `groupchat` instead of camelCase `groupChat` | The schema enum is `["team","personal","groupChat","copilot"]` — case-sensitive. For CEAs, use `["personal","copilot"]` per validation guidelines |
+| Bot doesn't show up in M365 Copilot Chat | bot `scopes` missing `copilot` (or `commandLists.scopes` doesn't match) | Per validation guidelines, CEAs MUST include `copilot` in BOTH `bots[0].scopes` AND `bots[0].commandLists[0].scopes`. The two scope arrays must match |
+| Prompt starters don't appear | Manifest has placeholder text `__STARTER_*__` left behind, OR env vars not set, OR placed in a `conversationStarters[]` (which is not in v1.21 schema) | Set `STARTER_1_TITLE` / `STARTER_1_PROMPT` (and 2/3) before `build_teams_manifest.py` runs. Starters become `{title, description}` entries in `bots[0].commandLists[0].commands[]`. Without env vars, `build_teams_manifest.py` strips the placeholder slots so only `!reset` ships |
 | Bot crashes on first message | `PROJECT_ENDPOINT` not set | Must include full path: `https://acct.services.ai.azure.com/api/projects/proj` |
 | Thread state lost between restarts | Using MemoryStorage | Switch to BlobStorage for production (`microsoft-agents-storage-blob`) |
 | Bot SDK auth fails | Wrong `msaAppType` in bot.bicep | Must be `UserAssignedMSI` (not `SingleTenant` or `MultiTenant`) |

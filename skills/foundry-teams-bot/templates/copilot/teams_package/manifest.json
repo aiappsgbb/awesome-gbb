@@ -1,6 +1,6 @@
 {
-    "$schema": "https://developer.microsoft.com/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
-    "manifestVersion": "devPreview",
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.21/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.21",
     "version": "1.0.0",
     "id": "__BOT_APP_ID__",
     "developer": {
@@ -33,14 +33,26 @@
     "bots": [
         {
             "botId": "__BOT_APP_ID__",
-            "scopes": ["personal"],
+            "scopes": ["personal", "copilot"],
             "commandLists": [
                 {
-                    "scopes": ["personal"],
+                    "scopes": ["personal", "copilot"],
                     "commands": [
                         {
                             "title": "!reset",
                             "description": "Reset conversation and start fresh"
+                        },
+                        {
+                            "title": "__STARTER_1_TITLE__",
+                            "description": "__STARTER_1_PROMPT__"
+                        },
+                        {
+                            "title": "__STARTER_2_TITLE__",
+                            "description": "__STARTER_2_PROMPT__"
+                        },
+                        {
+                            "title": "__STARTER_3_TITLE__",
+                            "description": "__STARTER_3_PROMPT__"
                         }
                     ]
                 }

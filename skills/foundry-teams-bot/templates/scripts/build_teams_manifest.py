@@ -1,9 +1,38 @@
-"""Build Teams manifest zip for sideloading (postprovision hook)."""
+"""Build Teams manifest zip for sideloading (postprovision hook).
+
+Prompt starters (M365 Copilot prompt-suggestion chips) for a Custom
+Engine Agent are defined as `bots[0].commandLists[0].commands[]`
+entries with `{title, description}` (see Microsoft Learn:
+"Create prompt suggestions" — bots/how-to/conversations/prompt-suggestions).
+NOT in `customEngineAgents[].conversationStarters[]` — that field is
+NOT in the Teams v1.21 schema (additionalProperties: false on the
+customEngineAgents item allows only `id` + `type`).
+
+User-customizable prompt starters via env vars:
+    STARTER_<N>_TITLE / STARTER_<N>_PROMPT  (N = 1..3)
+
+Title becomes the visible chip, PROMPT becomes the description text.
+If env vars are not set, the placeholder STARTER_<N> commands are
+stripped (the bot still ships with the built-in `!reset` command).
+"""
 
 import json
 import os
 import zipfile
 from pathlib import Path
+
+
+def _resolve_starters() -> list[dict]:
+    """Return commandLists-shaped {title, description} entries from env."""
+    starters: list[dict] = []
+    for n in (1, 2, 3):
+        title = os.environ.get(f"STARTER_{n}_TITLE", "").strip()
+        prompt = os.environ.get(f"STARTER_{n}_PROMPT", "").strip()
+        if title and prompt:
+            starters.append(
+                {"title": title[:32], "description": prompt[:128]}
+            )
+    return starters
 
 
 def build_manifest(
@@ -22,7 +51,8 @@ def build_manifest(
 
     # Replace all tokens — respect Teams manifest length limits
     manifest["id"] = bot_client_id
-    manifest["copilotAgents"]["customEngineAgents"][0]["id"] = bot_client_id
+    cea = manifest["copilotAgents"]["customEngineAgents"][0]
+    cea["id"] = bot_client_id
     manifest["bots"][0]["botId"] = bot_client_id
     manifest["name"]["short"] = agent_name[:30]            # max 30 chars
     manifest["name"]["full"] = agent_name[:100]             # max 100 chars
@@ -31,6 +61,20 @@ def build_manifest(
         manifest["description"]["full"] = agent_description[:4000]  # max 4000 chars
     if developer_name:
         manifest["developer"]["name"] = developer_name
+
+    # Prompt starters — replace placeholder STARTER_<N> commands with
+    # env-provided values, or strip them entirely (leaving the bot with
+    # just the built-in `!reset` command).
+    starters = _resolve_starters()
+    cmd_list = manifest["bots"][0]["commandLists"][0]
+    cmd_list["commands"] = [
+        c for c in cmd_list["commands"]
+        if not (
+            isinstance(c.get("title"), str)
+            and c["title"].startswith("__STARTER_")
+        )
+    ]
+    cmd_list["commands"].extend(starters)
 
     zip_path = out / "copilot_package.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
@@ -41,6 +85,8 @@ def build_manifest(
                 zf.write(icon_path, icon)
 
     print(f"Teams package: {zip_path}")
+    if starters:
+        print(f"  prompt starters: {len(starters)}")
     return zip_path
 
 
