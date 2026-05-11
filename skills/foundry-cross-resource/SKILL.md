@@ -23,7 +23,7 @@ description: >
 > **Status — verified live on 2026-04-23** with Foundry account
 > `xtest-foundry-mr5kfi` / project `xtest-proj-mr5kfi` (Sweden Central) calling
 > deployment `gpt-4o-mini` hosted on a different Azure OpenAI account
-> (`emea-aigbb-demos-oai`) through APIM `emea-gbb-ai-apim`. Both **ApiKey** and
+> (`acme-aoai-shared`) through APIM `acme-ai-apim`. Both **ApiKey** and
 > **ProjectManagedIdentity** auth paths returned `PONG` on all three
 > invocation patterns. See "Verified working configuration" at the end.
 
@@ -41,7 +41,7 @@ local-deployment call.
 ```
 ┌────────────────────────┐                ┌──────────────────────────┐                ┌─────────────────────────────┐
 │  Consumer Foundry      │                │  APIM AI Gateway         │                │  Backend AI/OpenAI account  │
-│  project               │  Foundry MI    │  emea-gbb-ai-apim        │   APIM MI →    │  emea-aigbb-demos-oai       │
+│  project               │  Foundry MI    │  acme-ai-apim        │   APIM MI →    │  acme-aoai-shared       │
 │  xtest-proj-mr5kfi     ├───or────────► │   /xtest-aoai            ├──Bearer───────►│  gpt-4o-mini deployment     │
 │  (Sweden Central)      │  ApiKey        │   /xtest-aoai-pmi        │  (msi token)   │  (East US 2)                │
 │                        │                │                          │                │                             │
@@ -150,7 +150,7 @@ GET  /models?api-version=2024-10-21             (model catalogue, used for dynam
 <policies>
     <inbound>
         <base />
-        <set-backend-service base-url="https://emea-aigbb-demos-oai.openai.azure.com/openai" />
+        <set-backend-service base-url="https://acme-aoai-shared.openai.azure.com/openai" />
         <authentication-managed-identity
             resource="https://cognitiveservices.azure.com"
             output-token-variable-name="msi-access-token"
@@ -189,7 +189,7 @@ to `api-key` so the caller sends `api-key: <key>`, not
                 <audience>https://cognitiveservices.azure.com/</audience>
             </audiences>
         </validate-azure-ad-token>
-        <set-backend-service base-url="https://emea-aigbb-demos-oai.openai.azure.com/openai" />
+        <set-backend-service base-url="https://acme-aoai-shared.openai.azure.com/openai" />
         <authentication-managed-identity
             resource="https://cognitiveservices.azure.com"
             output-token-variable-name="msi-access-token"
@@ -272,7 +272,7 @@ Reachable also via the Foundry data-plane endpoint
 {
   "properties": {
     "category": "ApiManagement",
-    "target": "https://emea-gbb-ai-apim.azure-api.net/xtest-aoai",
+    "target": "https://acme-ai-apim.azure-api.net/xtest-aoai",
     "authType": "ApiKey",
     "credentials": { "key": "<APIM subscription primary key>" },
     "isSharedToAll": true,
@@ -305,7 +305,7 @@ PUT https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>/c
 {
   "properties": {
     "category": "ApiManagement",
-    "target": "https://emea-gbb-ai-apim.azure-api.net/xtest-aoai-pmi",
+    "target": "https://acme-ai-apim.azure-api.net/xtest-aoai-pmi",
     "authType": "ProjectManagedIdentity",
     "credentials": {},
     "audience": "https://cognitiveservices.azure.com",
@@ -374,7 +374,7 @@ through Bicep, only if you call ARM/REST directly.
 ```powershell
 $tenant = '<tenant-id>'
 $proj   = 'https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>'
-$apim   = 'https://emea-gbb-ai-apim.azure-api.net/xtest-aoai'
+$apim   = 'https://acme-ai-apim.azure-api.net/xtest-aoai'
 
 # Token for Foundry data plane (use the AI resource audience)
 $tok = az account get-access-token --resource 'https://ai.azure.com' --query accessToken -o tsv
@@ -533,7 +533,7 @@ dispatches via the connection. See `foundry-hosted-agents` and
 ### 8.1 Pre-Foundry: smoke-test APIM directly
 
 ```powershell
-$apim = 'https://emea-gbb-ai-apim.azure-api.net/xtest-aoai'
+$apim = 'https://acme-ai-apim.azure-api.net/xtest-aoai'
 $key  = '<subscription primary key>'
 
 Invoke-RestMethod -Method Post `

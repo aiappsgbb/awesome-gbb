@@ -627,3 +627,4 @@ the workspace and the cinematic feel like the same product:
 | [`threadlight-hitl-patterns`](../threadlight-hitl-patterns/) | The Teams Adaptive Card side of human interaction (action gates) |
 | [`threadlight-deploy`](../threadlight-deploy/) | Wires the workspace into the deployable agent (static site behind the bot ACA) |
 | [`threadlight-demo-data-factory`](../threadlight-demo-data-factory/) | Generates the seed JSON the workspace renders |
+| [`threadlight-safe-check`](../threadlight-safe-check/) | Probes the static-site / Easy Auth wiring generated here (post-deploy reachability gate) |

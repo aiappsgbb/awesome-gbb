@@ -409,3 +409,4 @@ realism").
 | [`threadlight-workspace-ui`](../threadlight-workspace-ui/) | Renders the same JSON in the operator workspace |
 | [`foundry-iq`](../foundry-iq/) | If the spec also needs a Knowledge Base, that's separate — this skill is for transactional/relational data only |
 | [`threadlight-deploy`](../threadlight-deploy/) | Wires seed + reset scripts into the deploy lifecycle |
+| [`threadlight-safe-check`](../threadlight-safe-check/) | Verifies the seed JSON / database fixtures generated here are actually present after deploy (post-deploy gate) |

@@ -133,7 +133,7 @@ Used in newer repos (e.g. `threadlight-v2`). The pattern:
 
 ### Legacy: PowerShell script (`publish_aca.ps1`)
 
-Older repos (e.g. `aigbb-demo-form`) use a `postprovision` hook with a PowerShell script:
+Older repos (e.g. `acme-demo-form`) use a `postprovision` hook with a PowerShell script:
 
 ```yaml
 # azure.yaml

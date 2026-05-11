@@ -129,14 +129,14 @@ that touches Azure must follow them.
 
 4a. **Multi-sub tenants: `az login --tenant <id>` defaults to whichever
     sub was last touched, NOT to `default_subscription`.** When a single
-    tenant covers multiple subscriptions (e.g., `fruocco-1` and
-    `fruocco-2`), `az login --tenant <id>` populates the token cache
+    tenant covers multiple subscriptions (e.g., `acme-prod-east` and
+    `acme-prod-west`), `az login --tenant <id>` populates the token cache
     with all of them and silently leaves the active subscription on
     whatever was set last in the global cache. The `default_subscription`
     field in the index file is a **hint to your assertion logic**, not
     a default `az` honors. You MUST run `az account set --subscription
     "$DEFAULT_SUB"` after every `az login` per shell. Mass effect: a
-    "deploy to fruocco-1" can land in fruocco-2 if you forget.
+    "deploy to acme-prod-east" can land in acme-prod-west if you forget.
 
     Fast check after login:
 

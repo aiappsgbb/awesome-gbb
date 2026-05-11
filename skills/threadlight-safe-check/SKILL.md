@@ -531,17 +531,19 @@ declaring victory.
 
 ---
 
-## Cross-references
+## See Also
 
-- `threadlight-design` — authors the `deployment_manifest{}` block in
-  `specs/manifest.json` that this skill consumes
-- `threadlight-deploy` — invokes this skill at `predeploy` and
-  `postdeploy` hooks; its Phase 3 / Phase 3.5 sections now reference
-  this skill as the canonical implementation
-- `azure-tenant-isolation` — `AZURE_CONFIG_DIR` setup that
-  `safe_check.py` relies on for correct-tenant `az` calls
-- `azd-patterns` — module library and canonical Bicep selector
-  vocabulary the pre-deploy check uses
+| Skill | Use When |
+|-------|----------|
+| [`threadlight-design`](../threadlight-design/) | Authors the `deployment_manifest{}` block in `specs/manifest.json` that this skill consumes |
+| [`threadlight-deploy`](../threadlight-deploy/) | Invokes this skill at `predeploy` and `postdeploy` hooks; the canonical implementation of its Phase 3 / Phase 3.5 gates |
+| [`threadlight-demo-data-factory`](../threadlight-demo-data-factory/) | Produces seed JSON / database fixtures whose presence safe-check verifies in the post-deploy phase |
+| [`threadlight-event-triggers`](../threadlight-event-triggers/) | Produces ACA Job / Function / consumer receivers whose deployment status (last 5 executions) safe-check probes |
+| [`threadlight-hitl-patterns`](../threadlight-hitl-patterns/) | Produces the bot + audit trail that safe-check verifies for channel reachability (SPEC § 8) |
+| [`threadlight-workspace-ui`](../threadlight-workspace-ui/) | Produces the operator workspace whose static-site / Easy Auth wiring safe-check probes |
+| [`foundry-evals`](../foundry-evals/) | Runs *after* safe-check passes — quality/behavioural eval is meaningless on a half-deployed surface |
+| [`azure-tenant-isolation`](../azure-tenant-isolation/) | `AZURE_CONFIG_DIR` setup that `safe_check.py` relies on for correct-tenant `az` calls |
+| [`azd-patterns`](../azd-patterns/) | Module library and canonical Bicep selector vocabulary the pre-deploy check uses |
 
 ## References
 

@@ -413,3 +413,4 @@ declarations harvested by this skill.
 | [`threadlight-workspace-ui`](../threadlight-workspace-ui/) | Renders the same gates inside the operator workspace |
 | [`threadlight-event-triggers`](../threadlight-event-triggers/) | Generates the SLA watcher ACA job |
 | [`foundry-evals`](../foundry-evals/) | Reads the audit trail to compute continuous-loop KPIs |
+| [`threadlight-safe-check`](../threadlight-safe-check/) | Verifies the bot + audit trail this skill generates are reachable from SPEC § 8 channels (post-deploy gate) |
