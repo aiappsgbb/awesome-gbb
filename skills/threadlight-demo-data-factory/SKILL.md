@@ -43,6 +43,36 @@ a threadlight process. The output drives both the mock MCP server (via
 
 ---
 
+## Industry canons — anchor pilot pattern
+
+Per-industry realism rules live in
+`threadlight-design/references/data-realism/{industry}.md` (one of:
+`fsi.md` · `retail.md` · `telco.md` · `mfg.md`). A canon is **only as
+credible as the pilot it's been anchored against** — generic vocabulary
+lists are aspirational; rules referenced from a *shipped* pilot's seed
+JSON are testable.
+
+| Industry | Canon file | Anchor pilot status |
+|----------|-----------|---------------------|
+| FSI | `data-realism/fsi.md` | **Anchored** to `card-dispute-investigation` (PCI-DSS PAN masking · MCC anchors · Reg E/Z timer math · Fed holiday list · CNP fraud signals · `dc-001` worked example). KYC golden cases are aspirational pending KYC pilot. |
+| Retail | `data-realism/retail.md` | Aspirational — awaiting PIM / returns-triage pilot. |
+| Telco | `data-realism/telco.md` | Aspirational — awaiting order-fallout / network-fault pilot. |
+| Mfg | `data-realism/mfg.md` | Aspirational — awaiting supplier-risk / shift-handover pilot. |
+
+**The anchor-pilot rule.** When you generate seed data for a pilot,
+mine the produced JSON for new realism rules and fold them back into
+the canon as an "Anchor pilot" subsection with a worked-example table
+(canon section → pilot file/field → worked value). The FSI canon's
+`### Anchor-pilot worked example (card-dispute-investigation)` table is
+the template — copy that shape for sibling pilots.
+
+**Honesty rule.** When the shipped pilot violated the canon (e.g.
+real merchant names slipping through), document it in a `### Traps`
+subsection with a "Don't / Do" table, NOT silently. The next pilot's
+generator should reject the v3-style anti-pattern up front.
+
+---
+
 ## Input contract / Output artifacts
 
 **Input contract**:
