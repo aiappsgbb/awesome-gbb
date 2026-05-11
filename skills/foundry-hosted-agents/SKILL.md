@@ -507,6 +507,17 @@ Each hosted agent gets **two Entra identities** at deploy time:
 
 View them with `azd ai agent show`.
 
+> **⚠️ ServiceIdentity Cosmos limitation (gap-003 from card-dispute v3
+> PoC).** The instance identity has `servicePrincipalType=ServiceIdentity`,
+> which the Cosmos DB data-plane RBAC engine **does not accept** — direct
+> role assignments fail with `unsupported type [Unfamiliar]`. The same
+> holds for Azure AI Search data-plane in some configurations.
+> **Workaround:** route Cosmos / Search access through an MCP server
+> backed by a **separate User-Assigned Managed Identity (UAMI)**. Grant
+> the data-plane role to that UAMI, give the agent only the MCP tool;
+> the agent never touches the data plane directly. Captured as
+> `gap-003` in the card-dispute PoC retrospective.
+
 ### Required Role Assignments
 
 **Deploying user:**

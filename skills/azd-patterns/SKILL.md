@@ -187,7 +187,8 @@ az containerapp job execution list --resource-group $RG --name $JOB `
 Common findings:
 - Image is `mcr.microsoft.com/azuredocs/containerapps-helloworld` — `azd
   provision` ran but `azd deploy` / publish_aca didn't (placeholder
-  leak — `safe-check` G9.1 catches this; check separately).
+  leak — `threadlight-safe-check` Step 3.5 (image-probe) catches this;
+  check separately).
 - Image hash matches latest ACR push but jobs still Failed → real
   runtime crash, advance to Rung 2.
 
@@ -309,7 +310,7 @@ works, surfaces structured root-cause diagnostics (e.g.
 |---|---|---|
 | ConsoleLogs empty + SystemLogs `Type=Pull`, `Reason=ImagePullError` | ACR pull RBAC missing on env's UAMI, or image tag doesn't exist in ACR | Verify `az acr repository show-tags`; grant `AcrPull` to env UAMI |
 | ConsoleLogs empty + SystemLogs `Reason=ContainerStartedExited` ExitCode 1 within 5s | Import-time crash before logger setup | Apply Rung 3 first-line stderr breadcrumbs |
-| ConsoleLogs empty + activity log `Forbidden` | Cosmos / Search data-plane RBAC not granted to job's UAMI (Foundry agent UAMI is `ServiceIdentity` and **cannot** receive Cosmos data-plane RBAC — see `azure-tenant-isolation` + `foundry-hosted-agents` gap-003) | Use a separate User-Assigned MI for the job; grant role `00000000-0000-0000-0000-000000000002` (Cosmos DB Built-in Data Contributor) at the account scope |
+| ConsoleLogs empty + activity log `Forbidden` | Cosmos / Search data-plane RBAC not granted to job's UAMI (note: a Foundry hosted-agent's runtime UAMI is `ServiceIdentity` and **cannot** receive Cosmos data-plane RBAC — see `foundry-hosted-agents` § "Agent Identities · ServiceIdentity Cosmos limitation") | Use a separate User-Assigned MI for the job; grant role `00000000-0000-0000-0000-000000000002` (Cosmos DB Built-in Data Contributor) at the account scope |
 | ConsoleLogs empty + everything looks healthy + execution Failed | LAW diagnostic settings missing for the ACA env (apps emit logs because they were created with diag wiring; jobs created later inherit the env but not always the diag setting on the job resource itself) | Add diagnostic setting on the job resource: `az monitor diagnostic-settings create --resource $JOB_ID --name to-law --workspace $WS --logs '[{"category":"ContainerAppConsoleLogs","enabled":true},{"category":"ContainerAppSystemLogs","enabled":true}]'` |
 | Image confirmed real + console fine + early Failed | Cron `args:` running unintended path (e.g. `python -m main` when entrypoint is `python main.py`) | `az containerapp job show ... --query template.containers[0].command` |
 

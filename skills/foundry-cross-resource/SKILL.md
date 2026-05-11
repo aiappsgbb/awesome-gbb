@@ -22,17 +22,19 @@ description: >
 
 > **Status — verified live on 2026-04-23** with Foundry account
 > `xtest-foundry-mr5kfi` / project `xtest-proj-mr5kfi` (Sweden Central) calling
-> deployment `gpt-5.4-mini` hosted on a different Azure OpenAI account
-> (`acme-aoai-shared`) through APIM `acme-ai-apim`. Both **ApiKey** and
-> **ProjectManagedIdentity** auth paths returned `PONG` on all three
-> invocation patterns. The same recipe was originally verified against
-> `gpt-4o-mini v 2024-07-18` — both deployments work identically through
-> the gateway; only the deployment name in the `responses.create` call
-> changes. See "Verified working configuration" at the end.
+> deployment `gpt-4o-mini v2024-07-18` hosted on a different Azure OpenAI
+> account (`acme-aoai-shared`) through APIM `acme-ai-apim`. Both **ApiKey**
+> and **ProjectManagedIdentity** auth paths returned `PONG` on all three
+> invocation patterns. See "Verified working configuration" at the end.
 >
-> **Default in worked examples below: `gpt-5.4-mini`.** This is the
-> current Foundry-routable chat-mini family (May 2026). Replace with
-> any deployment name your APIM backend actually carries.
+> **Default in worked examples below: `gpt-5.4-mini`** (current
+> Foundry-routable chat-mini family, May 2026). The original verification
+> was on `gpt-4o-mini`; the gateway routes by `deployment-name-in-path`
+> regardless of model family, so the recipe is mechanically identical for
+> any deployment your APIM backend actually carries. The exact API
+> `version` string in the connection metadata below is illustrative —
+> use whatever your backend deployment is registered with (check
+> `az cognitiveservices account deployment show`).
 
 ---
 
@@ -647,15 +649,19 @@ the recipe is reproducible from the placeholders).
 | Test result (ApiKey) | Pattern A ✅ Pattern B ✅ Pattern C ✅ Negative chat.completions → 404 ✅ |
 | Test result (PMI) | Pattern A ✅ Pattern B ✅ Pattern C ✅ |
 
-> **Model currency note.** Verification originally ran on `gpt-4o-mini`
-> in April 2026 and was re-verified on `gpt-5.4-mini` in May 2026. Both
-> work identically through the gateway. **Default in this skill is
-> `gpt-5.4-mini`** (current Foundry-routable chat-mini family). The
-> Pattern A/B/C behaviour is the same on both; only the deployment name
-> in the `chat.completions` / `responses.create` call changes. `gpt-4o`
-> family is **legacy** and reaches end-of-support per the Azure OpenAI
-> lifecycle calendar — see `foundry-doc-vision-speech` § "GPT-4o is
-> LEGACY".
+> **Model currency note.** Verification ran on `gpt-4o-mini` (April
+> 2026). Worked examples in this document **default to `gpt-5.4-mini`**
+> (current Foundry-routable chat-mini family, May 2026) for currency,
+> NOT because gpt-5.4-mini was independently re-verified end-to-end
+> against this APIM topology — only that the gateway routes by
+> `deployment-name-in-path` so the recipe is mechanically identical
+> across model families. When you adopt this skill for a new pilot,
+> verify with the actual deployment name + version in your APIM
+> backend (`az cognitiveservices account deployment show`); the
+> `version` field shown in the connection-metadata JSON is
+> illustrative. `gpt-4o` family is **legacy** and reaches
+> end-of-support per the Azure OpenAI lifecycle calendar — see
+> `foundry-doc-vision-speech` § "GPT-4o is LEGACY".
 
 SDK versions used: `azure-ai-projects 2.1.0`, `openai 2.36.0`,
 `azure-identity 1.x`. Compatible with `azure-ai-projects >= 2.0.0`.
