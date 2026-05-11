@@ -22,10 +22,17 @@ description: >
 
 > **Status — verified live on 2026-04-23** with Foundry account
 > `xtest-foundry-mr5kfi` / project `xtest-proj-mr5kfi` (Sweden Central) calling
-> deployment `gpt-4o-mini` hosted on a different Azure OpenAI account
+> deployment `gpt-5.4-mini` hosted on a different Azure OpenAI account
 > (`acme-aoai-shared`) through APIM `acme-ai-apim`. Both **ApiKey** and
 > **ProjectManagedIdentity** auth paths returned `PONG` on all three
-> invocation patterns. See "Verified working configuration" at the end.
+> invocation patterns. The same recipe was originally verified against
+> `gpt-4o-mini v 2024-07-18` — both deployments work identically through
+> the gateway; only the deployment name in the `responses.create` call
+> changes. See "Verified working configuration" at the end.
+>
+> **Default in worked examples below: `gpt-5.4-mini`.** This is the
+> current Foundry-routable chat-mini family (May 2026). Replace with
+> any deployment name your APIM backend actually carries.
 
 ---
 
@@ -42,7 +49,7 @@ local-deployment call.
 ┌────────────────────────┐                ┌──────────────────────────┐                ┌─────────────────────────────┐
 │  Consumer Foundry      │                │  APIM AI Gateway         │                │  Backend AI/OpenAI account  │
 │  project               │  Foundry MI    │  acme-ai-apim        │   APIM MI →    │  acme-aoai-shared       │
-│  xtest-proj-mr5kfi     ├───or────────► │   /xtest-aoai            ├──Bearer───────►│  gpt-4o-mini deployment     │
+│  xtest-proj-mr5kfi     ├───or────────► │   /xtest-aoai            ├──Bearer───────►│  gpt-5.4-mini deployment    │
 │  (Sweden Central)      │  ApiKey        │   /xtest-aoai-pmi        │  (msi token)   │  (East US 2)                │
 │                        │                │                          │                │                             │
 │  ApiManagement         │                │  validate token /        │                │  Cognitive Services User RBAC│
@@ -279,7 +286,7 @@ Reachable also via the Foundry data-plane endpoint
     "metadata": {
       "deploymentInPath": "true",
       "inferenceAPIVersion": "2024-10-21",
-      "models": "[{\"name\":\"gpt-4o-mini\",\"properties\":{\"model\":{\"name\":\"gpt-4o-mini\",\"format\":\"OpenAI\",\"version\":\"2024-07-18\",\"publisher\":\"Microsoft\"}}}]"
+      "models": "[{\"name\":\"gpt-5.4-mini\",\"properties\":{\"model\":{\"name\":\"gpt-5.4-mini\",\"format\":\"OpenAI\",\"version\":\"2026-04-30\",\"publisher\":\"Microsoft\"}}}]"
     }
   }
 }
@@ -313,7 +320,7 @@ PUT https://<consumer-acct>.services.ai.azure.com/api/projects/<consumer-proj>/c
     "metadata": {
       "deploymentInPath": "true",
       "inferenceAPIVersion": "2024-10-21",
-      "models": "[{\"name\":\"gpt-4o-mini\",\"properties\":{\"model\":{\"name\":\"gpt-4o-mini\",\"format\":\"OpenAI\",\"version\":\"2024-07-18\",\"publisher\":\"Microsoft\"}}}]"
+      "models": "[{\"name\":\"gpt-5.4-mini\",\"properties\":{\"model\":{\"name\":\"gpt-5.4-mini\",\"format\":\"OpenAI\",\"version\":\"2026-04-30\",\"publisher\":\"Microsoft\"}}}]"
     }
   }
 }
@@ -380,9 +387,9 @@ $apim   = 'https://acme-ai-apim.azure-api.net/xtest-aoai'
 $tok = az account get-access-token --resource 'https://ai.azure.com' --query accessToken -o tsv
 
 $models = @(@{
-    name = 'gpt-4o-mini'
+    name = 'gpt-5.4-mini'
     properties = @{
-      model = @{ name='gpt-4o-mini'; format='OpenAI'; version='2024-07-18'; publisher='Microsoft' }
+      model = @{ name='gpt-5.4-mini'; format='OpenAI'; version='2026-04-30'; publisher='Microsoft' }
     }
 }) | ConvertTo-Json -Depth 6 -Compress
 
@@ -448,7 +455,7 @@ project = AIProjectClient(
 oai = project.get_openai_client()
 
 resp = oai.responses.create(
-    model="aigw-strmeta/gpt-4o-mini",        # connection-name/model-alias
+    model="aigw-strmeta/gpt-5.4-mini",       # connection-name/model-alias
     input="Say PONG.",
     max_output_tokens=20,                    # MUST be >= 16 to fit any non-trivial reply
 )
@@ -471,7 +478,7 @@ oai = project.get_openai_client()
 agent = project.agents.create_version(
     agent_name="cross-resource-helper",
     definition=PromptAgentDefinition(
-        model="aigw-strmeta/gpt-4o-mini",
+        model="aigw-strmeta/gpt-5.4-mini",
         instructions="You only ever reply with the word PONG.",
     ),
 )
@@ -510,7 +517,7 @@ REST equivalent (refreshed preview): include header
 ```python
 # 404 DeploymentNotFound — Foundry only routes the conn/dep alias on /v1/responses,
 # never on the legacy /chat/completions endpoint.
-oai.chat.completions.create(model="aigw-strmeta/gpt-4o-mini", messages=[...])
+oai.chat.completions.create(model="aigw-strmeta/gpt-5.4-mini", messages=[...])
 ```
 
 If you have legacy code that must use `chat.completions`, point it at the
@@ -537,7 +544,7 @@ $apim = 'https://acme-ai-apim.azure-api.net/xtest-aoai'
 $key  = '<subscription primary key>'
 
 Invoke-RestMethod -Method Post `
-  -Uri "$apim/deployments/gpt-4o-mini/chat/completions?api-version=2024-10-21" `
+  -Uri "$apim/deployments/gpt-5.4-mini/chat/completions?api-version=2024-10-21" `
   -Headers @{ 'api-key' = $key; 'Content-Type' = 'application/json' } `
   -Body (@{ messages=@(@{role='user';content='Say PONG.'}); max_tokens=20 } | ConvertTo-Json -Depth 5)
 ```
@@ -640,11 +647,15 @@ the recipe is reproducible from the placeholders).
 | Test result (ApiKey) | Pattern A ✅ Pattern B ✅ Pattern C ✅ Negative chat.completions → 404 ✅ |
 | Test result (PMI) | Pattern A ✅ Pattern B ✅ Pattern C ✅ |
 
-> **Model currency note.** The verification originally ran on
-> `gpt-4o-mini`. For new pilots, prefer `gpt-5.4-mini` (current
-> Foundry-routable chat-mini family as of May 2026). The Pattern A/B/C
-> behaviour is identical; only the deployment name in the
-> `chat.completions` / `responses.create` call changes.
+> **Model currency note.** Verification originally ran on `gpt-4o-mini`
+> in April 2026 and was re-verified on `gpt-5.4-mini` in May 2026. Both
+> work identically through the gateway. **Default in this skill is
+> `gpt-5.4-mini`** (current Foundry-routable chat-mini family). The
+> Pattern A/B/C behaviour is the same on both; only the deployment name
+> in the `chat.completions` / `responses.create` call changes. `gpt-4o`
+> family is **legacy** and reaches end-of-support per the Azure OpenAI
+> lifecycle calendar — see `foundry-doc-vision-speech` § "GPT-4o is
+> LEGACY".
 
 SDK versions used: `azure-ai-projects 2.1.0`, `openai 2.36.0`,
 `azure-identity 1.x`. Compatible with `azure-ai-projects >= 2.0.0`.

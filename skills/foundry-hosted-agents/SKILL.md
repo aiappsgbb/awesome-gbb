@@ -129,7 +129,19 @@ ResponsesHostServer(orchestrator).run()
 
 ### MCP Tools via FoundryChatClient
 
+> **🔴 Known issue (v1.1.1 + v1.3.0 — bug-009/014).** The
+> `client.get_mcp_tool()` path renders MCP `CallToolResult` content as
+> `[<Content object at 0x...>]` Python reprs in the model's view. The
+> model reads that as "tool failed" and hallucinates an apology even
+> though the underlying MCP call succeeded and returned valid JSON.
+> Bug confirmed unresolved across two `agent_framework` releases; the
+> fix MUST be on the agent client side — server-side `json.dumps(...)`
+> is a no-op because the wrapping happens client-side. **Use the
+> `MCPStreamableHTTPTool + parse_tool_results` pattern below instead
+> — see § "MCP Tools — recommended pattern".**
+
 ```python
+# 🔴 BUGGY — triggers serialization bug; do not use until upstream fix
 mcp_tool = client.get_mcp_tool(
     name="my-mcp",
     url="https://my-mcp-server.azurecontainerapps.io/mcp",
@@ -142,6 +154,97 @@ agent = Agent(client=client, tools=[my_tool, mcp_tool], ...)
 > **URL must be a valid URI** (starts with `http://` or `https://`). Unresolved
 > `${ENV_VAR}` placeholders that expand to empty strings cause `invalid_payload`
 > errors at runtime.
+
+### MCP Tools — recommended pattern (`MCPStreamableHTTPTool` + `parse_tool_results`)
+
+Use `MCPStreamableHTTPTool` directly with a custom `parse_tool_results`
+callback that extracts the `TextContent.text` payload from the MCP
+`CallToolResult` and surfaces it to the model as plain JSON. This
+sidesteps `FoundryChatClient.get_mcp_tool()` entirely and avoids the
+`[<Content object>]` repr leak.
+
+**Worked example** — verified live in card-dispute v3 PoC
+(`threadlight-skills/card-dispute-investigation/src/agent/container.py`),
+running on a 10-tool MCP server with `gpt-5.4-mini`:
+
+```python
+import json
+from agent_framework import Agent, MCPStreamableHTTPTool, tool
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.identity import DefaultAzureCredential
+
+
+def _mcp_text_extractor(result):
+    """Convert an MCP CallToolResult into the plain JSON string the model expects.
+
+    Without this callback, agent_framework's default rendering of MCP results
+    leaks the Python repr of `[<Content object>]` into the model's view, which
+    gpt-5.4-mini reads as a tool failure. We surface the first TextContent
+    payload (which the MCP server returns as `json.dumps(...)`) verbatim.
+    """
+    if getattr(result, "isError", False):
+        return json.dumps({
+            "error": "mcp_tool_error",
+            "content": [str(c) for c in (result.content or [])],
+        })
+    for c in result.content or []:
+        text = getattr(c, "text", None)
+        if isinstance(text, str) and text:
+            return text
+    sc = getattr(result, "structuredContent", None)
+    if sc is not None:
+        return json.dumps(sc, default=str)
+    return json.dumps({"_empty": True})
+
+
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["MODEL_DEPLOYMENT_NAME"],
+    credential=DefaultAzureCredential(),
+)
+
+mcp_tool = MCPStreamableHTTPTool(
+    name="card_disputes_mcp",
+    url=f"https://{os.environ['MCP_SERVER_FQDN']}/mcp",
+    approval_mode="never_require",
+    parse_tool_results=_mcp_text_extractor,   # ⚠️ THE FIX — opts out of default rendering
+    request_timeout=60,
+)
+
+agent = Agent(client=client, tools=[my_local_tool, mcp_tool], ...)
+```
+
+**Why this works:**
+- `MCPStreamableHTTPTool` is the lower-level MAF primitive that
+  `client.get_mcp_tool()` wraps — bypassing the wrapper avoids the
+  buggy renderer.
+- `parse_tool_results` is invoked by MAF on every tool result before
+  it's rendered into the model's history; returning a plain string
+  makes that string what the model sees verbatim.
+- The MCP server should return `json.dumps(...)` from each tool
+  handler (FastMCP wraps it as a single `TextContent`); the extractor
+  unwraps that back to the JSON string.
+
+**When pure-compute logic doesn't need to be on the MCP server,
+inline it as `@tool`.** The MCP-vs-`@tool` rule from card-dispute v3:
+- **MCP server** for any tool with I/O (DB lookups, file reads,
+  external API calls).
+- **Inline `@tool`** for pure computation (date math, formatting,
+  validation) — cheaper round-trip, no HTTP hop.
+
+**Probe to verify the fix is in place** — dump the raw
+`custom_tool_call_output` from a real Foundry trace; the `output`
+field should be a plain JSON string (e.g. `{"case_id":"...","status":"..."}`),
+NOT `[<agent_framework._types.Content object at 0x...>]`. The
+card-dispute PoC ships `tests/probe_mcp_output.py` for this.
+
+> **Status note.** Once the upstream `agent_framework` bug is fixed
+> (track at `microsoft-foundry/foundry-samples` issues), the
+> `client.get_mcp_tool()` shorthand becomes safe again. Until then,
+> the explicit `MCPStreamableHTTPTool` + extractor is the canonical
+> pattern. Captured as `gap-009` + `gap-014` in the card-dispute PoC
+> retrospective.
 
 ### File Generation (@tool pattern)
 

@@ -83,6 +83,36 @@ shape — not a flexible framework.
 
 ---
 
+## Standard HITL panels (drop-in templates)
+
+Three standard panels live in `references/hitl-panels/` — they're
+**shape-agnostic** (drop into the right pane of `case-list`, `inbox`,
+`kanban`; the center of `console`; or as a drawer triggered from
+`dashboard` / `map`). Every workspace pilot needs all three; do not
+ship a workspace without them.
+
+| Panel | File | Purpose |
+|-------|------|---------|
+| **Decision pane** | `references/hitl-panels/decision-pane.html` | Agent recommendation + evidence + citations side-by-side |
+| **Action toolbar** | `references/hitl-panels/action-toolbar.html` | BR-XXX-derived action gates (`approve / edit / reject / escalate`) with reason capture |
+| **Audit viewer** | `references/hitl-panels/audit-viewer.html` | Read-only immutable audit log with CSV/PDF export |
+
+**Shared data contract.** All three panels read from a single global
+`window.threadlight` object (`activeCase`, `recommendation`,
+`actions`, `audit`, `onAction`). Wire that object once from the seed
+JSON or the agent's MCP server and all three panels light up.
+See `references/hitl-panels/README.md` for the full contract +
+"Drop-in instructions" + the demo stub. Vanilla HTML / CSS / JS — no
+React, no build step; renders straight from `file://` for early
+demos and stays clean inside an nginx ACA container for production.
+
+**Why mandatory.** card-dispute v3 shipped without any of these and
+got caught with a "workspace" that was a static file dump — no
+analyst-facing decision surface, no action gates, no audit. The
+remediation pass took ~30 min per panel using these templates. That
+remediation is the last time we want to do this work; future pilots
+copy these three files first, then style them per process accent.
+
 ## Workspace shapes (the catalog)
 
 Each shape has its own polished reference. Pick one (driven by spec § 8b).
@@ -583,6 +613,10 @@ the workspace and the cinematic feel like the same product:
 
 | File | Purpose |
 |------|---------|
+| `references/hitl-panels/README.md` | Drop-in HITL panels — shared data contract + instructions |
+| `references/hitl-panels/decision-pane.html` | Agent recommendation + evidence + citations panel |
+| `references/hitl-panels/action-toolbar.html` | BR-XXX-derived action gates with reason capture |
+| `references/hitl-panels/audit-viewer.html` | Immutable audit log drawer with CSV/PDF export |
 | `references/shapes/case-list/` | Polished case-list reference |
 | `references/shapes/inbox/` | Polished inbox reference |
 | `references/shapes/dashboard/` | Polished dashboard reference |
@@ -592,12 +626,14 @@ the workspace and the cinematic feel like the same product:
 | `references/palettes.md` | Per-process accent color palette catalog |
 | `references/framework-rebuild.md` | Detailed React/Angular/Vue/Blazor port notes |
 
-> The shapes/ subdirectories are seeded as empty placeholders in this commit;
-> each gets fleshed out as the corresponding pilot lands a real customer-grade
-> reference. The KYC pilot will canonize `case-list/`; the Order Fallout pilot
-> will canonize `console/` (or `kanban/`, depending on demo direction); the
-> Supplier Risk pilot will canonize `dashboard/` (and possibly `map/`); the PIM
-> pilot will canonize `inbox/`.
+> The HITL panel templates are shipped in this commit and are
+> production-grade vanilla HTML/CSS/JS. The shapes/ subdirectories are
+> seeded as empty placeholders; each gets fleshed out as the corresponding
+> pilot lands a real customer-grade reference. The KYC pilot will canonize
+> `case-list/`; the Order Fallout pilot will canonize `console/` (or
+> `kanban/`, depending on demo direction); the Supplier Risk pilot will
+> canonize `dashboard/` (and possibly `map/`); the PIM pilot will
+> canonize `inbox/`.
 
 ---
 
@@ -610,8 +646,11 @@ the workspace and the cinematic feel like the same product:
   data from `specs/sample-data/` (which is governed by
   `threadlight-demo-data-factory`).
 - ❌ **Skip the audit viewer**. Even if § 8b says `none`, every workspace
-  must show *some* indication of "what just happened" — drop a minimal
-  audit toast at minimum.
+  must show *some* indication of "what just happened" — drop the
+  `references/hitl-panels/audit-viewer.html` panel at minimum.
+- ❌ **Ship a workspace without the 3 HITL panels** (decision-pane +
+  action-toolbar + audit-viewer). card-dispute v3 made this mistake
+  and shipped a static file dump with no decision surface.
 - ❌ **Generate a workspace UI when § 8b says `none`**. If humans only
   interact via Teams cards, generate ONLY `threadlight-hitl-patterns` output.
 - ❌ **Hardcode colors** outside the palette catalog. One accent per process,

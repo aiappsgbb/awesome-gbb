@@ -154,6 +154,181 @@ The script does `az acr build` + `az containerapp job update`. This works but is
 
 ---
 
+## ACA Job: silent-failure debug playbook
+
+**Symptom we keep hitting.** ACA Job execution flips to `Failed`
+within 60s of the deploy completing, but **zero console + system
+logs reach Log Analytics Workspace** even though sibling ACA apps
+(MCP server, agent) in the same env route logs cleanly. `az
+containerapp job logs show` hangs indefinitely. This bit the
+card-dispute v3 PoC's deadline-watcher cron after the in-process
+refactor and was the single biggest end-of-session blocker
+(`cdi-r3-cron-debug` blocked todo).
+
+The diagnostic ladder below goes **cheap → expensive**. Stop at the
+first rung that surfaces actionable signal.
+
+### Rung 1 — Verify the basics aren't lying
+
+```powershell
+$RG  = 'rg-card-dispute-poc'
+$JOB = 'aca-job-deadline-watcher'
+
+# Confirm the job exists and what image it's actually running
+az containerapp job show --resource-group $RG --name $JOB `
+  --query "{state:properties.runningState, image:properties.template.containers[0].image, env:properties.environmentId}" -o table
+
+# Confirm last execution(s)
+az containerapp job execution list --resource-group $RG --name $JOB `
+  --query "[].{name:name, status:properties.status, start:properties.startTime, end:properties.endTime}" `
+  --output table | Select-Object -First 10
+```
+
+Common findings:
+- Image is `mcr.microsoft.com/azuredocs/containerapps-helloworld` — `azd
+  provision` ran but `azd deploy` / publish_aca didn't (placeholder
+  leak — `safe-check` G9.1 catches this; check separately).
+- Image hash matches latest ACR push but jobs still Failed → real
+  runtime crash, advance to Rung 2.
+
+### Rung 2 — Probe LAW for ANY signal at all (including system events)
+
+```powershell
+$WS = az monitor log-analytics workspace list --resource-group $RG `
+        --query "[0].customerId" -o tsv
+$JOB = 'aca-job-deadline-watcher'
+
+# Console logs — what stdout/stderr emitted (this is the "no logs" thing if empty)
+az monitor log-analytics query --workspace $WS --analytics-query @"
+ContainerAppConsoleLogs_CL
+| where ContainerJobName_s == '$JOB'
+| order by TimeGenerated desc
+| project TimeGenerated, RevisionName_s, Log_s
+| take 50
+"@ -o table
+
+# System logs — ACA control plane events (start/stop/pull/probe failures)
+az monitor log-analytics query --workspace $WS --analytics-query @"
+ContainerAppSystemLogs_CL
+| where ContainerAppName_s == '$JOB'
+| order by TimeGenerated desc
+| project TimeGenerated, Type_s, Reason_s, Log_s
+| take 50
+"@ -o table
+```
+
+What each empty/non-empty combo means:
+
+| ConsoleLogs | SystemLogs | Likely cause |
+|---|---|---|
+| Empty | Empty | LAW routing not wired to this job (env-level diag setting missing or job created before diag setting), OR ACA Job log-pipeline lag (try again 2-3 min after execution) |
+| Empty | Non-empty | Image pulls / starts but exits before any `print()` / `logging.info()` reaches LAW. Usually an **import-time crash** — the process exits before `logging.basicConfig()` fires. Move to Rung 3. |
+| Non-empty | Non-empty | You have signal — read it. |
+
+### Rung 3 — Force first-line logging in the entrypoint
+
+When the ConsoleLogs pipe is empty but SystemLogs show the container
+started + exited, the crash is import-side. Tactic: emit a synchronous
+write to stderr **before any other import** so even an
+`ImportError` produces a visible breadcrumb.
+
+```python
+# main.py — top of file, BEFORE any project imports
+import sys
+sys.stderr.write("BOOT: entrypoint reached\n"); sys.stderr.flush()
+try:
+    import azure.identity     # the usual suspects first
+    sys.stderr.write("BOOT: azure.identity OK\n"); sys.stderr.flush()
+    import azure.cosmos
+    sys.stderr.write("BOOT: azure.cosmos OK\n"); sys.stderr.flush()
+    # ... your imports ...
+except Exception as e:
+    sys.stderr.write(f"BOOT: import failed: {type(e).__name__}: {e}\n")
+    sys.stderr.flush()
+    raise
+```
+
+Push, redeploy, kick off a manual execution (`az containerapp job
+start --resource-group $RG --name $JOB`), wait ~90s, re-run the
+ConsoleLogs query at Rung 2. The breadcrumbs reveal which import
+exploded.
+
+### Rung 4 — Activity log probe (orthogonal channel — bypasses LAW entirely)
+
+```powershell
+$RG = 'rg-card-dispute-poc'
+$JOB = 'aca-job-deadline-watcher'
+$JOB_ID = az containerapp job show --resource-group $RG --name $JOB --query id -o tsv
+
+# Last 4 hours of activity log entries for the job resource
+az monitor activity-log list `
+  --resource-id $JOB_ID `
+  --start-time (Get-Date).AddHours(-4).ToString('o') `
+  --query "[].{time:eventTimestamp, level:level, op:operationName.value, status:status.value, msg:properties.statusMessage}" `
+  -o table | Select-Object -First 20
+```
+
+Catches: image pull failures (ACR auth / RBAC missing on the env's
+UAMI), execution-create failures (quota), control-plane denials.
+
+### Rung 5 — Portal Container Apps blade (job execution detail)
+
+The most painful diagnostic to automate, but it has signal that **is
+NOT exposed via CLI**. Path:
+
+1. Azure Portal → Resource group → the ACA Job resource
+2. Left nav → **Execution history**
+3. Click the failed execution name
+4. The right pane shows **per-replica logs** including init-container
+   output and any pre-`logging.basicConfig` stderr — the same data
+   that LAW would show *if* the routing were healthy.
+
+Use this rung when Rungs 1–4 give you nothing actionable. Do not
+skip the earlier rungs — they're 1-line probes; the portal click is
+several minutes of navigation.
+
+### Rung 6 — Detectors API (preview — sometimes 404s)
+
+```powershell
+$RG = 'rg-card-dispute-poc'
+$JOB = 'aca-job-deadline-watcher'
+$exec = (az containerapp job execution list --resource-group $RG --name $JOB `
+          --query "[0].name" -o tsv)
+az rest --method get `
+  --uri "https://management.azure.com/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RG/providers/Microsoft.App/jobs/$JOB/executions/$exec/detectors?api-version=2024-03-01"
+```
+
+Returns `404` on many regions / SKU combos as of May 2026 — try
+`api-version=2024-08-02-preview` or `2025-01-01` if 404. When it
+works, surfaces structured root-cause diagnostics (e.g.
+"OutOfMemoryException", "ImagePullBackOff", "MaxReplicasExceeded").
+
+### Common root causes — the "if I ran out of time, what's it most likely?" table
+
+| Symptom in logs | Likely cause | Fix |
+|---|---|---|
+| ConsoleLogs empty + SystemLogs `Type=Pull`, `Reason=ImagePullError` | ACR pull RBAC missing on env's UAMI, or image tag doesn't exist in ACR | Verify `az acr repository show-tags`; grant `AcrPull` to env UAMI |
+| ConsoleLogs empty + SystemLogs `Reason=ContainerStartedExited` ExitCode 1 within 5s | Import-time crash before logger setup | Apply Rung 3 first-line stderr breadcrumbs |
+| ConsoleLogs empty + activity log `Forbidden` | Cosmos / Search data-plane RBAC not granted to job's UAMI (Foundry agent UAMI is `ServiceIdentity` and **cannot** receive Cosmos data-plane RBAC — see `azure-tenant-isolation` + `foundry-hosted-agents` gap-003) | Use a separate User-Assigned MI for the job; grant role `00000000-0000-0000-0000-000000000002` (Cosmos DB Built-in Data Contributor) at the account scope |
+| ConsoleLogs empty + everything looks healthy + execution Failed | LAW diagnostic settings missing for the ACA env (apps emit logs because they were created with diag wiring; jobs created later inherit the env but not always the diag setting on the job resource itself) | Add diagnostic setting on the job resource: `az monitor diagnostic-settings create --resource $JOB_ID --name to-law --workspace $WS --logs '[{"category":"ContainerAppConsoleLogs","enabled":true},{"category":"ContainerAppSystemLogs","enabled":true}]'` |
+| Image confirmed real + console fine + early Failed | Cron `args:` running unintended path (e.g. `python -m main` when entrypoint is `python main.py`) | `az containerapp job show ... --query template.containers[0].command` |
+
+### Anti-pattern (DO NOT do)
+
+- ❌ Don't add `time.sleep(120)` "just to keep the container alive" — it
+  hides the crash. Fix the import.
+- ❌ Don't switch to a long-lived `containerapp app` to "get logs" — ACA
+  Jobs are the right primitive for cron; the routing IS fixable.
+- ❌ Don't blindly bump `replicaTimeout` — if the entrypoint crashes
+  in 5s, more time won't help.
+
+> Captured from the card-dispute v3 PoC `cdi-r3-cron-debug` blocked
+> todo (May 2026). The ladder above is the order in which the
+> debugging session would have moved if the agent hadn't run out of
+> turns; future cron debugs should rerun this top-to-bottom.
+
+---
+
 ## Hooks: `postprovision` vs `postdeploy`
 
 | Hook | Runs after | Use for |
