@@ -458,6 +458,76 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
             )
         job_health_results.append(entry)
 
+    # ------------------------------------------------------------------
+    # G9.3 — App Insights existence behavioural check (appin_health)
+    # If the SPEC declared `app-insights: yes` (or expected_resource_types
+    # includes `Microsoft.Insights/components`), the post-deploy gate FAILS
+    # if no AppIn resource exists in the deployed RG. Catches the silent
+    # observability gap discovered after card-dispute v3 (azd up returned
+    # 0 but App Insights stayed completely empty because the bicep module
+    # was never composed in main.bicep). See foundry-observability skill.
+    # ------------------------------------------------------------------
+    appin_health_results: list[dict[str, Any]] = []
+    appin_expected = (
+        "app-insights" in selectors
+        or "Microsoft.Insights/components" in expected_types
+        or "appinsights" in selectors
+    )
+    if appin_expected:
+        try:
+            appin_raw = _az(
+                "resource", "list",
+                "-g", rg,
+                "--resource-type", "Microsoft.Insights/components",
+                "--query", "[].{name:name,id:id,kind:kind}",
+                "-o", "json",
+            )
+            appin_resources = json.loads(appin_raw or "[]")
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+            appin_health_results.append({
+                "status": "probe_failed", "error": str(exc)[:200],
+            })
+            gaps.append(
+                f"appin-existence probe failed: {exc} "
+                f"(unable to verify Microsoft.Insights/components in {rg})"
+            )
+        else:
+            if not appin_resources:
+                appin_health_results.append({
+                    "status": "MISSING",
+                    "expected": "Microsoft.Insights/components",
+                    "found_in_rg": [],
+                })
+                gaps.append(
+                    f"appin-existence: SPEC declared app-insights but NO "
+                    f"Microsoft.Insights/components resource exists in "
+                    f"{rg!r}. azd up returned success but App Insights was "
+                    f"never provisioned — agent traces, MCP tool calls, and "
+                    f"cron logs will be silently lost. Check that "
+                    f"infra/main.bicep includes app-insights.bicep (always-on). "
+                    f"See foundry-observability skill for the drop-in module."
+                )
+            else:
+                for appin in appin_resources:
+                    appin_health_results.append({
+                        "name": appin.get("name"),
+                        "kind": appin.get("kind"),
+                        "status": "OK",
+                    })
+    else:
+        # SPEC did not declare AppIn. Record the check was skipped so the
+        # auditor can see we considered it; do NOT trip the gate.
+        appin_health_results.append({
+            "status": "not_required_by_spec",
+            "note": (
+                "SPEC § 11c did not include app-insights selector AND "
+                "expected_resource_types did not include "
+                "Microsoft.Insights/components. Add them to enable "
+                "this gate. (Threadlight default: app-insights is "
+                "always-on — see foundry-observability skill.)"
+            ),
+        })
+
     channel_results: list[dict[str, Any]] = []
     for ch in channels:
         ch_type = ch.get("type", "").lower()
@@ -516,6 +586,7 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
         "deployed_resource_types": sorted(deployed_types),
         "image_probe": image_probe_results,
         "job_health": job_health_results,
+        "appin_health": appin_health_results,
         "channels": channel_results,
         "scheduled_jobs": job_results,
         "gaps": gaps,

@@ -3,19 +3,21 @@ name: threadlight-safe-check
 description: >
   Mandatory three-lifecycle completeness gate for threadlight pilots
   (design / pre-deploy / post-deploy). Reads SPEC § 11c selectors via
-  specs/manifest.json `deployment_manifest` and asserts: every selector
-  maps to deployed `Microsoft.*` resource types, every channel reaches,
-  every scheduled job is wired. Post-deploy phase ALSO runs behavioural
+  `specs/manifest.json` `deployment_manifest` and asserts: every
+  selector maps to deployed `Microsoft.*` types, every channel reaches,
+  every scheduled job is wired. Post-deploy ALSO runs behavioural
   checks — deployed images must NOT match the azuredocs helloworld
-  placeholder, and no ACA Job may have its last 5 executions all Failed.
-  USE FOR: completeness gate, deploy gate, safe check, post-deploy gate,
-  pre-deploy check, manifest drift, orphan modules, partial PoC, missing
-  bot/workspace/aca-job, deployment_manifest, Phase 3.5, postdeploy-
+  placeholder, no ACA Job may have its last 5 executions all Failed,
+  and an App Insights resource must exist when SPEC declared it.
+  USE FOR: completeness gate, deploy gate, safe check, post-deploy
+  gate, pre-deploy check, manifest drift, orphan modules, partial PoC,
+  missing bot/workspace/aca-job, deployment_manifest, postdeploy-
   manifest.json, placeholder image, helloworld image, image probe, job
-  execution failed, cron rot.
-  DO NOT USE FOR: invocation/runtime tests or agent quality (foundry-
-  evals), `azd up` orchestration (threadlight-deploy), schema authoring
-  (threadlight-design).
+  execution failed, cron rot, app insights missing, telemetry not
+  flowing, blank appin.
+  DO NOT USE FOR: invocation/runtime tests (foundry-evals), `azd up`
+  orchestration (threadlight-deploy), schema authoring (threadlight-
+  design).
 ---
 
 # Threadlight Safe Check — three lifecycle gates, one CLI
@@ -341,6 +343,37 @@ yet), `job_health[].status` records `no_executions_yet` and **does NOT**
 trip the gate (false-positive avoidance). It will trip on the next
 post-deploy run if the job stays red.
 
+### Step 5.6 — App Insights existence (catches silent observability gap)
+
+The biggest "azd up returned 0 but the demo is dark" failure mode caught
+in Phase 25: deployed PoC ships with no telemetry at all because the
+`app-insights.bicep` module was never composed into `infra/main.bicep`.
+Hosted agent runs, MCP serves tools, cron ticks — but App Insights stays
+empty. The smoke probe `first-trace-probe.kql` returns 0 rows and nobody
+notices until a customer asks "where are the traces?".
+
+If `module_selectors.app-insights == "yes"` (or `expected_resource_types`
+includes `Microsoft.Insights/components`), the gate runs:
+
+```python
+appin_resources = az resource list -g <rg> \
+    --resource-type Microsoft.Insights/components -o json
+if not appin_resources:
+    gaps.append("appin-existence: SPEC declared app-insights but NO ...")
+```
+
+The probe records every checked resource under `appin_health[]`. If SPEC
+did NOT declare AppIn, the check is a no-op and records
+`{"status":"not_required_by_spec","note":"…"}` so the auditor sees it
+was considered.
+
+> **Threadlight default:** `app-insights` should always be in
+> `module_selectors`. Add `Microsoft.Insights/components` to
+> `expected_resource_types`. See `foundry-observability` skill for the
+> drop-in `app-insights.bicep` + `log-analytics.bicep` modules and the
+> postprovision script that connects the Foundry account to AppIn so
+> hosted-agent traces flow.
+
 ### Step 6 — write `tests/postdeploy-manifest.json`
 
 ```json
@@ -348,14 +381,17 @@ post-deploy run if the job stays red.
   "phase": "post-deploy",
   "deployed_at": "2026-05-10T22:30:00Z",
   "rg": "rg-card-dispute-poc",
-  "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui"],
-  "deployed_resource_types": ["Microsoft.CognitiveServices/accounts", "..."],
+  "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui", "app-insights"],
+  "deployed_resource_types": ["Microsoft.CognitiveServices/accounts", "Microsoft.Insights/components", "..."],
   "image_probe": [
     { "name": "ca-mcp-...", "kind": "containerapp", "image": "cr...azurecr.io/.../mcp:azd-deploy-1778483950", "status": "OK" },
     { "name": "ca-job-deadline-...", "kind": "containerapp-job", "image": "cr...azurecr.io/.../deadline-watcher:azd-deploy-1778484248", "status": "OK" }
   ],
   "job_health": [
     { "name": "ca-job-deadline-...", "executions_checked": 5, "statuses": ["Succeeded","Succeeded","Succeeded","Succeeded","Succeeded"], "status": "OK" }
+  ],
+  "appin_health": [
+    { "name": "appin-card-dispute-poc", "kind": "web", "status": "OK" }
   ],
   "channels": [
     { "name": "Analyst Workspace", "type": "web", "fqdn": "ca-workspace-...azurecontainerapps.io", "status": "OK" },
@@ -381,11 +417,13 @@ are **structural** — they answer *"is the right shape of resource
 present?"*. The Card Dispute v3 PoC failed on these and the gate caught
 it.
 
-Steps 3.5 and 5.5 are **behavioural** — they answer *"is the right code
-running, and is it not crashing?"*. The Card Dispute v4 PoC passed all
-structural checks but had MCP running the helloworld placeholder and
-the cron failing every 15 min. Structural checks alone weren't enough;
-the behavioural checks close that loop.
+Steps 3.5, 5.5, and 5.6 are **behavioural** — they answer *"is the right
+code running, is it not crashing, and is telemetry actually landing?"*.
+The Card Dispute v4 PoC passed all structural checks but had MCP running
+the helloworld placeholder, the cron failing every 15 min, and zero
+traces in AppIn (because the AppIn resource was never even provisioned).
+Structural checks alone weren't enough; the behavioural checks close
+that loop.
 
 Both layers are cheap (single `az` call per resource) and run on the
 same schedule (post-deploy hook). There's no scenario where you want
