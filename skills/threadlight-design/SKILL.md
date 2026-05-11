@@ -30,6 +30,30 @@ Invoke this skill when the user wants to:
 - Mock backend systems they can't access yet (SAP, CRM, core banking, OSS/BSS)
 - Turn vague requirements into a concrete, reviewable spec with cited industry data
 
+## Using this skill in Microsoft Copilot Cowork
+
+This skill is designed for two personas:
+
+- **Sellers (non-technical) — usually in Microsoft Copilot Cowork.** Use Cowork to
+  tailor-craft a use-case pitch with the customer's named pain, sourced industry
+  stats, and a customer-facing `specs/overview.html` you can screen-share on the
+  next call. **Fast-PoC mode** is the right default in Cowork — the skill asks
+  2–3 essential questions, assumes sensible defaults, and produces everything in
+  one pass. You don't need to be a developer to drive this.
+- **Solution Engineers (technical) — usually in GitHub Copilot CLI / Claude
+  Code.** Use **Full mode** when the design will face a customer SME for
+  industry-realism review, or when the design is a prelude to a workshop deploy.
+  After the spec is committed, hand off to `threadlight-local-test` for fast
+  inner-loop iteration or directly to `threadlight-deploy` for the customer
+  sandbox.
+
+> [!TIP]
+> **Cowork-specific tips:** keep the customer's industry vocabulary inline (don't
+> abstract to generic "the customer"); attach the generated `specs/overview.html`
+> directly to the conversation so the customer can react to the visual; if the
+> customer wants to see the agent run live, ask the SE to invoke
+> `threadlight-local-test` and screen-share back into Cowork.
+
 ## Workflow Overview
 
 ```
@@ -728,6 +752,13 @@ for the customer conversation, anticipate questions, and suggest next steps.
    - Deploy to Citadel landing zone (if governed)
    - Expand to additional process variants
 
+> [!TIP]
+> **For the SE who'll run the deploy or workshop:** `threadlight-local-test` is
+> available for fast inner-loop iteration without `azd up`, and
+> `threadlight-deploy` handles the full Foundry deployment. Mention these as
+> options to the customer's technical contact — but don't force them; some
+> demos go straight from `overview.html` to a steering-committee decision.
+
 **Style:** Same dark theme as overview.html but with an "INTERNAL USE ONLY" banner
 at the top. Print-friendly (saves as clean PDF).
 
@@ -743,7 +774,7 @@ Walk through the generated structure with the user:
    - **`specs/`** = WHAT the business needs (reviewable by stakeholders)
    - **`src/agent/skills/` + `AGENTS.md`** = HOW the agent implements it
    - **Deploy artifacts** = generated separately by `threadlight-deploy`
-4. Suggest next steps (test locally, deploy, iterate)
+4. Suggest next steps (test locally with `threadlight-local-test` if iterating; deploy with `threadlight-deploy` when ready; then evaluate with `foundry-evals`)
 
 ### Step 8: Auto-Review (mandatory)
 
@@ -849,7 +880,9 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | Skill | Use When |
 |-------|----------|
 | [**threadlight-deploy**](../threadlight-deploy/) | Consumes the SPEC + AGENTS.md + skills produced by this skill; turns them into a deployable Foundry hosted-agent project |
+| [**threadlight-local-test**](../threadlight-local-test/) | **Optional fast inner-loop for SEs.** Run the design output locally (FoundryChatClient + FastMCP + workspace) without `azd up` — Cowork-friendly for iterating on tools and prompts before a customer workshop |
 | [**threadlight-safe-check**](../threadlight-safe-check/) | Reads the `deployment_manifest{}` block authored under SPEC § 11c (this skill's responsibility) and gates design / pre-deploy / post-deploy completeness |
+| [**foundry-observability**](../foundry-observability/) | Always layered into deploy from day one — App Insights + OTel telemetry across hosted agents, MCP, ACA jobs, workspace; closes the silent gap where `azd up` returns 0 but AppIn stays empty |
 | [**foundry-iq**](../foundry-iq/) | **Default knowledge retrieval pattern** — every SPEC § 7 should declare a Knowledge Base with `Backing service: foundry-iq` unless the process has zero domain documents |
 | [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Consumes SPEC § 7b AI Services & Model Selection — wires vision / DocIntel / Speech tools |
 | [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Consumes SPEC § 8b Workspace UX — generates the operator workspace |

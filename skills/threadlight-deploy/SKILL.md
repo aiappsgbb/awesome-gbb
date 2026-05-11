@@ -2009,7 +2009,7 @@ see Step 4).
 // infra/main.bicep — extended by Phase 6 from the Phase 5 stub
 module uami 'modules/uami.bicep' = { /* always */ }
 module acr 'modules/acr.bicep' = { /* always */ }
-module appInsights 'modules/app-insights.bicep' = { /* always */ }
+module appInsights 'modules/app-insights.bicep' = { /* always — see foundry-observability skill for layers 2 + 3 */ }
 module cosmos 'modules/cosmos-db.bicep' = if (deployCosmosDb) { /* ... */ }
 
 module search 'modules/ai-search.bicep' = if (deployAiSearch) { /* ... */ }
@@ -2270,6 +2270,8 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Deploy custom MCP servers as ACA or Azure Functions |
 | [**foundry-evals**](../foundry-evals/) | Evaluate agent quality + **continuous evaluation**: Plan A (default) Foundry built-in scheduled evals, Plan B (fallback) ACA Job (reads SPEC § 9 KPI table) |
 | [**threadlight-safe-check**](../threadlight-safe-check/) | **Mandatory post-deploy completeness gate** — invoked from `predeploy` / `postdeploy` hooks; verifies every SPEC § 11c selector maps to deployed resources, all channels reach, all jobs are wired. Run this before declaring victory or kicking off `foundry-evals` |
+| [**foundry-observability**](../foundry-observability/) | **Always layered into deploy from day one.** Owns the 3-layer telemetry pattern (Bicep substrate → Foundry account-level AppIn connection → `configure_azure_monitor()` in each ACA workload). Without this, `azd up` returns 0 but App Insights stays empty for the entire pilot lifetime — the silent gap that bit Card Dispute v3. The post-deploy hook MUST call `connect_foundry_appinsights.py` and every ACA workload entry point MUST start with `init_telemetry(role=...)` |
+| [**threadlight-local-test**](../threadlight-local-test/) | **For SEs.** Optional fast inner-loop before `azd up` — run the designed agent locally (FoundryChatClient + FastMCP + workspace + sample data) in Copilot CLI / Cowork / Clawpilot. Skip when the spec is a one-shot demo or already-deployed pilot |
 | [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Generates the operator workspace from SPEC § 8b (case-list, inbox, dashboard, console, kanban, map) |
 | [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Generates Adaptive Cards + audit trail for SPEC § 8 action gates |
 | [**threadlight-event-triggers**](../threadlight-event-triggers/) | Generates trigger receivers from SPEC § 10b (ACA Job cron/manual, Functions, ACA consumer) |

@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-15-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-23-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -11,7 +11,9 @@
 
 - [What Are Skills?](#what-are-skills)
 - [Skills Catalog](#skills-catalog)
-  - [🏗️ Agent Design & Deployment](#️-agent-design--deployment)
+  - [🏗️ Foundry Building Blocks](#️-foundry-building-blocks)
+  - [🧵 Threadlight Pipeline](#-threadlight-pipeline)
+  - [🛠️ Cross-Cutting Helpers](#️-cross-cutting-helpers)
   - [📊 Content Generation](#-content-generation)
   - [🔍 Discovery](#-discovery)
 - [How to Use](#how-to-use)
@@ -30,22 +32,53 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 ## Skills Catalog
 
-### 🏗️ Agent Design & Deployment
+> [!TIP]
+> **Two primary personas use these skills:**
+> - **Sellers** (non-technical, in Microsoft Copilot Cowork) — start with `threadlight-design` to tailor-craft a use-case pitch.
+> - **Solution Engineers** (technical, running customer workshops) — use `threadlight-local-test` for fast inner-loop iteration, then `threadlight-deploy` for the customer sandbox.
+>
+> See [THREADLIGHT.md](THREADLIGHT.md) for the end-to-end pipeline and a customer-workshop runbook.
+
+### 🏗️ Foundry Building Blocks
+
+Reference patterns for Microsoft Foundry hosted agents, MCP servers, evals, RAG, vision/speech, and observability.
 
 | Skill | Description |
 |-------|-------------|
-| [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Reference guide for the refreshed Foundry hosted agents preview (April 2026) — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting |
-| [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a Foundry Hosted Agent to Microsoft Teams — bot code, Bicep infrastructure, Teams manifest, UAMI auth, and ACA deployment |
-| [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, for long-running tool loops |
-| [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as Azure Container Apps or Azure Functions — Cosmos DB MCPToolKit, Playwright MCP, mock MCP for demos, protocol requirements |
-| [**foundry-evals**](skills/foundry-evals/) | Evaluate Foundry hosted agents — two-phase invoke+score pattern, 6 built-in evaluators, dataset creation, RBAC, tool-use discipline |
-| [**foundry-iq**](skills/foundry-iq/) | Build enterprise RAG with Foundry IQ — Azure AI Search Knowledge Agents, agentic retrieval, multi-hop reasoning, citation-backed responses |
-| [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (azd) — hooks, postdeploy/postprovision, ACA job deployment, infrastructure scripting conventions |
-| [**foundry-cross-resource**](skills/foundry-cross-resource/) | Cross-resource model invocation via AI Gateway (APIM) — use models from another Foundry resource or shared pool |
-| [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an existing AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth |
+| [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Refreshed hosted-agents preview — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, troubleshooting, MCP wiring |
+| [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
+| [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
+| [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |
+| [**foundry-evals**](skills/foundry-evals/) | Evaluate hosted agents — two-phase invoke+score, 6 built-in evaluators, enriched-dataset shape (`tool_calls` + `tool_outputs`), continuous loop |
+| [**foundry-iq**](skills/foundry-iq/) | Enterprise RAG with Foundry IQ — Azure AI Search Knowledge Bases, agentic retrieval, multi-hop reasoning, citation-backed responses |
+| [**foundry-doc-vision-speech**](skills/foundry-doc-vision-speech/) | Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) into a hosted agent — MCP and native Toolbox patterns + RBAC matrix |
+| [**foundry-observability**](skills/foundry-observability/) | End-to-end App Insights + Log Analytics + OpenTelemetry across hosted agents, MCP servers, ACA jobs, bot, workspace — **closes the silent-telemetry gap** where `azd up` returns 0 but AppIn stays empty |
+| [**foundry-cross-resource**](skills/foundry-cross-resource/) | Cross-resource model invocation via AI Gateway (APIM) — use models from another Foundry resource or a shared pool |
 
-> [!NOTE]
-> **Threadlight** (`threadlight-design` + `threadlight-deploy`) is our skill pipeline for rapid PoC delivery: customer brief → spec → mock → deploy → demo. See [THREADLIGHT.md](THREADLIGHT.md) for the full flow and companion skills.
+### 🧵 Threadlight Pipeline
+
+End-to-end skill chain for rapid PoC delivery: customer brief → spec → local test → deploy → safe-check gate → demo. See [THREADLIGHT.md](THREADLIGHT.md) for the flow.
+
+| Skill | Description |
+|-------|-------------|
+| [**threadlight-design**](skills/threadlight-design/) | Spec out a business process or customer use case (FSI, MFG, Retail, Telco, etc.) — durable SpecKit + AGENTS.md + skills + mock data + seller pitch page (`overview.html`). Cowork-friendly. |
+| [**threadlight-deploy**](skills/threadlight-deploy/) | Take a designed project and generate Foundry deployment artifacts — `container.py`, `Dockerfile`, `agent.yaml`, `azure.yaml`, Bicep modules. One-command `azd up` to a hosted agent. |
+| [**threadlight-local-test**](skills/threadlight-local-test/) | **For SEs.** Run a design output locally (FoundryChatClient + FastMCP + workspace UI + sample data) without `azd up` — fast iteration in Copilot CLI / Cowork / Clawpilot. |
+| [**threadlight-safe-check**](skills/threadlight-safe-check/) | **Mandatory** three-lifecycle completeness gate (design / pre-deploy / post-deploy) — selectors → resources, image-probe (no placeholder), job-success, App Insights presence. Catches silent partial deploys. |
+| [**threadlight-event-triggers**](skills/threadlight-event-triggers/) | Scaffold non-interactive trigger receivers — ACA Jobs (cron) + KEDA-scaled consumers (Service Bus / Event Grid) + idempotency. |
+| [**threadlight-workspace-ui**](skills/threadlight-workspace-ui/) | Curated, framework-agnostic workspace UI reference per process (case-list, dashboard, console, kanban, map) with action toolbar + audit viewer. **ACA-hosted**, not file:// |
+| [**threadlight-hitl-patterns**](skills/threadlight-hitl-patterns/) | Teams Adaptive Card 1.5 flows + bot UX for the seven canonical action gates (approve, edit-and-approve, reject, escalate, signoff, audit-view, request-info). |
+| [**threadlight-demo-data-factory**](skills/threadlight-demo-data-factory/) | Per-domain synthetic data + Cosmos seed / reset scripts. Anchors on industry realism canons (FSI canon ready; Retail / Telco / MFG drafted as pilots ship). |
+
+### 🛠️ Cross-Cutting Helpers
+
+Multi-skill scaffolding and operational discipline used by the Threadlight pipeline and standalone Foundry deployments.
+
+| Skill | Description |
+|-------|-------------|
+| [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (`azd`) — hooks, postdeploy/postprovision, ACA Job deployment, **silent-failure debug playbook** (6-rung diagnostic ladder). |
+| [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
+| [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth. |
 
 ### 📊 Content Generation
 
@@ -83,7 +116,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 ```
 
 > [!TIP]
-> Skills like **pptx**, **auto-demo-producer**, and **foundry-hosted-agents** are great candidates for global install (`--scope user` / `-g`) — they're useful across all your projects. Design and deployment skills like **threadlight-design** and **threadlight-deploy** work well at project scope.
+> **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. Other skills can stay at project scope.
 
 ---
 
