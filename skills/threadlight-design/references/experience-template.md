@@ -208,14 +208,21 @@ GBB | FY26 | CSU | OCP | ECIF | MTC | EBC | @microsoft.com
 threadlight | citadel | black belt
 Moneta | ARGUS | NetCracker | Amdocs | BSS-Magic | Genie
 Microsoft confidential | For internal use
+\bAcme\b | \bFooCorp\b | \bTestCo\b | \bContoso\b | \bFabrikam\b
+\bNorthwind Traders\b      # the verbatim Microsoft Learn tutorial brand
 [any seller-team member names]
 ```
 
 For telco specifically: vendor names like NetCracker / Amdocs / Genie are
-forbidden — say "OSS / BSS / order management" or "quote engine" generically.
+forbidden — say "OSS / BSS / order management" or "quote engine"
+generically. The full per-industry vendor banned-list lives in
+`references/data-realism/{industry}.md` § "Banned-name list" — those
+patterns must also be in the grep.
 
-For every customer/case/order/transaction in the demo: synthesize plausible
-data. Realistic vocabulary is good; real customer names are not.
+For every customer / case / order / transaction in the demo: synthesize
+plausible data. Realistic vocabulary is good; real customer names are
+not. Cartoon names (`Acme`, `Contoso`, `Fabrikam`) signal ``tutorial,
+not pilot'' — they're banned even though they don't leak Microsoft IP.
 
 ---
 
@@ -242,7 +249,9 @@ data = open('experience.html', encoding='utf-8').read()
 patterns = [r'\bGBB\b', r'\bFY26\b', r'\bCSU\b', r'\bOCP\b', r'\bECIF\b',
             r'\bMTC\b', r'\bEBC\b', r'@microsoft\.com', r'\bthreadlight\b',
             r'\bcitadel\b', r'\bblack belt\b', r'Moneta', r'ARGUS',
-            r'Microsoft confidential', r'For internal use']
+            r'Microsoft confidential', r'For internal use',
+            r'\bAcme\b', r'\bFooCorp\b', r'\bTestCo\b', r'\bContoso\b',
+            r'\bFabrikam\b', r'\bNorthwind Traders\b']
 hits = [(p, len(re.findall(p, data, re.IGNORECASE))) for p in patterns
         if re.findall(p, data, re.IGNORECASE)]
 assert not hits, hits

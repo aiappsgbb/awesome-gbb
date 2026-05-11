@@ -1,9 +1,45 @@
 ---
 name: foundry-iq
-description: Build enterprise RAG solutions using Foundry IQ with Azure AI Search agentic retrieval. Use when implementing policy assistants, knowledge bases with citations, or multi-hop question answering systems.
+description: >
+  Build enterprise RAG into every threadlight process via Foundry IQ — Azure AI Search
+  Knowledge Bases with agentic retrieval (multi-hop reasoning, query planning,
+  citation-backed responses). DEFAULT knowledge retrieval pattern for every
+  threadlight process; SPEC § 7 must declare a Knowledge Base for the process domain.
+  USE FOR: knowledge base, RAG, agentic retrieval, policy assistant, citations,
+  multi-hop QA, Knowledge Agent, AI Search Knowledge Base, document grounding,
+  semantic retrieval, foundry-iq, knowledge index, hybrid search, vector search.
+  DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
+  MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
 ---
 
 # Foundry IQ Agent Framework Integration Skill
+
+> **Default knowledge retrieval pattern for EVERY threadlight process.**
+> SPEC § 7 (Knowledge Sources) must declare at least one Knowledge Base per process,
+> with `Backing service: foundry-iq` (the default — alternatives are `mcp-search`
+> or `inline-context` only when foundry-iq is genuinely overkill, e.g., a process
+> with literally zero domain documents).
+>
+> See `threadlight-design/SKILL.md` → "Knowledge sources (default = foundry-iq)"
+> for the rule. This skill is the implementation of that default.
+
+## Input contract / Output artifacts
+
+| Reads | From |
+|-------|------|
+| **SPEC.md § 7 Knowledge Sources** (Backing service, sources list, expected query patterns) | `threadlight-design` |
+| Documents from blob storage / SharePoint / GitHub (sources declared in § 7) | Customer / `threadlight-demo-data-factory` for demo seed corpus |
+
+| Produces | At |
+|----------|-----|
+| Azure AI Search index | One per Knowledge Base in SPEC § 7 |
+| Knowledge Agent (in Foundry project) | One per Knowledge Base; reasoning effort per § 7 spec |
+| `infra/modules/foundry-iq-index.bicep` | Composed by `azd-patterns` Bicep library; included by `threadlight-deploy` Phase 6 when SPEC § 7 declares foundry-iq |
+| `infra/scripts/bootstrap_foundry_iq.py` | Postprovision hook that creates the index + uploads documents + creates the Knowledge Agent |
+| `src/agent/skills/<knowledge-skill>/SKILL.md` | Skill that wraps the Knowledge Agent retrieval call as a tool |
+| `agent.yaml` env vars | `FOUNDRY_IQ_INDEX`, `FOUNDRY_IQ_AGENT_NAME`, `AI_SEARCH_ENDPOINT` |
+
+---
 
 ## Folder Contents
 
@@ -25,6 +61,32 @@ description: Build enterprise RAG solutions using Foundry IQ with Azure AI Searc
 ## Overview
 
 Foundry IQ is Microsoft's enterprise-grade RAG solution that treats retrieval as a reasoning task. It uses Azure AI Search Knowledge Bases with agentic retrieval to enable multi-hop reasoning, query planning, and citation-backed responses.
+
+> ### Knowledge Bases migration callout (May 2026)
+>
+> Two control-plane surfaces exist side by side; **they are NOT
+> interchangeable** and you must pin to one consciously:
+>
+> | Surface | api-version | Endpoint shape | Wire shape |
+> |---------|-------------|----------------|------------|
+> | **Legacy "Knowledge Agents"** | `2025-01-01-preview` | `PUT /agents/<name>` | `configuration: { reasoningEffort, outputMode }` (nested) |
+> | **New "Knowledge Bases"** | `2025-11-01-preview` | `PUT /knowledgebases/<name>` | top-level `retrievalReasoningEffort` + `outputConfiguration: { modality }` (flat) |
+>
+> The scripts in this skill are pinned to the legacy `/agents/` surface
+> for compatibility with tenants that haven't yet been migrated. To opt
+> into Knowledge Bases:
+> 1. Bump `AI_SEARCH_API_VERSION` to `2025-11-01-preview`.
+> 2. Replace the `/agents/<name>` path with `/knowledgebases/<name>` in
+>    `KnowledgeAgentManager._make_request` callers and
+>    `KnowledgeAgentRetriever.retrieve`.
+> 3. The wire shape change in step 1 is already implemented in
+>    `knowledge_agent_manager.create_agent` (see the wire-format note
+>    inline in the function), but the legacy endpoint will reject the
+>    flat shape — the two MUST move together.
+>
+> Output mode values are also camelCase on the wire — `extractiveData`,
+> NOT `extractive_data`. The previous snake_case form was a docs typo
+> that the legacy endpoint silently ignored.
 
 ---
 
@@ -128,15 +190,45 @@ All configuration should be externalized to `.env`.
 **Keyless auth (DefaultAzureCredential) is the default** — only set API keys if
 you cannot use managed identity or `az login`.
 
+> ### ⚠️ Threadlight pilots: keyless is MANDATORY (not optional)
+>
+> For threadlight processes deployed via `threadlight-deploy`, the keyed
+> fallback path **must not ship** in production:
+>
+> - Provision Azure AI Search with `disableLocalAuth: true`
+> - Provision AOAI with `disableLocalAuth: true`
+> - Assign UAMI roles per the matrix below — NOT keys, NOT shared admin keys
+> - Strip `AZURE_OPENAI_API_KEY` and `AI_SEARCH_KEY` from the deployed `.env` (they're for local dev only)
+>
+> Required RBAC for foundry-iq runtime (assign to the agent's UAMI):
+>
+> | Resource | Role | Role ID |
+> |----------|------|---------|
+> | Azure AI Search service | `Search Index Data Reader` | `1407120a-92aa-4202-b7e9-c0e197c71c8f` |
+> | Azure AI Search service | `Search Index Data Contributor` (only for indexer/builder UAMI) | `8ebe5a00-799e-43f5-93ac-243d3dce84a7` |
+> | Azure OpenAI account | `Cognitive Services OpenAI User` | `5e0bd9bd-7b93-4f28-af87-19fc36ad61bd` |
+> | Foundry project (if using Knowledge Agent) | `Azure AI User` | `53ca6127-db72-4b80-b1b0-d745d6d5456d` |
+>
+> Plus: `Search Service Contributor` (`7ca78c08-252a-4471-8644-bb5ff32d4ba0`)
+> on the Search service for the **deploy-time** identity that creates indexes,
+> indexers, and knowledge agents (separate from the runtime UAMI; least
+> privilege at runtime).
+>
+> See `foundry-doc-vision-speech` for the full keyless RBAC matrix across
+> all Cognitive Services.
+
 ```bash
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-# AZURE_OPENAI_API_KEY=            # Optional — omit for keyless auth
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
+# AZURE_OPENAI_API_KEY=            # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
+AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 # Azure AI Search Configuration
 AI_SEARCH_ENDPOINT=https://<service>.search.windows.net
-# AI_SEARCH_KEY=                    # Optional — omit for keyless auth
+# AI_SEARCH_KEY=                    # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
+# Pin to match the endpoint surface you use:
+#   2025-01-01-preview → /agents/<name>             (legacy; configuration-nested)
+#   2025-11-01-preview → /knowledgebases/<name>     (new; flat retrievalReasoningEffort)
 AI_SEARCH_API_VERSION=2025-01-01-preview
 
 # PolicyBot Configuration
@@ -148,9 +240,9 @@ POLICY_CHAT_MODEL=gpt-5.4-mini
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 
-# Agentic Retrieval
+# Agentic Retrieval — wire format is camelCase (NOT snake_case)
 REASONING_EFFORT=medium       # minimal | low | medium
-OUTPUT_MODE=extractive_data
+OUTPUT_MODE=extractiveData    # extractiveData | answerSynthesis
 
 # Server Configuration
 API_HOST=0.0.0.0
@@ -417,9 +509,9 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| API Version mismatch | Using old version | Use `2025-01-01-preview` for Knowledge Agents |
+| API Version mismatch | Using old version | Pin `AI_SEARCH_API_VERSION=2025-01-01-preview` for legacy `/agents/` endpoint OR `2025-11-01-preview` for the new `/knowledgebases/` endpoint. The two are NOT interchangeable — see Knowledge Bases migration callout above. |
 | Missing index | Index not created | Run `/setup` endpoint first |
-| Authentication failed | Bad credentials | Check API keys in `.env` |
+| Authentication failed | 401 / 403 from Search or AOAI | Threadlight pilots are **keyless-by-mandate** — verify the agent's UAMI has the required Entra roles (Search Index Data Reader, Cognitive Services OpenAI User, Azure AI User on the Foundry project) AND that `AZURE_CLIENT_ID` is exported into the container so DefaultAzureCredential picks the UAMI (not the dev-loop user). Do NOT bypass by setting `AI_SEARCH_KEY` or `AZURE_OPENAI_API_KEY`. |
 | No results | Empty index | Index sample documents first |
 | Timeout | Large retrieval | Reduce reasoning effort or chunk size |
 
@@ -436,8 +528,22 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 ## Extension Ideas
 
 1. **Add SharePoint source**: Connect document libraries as knowledge sources
-2. **Multi-agent orchestration**: Specialized agents for different domains
+2. **Skill-based orchestration**: Wrap the Knowledge Agent retrieval in a dedicated `src/agent/skills/<knowledge-skill>/SKILL.md` so the threadlight agent (single-agent, skill-based pattern) can call it as a tool — this is the orchestration model `threadlight-design` uses, NOT a separate retrieval agent
 3. **Streaming responses**: Real-time token streaming with Gradio UI
 4. **Custom functions**: Email escalation, ticket creation, etc.
 5. **Caching layer**: Redis for conversation history and frequent queries
 6. **Observability**: OpenTelemetry tracing for request flow visibility
+
+---
+
+## See Also
+
+| Skill | Use When |
+|-------|----------|
+| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 7 Knowledge Sources — the input contract for this skill |
+| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 (Module Composer) wires `foundry-iq-index.bicep` when SPEC § 7 declares `Backing service: foundry-iq` |
+| [**azd-patterns**](../azd-patterns/) | Owns the `foundry-iq-index.bicep` module shape |
+| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Pairs with this skill: extract structured text from raw docs (foundry-doc-vision-speech) → index it for retrieval (foundry-iq) |
+| [**foundry-mcp-aca**](../foundry-mcp-aca/) | Alternative knowledge backing (`mcp-search`) when foundry-iq is genuinely overkill — prefer foundry-iq by default |
+| [**foundry-evals**](../foundry-evals/) | Evaluates retrieval precision, citation accuracy, multi-hop reasoning quality |
+| [**foundry-hosted-agents**](../foundry-hosted-agents/) | The hosted agent that calls this Knowledge Agent as a tool |

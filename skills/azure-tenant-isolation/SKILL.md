@@ -117,6 +117,34 @@ that touches Azure must follow them.
 4. **Never `az login` without `--tenant <id>`.** A bare `az login` opens
    the browser picker and may pick the wrong tenant — silently. Always
    pass `--tenant <id>`. Same goes for `azd auth login --tenant-id <id>`.
+   **AND**: `azd` has its own auth chain — `az login` alone does NOT
+   satisfy `azd ai agent show` / `azd deploy`, even with `AZD_CONFIG_DIR`
+   set. Run **both** logins per shell:
+
+   ```bash
+   az login --tenant "$TENANT_ID"
+   az account set --subscription "$DEFAULT_SUB"   # MANDATORY for multi-sub tenants — see rule 4a
+   azd auth login --tenant-id "$TENANT_ID"
+   ```
+
+4a. **Multi-sub tenants: `az login --tenant <id>` defaults to whichever
+    sub was last touched, NOT to `default_subscription`.** When a single
+    tenant covers multiple subscriptions (e.g., `fruocco-1` and
+    `fruocco-2`), `az login --tenant <id>` populates the token cache
+    with all of them and silently leaves the active subscription on
+    whatever was set last in the global cache. The `default_subscription`
+    field in the index file is a **hint to your assertion logic**, not
+    a default `az` honors. You MUST run `az account set --subscription
+    "$DEFAULT_SUB"` after every `az login` per shell. Mass effect: a
+    "deploy to fruocco-1" can land in fruocco-2 if you forget.
+
+    Fast check after login:
+
+    ```bash
+    az account show --query "{tenant:tenantId, sub:name}" -o table
+    # Verify sub is the one you wanted; if not, az account set --subscription "$DEFAULT_SUB"
+    ```
+
 5. **The index file is personal.** It lists your tenant ids. Gitignore
    `~/.azure-tenants/` and `~/.azd-tenants/` globally. Never commit them.
 6. **Subprocess inherits env, not isolation state.** Set
@@ -707,10 +735,14 @@ otherwise alias-agnostic.
 | `AADSTS50020` / `AADSTS700016` | `az account show --query tenantId` | Token from tenant A used against tenant B. Re-isolate: `rm -rf $AZURE_CONFIG_DIR; mkdir -p $AZURE_CONFIG_DIR; az login --tenant <id>` |
 | `az login` opens browser unexpectedly | n/a | Always pass `--tenant <id>` so `az` skips the picker |
 | Subscription not found | `az account list --query "[].{name:name,tenantId:tenantId}" -o table` | You're logged into the wrong tenant — `az login --tenant <id>` after setting `AZURE_CONFIG_DIR` |
+| Active sub silently wrong after `az login --tenant <id>` (multi-sub tenant) | `az account show --query name -o tsv` after login (returns last-touched sub, not your alias's `default_subscription`) | `az login --tenant <id>` does not honor the index file's `default_subscription` — it just populates the cache. You MUST follow it with `az account set --subscription "$DEFAULT_SUB"`. Bake both into your shell startup script. |
+| `azd ai agent show` returns "not logged in" even though `az account show` works | `azd auth login --check-status` (returns "not logged in to Azure") | `azd` uses `AzureDeveloperCliCredential` with its own token cache under `$AZD_CONFIG_DIR/auth/`. Run `azd auth login --tenant-id <id>` separately — `az login` does NOT populate it, even with both env vars set. |
 | Multiple terminals interfering | `echo $AZURE_CONFIG_DIR` in each | Every terminal must set its own `AZURE_CONFIG_DIR` before any `az` command |
 | `azd auth` token expired | `azd auth login --check-status` | `azd auth login --tenant-id <id>` (with `AZD_CONFIG_DIR` set) |
 | Subprocess uses wrong tenant | `az account show` from inside the subprocess | Re-export `AZURE_CONFIG_DIR` and `AZD_CONFIG_DIR` in the parent before spawning |
 | Assertion passes but deploy still wrong | `az account show --query "{sub:name, tenant:tenantId}" -o table` immediately before the deploy | Some other process changed `az account set` between assertion and deploy. Tighten by re-running the assertion immediately before each destructive call |
+| `az rest --headers ...` fails with "non atteso"/"unexpected" on Windows PowerShell | The `--headers key=value` flag has inconsistent parsing across `az` CLI versions and locales (notably non-EN-US PowerShell hosts) | For app-reg redirect-URI updates use `az ad app update --id <appId> --web-redirect-uris uri1 uri2 …` (replaces the array — read existing first, merge, then update). For other Graph PATCHes, build the body in Python or `Invoke-RestMethod` with a token from `az account get-access-token --resource https://graph.microsoft.com` |
+| `az ad app credential reset` wiped every secret on the app reg | Default behaviour is REPLACE, not APPEND — every other ACA app sharing the app reg breaks | Always pass `--append --display-name <label>` and verify with `az ad app credential list --id <appId>` after. For shared app regs (e.g. one Easy Auth identity for many demo containers), the `--display-name` is the only way to tell secrets apart later |
 
 ---
 
@@ -720,7 +752,7 @@ For a new terminal, new script, or a fresh agent session:
 
 - [ ] `AZURE_CONFIG_DIR` is set to the tenant-specific directory.
 - [ ] `AZD_CONFIG_DIR` is set if `azd` is involved.
-- [ ] Logged in via `az login --tenant <id>` (and/or `azd auth login --tenant-id <id>`) — never bare `az login`.
+- [ ] Logged in via `az login --tenant <id>` **AND** `azd auth login --tenant-id <id>` (separate token caches — `azd` does NOT inherit `az`'s session). Never bare `az login`.
 - [ ] Default subscription set with `az account set --subscription <name>`.
 - [ ] **Verification step run immediately before every destructive op:** `az account show --query tenantId -o tsv` and `--query name -o tsv` compared to expected values; `exit 1` on mismatch.
 - [ ] No API keys in code — `ChainedTokenCredential` only.

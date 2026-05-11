@@ -1,31 +1,34 @@
 ---
 name: threadlight-design
 description: >
-  Spec out any business process or customer use case, then generate agent architecture
-  (AGENTS.md + Skills). Produces a durable SpecKit specification first (process flow,
-  business rules, data models, tool contracts, mock data), then derives implementation
-  artifacts from the spec. Works for any domain — CX front desks, document processing,
-  content research, backend automation, monitoring, reporting, and beyond.
-  USE FOR: design a process, spec out a use case, create agent architecture, automate a
-  workflow, threadlight design, skill factory, business process specification, speckit,
-  define a customer scenario, mock backend systems, design an agent for any workflow.
+  Spec out a business process or customer use case for an enterprise pilot, then
+  generate agent architecture (AGENTS.md + Skills) — a durable SpecKit specification
+  first (process flow, business rules, data models, tool contracts, mock data,
+  KPIs, governance), then implementation artifacts derived from the spec. Targets
+  named LOB processes in regulated industries (FSI, Mfg, Retail, Telco, Healthcare,
+  Utilities) where a customer SME will judge the SPEC on industry realism before
+  the demo even runs.
+  USE FOR: design a process, spec out a use case, create agent architecture, automate
+  a regulated workflow, threadlight design, skill factory, business process
+  specification, speckit, define a customer scenario, mock backend systems.
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
-  general Q&A.
+  general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 ---
 
 # Threadlight Design
 
-Turn any business process or customer use case into a **durable specification** (SpecKit)
-and then derive **AGENTS.md + Skills** from it — ready for development and deployment.
+Turn a business process or customer use case into a **durable specification** (SpecKit)
+and then derive **AGENTS.md + Skills** from it — ready for a credible enterprise pilot
+that holds up in front of an industry SME.
 
 ## When to Use
 
 Invoke this skill when the user wants to:
-- Spec out a business process or customer scenario (any domain)
-- Design agent architecture for a workflow
-- Create a structured skill folder with formal specification
-- Mock backend systems they can't access yet (SAP, CRM, corporate DBs)
-- Turn vague requirements into a concrete, reviewable spec
+- Spec out a business process or customer scenario (any regulated LOB domain)
+- Design agent architecture for a workflow that will face a CIO / CCO / COO / CDO
+- Create a structured skill folder with a formal, audit-ready specification
+- Mock backend systems they can't access yet (SAP, CRM, core banking, OSS/BSS)
+- Turn vague requirements into a concrete, reviewable spec with cited industry data
 
 ## Workflow Overview
 
@@ -159,16 +162,22 @@ Reference: `references/process-traits.md`
    - Case-based — long-lived cases (open → in-progress → resolved)
    - Pipeline — items flow through ordered stages
 
-   > **Fast-PoC default:** If the user doesn't know yet, assume **stateless** and
-   > flag in spec § 12 Assumptions: "Assumed stateless — review for case lifecycle needs."
+   > **Default:** If the user doesn't know yet, **ask** rather than assume.
+   > Stateless is the wrong default for any regulated process — assume
+   > **case-based** for FSI / Healthcare / regulated supplier risk and
+   > flag in spec § 12: "Defaulted to case-based; confirm lifecycle with
+   > stakeholder."
 
 8. **Does the agent take consequential actions?** (Action Criticality trait)
    - Read-only — only reads/analyzes data
    - Reversible writes — creates/updates data that can be undone
    - Irreversible actions — payments, approvals, notifications, external writes
 
-   > **Fast-PoC default:** If the user doesn't know yet, assume **read-only** and
-   > flag in spec § 12: "Assumed read-only — review before adding write/approval actions."
+   > **Default:** Read-only is the right default **only for the first
+   > pilot iteration**. For any second-iteration spec, **ask** the user
+   > which writes are in scope and document them in § 8 (Human Interaction
+   > Points) with their action gates. A regulated process whose write
+   > surface stays at "read-only" forever is a tutorial, not a pilot.
 
 #### Trait-Driven Branching
 
@@ -211,16 +220,29 @@ Create in the project directory:
 Must include all sections from the template:
 1. **Process Overview** — name, domain, goals, scope, participants
 2. **Process Flow** — step-by-step with actors, inputs, outputs, decision branches
-3. **Business Rules** — numbered BR-XXX, each with condition/action/exception
+3. **Business Rules** — numbered BR-XXX, each with condition/action/exception **+ KPI mapping** (drives § 9 continuous-eval contract)
 4. **Data Models** — all entities with field-level schemas and system of record
 5. **System Integrations** — each external system, direction, auth, availability (including **mock** flag)
+5b. **External Systems & Mocks (MCP contract)** — endpoint shape, tools exposed, mock data scale, reset semantics. **INPUT CONTRACT for `foundry-mcp-aca`.** *Required for any process that talks to external systems.*
 6. **Tool Contracts** — abstract tool definitions (not bound to any runtime)
-7. **Knowledge Sources** — reference documents, policies, search indexes
-8. **Human Interaction Points** — approvals, escalations, conversational flows (if any)
-9. **Success Criteria** — functional, performance, quality targets + evaluation scenarios (S-XXX linked to BR-XXX)
+7. **Knowledge Sources** — reference documents, policies, search indexes — with explicit `foundry-iq` / `mcp-search` / `inline-context` backing decision
+7b. **AI Services & Model Selection** — chat / vision / DocIntel / Speech models with versions. **INPUT CONTRACT for `foundry-doc-vision-speech` and `azure.yaml` `config.deployments`.** Use **`gpt-5.4` family** as of May 2026 — `gpt-4o` is legacy. *Required for every process.*
+8. **Human Interaction Points** — approvals, escalations, conversational flows — with **action-gate taxonomy** (`approve` / `edit-and-approve` / `reject` / `escalate` / `signoff` / `audit-view` / `request-info`). **INPUT CONTRACT for `threadlight-hitl-patterns`.**
+8b. **Human Interaction (Workspace UX)** — case-list / inbox / dashboard / console / kanban / map shape with primary filters, detail sections, action toolbar, audit viewer. **INPUT CONTRACT for `threadlight-workspace-ui`.** *Optional — skip if humans only interact via approval cards.*
+9. **Success Criteria** — functional, performance, quality targets + evaluation scenarios (S-XXX linked to BR-XXX) **+ Business KPIs table (BR → KPI mapping)** for continuous evaluation
 10. **Trigger & Run Model** — how/when the process executes, volume, SLA
+10b. **Triggers (Receiver contract)** — receiver type, idempotency key, dedup window, dead-letter rule. **INPUT CONTRACT for `threadlight-event-triggers`.** *Required for event-driven and scheduled processes.*
 11. **Security, Compliance & Governance** — PII, auth, retention, regulatory, audit
+11b. **Governance Posture (AI Governance Hub spoke — opt-in)** — `governance_hub.required` flag + spoke artifacts needed. **INPUT CONTRACT for the optional governance-hub spoke handoff in `threadlight-deploy`.** *Required for every regulated process.*
+11c. **Tech Stack (Module selectors)** — Bicep module on/off list (cosmos, search, doc-intel, speech, event-grid, service-bus, foundry-iq-index, etc.). **INPUT CONTRACT for the `azd-patterns` Bicep module library and the composer in `threadlight-deploy`.** *Required for every process.*
+11d. **Demo Data (Realism rules)** — per-entity volumes, distribution, golden cases, reset semantics, industry realism rules. **INPUT CONTRACT for `threadlight-demo-data-factory`.** *Required for every process with mocked systems.*
 12. **Assumptions & Open Questions** — what's given, what needs stakeholder input
+
+> **The abstract / pure-coding split.** Sections **5b, 7b, 8 (action gate), 8b, 9 (KPI table),
+> 10b, 11b, 11c, 11d** are **input contracts** — each one is consumed mechanically by a
+> downstream pure-coding skill. If a section is empty/missing, the corresponding
+> downstream skill cannot generate working code. Always populate them at least minimally;
+> use defaults from this skill's references when the user can't articulate them yet.
 
 #### Generating Evaluation Scenarios (§ 9)
 
@@ -249,9 +271,24 @@ These scenarios feed directly into `foundry-evals` for post-deployment scoring.
 #### `specs/sample-data/{entity}.json` — Mock data (for systems marked "mock")
 
 For each entity in § 4 Data Models where the backing system is marked "mock" in § 5:
-- Generate 5-10 realistic sample records matching the schema
-- Include varied data (different values, edge cases, some optional fields missing)
-- Add a `_meta` field with generation date and schema version
+- Generate **enough records to be credible at the scale named in § 11d**:
+  the quick-rough default is **≥ 50 records per entity** for narrative
+  walkthrough and **≥ 10K records** for executive scale-conversation.
+  See `references/data-realism/{industry}.md` § "Production-realism
+  volume + SLA defaults" for industry-specific volumes — those values
+  win when they conflict with this default.
+- Include varied data, hand-curated golden cases (named, story-bearing),
+  some optional fields missing, and skewed distributions matching
+  reality (no random uniform).
+- Wrap each file as `{"_meta": {...}, "records": [...]}`. Do not put
+  `_meta` as a sibling key to records — `threadlight-demo-data-factory`
+  and `threadlight-workspace-ui` both depend on the wrapper shape.
+
+> **Heavy lift goes to `threadlight-demo-data-factory`.** This skill
+> writes the seed JSONs at narrative scale; the factory skill generates
+> additional records to scale-conversation volume on demand using
+> deterministic seeds, capped concurrency, and the per-industry
+> distributions documented in `references/data-realism/{industry}.md`.
 
 #### `specs/sample-data/README.md` — Migration guide
 
@@ -336,9 +373,14 @@ Read the spec and derive the architecture using these deterministic rules:
    - Conversational interaction points may warrant a dedicated skill
 
 4. **Knowledge sources → Foundry IQ or MCP:**
-   - **Documents, policies, regulations, product docs** (spec § 7) → **Foundry IQ**
-     (Azure AI Search with agentic retrieval — query planning, multi-hop, citations).
-     See `foundry-iq` skill.
+   - **Documents, policies, regulations, product docs, brand guidelines, runbooks**
+     (spec § 7) → **Foundry IQ** (Azure AI Search with agentic retrieval — query
+     planning, multi-hop, citations). See `foundry-iq` skill. **Foundry IQ is the
+     default knowledge retrieval pattern for every threadlight process** — even
+     processes that primarily query transactional data should ship with a Foundry
+     IQ index for their domain policies. Set `Backing service: foundry-iq` in spec
+     § 7 unless the corpus is genuinely tiny (then `inline-context`) or genuinely
+     live (then `mcp-search`).
    - **Dynamic/transactional data** (spec § 5 integrations) → **MCP server**
      (mock for PoC, real for production). See `foundry-mcp-aca` skill.
    - **Cosmos DB** → MCPToolKit (10 tools out of the box) as `src/mcp/`
@@ -458,9 +500,71 @@ Machine-readable deployment contract (lives with the spec):
     "pii": false,
     "auth_required_sources": [],
     "regulatory": []
+  },
+  "deployment_manifest": {
+    "module_selectors": {
+      "foundry-account":  "yes",
+      "cosmos-db":        "yes",
+      "ai-search":        "yes",
+      "foundry-iq-index": "yes",
+      "aca-mcp":          "yes",
+      "aca-bot":          "yes",
+      "aca-job":          "yes",
+      "workspace-ui":     "yes",
+      "key-vault":        "no",
+      "event-grid":       "no"
+    },
+    "services": [
+      {"name": "agent",     "host": "azure.ai.agent",   "src": "src/agent"},
+      {"name": "mcp",       "host": "containerapp",     "src": "src/mcp"},
+      {"name": "bot",       "host": "containerapp",     "src": "src/bot"},
+      {"name": "workspace", "host": "containerapp",     "src": "src/workspace"}
+    ],
+    "scheduled_jobs": [
+      {"name": "{job-name}", "schedule": "*/15 * * * *", "tool": "{tool-name}", "src": "src/jobs/{job-name}"}
+    ],
+    "channels": [
+      {"name": "Analyst Workspace",      "type": "web",            "service": "workspace"},
+      {"name": "Teams adaptive card",    "type": "teams",          "service": "bot"},
+      {"name": "Email deadline alerts",  "type": "email",          "service": "{service or external}"}
+    ],
+    "expected_resource_types": [
+      "Microsoft.CognitiveServices/accounts",
+      "Microsoft.DocumentDB/databaseAccounts",
+      "Microsoft.Search/searchServices",
+      "Microsoft.App/managedEnvironments",
+      "Microsoft.App/containerApps",
+      "Microsoft.App/jobs",
+      "Microsoft.BotService/botServices",
+      "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "Microsoft.ContainerRegistry/registries",
+      "Microsoft.Insights/components"
+    ]
   }
 }
 ```
+
+> **`deployment_manifest` is a contract `threadlight-deploy` reads
+> mechanically.** The deploy skill's Phase 3 module-selector check
+> walks `module_selectors`, confirms each service maps to a folder
+> under `src/` with a Dockerfile, and confirms every `infra/*.bicep`
+> module is wired in `main.bicep`. Phase 3.5 then takes
+> `expected_resource_types` and asserts every entry is in
+> `az resource list -g <RG>` after `azd up`. The mechanical
+> implementation is the **`threadlight-safe-check`** skill — invoke
+> `python -m threadlight.safe_check --phase {design|pre-deploy|post-deploy}`
+> at the corresponding lifecycle points. If you flip a selector
+> from `yes` to `no` mid-pilot, **delete the corresponding source
+> folder and Bicep module too** ` orphans break the orphan check.
+
+> **Required for every process where `aca-bot`, `aca-job`,
+> `workspace-ui`, or any other selector that produces a deployable
+> service is `yes`.** Without `deployment_manifest`, the deploy gate
+> can't tell missing services from intentionally-skipped ones, and
+> ships partial PoCs as if they were complete (this happened on
+> card-dispute-investigation v3 ` `aca-bot` and `aca-job` shipped
+> as `yes` in SPEC § 11c, deployed as zero resources, and weren't
+> noticed until the user opened the resource group).
 
 #### 6. `README.md`
 
@@ -682,8 +786,10 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `references/speckit-template.md` | Template for SpecKit specification documents | ✅ Included |
+| `references/speckit-template.md` | Template for SpecKit specification documents (12 sections + abstract-vs-pure-coding contracts) | ✅ Included |
 | `references/process-traits.md` | Composable trait catalog for process pattern detection | ✅ Included |
+| `references/experience-template.md` | Bespoke cinematic `experience.html` design discipline + paradigm catalog | ✅ Included |
+| `references/data-realism/README.md` | Per-industry demo-data realism rules (FSI, Retail, Telco, Mfg) | ✅ Included |
 | `references/domains/` | Optional domain primers for industry-specific acceleration | ✅ Included |
 | `references/skill-template.md` | Template for generated SKILL.md files | 📎 From upstream `threadlight-skills` repo |
 | `references/agents-template.md` | Template for generated AGENTS.md | 📎 From upstream `threadlight-skills` repo |
@@ -692,6 +798,36 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 > **📎 Upstream references:** Some reference files live in the full `threadlight-skills` repo
 > and are loaded when the skill is installed there. For standalone use from this repo,
 > follow the SpecKit template structure — it embeds the compliance questions inline.
+
+---
+
+## Input contract / Output artifacts
+
+**Input contract** — what this skill consumes:
+- A free-form user description of a business process or use case (interview-driven Phase A)
+- Optional domain primer at `references/domains/{domain}.md` (cherry-pick during interview)
+
+**Output artifacts** — what this skill produces (the contract surface for every downstream skill):
+
+| File | Consumed by | Purpose |
+|------|-------------|---------|
+| `specs/SPEC.md` § 5b | `foundry-mcp-aca` | External Systems & Mocks (MCP contract) — endpoint shape, tools, mock data scale, reset semantics |
+| `specs/SPEC.md` § 7 | `foundry-iq` | Knowledge Sources — which corpora become Knowledge Bases |
+| `specs/SPEC.md` § 7b | `foundry-doc-vision-speech` + `azure.yaml` | AI Services & Model Selection — model + version + capacity |
+| `specs/SPEC.md` § 8 | `threadlight-hitl-patterns` | Action gates — Adaptive Card generation |
+| `specs/SPEC.md` § 8b | `threadlight-workspace-ui` | Workspace shape — case-list / dashboard / console / kanban |
+| `specs/SPEC.md` § 9 KPI table | `foundry-evals` continuous loop | BR → KPI mapping for week-over-week dashboards |
+| `specs/SPEC.md` § 10b | `threadlight-event-triggers` | Receiver type + idempotency + dead-letter rule |
+| `specs/SPEC.md` § 11b | `threadlight-deploy` Citadel handoff + `citadel-spoke-onboarding` | Governance posture — citadel.required flag |
+| `specs/SPEC.md` § 11c | `azd-patterns` Bicep module library + `threadlight-deploy` composer | Tech stack module selectors — which Bicep modules to wire |
+| `specs/SPEC.md` § 11d | `threadlight-demo-data-factory` | Demo data realism rules — volumes, distribution, golden cases |
+| `specs/sample-data/{entity}.json` | `foundry-mcp-aca` Option D + `threadlight-demo-data-factory` | Seed data for mock MCP server |
+| `specs/manifest.json` | `threadlight-deploy` | Machine-readable deployment contract |
+| `AGENTS.md` + `src/agent/skills/` | `threadlight-deploy` | Skill catalog + behavioral guidelines |
+
+> If a section is missing or under-specified, the corresponding downstream skill
+> will either fail or fall back to defaults. **Always populate every input contract
+> at least minimally** — even if just `Citadel required: no` or `Triggers: on-demand only`.
 
 ---
 
@@ -705,3 +841,21 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 6. **Progressive discovery**: Start simple, branch by detected traits — don't overwhelm with questions
 7. **Compliance by default**: Always screen for PII, secrets, regulatory, and retention
 8. **Evidence-first**: All extracted data should include source references for auditability
+
+---
+
+## See Also
+
+| Skill | Use When |
+|-------|----------|
+| [**threadlight-deploy**](../threadlight-deploy/) | Consumes the SPEC + AGENTS.md + skills produced by this skill; turns them into a deployable Foundry hosted-agent project |
+| [**foundry-iq**](../foundry-iq/) | **Default knowledge retrieval pattern** — every SPEC § 7 should declare a Knowledge Base with `Backing service: foundry-iq` unless the process has zero domain documents |
+| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Consumes SPEC § 7b AI Services & Model Selection — wires vision / DocIntel / Speech tools |
+| [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Consumes SPEC § 8b Workspace UX — generates the operator workspace |
+| [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Consumes SPEC § 8 Action Gates — generates Adaptive Cards + audit trail for the seven canonical gates |
+| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Consumes SPEC § 10b Triggers — generates ACA Job / Function / consumer receivers |
+| [**threadlight-demo-data-factory**](../threadlight-demo-data-factory/) | Consumes SPEC § 11d Demo Data + the `references/data-realism/` industry rules — generates realistic demo data |
+| [**foundry-mcp-aca**](../foundry-mcp-aca/) | Consumes SPEC § 5 / § 5b — wraps mocked systems behind MCP |
+| [**foundry-evals**](../foundry-evals/) | Consumes SPEC § 9 KPI table — runs continuous evaluation loop |
+| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Consumes SPEC § 11b Governance Posture — opt-in Citadel handoff after initial deploy |
+| [**azd-patterns**](../azd-patterns/) | Composable Bicep module library that all module-emitting skills above feed into |

@@ -67,17 +67,77 @@ Recommended (from `threadlight-design`):
 > | Skill | When Needed |
 > |-------|------------|
 > | `foundry-hosted-agents` | **Always** — RBAC, identity model, agent.yaml schema, dependency versions, troubleshooting |
+> | `threadlight-design` | **Always** — produces SPEC.md sections this skill consumes (§ 5b, § 7b, § 8, § 8b, § 9, § 10b, § 11b, § 11c, § 11d) |
+> | `azd-patterns` | **Always** — Bicep module library that Phase 6 (Module Composer) reads from |
+> | `foundry-iq` | **Default for every process** — provisions the Knowledge Agent + AI Search index for SPEC § 7 knowledge sources |
 > | `foundry-teams-bot` | If Teams integration is needed |
 > | `foundry-mcp-aca` | If deploying custom MCP servers as ACA or Azure Functions |
-> | `foundry-evals` | For post-deployment evaluation |
+> | `threadlight-workspace-ui` | If SPEC § 8b specifies an operator workspace |
+> | `threadlight-hitl-patterns` | If SPEC § 8 declares any human action gate (approve/edit-and-approve/reject/escalate/signoff/audit-view/request-info) |
+> | `threadlight-event-triggers` | If SPEC § 10b declares any event-driven, scheduled, or webhook trigger |
+> | `threadlight-demo-data-factory` | If SPEC § 5 marks any system as `mock` (almost always true for pilots) |
+> | `foundry-doc-vision-speech` | If SPEC § 7b selects any vision / DocIntel / Speech model |
+> | `foundry-evals` | For post-deployment evaluation AND continuous evaluation: **Plan A** (default) — Foundry's built-in scheduled evaluations (no extra infra). **Plan B** (fallback) — ACA Job cron eval that reads from App Insights and writes to Workbook (use only when Plan A doesn't yet support hosted-agent eval kinds you need). Phase 6 includes the ACA Job ONLY when SPEC § 9 sets `continuous_eval.plan: "B"` |
+> | `citadel-spoke-onboarding` | **Phase 7 (opt-in)** — runs ONLY when SPEC § 11b sets `governance_hub.required: yes` |
 >
 > Use `/skills list` to check availability. If missing, install from `aiappsgbb/awesome-gbb`.
 
 ## Workflow
 
 ```
-Read AGENTS.md → Map tools → Choose MCP strategy → Generate runtime files → Validate → Generate azd project (extension scaffold) → Deploy notes
+Phase 0  →  Phase 1   →  Phase 2  →  Phase 3   →  Phase 4   →  Phase 5  →  Phase 6  →  Phase 7
+Poly-repo   Analyze      Generate    Validate     Teams Bot    azd        Module      Citadel
+guard       SPEC +       runtime     scaffold     (optional)   project    composer    handoff
+            AGENTS.md    files                                  scaffold   (Bicep)     (opt-in)
 ```
+
+---
+
+## Phase 0: Poly-Repo Guard (mandatory pre-flight)
+
+**Rule**: each threadlight process gets ONE repo. ONE repo = ONE process = ONE
+`azd up`. **Never multi-process repos.**
+
+### Why
+
+We learned this the hard way on `threadlight-v1` and `threadlight-v2`. Multi-process
+repos:
+- Inflate Bicep into one giant template with 70% `if` blocks
+- Force unrelated processes to share azd env, breaking iteration
+- Make customer hand-off awkward (they only want one process; they get all 13)
+- Concentrate blast radius — one botched deploy takes down siblings
+
+### Pre-flight checklist (run this FIRST, before Phase 1)
+
+Inspect the input folder. If ANY of these are true, **stop and ask the user
+to split the repo before proceeding**:
+
+- More than one `specs/SPEC.md` exists at any depth
+- More than one `AGENTS.md` exists at any depth
+- The folder name contains a plural / catalog noun (`processes/`, `catalog/`, `pilots/`)
+- The folder contains nested `specs/<process-slug>/SPEC.md` siblings
+- A previous run produced an `azure.yaml` with multiple `services:` entries that
+  point to different agent containers
+
+### How to split
+
+```
+Before (rejected):                  After (each is its own azd up):
+threadlight-pilots/                  fsi-kyc-onboarding/
+├── kyc-onboarding/                  ├── specs/
+│   ├── specs/                       │   └── SPEC.md
+│   └── src/                         ├── src/
+├── pim-enrichment/                  └── azure.yaml
+│   ├── specs/
+│   └── src/                         retail-pim-enrichment/
+└── azure.yaml  (← shared)           ├── specs/
+                                     │   └── SPEC.md
+                                     ├── src/
+                                     └── azure.yaml
+```
+
+The `threadlight-design` skill respects this by default — it generates one
+self-contained subtree per process. This skill enforces it.
 
 ---
 
@@ -586,6 +646,29 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 > skill. Without isolation, an `azd up` here may silently deploy into
 > whatever subscription another shell last `az account set` against.
 
+> **`azd` has its own auth chain — `az login` is not enough.**
+> `azd ai agent show`, `azd deploy`, and the rest of the `azd` family
+> use **`AzureDeveloperCliCredential`**, which reads tokens from
+> `$AZD_CONFIG_DIR/auth/` — completely separate from the `az` CLI
+> token cache under `$AZURE_CONFIG_DIR`. Even with both env vars
+> pointed at the same alias, an `az login --tenant <id>` does **NOT**
+> satisfy `azd`. You must run **`azd auth login --tenant-id <id>`**
+> in addition to `az login`. Symptoms when missed: `azd ai agent show`
+> hangs or returns `ERROR: not logged in. Try running 'azd auth
+> login'`, even though `az account show` works fine. This is the #2
+> "what changed?" trap after the multi-sub gotcha — bake both into
+> your shell startup script.
+>
+> Verified working sequence (per-shell, after the alias env vars are
+> exported per `azure-tenant-isolation`):
+>
+> ```bash
+> az login --tenant "$TENANT_ID"
+> az account set --subscription "$DEFAULT_SUB"
+> azd auth login --tenant-id "$TENANT_ID"   # NOT optional
+> az account show --query "{tenant:tenantId, sub:name}" -o table
+> ```
+
 ## Deploy Steps
 
 1. **Deploy everything with one command:**
@@ -872,7 +955,244 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] Shared UAMI: one UAMI for bot + MCP ACA + hooks; `AZURE_CLIENT_ID` set on all ACAs
 - [ ] AppInsights connection to Foundry project exists (or postprovision hook creates it)
 
+#### SPEC § 11c module-selector cross-check (MANDATORY)
+
+> **Use the consolidated `threadlight-safe-check` skill** for the
+> mechanical implementation of this check (and Phase 3.5 below). The
+> manual matrix below is preserved for documentation; the canonical
+> automation is:
+>
+> ```bash
+> python -m threadlight.safe_check --phase pre-deploy
+> ```
+>
+> Wire it as an `azd hooks predeploy` so missing services abort the
+> docker build before wasting an ACR push.
+
+> **Why this exists.** The card-dispute-investigation v3 PoC shipped
+> with `infra/bot/aca.bicep`, `infra/bot/bot-service.bicep`, and a
+> `src/workspace/index.html` ` but `azure.yaml` only declared two
+> services (`agent` + `mcp`), `infra/main.bicep` only wired `mcpApp`,
+> and the workspace had no `Dockerfile`. Result: SPEC § 11c said
+> `aca-bot: yes` and `aca-job: yes`; deployment ended up with **0 bot
+> resources, 0 jobs, 0 workspace ACAs** ` and the deploy still
+> reported success. `threadlight-safe-check --phase pre-deploy` would
+> have caught this.
+
+For **every `yes` row** in SPEC § 11c, walk this matrix:
+
+| Selector | Must exist in `azure.yaml` services | Must be referenced from `infra/main.bicep` | Must have source under `src/` |
+|---|---|---|---|
+| `aca-mcp` | `host: containerapp`, `project: ./src/mcp` | `module mcpApp '<host>/container-app.bicep'` | `src/mcp/Dockerfile` + `server.py` |
+| `aca-bot` | `host: containerapp`, `project: ./src/bot` | `module botAca 'bot/aca.bicep'` AND `module botService 'bot/bot-service.bicep'` | `src/bot/Dockerfile` + `bot.py` + `app.py` + `teams_package/manifest.json` |
+| `aca-job` | `host: containerapp.job` (or postdeploy `az containerapp job create`) | `module job 'jobs/aca-job.bicep'` (or `core/host/container-app-job.bicep`) | `src/jobs/<name>/Dockerfile` + `main.py` (cron entrypoint) |
+| `workspace-ui` (SPEC § 8b non-empty) | `host: containerapp`, `project: ./src/workspace` | `module workspaceAca 'core/host/container-app.bicep'` | `src/workspace/Dockerfile` + ACA-served HTML/SPA. **NOT just a static `index.html` opened from `file://`** ` see `threadlight-workspace-ui` Hosting section |
+| `foundry-iq-index` | n/a (provisioned by `postprovision` hook) | `module knowledge 'modules/ai-search.bicep'` (the index) | `scripts/postprovision.py` calls `provision_knowledge_base()` |
+
+For **every `yes` selector**, all three columns MUST be checked. If any
+is missing: **STOP**, fix the gap, do not proceed to `azd up`.
+
+#### Bicep-module orphan check (MANDATORY)
+
+For every `infra/<dir>/*.bicep` file in the repo, run:
+
+```bash
+# From repo root
+for f in $(find infra -name '*.bicep' -not -path '*/core/*' -not -path '*/modules/*'); do
+    base=$(basename "$f" .bicep)
+    if ! grep -q "module .*'.*$base\.bicep'" infra/main.bicep; then
+        echo "ORPHAN: $f is not referenced from infra/main.bicep"
+    fi
+done
+```
+
+Orphan modules confuse future readers ("is this needed? was the deploy
+broken?"). Either **wire them in** or **delete them**. No middle
+ground. The card-dispute-investigation PoC carried orphan
+`infra/bot/aca.bicep` and `infra/bot/bot-service.bicep` for an entire
+deploy cycle ` they looked deployed when reading `infra/`, but
+weren't.
+
+#### `src/`-folder orphan check (MANDATORY)
+
+Mirror of the above for source code. For every `src/<dir>/`:
+
+| Source folder | Must be declared in `azure.yaml` services | Action if not |
+|---|---|---|
+| `src/agent/` | `host: azure.ai.agent` | required ` always present |
+| `src/mcp/` | `host: containerapp` (named `mcp`) | wire it OR delete `src/mcp/` |
+| `src/bot/` | `host: containerapp` (named `bot`) | wire it OR delete `src/bot/` |
+| `src/workspace/` | `host: containerapp` (named `workspace`) **AND** must have `Dockerfile` | wire it OR explicitly mark in SPEC § 8b as "demo-only static page" with no ACA hosting |
+| `src/jobs/<name>/` | `host: containerapp.job` (named `<name>`) OR postdeploy `az containerapp job create` | wire it OR delete |
+
+Same rule: orphan source folders are a deploy bug. Either ship them or
+remove them.
+
 **If any check fails:** fix it before presenting. Do not leave broken artifacts.
+
+---
+
+## Phase 3.5: Post-deploy completeness gate (MANDATORY)
+
+> **Canonical implementation: `threadlight-safe-check` skill.** Invoke as
+> `python -m threadlight.safe_check --phase post-deploy` immediately after
+> `azd up` returns 0 (and wire as `azd hooks postdeploy`). The detailed
+> step-by-step below is preserved for understanding what the gate does;
+> in practice run the consolidated CLI rather than reimplementing.
+
+> **Why this is non-negotiable.** "PoC complete" is NOT the same as
+> "`azd up` returned 0". It means **every Azure resource declared by
+> SPEC § 11c is in `az resource list`, every channel declared by SPEC
+> § 8 is reachable, and every scheduled job is running**. Without
+> this gate, the card-dispute-investigation PoC was reported "deployed
+> and evaluated" with `aca-bot`, `aca-job`, and `workspace-ui` all
+> silently missing. Run this gate **before** announcing success.
+
+### Step 1 ` capture deployed state
+
+```bash
+# Make sure azure-tenant-isolation env vars are set first
+RG=$(azd env get-value AZURE_RESOURCE_GROUP)
+az resource list -g "$RG" \
+   --query "[].{type:type, name:name}" -o json > tests/deployed-resources.json
+az containerapp list -g "$RG" \
+   --query "[].{name:name, fqdn:properties.configuration.ingress.fqdn, state:properties.runningStatus}" \
+   -o json > tests/deployed-containerapps.json
+az containerapp job list -g "$RG" \
+   --query "[].{name:name, schedule:properties.configuration.scheduleTriggerConfig.cronExpression}" \
+   -o json > tests/deployed-jobs.json
+```
+
+### Step 2 ` build expected list from SPEC
+
+For every `yes` row in SPEC § 11c, look up the expected resource
+type(s):
+
+| Selector | Expected `Microsoft.*` resource types |
+|---|---|
+| `foundry-account` | `Microsoft.CognitiveServices/accounts` (account + nested project) |
+| `cosmos-db` | `Microsoft.DocumentDB/databaseAccounts` |
+| `ai-search` | `Microsoft.Search/searchServices` |
+| `app-insights` | `Microsoft.Insights/components` + `Microsoft.OperationalInsights/workspaces` |
+| `acr` | `Microsoft.ContainerRegistry/registries` |
+| `uami` | `Microsoft.ManagedIdentity/userAssignedIdentities` |
+| `aca-environment` | `Microsoft.App/managedEnvironments` |
+| `aca-mcp` | `Microsoft.App/containerApps` (1 named `*-mcp-*` or `ca-mcp-*`) |
+| `aca-bot` | `Microsoft.App/containerApps` (1 named `*-bot-*`) **AND** `Microsoft.BotService/botServices` |
+| `aca-job` | `Microsoft.App/jobs` (1 per cron entry) |
+| `workspace-ui` | `Microsoft.App/containerApps` (1 named `*-workspace-*` or `*-ui-*`) |
+| `event-grid` | `Microsoft.EventGrid/topics` (or `systemTopics`) |
+| `service-bus` | `Microsoft.ServiceBus/namespaces` |
+| `key-vault` | `Microsoft.KeyVault/vaults` (only if explicitly `yes` ` keyless-by-default) |
+| `storage-blob` | `Microsoft.Storage/storageAccounts` |
+| `foundry-iq-index` | `Microsoft.Search/searchServices` (named `*-iq-*`) AND `azd env get-value FOUNDRY_IQ_KB_NAME` resolves |
+
+### Step 3 ` diff and assert
+
+```python
+# tests/postdeploy_gate.py ` make this part of the deploy script.
+import json, sys
+from pathlib import Path
+
+deployed = json.loads(Path("tests/deployed-resources.json").read_text())
+deployed_types = {r["type"] for r in deployed}
+
+# Build expected from SPEC § 11c. Hand-maintain this list per process,
+# or read it from specs/manifest.json -> deployment_manifest.expected_resource_types
+expected = {
+    "Microsoft.CognitiveServices/accounts",
+    "Microsoft.DocumentDB/databaseAccounts",
+    "Microsoft.Search/searchServices",
+    "Microsoft.App/managedEnvironments",
+    "Microsoft.App/containerApps",     # mcp + bot + workspace
+    "Microsoft.App/jobs",              # deadline-watcher cron
+    "Microsoft.BotService/botServices",
+    "Microsoft.ManagedIdentity/userAssignedIdentities",
+    "Microsoft.ContainerRegistry/registries",
+    "Microsoft.Insights/components",
+}
+
+missing = expected - deployed_types
+if missing:
+    print(f"GAP: missing resource types: {missing}")
+    sys.exit(1)
+
+# Per-app instance checks for the ACAs (counts matter ` 3 ACAs expected)
+acas = json.loads(Path("tests/deployed-containerapps.json").read_text())
+aca_names = {a["name"] for a in acas}
+required_aca_patterns = {"mcp": False, "bot": False, "workspace": False}
+for n in aca_names:
+    for k in required_aca_patterns:
+        if k in n.lower(): required_aca_patterns[k] = True
+unmet = [k for k, v in required_aca_patterns.items() if not v]
+if unmet:
+    print(f"GAP: missing required ACA roles: {unmet}")
+    sys.exit(1)
+
+print("OK - post-deploy completeness gate passed")
+```
+
+### Step 4 ` channel reachability
+
+For every Human Interaction channel in SPEC § 8, run a smoke check:
+
+```bash
+# Workspace UI ` HTTP 200 on the FQDN
+WORKSPACE_FQDN=$(jq -r '.[] | select(.name | contains("workspace")) | .fqdn' tests/deployed-containerapps.json)
+[ -n "$WORKSPACE_FQDN" ] && curl -fsSL "https://$WORKSPACE_FQDN/" -o /dev/null && echo "workspace OK"
+
+# Bot ` ACA running + Bot Service registered
+BOT_NAME=$(jq -r '.[] | select(.name | contains("bot")) | .name' tests/deployed-containerapps.json)
+[ -n "$BOT_NAME" ] && az containerapp show -g "$RG" -n "$BOT_NAME" --query properties.runningStatus -o tsv
+
+# Scheduled jobs ` cron expression matches SPEC § 10b
+az containerapp job list -g "$RG" --query "[].{name:name, schedule:properties.configuration.scheduleTriggerConfig.cronExpression}" -o table
+```
+
+### Step 5 ` write the gate result
+
+Persist `tests/postdeploy-manifest.json`:
+
+```json
+{
+  "deployed_at": "2026-05-10T22:30:00Z",
+  "rg": "rg-card-dispute-poc",
+  "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui"],
+  "deployed_resources": ["` types ` "],
+  "channels": [
+    { "name": "Analyst Workspace", "fqdn": "ca-workspace-`.`.azurecontainerapps.io", "status": "OK" },
+    { "name": "Teams adaptive card", "bot_name": "ca-bot-`", "status": "OK" }
+  ],
+  "scheduled_jobs": [
+    { "name": "deadline-watcher", "schedule": "*/15 * * * *", "status": "OK" }
+  ],
+  "gaps": []
+}
+```
+
+> **`gaps` MUST be empty for "PoC complete".** If non-empty, the
+> deploy is incomplete ` either fix the gap (preferred) or update
+> SPEC § 11c to flip the selector to `no` with a documented reason
+> ("scheduled job deferred to v2"). Silently shipping with gaps is
+> the failure mode this whole gate exists to prevent.
+
+### Anti-pattern: "the agent runs in the portal so we're done"
+
+The PoC is **NOT done** when:
+- Only the hosted agent + 1 MCP ACA are deployed but SPEC § 11c
+  declared more (`aca-bot`, `aca-job`, `workspace-ui`).
+- The smoke probe / eval invokes the agent successfully but the
+  agent's deployed surface area doesn't match SPEC § 8 channels.
+- Bicep modules are present in `infra/` but not wired into
+  `main.bicep` (orphans).
+- Source folders exist under `src/` but aren't declared in
+  `azure.yaml` services.
+- `tests/postdeploy-manifest.json` doesn't exist or has non-empty
+  `gaps[]`.
+
+If any of the above is true, the PoC is partial. Communicate that
+honestly to the user (with the gap list) instead of declaring
+victory.
 
 ---
 
@@ -1083,6 +1403,205 @@ For systems using **Cosmos DB**, generate a Cosmos MCPToolKit deployment using
 
 ---
 
+## Reference: Static-Site Showroom Deploy (nginx ACA + Easy Auth)
+
+> **When to use.** A **static showroom** (lobby + catalog + cinematic process
+> walkthroughs) is a classic adjacent need to a hosted-agent pilot — the
+> seller wants a single URL to put on a slide that gates by Entra ID.
+> Same `azure-tenant-isolation` discipline, same `aigbbemea` ACR, same
+> Communication Blue brand bar — but the **runtime is nginx, not an agent**,
+> and the **2-phase Easy Auth wiring** below is non-negotiable. This is
+> NOT modeled in SPEC § 11c (it's not a per-process agent repo); ship it
+> as a sibling `infra/` folder with the static HTML.
+
+### The chicken-and-egg problem
+
+ACA `secrets[].keyVaultUrl` references are validated at **provisioning
+time**, not at runtime. So you cannot do this in one Bicep deploy:
+
+```
+1. Create KV
+2. Create ACA app with secrets:[{ name: 'easyauth-client-secret',
+                                  keyVaultUrl: '<kv>/secrets/easyauth-client-secret',
+                                  identity: <uami> }]
+3. Mint AAD client secret (needs the ACA FQDN as redirect URI…)
+4. Write secret to KV
+```
+
+Step 2 fails: KV secret doesn't exist yet → `unable to fetch secret`.
+Reordering doesn't help — the AAD client secret needs the ACA FQDN to
+register the redirect URI, which needs the ACA created first.
+
+### The fix: 2-phase Bicep with `wireAuth` toggle
+
+Add a single `bool` param to your Bicep module and gate two things on it:
+
+```bicep
+// infra/modules/site.bicep
+@description('Phase 2 toggle: when true, wires the ACA secret reference + Easy Auth. Phase 1 = false.')
+param wireAuth bool = false
+
+// ... UAMI, KV, role assignments, ACA env all unconditional ...
+
+resource site 'Microsoft.App/containerApps@2024-10-02-preview' = {
+  name: 'showroom-site'
+  // ...
+  properties: {
+    configuration: {
+      // GATED: empty array on phase 1, real reference on phase 2
+      secrets: wireAuth ? [
+        {
+          name: 'easyauth-client-secret'
+          keyVaultUrl: '${kv.properties.vaultUri}secrets/easyauth-client-secret'
+          identity: uami.id
+        }
+      ] : []
+      ingress: { external: true, targetPort: 80 /* ... */ }
+      registries: [{ server: '${acrName}.azurecr.io', identity: uami.id }]
+    }
+    template: {
+      containers: [{
+        image: imageRef
+        name: 'site'
+        resources: { cpu: json('0.5'), memory: '1Gi' }
+        probes: [
+          { type: 'Liveness',  httpGet: { path: '/healthz', port: 80 } }
+          { type: 'Readiness', httpGet: { path: '/healthz', port: 80 } }
+        ]
+      }]
+      scale: { minReplicas: 1, maxReplicas: 5 /* ... */ }
+    }
+  }
+}
+
+// GATED: only created on phase 2
+resource auth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview' = if (wireAuth) {
+  parent: site
+  name: 'current'                // MUST be literal 'current'
+  properties: {
+    platform: { enabled: true }
+    globalValidation: {
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: easyAuthClientId
+          clientSecretSettingName: 'easyauth-client-secret'
+          openIdIssuer: 'https://sts.windows.net/${tenant().tenantId}/v2.0'
+        }
+        validation: { allowedAudiences: easyAuthAllowedAudiences }
+      }
+    }
+    login: { tokenStore: { enabled: true } }
+  }
+}
+```
+
+### deploy.ps1 orchestration (canonical)
+
+```powershell
+# Phase 1: foundation (KV, UAMI, RBAC, ACA env, ACA app — NO auth)
+az deployment sub create --name "site-p1-$ts" --location $Location `
+    --template-file infra/main.bicep `
+    --parameters wireAuth=false imageRef=$imageRef <other-params>
+
+# Between phases: grant Secrets Officer + mint + write secret
+az role assignment create --assignee-object-id $deployerOid `
+    --assignee-principal-type User --role 'Key Vault Secrets Officer' `
+    --scope "/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.KeyVault/vaults/$kvName"
+Start-Sleep 30  # RBAC propagation — non-negotiable
+
+$cred = az ad app credential reset --id $clientId `
+    --display-name 'showroom-site' --append `
+    --end-date (Get-Date).AddMonths(12).ToString('yyyy-MM-ddTHH:mm:ssZ') `
+    -o json | ConvertFrom-Json
+az keyvault secret set --vault-name $kvName --name easyauth-client-secret `
+    --value $cred.password --output none
+
+# Phase 2: re-deploy with auth wired
+az deployment sub create --name "site-p2-$ts" --location $Location `
+    --template-file infra/main.bicep `
+    --parameters wireAuth=true imageRef=$imageRef <other-params>
+
+# Post: register redirect URI (idempotent)
+$existing = az ad app show --id $clientId --query 'web.redirectUris' -o json | ConvertFrom-Json
+$redirectUri = "https://$siteFqdn/.auth/login/aad/callback"
+if ($existing -notcontains $redirectUri) {
+    $merged = @($existing + $redirectUri | Select-Object -Unique)
+    az ad app update --id $clientId --web-redirect-uris @merged --output none
+}
+```
+
+### Smoke test the gate (3 expected behaviours)
+
+```powershell
+$url = "https://$siteFqdn"
+# HEAD: 401 with WWW-Authenticate Bearer + correct authorization_uri (tenant + client_id)
+curl -sI $url
+# GET (browser-like): 302 → login.windows.net/<tenant>/oauth2/v2.0/authorize?...client_id=<appId>...
+curl -s -o NUL -w "HTTP %{http_code} → %{redirect_url}\n" -A "Mozilla/5.0" $url
+# GET /healthz: also gated (no path exclusions by default) → 401/302
+```
+
+### nginx Dockerfile + nginx.conf (canonical static-site shape)
+
+`Dockerfile`:
+```dockerfile
+FROM nginx:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY . /usr/share/nginx/html/
+RUN rm -f /usr/share/nginx/html/Dockerfile /usr/share/nginx/html/nginx.conf \
+ && chown -R nginx:nginx /usr/share/nginx/html
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1/healthz || exit 1
+```
+
+`nginx.conf`:
+```nginx
+server {
+    listen 80;
+    server_tokens off;
+    gzip on; gzip_types text/css application/javascript image/svg+xml;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location = /healthz { return 200 'ok\n'; add_header Content-Type text/plain; }
+
+    location ~* \.(html?)$ { add_header Cache-Control "public, max-age=300"; }
+    location ~* \.(css|js|png|jpe?g|svg|woff2?)$ { add_header Cache-Control "public, max-age=2592000, immutable"; }
+
+    root /usr/share/nginx/html;
+    index index.html;
+    # NO SPA fallback — multi-page site, 404 should 404
+}
+```
+
+`.dockerignore` (deny-list — ACR Tasks uploads everything but `COPY .` honors this):
+```
+.git/
+infra/
+docs/
+00-research/
+**/*.md
+**/.vscode/
+deploy.ps1
+```
+
+### Anti-patterns
+
+- ❌ Single Bicep deploy with `secrets:` reference + `authConfigs` + post-deploy KV write → ACA fails to provision
+- ❌ Hard-coding role GUIDs (typo Bicep deploys without erroring then fails at role-assignment provisioning) — always look up via `az role definition list --name '<role>' --query '[0].name' -o tsv`
+- ❌ `az rest --headers Content-Type=application/json` for redirect URI updates (Windows CLI parses `--headers` inconsistently) — use `az ad app update --web-redirect-uris …` instead
+- ❌ `az ad app credential reset` without `--append` (replaces ALL existing secrets — disrupts every other ACA app sharing the same app reg)
+- ❌ Forgetting `Start-Sleep 30` after `az role assignment create` for KV Secrets Officer (RBAC propagation is real and `keyvault secret set` will return 403 if you race it)
+
+---
+
 ## Reference: SDK Deployment (via `azd ai agent` Extension)
 
 The `azd ai agent` extension (`azure.ai.agents >= 0.1.0-preview`) handles hosted agent
@@ -1175,7 +1694,7 @@ definition = HostedAgentDefinition(
     environment_variables={
         # NOTE: FOUNDRY_PROJECT_ENDPOINT is RESERVED — platform auto-injects it
         "AZURE_AI_PROJECT_ENDPOINT": "https://...",
-        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "gpt-5.4-mini",
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "gpt-5.4",  # default for production agents; gpt-5.4-mini only for trivial 1-2-step flows
     },
 )
 
@@ -1389,6 +1908,297 @@ project/                    # ← REPO ROOT
 
 ---
 
+## Phase 6: Module Composer (Bicep) — read SPEC § 11c, include exactly the right modules
+
+Phase 5 above bootstraps the agent / azd skeleton. Phase 6 wires the
+**process-specific infrastructure** by reading SPEC § 11c (Tech Stack module
+selectors) and composing only the modules that process actually needs.
+
+### Why a composer (not one big main.bicep)
+
+Each of the 13 catalog processes uses a different mix of services:
+- KYC needs `cosmos + search + foundry-iq + doc-intel + speech` (no event-grid)
+- Order Fallout needs `cosmos + service-bus + aca-job + aca-mcp` (no doc-intel/speech)
+- Supplier Risk needs `cosmos + foundry-iq + event-grid + storage-blob`
+
+A monolithic `main.bicep` would be 70% `if` blocks. The composer pattern
+includes **only the modules SPEC § 11c explicitly selects**, plus the
+always-on baseline (`uami` + `acr` + `app-insights` + `foundry-account`).
+
+### Step 1 — Read SPEC § 11c
+
+The spec writes § 11c as the **canonical kebab-case selector table**
+defined in `threadlight-design/references/speckit-template.md` § 11c.
+Phase 6 reads that table verbatim — the rows are the source of truth
+for module inclusion. Example excerpt:
+
+```markdown
+| Module             | Selected? | Purpose in this process                          |
+| `cosmos-db`        | yes       | Persistent case state, audit log                 |
+| `ai-search`        | yes       | Foundry IQ Knowledge Base backing                |
+| `foundry-iq-index` | yes       | KB: kyc-policies (sources: blob/policies/kyc/)   |
+| `azure-vision`     | yes       | Damage-photo classification                       |
+| `aca-job`          | yes       | sla-watcher cron `*/15 * * * *`                  |
+| `aca-mcp`          | yes       | customer-data MCP                                |
+| `aca-bot`          | yes       | Teams bot for analyst HITL                       |
+```
+
+**Selector vocabulary is THE contract.** Use the kebab-case names from
+the SPEC template verbatim — every other place in the toolchain
+(`azd-patterns` Bicep module library, this composer) must match. Do
+**not** invent a parallel YAML/camelCase namespace; that creates
+silent no-ops where the composer doesn't recognize the SPEC's selector
+and produces a Bicep tree missing the module the SPEC asked for.
+
+### Step 1.5 — Apply SPEC implications
+
+Per `speckit-template.md` § 11c, certain selectors imply others. Phase 6
+**enforces** these silently — not failures, additions:
+
+| When SPEC selects… | Composer auto-adds | Reason |
+|--------------------|---------------------|--------|
+| `aca-bot` | `aca-mcp` (if not already selected) | Bot needs MCP for case lookups |
+| `event-grid` | `aca-job` (if not already selected) | Need a receiver for events |
+| `service-bus` | `aca-job` (if not already selected) | Need a consumer for the queue |
+| `foundry-iq-index` | `ai-search`, `storage-blob` | KB infra dependencies |
+
+Surface the auto-additions in the composer's stdout so the user sees
+``adding `aca-mcp` because `aca-bot` was selected'' — silent additions
+that surprise the user are anti-pattern.
+
+### Step 2 — Resolve module set (canonical inclusion order)
+
+**Always include** (not in § 11c selectors — these are baseline):
+`uami → acr → app-insights → foundry-account`. Notice **`key-vault` is
+NOT in the always-include set** — Threadlight pilots are keyless by
+mandate (managed identity end-to-end). Only include `key-vault` when
+SPEC § 11c explicitly selects `key-vault: yes` because the process
+integrates with a customer-side service that demands a literal API key.
+
+`cosmos-db` is the most common selection (case state, audit) but is
+**conditional** — a stateless single-call agent doesn't need it.
+
+Conditionally include based on SPEC § 11c selector rows:
+- `cosmos-db: yes` → include `cosmos-db.bicep`
+- `ai-search: yes` → include `ai-search.bicep`
+- `foundry-iq-index: yes` → include `foundry-iq-index.bicep` (delegates to `foundry-iq` skill)
+- `azure-vision`/`doc-intel`/`azure-speech` `: yes` → include corresponding modules (delegates to `foundry-doc-vision-speech` skill)
+- `event-grid`/`service-bus`/`storage-blob` `: yes` → include corresponding modules
+- `aca-mcp: yes` → include `aca-mcp.bicep` per server (delegates to `foundry-mcp-aca` skill)
+- `aca-job: yes` → include `aca-job.bicep` per job (delegates to `threadlight-event-triggers` skill)
+- `aca-bot: yes` → include `aca-bot.bicep` (delegates to `foundry-teams-bot` skill)
+
+### Step 3 — Compose `infra/main.bicep`
+
+> **Phase 5 vs Phase 6 — what each writes.** Phase 5 (`azd ai agent init`)
+> stubs `infra/main.bicep` with the always-create baseline + agent
+> definition extension hooks ONLY. Phase 6 **edits** that stub: it adds
+> the `module foo 'modules/foo.bicep' = if (deployFoo) { ... }` blocks
+> for the SPEC-selected modules and writes the corresponding files into
+> `infra/modules/`. The stub from Phase 5 stays as the orchestrator;
+> Phase 6 fills it in. **Never overwrite `main.bicep` from scratch in
+> Phase 6** — that drops the agent extension wiring from Phase 5.
+
+Generate `infra/main.bicep` as a thin orchestrator that calls each included
+module in order, threads outputs through, and emits the env vars the agent
+container needs. Every output the agent reads at runtime MUST appear in
+`agent.yaml`'s `environment_variables:` block (with the correct schema —
+see Step 4).
+
+```bicep
+// infra/main.bicep — extended by Phase 6 from the Phase 5 stub
+module uami 'modules/uami.bicep' = { /* always */ }
+module acr 'modules/acr.bicep' = { /* always */ }
+module appInsights 'modules/app-insights.bicep' = { /* always */ }
+module cosmos 'modules/cosmos-db.bicep' = if (deployCosmosDb) { /* ... */ }
+
+module search 'modules/ai-search.bicep' = if (deployAiSearch) { /* ... */ }
+module foundryIQ 'modules/foundry-iq-index.bicep' = if (deployFoundryIqIndex) {
+  params: { searchService: search.outputs.serviceName, knowledgeBases: knowledgeBases }
+}
+module vision 'modules/azure-vision.bicep' = if (deployAzureVision) { /* ... */ }
+// ... and so on for each selected module ...
+
+module foundryAccount 'modules/foundry-account.bicep' = { /* always, last */ }
+
+// Outputs surfaced to azd .env (consumed by agent.yaml via env-var substitution)
+output AZURE_COSMOS_ENDPOINT string = deployCosmosDb ? cosmos.outputs.endpoint : ''
+output AZURE_COSMOS_DATABASE string = deployCosmosDb ? cosmos.outputs.databaseName : ''
+output AZURE_SEARCH_ENDPOINT string = deployAiSearch ? search.outputs.endpoint : ''
+output AZURE_FOUNDRY_IQ_INDEX string = deployFoundryIqIndex ? foundryIQ.outputs.indexNames[0] : ''
+output AZURE_VISION_DEPLOYMENT_NAME string = deployAzureVision ? vision.outputs.deploymentName : ''
+```
+
+### Step 4 — Wire outputs to `agent.yaml`
+
+`agent.yaml` is the Foundry hosted-agent definition. Its
+`environment_variables` field is a **list of `{name, value}` objects** (not
+a flat dict), and the values are resolved by the **azd .env at agent-deploy
+time**, not by Bicep interpolation. Phase 6 maps Bicep outputs into the
+azd .env (Step 3 emits the `output` declarations above; azd populates them
+into `.azure/<env>/.env` after `azd provision`); `agent.yaml` then
+references them as `${VAR_NAME}`.
+
+```yaml
+# agent.yaml (Phase 6 amends)
+environment_variables:
+  - name: COSMOS_ENDPOINT
+    value: ${AZURE_COSMOS_ENDPOINT}
+  - name: COSMOS_DATABASE
+    value: ${AZURE_COSMOS_DATABASE}
+  - name: SEARCH_ENDPOINT
+    value: ${AZURE_SEARCH_ENDPOINT}
+  - name: FOUNDRY_IQ_INDEX
+    value: ${AZURE_FOUNDRY_IQ_INDEX}
+  - name: VISION_DEPLOYMENT_NAME
+    value: ${AZURE_VISION_DEPLOYMENT_NAME}
+  - name: MCP_CUSTOMER_DATA_URL
+    value: ${AZURE_MCP_CUSTOMER_DATA_URL}
+  # AZURE_CLIENT_ID is auto-injected by the agent-runtime when bound to a UAMI
+  # APPLICATIONINSIGHTS_CONNECTION_STRING is auto-injected when an App Insights
+  # resource is associated with the Foundry project — do NOT set it here.
+```
+
+> **Schema gotchas** observed in earlier rounds:
+> - `environment_variables` is a list of `{name, value}` dicts, not a flat
+>   key→value mapping. The Foundry hosted-agent schema validator rejects
+>   the flat form silently in some preview revs.
+> - You can't use Bicep interpolation (`${cosmos.outputs.endpoint}`)
+>   inside `agent.yaml` — the agent control plane doesn't see Bicep
+>   outputs. Always go via azd .env.
+> - Don't set `APPLICATIONINSIGHTS_CONNECTION_STRING` — it's reserved
+>   and auto-injected when the project + App Insights are associated.
+>   Setting it manually causes telemetry collisions.
+
+### Step 5 — Hook scripts (postprovision / postdeploy)
+
+If SPEC § 11c selects modules that need post-provision wiring (e.g.,
+`foundry-iq-index` needs to run a Knowledge Agent provisioning script
+after AI Search is up; `aca-job` needs `publish_aca` to push the job
+image; `aca-bot` needs the Teams manifest sideload), Phase 6 **merges**
+its hook needs with whatever Phase 5 already wrote. Never overwrite an
+existing `hooks:` block — that's how the Phase 5 Teams-manifest hook
+gets clobbered. Read, merge, write.
+
+The merged form chains `&&`-style with a single shell invocation per
+hook to preserve order:
+
+```yaml
+# azure.yaml (after Phase 6 merge)
+hooks:
+  postprovision:
+    shell: pwsh
+    run: |
+      cd infra/scripts && uv sync --frozen
+      uv run bootstrap_foundry_iq.py
+      uv run sideload_teams_manifest.py   # added in Phase 5
+  postdeploy:
+    shell: pwsh
+    run: |
+      cd infra/scripts && uv sync --frozen
+      uv run publish_aca_jobs.py
+      uv run publish_aca_mcp.py
+```
+
+For more than two scripts, write a `infra/scripts/postdeploy.py`
+dispatcher that invokes each subscript in order — that keeps `azure.yaml`
+stable across spec changes. The dispatcher pattern is documented in
+`azd-patterns/SKILL.md` § "Cross-platform deployment scripts".
+
+These scripts are **vendored into the project** so they don't depend on
+network access at deploy time. The factory shapes are defined by `azd-patterns`.
+
+### Step 6 — Validation
+
+Phase 6 ends with three checks (all must pass before Phase 7):
+
+```bash
+# 1. Compile check — catches schema errors before deploy
+az bicep build --file infra/main.bicep
+
+# 2. Preview the deployment plan against your azd env
+azd provision --preview
+
+# 3. Validate agent.yaml against the Foundry hosted-agent schema
+azd ai agent validate
+```
+
+> **The full Bicep module catalog** lives in `azd-patterns/SKILL.md` →
+> "Composable Bicep Module Library". This skill orchestrates inclusion;
+> azd-patterns owns the module shapes.
+
+---
+
+## Phase 7: Citadel Handoff (opt-in)
+
+**Trigger**: SPEC § 11b sets `governance_hub.required: yes`.
+
+If the customer wants the deployed agent to land as a **spoke under their
+AI Governance Hub** (centralized model gateway, key vault inheritance,
+APIM policies, JWT auth), Phase 7 invokes the `citadel-spoke-onboarding`
+skill AFTER the base deployment is provisioned.
+
+### Why this is opt-in (not default)
+
+- Citadel adds APIM connection wiring + product policy + JWT auth steps that
+  are unnecessary for cx who just want a PoC running in their tenant
+- Customers with no Citadel hub in place would face an extra dependency
+- Pilot stage usually doesn't need governance — that comes when production-bound
+- Adding Citadel later is a clean, additive change (no rewrite); doing it
+  early when not needed is wasted setup
+
+### When SPEC § 11b sets `governance_hub.required: yes`
+
+Phase 7 reads SPEC § 11b for the rest of the AI Governance Hub spoke
+posture:
+
+```yaml
+# specs/SPEC.md § 11b (when governance_hub.required: yes)
+governance:
+  governance_hub:
+    required: yes
+    hub_endpoint: https://hub-prod.<customer-apim>.azure-api.net
+    access_contracts:
+      - hub-llm-gateway
+      - hub-knowledge-search
+    secrets_via_keyvault: true
+    jwt_auth: true
+```
+
+Then it hands off to `citadel-spoke-onboarding` (the **AI Citadel
+Governance Hub** is the reference implementation; the SPEC field is
+named generically because some customers run other hub products):
+
+```
+1. Run base azd up (Phase 5 + 6 complete) — agent deploys to its own tenant
+2. Invoke citadel-spoke-onboarding skill with:
+   - hub_endpoint
+   - access_contracts list
+   - the agent's UAMI principal (so APIM can grant it product subscription)
+3. citadel-spoke-onboarding produces:
+   - APIM connection in the Foundry project pointing to hub gateway
+     (use Option B — Foundry Connection — NOT Option A; Option A breaks
+     the keyless-by-mandate posture for threadlight pilots)
+   - Key Vault references replacing direct AOAI keys
+   - Updated agent.yaml with `MODEL_DEPLOYMENT_NAME = connectionName/deploymentName`
+   - JWT validation policy on the agent endpoint
+   - Validation notebook to prove end-to-end works
+4. Redeploy agent (azd deploy <service>) to pick up the new MODEL_DEPLOYMENT_NAME
+```
+
+### When `governance_hub.required: no` (or missing)
+
+Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
+§ 11b" and end. Customer can re-enable later by setting
+`governance_hub.required: yes` in SPEC § 11b and running
+`threadlight-deploy` Phase 7 again (it is incrementally re-runnable).
+
+> **See `citadel-spoke-onboarding` skill** for the full step-by-step
+> onboarding procedure, APIM access contract details, and validation
+> notebook.
+
+---
+
 ## Gotchas & Hard-Won Lessons
 
 | Issue | Cause | Fix |
@@ -1419,6 +2229,7 @@ project/                    # ← REPO ROOT
 | **Model deployments not created** | **`azd deploy` doesn't create model deployments — only `azd provision`** | **Run `azd up` (full) or `azd provision` to create model deployments** |
 | **Compute not starting** | Agent not invoked yet | Refreshed preview provisions compute on first request; deprovisions after 15min idle |
 | **Protocol version error** | Using old `"v1"` format | Use semver `"1.0.0"` in agent.yaml and SDK code |
+| **`azd ai agent show` hangs or says "not logged in"** | `azd` has its own auth chain (`AzureDeveloperCliCredential`) — `az login` does NOT populate it, even with `AZURE_CONFIG_DIR` set | Run `azd auth login --tenant-id <id>` in the same shell. The `azd` token cache lives in `$AZD_CONFIG_DIR/auth/`, separate from `az`'s. Bake both `az login` and `azd auth login` into your shell startup script. |
 | **`postdeploy` fails with AZURE_TENANT_ID** | Extension postdeploy hook expects tenant ID for RBAC auto-assignment | **Set `AZURE_TENANT_ID` in azd env. Without it, postdeploy can't assign `Azure AI User` to agent identity → runtime 401 on storage** |
 | **Two identities in `azd ai agent show`** | Refreshed preview creates `instance_identity` + `blueprint` per agent | Both need RBAC — assign same roles to both principal IDs |
 | **MCP `server_url` invalid URI error** | `${ENV_VAR}` in mcp-config.json not set → expands to empty string → `/mcp` is not a valid URI | **Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. The container skips empty URLs, but `FoundryChatClient.get_mcp_tool()` registers them and Foundry rejects at runtime.** |
@@ -1435,6 +2246,12 @@ project/                    # ← REPO ROOT
 | **Cross-RG ACR needs manual AcrPull** | ACR in different resource group from ACA | Manually assign `AcrPull` to the shared UAMI on the ACR. Bicep auto-assignment only works same RG. |
 | **ACA missing `azd-service-name` tag** | azd can't find the ACA for updates on redeploy | Add `azd-service-name: <service>` tag to all ACA resources in Bicep |
 | **MCP ACA needs `registries` config in ACA** | ACA can't pull image from ACR without registry auth | Add `registries: [{ server: acrEndpoint, identity: uami.id }]` to ACA configuration in Bicep (NOT admin creds, NOT system MI) |
+| **ACA `secrets[].keyVaultUrl` fails at create-time** when KV secret doesn't exist yet | Secret refs are validated **at ACA provisioning**, not at runtime. Cannot create ACA + KV secret + auth wiring in a single Bicep deploy when the secret value comes from `az ad app credential reset` (which needs the ACA's FQDN as redirect URI… circular). | **2-phase Bicep deploy with a `wireAuth bool = false` param.** Phase 1: deploy ACA with empty `secrets:` array + skipped `authConfigs`. Between phases: grant deployer `Key Vault Secrets Officer`, mint client secret on the app reg via `az ad app credential reset --append --display-name <label>`, write to KV. Phase 2: re-deploy with `wireAuth=true` to wire the secret reference + `authConfigs`. See **Static-Site Showroom Deploy** reference below. |
+| **`enableRbacAuthorization=true` on KV** — Owner can't write secrets | KV with RBAC mode requires data-plane role; Owner only grants control plane | Assign `Key Vault Secrets Officer` (`b86a8fe4-44ce-4948-aee5-eccb2c155cd7`) to the deployer principal, wait **25-30s** for RBAC propagation before `az keyvault secret set` |
+| **PowerShell array param `--parameters key=[\"$oid\"]` corrupts JSON** | Quote escaping between PowerShell + az CLI strips the inner `"`, leaving `[bare-guid]` which fails JSON parse | Either pass arrays via a parameters JSON file, OR drop the array param from Bicep and grant the role via post-deploy `az role assignment create` |
+| **Wrong built-in role GUID hard-coded in Bicep** | Easy to typo (`...406e-8b5a-...` vs `...408a-b874-...`); deploy doesn't fail until role-assignment resource provisions | **NEVER hard-code role GUIDs from memory.** Look up via `az role definition list --name "<role>" --query "[0].name" -o tsv`. Useful pins: AcrPull `7f951dda-4ed3-4680-a7ca-43fe172d538d` · KV Secrets User `4633458b-17de-408a-b874-0445c86b69e6` · KV Secrets Officer `b86a8fe4-44ce-4948-aee5-eccb2c155cd7` |
+| **`az rest --headers Content-Type=application/json` fails on Windows** ("non atteso" / "unexpected") | The `--headers` flag has inconsistent parsing between az CLI versions and locales | For redirect-URI updates, use `az ad app update --id <appId> --web-redirect-uris uri1 uri2 …` (replaces the full array — read existing first, merge, then update) |
+| **`az ad app credential reset` without `--append` blows away other secrets** | Default behavior is REPLACE, not append | Always pass `--append --display-name <label>`. Verify with `az ad app credential list --id <appId>` after |
 
 > **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
 > and detailed RBAC scenarios.
@@ -1447,11 +2264,17 @@ project/                    # ← REPO ROOT
 |-------|----------|
 | [**threadlight-design**](../threadlight-design/) | Spec out the business process first (produces specs/ + AGENTS.md + skills that this skill consumes) |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | Reference for RBAC, identity model, agent.yaml schema, dependencies, troubleshooting |
+| [**foundry-iq**](../foundry-iq/) | **Default for every process** — provisions the AI Search index + Knowledge Agent (consumed in Phase 6 via `foundry-iq-index.bicep`) |
+| [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Vision / Document Intelligence / Speech models — consumed in Phase 6 when SPEC § 7b selects them |
 | [**foundry-teams-bot**](../foundry-teams-bot/) | Deep dive on Teams bot integration (bot.py, manifest, Bicep, sideloading) |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Deploy custom MCP servers as ACA or Azure Functions |
-| [**foundry-evals**](../foundry-evals/) | Evaluate agent quality with Foundry built-in evaluators |
+| [**foundry-evals**](../foundry-evals/) | Evaluate agent quality + **continuous evaluation**: Plan A (default) Foundry built-in scheduled evals, Plan B (fallback) ACA Job (reads SPEC § 9 KPI table) |
+| [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Generates the operator workspace from SPEC § 8b (case-list, inbox, dashboard, console, kanban, map) |
+| [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Generates Adaptive Cards + audit trail for SPEC § 8 action gates |
+| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Generates trigger receivers from SPEC § 10b (ACA Job cron/manual, Functions, ACA consumer) |
+| [**threadlight-demo-data-factory**](../threadlight-demo-data-factory/) | Generates realistic demo data when SPEC § 5 marks any system as `mock` |
 | [**ghcp-hosted-agents**](../ghcp-hosted-agents/) | Alternative runtime — GHCP SDK with Invocations protocol (for long-running agents >120s) |
-| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Governance and Citadel hub integration |
+| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | **Phase 7 (opt-in)** — onboards as a spoke under an AI Governance Hub when SPEC § 11b sets `governance_hub.required: yes` |
 | [**foundry-cross-resource**](../foundry-cross-resource/) | AI Gateway (APIM) — use models from another Foundry resource or shared pool |
 | [**azure-tenant-isolation**](../azure-tenant-isolation/) | Per-tenant `AZURE_CONFIG_DIR` / `AZD_CONFIG_DIR` so `azd up` always lands in the right tenant + subscription |
-| [**azd-patterns**](../azd-patterns/) | `azd` hooks (`postdeploy`, `postprovision`), ACA job deployment, cross-platform deploy script conventions |
+| [**azd-patterns**](../azd-patterns/) | `azd` hooks, ACA job deployment, **Composable Bicep Module Library** (the source of every module Phase 6 includes) |
