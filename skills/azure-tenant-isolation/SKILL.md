@@ -741,6 +741,8 @@ otherwise alias-agnostic.
 | `azd auth` token expired | `azd auth login --check-status` | `azd auth login --tenant-id <id>` (with `AZD_CONFIG_DIR` set) |
 | Subprocess uses wrong tenant | `az account show` from inside the subprocess | Re-export `AZURE_CONFIG_DIR` and `AZD_CONFIG_DIR` in the parent before spawning |
 | Assertion passes but deploy still wrong | `az account show --query "{sub:name, tenant:tenantId}" -o table` immediately before the deploy | Some other process changed `az account set` between assertion and deploy. Tighten by re-running the assertion immediately before each destructive call |
+| `az rest --headers ...` fails with "non atteso"/"unexpected" on Windows PowerShell | The `--headers key=value` flag has inconsistent parsing across `az` CLI versions and locales (notably non-EN-US PowerShell hosts) | For app-reg redirect-URI updates use `az ad app update --id <appId> --web-redirect-uris uri1 uri2 …` (replaces the array — read existing first, merge, then update). For other Graph PATCHes, build the body in Python or `Invoke-RestMethod` with a token from `az account get-access-token --resource https://graph.microsoft.com` |
+| `az ad app credential reset` wiped every secret on the app reg | Default behaviour is REPLACE, not APPEND — every other ACA app sharing the app reg breaks | Always pass `--append --display-name <label>` and verify with `az ad app credential list --id <appId>` after. For shared app regs (e.g. one Easy Auth identity for many demo containers), the `--display-name` is the only way to tell secrets apart later |
 
 ---
 

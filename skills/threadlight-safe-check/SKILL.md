@@ -1,19 +1,21 @@
 ---
 name: threadlight-safe-check
 description: >
-  Mandatory completeness gate for threadlight pilots — three lifecycle checks
-  (post-design, pre-deploy, post-deploy) consolidated into a single CLI.
-  Reads SPEC § 11c selectors via specs/manifest.json `deployment_manifest`
-  and asserts the spec contract holds end-to-end: design has machine-readable
-  manifest, code has every service per `module_selectors`, deployed resource
-  group contains every selector's `Microsoft.*` types, every channel reaches.
+  Mandatory three-lifecycle completeness gate for threadlight pilots
+  (design / pre-deploy / post-deploy). Reads SPEC § 11c selectors via
+  specs/manifest.json `deployment_manifest` and asserts: every selector
+  maps to deployed `Microsoft.*` resource types, every channel reaches,
+  every scheduled job is wired. Post-deploy phase ALSO runs behavioural
+  checks — deployed images must NOT match the azuredocs helloworld
+  placeholder, and no ACA Job may have its last 5 executions all Failed.
   USE FOR: completeness gate, deploy gate, safe check, post-deploy gate,
-  pre-deploy check, design check, manifest drift, orphan modules, partial
-  PoC, missing bot, missing workspace, missing aca-job, deployment_manifest,
-  Phase 3.5, postdeploy-manifest.json, threadlight gates.
-  DO NOT USE FOR: invocation/runtime tests (use foundry-evals), agent quality
-  scoring (use foundry-evals), one-shot azd up commands (use threadlight-deploy
-  end-to-end), schema authoring (use threadlight-design).
+  pre-deploy check, manifest drift, orphan modules, partial PoC, missing
+  bot/workspace/aca-job, deployment_manifest, Phase 3.5, postdeploy-
+  manifest.json, placeholder image, helloworld image, image probe, job
+  execution failed, cron rot.
+  DO NOT USE FOR: invocation/runtime tests or agent quality (foundry-
+  evals), `azd up` orchestration (threadlight-deploy), schema authoring
+  (threadlight-design).
 ---
 
 # Threadlight Safe Check — three lifecycle gates, one CLI
@@ -35,6 +37,18 @@ post-deploy  → manifest <-> az resource list <-> channel reachability
 > looked plausible. The gap was caught by the user opening the Azure
 > Portal and noticing missing tiles. **A consolidated, mandatory gate
 > would have caught this in 30 seconds.** That gate is this skill.
+>
+> **And then it shipped again, differently.** The next pilot
+> (`card-dispute-investigation` v4, post `fetch-container-image`
+> pattern) had every resource type present in the resource group —
+> `safe-check` returned `gaps: []` ✅ — but the MCP container was
+> running `mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`
+> (Bicep had hard-coded the placeholder; `azd deploy mcp` was never
+> run after the provision), and the deadline-watcher cron had
+> 13 consecutive `Failed` executions. Structural-only checks aren't
+> enough. The post-deploy phase now also runs **behavioural** checks:
+> deployed images must NOT match the azuredocs placeholder regex,
+> and no scheduled job may have its last 5 executions all `Failed`.
 
 ## What this skill does NOT replace
 
@@ -51,7 +65,7 @@ post-deploy  → manifest <-> az resource list <-> channel reachability
 |---|---|---|---|
 | After SPEC + AGENTS.md drafted | `--phase design` | `specs/manifest.json` contains `deployment_manifest{}`; SPEC § 11c rows match `module_selectors` keys | Drift / fail |
 | Before `azd up` | `--phase pre-deploy` | Every `yes` selector → wired in `azure.yaml` + `infra/main.bicep` + has `src/<dir>/Dockerfile`; no orphan Bicep / src folders | Fail-fast |
-| After `azd up` returns 0 | `--phase post-deploy` | Every `expected_resource_types` entry in `az resource list`; required ACA roles by name pattern; all `channels` reach HTTP/JWT-OK; `scheduled_jobs` cron correct | **The non-negotiable gate.** Empty `gaps[]` = PoC complete |
+| After `azd up` returns 0 | `--phase post-deploy` | Every `expected_resource_types` entry in `az resource list`; required ACA roles by name pattern; **every deployed image is the real image (NOT the azuredocs placeholder)**; **no scheduled job has its last 5 executions all `Failed`**; all `channels` reach HTTP/JWT-OK; `scheduled_jobs` cron correct | **The non-negotiable gate.** Empty `gaps[]` = PoC complete |
 
 Each phase emits a JSON manifest under `tests/` so the gate is auditable
 and re-readable later (CI, demo prep, postmortem):
@@ -236,6 +250,39 @@ for aca in deployed_acas:
 unmet = required_aca_roles - present_roles
 ```
 
+### Step 3.5 — image-probe (catches placeholder-image leak)
+
+> **Behavioural check.** Type/name/role can all match while the actual
+> code running is Microsoft's `containerapps-helloworld` sample —
+> typically because Bicep hard-coded the placeholder image and nobody
+> ran `azd deploy <service>` after provision (or the
+> `fetch-container-image` pattern was missing for that ACA module).
+> `azd up` reports SUCCESS. The agent's `tool_selection` evals collapse.
+> The deadline-watcher 404s. The structural gate is silent.
+
+For every entry in `deployed_acas + deployed_jobs`, query
+`properties.template.containers[0].image` and FAIL if it matches
+`PLACEHOLDER_IMAGE_REGEX = ^mcr\.microsoft\.com/azuredocs/.*`:
+
+```python
+PLACEHOLDER_IMAGE_REGEX = re.compile(r"^mcr\.microsoft\.com/azuredocs/.*", re.IGNORECASE)
+
+for resource in deployed_acas + deployed_jobs:
+    image = resource.get("image", "")
+    if not image:
+        gaps.append(f"image-probe {resource['name']!r}: az returned no image string")
+    elif PLACEHOLDER_IMAGE_REGEX.match(image):
+        gaps.append(
+            f"image-probe {resource['name']!r} is running the azuredocs helloworld "
+            f"placeholder. Run `azd deploy <service>` and apply the fetch-container-image "
+            f"pattern in infra/ (see threadlight-deploy Gotchas)."
+        )
+```
+
+The probe records every checked resource under `image_probe[]` in
+`postdeploy-manifest.json` so a non-placeholder image is auditable
+later (you can grep "PLACEHOLDER" across past gates).
+
 ### Step 4 — channel reachability
 
 For every entry in `deployment_manifest.channels[]`:
@@ -259,6 +306,41 @@ for job in manifest_jobs:
         gaps.append(f"job {job['name']} cron drift: deployed={matched['schedule']} expected={job['schedule']}")
 ```
 
+### Step 5.5 — job execution-success (catches silent cron rot)
+
+> **Behavioural check.** A job can be deployed with the right name,
+> right cron, right image — and crash on every single tick. ACA Jobs
+> don't surface the failure in `azd up` output, the schedule continues
+> firing on time, and the only signal is execution-history showing
+> nothing but red. We saw 13 consecutive `Failed` executions over 3.5
+> hours before catching it manually.
+
+For every deployed ACA Job, fetch the last `JOB_EXECUTION_WINDOW = 5`
+executions (sorted by `startTime`); if all 5 are `status=Failed`, the
+cron is dead and the gate trips:
+
+```python
+for job in deployed_jobs:
+    execs = az(
+        "containerapp", "job", "execution", "list", "-n", job["name"], "-g", rg,
+        "--query", "sort_by([], &properties.startTime)[-5:]"
+                   ".{name:name,status:properties.status}",
+        "-o", "json",
+    )
+    statuses = [e["status"] for e in execs]
+    if statuses and all(s == "Failed" for s in statuses):
+        gaps.append(
+            f"job-success {job['name']!r}: last {len(execs)} executions ALL Failed. "
+            f"Cron is dead even though deploy succeeded — investigate replica logs "
+            f"and image entrypoint."
+        )
+```
+
+If a job has zero executions yet (just deployed, schedule hasn't fired
+yet), `job_health[].status` records `no_executions_yet` and **does NOT**
+trip the gate (false-positive avoidance). It will trip on the next
+post-deploy run if the job stays red.
+
 ### Step 6 — write `tests/postdeploy-manifest.json`
 
 ```json
@@ -268,6 +350,13 @@ for job in manifest_jobs:
   "rg": "rg-card-dispute-poc",
   "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui"],
   "deployed_resource_types": ["Microsoft.CognitiveServices/accounts", "..."],
+  "image_probe": [
+    { "name": "ca-mcp-...", "kind": "containerapp", "image": "cr...azurecr.io/.../mcp:azd-deploy-1778483950", "status": "OK" },
+    { "name": "ca-job-deadline-...", "kind": "containerapp-job", "image": "cr...azurecr.io/.../deadline-watcher:azd-deploy-1778484248", "status": "OK" }
+  ],
+  "job_health": [
+    { "name": "ca-job-deadline-...", "executions_checked": 5, "statuses": ["Succeeded","Succeeded","Succeeded","Succeeded","Succeeded"], "status": "OK" }
+  ],
   "channels": [
     { "name": "Analyst Workspace", "type": "web", "fqdn": "ca-workspace-...azurecontainerapps.io", "status": "OK" },
     { "name": "Teams adaptive card", "type": "teams", "fqdn": "ca-bot-...azurecontainerapps.io", "status": "OK_jwt_alive" }
@@ -284,6 +373,23 @@ for job in manifest_jobs:
 > in lock-step to flip the selector to `no` with a documented
 > rationale ("scheduled job deferred to v2"). **Silently shipping
 > with gaps is the failure mode this whole gate exists to prevent.**
+
+### Why both structural AND behavioural checks
+
+The first three steps (resource types, role keywords, channel reach)
+are **structural** — they answer *"is the right shape of resource
+present?"*. The Card Dispute v3 PoC failed on these and the gate caught
+it.
+
+Steps 3.5 and 5.5 are **behavioural** — they answer *"is the right code
+running, and is it not crashing?"*. The Card Dispute v4 PoC passed all
+structural checks but had MCP running the helloworld placeholder and
+the cron failing every 15 min. Structural checks alone weren't enough;
+the behavioural checks close that loop.
+
+Both layers are cheap (single `az` call per resource) and run on the
+same schedule (post-deploy hook). There's no scenario where you want
+one but not the other — the gate fails fast on either.
 
 ---
 

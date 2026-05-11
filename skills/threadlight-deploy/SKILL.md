@@ -1403,6 +1403,205 @@ For systems using **Cosmos DB**, generate a Cosmos MCPToolKit deployment using
 
 ---
 
+## Reference: Static-Site Showroom Deploy (nginx ACA + Easy Auth)
+
+> **When to use.** A **static showroom** (lobby + catalog + cinematic process
+> walkthroughs) is a classic adjacent need to a hosted-agent pilot — the
+> seller wants a single URL to put on a slide that gates by Entra ID.
+> Same `azure-tenant-isolation` discipline, same `aigbbemea` ACR, same
+> Communication Blue brand bar — but the **runtime is nginx, not an agent**,
+> and the **2-phase Easy Auth wiring** below is non-negotiable. This is
+> NOT modeled in SPEC § 11c (it's not a per-process agent repo); ship it
+> as a sibling `infra/` folder with the static HTML.
+
+### The chicken-and-egg problem
+
+ACA `secrets[].keyVaultUrl` references are validated at **provisioning
+time**, not at runtime. So you cannot do this in one Bicep deploy:
+
+```
+1. Create KV
+2. Create ACA app with secrets:[{ name: 'easyauth-client-secret',
+                                  keyVaultUrl: '<kv>/secrets/easyauth-client-secret',
+                                  identity: <uami> }]
+3. Mint AAD client secret (needs the ACA FQDN as redirect URI…)
+4. Write secret to KV
+```
+
+Step 2 fails: KV secret doesn't exist yet → `unable to fetch secret`.
+Reordering doesn't help — the AAD client secret needs the ACA FQDN to
+register the redirect URI, which needs the ACA created first.
+
+### The fix: 2-phase Bicep with `wireAuth` toggle
+
+Add a single `bool` param to your Bicep module and gate two things on it:
+
+```bicep
+// infra/modules/site.bicep
+@description('Phase 2 toggle: when true, wires the ACA secret reference + Easy Auth. Phase 1 = false.')
+param wireAuth bool = false
+
+// ... UAMI, KV, role assignments, ACA env all unconditional ...
+
+resource site 'Microsoft.App/containerApps@2024-10-02-preview' = {
+  name: 'showroom-site'
+  // ...
+  properties: {
+    configuration: {
+      // GATED: empty array on phase 1, real reference on phase 2
+      secrets: wireAuth ? [
+        {
+          name: 'easyauth-client-secret'
+          keyVaultUrl: '${kv.properties.vaultUri}secrets/easyauth-client-secret'
+          identity: uami.id
+        }
+      ] : []
+      ingress: { external: true, targetPort: 80 /* ... */ }
+      registries: [{ server: '${acrName}.azurecr.io', identity: uami.id }]
+    }
+    template: {
+      containers: [{
+        image: imageRef
+        name: 'site'
+        resources: { cpu: json('0.5'), memory: '1Gi' }
+        probes: [
+          { type: 'Liveness',  httpGet: { path: '/healthz', port: 80 } }
+          { type: 'Readiness', httpGet: { path: '/healthz', port: 80 } }
+        ]
+      }]
+      scale: { minReplicas: 1, maxReplicas: 5 /* ... */ }
+    }
+  }
+}
+
+// GATED: only created on phase 2
+resource auth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview' = if (wireAuth) {
+  parent: site
+  name: 'current'                // MUST be literal 'current'
+  properties: {
+    platform: { enabled: true }
+    globalValidation: {
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: easyAuthClientId
+          clientSecretSettingName: 'easyauth-client-secret'
+          openIdIssuer: 'https://sts.windows.net/${tenant().tenantId}/v2.0'
+        }
+        validation: { allowedAudiences: easyAuthAllowedAudiences }
+      }
+    }
+    login: { tokenStore: { enabled: true } }
+  }
+}
+```
+
+### deploy.ps1 orchestration (canonical)
+
+```powershell
+# Phase 1: foundation (KV, UAMI, RBAC, ACA env, ACA app — NO auth)
+az deployment sub create --name "site-p1-$ts" --location $Location `
+    --template-file infra/main.bicep `
+    --parameters wireAuth=false imageRef=$imageRef <other-params>
+
+# Between phases: grant Secrets Officer + mint + write secret
+az role assignment create --assignee-object-id $deployerOid `
+    --assignee-principal-type User --role 'Key Vault Secrets Officer' `
+    --scope "/subscriptions/$subId/resourceGroups/$rg/providers/Microsoft.KeyVault/vaults/$kvName"
+Start-Sleep 30  # RBAC propagation — non-negotiable
+
+$cred = az ad app credential reset --id $clientId `
+    --display-name 'showroom-site' --append `
+    --end-date (Get-Date).AddMonths(12).ToString('yyyy-MM-ddTHH:mm:ssZ') `
+    -o json | ConvertFrom-Json
+az keyvault secret set --vault-name $kvName --name easyauth-client-secret `
+    --value $cred.password --output none
+
+# Phase 2: re-deploy with auth wired
+az deployment sub create --name "site-p2-$ts" --location $Location `
+    --template-file infra/main.bicep `
+    --parameters wireAuth=true imageRef=$imageRef <other-params>
+
+# Post: register redirect URI (idempotent)
+$existing = az ad app show --id $clientId --query 'web.redirectUris' -o json | ConvertFrom-Json
+$redirectUri = "https://$siteFqdn/.auth/login/aad/callback"
+if ($existing -notcontains $redirectUri) {
+    $merged = @($existing + $redirectUri | Select-Object -Unique)
+    az ad app update --id $clientId --web-redirect-uris @merged --output none
+}
+```
+
+### Smoke test the gate (3 expected behaviours)
+
+```powershell
+$url = "https://$siteFqdn"
+# HEAD: 401 with WWW-Authenticate Bearer + correct authorization_uri (tenant + client_id)
+curl -sI $url
+# GET (browser-like): 302 → login.windows.net/<tenant>/oauth2/v2.0/authorize?...client_id=<appId>...
+curl -s -o NUL -w "HTTP %{http_code} → %{redirect_url}\n" -A "Mozilla/5.0" $url
+# GET /healthz: also gated (no path exclusions by default) → 401/302
+```
+
+### nginx Dockerfile + nginx.conf (canonical static-site shape)
+
+`Dockerfile`:
+```dockerfile
+FROM nginx:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY . /usr/share/nginx/html/
+RUN rm -f /usr/share/nginx/html/Dockerfile /usr/share/nginx/html/nginx.conf \
+ && chown -R nginx:nginx /usr/share/nginx/html
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1/healthz || exit 1
+```
+
+`nginx.conf`:
+```nginx
+server {
+    listen 80;
+    server_tokens off;
+    gzip on; gzip_types text/css application/javascript image/svg+xml;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location = /healthz { return 200 'ok\n'; add_header Content-Type text/plain; }
+
+    location ~* \.(html?)$ { add_header Cache-Control "public, max-age=300"; }
+    location ~* \.(css|js|png|jpe?g|svg|woff2?)$ { add_header Cache-Control "public, max-age=2592000, immutable"; }
+
+    root /usr/share/nginx/html;
+    index index.html;
+    # NO SPA fallback — multi-page site, 404 should 404
+}
+```
+
+`.dockerignore` (deny-list — ACR Tasks uploads everything but `COPY .` honors this):
+```
+.git/
+infra/
+docs/
+00-research/
+**/*.md
+**/.vscode/
+deploy.ps1
+```
+
+### Anti-patterns
+
+- ❌ Single Bicep deploy with `secrets:` reference + `authConfigs` + post-deploy KV write → ACA fails to provision
+- ❌ Hard-coding role GUIDs (typo Bicep deploys without erroring then fails at role-assignment provisioning) — always look up via `az role definition list --name '<role>' --query '[0].name' -o tsv`
+- ❌ `az rest --headers Content-Type=application/json` for redirect URI updates (Windows CLI parses `--headers` inconsistently) — use `az ad app update --web-redirect-uris …` instead
+- ❌ `az ad app credential reset` without `--append` (replaces ALL existing secrets — disrupts every other ACA app sharing the same app reg)
+- ❌ Forgetting `Start-Sleep 30` after `az role assignment create` for KV Secrets Officer (RBAC propagation is real and `keyvault secret set` will return 403 if you race it)
+
+---
+
 ## Reference: SDK Deployment (via `azd ai agent` Extension)
 
 The `azd ai agent` extension (`azure.ai.agents >= 0.1.0-preview`) handles hosted agent
@@ -2047,6 +2246,12 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | **Cross-RG ACR needs manual AcrPull** | ACR in different resource group from ACA | Manually assign `AcrPull` to the shared UAMI on the ACR. Bicep auto-assignment only works same RG. |
 | **ACA missing `azd-service-name` tag** | azd can't find the ACA for updates on redeploy | Add `azd-service-name: <service>` tag to all ACA resources in Bicep |
 | **MCP ACA needs `registries` config in ACA** | ACA can't pull image from ACR without registry auth | Add `registries: [{ server: acrEndpoint, identity: uami.id }]` to ACA configuration in Bicep (NOT admin creds, NOT system MI) |
+| **ACA `secrets[].keyVaultUrl` fails at create-time** when KV secret doesn't exist yet | Secret refs are validated **at ACA provisioning**, not at runtime. Cannot create ACA + KV secret + auth wiring in a single Bicep deploy when the secret value comes from `az ad app credential reset` (which needs the ACA's FQDN as redirect URI… circular). | **2-phase Bicep deploy with a `wireAuth bool = false` param.** Phase 1: deploy ACA with empty `secrets:` array + skipped `authConfigs`. Between phases: grant deployer `Key Vault Secrets Officer`, mint client secret on the app reg via `az ad app credential reset --append --display-name <label>`, write to KV. Phase 2: re-deploy with `wireAuth=true` to wire the secret reference + `authConfigs`. See **Static-Site Showroom Deploy** reference below. |
+| **`enableRbacAuthorization=true` on KV** — Owner can't write secrets | KV with RBAC mode requires data-plane role; Owner only grants control plane | Assign `Key Vault Secrets Officer` (`b86a8fe4-44ce-4948-aee5-eccb2c155cd7`) to the deployer principal, wait **25-30s** for RBAC propagation before `az keyvault secret set` |
+| **PowerShell array param `--parameters key=[\"$oid\"]` corrupts JSON** | Quote escaping between PowerShell + az CLI strips the inner `"`, leaving `[bare-guid]` which fails JSON parse | Either pass arrays via a parameters JSON file, OR drop the array param from Bicep and grant the role via post-deploy `az role assignment create` |
+| **Wrong built-in role GUID hard-coded in Bicep** | Easy to typo (`...406e-8b5a-...` vs `...408a-b874-...`); deploy doesn't fail until role-assignment resource provisions | **NEVER hard-code role GUIDs from memory.** Look up via `az role definition list --name "<role>" --query "[0].name" -o tsv`. Useful pins: AcrPull `7f951dda-4ed3-4680-a7ca-43fe172d538d` · KV Secrets User `4633458b-17de-408a-b874-0445c86b69e6` · KV Secrets Officer `b86a8fe4-44ce-4948-aee5-eccb2c155cd7` |
+| **`az rest --headers Content-Type=application/json` fails on Windows** ("non atteso" / "unexpected") | The `--headers` flag has inconsistent parsing between az CLI versions and locales | For redirect-URI updates, use `az ad app update --id <appId> --web-redirect-uris uri1 uri2 …` (replaces the full array — read existing first, merge, then update) |
+| **`az ad app credential reset` without `--append` blows away other secrets** | Default behavior is REPLACE, not append | Always pass `--append --display-name <label>`. Verify with `az ad app credential list --id <appId>` after |
 
 > **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
 > and detailed RBAC scenarios.

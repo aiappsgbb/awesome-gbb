@@ -60,6 +60,23 @@ ACA_ROLE_KEYWORDS = {
     "workspace-ui": "workspace",
 }
 
+# Behavioural-check tunables (post-deploy phase)
+# ------------------------------------------------------------------
+# G9.1 — Placeholder image regex. ANY ACA / ACA Job container image
+# matching this pattern is the result of `azd provision` running before
+# `azd deploy` (or a Bicep run that didn't honor SERVICE_*_RESOURCE_EXISTS).
+# It means the SPEC asked for our code but Azure is running Microsoft's
+# helloworld sample. azd reports SUCCESS, evals fall apart, deadline-watcher
+# silently 404s. Catch it here.
+PLACEHOLDER_IMAGE_REGEX = re.compile(
+    r"^mcr\.microsoft\.com/azuredocs/.*", re.IGNORECASE,
+)
+
+# G9.2 — Job execution-success window. If the last N executions of an
+# ACA Job all show status=Failed, the cron is dead — even if azd deploy
+# succeeded and the image is the right one. Trip the gate.
+JOB_EXECUTION_WINDOW = 5
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -318,6 +335,7 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
     acas_raw = _az("containerapp", "list", "-g", rg,
                    "--query",
                    "[].{name:name,fqdn:properties.configuration.ingress.fqdn,"
+                   "image:properties.template.containers[0].image,"
                    "state:properties.runningStatus}",
                    "-o", "json")
     deployed_acas = json.loads(acas_raw or "[]")
@@ -325,7 +343,8 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
     jobs_raw = _az("containerapp", "job", "list", "-g", rg,
                    "--query",
                    "[].{name:name,schedule:properties.configuration."
-                   "scheduleTriggerConfig.cronExpression}", "-o", "json")
+                   "scheduleTriggerConfig.cronExpression,"
+                   "image:properties.template.containers[0].image}", "-o", "json")
     deployed_jobs = json.loads(jobs_raw or "[]")
 
     bots_raw = _az("resource", "list", "-g", rg,
@@ -348,6 +367,96 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
 
     if "aca-bot" in selectors and not deployed_bots:
         gaps.append("aca-bot:yes but no Microsoft.BotService/botServices found")
+
+    # ------------------------------------------------------------------
+    # G9.1 — Image-probe behavioural check (image_probe_results)
+    # Any deployed ACA / ACA Job whose container image matches the
+    # azuredocs helloworld placeholder is a `azd provision`-only deploy
+    # masquerading as a real one. azd will report SUCCESS but the SPEC
+    # behaviour is missing.
+    # ------------------------------------------------------------------
+    image_probe_results: list[dict[str, Any]] = []
+    for resource in deployed_acas + deployed_jobs:
+        image = (resource.get("image") or "").strip()
+        kind = "containerapp" if resource in deployed_acas else "containerapp-job"
+        entry = {
+            "name": resource.get("name"),
+            "kind": kind,
+            "image": image,
+            "status": "OK",
+        }
+        if not image:
+            entry["status"] = "no_image_reported"
+            gaps.append(
+                f"image-probe {kind} {resource.get('name')!r}: az returned "
+                f"no image string (deploy state unknown)"
+            )
+        elif PLACEHOLDER_IMAGE_REGEX.match(image):
+            entry["status"] = "PLACEHOLDER"
+            gaps.append(
+                f"image-probe {kind} {resource.get('name')!r} is running the "
+                f"azuredocs helloworld placeholder ({image}). The real "
+                f"application image was never promoted; run "
+                f"`azd deploy <service>` for this service. See "
+                f"threadlight-deploy Gotchas → fetch-container-image pattern."
+            )
+        image_probe_results.append(entry)
+
+    # ------------------------------------------------------------------
+    # G9.2 — Job execution-success behavioural check
+    # For each deployed ACA Job, fetch the last JOB_EXECUTION_WINDOW
+    # executions; trip the gate if ALL of them are status=Failed.
+    # Catches silent cron rot — the deploy succeeded but the cron
+    # crashes on every tick.
+    # ------------------------------------------------------------------
+    job_health_results: list[dict[str, Any]] = []
+    for job in deployed_jobs:
+        job_name = job.get("name") or ""
+        if not job_name:
+            continue
+        try:
+            execs_raw = _az(
+                "containerapp", "job", "execution", "list",
+                "-n", job_name, "-g", rg,
+                "--query",
+                f"sort_by([], &properties.startTime)[-{JOB_EXECUTION_WINDOW}:]"
+                ".{name:name,status:properties.status,startTime:"
+                "properties.startTime}",
+                "-o", "json",
+            )
+            executions = json.loads(execs_raw or "[]")
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+            job_health_results.append({
+                "name": job_name, "status": "probe_failed",
+                "error": str(exc)[:200],
+            })
+            gaps.append(
+                f"job-success probe failed for {job_name!r}: {exc} "
+                f"(unable to verify last {JOB_EXECUTION_WINDOW} executions)"
+            )
+            continue
+        statuses = [e.get("status") for e in executions]
+        if not executions:
+            job_health_results.append({
+                "name": job_name, "status": "no_executions_yet",
+                "executions": [],
+            })
+            continue
+        all_failed = bool(statuses) and all(s == "Failed" for s in statuses)
+        entry = {
+            "name": job_name,
+            "executions_checked": len(executions),
+            "statuses": statuses,
+            "status": "OK" if not all_failed else "ALL_FAILED",
+        }
+        if all_failed:
+            gaps.append(
+                f"job-success {job_name!r}: last {len(executions)} "
+                f"executions ALL Failed ({', '.join(e.get('name','?') for e in executions)}). "
+                f"Cron is dead even though deploy succeeded — investigate "
+                f"replica logs and image entrypoint."
+            )
+        job_health_results.append(entry)
 
     channel_results: list[dict[str, Any]] = []
     for ch in channels:
@@ -405,6 +514,8 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
         "rg": rg,
         "checked_selectors": sorted(selectors),
         "deployed_resource_types": sorted(deployed_types),
+        "image_probe": image_probe_results,
+        "job_health": job_health_results,
         "channels": channel_results,
         "scheduled_jobs": job_results,
         "gaps": gaps,
