@@ -528,6 +528,104 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
             ),
         })
 
+    # ------------------------------------------------------------------
+    # G9.4 — Bot AUTHTYPE behavioural check (bot_auth_health)
+    # When the SPEC declares aca-bot AND the deployed Bot Service is
+    # registered as appType=UserAssignedMSI, the bot ACA's env block
+    # MUST contain CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE
+    # =UserManagedIdentity. Without it, the microsoft-agents-* SDK
+    # falls back to ConfidentialClient flow and demands a client secret
+    # the deploy never provisioned -> every real Teams message comes
+    # back as HTTP 500 with AADSTS7000216 in the bot logs. The synthetic
+    # _probe_teams() check returns OK_jwt_alive (JWT middleware fires
+    # BEFORE outbound token acquisition), so this gap escapes channel
+    # reachability. Caught it on KYC PoC v1; protecting future pilots.
+    # ------------------------------------------------------------------
+    bot_auth_health_results: list[dict[str, Any]] = []
+    if "aca-bot" in selectors:
+        for bot_svc in deployed_bots:
+            bot_name = bot_svc.get("name") or ""
+            try:
+                bot_props_raw = _az(
+                    "bot", "show", "-g", rg, "-n", bot_name,
+                    "--query",
+                    "{appType:properties.msaAppType,"
+                    "msaAppId:properties.msaAppId}",
+                    "-o", "json",
+                )
+                bot_props = json.loads(bot_props_raw or "{}")
+            except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+                bot_auth_health_results.append({
+                    "name": bot_name, "status": "probe_failed",
+                    "error": str(exc)[:200],
+                })
+                continue
+            app_type = (bot_props.get("appType") or "").strip()
+            if app_type != "UserAssignedMSI":
+                bot_auth_health_results.append({
+                    "name": bot_name, "appType": app_type,
+                    "status": "skipped_not_uami",
+                })
+                continue
+            bot_aca = next(
+                (a for a in deployed_acas if "bot" in a["name"].lower()),
+                None,
+            )
+            if not bot_aca:
+                bot_auth_health_results.append({
+                    "bot_service": bot_name, "appType": app_type,
+                    "status": "no_aca_matched",
+                })
+                gaps.append(
+                    f"bot-authtype: Bot Service {bot_name!r} is "
+                    f"appType=UserAssignedMSI but no ACA matched name "
+                    f"pattern *bot* — cannot verify AUTHTYPE env"
+                )
+                continue
+            try:
+                env_raw = _az(
+                    "containerapp", "show", "-g", rg, "-n", bot_aca["name"],
+                    "--query",
+                    "properties.template.containers[0].env[].{name:name,"
+                    "value:value}",
+                    "-o", "json",
+                )
+                env_vars = json.loads(env_raw or "[]")
+            except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+                bot_auth_health_results.append({
+                    "bot_service": bot_name, "aca": bot_aca["name"],
+                    "status": "env_probe_failed", "error": str(exc)[:200],
+                })
+                continue
+            authtype_var = next(
+                (v for v in env_vars
+                 if v.get("name") == "CONNECTIONS__SERVICE_CONNECTION__"
+                                     "SETTINGS__AUTHTYPE"),
+                None,
+            )
+            authtype_value = (authtype_var or {}).get("value", "")
+            entry = {
+                "bot_service": bot_name, "aca": bot_aca["name"],
+                "appType": app_type, "authtype": authtype_value,
+            }
+            if authtype_value != "UserManagedIdentity":
+                entry["status"] = "AUTHTYPE_MISSING_OR_WRONG"
+                gaps.append(
+                    f"bot-authtype {bot_aca['name']!r}: Bot Service "
+                    f"{bot_name!r} is appType=UserAssignedMSI but ACA env "
+                    f"CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE="
+                    f"{authtype_value!r} (expected 'UserManagedIdentity'). "
+                    f"Without it MSAL falls back to ConfidentialClient -> "
+                    f"AADSTS7000216 on every Teams message. Patch with "
+                    f"`az containerapp update --set-env-vars CONNECTIONS"
+                    f"__SERVICE_CONNECTION__SETTINGS__AUTHTYPE="
+                    f"UserManagedIdentity` AND fix Bicep main.bicep / "
+                    f"foundry-teams-bot Bicep snippet."
+                )
+            else:
+                entry["status"] = "OK"
+            bot_auth_health_results.append(entry)
+
     channel_results: list[dict[str, Any]] = []
     for ch in channels:
         ch_type = ch.get("type", "").lower()
@@ -587,6 +685,7 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
         "image_probe": image_probe_results,
         "job_health": job_health_results,
         "appin_health": appin_health_results,
+        "bot_auth_health": bot_auth_health_results,
         "channels": channel_results,
         "scheduled_jobs": job_results,
         "gaps": gaps,

@@ -374,6 +374,66 @@ was considered.
 > postprovision script that connects the Foundry account to AppIn so
 > hosted-agent traces flow.
 
+### Step 5.7 — Bot AUTHTYPE (catches silent UAMI auth misconfig)
+
+> **Behavioural check.** A bot can be deployed with the right Bot
+> Service registration (`appType: UserAssignedMSI`, `msaAppId =
+> UAMI clientId`), the right ACA running, the right JWT middleware
+> alive (Step 4 channel probe returns `OK_jwt_alive`) — and STILL
+> return HTTP 500 with `AADSTS7000216` on **every real Teams message**.
+>
+> Why? Because the `microsoft-agents-*` SDK reads
+> `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` at startup to
+> decide which MSAL flow to use. **If missing**, it defaults to
+> `ConfidentialClient`, which demands a `client_secret` the keyless
+> deploy never provisioned. Step 4's synthetic JWT probe doesn't catch
+> this because the JWT middleware fires BEFORE the outbound token
+> acquisition path. So the channel is "reachable" but every real
+> message fails.
+>
+> Origin: KYC PoC v1 (2026-05-12) — 4 hours of bot-can't-talk-to-Teams.
+
+For every Bot Service in the RG with `appType=UserAssignedMSI`, the
+gate locates the matching ACA (name pattern `*bot*`), reads its env
+block, and asserts the `AUTHTYPE` env var is present with the literal
+string `UserManagedIdentity`:
+
+```python
+for bot_svc in deployed_bots:
+    props = az("bot", "show", "-g", rg, "-n", bot_svc["name"], ...)
+    if props["appType"] != "UserAssignedMSI":
+        continue   # not UAMI-mode, skip
+    bot_aca = next((a for a in deployed_acas if "bot" in a["name"].lower()), None)
+    env = az("containerapp", "show", "-g", rg, "-n", bot_aca["name"],
+             "--query", "properties.template.containers[0].env[]", ...)
+    authtype = next((v for v in env if v["name"] ==
+                     "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE"),
+                    {}).get("value", "")
+    if authtype != "UserManagedIdentity":
+        gaps.append(
+            f"bot-authtype {bot_aca['name']!r}: appType=UserAssignedMSI "
+            f"but AUTHTYPE={authtype!r} (expected 'UserManagedIdentity'). "
+            f"MSAL will fall back to ConfidentialClient → AADSTS7000216 "
+            f"on every Teams message."
+        )
+```
+
+The probe records every checked bot under `bot_auth_health[]`. If the
+SPEC did NOT declare `aca-bot`, the check is skipped silently. If
+`Bot Service.appType != UserAssignedMSI` (e.g. multi-tenant w/ secret
+explicitly chosen), the check is also skipped — this only enforces the
+contract the threadlight pattern actually uses.
+
+> **Quick fix when caught:**
+> ```bash
+> az containerapp update -g <rg> -n <bot-aca> \
+>   --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity
+> ```
+> AND patch `infra/main.bicep` (or whichever Bicep wires the bot ACA env
+> block) so the next `azd provision` doesn't drop it again. See
+> `foundry-teams-bot` skill § Bicep snippet — all FOUR
+> `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars are mandatory.
+
 ### Step 6 — write `tests/postdeploy-manifest.json`
 
 ```json
@@ -392,6 +452,9 @@ was considered.
   ],
   "appin_health": [
     { "name": "appin-card-dispute-poc", "kind": "web", "status": "OK" }
+  ],
+  "bot_auth_health": [
+    { "bot_service": "bot-card-dispute-...", "aca": "ca-bot-...", "appType": "UserAssignedMSI", "authtype": "UserManagedIdentity", "status": "OK" }
   ],
   "channels": [
     { "name": "Analyst Workspace", "type": "web", "fqdn": "ca-workspace-...azurecontainerapps.io", "status": "OK" },
@@ -417,13 +480,16 @@ are **structural** — they answer *"is the right shape of resource
 present?"*. The Card Dispute v3 PoC failed on these and the gate caught
 it.
 
-Steps 3.5, 5.5, and 5.6 are **behavioural** — they answer *"is the right
-code running, is it not crashing, and is telemetry actually landing?"*.
+Steps 3.5, 5.5, 5.6, and 5.7 are **behavioural** — they answer *"is the right
+code running, is it not crashing, is telemetry actually landing, and can the
+bot actually talk back to Teams?"*.
 The Card Dispute v4 PoC passed all structural checks but had MCP running
 the helloworld placeholder, the cron failing every 15 min, and zero
 traces in AppIn (because the AppIn resource was never even provisioned).
-Structural checks alone weren't enough; the behavioural checks close
-that loop.
+The KYC v1 PoC passed all structural checks AND the JWT-alive channel probe,
+but the bot returned HTTP 500 on every real Teams message because the
+`AUTHTYPE` env var was missing. Structural checks alone weren't enough;
+the behavioural checks close that loop.
 
 Both layers are cheap (single `az` call per resource) and run on the
 same schedule (post-deploy hook). There's no scenario where you want

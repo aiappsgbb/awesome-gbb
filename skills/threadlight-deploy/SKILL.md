@@ -1084,6 +1084,8 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] `src/bot/requirements.txt` — includes microsoft-agents-* + openai
 - [ ] `src/bot/build_manifest.py` — replaces all manifest tokens
 - [ ] `src/bot/teams_package/manifest.json` — has placeholder tokens ready for postprovision
+- [ ] **Bot ACA env block has ALL FOUR `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars** (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=`UserManagedIdentity`**) — missing `AUTHTYPE` is the silent-killer KYC v1 bug: bot looks healthy from outside, JWT probe passes, every real Teams message returns HTTP 500 with AADSTS7000216. See `foundry-teams-bot` skill § Bicep snippet.
+- [ ] **Bot Service `appType: UserAssignedMSI`** with `msaAppId` = UAMI clientId AND `msaAppMSIResourceId` = UAMI ARM ID
 - [ ] *(Skip this section entirely if Teams not needed)*
 
 #### Root config files (MUST be at repo root — azd requires this)
@@ -2404,7 +2406,8 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | Import errors crash container | Missing dependency in pyproject.toml | Diagnostic HTTP server keeps container alive |
 | Bot returns "Response could not be saved" | Old-style `agent_reference` invocation | Use `get_openai_client(agent_name=...)` with `allow_preview=True` |
 | Bot gets 400 "responses protocol not declared" | **CONFIRMED:** GHCP SDK agent only serves `/invocations`. Bot's `oai.responses.create()` fails. | Bot must use direct HTTP POST to `/protocols/invocations` + SSE parsing for GHCP agents. OR use MAF runtime. See `foundry-teams-bot` skill. |
-| Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 3 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars |
+| Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 4 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=UserManagedIdentity**) |
+| **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** (synthetic JWT probe still passes!) | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` env var → MSAL falls back to ConfidentialClient flow → demands client_secret the keyless deploy never provisioned. KYC v1 silent killer.** | **Add `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity` to bot ACA env in Bicep. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`. The `safe-check --phase post-deploy` Step 5.7 catches this; channel JWT probe does NOT (JWT middleware fires before outbound token acquisition).** |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
 | `azd deploy` fails with Docker error | Missing `remoteBuild: true` in azure.yaml | Add `remoteBuild: true` under `docker:` — azd builds via ACR Tasks, no local Docker |

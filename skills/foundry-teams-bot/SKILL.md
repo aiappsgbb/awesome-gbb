@@ -380,6 +380,33 @@ module copilotAca 'bot/aca.bicep' = {
 }
 ```
 
+> [!CAUTION]
+> **🚨 `AUTHTYPE=UserManagedIdentity` is NOT optional.**
+>
+> If you forget this single env var, the bot looks healthy from outside
+> (ACA Running, JWT middleware returns 401 on synthetic probes,
+> `safe-check` channel probe returns `OK_jwt_alive`) but **every real
+> Teams message returns HTTP 500** with `AADSTS7000216: 'client_assertion',
+> 'client_secret' or 'request' is required for the 'client_credentials'
+> grant type` in the bot logs. This happens because the
+> `microsoft-agents-*` SDK defaults to **ConfidentialClient** (which
+> wants a client secret you don't have, since the deploy is keyless),
+> instead of switching to **UserAssignedManagedIdentity** flow.
+>
+> **All FOUR** `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` env vars
+> must be present. Missing any one is a deploy bug:
+> - `CLIENTID` — UAMI client ID
+> - `TENANTID` — tenant
+> - `AUTHORITYENDPOINT` — Entra login endpoint
+> - **`AUTHTYPE` — must be literal string `UserManagedIdentity`** (not
+>   `UserAssignedManagedIdentity`, not `ManagedIdentity`)
+>
+> The post-deploy gate (`threadlight-safe-check --phase post-deploy`)
+> includes a behavioural check (`bot_auth_health`) that verifies this
+> when `Bot Service.appType == UserAssignedMSI`. Run it before declaring
+> the bot ready. (Bug origin: KYC PoC v1, 2026-05-12, 4 hours of "why
+> won't Teams reach my bot".)
+
 ---
 
 ## Step 4: Generate Teams Manifest
@@ -694,7 +721,8 @@ Common issues visible in logs:
 | `AGENT_NAME` | No | Hosted agent name (default from `__PROJECT_NAME__`) |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | ✅ | UAMI client ID for Bot Framework MSAL auth |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | ✅ | Azure AD tenant ID |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` | ✅ | Must be `UserManagedIdentity` |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHORITYENDPOINT` | ✅ | Entra login endpoint (`environment().authentication.loginEndpoint` in Bicep) |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` | ✅✅ | **MANDATORY** — must be literal `UserManagedIdentity`. Without it, MSAL falls back to ConfidentialClient → AADSTS7000216 on every real Teams message. The synthetic JWT probe in `safe-check` does NOT catch this (JWT middleware fires before outbound token acquisition). |
 
 ---
 
@@ -1102,7 +1130,8 @@ user_token = result["access_token"]
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | Bot returns "Response could not be saved" | Old-style `agent_reference` invocation | Use `get_openai_client(agent_name=...)` with `allow_preview=True` |
-| Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 3 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars |
+| Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 4 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars: CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=UserManagedIdentity** |
+| **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` → MSAL falls back to ConfidentialClient (needs a client secret the keyless deploy never provisioned)** | **Set `AUTHTYPE=UserManagedIdentity`. Synthetic JWT probe in safe-check returns OK_jwt_alive because JWT middleware fires before outbound token acquisition; only `safe-check --phase post-deploy` Step 5.7 catches it. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`** |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
 | Teams shows the bot's reply twice (full message appended after streaming completes) | Yielding `TextChunk` on both `response.output_text.delta` and `response.output_text.done` | Only yield from deltas; the done event is metadata/final accumulated text, not a separate content payload |
