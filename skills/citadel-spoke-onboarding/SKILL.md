@@ -1,17 +1,11 @@
 ---
 name: citadel-spoke-onboarding
 description: >
-  Onboard a GenAI app or Microsoft Foundry project as a spoke into an existing
-  AI Citadel Governance Hub. Covers Access Contracts, Foundry APIM connections,
-  Key Vault secret wiring, product policies, JWT auth, and networking.
-  USE FOR: citadel spoke, citadel spoke onboarding, onboard agent to citadel,
-  onboard foundry project to citadel, onboard genai app to citadel, access contract,
-  ai hub gateway access contract, connect foundry to citadel, APIM connection,
-  foundry apim connection citadel, bring your own ai gateway foundry,
-  citadel onboarding, govern agent, AI gateway spoke, citadel compliant agent,
-  citadel access contract, connect to governance hub, citadel JWT auth,
-  citadel product policy, citadel key vault secrets, citadel validation notebook,
-  unified ai api, openai compatible gateway, agent governance toolkit, citadel AGT.
+  Onboard a Foundry project as a spoke into an AI Citadel Governance Hub.
+  Covers Access Contracts, APIM connections, product policies, JWT auth.
+  USE FOR: citadel spoke onboarding, access contract, connect foundry to citadel,
+  APIM connection, bring your own ai gateway, govern agent, citadel JWT auth,
+  citadel product policy, unified ai api, citadel AGT.
   DO NOT USE FOR: deploying the Citadel hub itself, APIM infrastructure,
   hub networking, hub provisioning, hub sizing, llm backend onboarding,
   deploying model backends, apim backend pools, hub policy fragment deployment.
