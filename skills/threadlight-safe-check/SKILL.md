@@ -434,6 +434,74 @@ contract the threadlight pattern actually uses.
 > `foundry-teams-bot` skill § Bicep snippet — all FOUR
 > `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars are mandatory.
 
+### Step 5.8 — Cosmos data realism (catches "deployed empty, agent says not found")
+
+> **Behavioural check.** A Cosmos-backed pilot can deploy cleanly
+> (`azd up` returns 0, all containers exist, MCP server reachable) and
+> STILL have the agent reply "case not found" / "no records" on every
+> realistic prompt — because **the containers are empty**. The eval
+> dataset writes a handful of synthetic IDs as a side-effect of probe
+> traffic, but the realistic golden cases that live in
+> `specs/sample-data/*.json` are never loaded unless `Phase 6.5` of
+> `threadlight-deploy` ran the seed step.
+>
+> Origin: KYC PoC v1 (2026-05-12) — `kyc-edd-memos` and
+> `kyc-beneficial-owners` containers shipped with **0 documents**;
+> `kyc-cases` had 5 eval-probe IDs (`CASE-S001`, `CASE-S-007`, etc.)
+> instead of the 8 realistic golden cases (`CASE-003-NG-EDD`,
+> `Cascadia Holdings`, etc.) declared in `specs/sample-data/`. User
+> typed realistic IDs; agent honestly reported "not found"; demo
+> looked broken.
+
+For every Cosmos container declared in SPEC § 5b with
+`seed_from: sample-data` (or matching a `kyc-*`, `case-*`, `dispute-*`,
+`order-*`, etc. pattern indicating it MUST hold demo data), the gate
+counts documents and asserts non-zero:
+
+```python
+# Pseudocode — actual implementation in safe_check/cosmos_data_check.py
+expected_seeded = [
+    {"container": c["name"], "min_docs": c.get("min_docs", 1)}
+    for c in spec_section_5b
+    if c.get("seed_from") == "sample-data"
+]
+
+cosmos = CosmosClient(endpoint, credential=AzureCliCredential())
+db = cosmos.get_database_client(spec_database_name)
+for spec in expected_seeded:
+    cont = db.get_container_client(spec["container"])
+    count = list(cont.query_items(
+        query="SELECT VALUE COUNT(1) FROM c",
+        enable_cross_partition_query=True,
+    ))[0]
+    if count < spec["min_docs"]:
+        gaps.append(
+            f"cosmos-data-realism {spec['container']!r}: {count} docs "
+            f"(expected ≥{spec['min_docs']} from sample-data). "
+            f"Run scripts/seed_data.py — see threadlight-deploy Phase 6.5."
+        )
+```
+
+The probe records every checked container under `cosmos_data_health[]`
+with `count`, `min_docs`, `pass`. Gate fails (exit 1) if ANY container
+is below its declared minimum.
+
+> **Quick fix when caught:**
+> ```bash
+> # Grant data-plane RBAC if not already (one-time):
+> az cosmosdb sql role assignment create -g $RG -a $COSMOS \
+>   --role-definition-id "00000000-0000-0000-0000-000000000002" \
+>   --principal-id "$(az ad signed-in-user show --query id -o tsv)" \
+>   --scope "$(az cosmosdb show -g $RG -n $COSMOS --query id -o tsv)"
+> sleep 30
+>
+> # Run the seed:
+> uv run scripts/seed_data.py
+> ```
+> AND patch `azure.yaml` `hooks.postdeploy` to invoke the seed
+> automatically on every `azd up` (see `threadlight-deploy` SKILL.md
+> § Phase 6.5 Step 3).
+
 ### Step 6 — write `tests/postdeploy-manifest.json`
 
 ```json

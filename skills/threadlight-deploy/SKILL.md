@@ -1907,6 +1907,24 @@ If included, the scaffold adds `copilot/` (bot code) and `infra/bot/` (Bicep) to
 the azd project. The `foundry-teams-bot` skill's `templates/` directory provides
 ready-to-copy files.
 
+> **MANDATORY: start from `bot-streaming.py`, not `bot.py`.** The default
+> bot template MUST be the streaming variant (`foundry-teams-bot/templates/copilot/bot-streaming.py`).
+> The non-streaming variant (`bot.py`) is **legacy/fallback only** — it
+> collects all SSE chunks into a list and sends one big `send_activity()`
+> at the end. Result: 60+ seconds of typing-dots silence in Teams,
+> followed by a wall of text. Bad UX, makes the demo feel broken.
+>
+> The streaming variant uses `StreamingResponse` from
+> `microsoft_agents.hosting.core.app.streaming.streaming_response` —
+> `queue_informative_update()` shows interim status, `queue_text_chunk()`
+> streams text progressively, `await end_stream()` finalises. Degrades
+> gracefully on non-streaming channels (DirectLine, web chat).
+>
+> Origin: KYC PoC v1 (2026-05-12) — bot deployed without streaming;
+> user got 60s silence + wall-of-text and thought the bot was broken.
+> The streaming refactor is ~30 LOC. There is no reason to ship the
+> collect-then-send variant for a Teams pilot.
+
 **If the agent generates files** (XLSX/PDF reports via `save_report` @tool):
 - Add `"supportsFiles": true` to the manifest bot config
 - The bot must implement the full FileConsentCard flow (see `foundry-teams-bot` skill § Sending Files to Teams)
@@ -2308,6 +2326,98 @@ azd ai agent validate
 > **The full Bicep module catalog** lives in `azd-patterns/SKILL.md` →
 > "Composable Bicep Module Library". This skill orchestrates inclusion;
 > azd-patterns owns the module shapes.
+
+---
+
+## Phase 6.5: Demo Data Seed (MANDATORY when SPEC § 5 marks any system as `mock`)
+
+> **Why this is mandatory.** SPEC § 5 declares which systems are `mock`
+> (almost always true for pilots). For each `mock` system backed by
+> Cosmos, the deployment provisions empty containers — and unless a seed
+> step runs, the deployed agent answers "not found" or "no records" on
+> every realistic prompt. The `threadlight-demo-data-factory` skill
+> generates `specs/sample-data/*.json` AND `scripts/seed_data.py`, but
+> Phase 6.5 is what actually invokes the seed at deploy time.
+>
+> Origin: KYC PoC v1 (2026-05-12) — `azd up` returned 0, the agent
+> deployed cleanly, the user typed `CASE-003-NG-EDD` (a realistic golden
+> case from `specs/sample-data/onboarding-cases.json`), the agent
+> correctly reported "not found" because Cosmos was empty of that ID.
+> The demo looked broken; it wasn't — it just had no data. 4 hours
+> diagnosing what should have been a postdeploy seed step.
+
+### Step 1 — Verify the demo-data-factory artifacts exist
+
+Phase 1 (Analyze) reads SPEC § 5. If any system has `mock: yes`:
+
+- ✅ `specs/sample-data/*.json` — at least one JSON per Cosmos container
+  the spec declares (cases, customers, screening, risk-assessments, etc.)
+- ✅ `scripts/seed_data.py` — the upsert script following the
+  `threadlight-demo-data-factory` `Semaphore(8)` pattern
+- ✅ `scripts/reset_data.py` — wipes Cosmos and re-runs `seed_data.py`
+  (for re-runs after schema changes)
+
+If any of the above is missing, **invoke `threadlight-demo-data-factory`
+NOW** to generate them. Do not proceed to Step 2 until they exist.
+
+### Step 2 — Grant Cosmos data-plane RBAC to the deployer
+
+This is the single most common blocker. Cosmos data-plane writes
+require **`Cosmos DB Built-in Data Contributor`** (role definition ID
+`00000000-0000-0000-0000-000000000002`) — control-plane Owner is NOT
+sufficient. Grant the deployer principal:
+
+```bash
+DEPLOYER_OID=$(az ad signed-in-user show --query id -o tsv)
+COSMOS_ID=$(az cosmosdb show -g $RG -n $COSMOS_ACCOUNT --query id -o tsv)
+az cosmosdb sql role assignment create -g $RG -a $COSMOS_ACCOUNT \
+  --role-definition-id "00000000-0000-0000-0000-000000000002" \
+  --principal-id "$DEPLOYER_OID" \
+  --scope "$COSMOS_ID"
+sleep 30   # RBAC propagation
+```
+
+For the **agent + bot UAMI** (so the runtime can read/write Cosmos via
+the MCP server), the same role is required at the same scope. The Bicep
+in `infra/modules/cosmos-db.bicep` should declare this assignment for
+the shared UAMI; verify it's there.
+
+### Step 3 — Wire the seed into the postdeploy hook chain
+
+Append to `azure.yaml`:
+
+```yaml
+hooks:
+  postdeploy:
+    shell: pwsh
+    run: |
+      cd scripts && uv sync --frozen --quiet
+      uv run seed_data.py
+```
+
+If a `postdeploy` hook already exists from Phase 5/6 (Toolbox setup,
+Teams manifest sideload, AppIn connect), **merge** rather than overwrite:
+
+```yaml
+hooks:
+  postdeploy:
+    shell: pwsh
+    run: |
+      cd infra/scripts && uv sync --frozen --quiet
+      uv run postdeploy.py     # dispatcher: toolbox + manifest + appin + seed
+```
+
+The dispatcher pattern (`infra/scripts/postdeploy.py`) is documented in
+`azd-patterns/SKILL.md` § "Cross-platform deployment scripts".
+
+### Step 4 — Verify
+
+`scripts/seed_data.py` should print one line per file: `→ <file>
+<container> (N docs)` and end with `✅ upserted N   ❌ errors 0`. The
+post-deploy completeness gate (`threadlight-safe-check --phase
+post-deploy` Step 5.8) then asserts that for each container declared
+in SPEC § 5b with `seed_from: sample-data`, document count is non-zero.
+If either step fails, the PoC is incomplete; do NOT declare victory.
 
 ---
 

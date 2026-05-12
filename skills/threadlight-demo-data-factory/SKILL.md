@@ -204,6 +204,45 @@ if __name__ == "__main__":
         print(f"  wrote {path} ({len(records)} records)")
 ```
 
+### Cosmos data-plane RBAC — required before running seed_data.py / reset_data.py
+
+> **Critical first-time gotcha.** Cosmos uses **separate** control-plane
+> and data-plane RBAC. Control-plane Owner / Contributor lets you create
+> containers but NOT write items. Data-plane writes need the **`Cosmos
+> DB Built-in Data Contributor`** role (definition id
+> `00000000-0000-0000-0000-000000000002`). Without it, `seed_data.py`
+> fails with `Forbidden ... required RBAC permissions to perform
+> action [Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/upsert]`
+> on EVERY upsert.
+>
+> Origin: KYC PoC v1 (2026-05-12) — first run of `seed_data.py`
+> failed 50/50 with Forbidden; took 10 min to realise control-plane
+> Owner doesn't grant data-plane writes.
+
+Grant once per pilot, both for the deployer (so they can run seed_data
+locally) AND for the agent/bot UAMI (so the runtime can read/write):
+
+```bash
+RG=<resource-group>
+COSMOS=<cosmos-account-name>
+DEPLOYER_OID=$(az ad signed-in-user show --query id -o tsv)
+UAMI_OID=$(az identity show -g $RG -n <uami-name> --query principalId -o tsv)
+SCOPE=$(az cosmosdb show -g $RG -n $COSMOS --query id -o tsv)
+
+for OID in $DEPLOYER_OID $UAMI_OID; do
+  az cosmosdb sql role assignment create -g $RG -a $COSMOS \
+    --role-definition-id "00000000-0000-0000-0000-000000000002" \
+    --principal-id "$OID" \
+    --scope "$SCOPE"
+done
+sleep 30   # RBAC propagation; 25-30s is the empirically observed minimum
+```
+
+The Bicep in `infra/modules/cosmos-db.bicep` should declare the UAMI
+assignment so it survives `azd provision`; the deployer assignment is
+typically a one-time bootstrap step the SE runs by hand or that lives
+in `infra/scripts/postprovision.py`.
+
 ### Step 3: Generate `scripts/reset_data.py`
 
 For `idempotent` reset:
