@@ -103,6 +103,93 @@ prefer managed identity over Cosmos keys.
 > assignment create`. This is the same gotcha called out in
 > `threadlight-hitl-patterns` — keep both wirings consistent.
 
+> **⚠️ aiohttp dep is mandatory for the Python Cosmos MCP server (verified KYC PoC,
+> May 2026).** The Python Cosmos MCPToolKit uses `azure-cosmos` async client which
+> silently requires `aiohttp` as the HTTP transport. Without it the container starts
+> fine, `tools/list` returns the 11 tools, but every `upsert_item` / `query_items`
+> call fails server-side with what looks like a Cosmos error but is actually an
+> ImportError swallowed by FastMCP. Pin in `src/mcp/requirements.txt`:
+>
+> ```
+> azure-cosmos>=4.7.0
+> azure-identity>=1.19.0
+> mcp>=1.10.0
+> aiohttp>=3.9.0       # REQUIRED — async HTTP transport for azure-cosmos
+> ```
+
+### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh PoC)
+
+The single biggest "first-deploy doesn't work" gotcha for ACA→Cosmos:
+
+| Default | What happens | Fix |
+|---|---|---|
+| Cosmos `publicNetworkAccess: Disabled` (the Azure default) | All ACA→Cosmos traffic returns `Forbidden — public access disabled` | Set `publicNetworkAccess: Enabled` for pilots (production: use private endpoint) |
+| Cosmos `networkAclBypass: None` (default) AND `ipRules: []` | All ACA→Cosmos traffic returns `Forbidden — Request originated from IP <egress-ip> through public internet. This is blocked` | Either: (a) set `networkAclBypass: AzureServices` ⚠️ (see caveat) OR (b) add the ACA environment's egress IP to `ipRules` (proven path for pilots) |
+| `networkAclBypass: AzureServices` is set, ACA still blocked | **Verified KYC PoC May 2026 (swedencentral):** even with `AzureServices` bypass, ACA managed-environment egress is still treated as "public internet" by Cosmos. The bypass DOES NOT cover ACA the way it covers Functions/Logic Apps. | **Add the ACA egress IP to `ipRules` explicitly.** Get it from the Cosmos Forbidden error message ("Request originated from IP X.X.X.X"), then `az cosmosdb update -g <rg> -n <acct> --ip-range-filter "X.X.X.X"`. For prod, use a private endpoint instead. |
+
+**Bicep snippet** (pilot-grade default — put this in `infra/modules/cosmos-db.bicep`):
+
+```bicep
+@description('Pilot posture: enables public network with AzureServices bypass + room for explicit ACA egress IP. Set false for prod-grade (private endpoint).')
+param pilotPosture bool = true
+
+@description('Optional explicit IP allowlist (for ACA egress IPs). Pilots: leave empty initially, then re-deploy with the IP from the Cosmos Forbidden error.')
+param ipAllowlist array = []
+
+resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-12-01-preview' = {
+  // ...
+  properties: {
+    publicNetworkAccess: pilotPosture ? 'Enabled' : 'Disabled'
+    networkAclBypass: pilotPosture ? 'AzureServices' : 'None'
+    ipRules: [for ip in ipAllowlist: { ipAddressOrRange: ip }]
+    disableLocalAuth: true   // keyless-by-mandate
+    // ...
+  }
+}
+```
+
+**Operator runbook for the "ACA→Cosmos Forbidden" failure** (post-deploy):
+
+```bash
+# 1. Pull the egress IP from the cosmos-mcp ACA logs
+az containerapp logs show -g <rg> -n ca-<process>-cosmos-mcp-<token> --tail 200 \
+  | grep -i "Request originated from IP"
+# Example output: "Request originated from IP 135.116.230.235 through public internet"
+
+# 2. Add it to Cosmos firewall (REST PATCH; CLI does not expose --enable-public-network)
+az rest --method PATCH \
+  --url "https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.DocumentDB/databaseAccounts/<acct>?api-version=2024-12-01-preview" \
+  --body '{"properties":{"publicNetworkAccess":"Enabled","ipRules":[{"ipAddressOrRange":"135.116.230.235"}]}}'
+
+# 3. Wait 60-180s for Cosmos provisioningState to flip Updating -> Succeeded
+az cosmosdb show -g <rg> -n <acct> --query "provisioningState" -o tsv
+```
+
+**Or automate it as a postdeploy hook (recommended for fully unattended `azd up`).**
+Reference implementation: [`references/postdeploy_cosmos_firewall_egress.py`](references/postdeploy_cosmos_firewall_egress.py)
+in this skill. The script:
+
+1. Reads `AZURE_RESOURCE_GROUP` / `AZURE_COSMOS_ACCOUNT_NAME` from azd env
+2. Auto-discovers the cosmos-mcp ACA name (first ACA matching `*cosmos-mcp*`)
+3. Polls the ACA's recent console logs (up to 5 min) for the Cosmos Forbidden error pattern
+4. Extracts the egress IP, idempotently patches Cosmos `ipRules`
+5. Polls Cosmos `provisioningState` until `Succeeded`
+
+Wire it into `azure.yaml`:
+
+```yaml
+hooks:
+  postdeploy:
+    shell: pwsh
+    run: |
+      cd infra/scripts && uv sync --frozen
+      uv run postdeploy.py
+      uv run postdeploy_cosmos_firewall_egress.py
+```
+
+This closes the last manual step in the "1-shot `azd up` for Cosmos-using
+processes" flow. Verified design against KYC PoC May 2026 forensics.
+
 ### Agent Configuration
 
 In the hosted agent's `mcp-config.json`:
@@ -345,18 +432,67 @@ Copy sample data from `specs/sample-data/*.json` into `src/mcp/data/`.
 ```dockerfile
 FROM python:3.12-slim
 WORKDIR /app
-RUN pip install --no-cache-dir fastmcp
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY data/ data/
 EXPOSE 8080
 CMD ["python", "server.py"]
 ```
 
+> **Pin `fastmcp` (verified card-dispute Apr 2026 + KYC May 2026).** `fastmcp` had a
+> 1.x → 2.x API break (Client interface changed). Both server (`src/mcp/`) and any
+> client that imports `fastmcp` (e.g. an ACA Job that drives the MCP server) MUST
+> pin to the **same major** to avoid silent failures: container starts, `tools/list`
+> works, but `tools/call` returns the wrong shape and the agent self-reports `failed`.
+
 ### Generate `src/mcp/requirements.txt`
 
 ```
-fastmcp>=2.0.0
+fastmcp>=2.0.0,<3.0.0
+azure-cosmos>=4.7.0          # only if Cosmos MCP — see Option A
+azure-identity>=1.19.0       # only if keyless to Azure
+aiohttp>=3.9.0               # MANDATORY for Cosmos MCP — async transport for azure-cosmos
 ```
+
+### MCP ACA also needs the `fetch-container-image` pattern (just like bot)
+
+> **Verified KYC Apr 2026 (checkpoint 68: ACA port-mismatch).** When `infra/main.bicep`
+> defaults the MCP image to `mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`
+> (the standard "first-deploy" placeholder), the ACA gets stuck `InProgress` forever
+> because the placeholder serves port 80 but the MCP module pins `targetPort: 8080`.
+> The `fetch-container-image` pattern is documented for bot ACAs in `foundry-teams-bot`
+> SKILL.md but **MUST be applied to MCP ACAs too.** Same trap, same fix:
+
+```bicep
+// infra/main.bicep — MCP ACA wiring
+@description('Set true after the first azd deploy mcp; lets re-provision preserve the deployed image')
+param mcpResourceExists bool = false
+
+module fetchMcpImage 'mcp/fetch-container-image.bicep' = if (mcpResourceExists) {
+  name: 'fetch-mcp-image'
+  params: {
+    name: 'ca-${prefix}-mcp-${token}'
+  }
+}
+
+module mcp 'mcp/aca.bicep' = {
+  params: {
+    image: mcpResourceExists && !empty(fetchMcpImage.outputs.image)
+      ? fetchMcpImage.outputs.image
+      : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+    targetPortOverride: mcpResourceExists ? 8080 : 80   // KEY: 80 on first deploy (helloworld), 8080 thereafter
+    // ... rest of params
+  }
+}
+```
+
+The `fetch-container-image.bicep` shape is identical to the bot version
+in `foundry-teams-bot/templates/infra/bot/fetch-container-image.bicep` —
+copy it into `infra/mcp/` and adjust the resource type.
+
+`threadlight-safe-check` will catch the helloworld placeholder if you
+forget; see its `--phase post-deploy` image-probe step.
 
 ### Local Development
 
