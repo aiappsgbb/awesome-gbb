@@ -335,24 +335,70 @@ response = client.chat.completions.create(model="gpt-5.4-mini", messages=[{"role
 
 ### Option B: Foundry Connection (Foundry Agents)
 
+The `connectionName/modelName` pattern routes LLM calls through the APIM gateway.
+This works at the **agent level** — not via raw `oai.chat.completions.create()`.
+
+**Hosted Agents (FoundryChatClient):**
+
+Set `MODEL_DEPLOYMENT_NAME` in `agent.yaml` to `connectionName/modelName`:
+
+```yaml
+# agent.yaml
+environment_variables:
+  - name: MODEL_DEPLOYMENT_NAME
+    value: Hub-MyTeam-MyAgent-DEV-LLM/gpt-5.4
+```
+
+The `FoundryChatClient` in `container.py` resolves the connection automatically:
+
+```python
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["MODEL_DEPLOYMENT_NAME"],  # "connectionName/gpt-5.4"
+    credential=DefaultAzureCredential(),
+)
+```
+
+**Prompt Agents (PromptAgentDefinition):**
+
 ```python
 from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import PromptAgentDefinition
 from azure.identity import DefaultAzureCredential
-
-# Connection name pattern: <BU>-<UseCase>-<ENV>-<ServiceCode>
-connection_name = "MyTeam-MyAgent-DEV-LLM"
-model_deployment = f"{connection_name}/gpt-5.4-mini"
 
 client = AIProjectClient(
     credential=DefaultAzureCredential(),
-    endpoint="https://<foundry-account>.cognitiveservices.azure.com/"
+    endpoint="https://<foundry-account>.services.ai.azure.com/api/projects/<project>",
+    allow_preview=True,
 )
-agent = client.agents.create_agent(
-    model=model_deployment,
-    name="my-agent",
-    instructions="You are a helpful assistant."
+
+# Connection name from access contract output
+model_deployment = "Hub-MyTeam-MyAgent-DEV-LLM/gpt-5.4"
+
+agent = client.agents.create_version(
+    agent_name="my-agent",
+    definition=PromptAgentDefinition(
+        model=model_deployment,
+        instructions="You are a helpful assistant.",
+    ),
 )
+
+# Chat via get_openai_client(agent_name=...) + responses.create()
+oai = client.get_openai_client(agent_name="my-agent")
+response = oai.responses.create(input="Hello", stream=False)
 ```
+
+> **⚠️ CRITICAL: `connectionName/model` does NOT work with raw OpenAI API calls.**
+> Calling `oai.chat.completions.create(model="connName/gpt-5.4")` returns
+> `404 DeploymentNotFound`. The routing only works through:
+> - `FoundryChatClient(model="connName/model")` (hosted agents)
+> - `PromptAgentDefinition(model="connName/model")` (prompt agents)
+> - NOT via `oai.chat.completions.create()` or `oai.responses.create()` directly
+
+> **`isSharedToAll` quirk:** The REST API ignores `isSharedToAll=true` on PUT/PATCH
+> — it always stays `false`. This does NOT block hosted agent routing (the agent
+> identity resolves the connection via `FoundryChatClient`). It may affect prompt
+> agents depending on how the caller authenticates.
 
 ### Option C: Direct Output (CI/CD Pipelines)
 
@@ -779,3 +825,18 @@ with Citadel.
 - [ ] Verify Foundry connection (if applicable)
 - [ ] Test end-to-end: agent → gateway → AI backend
 - [ ] Commit contract files to source control for audit trail
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| **404 DeploymentNotFound via `oai.chat.completions.create()`** | `connectionName/model` only works at agent level, not raw OpenAI API | Use `FoundryChatClient(model="conn/model")` for hosted agents, or `PromptAgentDefinition(model="conn/model")` for prompt agents |
+| **`isSharedToAll` stuck at `false`** | REST API (all versions) ignores the flag on PUT/PATCH | Does NOT block hosted agent routing. For prompt agents, add caller OID to `sharedUserList` |
+| **Hub KV `Forbidden: ForbiddenByConnection`** | Hub Key Vault has public network access disabled | Use Option C (direct output) or deploy from inside the hub VNet |
+| **Tool calls fail with `server_error`** | APIM policy `allowedModels` doesn't include your model, or TPM too low for tool-heavy queries | Update `allowedModels` in policy XML. Bump TPM to ≥10K for agents with MCP tools |
+| **`apiPath` wrong → model discovery fails** | `openai` path has no `/models` endpoint, `models` path does | For APIM defaults discovery use `apiPath='models'`. For static models use `apiPath='openai'` with `deploymentInPath='true'` |
+| **Static models not appearing in connection metadata** | Bicep module may use dynamic discovery defaults even when staticModels passed | Set `models` directly in metadata as stringified JSON via REST PUT |
+| **Connection category `ApiKey` vs `ApiManagement`** | Portal "API Key" creates `ApiKey` category, Bicep creates `ApiManagement` | Both work for routing. `ApiManagement` is preferred (has model discovery) |
+| **Cross-region (spoke ≠ hub region)** | Foundry in northcentralus, APIM in swedencentral | Works — connection routes over public internet. VNet peering needed only for private endpoints |
