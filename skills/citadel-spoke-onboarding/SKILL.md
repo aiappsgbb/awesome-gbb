@@ -196,6 +196,9 @@ For custom policies, edit `ai-product-policy.xml`. Full policy reference:
     <include-fragment fragment-id="validate-model-access" />
 
     <!-- 4. Capacity management (subscription level) -->
+    <!-- ⚠️ For Foundry agents with MCP tools, use ≥100K TPM.
+         A single CI query with 10-20 tool calls consumes 50-80K tokens.
+         10K TPM causes server_error after the first tool call completes. -->
     <llm-token-limit counter-key="@(context.Subscription.Id)"
         tokens-per-minute="5000"
         estimate-prompt-tokens="false"
@@ -829,7 +832,7 @@ with Citadel.
 | **404 DeploymentNotFound via `oai.chat.completions.create()`** | `connectionName/model` only works at agent level, not raw OpenAI API | Use `FoundryChatClient(model="conn/model")` for hosted agents, or `PromptAgentDefinition(model="conn/model")` for prompt agents |
 | **`isSharedToAll` stuck at `false`** | REST API (all versions) ignores the flag on PUT/PATCH | Does NOT block hosted agent routing. For prompt agents, add caller OID to `sharedUserList` |
 | **Hub KV `Forbidden: ForbiddenByConnection`** | Hub Key Vault has public network access disabled | Use Option C (direct output) or deploy from inside the hub VNet |
-| **Tool calls fail with `server_error`** | APIM policy `allowedModels` doesn't include your model, or TPM too low for tool-heavy queries | Update `allowedModels` in policy XML. Bump TPM to ≥10K for agents with MCP tools |
+| **Tool calls fail with `server_error`** | APIM policy TPM too low — agent exhausts token budget on 2nd+ turn of tool loop | **Bump TPM to ≥100K** for agents with MCP tools. CI-style agents with 10-20 tool calls consume 50-80K tokens per query. 10K TPM causes `server_error` after the first tool call completes. Also check `allowedModels` includes your model. |
 | **`apiPath` wrong → model discovery fails** | `openai` path has no `/models` endpoint, `models` path does | For APIM defaults discovery use `apiPath='models'`. For static models use `apiPath='openai'` with `deploymentInPath='true'` |
 | **Static models not appearing in connection metadata** | Bicep module may use dynamic discovery defaults even when staticModels passed | Set `models` directly in metadata as stringified JSON via REST PUT |
 | **Connection category `ApiKey` vs `ApiManagement`** | Portal "API Key" creates `ApiKey` category, Bicep creates `ApiManagement` | Both work for routing. `ApiManagement` is preferred (has model discovery) |
