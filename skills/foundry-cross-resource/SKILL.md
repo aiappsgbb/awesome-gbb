@@ -16,6 +16,8 @@ description: >
   AzureOpenAI/AIServices connection), Azure tenant isolation
   (use azure-tenant-isolation), Foundry project creation, APIM creation
   from scratch.
+metadata:
+  version: "1.0.0"
 ---
 
 # Cross-Resource Model Invocation via Foundry AI Gateway

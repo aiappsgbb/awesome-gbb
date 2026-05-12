@@ -463,7 +463,7 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
     # If the SPEC declared `app-insights: yes` (or expected_resource_types
     # includes `Microsoft.Insights/components`), the post-deploy gate FAILS
     # if no AppIn resource exists in the deployed RG. Catches the silent
-    # observability gap discovered after card-dispute v3 (azd up returned
+    # observability gap discovered in recent pilots (azd up returned
     # 0 but App Insights stayed completely empty because the bicep module
     # was never composed in main.bicep). See foundry-observability skill.
     # ------------------------------------------------------------------
@@ -539,7 +539,7 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
     # back as HTTP 500 with AADSTS7000216 in the bot logs. The synthetic
     # _probe_teams() check returns OK_jwt_alive (JWT middleware fires
     # BEFORE outbound token acquisition), so this gap escapes channel
-    # reachability. Caught it on KYC PoC v1; protecting future pilots.
+    # reachability. Caught in recent pilots; protecting future pilots.
     # ------------------------------------------------------------------
     bot_auth_health_results: list[dict[str, Any]] = []
     if "aca-bot" in selectors:

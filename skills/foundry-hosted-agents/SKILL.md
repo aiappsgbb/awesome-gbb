@@ -6,6 +6,8 @@ description: >
   agent.yaml, dataset curation from traces. Covers the refreshed hosted agents
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
+metadata:
+  version: "1.0.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -26,12 +28,12 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 
 ## Runtime Pattern (MAF Variant)
 
-> **Model selection (verified May 2026, card-dispute v3 PoC).** Default
+> **Model selection (verified across recent pilots).** Default
 > to **`gpt-5.4`** for production agents that run instruction chains
 > with 10+ tool steps (case investigation, multi-source RAG synthesis,
 > regulatory drafting). Use **`gpt-5.4-mini`** only for trivial
 > 1-2-step flows (single-tool lookups, formatters). The mini variant's
-> tool-call discipline degrades sharply on long chains: in the v3 PoC,
+> tool-call discipline degrades sharply on long chains: in recent
 > strict-smoke reproducibility on a 7-skill flow went from **1/3** with
 > gpt-5.4-mini to **3/3** with gpt-5.4 (same MCP server, same prompts).
 > The mini variant tends to call commit-style tools before evidence is
@@ -163,9 +165,8 @@ callback that extracts the `TextContent.text` payload from the MCP
 sidesteps `FoundryChatClient.get_mcp_tool()` entirely and avoids the
 `[<Content object>]` repr leak.
 
-**Worked example** — verified live in card-dispute v3 PoC
-(`threadlight-skills/card-dispute-investigation/src/agent/container.py`),
-running on a 10-tool MCP server with `gpt-5.4-mini`:
+**Worked example** — validated in recent pilots, running on a
+10-tool MCP server with `gpt-5.4-mini`:
 
 ```python
 import json
@@ -205,7 +206,7 @@ client = FoundryChatClient(
 )
 
 mcp_tool = MCPStreamableHTTPTool(
-    name="card_disputes_mcp",
+    name="<process>_mcp",
     url=f"https://{os.environ['MCP_SERVER_FQDN']}/mcp",
     approval_mode="never_require",
     parse_tool_results=_mcp_text_extractor,   # ⚠️ THE FIX — opts out of default rendering
@@ -227,7 +228,7 @@ agent = Agent(client=client, tools=[my_local_tool, mcp_tool], ...)
   unwraps that back to the JSON string.
 
 **When pure-compute logic doesn't need to be on the MCP server,
-inline it as `@tool`.** The MCP-vs-`@tool` rule from card-dispute v3:
+inline it as `@tool`.** The MCP-vs-`@tool` rule from recent pilots:
 - **MCP server** for any tool with I/O (DB lookups, file reads,
   external API calls).
 - **Inline `@tool`** for pure computation (date math, formatting,
@@ -236,15 +237,14 @@ inline it as `@tool`.** The MCP-vs-`@tool` rule from card-dispute v3:
 **Probe to verify the fix is in place** — dump the raw
 `custom_tool_call_output` from a real Foundry trace; the `output`
 field should be a plain JSON string (e.g. `{"case_id":"...","status":"..."}`),
-NOT `[<agent_framework._types.Content object at 0x...>]`. The
-card-dispute PoC ships `tests/probe_mcp_output.py` for this.
+NOT `[<agent_framework._types.Content object at 0x...>]`. Your
+process repo should ship `tests/probe_mcp_output.py` for this.
 
 > **Status note.** Once the upstream `agent_framework` bug is fixed
 > (track at `microsoft-foundry/foundry-samples` issues), the
 > `client.get_mcp_tool()` shorthand becomes safe again. Until then,
 > the explicit `MCPStreamableHTTPTool` + extractor is the canonical
-> pattern. Captured as `gap-009` + `gap-014` in the card-dispute PoC
-> retrospective.
+> pattern. Captured from recent PoC retrospectives.
 
 ### File Generation (@tool pattern)
 
@@ -325,8 +325,8 @@ You have a `save_report` tool for generating downloadable files:
 - The bot captures `agent_session_id` from the `response.completed` event to locate files
 - Wrap each format in try/except to return a clean error if generation fails
 
-> **Validated** — XLSX and PDF file delivery tested end-to-end in Imperial Commercial
-> Sales PoC (May 2026). FileConsentCard renders clickable OneDrive cards in Teams.
+> **Validated** — XLSX and PDF file delivery tested end-to-end in recent
+> file-delivery pilots. FileConsentCard renders clickable OneDrive cards in Teams.
 
 ---
 
@@ -361,11 +361,10 @@ packages = []
 **Do NOT use `agent-framework>=1.1.0` as a meta-package.** The meta-package's transitive
 resolution is non-deterministic across uv versions. Pin `agent-framework-core==1.3.0` and
 `agent-framework-foundry==1.3.0` exactly instead. Verified working on linux/amd64 as the
-card-dispute-investigation reference shape (May 2026 — supersedes the prior 1.1.1 pinning
-guidance, which became fragile once `agent-framework-foundry-hosting` advanced its
+current reference shape, superseding prior 1.1.1 pinning guidance that became fragile once `agent-framework-foundry-hosting` advanced its
 transitive pins).
 
-**Mandatory adjacent rules** (lessons from KYC v6-v9 burn cycle):
+**Mandatory adjacent rules** (lessons from recent dependency-resolution retrospectives):
 - **Drop** any explicit `azure-ai-agentserver-responses` line — `agent-framework-foundry-hosting`
   pins the right transitive itself; declaring it explicitly causes uv to resolve a stack that
   passes install but crashes at first invocation with opaque `server_error/model:""`.
@@ -377,7 +376,7 @@ transitive pins).
 prerelease markers (e.g. `>=1.0.0a260421`) resolve to prereleases; everything else
 stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 
-### Dependency Chain (verified on PyPI, May 2026 — card-dispute proven)
+### Dependency Chain (verified on PyPI)
 
 | Package | Version | Type | Pulls in |
 |---------|---------|------|----------|
@@ -436,7 +435,7 @@ resources:
 | Protocol version `1.0.0` | Semver format — NOT `"v1"` (old preview) |
 | `resources: {cpu, memory}` flat object | NOT a YAML list `[{kind: model}]` |
 | NO `FOUNDRY_PROJECT_ENDPOINT` | Reserved — platform injects it. All `FOUNDRY_*` and `AGENT_*` prefixed vars are reserved |
-| NO `APPLICATIONINSIGHTS_CONNECTION_STRING` | Also reserved (verified 2026-05-12, req `820a502e2facc8e1cf46eb3ae71ea26e`). Platform attempts to auto-inject from the account-level `AppInsights` connection — but auto-injection is **best-effort**, can silently fail (see Troubleshooting), and you CANNOT escape-hatch via `agent.yaml`. Use guarded `_init_telemetry()` in `container.py` so the agent survives the failure (see `foundry-observability` gap rows O-011 / O-012) |
+| NO `APPLICATIONINSIGHTS_CONNECTION_STRING` | Also reserved. Platform attempts to auto-inject from the account-level `AppInsights` connection — but auto-injection is **best-effort**, can silently fail (see Troubleshooting), and you CANNOT escape-hatch via `agent.yaml`. Use guarded `_init_telemetry()` in `container.py` so the agent survives the failure (see `foundry-observability` gap rows O-011 / O-012) |
 | Model deployment in `azure.yaml` | NOT in agent.yaml — declared in `config.deployments` |
 
 > **Two schemas exist — don't confuse them:**
@@ -522,16 +521,15 @@ Each hosted agent gets **two Entra identities** at deploy time:
 
 View them with `azd ai agent show`.
 
-> **⚠️ ServiceIdentity Cosmos limitation (gap-003 from card-dispute v3
-> PoC).** The instance identity has `servicePrincipalType=ServiceIdentity`,
+> **⚠️ ServiceIdentity Cosmos limitation.** The instance identity has `servicePrincipalType=ServiceIdentity`,
 > which the Cosmos DB data-plane RBAC engine **does not accept** — direct
 > role assignments fail with `unsupported type [Unfamiliar]`. The same
 > holds for Azure AI Search data-plane in some configurations.
 > **Workaround:** route Cosmos / Search access through an MCP server
 > backed by a **separate User-Assigned Managed Identity (UAMI)**. Grant
 > the data-plane role to that UAMI, give the agent only the MCP tool;
-> the agent never touches the data plane directly. Captured as
-> `gap-003` in the card-dispute PoC retrospective.
+> the agent never touches the data plane directly. Captured from
+> recent PoC retrospectives.
 
 ### Required Role Assignments
 
@@ -656,12 +654,12 @@ Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/con
 | `PermissionDenied: Principal does not have access` | Agent identity missing `Azure AI User` (53ca6127) on account AND project | Assign on both scopes; `_assign_agent_identity_roles()` does this automatically |
 | `Experience not available for this subscription` | Region doesn't support hosted agents, or `ENABLE_CAPABILITY_HOST=true` | Set `ENABLE_CAPABILITY_HOST=false`, try `northcentralus` |
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
-| Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. The PoC ran 1/3 reproducibility with mini + permissive MCP, **3/3 with gpt-5.4 + validate-or-reject**. |
+| Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. Recent strict-smoke runs showed low reproducibility with mini + permissive MCP and high reproducibility with gpt-5.4 + validate-or-reject. |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `agent.yaml` `environment_variables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Verified 2026-05-12, req `820a502e2facc8e1cf46eb3ae71ea26e` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `agent.yaml` `environment_variables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Observed in hosted-agent validation |
 | Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` OR AppInsights connection missing on account | Assign RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; `azd ai agent show` reports active** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null`), the SDK raises `ValueError`. Container crashes before `ResponsesHostServer` binds. Foundry runtime sees no agent. **The agent itself is fine — telemetry init is what killed it.** | Wrap telemetry init in `_init_telemetry()` (no-ops on missing env / SDK ImportError / any SDK exception). Never call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` gap row O-011 |
-| **AppInsights connection PUT 400 ValidationError "AuthType for AppInsights Connection can only be ApiKey"** | Account-RP scope `2025-10-01-preview` in `swedencentral` (and possibly other regions) rejects `authType: AAD` despite skill guidance. Correlation `46a268ef71ff3893cbde7f9d1917ca7f`, verified 2026-05-12 | Use `authType: ApiKey` with `credentials.key` in body. **BUT:** the key is silently dropped server-side — GET returns `credentials: null` and platform never injects the env var. There is no working workaround at the platform layer. File a support ticket; ship with guarded `_init_telemetry()` so the agent functions without telemetry; consider region pivot |
+| **AppInsights connection PUT 400 ValidationError "AuthType for AppInsights Connection can only be ApiKey"** | Account-RP scope `2025-10-01-preview` in some regions rejects `authType: AAD` despite skill guidance (correlation IDs available) | Use `authType: ApiKey` with `credentials.key` in body. **BUT:** the key is silently dropped server-side — GET returns `credentials: null` and platform never injects the env var. There is no working workaround at the platform layer. File a support ticket; ship with guarded `_init_telemetry()` so the agent functions without telemetry; consider region pivot |
 | **AppInsights connection account-level "1-per-category" limit** | Account-level `AppInsights` connections enforce a single-instance-per-category constraint — cannot create parallel connections in the same account. Re-creation requires DELETE first | DELETE the existing connection BEFORE re-PUT. Use `az rest --method DELETE` with full URI **as a variable** (do NOT inline `?api-version=...` — see next row) |
 | **`az rest --method DELETE` strips `?api-version=...` query string when URI is inlined on PowerShell** | PowerShell argument parsing eats the `?api-version=` before `az` sees it. The DELETE then fails with "MissingApiVersionParameter" or behaves inconsistently against the bare resource without the version | Workaround: assign the URI to a variable first, then pass via `--uri $delUri`: `$delUri = "https://management.azure.com/.../connections/<name>?api-version=2025-10-01-preview"; az rest --method DELETE --uri $delUri` |
 | ACA job uses old code after deploy | Postdeploy hook fails (`AZURE_AI_PROJECT_ENDPOINT not set`) | Run `cd infra/scripts && uv run deploy_job.py` manually after each `azd deploy` |

@@ -9,6 +9,8 @@ description: >
   score agent responses, eval RBAC, judge model.
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
+metadata:
+  version: "1.0.0"
 ---
 
 # Foundry Agent Evaluations
@@ -51,9 +53,9 @@ oai = project.get_openai_client(agent_name="my-agent")
 
 # Warm up — single-shot ping is INSUFFICIENT for hosted agents that
 # scale to zero (15min idle). Use the retry loop pattern below for any
-# eval likely to hit a cold container — verified KYC PoC May 2026, where
-# a single ping returned server_error in ~9s and made all 5 scenarios
-# fail 0/5 before the agent had even spun up.
+# eval likely to hit a cold container. A single ping can return
+# server_error in ~9s and make every scenario fail before the agent
+# has even spun up.
 print("Warming up...")
 oai.responses.create(input="Hello", stream=False)
 
@@ -77,8 +79,8 @@ for query in test_queries:
 - **Use `stream=False`** — simpler for eval; streaming works but adds complexity
 - **agent-bound client** — `get_openai_client(agent_name=...)` routes to the dedicated endpoint
 - **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
-- **Pace invocations** — add a **5s** `time.sleep()` between calls (was 2s — bumped after KYC PoC May 2026 saw repeat empty responses at 2s). Rapid-fire requests produce empty responses even after warm-up
-- **Warmup retry loop, not single-shot** — a single warmup ping is NOT enough for hosted agents that scale to zero. First call to a cold container returns `server_error` in 5-10s before the platform has even brought a replica up. **Pattern (verified KYC PoC May 2026, recovered eval from 0/5 → 4/5 substantive):**
+- **Pace invocations** — add a **5s** `time.sleep()` between calls. Rapid-fire requests produce empty responses even after warm-up
+- **Warmup retry loop, not single-shot** — a single warmup ping is NOT enough for hosted agents that scale to zero. First call to a cold container returns `server_error` in 5-10s before the platform has even brought a replica up. **Pattern (validated across recent hosted-agent evals):**
 
 ```python
 # Warmup with retry loop — handles scale-from-zero hosted agents
@@ -491,7 +493,7 @@ on every row:
 
 ```json
 {
-    "query": "Process dispute dc-001",
+    "query": "Process dispute CASE-<id>",
     "response": "Based on Reg E ` 1005.11(c)(1), provisional credit is required ` ",
     "tool_definitions": [
         { "name": "get_dispute_case", "type": "function", "parameters": {"} },
@@ -502,7 +504,7 @@ on every row:
             "id": "call_001",
             "type": "tool_call",
             "name": "get_dispute_case",
-            "arguments": {"case_id": "dc-001"}
+            "arguments": {"case_id": "CASE-<id>"}
         },
         {
             "id": "call_002",
@@ -514,7 +516,7 @@ on every row:
     "tool_outputs": [
         {
             "tool_call_id": "call_001",
-            "output": "{\"case_id\":\"dc-001\",\"customer_address\":\"248 Westbridge Road, Concord MA\",}"
+            "output": "{\"case_id\":\"CASE-<id>\",\"customer_address\":\"<example-address>\",}"
         },
         {
             "tool_call_id": "call_002",
@@ -564,10 +566,9 @@ results.append({
 
 > **Without `tool_outputs`**, `tool_output_utilization` will FLAG every
 > grounded answer as fabricated ` even when the response is verbatim
-> from a tool result. We hit this on the `card-dispute-investigation`
-> reference PoC: 6/6 cases FLAGed despite the agent emitting real
-> mailing addresses, real CFR citations, and real Reg E timer values
-> straight from `get_dispute_case` + `lookup_reg_rule`. Adding the
+> from a tool result. Recent investigation-style evals saw all cases
+> flagged despite the agent emitting grounded addresses, citations,
+> and timer values straight from MCP tools. Adding the
 > transcript flipped the same 6 cases to PASS.
 
 ---
@@ -759,9 +760,8 @@ for ev, scores in per_evaluator.items():
 > in `content`. The pass/fail summary is therefore always 0/0/0/N.
 > Use the extractor above for any production reporting.
 
-A reusable `eval/compile_scores.py` helper that does this end-to-end
-(per-case  per-evaluator matrix) is in the
-`card-dispute-investigation` reference PoC.
+Keep a reusable `eval/compile_scores.py` helper that does this end-to-end
+(per-case per-evaluator matrix) in your process repo.
 
 ## Interpreting Results
 

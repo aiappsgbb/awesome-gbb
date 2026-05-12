@@ -14,6 +14,8 @@ description: >
   DO NOT USE FOR: creating Azure resources from scratch (use azure-prepare),
   cost optimization (use azure-cost-optimization), Foundry agents (use
   microsoft-foundry).
+metadata:
+  version: "1.0.0"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation

@@ -8,6 +8,8 @@ description: >
   Teams channel, sideload Teams app, add Teams to Foundry agent, chat with agent in Teams.
   DO NOT USE FOR: designing the agent (use threadlight-design), deploying the hosted agent
   itself (use threadlight-deploy), general Bot Framework development.
+metadata:
+  version: "1.0.0"
 ---
 
 # Foundry Teams Bot
@@ -404,8 +406,8 @@ module copilotAca 'bot/aca.bicep' = {
 > The post-deploy gate (`threadlight-safe-check --phase post-deploy`)
 > includes a behavioural check (`bot_auth_health`) that verifies this
 > when `Bot Service.appType == UserAssignedMSI`. Run it before declaring
-> the bot ready. (Bug origin: KYC PoC v1, 2026-05-12, 4 hours of "why
-> won't Teams reach my bot".)
+> the bot ready. (Observed in recent pilots after hours of "why
+> won't Teams reach my bot" debugging.)
 
 ---
 
@@ -968,8 +970,8 @@ elif event_type == "response.completed":
 ```
 
 > **Validated pattern** — tested with XLSX (openpyxl) and PDF (fpdf2) file delivery
-> in Imperial Commercial Sales PoC (May 2026). Files appear as clickable OneDrive
-> cards in Teams with preview support.
+> in recent file-delivery pilots. Files appear as clickable OneDrive cards in
+> Teams with preview support.
 
 ### Downloading files from Foundry session
 
@@ -1134,7 +1136,7 @@ user_token = result["access_token"]
 | **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` → MSAL falls back to ConfidentialClient (needs a client secret the keyless deploy never provisioned)** | **Set `AUTHTYPE=UserManagedIdentity`. Synthetic JWT probe in safe-check returns OK_jwt_alive because JWT middleware fires before outbound token acquisition; only `safe-check --phase post-deploy` Step 5.7 catches it. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`** |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately as `send_activity()` | Use `StreamingResponse` from `microsoft_agents.hosting.core.app.streaming.streaming_response`: `sr.queue_text_chunk(delta)` per chunk + `await sr.end_stream()` once. SDK handles batching + sequence numbers. See `templates/copilot/bot-streaming.py`. |
-| Bot delivers ONE big message after 60s of typing-dots silence (no progressive UX) | Bot uses the legacy collect-then-send pattern: SSE chunks accumulated into a list, joined, sent via single `send_activity()` at end | Refactor to streaming. Replace `chunks.append(delta)` + final `send_activity(answer)` with `StreamingResponse(context).queue_text_chunk(delta)` per chunk + `await streaming.end_stream()`. ~30 LOC change. **Origin:** KYC PoC v1 (2026-05-12). |
+| Bot delivers ONE big message after 60s of typing-dots silence (no progressive UX) | Bot uses the legacy collect-then-send pattern: SSE chunks accumulated into a list, joined, sent via single `send_activity()` at end | Refactor to streaming. Replace `chunks.append(delta)` + final `send_activity(answer)` with `StreamingResponse(context).queue_text_chunk(delta)` per chunk + `await streaming.end_stream()`. ~30 LOC change. **Origin:** recent pilot retrospective. |
 | Teams shows the bot's reply twice (full message appended after streaming completes) | Yielding `TextChunk` on both `response.output_text.delta` and `response.output_text.done` | Only yield from deltas; the done event is metadata/final accumulated text, not a separate content payload |
 | Teams shows Invocations replies twice after streaming | Yielding `TextChunk` on both `assistant.message_delta` and final `assistant.message` | Track whether deltas were streamed; if yes, ignore final `assistant.message`, otherwise use it for non-delta backends |
 | Sideload fails | manifest schema wrong | Use `manifestVersion: "1.21"` (not `devPreview` — `devPreview` is rejected for new CEA uploads since GA May 2025) with `copilotAgents.customEngineAgents` |

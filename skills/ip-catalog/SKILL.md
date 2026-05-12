@@ -7,6 +7,8 @@ description: >
   are available, find solutions by service/pattern, get IP details, browse
   catalog, discover assets. DO NOT USE FOR: creating IPs, deploying apps,
   managing repos.
+metadata:
+  version: "1.0.0"
 ---
 
 # AI Apps GBB IP Catalog — MCP Discovery

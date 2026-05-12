@@ -88,19 +88,19 @@ The closing panel is consistent across paradigms (intentional — it's the
 
 | Paradigm | Best for | Catalog reference |
 |----------|----------|-------------------|
-| **4-act narrative scroll** | Cases with a strong time-of-day arc and emotional pain (regulatory, customer-trust) | `01-fsi/kyc-onboarding/specs/experience.html` |
-| **Live topology graph** | Network/graph-shaped processes; nodes + edges + health states | `03-telco/network-fault-triage/specs/experience.html` |
-| **Kanban pipeline (live)** | Order/case flow through stages; "stuck → moving" drama | `03-telco/order-fallout-resolution/specs/experience.html` |
-| **World dot-density map** | Geographically distributed processes (supply chain, fleet, branch ops) | `04-manufacturing/supplier-risk-monitoring/specs/experience.html` |
-| **Dossier / binder pages** | Document-as-deliverable processes (credit memo, M&A diligence) | `01-fsi/smb-credit-memo/specs/experience.html` |
-| **Dispatch console (split)** | Inbound stream + decision stream side-by-side (FNOL, contact center) | `01-fsi/insurance-fnol-triage/specs/experience.html` |
-| **Ledger + regulatory clock** | Investigation processes with a hard regulatory deadline | `01-fsi/card-dispute-investigation/specs/experience.html` |
-| **Editorial campaign cover** | Marketing/merchandising deliverables with a print-lock | `02-retail/promo-planning-copilot/specs/experience.html` |
-| **Magazine spread (Vogue-grade)** | Vision-skill-heavy product enrichment | `02-retail/pim-catalog-enrichment/specs/experience.html` |
-| **Conveyor belt** | Physical-flow processes (fulfillment, returns, inspection) | `02-retail/returns-triage/specs/experience.html` |
-| **Tender document compose** | Multi-section corporate deliverables (RFP, quote, proposal) | `03-telco/b2b-quote-to-order/specs/experience.html` |
-| **CAD blueprint annotated** | Engineering / technical-spec retrieval with citations | `04-manufacturing/engineering-knowledge-copilot/specs/experience.html` |
-| **Control-room dual-dashboard** | Handover / shift-change processes | `04-manufacturing/shift-handover-briefing/specs/experience.html` |
+| **4-act narrative scroll** | Cases with a strong time-of-day arc and emotional pain (regulatory, customer-trust) | `<your-pilot>/specs/experience.html` |
+| **Live topology graph** | Network/graph-shaped processes; nodes + edges + health states | `<your-pilot>/specs/experience.html` |
+| **Kanban pipeline (live)** | Order/case flow through stages; "stuck → moving" drama | `<your-pilot>/specs/experience.html` |
+| **World dot-density map** | Geographically distributed processes (supply chain, fleet, branch ops) | `<your-pilot>/specs/experience.html` |
+| **Dossier / binder pages** | Document-as-deliverable processes (credit memo, M&A diligence) | `<your-pilot>/specs/experience.html` |
+| **Dispatch console (split)** | Inbound stream + decision stream side-by-side (FNOL, contact center) | `<your-pilot>/specs/experience.html` |
+| **Ledger + regulatory clock** | Investigation processes with a hard regulatory deadline | `<your-pilot>/specs/experience.html` |
+| **Editorial campaign cover** | Marketing/merchandising deliverables with a print-lock | `<your-pilot>/specs/experience.html` |
+| **Magazine spread (Vogue-grade)** | Vision-skill-heavy product enrichment | `<your-pilot>/specs/experience.html` |
+| **Conveyor belt** | Physical-flow processes (fulfillment, returns, inspection) | `<your-pilot>/specs/experience.html` |
+| **Tender document compose** | Multi-section corporate deliverables (RFP, quote, proposal) | `<your-pilot>/specs/experience.html` |
+| **CAD blueprint annotated** | Engineering / technical-spec retrieval with citations | `<your-pilot>/specs/experience.html` |
+| **Control-room dual-dashboard** | Handover / shift-change processes | `<your-pilot>/specs/experience.html` |
 
 If a new process doesn't fit any of these — invent a new one. Some untapped
 paradigms: courtroom evidence binder, hospital triage board, air-traffic

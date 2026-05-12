@@ -9,6 +9,8 @@ description: >
   DO NOT USE FOR: deploying the Citadel hub itself, APIM infrastructure,
   hub networking, hub provisioning, hub sizing, llm backend onboarding,
   deploying model backends, apim backend pools, hub policy fragment deployment.
+metadata:
+  version: "1.0.0"
 ---
 
 # Citadel Spoke Onboarding — Reference Guide

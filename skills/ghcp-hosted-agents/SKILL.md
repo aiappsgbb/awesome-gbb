@@ -12,6 +12,8 @@ description: >
   ghcp hosted agent, copilot client foundry.
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
+metadata:
+  version: "1.0.0"
 ---
 
 # GHCP SDK Hosted Agents on Foundry

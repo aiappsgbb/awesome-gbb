@@ -12,6 +12,8 @@ description: >
   DO NOT USE FOR: indexing real customer data (use foundry-iq for
   that), live data ingestion (use threadlight-event-triggers), MCP
   server scaffold (use foundry-mcp-aca).
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight Demo Data Factory
@@ -54,16 +56,16 @@ JSON are testable.
 
 | Industry | Canon file | Anchor pilot status |
 |----------|-----------|---------------------|
-| FSI | `data-realism/fsi.md` | **Anchored** to `card-dispute-investigation` (PCI-DSS PAN masking · MCC anchors · Reg E/Z timer math · Fed holiday list · CNP fraud signals · `dc-001` worked example). KYC golden cases are aspirational pending KYC pilot. |
+| FSI | `data-realism/fsi.md` | **Anchored** to reusable financial-services realism patterns (PCI-DSS PAN masking · MCC anchors · Reg E/Z timer math · Fed holiday list · CNP fraud signals · worked examples). Compliance golden cases are aspirational pending future pilots. |
 | Retail | `data-realism/retail.md` | Aspirational — awaiting PIM / returns-triage pilot. |
-| Telco | `data-realism/telco.md` | Aspirational — awaiting order-fallout / network-fault pilot. |
+| Telco | `data-realism/telco.md` | Aspirational — awaiting a future telco operations pilot. |
 | Mfg | `data-realism/mfg.md` | Aspirational — awaiting supplier-risk / shift-handover pilot. |
 
 **The anchor-pilot rule.** When you generate seed data for a pilot,
 mine the produced JSON for new realism rules and fold them back into
 the canon as an "Anchor pilot" subsection with a worked-example table
 (canon section → pilot file/field → worked value). The FSI canon's
-`### Anchor-pilot worked example (card-dispute-investigation)` table is
+`### Anchor-pilot worked example` table is
 the template — copy that shape for sibling pilots.
 
 **Honesty rule.** When the shipped pilot violated the canon (e.g.
@@ -215,9 +217,9 @@ if __name__ == "__main__":
 > action [Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/upsert]`
 > on EVERY upsert.
 >
-> Origin: KYC PoC v1 (2026-05-12) — first run of `seed_data.py`
-> failed 50/50 with Forbidden; took 10 min to realise control-plane
-> Owner doesn't grant data-plane writes.
+> Origin: recent pilot retrospective — first run of `seed_data.py`
+> failed every upsert with Forbidden; control-plane Owner doesn't
+> grant data-plane writes.
 
 Grant once per pilot, both for the deployer (so they can run seed_data
 locally) AND for the agent/bot UAMI (so the runtime can read/write):
@@ -409,10 +411,10 @@ realism").
 
 | File | Purpose |
 |------|---------|
-| `references/generators/fsi.py` | FSI banking + insurance generators (canonized during KYC pilot) |
-| `references/generators/retail.py` | Retail / CPG generators (canonized during PIM pilot) |
-| `references/generators/telco.py` | Telco generators (canonized during Order Fallout pilot) |
-| `references/generators/mfg.py` | Mfg generators (canonized during Supplier Risk pilot) |
+| `references/generators/fsi.py` | FSI banking + insurance generators (canonized during a future FSI pilot) |
+| `references/generators/retail.py` | Retail / CPG generators (canonized during a future retail pilot) |
+| `references/generators/telco.py` | Telco generators (canonized during a future telco pilot) |
+| `references/generators/mfg.py` | Mfg generators (canonized during a future manufacturing pilot) |
 | `references/generators/_universal.py` | Shared utilities — shifted-name, valid-format-fake, log-normal helpers |
 | `references/generators/README.md` | How to write a new industry generator |
 | `references/cosmos-bootstrap.md` | First-time Cosmos container creation (called by reset_data.py first run) |

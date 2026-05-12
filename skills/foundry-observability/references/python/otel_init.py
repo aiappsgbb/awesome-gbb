@@ -8,7 +8,7 @@ Use in:
 
 Pattern:
     from otel_init import init_telemetry
-    init_telemetry(role="card-dispute-mcp")  # call BEFORE any other init
+    init_telemetry(role="<process>-mcp")  # call BEFORE any other init
 
 Why call it first
 -----------------
@@ -48,7 +48,7 @@ def init_telemetry(
 
     Args:
         role: cloud_RoleName as it appears in App Insights queries.
-              Convention: <pilot-slug>-<service> (e.g., 'card-dispute-mcp').
+              Convention: <process-slug>-<service> (e.g., 'your-process-mcp').
         enable_azure_sdk: capture Cosmos / AOAI / Search / Storage SDK calls.
         enable_fastapi: capture FastAPI request/response spans (MCP servers + bots).
         enable_requests: capture outbound HTTP via requests + urllib3.

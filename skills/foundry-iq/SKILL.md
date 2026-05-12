@@ -10,6 +10,8 @@ description: >
   semantic retrieval, foundry-iq, knowledge index, hybrid search, vector search.
   DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
   MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
+metadata:
+  version: "1.0.0"
 ---
 
 # Foundry IQ Agent Framework Integration Skill

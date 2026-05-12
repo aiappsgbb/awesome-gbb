@@ -11,6 +11,8 @@ description: >
   DO NOT USE FOR: bot infrastructure (use foundry-teams-bot), workspace
   UI (use threadlight-workspace-ui), agent runtime logic (use
   threadlight-deploy).
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight HITL Patterns

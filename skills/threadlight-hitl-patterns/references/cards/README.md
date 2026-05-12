@@ -20,7 +20,7 @@ same structure with gate-specific Input fields and Action buttons.
 
 1. **KYC pilot** — canonize `approve`, `edit-and-approve`, `escalate`
    (the three gates KYC analyst needs)
-2. **Order fallout pilot** — canonize `escalate`, `signoff`, `audit-view`
+2. **Future operations pilot** — canonize `escalate`, `signoff`, `audit-view`
    (NOC operator gates)
 3. **Supplier risk pilot** — canonize `request-info` (supplier outreach)
 4. **PIM pilot** — canonize `reject` with reason picker (brand violation)

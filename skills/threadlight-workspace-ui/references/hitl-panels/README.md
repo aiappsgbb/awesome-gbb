@@ -2,9 +2,9 @@
 
 Three drop-in panel templates that every analyst workspace needs,
 regardless of shape (`case-list`, `inbox`, `dashboard`, `console`,
-`kanban`, `map`). These templates were captured from the card-dispute
-v3 PoC remediation pass after the original v3 ship was caught with
-zero analyst-facing decision UI — the agent ran headless and the
+`kanban`, `map`). These templates were captured from recent pilot
+remediation work after the original workspace shipped with zero
+analyst-facing decision UI — the agent ran headless and the
 "workspace" was a static file dump.
 
 ## Why panels (not full apps)
@@ -43,10 +43,10 @@ workspace populates from the agent's MCP server (or a stub):
 window.threadlight = {
   // Active case context (set when operator selects a row)
   activeCase: {
-    id: "DC-2026-001",
-    entity: "Mei-Lin Chen",
+    id: "CASE-001",
+    entity: "Acme Holdings",
     status: "AWAITING_REVIEW",
-    sla: { hoursRemaining: 7.2, hardDeadline: "2026-05-12T17:00:00Z" }
+    sla: { hoursRemaining: 7.2, hardDeadline: "<deadline-iso8601>" }
   },
   // Agent's current recommendation for the active case
   recommendation: {
@@ -88,8 +88,8 @@ demos; the same contract drives a real Cosmos-backed deployment.
 
 ## Verified-against
 
-- `card-dispute-investigation` v3 PoC remediation pass (May 2026):
-  fixed the "workspace UI lacks any decision surface" gap by dropping
-  these three panels into `src/workspace/`. Took ~30 minutes per
-  panel; same shape works for KYC analyst console + Order Fallout
-  BSS console + supplier-risk control room.
+- Recent pilot remediation pass: fixed the "workspace UI lacks any
+  decision surface" gap by dropping these three panels into
+  `src/workspace/`. Took ~30 minutes per panel; same shape works for
+  KYC analyst console + Order Fallout BSS console + supplier-risk
+  control room.

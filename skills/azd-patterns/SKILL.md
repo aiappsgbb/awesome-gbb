@@ -8,6 +8,8 @@ description: >
   deployment scripts, uv run, azd env, azd conventions, infra scripts.
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
+metadata:
+  version: "1.0.0"
 ---
 
 # AZD Tips & Patterns
@@ -22,7 +24,7 @@ Conventions and best practices for `azd` workflows, hooks, and ACA job deploymen
 
 ### Recommended: Python + `postdeploy` hook (cross-platform)
 
-Used in newer repos (e.g. `threadlight-v2`). The pattern:
+Used in newer repos. The pattern:
 
 1. **`azure.yaml`** — wire a `postdeploy` hook that runs after `azd deploy`:
 
@@ -160,10 +162,8 @@ The script does `az acr build` + `az containerapp job update`. This works but is
 within 60s of the deploy completing, but **zero console + system
 logs reach Log Analytics Workspace** even though sibling ACA apps
 (MCP server, agent) in the same env route logs cleanly. `az
-containerapp job logs show` hangs indefinitely. This bit the
-card-dispute v3 PoC's deadline-watcher cron after the in-process
-refactor and was the single biggest end-of-session blocker
-(`cdi-r3-cron-debug` blocked todo).
+containerapp job logs show` hangs indefinitely. This has bitten deadline-watcher cron jobs after in-process
+refactors and is often the biggest end-of-session blocker.
 
 The diagnostic ladder below goes **cheap → expensive**. Stop at the
 first rung that surfaces actionable signal.
@@ -171,7 +171,7 @@ first rung that surfaces actionable signal.
 ### Rung 1 — Verify the basics aren't lying
 
 ```powershell
-$RG  = 'rg-card-dispute-poc'
+$RG  = 'rg-<your-process>-poc'
 $JOB = 'aca-job-deadline-watcher'
 
 # Confirm the job exists and what image it's actually running
@@ -257,7 +257,7 @@ exploded.
 ### Rung 4 — Activity log probe (orthogonal channel — bypasses LAW entirely)
 
 ```powershell
-$RG = 'rg-card-dispute-poc'
+$RG = 'rg-<your-process>-poc'
 $JOB = 'aca-job-deadline-watcher'
 $JOB_ID = az containerapp job show --resource-group $RG --name $JOB --query id -o tsv
 
@@ -291,7 +291,7 @@ several minutes of navigation.
 ### Rung 6 — Detectors API (preview — sometimes 404s)
 
 ```powershell
-$RG = 'rg-card-dispute-poc'
+$RG = 'rg-<your-process>-poc'
 $JOB = 'aca-job-deadline-watcher'
 $exec = (az containerapp job execution list --resource-group $RG --name $JOB `
           --query "[0].name" -o tsv)
@@ -323,10 +323,8 @@ works, surfaces structured root-cause diagnostics (e.g.
 - ❌ Don't blindly bump `replicaTimeout` — if the entrypoint crashes
   in 5s, more time won't help.
 
-> Captured from the card-dispute v3 PoC `cdi-r3-cron-debug` blocked
-> todo (May 2026). The ladder above is the order in which the
-> debugging session would have moved if the agent hadn't run out of
-> turns; future cron debugs should rerun this top-to-bottom.
+> Captured from recent cron-debug retrospectives. Future cron debugs
+> should rerun this ladder top-to-bottom.
 
 ---
 
@@ -497,7 +495,7 @@ modules) so they can be vendored independently.
 
 | Module | File | Selector (SPEC § 11c kebab-case key) | Outputs (always) | When to include |
 |--------|------|---------------------------------------|------------------|-----------------|
-| **cosmos-db** | `infra/modules/cosmos-db.bicep` | `cosmos-db: yes` (params: `sku: 'serverless' \| 'autoscale'`) | `endpoint`, `accountName`, `databaseName`, `containerNames[]` | Any process that needs case state, audit, or agent memory (default for case-based / regulated processes) |
+| **cosmos-db** | `infra/modules/cosmos-db.bicep` | `cosmos-db: yes` (params: `sku: 'serverless' \| 'autoscale'`, `pilotPosture: bool = true`, `ipAllowlist: array = []`) | `endpoint`, `accountName`, `databaseName`, `containerNames[]` | Any process that needs case state, audit, or agent memory (default for case-based / regulated processes). **`pilotPosture=true` (default) sets `publicNetworkAccess: Enabled` + `networkAclBypass: AzureServices` — see Cosmos firewall callout below** |
 | **ai-search** | `infra/modules/ai-search.bicep` | `ai-search: yes` (params: `sku: 'basic' \| 'standard'`) | `endpoint`, `serviceName`, `indexNames[]`, `apiVersion` | Knowledge retrieval (paired with `foundry-iq-index` below) |
 | **doc-intel** | `infra/modules/doc-intel.bicep` | `doc-intel: yes` (params: `tier: 'S0'`) | `endpoint`, `accountName` | Structured-doc ingestion (KYC IDs, invoices, claims forms) |
 | **azure-vision** | `infra/modules/azure-vision.bicep` | `azure-vision: yes` (params: `model: 'gpt-5.4-pro' \| 'gpt-5.4' \| 'gpt-5.4-mini'`) | `endpoint`, `deploymentName` | Image / damage-photo / blueprint analysis |
@@ -544,6 +542,39 @@ Resulting `infra/main.bicep` includes (in canonical inclusion order):
 > are keyless end-to-end. Include `key-vault` ONLY when SPEC § 11c
 > explicitly selects `key-vault: yes` for an external integration that
 > demands a literal API key.
+
+### Cosmos firewall — pilot-grade defaults (the trap that costs ~45 min on every fresh PoC)
+
+**Observed in recent pilots.** Azure's Cosmos default is
+`publicNetworkAccess: Disabled` — every ACA→Cosmos write returns
+`Forbidden` until manually patched, even with managed identity + correct
+data-plane RBAC. `cosmos-db.bicep` MUST default to pilot-friendly
+posture:
+
+```bicep
+@description('Pilot posture: enables public network + AzureServices bypass. Set false for prod-grade (private endpoint).')
+param pilotPosture bool = true
+
+@description('Explicit IP allowlist for ACA egress (pilots: leave empty initially, then re-deploy with the IP from the Cosmos Forbidden error). Required because AzureServices bypass does NOT cover ACA traffic — see foundry-mcp-aca.')
+param ipAllowlist array = []
+
+resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-12-01-preview' = {
+  // ...
+  properties: {
+    publicNetworkAccess: pilotPosture ? 'Enabled' : 'Disabled'
+    networkAclBypass:    pilotPosture ? 'AzureServices' : 'None'
+    ipRules: [for ip in ipAllowlist: { ipAddressOrRange: ip }]
+    disableLocalAuth: true
+    // ...
+  }
+}
+```
+
+**Pilot-only — gotcha:** `AzureServices` bypass alone is NOT sufficient
+for ACA → Cosmos traffic in `swedencentral` (and likely other regions).
+The full operator runbook + post-deploy IP discovery commands live in
+`foundry-mcp-aca` SKILL.md § "Cosmos firewall + ACA egress (the trap
+that wastes 45 min on every fresh PoC)".
 
 ### Why composable modules (not one big main.bicep)
 

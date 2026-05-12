@@ -15,8 +15,8 @@ will hold the full working scaffolds.
 
 ## Canonization order (during pilots)
 
-1. **Order Fallout pilot** — canonize `function-http` (webhook from order
-   system) AND `aca-job-cron` (SLA watcher for stuck orders)
+1. **Future operations pilot** — canonize `function-http` (webhook from source
+   system) AND `aca-job-cron` (SLA watcher for stuck items)
 2. **KYC pilot** — canonize `aca-job-cron` (SLA watcher for awaiting-approval cases)
 3. **Supplier Risk pilot** — canonize `function-eventgrid` (news event ingestion)
 4. **PIM pilot** — canonize `aca-job-manual` (replay enrichment for a SKU range)

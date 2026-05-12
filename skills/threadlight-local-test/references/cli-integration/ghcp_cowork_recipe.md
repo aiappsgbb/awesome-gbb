@@ -108,8 +108,8 @@ in the PoC root, ask it to call tools.
 ## Common pitfalls
 
 - **Two MCP servers, same name, different URLs** → CLI calls the
-  first one registered. Use distinct names per PoC: `card-dispute-local`,
-  `supplier-risk-local`.
+  first one registered. Use distinct names per process: `<process-a>-local`,
+  `<process-b>-local`.
 - **MCP server still running after you `Ctrl+C` the terminal** →
   FastMCP catches SIGINT but doesn't always release port 8000
   cleanly. `Get-NetTCPConnection -LocalPort 8000` to find the PID,

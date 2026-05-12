@@ -17,6 +17,8 @@ description: >
   DO NOT USE FOR: prod deployment (use threadlight-deploy), final
   pre-pilot validation (use threadlight-safe-check), Foundry
   hosted-agent runtime testing in cloud (use foundry-evals).
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight — Local Test Loop (no azd up)

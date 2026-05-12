@@ -13,6 +13,8 @@ description: >
   specification, speckit, define a customer scenario, mock backend systems.
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight Design
@@ -263,7 +265,7 @@ Must include all sections from the template:
 11c. **Tech Stack (Module selectors)** — Bicep module on/off list (cosmos, search, doc-intel, speech, event-grid, service-bus, foundry-iq-index, etc.). **INPUT CONTRACT for the `azd-patterns` Bicep module library and the composer in `threadlight-deploy`.** *Required for every process.*
 
 > **Legacy-SPEC backfill — mandatory check before handing off to threadlight-deploy.**
-> SPECs generated before § 11c was added to this skill (any SPEC where the section list jumps from § 11 to § 12, or has no kebab-case selector table) **must be backfilled** before Phase 6 of `threadlight-deploy` runs. The composer reads § 11c verbatim — without it, it can't tell "no aca-bot deployed" from "aca-bot intentionally not selected", and the post-deploy gate ships partial PoCs as if they were complete (this is exactly how card-dispute-investigation v3 shipped with `aca-bot` and `aca-job` declared `yes` but zero deployed). Run a one-shot grep before generating Phase 6 modules:
+> SPECs generated before § 11c was added to this skill (any SPEC where the section list jumps from § 11 to § 12, or has no kebab-case selector table) **must be backfilled** before Phase 6 of `threadlight-deploy` runs. The composer reads § 11c verbatim — without it, it can't tell "no aca-bot deployed" from "aca-bot intentionally not selected", and the post-deploy gate ships partial PoCs as if they were complete (for example, `aca-bot` and `aca-job` declared `yes` but zero deployed). Run a one-shot grep before generating Phase 6 modules:
 > ```bash
 > grep -E '^(##|###) 11c' specs/SPEC.md || echo "MISSING - reverse-engineer from azure.yaml services + infra/main.bicep modules and prepend § 11c table"
 > ```
@@ -594,10 +596,9 @@ Machine-readable deployment contract (lives with the spec):
 > `workspace-ui`, or any other selector that produces a deployable
 > service is `yes`.** Without `deployment_manifest`, the deploy gate
 > can't tell missing services from intentionally-skipped ones, and
-> ships partial PoCs as if they were complete (this happened on
-> card-dispute-investigation v3 ` `aca-bot` and `aca-job` shipped
-> as `yes` in SPEC § 11c, deployed as zero resources, and weren't
-> noticed until the user opened the resource group).
+> ships partial PoCs as if they were complete (`aca-bot` and
+> `aca-job` declared `yes` in SPEC § 11c, deployed as zero resources,
+> and not noticed until someone opens the resource group).
 
 #### 6. `README.md`
 
@@ -696,8 +697,7 @@ posture of *this* process — through visuals native to *its* domain.
 
 - HTMLParser parses with zero errors
 - Whitelabel deny-list grep returns zero hits (file is customer-facing) —
-  including process-domain vendor names (NetCracker / Amdocs / Genie for
-  telco; Moneta / ARGUS for FSI)
+  including process-domain vendor or product names for the selected industry
 - **Bespoke check:** no `id="act-1"`..`"act-4"` (those are KYC's), no
   `giant-counter` element (KYC's signature), no copy-of-KYC color palette
   unless the process is KYC
@@ -838,11 +838,11 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | `references/experience-template.md` | Bespoke cinematic `experience.html` design discipline + paradigm catalog | ✅ Included |
 | `references/data-realism/README.md` | Per-industry demo-data realism rules (FSI, Retail, Telco, Mfg) | ✅ Included |
 | `references/domains/` | Optional domain primers for industry-specific acceleration | ✅ Included |
-| `references/skill-template.md` | Template for generated SKILL.md files | 📎 From upstream `threadlight-skills` repo |
-| `references/agents-template.md` | Template for generated AGENTS.md | 📎 From upstream `threadlight-skills` repo |
-| `references/compliance-checklist.md` | Privacy/legal/regulatory screening checklist | 📎 From upstream `threadlight-skills` repo |
+| `references/skill-template.md` | Template for generated SKILL.md files | 📎 From the upstream reference set |
+| `references/agents-template.md` | Template for generated AGENTS.md | 📎 From the upstream reference set |
+| `references/compliance-checklist.md` | Privacy/legal/regulatory screening checklist | 📎 From the upstream reference set |
 
-> **📎 Upstream references:** Some reference files live in the full `threadlight-skills` repo
+> **📎 Upstream references:** Some reference files live in the full reference set
 > and are loaded when the skill is installed there. For standalone use from this repo,
 > follow the SpecKit template structure — it embeds the compliance questions inline.
 

@@ -7,10 +7,10 @@ during the corresponding pilot.
 | Industry | Module | Status |
 |----------|--------|--------|
 | `_universal.py` | Shared utilities (shifted-name, valid-format-fake, log-normal helpers) | 📋 To draft alongside FSI |
-| `fsi.py` | FSI banking + insurance (customers, accounts, transactions, sanctions, claims) | 🔶 Draft during KYC pilot |
-| `retail.py` | Retail / CPG (products, SKUs, orders, returns, reviews) | 📋 During PIM pilot |
-| `telco.py` | Telco (customers, MSISDNs, orders, faults, network elements) | 📋 During Order Fallout pilot |
-| `mfg.py` | Mfg (suppliers, parts, BOMs, shipments, quality events) | 📋 During Supplier Risk pilot |
+| `fsi.py` | FSI banking + insurance (customers, accounts, transactions, sanctions, claims) | 🔶 Draft during a future FSI pilot |
+| `retail.py` | Retail / CPG (products, SKUs, orders, returns, reviews) | 📋 During a future retail pilot |
+| `telco.py` | Telco (customers, MSISDNs, orders, faults, network elements) | 📋 During a future telco pilot |
+| `mfg.py` | Mfg (suppliers, parts, BOMs, shipments, quality events) | 📋 During a future manufacturing pilot |
 
 ## Module interface
 

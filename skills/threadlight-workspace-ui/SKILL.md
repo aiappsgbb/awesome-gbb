@@ -12,6 +12,8 @@ description: >
   DO NOT USE FOR: experience.html cinematic (use threadlight-design),
   Teams Adaptive Cards (use threadlight-hitl-patterns), real-time chat UI,
   framework-specific scaffolds (we ship pattern, not framework).
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight Workspace UI
@@ -106,7 +108,7 @@ See `references/hitl-panels/README.md` for the full contract +
 React, no build step; renders straight from `file://` for early
 demos and stays clean inside an nginx ACA container for production.
 
-**Why mandatory.** card-dispute v3 shipped without any of these and
+**Why mandatory.** Recent pilots shipped without these panels and
 got caught with a "workspace" that was a static file dump — no
 analyst-facing decision surface, no action gates, no audit. The
 remediation pass took ~30 min per panel using these templates. That
@@ -416,7 +418,7 @@ with sync_playwright() as p:
     page = context.new_page()
     page.goto("http://localhost:8000/?session=demo-001")
     page.wait_for_selector("[data-testid='case-list']")
-    page.locator("[data-case-id='dc-001']").click()  # open detail pane
+    page.locator("[data-case-id='CASE-<id>']").click()  # open detail pane
     page.wait_for_selector("[data-testid='detail-pane']")
     page.screenshot(
         path="docs/screenshots/workspace.png",
@@ -629,11 +631,9 @@ the workspace and the cinematic feel like the same product:
 > The HITL panel templates are shipped in this commit and are
 > production-grade vanilla HTML/CSS/JS. The shapes/ subdirectories are
 > seeded as empty placeholders; each gets fleshed out as the corresponding
-> pilot lands a real customer-grade reference. The KYC pilot will canonize
-> `case-list/`; the Order Fallout pilot will canonize `console/` (or
-> `kanban/`, depending on demo direction); the Supplier Risk pilot will
-> canonize `dashboard/` (and possibly `map/`); the PIM pilot will
-> canonize `inbox/`.
+> future pilots land customer-grade references. Future pilots will canonize
+> `case-list/`, `console/` (or `kanban/`), `dashboard/` (and possibly
+> `map/`), and `inbox/`.
 
 ---
 
@@ -649,7 +649,7 @@ the workspace and the cinematic feel like the same product:
   must show *some* indication of "what just happened" — drop the
   `references/hitl-panels/audit-viewer.html` panel at minimum.
 - ❌ **Ship a workspace without the 3 HITL panels** (decision-pane +
-  action-toolbar + audit-viewer). card-dispute v3 made this mistake
+  action-toolbar + audit-viewer). Recent pilots made this mistake
   and shipped a static file dump with no decision surface.
 - ❌ **Generate a workspace UI when § 8b says `none`**. If humans only
   interact via Teams cards, generate ONLY `threadlight-hitl-patterns` output.

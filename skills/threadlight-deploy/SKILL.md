@@ -11,6 +11,8 @@ description: >
   DO NOT USE FOR: designing the process (use threadlight-design), running evals (use foundry-evals),
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
+metadata:
+  version: "1.0.0"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -100,7 +102,7 @@ guard       SPEC +       runtime     scaffold     (optional)   project    compos
 
 ### Why
 
-We learned this the hard way on `threadlight-v1` and `threadlight-v2`. Multi-process
+We learned this the hard way in older multi-process repos. Multi-process
 repos:
 - Inflate Bicep into one giant template with 70% `if` blocks
 - Force unrelated processes to share azd env, breaking iteration
@@ -123,11 +125,11 @@ to split the repo before proceeding**:
 
 ```
 Before (rejected):                  After (each is its own azd up):
-threadlight-pilots/                  fsi-kyc-onboarding/
-├── kyc-onboarding/                  ├── specs/
+<multi-process-repo>/             <your-process-repo>/
+├── <process-a>/                    ├── specs/
 │   ├── specs/                       │   └── SPEC.md
 │   └── src/                         ├── src/
-├── pim-enrichment/                  └── azure.yaml
+├── <process-b>/                    └── azure.yaml
 │   ├── specs/
 │   └── src/                         retail-pim-enrichment/
 └── azure.yaml  (← shared)           ├── specs/
@@ -539,14 +541,13 @@ specs (e.g. `>=1.0.0a260421`), while keeping all other packages on GA (e.g. `azu
 resolves to 1.25.3 GA, NOT 1.26.0b2 beta). Do NOT use `"allow"` — it pulls beta versions
 of azure-identity and other packages unintentionally.
 
-> **🛑 PROVEN-WORKING REFERENCE PINS (2026-05-12, KYC v6-v10 RCA)**
+> **🛑 PROVEN-WORKING REFERENCE PINS**
 >
-> The recipe above is the **exact card-dispute-investigation working set**, validated as
-> the only combo that actually runs. Earlier guidance recommended **open ranges**
-> (`agent-framework-core>=1.0.0`) plus an **explicit `azure-ai-agentserver-responses>=1.0.0b4`**
-> — that resolves to a stack uv accepts at install time but that crashes the container at
-> first invocation, returning the opaque `server_error/model:""`. KYC PoC burned 4 deploys
-> (v6, v7, v8, v9) chasing this until the card-dispute pyproject.toml was diff'd and copied.
+> The recipe above is the validated working set. Earlier guidance recommended
+> **open ranges** (`agent-framework-core>=1.0.0`) plus an explicit
+> `azure-ai-agentserver-responses>=1.0.0b4` — that resolves to a stack uv
+> accepts at install time but that crashes the container at first invocation,
+> returning the opaque `server_error/model:""`.
 >
 > **Mandatory rules:**
 > - **Pin** `agent-framework-core==1.3.0` and `agent-framework-foundry==1.3.0`. NOT open ranges.
@@ -557,8 +558,8 @@ of azure-identity and other packages unintentionally.
 >   `MCPStreamableHTTPTool` will fail at runtime without it.
 > - **Include** `[tool.setuptools] packages = []` — uv needs it to resolve cleanly when
 >   the project itself isn't installed (`uv sync --no-install-project`).
-> - **Reference**: `card-dispute-investigation/src/agent/pyproject.toml` is the canonical
->   working shape. When in doubt, diff against it.
+> - **Reference**: keep a canonical `src/agent/pyproject.toml` in each process repo
+>   and diff against the validated working shape when in doubt.
 
 > **⚠️ Dependency Pinning & Future Updates**
 >
@@ -595,7 +596,7 @@ WORKDIR /app
 
 # Uses uv for dependency management (prerelease support for hosting package)
 # Pin uv:0.7 — uv:latest (0.8+) resolves prereleases differently and may pick
-# incompatible pre-built wheels. Card-dispute proven-working pin.
+# incompatible pre-built wheels. Validated working pin.
 COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
 
 COPY pyproject.toml .
@@ -731,7 +732,7 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
    `kyc-audit-log` to prove BR-XXX persistence, checking `kyc-cases` for stuck
    case_ids — fails `Forbidden — principal does not have RBAC permissions to
    perform action Microsoft.DocumentDB/databaseAccounts/readMetadata` until you
-   manually grant it. **Verified KYC PoC May 2026.** Add this as the FIRST step
+   manually grant it. **Verified across recent pilots.** Add this as the FIRST step
    of any post-deploy verification runbook:
 
    ```bash
@@ -862,8 +863,8 @@ the Foundry project** for eval telemetry and agent tracing to work.
 
 > **Why this is mandatory, not optional.** The platform's
 > `APPLICATIONINSIGHTS_CONNECTION_STRING` auto-injection is
-> **best-effort, not contractual** — it can silently fail (KYC PoC in
-> `swedencentral` 2026-05-12: AppIn account-level connection persisted
+> **best-effort, not contractual** — it can silently fail (for example,
+> in some regions: AppIn account-level connection persisted
 > with `credentials: null` after AAD-rejected → ApiKey-silent-drop;
 > platform never injected the env var). When it fails AND `container.py`
 > calls raw `configure_azure_monitor()` at the top of `main()`, the SDK
@@ -918,8 +919,7 @@ def main() -> None:
 > **Note:** The platform attempts to inject `APPLICATIONINSIGHTS_CONNECTION_STRING`
 > into hosted agent containers automatically (best-effort) — do NOT declare
 > it in `agent.yaml`, it is reserved. `create_version` rejects it with
-> `invalid_request_error` (request ID `820a502e2facc8e1cf46eb3ae71ea26e`
-> documents the rejection from KYC PoC).
+> `invalid_request_error` (request IDs are available in platform logs).
 
 ## Evaluations
 
@@ -1084,7 +1084,7 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] `src/bot/requirements.txt` — includes microsoft-agents-* + openai
 - [ ] `src/bot/build_manifest.py` — replaces all manifest tokens
 - [ ] `src/bot/teams_package/manifest.json` — has placeholder tokens ready for postprovision
-- [ ] **Bot ACA env block has ALL FOUR `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars** (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=`UserManagedIdentity`**) — missing `AUTHTYPE` is the silent-killer KYC v1 bug: bot looks healthy from outside, JWT probe passes, every real Teams message returns HTTP 500 with AADSTS7000216. See `foundry-teams-bot` skill § Bicep snippet.
+- [ ] **Bot ACA env block has ALL FOUR `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars** (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=`UserManagedIdentity`**) — missing `AUTHTYPE` is a silent-killer bug: bot looks healthy from outside, JWT probe passes, every real Teams message returns HTTP 500 with AADSTS7000216. See `foundry-teams-bot` skill § Bicep snippet.
 - [ ] **Bot Service `appType: UserAssignedMSI`** with `msaAppId` = UAMI clientId AND `msaAppMSIResourceId` = UAMI ARM ID
 - [ ] *(Skip this section entirely if Teams not needed)*
 
@@ -1141,7 +1141,7 @@ Check every file. Mark each ✅ or fix before presenting.
 > Wire it as an `azd hooks predeploy` so missing services abort the
 > docker build before wasting an ACR push.
 
-> **Why this exists.** The card-dispute-investigation v3 PoC shipped
+> **Why this exists.** A recent investigation-style PoC shipped
 > with `infra/bot/aca.bicep`, `infra/bot/bot-service.bicep`, and a
 > `src/workspace/index.html` ` but `azure.yaml` only declared two
 > services (`agent` + `mcp`), `infra/main.bicep` only wired `mcpApp`,
@@ -1180,7 +1180,7 @@ done
 
 Orphan modules confuse future readers ("is this needed? was the deploy
 broken?"). Either **wire them in** or **delete them**. No middle
-ground. The card-dispute-investigation PoC carried orphan
+ground. A recent PoC carried orphan
 `infra/bot/aca.bicep` and `infra/bot/bot-service.bicep` for an entire
 deploy cycle ` they looked deployed when reading `infra/`, but
 weren't.
@@ -1216,7 +1216,7 @@ remove them.
 > "`azd up` returned 0". It means **every Azure resource declared by
 > SPEC § 11c is in `az resource list`, every channel declared by SPEC
 > § 8 is reachable, and every scheduled job is running**. Without
-> this gate, the card-dispute-investigation PoC was reported "deployed
+> this gate, a recent PoC was reported "deployed
 > and evaluated" with `aca-bot`, `aca-job`, and `workspace-ui` all
 > silently missing. Run this gate **before** announcing success.
 
@@ -1328,7 +1328,7 @@ Persist `tests/postdeploy-manifest.json`:
 ```json
 {
   "deployed_at": "2026-05-10T22:30:00Z",
-  "rg": "rg-card-dispute-poc",
+  "rg": "rg-<your-process>-poc",
   "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui"],
   "deployed_resources": ["` types ` "],
   "channels": [
@@ -1475,18 +1475,18 @@ container.py (MAF variant)
 | `MCP_SERVER_URL` | No | Legacy single MCP server URL (prefer mcp-config.json) |
 | `PORT` | No | Listen port (default: 8088) |
 
-> **Reserved environment variables (April 2026):** All `FOUNDRY_*` and `AGENT_*`
+> **Reserved environment variables:** All `FOUNDRY_*` and `AGENT_*`
 > prefixed variables are reserved by the platform. Do NOT declare them in
 > `agent.yaml` `environment_variables` — the platform injects them automatically.
 > Declaring them causes `invalid_payload` errors at `create_version` time.
 >
-> **Also reserved (verified 2026-05-12):** `APPLICATIONINSIGHTS_CONNECTION_STRING`.
+> **Also reserved:** `APPLICATIONINSIGHTS_CONNECTION_STRING`.
 > Even when the platform's auto-injection silently fails (see Gotchas table for
 > the AppIn AAD-rejected / ApiKey-silent-drop trap), you CANNOT escape-hatch by
 > setting it in `agent.yaml` — `create_version` fails immediately with
 > `invalid_request_error`: "Environment variable
 > 'APPLICATIONINSIGHTS_CONNECTION_STRING' is reserved for platform use" (request
-> ID `820a502e2facc8e1cf46eb3ae71ea26e` from KYC PoC). The only safe path is a
+> ID available in platform logs). The only safe path is a
 > guarded `_init_telemetry()` in `container.py` so the agent runs even when AppIn
 > is broken — see the OpenTelemetry section above.
 
@@ -1920,7 +1920,7 @@ ready-to-copy files.
 > streams text progressively, `await end_stream()` finalises. Degrades
 > gracefully on non-streaming channels (DirectLine, web chat).
 >
-> Origin: KYC PoC v1 (2026-05-12) — bot deployed without streaming;
+> Origin: recent pilot retrospective — bot deployed without streaming;
 > user got 60s silence + wall-of-text and thought the bot was broken.
 > The streaming refactor is ~30 LOC. There is no reason to ship the
 > collect-then-send variant for a Teams pilot.
@@ -2339,9 +2339,9 @@ azd ai agent validate
 > generates `specs/sample-data/*.json` AND `scripts/seed_data.py`, but
 > Phase 6.5 is what actually invokes the seed at deploy time.
 >
-> Origin: KYC PoC v1 (2026-05-12) — `azd up` returned 0, the agent
-> deployed cleanly, the user typed `CASE-003-NG-EDD` (a realistic golden
-> case from `specs/sample-data/onboarding-cases.json`), the agent
+> Origin: recent pilot retrospective — `azd up` returned 0, the agent
+> deployed cleanly, the user typed `CASE-<id>` (a realistic golden
+> case from `specs/sample-data/*.json`), the agent
 > correctly reported "not found" because Cosmos was empty of that ID.
 > The demo looked broken; it wasn't — it just had no data. 4 hours
 > diagnosing what should have been a postdeploy seed step.
@@ -2497,8 +2497,8 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 |-------|-------|-----|
 | Agent returns empty responses | TPM too low — 429 rate limits | Use ≥300K TPM deployment |
 | **`FOUNDRY_PROJECT_ENDPOINT` in agent.yaml** | **All `FOUNDRY_*` and `AGENT_*` env vars are reserved by the platform (injected automatically)** | **Remove from `environment_variables` in agent.yaml. Container reads it via `os.environ` at runtime.** |
-| **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null` — see next row), the SDK raises `ValueError` and the container crashes before `ResponsesHostServer` binds. Foundry runtime then sees no agent → `server_error`. **The agent itself is fine.** | Wrap telemetry init in `_init_telemetry()` helper that no-ops on missing env / SDK ImportError / SDK exception. NEVER call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` skill, gap rows O-011 / O-012 for the full forensic and reference template. KYC PoC swedencentral 2026-05-12 anchor |
-| **AppInsights connection PUT returns 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but GET shows `credentials: null` (silent server-side drop)** | Platform gap on account-RP scope `2025-10-01-preview` in some regions (verified `swedencentral` 2026-05-12, correlation `46a268ef71ff3893cbde7f9d1917ca7f`). Connection persists with `isDefault: true` but no usable secret → platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Ship the agent with guarded `_init_telemetry()` (preceding row) so it functions without telemetry. File a support ticket with the correlation IDs. If AppIn telemetry is non-negotiable, pivot region (`eastus` / `northcentralus` are the best initial bets — verify auto-injection works BEFORE committing to a redeploy) |
+| **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null` — see next row), the SDK raises `ValueError` and the container crashes before `ResponsesHostServer` binds. Foundry runtime then sees no agent → `server_error`. **The agent itself is fine.** | Wrap telemetry init in `_init_telemetry()` helper that no-ops on missing env / SDK ImportError / SDK exception. NEVER call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` skill, gap rows O-011 / O-012 for the full forensic and reference template. |
+| **AppInsights connection PUT returns 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but GET shows `credentials: null` (silent server-side drop)** | Platform gap on account-RP scope `2025-10-01-preview` in some regions (correlation IDs available). Connection persists with `isDefault: true` but no usable secret → platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Ship the agent with guarded `_init_telemetry()` (preceding row) so it functions without telemetry. File a support ticket with the correlation IDs. If AppIn telemetry is non-negotiable, pivot region (`eastus` / `northcentralus` are the best initial bets — verify auto-injection works BEFORE committing to a redeploy) |
 | **`template.kind` validation error** | **agent.yaml uses wrong schema — `template:` nesting is for `agent.manifest.yaml` (samples only)** | **Use ContainerAgent schema: `kind: hosted` at top level, NOT `template.kind`. Schema: `ContainerAgent.yaml`** |
 | **"Experience not available" on create_version** | **Region does not support hosted agents OR `ENABLE_CAPABILITY_HOST=true` (removed in refreshed preview)** | **Set `ENABLE_CAPABILITY_HOST=false` in `main.parameters.json`. Try `northcentralus`, `eastus`, `swedencentral`. Avoid `eastus2`.** |
 | **Agent 401 on `storage/history`** | **Agent's Entra identity missing `Azure AI User` on project scope, OR RBAC not yet propagated (5-15 min for new SPs)** | **Assign `Azure AI User` to BOTH `instance_identity` AND `blueprint` principal IDs on Foundry account + project. Wait 15 min, then redeploy to force new session.** |
@@ -2517,7 +2517,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | Bot returns "Response could not be saved" | Old-style `agent_reference` invocation | Use `get_openai_client(agent_name=...)` with `allow_preview=True` |
 | Bot gets 400 "responses protocol not declared" | **CONFIRMED:** GHCP SDK agent only serves `/invocations`. Bot's `oai.responses.create()` fails. | Bot must use direct HTTP POST to `/protocols/invocations` + SSE parsing for GHCP agents. OR use MAF runtime. See `foundry-teams-bot` skill. |
 | Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 4 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=UserManagedIdentity**) |
-| **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** (synthetic JWT probe still passes!) | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` env var → MSAL falls back to ConfidentialClient flow → demands client_secret the keyless deploy never provisioned. KYC v1 silent killer.** | **Add `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity` to bot ACA env in Bicep. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`. The `safe-check --phase post-deploy` Step 5.7 catches this; channel JWT probe does NOT (JWT middleware fires before outbound token acquisition).** |
+| **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** (synthetic JWT probe still passes!) | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` env var → MSAL falls back to ConfidentialClient flow → demands client_secret the keyless deploy never provisioned. Silent-killer auth bug.** | **Add `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity` to bot ACA env in Bicep. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`. The `safe-check --phase post-deploy` Step 5.7 catches this; channel JWT probe does NOT (JWT middleware fires before outbound token acquisition).** |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
 | `azd deploy` fails with Docker error | Missing `remoteBuild: true` in azure.yaml | Add `remoteBuild: true` under `docker:` — azd builds via ACR Tasks, no local Docker |
@@ -2565,7 +2565,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Deploy custom MCP servers as ACA or Azure Functions |
 | [**foundry-evals**](../foundry-evals/) | Evaluate agent quality + **continuous evaluation**: Plan A (default) Foundry built-in scheduled evals, Plan B (fallback) ACA Job (reads SPEC § 9 KPI table) |
 | [**threadlight-safe-check**](../threadlight-safe-check/) | **Mandatory post-deploy completeness gate** — invoked from `predeploy` / `postdeploy` hooks; verifies every SPEC § 11c selector maps to deployed resources, all channels reach, all jobs are wired. Run this before declaring victory or kicking off `foundry-evals` |
-| [**foundry-observability**](../foundry-observability/) | **Always layered into deploy from day one.** Owns the 3-layer telemetry pattern (Bicep substrate → Foundry account-level AppIn connection → `configure_azure_monitor()` in each ACA workload). Without this, `azd up` returns 0 but App Insights stays empty for the entire pilot lifetime — the silent gap that bit Card Dispute v3. The post-deploy hook MUST call `connect_foundry_appinsights.py` and every ACA workload entry point MUST start with `init_telemetry(role=...)` |
+| [**foundry-observability**](../foundry-observability/) | **Always layered into deploy from day one.** Owns the 3-layer telemetry pattern (Bicep substrate → Foundry account-level AppIn connection → `configure_azure_monitor()` in each ACA workload). Without this, `azd up` returns 0 but App Insights stays empty for the entire pilot lifetime — the silent gap observed in recent pilots. The post-deploy hook MUST call `connect_foundry_appinsights.py` and every ACA workload entry point MUST start with `init_telemetry(role=...)` |
 | [**threadlight-local-test**](../threadlight-local-test/) | **For SEs.** Optional fast inner-loop before `azd up` — run the designed agent locally (FoundryChatClient + FastMCP + workspace + sample data) in Copilot CLI / Cowork / Clawpilot. Skip when the spec is a one-shot demo or already-deployed pilot |
 | [**threadlight-workspace-ui**](../threadlight-workspace-ui/) | Generates the operator workspace from SPEC § 8b (case-list, inbox, dashboard, console, kanban, map) |
 | [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Generates Adaptive Cards + audit trail for SPEC § 8 action gates |

@@ -18,6 +18,8 @@ description: >
   DO NOT USE FOR: invocation/runtime tests (foundry-evals), `azd up`
   orchestration (threadlight-deploy), schema authoring (threadlight-
   design).
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight Safe Check — three lifecycle gates, one CLI
@@ -32,7 +34,7 @@ pre-deploy   → manifest <-> azure.yaml services <-> infra/main.bicep <-> src/<
 post-deploy  → manifest <-> az resource list <-> channel reachability
 ```
 
-> **Why this skill exists.** The `card-dispute-investigation` v3 PoC
+> **Why this skill exists.** A recent investigation-style PoC
 > shipped with **`aca-bot: yes`, `aca-job: yes`, `workspace-ui: yes`**
 > in SPEC § 11c — and zero bot resources, zero jobs, zero workspace ACAs
 > in the deployed resource group. `azd up` returned 0. Eval scores
@@ -40,9 +42,9 @@ post-deploy  → manifest <-> az resource list <-> channel reachability
 > Portal and noticing missing tiles. **A consolidated, mandatory gate
 > would have caught this in 30 seconds.** That gate is this skill.
 >
-> **And then it shipped again, differently.** The next pilot
-> (`card-dispute-investigation` v4, post `fetch-container-image`
-> pattern) had every resource type present in the resource group —
+> **And then it shipped again, differently.** A later pilot
+> using the `fetch-container-image` pattern had every resource type
+> present in the resource group —
 > `safe-check` returned `gaps: []` ✅ — but the MCP container was
 > running `mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`
 > (Bicep had hard-coded the placeholder; `azd deploy mcp` was never
@@ -176,8 +178,8 @@ populated:
 | `workspace-ui` | `name: workspace`, `host: containerapp`, `project: ./src/workspace` | `module workspaceApp '...container-app.bicep'` with `serviceName: 'workspace'` | `src/workspace/Dockerfile` + ACA-served HTML/SPA. **NOT a static `index.html` only.** |
 | `foundry-iq-index` | n/a (provisioned by hook) | `module knowledge 'modules/ai-search.bicep'` (the index) | `scripts/postprovision.py` calls `provision_knowledge_base()` |
 
-Plus **two orphan checks** (caught the card-dispute v3 ghost
-`infra/bot/aca.bicep` for an entire deploy cycle):
+Plus **two orphan checks** (caught orphan
+`infra/bot/aca.bicep` files left for an entire deploy cycle):
 
 1. **Bicep-module orphan check.** Every `infra/<dir>/*.bicep` (excluding
    `core/`, `modules/`) must be referenced from `infra/main.bicep` via
@@ -391,7 +393,7 @@ was considered.
 > acquisition path. So the channel is "reachable" but every real
 > message fails.
 >
-> Origin: KYC PoC v1 (2026-05-12) — 4 hours of bot-can't-talk-to-Teams.
+> Origin: recent pilot retrospective — 4 hours of bot-can't-talk-to-Teams.
 
 For every Bot Service in the RG with `appType=UserAssignedMSI`, the
 gate locates the matching ACA (name pattern `*bot*`), reads its env
@@ -445,11 +447,11 @@ contract the threadlight pattern actually uses.
 > `specs/sample-data/*.json` are never loaded unless `Phase 6.5` of
 > `threadlight-deploy` ran the seed step.
 >
-> Origin: KYC PoC v1 (2026-05-12) — `kyc-edd-memos` and
-> `kyc-beneficial-owners` containers shipped with **0 documents**;
-> `kyc-cases` had 5 eval-probe IDs (`CASE-S001`, `CASE-S-007`, etc.)
-> instead of the 8 realistic golden cases (`CASE-003-NG-EDD`,
-> `Cascadia Holdings`, etc.) declared in `specs/sample-data/`. User
+> Origin: recent pilot retrospective — document containers shipped with
+> **0 documents**; case containers had only eval-probe IDs
+> (`CASE-S001`, `CASE-S-007`, etc.) instead of realistic golden cases
+> (`CASE-<id>`, `<example-customer>`, etc.) declared in
+> `specs/sample-data/`. User
 > typed realistic IDs; agent honestly reported "not found"; demo
 > looked broken.
 
@@ -508,7 +510,7 @@ is below its declared minimum.
 {
   "phase": "post-deploy",
   "deployed_at": "2026-05-10T22:30:00Z",
-  "rg": "rg-card-dispute-poc",
+  "rg": "rg-<your-process>-poc",
   "checked_selectors": ["foundry-account", "cosmos-db", "ai-search", "aca-mcp", "aca-bot", "aca-job", "workspace-ui", "app-insights"],
   "deployed_resource_types": ["Microsoft.CognitiveServices/accounts", "Microsoft.Insights/components", "..."],
   "image_probe": [
@@ -519,10 +521,10 @@ is below its declared minimum.
     { "name": "ca-job-deadline-...", "executions_checked": 5, "statuses": ["Succeeded","Succeeded","Succeeded","Succeeded","Succeeded"], "status": "OK" }
   ],
   "appin_health": [
-    { "name": "appin-card-dispute-poc", "kind": "web", "status": "OK" }
+    { "name": "<your-appin>", "kind": "web", "status": "OK" }
   ],
   "bot_auth_health": [
-    { "bot_service": "bot-card-dispute-...", "aca": "ca-bot-...", "appType": "UserAssignedMSI", "authtype": "UserManagedIdentity", "status": "OK" }
+    { "bot_service": "<your-bot>", "aca": "ca-bot-<slug>", "appType": "UserAssignedMSI", "authtype": "UserManagedIdentity", "status": "OK" }
   ],
   "channels": [
     { "name": "Analyst Workspace", "type": "web", "fqdn": "ca-workspace-...azurecontainerapps.io", "status": "OK" },
@@ -545,16 +547,16 @@ is below its declared minimum.
 
 The first three steps (resource types, role keywords, channel reach)
 are **structural** — they answer *"is the right shape of resource
-present?"*. The Card Dispute v3 PoC failed on these and the gate caught
+present?"*. Recent pilots failed on these and the gate caught
 it.
 
 Steps 3.5, 5.5, 5.6, and 5.7 are **behavioural** — they answer *"is the right
 code running, is it not crashing, is telemetry actually landing, and can the
 bot actually talk back to Teams?"*.
-The Card Dispute v4 PoC passed all structural checks but had MCP running
+Recent pilots passed all structural checks but had MCP running
 the helloworld placeholder, the cron failing every 15 min, and zero
 traces in AppIn (because the AppIn resource was never even provisioned).
-The KYC v1 PoC passed all structural checks AND the JWT-alive channel probe,
+Recent pilots passed all structural checks AND the JWT-alive channel probe,
 but the bot returned HTTP 500 on every real Teams message because the
 `AUTHTYPE` env var was missing. Structural checks alone weren't enough;
 the behavioural checks close that loop.

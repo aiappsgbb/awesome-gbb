@@ -3,9 +3,9 @@
 Auto-discover the cosmos-mcp ACA's egress IP and patch Cosmos firewall.
 
 The Azure ACA managed environment NATs all egress through a regional public IP
-that is NOT covered by Cosmos `networkAclBypass: AzureServices`. Verified KYC
-PoC swedencentral, May 2026: even with `AzureServices` bypass enabled, every
-ACA -> Cosmos write returns `Forbidden -- Request originated from IP X.X.X.X
+that is NOT covered by Cosmos `networkAclBypass: AzureServices`. In some
+regions, even with `AzureServices` bypass enabled, every ACA -> Cosmos
+write returns `Forbidden -- Request originated from IP X.X.X.X
 through public internet`.
 
 This script is the closing piece to make `azd up` truly hands-off for any

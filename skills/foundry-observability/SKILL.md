@@ -18,6 +18,8 @@ description: >
   account-level appin.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
+metadata:
+  version: "1.0.0"
 ---
 
 # Foundry Observability
@@ -26,7 +28,7 @@ End-to-end telemetry across every component of a Threadlight pilot:
 Foundry hosted agent, MCP servers on ACA, ACA jobs (cron triggers),
 bot service, workspace UI. **Default discipline**, not optional.
 
-> **Why this skill exists.** The card-dispute v3 PoC deployed cleanly
+> **Why this skill exists.** Recent pilots deployed cleanly
 > (`azd up` returned 0, all resources provisioned) but App Insights
 > stayed **completely empty** — no agent traces, no MCP tool calls,
 > no cron logs. Root cause: no one wired the connection at any layer.
@@ -273,8 +275,8 @@ Add it to `agent.yaml` and the agent runtime errors with
 > **⚠️ Layer 2 caveat — hosted-agent containers MUST guard the init too.**
 > The "platform auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING`"
 > promise is **best-effort, not contractual** — we have field evidence
-> that it can silently fail. KYC PoC in `swedencentral` (2026-05-12)
-> ran with the AppInsights account-level connection persisted as
+> that it can silently fail. In some regions, the AppInsights
+> account-level connection can persist as
 > `credentials: null` (silent-drop on AAD-rejected → ApiKey-fallback PUT
 > — see "Auth-type platform forensic" below). The platform did NOT
 > inject the env var. The hosted-agent container called raw
@@ -315,7 +317,7 @@ from azure.monitor.opentelemetry import configure_azure_monitor
 # Wraps OTel SDK + Azure Monitor exporter + standard library instrumentations
 # (logging, urllib3, requests, fastapi, httpx, redis, postgres, ...) in one shot.
 configure_azure_monitor(
-    logger_name="card_dispute_mcp",         # show up as cloudRoleName in AppIn
+    logger_name="<process>-mcp",          # show up as cloudRoleName in AppIn
     instrumentation_options={
         "azure_sdk": { "enabled": True },   # capture Cosmos / AOAI / Search SDK calls
         "fastapi":   { "enabled": True },   # MCP server is FastAPI under the hood
@@ -389,7 +391,7 @@ template: {
 }
 ```
 
-> **The silent-cron lesson** (from card-dispute v3 — see
+> **The silent-cron lesson** (from recent pilot retrospectives — see
 > `azd-patterns` § ACA Job silent-failure playbook). When the cron
 > exits with non-zero before any `print()` reaches stdout, ACA's
 > default LAW logging routes nothing — but if `configure_azure_monitor()`
@@ -504,9 +506,9 @@ are silent. This is the single most useful query when an ACA Job is
 | O-009 | Traces appear briefly then stop after redeploy | New ACA revision didn't get the env var (drift in revision template) | Check the most recent revision's container env explicitly: `az containerapp revision show -g <rg> -n <app> --revision <rev> --query 'properties.template.containers[0].env'` |
 | O-010 | Telemetry shows but with key-based auth (despite `disableLocalAuth=true`) | A previous deploy left the ingestion key path active | Force-set `DisableLocalAuth: true`; redeploy; old keys stop working immediately |
 | O-011 | **Hosted agent returns `server_error` / `model: ""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform's `APPLICATIONINSIGHTS_CONNECTION_STRING` auto-injection fails (e.g. account-level AppIn connection persisted with `credentials: null` — see O-012), the SDK raises `ValueError`. Container exits before `ResponsesHostServer` binds; Foundry runtime sees no agent. **The agent itself is fine — only telemetry init crashed it.** | **Hosted-agent `container.py` MUST use guarded init** — `init_telemetry()` from `references/python/otel_init.py` OR inline an 8-line equivalent that no-ops on (a) missing env var, (b) SDK ImportError, (c) any SDK exception. Never call `configure_azure_monitor()` raw at module/main scope. The agent works fine without telemetry — don't let telemetry init kill it |
-| O-012 | AppInsights connection PUT returns HTTP 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but `credentials: null` on subsequent GET (silent server-side drop) | Platform gap on account-RP scope `2025-10-01-preview` in some regions. Verified `swedencentral` 2026-05-12, correlation `46a268ef71ff3893cbde7f9d1917ca7f`. The connection persists with `isDefault: true, isSharedToAll: true` but no usable secret — the platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Document the gap. Ship the agent with O-011 guarded init so it functions without telemetry. File an Azure support ticket with the correlation IDs (we have 3 documented req IDs from the KYC PoC if you need a precedent). If AppIn telemetry is non-negotiable for the pilot, pivot region (`eastus` / `northcentralus` are the best initial bets — **verify auto-injection works BEFORE committing to a redeploy**) |
+| O-012 | AppInsights connection PUT returns HTTP 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but `credentials: null` on subsequent GET (silent server-side drop) | Platform gap on account-RP scope `2025-10-01-preview` in some regions; correlation IDs are available in platform logs. The connection persists with `isDefault: true, isSharedToAll: true` but no usable secret — the platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Document the gap. Ship the agent with O-011 guarded init so it functions without telemetry. File an Azure support ticket with the correlation IDs from platform logs. If AppIn telemetry is non-negotiable for the pilot, pivot region (`eastus` / `northcentralus` are the best initial bets — **verify auto-injection works BEFORE committing to a redeploy**) |
 
-### Auth-type platform forensic (KYC swedencentral, 2026-05-12)
+### Auth-type platform forensic (some regions)
 
 The Layer 2 caveat callout above and gap rows O-011 / O-012 are
 anchored on this forensic. Three remediation paths attempted, **all
@@ -514,17 +516,16 @@ failed with documented evidence**:
 
 | Path | Outcome | Evidence anchor |
 |---|---|---|
-| 1. Set `APPLICATIONINSIGHTS_CONNECTION_STRING` in `agent.yaml` (escape hatch) | HTTP 400 `invalid_request_error`: "Environment variable 'APPLICATIONINSIGHTS_CONNECTION_STRING' is reserved for platform use" | Request ID `820a502e2facc8e1cf46eb3ae71ea26e` |
-| 2. AAD `authType` on PUT to AppInsights connection (skill-recommended) | HTTP 400 ValidationError: "AuthType for AppInsights Connection can only be ApiKey" | Correlation `46a268ef71ff3893cbde7f9d1917ca7f`, account-rp / swedencentral / `2025-10-01-preview` |
+| 1. Set `APPLICATIONINSIGHTS_CONNECTION_STRING` in `agent.yaml` (escape hatch) | HTTP 400 `invalid_request_error`: "Environment variable 'APPLICATIONINSIGHTS_CONNECTION_STRING' is reserved for platform use" | Request IDs available in platform logs |
+| 2. AAD `authType` on PUT to AppInsights connection (skill-recommended) | HTTP 400 ValidationError: "AuthType for AppInsights Connection can only be ApiKey" | Correlation IDs available in platform logs (`2025-10-01-preview`) |
 | 3. ApiKey `authType` with `credentials.key` in body (workaround) | HTTP 200 on PUT, GET returns `credentials: null` (silent-drop on a brand-new clean account-level resource at canonical scope) | `isDefault: true, isSharedToAll: true` records on the connection; platform still does NOT inject the env var |
 
-> **Re-confirmed KYC v12 (swedencentral, 2026-05-12).** Same three failure
-> paths reproduced on a separate Foundry account with a clean install +
-> upgraded agent dependencies (`agent-framework-foundry-hosting` >=
-> `1.0.0a260421`). The behavior is platform-region, not project- or
-> dependency-specific. **For new pilots in `swedencentral`: budget zero
-> hours on this; ship Layer 3 telemetry and skip the AppIn account
-> connection until the platform fix lands.**
+> **Re-confirmation guidance.** If the same three failure paths reproduce
+> on a separate Foundry account with a clean install + upgraded agent
+> dependencies (`agent-framework-foundry-hosting` >= `1.0.0a260421`),
+> treat the behavior as platform-region, not project- or dependency-
+> specific. For affected regions, ship Layer 3 telemetry and skip the
+> AppIn account connection until the platform fix lands.
 
 **Lesson.** The Layer 2 promise ("platform auto-injects when you have
 an account-level `AppInsights` connection") cannot be relied upon as a

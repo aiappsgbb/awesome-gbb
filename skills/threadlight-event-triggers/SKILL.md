@@ -13,6 +13,8 @@ description: >
   DO NOT USE FOR: chat / on-demand triggers (those go through the agent
   directly), bot infrastructure (use foundry-teams-bot), MCP server
   deployment (use foundry-mcp-aca).
+metadata:
+  version: "1.0.0"
 ---
 
 # Threadlight Event Triggers

@@ -8,8 +8,8 @@ Usage (from PoC root):
 
 Then type prompts; Ctrl+C or `quit` to exit.
 
-Adapt the import to match the PoC's agent factory location:
-    from agent.container import build_agent      # card-dispute style
+Adapt the import to match your process agent factory location:
+    from agent.container import build_agent      # common layout
     from src.agent.container import build_agent  # if `src` is on path
 """
 

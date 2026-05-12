@@ -9,6 +9,8 @@ description: >
   MCP for hosted agent, connect hosted agent to MCP.
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
+metadata:
+  version: "1.0.0"
 ---
 
 # Foundry MCP ACA Deployment
@@ -103,8 +105,7 @@ prefer managed identity over Cosmos keys.
 > assignment create`. This is the same gotcha called out in
 > `threadlight-hitl-patterns` — keep both wirings consistent.
 
-> **⚠️ aiohttp dep is mandatory for the Python Cosmos MCP server (verified KYC PoC,
-> May 2026).** The Python Cosmos MCPToolKit uses `azure-cosmos` async client which
+> **⚠️ aiohttp dep is mandatory for the Python Cosmos MCP server.** The Python Cosmos MCPToolKit uses `azure-cosmos` async client which
 > silently requires `aiohttp` as the HTTP transport. Without it the container starts
 > fine, `tools/list` returns the 11 tools, but every `upsert_item` / `query_items`
 > call fails server-side with what looks like a Cosmos error but is actually an
@@ -125,7 +126,7 @@ The single biggest "first-deploy doesn't work" gotcha for ACA→Cosmos:
 |---|---|---|
 | Cosmos `publicNetworkAccess: Disabled` (the Azure default) | All ACA→Cosmos traffic returns `Forbidden — public access disabled` | Set `publicNetworkAccess: Enabled` for pilots (production: use private endpoint) |
 | Cosmos `networkAclBypass: None` (default) AND `ipRules: []` | All ACA→Cosmos traffic returns `Forbidden — Request originated from IP <egress-ip> through public internet. This is blocked` | Either: (a) set `networkAclBypass: AzureServices` ⚠️ (see caveat) OR (b) add the ACA environment's egress IP to `ipRules` (proven path for pilots) |
-| `networkAclBypass: AzureServices` is set, ACA still blocked | **Verified KYC PoC May 2026 (swedencentral):** even with `AzureServices` bypass, ACA managed-environment egress is still treated as "public internet" by Cosmos. The bypass DOES NOT cover ACA the way it covers Functions/Logic Apps. | **Add the ACA egress IP to `ipRules` explicitly.** Get it from the Cosmos Forbidden error message ("Request originated from IP X.X.X.X"), then `az cosmosdb update -g <rg> -n <acct> --ip-range-filter "X.X.X.X"`. For prod, use a private endpoint instead. |
+| `networkAclBypass: AzureServices` is set, ACA still blocked | Even with `AzureServices` bypass, ACA managed-environment egress can still be treated as "public internet" by Cosmos. The bypass DOES NOT cover ACA the way it covers Functions/Logic Apps. | **Add the ACA egress IP to `ipRules` explicitly.** Get it from the Cosmos Forbidden error message ("Request originated from IP X.X.X.X"), then `az cosmosdb update -g <rg> -n <acct> --ip-range-filter "X.X.X.X"`. For prod, use a private endpoint instead. |
 
 **Bicep snippet** (pilot-grade default — put this in `infra/modules/cosmos-db.bicep`):
 
@@ -188,7 +189,7 @@ hooks:
 ```
 
 This closes the last manual step in the "1-shot `azd up` for Cosmos-using
-processes" flow. Verified design against KYC PoC May 2026 forensics.
+processes" flow. Verified design against recent pilot forensics.
 
 ### Agent Configuration
 
@@ -440,7 +441,7 @@ EXPOSE 8080
 CMD ["python", "server.py"]
 ```
 
-> **Pin `fastmcp` (verified card-dispute Apr 2026 + KYC May 2026).** `fastmcp` had a
+> **Pin `fastmcp`.** `fastmcp` had a
 > 1.x → 2.x API break (Client interface changed). Both server (`src/mcp/`) and any
 > client that imports `fastmcp` (e.g. an ACA Job that drives the MCP server) MUST
 > pin to the **same major** to avoid silent failures: container starts, `tools/list`
@@ -457,7 +458,7 @@ aiohttp>=3.9.0               # MANDATORY for Cosmos MCP — async transport for 
 
 ### MCP ACA also needs the `fetch-container-image` pattern (just like bot)
 
-> **Verified KYC Apr 2026 (checkpoint 68: ACA port-mismatch).** When `infra/main.bicep`
+> **Verified in recent ACA port-mismatch retrospectives.** When `infra/main.bicep`
 > defaults the MCP image to `mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`
 > (the standard "first-deploy" placeholder), the ACA gets stuck `InProgress` forever
 > because the placeholder serves port 80 but the MCP module pins `targetPort: 8080`.
@@ -605,8 +606,8 @@ uv run scripts/seed_data.py --to src/mcp/data/   # threadlight-demo-data-factory
 
 ## Validate-or-reject (the canonical pattern for stateful tools)
 
-> **Highest-leverage pattern in the toolchain.** Discovered during the
-> card-dispute v3 PoC: lifted recommendation quality from "junk packet
+> **Highest-leverage pattern in the toolchain.** Observed in recent pilots:
+> lifted recommendation quality from "junk packet
 > with `confidence: 0`" to "well-cited `confidence: 0.93` packet" with
 > a single server-side change. Apply this to **every** MCP tool that
 > commits a decision, persists state, or returns a high-stakes
@@ -686,7 +687,7 @@ async def build_recommendation(
 
 A free-form `"please call get_transaction_history first"` works *some*
 of the time. The structured shape is the difference between "works
-3/3" and "works 1/3" in the v3 PoC reproducibility runs. Models
+high and low reproducibility in recent strict-smoke runs. Models
 parse structured payloads more reliably than English instructions in
 tool outputs.
 

@@ -205,7 +205,7 @@ For each AI capability the agent needs:
 - **Model + version** (current as of 2026-05):
   | Use case | Recommended model | Notes |
   |----------|-------------------|-------|
-  | **Default for threadlight pilots (7+ skills, 10+ tool calls)** | `gpt-5.4` (2026-03-05) | 1M context, vision-capable. Tool-call discipline holds up under long chains — verified card-dispute v3 PoC: 3/3 strict-smoke reproducibility on a 7-skill flow vs 1/3 with gpt-5.4-mini |
+  | **Default for threadlight pilots (7+ skills, 10+ tool calls)** | `gpt-5.4` (2026-03-05) | 1M context, vision-capable. Tool-call discipline holds up under long chains — validated across recent long-chain pilots with stricter smoke-test reproducibility than gpt-5.4-mini |
   | Trivial chat / 1-2 step flows | `gpt-5.4-mini` (2026-03-17) | 400K context, vision-capable, lower cost. Use ONLY when the agent has ≤2 tool calls per turn — degrades on long instruction chains (skips evidence-gathering tools, emits hollow commit-tool outputs) |
   | Premium reasoning + vision | `gpt-5.4-pro` (2026-03-05) | When vision feeds multi-step reasoning |
   | Bulk / cheap vision | `gpt-5.4-nano` (2026-03-17) | Returns triage, photo screening |
