@@ -82,6 +82,8 @@ Every PoC, regardless of mode, MUST have:
 - ✅ **AGENTS.md + skills** derived from spec
 - ✅ **Deployable scaffold** (`azd up` ready)
 - ✅ **Eval dataset** from spec § 9 scenarios — so the demo can be scored
+- ✅ **`specs/overview.html`** — seller pitch page (always)
+- ✅ **`specs/experience.html`** — bespoke cinematic customer journey (always — every PoC is a demo by definition; **see Step 6 § 8**). Skip ONLY when spec § 12 assumptions explicitly flag `internal-no-demo: true`.
 
 ---
 
@@ -642,17 +644,24 @@ customer walkthroughs, and stakeholder alignment.
 - No external CDN, fonts, or scripts — everything inline
 - Print-friendly (can be saved as PDF from browser)
 
-#### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (recommended)
+#### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (MANDATORY)
 
 A second seller-facing artifact that complements `overview.html`. Where the
 overview is a **brief**, the experience is a **bespoke journey** that makes
 the customer feel the pain, the intervention, the outcome, and the trust
 posture of *this* process — through visuals native to *its* domain.
 
-> **Generate this whenever the user asks for a "demo", "customer journey",
-> "walkthrough", "story", "cinematic", or "experience"** — or whenever the
-> process is intended for live customer presentations or executive
-> walkthroughs. Skip for purely internal automation specs.
+> **Generate this for every PoC, period.** Threadlight's curation premise
+> ("we deliver fewer processes, but reliably and beautifully") demands a
+> cinematic artifact for every process — there is no such thing as a
+> threadlight PoC without an `experience.html`. The skill must NOT wait
+> for the user to say "demo" / "cinematic" / "walkthrough" — those words
+> are implicit in the request to design a threadlight process.
+>
+> **The only valid skip** is when SPEC § 12 assumptions explicitly carry
+> `internal-no-demo: true` (e.g., a pure backend automation with no
+> seller motion). Even then, log the skip in your hand-off message so
+> the user can override.
 
 > ⚠️ **Bespoke per process — not a template.** The single biggest mistake in
 > `experience.html` generation is reusing the same 4-act layout for every
@@ -798,7 +807,7 @@ must catch its own mistakes.
 - [ ] AGENTS.md skills table matches the actual `src/agent/skills/` directories
 - [ ] `specs/manifest.json` matches the generated skills list and BR counts
 - [ ] `specs/overview.html` renders without errors (valid HTML structure)
-- [ ] If `specs/experience.html` was generated: HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
+- [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
 

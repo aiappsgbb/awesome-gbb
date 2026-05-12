@@ -518,6 +518,14 @@ failed with documented evidence**:
 | 2. AAD `authType` on PUT to AppInsights connection (skill-recommended) | HTTP 400 ValidationError: "AuthType for AppInsights Connection can only be ApiKey" | Correlation `46a268ef71ff3893cbde7f9d1917ca7f`, account-rp / swedencentral / `2025-10-01-preview` |
 | 3. ApiKey `authType` with `credentials.key` in body (workaround) | HTTP 200 on PUT, GET returns `credentials: null` (silent-drop on a brand-new clean account-level resource at canonical scope) | `isDefault: true, isSharedToAll: true` records on the connection; platform still does NOT inject the env var |
 
+> **Re-confirmed KYC v12 (swedencentral, 2026-05-12).** Same three failure
+> paths reproduced on a separate Foundry account with a clean install +
+> upgraded agent dependencies (`agent-framework-foundry-hosting` >=
+> `1.0.0a260421`). The behavior is platform-region, not project- or
+> dependency-specific. **For new pilots in `swedencentral`: budget zero
+> hours on this; ship Layer 3 telemetry and skip the AppIn account
+> connection until the platform fix lands.**
+
 **Lesson.** The Layer 2 promise ("platform auto-injects when you have
 an account-level `AppInsights` connection") cannot be relied upon as a
 runtime contract. Layer 2 is best-effort observability; **Layer 3

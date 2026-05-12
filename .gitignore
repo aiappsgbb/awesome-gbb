@@ -21,3 +21,7 @@ node_modules/
 __pycache__/
 *.pyc
 .venv/
+
+# local upload artifacts (cowork zips)
+skills/*.zip
+
