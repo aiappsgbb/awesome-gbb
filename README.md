@@ -133,6 +133,13 @@ skills/
 
 ## Contributing
 
+> [!IMPORTANT]
+> **Read [AGENTS.md](AGENTS.md) first** if you (or a sub-agent acting on your
+> behalf) are about to edit any skill. It captures the invariants — agnostic
+> wording, reference-data canon, `metadata.version` rules, the mass-edit
+> safety rails — that **are not enforced by CI** and have bitten us in
+> production.
+
 1. **Fork & branch** — create a feature branch from `main`.
 2. **Add your Skill** — place it under `skills/<your-skill-name>/SKILL.md`.
 3. **Open a PR** — describe the scenario, target audience, and any dependencies.
