@@ -724,6 +724,43 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
    Stale conversations from previous agent versions cause persistent `server_error`.
    Type `!reset` in the Teams chat, or the bot auto-retries with a fresh conversation.
 
+5. **Grant deployer Cosmos data-plane RBAC for verification probes (mandatory if `cosmos-db` selected):**
+
+   `azd up` grants the agent UAMI Cosmos data-plane access, but **NOT** the deployer
+   principal. Every post-deploy verification probe — counting rows, inspecting
+   `kyc-audit-log` to prove BR-XXX persistence, checking `kyc-cases` for stuck
+   case_ids — fails `Forbidden — principal does not have RBAC permissions to
+   perform action Microsoft.DocumentDB/databaseAccounts/readMetadata` until you
+   manually grant it. **Verified KYC PoC May 2026.** Add this as the FIRST step
+   of any post-deploy verification runbook:
+
+   ```bash
+   ME=$(az ad signed-in-user show --query id -o tsv)
+   az cosmosdb sql role assignment create \
+     -g "$AZURE_RESOURCE_GROUP" -a "$AZURE_COSMOS_ACCOUNT_NAME" \
+     --role-definition-id 00000000-0000-0000-0000-000000000001 \
+     --principal-id "$ME" --scope "/"
+   sleep 25   # RBAC propagation
+   ```
+
+   Use role `00000000-0000-0000-0000-000000000001` = `Cosmos DB Built-in Data
+   Reader` (read-only is sufficient for verification; for write probes use
+   `00000000-0000-0000-0000-000000000002` = Data Contributor). For a permanent
+   fix, add this to the `postdeploy.py` hook in `infra/scripts/`.
+
+6. **Cosmos firewall pilot-posture (mandatory if `cosmos-db` selected) — see `foundry-mcp-aca` SKILL.md § "Cosmos firewall + ACA egress" for the full runbook.** Quick check:
+
+   ```bash
+   az cosmosdb show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_COSMOS_ACCOUNT_NAME" \
+     --query "{publicNetAccess:publicNetworkAccess,ipRules:ipRules,bypass:networkAclBypass}" -o json
+   ```
+
+   If `publicNetAccess: Disabled` OR `ipRules: []` (and ACA-side writes are
+   failing), apply the runbook from `foundry-mcp-aca`. The `azd-patterns`
+   `cosmos-db.bicep` module defaults to `pilotPosture=true` to avoid this trap
+   on fresh pilots; the `ipRules` array still needs the ACA egress IP added
+   post-deploy (extracted from the `ca-*-cosmos-mcp-*` ACA logs).
+
 ## Bot Implementation Notes
 
 > **See the `foundry-teams-bot` skill** for complete bot implementation — code patterns,
@@ -907,43 +944,105 @@ Each line maps directly to a scenario row in the spec.
 
 #### `tests/run_evals.py`
 
-Invoke + score script using the `foundry-evals` two-phase pattern:
+Invoke + score script using the `foundry-evals` two-phase pattern.
+**MUST** include three Windows-survival defenses from day one — every
+PoC that has skipped them has lost full eval batches mid-run (see
+`foundry-evals` SKILL § "Eval scripts on Windows: cp1252 trap"):
+
+1. **UTF-8 stdout wrap** so the agent's `→` / em-dashes don't crash
+2. **`safe()` ASCII-strip** on every agent string before printing
+3. **Incremental JSON writes** after each scenario, not at the end
 
 ```python
-"""Run eval scenarios against the deployed agent."""
+"""Run eval scenarios against the deployed agent.
 
-import json
+Windows-survival defenses baked in (DO NOT REMOVE):
+- UTF-8 stdout wrap so the agent's non-ASCII output cannot crash us
+- safe() ASCII-strip when printing agent strings
+- Incremental JSON writes so a mid-run crash keeps prior results
+"""
+import io, json, sys, time
 from pathlib import Path
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
+                              errors="replace", line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8",
+                              errors="replace", line_buffering=True)
+
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
+from openai import APIError
 
 PROJECT_ENDPOINT = "<from azd env>"
 AGENT_NAME = "<from agent.yaml>"
+RESULTS_PATH = Path("tests/eval-results.json")
 
-project = AIProjectClient(
-    endpoint=PROJECT_ENDPOINT,
-    credential=DefaultAzureCredential(),
-    allow_preview=True,
-)
+def safe(s, n=None):
+    if s is None:
+        return ""
+    if n:
+        s = s[:n]
+    return s.encode("ascii", errors="replace").decode("ascii")
+
+project = AIProjectClient(endpoint=PROJECT_ENDPOINT,
+                          credential=DefaultAzureCredential(),
+                          allow_preview=True)
 oai = project.get_openai_client(agent_name=AGENT_NAME)
 
-# Warm up
-oai.responses.create(input="Hello", stream=False)
+dataset = [json.loads(line) for line in
+           Path("tests/eval_dataset.jsonl").read_text(encoding="utf-8").splitlines()
+           if line.strip()]
 
-# Load dataset
-dataset = [json.loads(line) for line in Path("eval_dataset.jsonl").read_text().splitlines()]
+# Cold-start retry loop (foundry-evals warmup pattern)
+for attempt in range(1, 5):
+    try:
+        w = oai.responses.create(input="Reply 'OK' if ready.", stream=False)
+        if w.status == "completed":
+            break
+    except Exception as e:
+        print(f"[warmup] attempt={attempt} EXC: {safe(str(e), 200)}")
+    if attempt < 4:
+        time.sleep(60)
 
-# Phase 1: Invoke
 results = []
-for item in dataset:
-    response = oai.responses.create(input=item["query"], stream=False)
-    results.append({**item, "response": response.output_text})
-    print(f"✓ {item['id']}: {item['query'][:50]}...")
+RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Phase 2: Score with Foundry evaluators
-# See foundry-evals skill for full scoring setup
+for item in dataset:
+    sid = item["id"]
+    print(f"--- {sid} [{item.get('category', '')}] ---")
+    t0 = time.time()
+    rec = {"id": sid, **item}
+    try:
+        r = oai.responses.create(input=item["query"], stream=False)
+        elapsed = time.time() - t0
+        out_text = ""
+        for o in (r.output or []):
+            for c in (getattr(o, "content", None) or []):
+                t = getattr(c, "text", None)
+                if t:
+                    out_text += t.value if hasattr(t, "value") else str(t)
+        rec.update({"status": r.status, "elapsed_s": round(elapsed, 1),
+                    "response_id": r.id, "output_len": len(out_text),
+                    "output_first_400": safe(out_text, 400)})
+        print(f"  status={r.status} elapsed={elapsed:.1f}s")
+        print(f"  output_first_400: {safe(out_text, 400)!r}")
+    except APIError as e:
+        rec.update({"status": "api_error", "code": e.code,
+                    "elapsed_s": round(time.time() - t0, 1)})
+    except Exception as e:
+        rec.update({"status": "exception", "exc_type": type(e).__name__,
+                    "exc_msg": safe(str(e), 300),
+                    "elapsed_s": round(time.time() - t0, 1)})
+    results.append(rec)
+    # Write after EVERY scenario - mid-run crash keeps prior results
+    RESULTS_PATH.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    time.sleep(5)
+
 print(f"\n{len(results)} scenarios invoked. Run foundry-evals to score.")
 ```
+
+Run with `python -X utf8 tests/run_evals.py` (or set `PYTHONUTF8=1` /
+`PYTHONIOENCODING=utf-8` in the parent shell) for a 4th defense layer.
 
 #### `tests/invoke_agent.py`
 

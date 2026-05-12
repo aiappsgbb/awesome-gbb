@@ -259,6 +259,13 @@ Must include all sections from the template:
 11. **Security, Compliance & Governance** — PII, auth, retention, regulatory, audit
 11b. **Governance Posture (AI Governance Hub spoke — opt-in)** — `governance_hub.required` flag + spoke artifacts needed. **INPUT CONTRACT for the optional governance-hub spoke handoff in `threadlight-deploy`.** *Required for every regulated process.*
 11c. **Tech Stack (Module selectors)** — Bicep module on/off list (cosmos, search, doc-intel, speech, event-grid, service-bus, foundry-iq-index, etc.). **INPUT CONTRACT for the `azd-patterns` Bicep module library and the composer in `threadlight-deploy`.** *Required for every process.*
+
+> **Legacy-SPEC backfill — mandatory check before handing off to threadlight-deploy.**
+> SPECs generated before § 11c was added to this skill (any SPEC where the section list jumps from § 11 to § 12, or has no kebab-case selector table) **must be backfilled** before Phase 6 of `threadlight-deploy` runs. The composer reads § 11c verbatim — without it, it can't tell "no aca-bot deployed" from "aca-bot intentionally not selected", and the post-deploy gate ships partial PoCs as if they were complete (this is exactly how card-dispute-investigation v3 shipped with `aca-bot` and `aca-job` declared `yes` but zero deployed). Run a one-shot grep before generating Phase 6 modules:
+> ```bash
+> grep -E '^(##|###) 11c' specs/SPEC.md || echo "MISSING - reverse-engineer from azure.yaml services + infra/main.bicep modules and prepend § 11c table"
+> ```
+> If missing: read the existing `azure.yaml` services + `infra/main.bicep` modules, write the corresponding kebab-case selector table, prepend it to the SPEC at the right anchor, and re-validate.
 11d. **Demo Data (Realism rules)** — per-entity volumes, distribution, golden cases, reset semantics, industry realism rules. **INPUT CONTRACT for `threadlight-demo-data-factory`.** *Required for every process with mocked systems.*
 12. **Assumptions & Open Questions** — what's given, what needs stakeholder input
 

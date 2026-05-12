@@ -49,7 +49,11 @@ project = AIProjectClient(
 )
 oai = project.get_openai_client(agent_name="my-agent")
 
-# Warm up (cold start takes 15-30s on first request)
+# Warm up — single-shot ping is INSUFFICIENT for hosted agents that
+# scale to zero (15min idle). Use the retry loop pattern below for any
+# eval likely to hit a cold container — verified KYC PoC May 2026, where
+# a single ping returned server_error in ~9s and made all 5 scenarios
+# fail 0/5 before the agent had even spun up.
 print("Warming up...")
 oai.responses.create(input="Hello", stream=False)
 
@@ -73,7 +77,29 @@ for query in test_queries:
 - **Use `stream=False`** — simpler for eval; streaming works but adds complexity
 - **agent-bound client** — `get_openai_client(agent_name=...)` routes to the dedicated endpoint
 - **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
-- **Pace invocations** — add a 2s `time.sleep()` between calls. Rapid-fire requests produce empty responses even after warm-up
+- **Pace invocations** — add a **5s** `time.sleep()` between calls (was 2s — bumped after KYC PoC May 2026 saw repeat empty responses at 2s). Rapid-fire requests produce empty responses even after warm-up
+- **Warmup retry loop, not single-shot** — a single warmup ping is NOT enough for hosted agents that scale to zero. First call to a cold container returns `server_error` in 5-10s before the platform has even brought a replica up. **Pattern (verified KYC PoC May 2026, recovered eval from 0/5 → 4/5 substantive):**
+
+```python
+# Warmup with retry loop — handles scale-from-zero hosted agents
+WARMUP_ATTEMPTS = 4
+WARMUP_BACKOFF_S = 60
+print(f"[warmup] coldstart loop (up to {WARMUP_ATTEMPTS} retries with {WARMUP_BACKOFF_S}s backoff)...")
+for attempt in range(1, WARMUP_ATTEMPTS + 1):
+    try:
+        r = oai.responses.create(input="ping", stream=False)
+        status = getattr(r, "status", "unknown")
+        print(f"[warmup] attempt={attempt} status={status}")
+        if status == "completed":
+            print("[warmup] READY -- proceeding with eval")
+            break
+    except Exception as e:
+        print(f"[warmup] attempt={attempt} EXC {type(e).__name__}: {str(e)[:120]}")
+    if attempt < WARMUP_ATTEMPTS:
+        time.sleep(WARMUP_BACKOFF_S)
+else:
+    raise RuntimeError("Hosted agent failed to warm up after 4 attempts (4 minutes). Check the deployment.")
+```
 - **ASCII-only logging on Windows** — see `Eval scripts on Windows: cp1252 trap` below. The default Windows console encoding is **cp1252**, not UTF-8. Any `print('→')`, `print('×')`, or `print('·')` in `run_evals.py` blows up with `UnicodeEncodeError` mid-run, killing partial results. Use `->`, `x`, `::` (or set `PYTHONUTF8=1` in the venv bootstrap; see fix below).
 - **Tolerate gateway flake on Phase 1** — Foundry's gateway can enter 5-10 minute sticky `internal_server_error` windows under burst load (especially mid-cold-start). 30-60s exponential backoff is **not** enough on bad days. See `Gateway flakiness during Phase 1` below for the resume-after-cooldown pattern.
 - **Retry on empty** — `output_text` can return empty when the agent does tool calls but the response structure varies. Retry once after a 3s pause. Also scan `response.output` items for message text as a fallback:
@@ -141,7 +167,43 @@ print(f"  -> {ms}ms :: {len(text)} chars :: attempt {attempt}")
 Banned characters: `→ × · ✓ ✗ ❌ ✅ ▶ ▲ ▼ ←  ° €` and any em-dash /
 en-dash. Replacements: `-> x :: PASS FAIL ! [done] etc.`
 
-**2. PYTHONUTF8=1 in the venv bootstrap** (defense in depth)
+**2. The agent's response can ALSO contain non-ASCII** (the gap that bit
+us twice on KYC even with #1 in place)
+
+Banning Unicode in your own `print()` calls only solves half the
+problem. The hosted agent is free to emit `→`, em-dashes, smart quotes,
+and curly arrows in its tool-result tables — and the moment your eval
+prints `output_first_400={out_text!r}`, the **agent's** `→` blows up
+the same way. Two layers, both required:
+
+```python
+# AT THE TOP OF run_evals.py — wrap stdout/stderr to silently
+# replace any byte that doesn't fit the cp1252 console
+import io, sys
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
+                              errors="replace", line_buffering=True)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8",
+                              errors="replace", line_buffering=True)
+
+def safe(s, n=None):
+    """Strip everything not ASCII before printing agent text."""
+    if s is None:
+        return ""
+    if n:
+        s = s[:n]
+    return s.encode("ascii", errors="replace").decode("ascii")
+
+# Then use safe() on every agent string you print:
+print(f"  output_first_400: {safe(out_text, 400)!r}")
+```
+
+`io.TextIOWrapper(.., errors='replace')` is **the** fix for this — it
+turns any otherwise-fatal `UnicodeEncodeError` into a `?` substitution
+silently. Without it, even one `→` in one tool-result line aborts the
+whole eval and you lose all results-so-far (see § Incremental result
+writes below for the corollary mitigation).
+
+**3. PYTHONUTF8=1 in the venv bootstrap** (defense in depth)
 
 If you can't audit every `print` (e.g., a vendored library prints
 arrows), force the interpreter into UTF-8 mode at process start. This
@@ -167,10 +229,40 @@ uv pip sync requirements.txt
 
 Setting these inside the script (`os.environ["PYTHONUTF8"] = "1"`)
 **does not work** — by the time the assignment runs, Python's stdio
-encoding is already locked.
+encoding is already locked. (Defense #2 above DOES work mid-script
+because it rebuilds the wrapper from raw `sys.stdout.buffer`.)
 
 The same trap kills `az acr build` log streaming on Windows; fix
 there is `--no-logs` (separate skill: `foundry-mcp-aca`).
+
+### Incremental result writes (mandatory default, not just for big batches)
+
+The "Resume-after-cooldown" pattern in the next section is framed as
+"recommended for batches > 5 scenarios." Treat that as a floor, not a
+ceiling — **every** `run_evals.py` should write its results JSON
+**after each scenario completes**, not at the end of the loop. Three
+real things that have wiped a full eval batch this pilot cycle:
+
+1. `UnicodeEncodeError` on the agent's response (the trap above) —
+   killed v10/v12 mid-S-019 every cold-start run, lost 4 prior results.
+2. Foundry gateway sticky 5xx window — kills attempt N, you lose 1..N-1.
+3. Ctrl+C / shell window closed by accident — same outcome.
+
+```python
+from pathlib import Path
+RESULTS_PATH = Path("eval/results.json")
+RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+results = []
+for sc in selected:
+    rec = run_one(sc)
+    results.append(rec)
+    # Write after EVERY scenario, not just at the end of the loop
+    RESULTS_PATH.write_text(json.dumps(results, indent=2), encoding="utf-8")
+```
+
+The cost is one tiny disk write per scenario (~5ms). The benefit is
+that a kill at scenario 4 of 5 still leaves you with 4 scored results
+on disk, ready to rerun-the-tail on top.
 
 ### Gateway flakiness during Phase 1
 
