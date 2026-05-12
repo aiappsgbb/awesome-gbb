@@ -68,15 +68,15 @@ GLBA · NYDFS Part 500 (cyber)
 |------|-----------------|---------|
 | **US SSN** | SSA-published documentation set: 987-65-4320 through 987-65-4329. **Do NOT** use 900–999 with middle digits 70–88/90–92/94–99 — that's the **REAL** ITIN range issued by the IRS (per IRS Pub. 1635). | 987-65-4321 |
 | **US ITIN** | If you specifically need ITIN-formatted, use SSA documentation set values that are formatted ITIN-shaped but are explicitly published as test (very rare — usually use SSN doc set above). | (avoid unless required) |
-| **US EIN** | EIN test set: prefixes 00, 07–09, 17–19, 28–29, 49, 69, 70, 78–79, 89 are not issued by IRS (IRS Pub. 1635 list of valid prefixes). | 00-1234567 |
+| **US EIN** | EIN test set: prefixes 0, 7–9, 17–19, 28–29, 49, 69, 70, 78–79, 89 are not issued by IRS (IRS Pub. 1635 list of valid prefixes). | 0-1234567 |
 | **EU IBAN** | ECB IBAN registry includes published examples per country. Use those exactly with the citation in a comment. Do NOT generate IBANs that pass mod-97 against arbitrary BBANs — they may resolve to real accounts. | GB82 WEST 1234 5698 7654 32 (UK ECB example) · DE89 3704 0044 0532 0130 00 (Germany ECB example — Commerzbank Köln BLZ; cite as ECB-published demo, never as `test'') |
-| **UK sort code** | UK Payments Association documented test sort codes: NatWest test 07-00-93, HSBC test 60-16-13. **00-00-XX is NOT a documented reserved range**. | 07-00-93 |
+| **UK sort code** | UK Payments Association documented test sort codes: NatWest test 7-00-93, HSBC test 60-16-13. **0-00-XX is NOT a documented reserved range**. | 7-00-93 |
 | **SWIFT/BIC** | XXX suffix = head-office branch (not "test"). Use SWIFT-reference test pattern or a clearly-fictional 4-letter institution: TESTBIC0XXX. **DEUTDEFFXXX is the real primary BIC for Deutsche Bank AG** — never use as a "test" example. | TESTGB22XXX |
 | **CUSIP / ISIN / SEDOL** | CUSIP fictional test prefixes per CUSIP Global Services. ISIN: use country prefix + valid Luhn check. **Do not use the SPDR / iShares / Vanguard prefixes that map to real ETFs.** | BBG000B9XRY4 (Bloomberg test FIGI shape — for fictional securities only) |
 | **LEI** | GLEIF publishes a sandbox at lei-test.gleif.org with documented sandbox LEIs. Use those. | (cite GLEIF sandbox) |
 | **Customer ID** | Internal — prefix with your bank's two-token shifted name + dash, e.g. CFB-CUST-00042 for "Cardinal Federal Bank". | CFB-CUST-00042 |
 | **Account number** | Synthetic 8–12 digits prefixed 9 (rarely real account leading digit at most US institutions); cite the bank's documented account-number format. | 987654321 |
-| **Phone (US/CA)** | NANPA fictional reservation: +1-NPA-555-01XX where NPA is any valid area code and 01XX is the central-office line range 0100–0199. **555 is the central-office code, not the area code** — +1-555-01XX-XXXX is malformed. | +1-202-555-0173 |
+| **Phone (US/CA)** | NANPA fictional reservation: +1-NPA-555-01XX where NPA is any valid area code and 1XX is the central-office line range 100–199. **555 is the central-office code, not the area code** — +1-555-01XX-XXXX is malformed. | +1-202-555-0173 |
 
 ## Names
 
@@ -213,7 +213,7 @@ When designing KPIs for an FSI process, prefer these over generic
 
 - idempotent — reset wipes Cosmos containers and re-seeds from JSON
   files. Reset must complete in <30s for live demo recovery.
-- See 	hreadlight-demo-data-factory for the exact reset script pattern
+- See `threadlight-demo-data-factory` for the exact reset script pattern
   (upsert-then-delete, partition-key from container metadata, capped
   concurrency).
 
