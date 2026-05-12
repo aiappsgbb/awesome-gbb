@@ -517,17 +517,20 @@ name = "__PROJECT_NAME__-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core>=1.0.0",
-    "agent-framework-foundry>=1.0.0",
+    "agent-framework-core==1.3.0",
+    "agent-framework-foundry==1.3.0",
     "agent-framework-foundry-hosting>=1.0.0a260421",
-    "azure-ai-agentserver-responses>=1.0.0b4",
     "azure-identity>=1.19.0,<1.26.0a0",
+    "mcp>=1.10.0",
     "python-dotenv>=1.0.0",
 ]
 
 [tool.uv]
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 prerelease = "if-necessary-or-explicit"
+
+[tool.setuptools]
+packages = []
 ```
 
 **CRITICAL: Uses `uv` (not `pip`)** — the `prerelease = "if-necessary-or-explicit"` setting
@@ -535,6 +538,27 @@ lets uv resolve prerelease packages that have explicit prerelease markers in the
 specs (e.g. `>=1.0.0a260421`), while keeping all other packages on GA (e.g. `azure-identity`
 resolves to 1.25.3 GA, NOT 1.26.0b2 beta). Do NOT use `"allow"` — it pulls beta versions
 of azure-identity and other packages unintentionally.
+
+> **🛑 PROVEN-WORKING REFERENCE PINS (2026-05-12, KYC v6-v10 RCA)**
+>
+> The recipe above is the **exact card-dispute-investigation working set**, validated as
+> the only combo that actually runs. Earlier guidance recommended **open ranges**
+> (`agent-framework-core>=1.0.0`) plus an **explicit `azure-ai-agentserver-responses>=1.0.0b4`**
+> — that resolves to a stack uv accepts at install time but that crashes the container at
+> first invocation, returning the opaque `server_error/model:""`. KYC PoC burned 4 deploys
+> (v6, v7, v8, v9) chasing this until the card-dispute pyproject.toml was diff'd and copied.
+>
+> **Mandatory rules:**
+> - **Pin** `agent-framework-core==1.3.0` and `agent-framework-foundry==1.3.0`. NOT open ranges.
+> - **Drop** any explicit `azure-ai-agentserver-responses` line. Let `agent-framework-foundry-hosting`
+>   pull its own pinned transitive (`==1.0.0b4` currently, but the right value for whatever
+>   foundry-hosting wants).
+> - **Add** explicit `mcp>=1.10.0`. `agent-framework-core 1.3.0` does NOT auto-pull it, and
+>   `MCPStreamableHTTPTool` will fail at runtime without it.
+> - **Include** `[tool.setuptools] packages = []` — uv needs it to resolve cleanly when
+>   the project itself isn't installed (`uv sync --no-install-project`).
+> - **Reference**: `card-dispute-investigation/src/agent/pyproject.toml` is the canonical
+>   working shape. When in doubt, diff against it.
 
 > **⚠️ Dependency Pinning & Future Updates**
 >
@@ -570,7 +594,9 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Uses uv for dependency management (prerelease support for hosting package)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Pin uv:0.7 — uv:latest (0.8+) resolves prereleases differently and may pick
+# incompatible pre-built wheels. Card-dispute proven-working pin.
+COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
 
 COPY pyproject.toml .
 RUN uv sync --no-dev --no-install-project \
@@ -636,7 +662,7 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 ## Prerequisites
 
 - Azure CLI (`az`) and Azure Developer CLI (`azd`) installed
-- `azd ai agent` extension: `azd extension install azure.ai.agents` (≥0.1.27-preview)
+- `azd ai agent` extension: `azd extension install azure.ai.agents` (≥0.1.30-preview)
 - Azure subscription with Contributor + **Azure AI Project Manager** on Foundry project
 - Set `AZURE_TENANT_ID` in azd env: `azd env set AZURE_TENANT_ID <your-tenant-id>`
 
@@ -795,24 +821,68 @@ the Foundry project** for eval telemetry and agent tracing to work.
    az role assignment create --assignee <PROJECT_MI_PRINCIPAL_ID> --role "Log Analytics Data Reader" --scope $LOG_ANALYTICS_ID
    ```
 
-### OpenTelemetry in container (optional)
+### OpenTelemetry in container (MANDATORY — guarded init only)
 
-For custom tracing beyond what the platform provides, add to `pyproject.toml`:
+> **Why this is mandatory, not optional.** The platform's
+> `APPLICATIONINSIGHTS_CONNECTION_STRING` auto-injection is
+> **best-effort, not contractual** — it can silently fail (KYC PoC in
+> `swedencentral` 2026-05-12: AppIn account-level connection persisted
+> with `credentials: null` after AAD-rejected → ApiKey-silent-drop;
+> platform never injected the env var). When it fails AND `container.py`
+> calls raw `configure_azure_monitor()` at the top of `main()`, the SDK
+> raises `ValueError`, the container exits before `ResponsesHostServer`
+> binds, and Foundry returns `server_error`/`model:""` on every smoke —
+> with ZERO telemetry to debug it (because telemetry init is what
+> crashed). The agent itself is fine; only the unguarded init kills it.
+>
+> **Hosted-agent `container.py` MUST wrap the init defensively** —
+> use `init_telemetry()` from `foundry-observability`'s
+> `references/python/otel_init.py`, OR inline an 8-line equivalent
+> that no-ops on missing env / SDK import / SDK raise. See the
+> `foundry-observability` skill (gap rows O-011 / O-012) for the
+> full forensic and reference helper.
+
+Add to `pyproject.toml`:
 
 ```toml
 azure-monitor-opentelemetry>=1.6.4
 opentelemetry-sdk>=1.27.0
 ```
 
-And initialize in `container.py`:
+And initialize in `container.py` — **guarded helper, NOT raw call**:
 
 ```python
-from azure.monitor.opentelemetry import configure_azure_monitor
-configure_azure_monitor()  # Reads APPLICATIONINSIGHTS_CONNECTION_STRING from env
+# At module top
+import logging, os
+logger = logging.getLogger(__name__)
+
+def _init_telemetry() -> None:
+    """Guarded telemetry init — never lets a missing/broken AppIn kill the container."""
+    conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if not conn:
+        logger.info("APPIN connection string not set — telemetry disabled (agent functional)")
+        return
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor(connection_string=conn)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("App Insights telemetry init skipped: %s (agent functional)", exc)
+
+def main() -> None:
+    _init_telemetry()           # FIRST line — guarded, never raises
+    # ... rest of main() ...
 ```
 
-> **Note:** The platform injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted
-> agent containers automatically. Do NOT declare it in agent.yaml — it's reserved.
+> **Anti-pattern (will silently kill your PoC):**
+> `configure_azure_monitor()` as the first line of `main()` with no
+> try/except. Causes the entire PoC to fail on any telemetry-platform
+> glitch. The agent works fine without telemetry — let it.
+
+> **Note:** The platform attempts to inject `APPLICATIONINSIGHTS_CONNECTION_STRING`
+> into hosted agent containers automatically (best-effort) — do NOT declare
+> it in `agent.yaml`, it is reserved. `create_version` rejects it with
+> `invalid_request_error` (request ID `820a502e2facc8e1cf46eb3ae71ea26e`
+> documents the rejection from KYC PoC).
 
 ## Evaluations
 
@@ -954,6 +1024,7 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] All `__PLACEHOLDER__` tokens replaced with actual values
 - [ ] Shared UAMI: one UAMI for bot + MCP ACA + hooks; `AZURE_CLIENT_ID` set on all ACAs
 - [ ] AppInsights connection to Foundry project exists (or postprovision hook creates it)
+- [ ] **`container.py` wraps telemetry init defensively** (no raw `configure_azure_monitor()` at module/main scope — use `_init_telemetry()` or `init_telemetry()` helper that no-ops on missing env / SDK import / SDK raise; see `foundry-observability` gap O-011)
 
 #### SPEC § 11c module-selector cross-check (MANDATORY)
 
@@ -1303,10 +1374,20 @@ container.py (MAF variant)
 | `MCP_SERVER_URL` | No | Legacy single MCP server URL (prefer mcp-config.json) |
 | `PORT` | No | Listen port (default: 8088) |
 
-> **Reserved environment variables (April 2026):** All `FOUNDRY_*` and `AGENT_*` prefixed
-> variables are reserved by the platform. Do NOT declare them in `agent.yaml`
-> `environment_variables` — the platform injects them automatically. Declaring them causes
-> `invalid_payload` errors at `create_version` time.
+> **Reserved environment variables (April 2026):** All `FOUNDRY_*` and `AGENT_*`
+> prefixed variables are reserved by the platform. Do NOT declare them in
+> `agent.yaml` `environment_variables` — the platform injects them automatically.
+> Declaring them causes `invalid_payload` errors at `create_version` time.
+>
+> **Also reserved (verified 2026-05-12):** `APPLICATIONINSIGHTS_CONNECTION_STRING`.
+> Even when the platform's auto-injection silently fails (see Gotchas table for
+> the AppIn AAD-rejected / ApiKey-silent-drop trap), you CANNOT escape-hatch by
+> setting it in `agent.yaml` — `create_version` fails immediately with
+> `invalid_request_error`: "Environment variable
+> 'APPLICATIONINSIGHTS_CONNECTION_STRING' is reserved for platform use" (request
+> ID `820a502e2facc8e1cf46eb3ae71ea26e` from KYC PoC). The only safe path is a
+> guarded `_init_telemetry()` in `container.py` so the agent runs even when AppIn
+> is broken — see the OpenTelemetry section above.
 
 ---
 
@@ -2205,6 +2286,8 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 |-------|-------|-----|
 | Agent returns empty responses | TPM too low — 429 rate limits | Use ≥300K TPM deployment |
 | **`FOUNDRY_PROJECT_ENDPOINT` in agent.yaml** | **All `FOUNDRY_*` and `AGENT_*` env vars are reserved by the platform (injected automatically)** | **Remove from `environment_variables` in agent.yaml. Container reads it via `os.environ` at runtime.** |
+| **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null` — see next row), the SDK raises `ValueError` and the container crashes before `ResponsesHostServer` binds. Foundry runtime then sees no agent → `server_error`. **The agent itself is fine.** | Wrap telemetry init in `_init_telemetry()` helper that no-ops on missing env / SDK ImportError / SDK exception. NEVER call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` skill, gap rows O-011 / O-012 for the full forensic and reference template. KYC PoC swedencentral 2026-05-12 anchor |
+| **AppInsights connection PUT returns 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but GET shows `credentials: null` (silent server-side drop)** | Platform gap on account-RP scope `2025-10-01-preview` in some regions (verified `swedencentral` 2026-05-12, correlation `46a268ef71ff3893cbde7f9d1917ca7f`). Connection persists with `isDefault: true` but no usable secret → platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Ship the agent with guarded `_init_telemetry()` (preceding row) so it functions without telemetry. File a support ticket with the correlation IDs. If AppIn telemetry is non-negotiable, pivot region (`eastus` / `northcentralus` are the best initial bets — verify auto-injection works BEFORE committing to a redeploy) |
 | **`template.kind` validation error** | **agent.yaml uses wrong schema — `template:` nesting is for `agent.manifest.yaml` (samples only)** | **Use ContainerAgent schema: `kind: hosted` at top level, NOT `template.kind`. Schema: `ContainerAgent.yaml`** |
 | **"Experience not available" on create_version** | **Region does not support hosted agents OR `ENABLE_CAPABILITY_HOST=true` (removed in refreshed preview)** | **Set `ENABLE_CAPABILITY_HOST=false` in `main.parameters.json`. Try `northcentralus`, `eastus`, `swedencentral`. Avoid `eastus2`.** |
 | **Agent 401 on `storage/history`** | **Agent's Entra identity missing `Azure AI User` on project scope, OR RBAC not yet propagated (5-15 min for new SPs)** | **Assign `Azure AI User` to BOTH `instance_identity` AND `blueprint` principal IDs on Foundry account + project. Wait 15 min, then redeploy to force new session.** |
@@ -2216,7 +2299,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | Eval `tool_selection` failures | Agent calls tools unnecessarily | Tool-use discipline directive (auto-injected) |
 | `create_version` returns old version | Same image tag as before | Always use unique timestamp tags |
 | `DeploymentModelNotSupported` | Wrong model version for the chosen model | Each model has a specific version string — see **Model Version Lookup Table** in Phase 5 § Step 2. Use `az cognitiveservices account list-models` to verify. |
-| `azd ai agent` extension missing | Extension not installed | `azd extension install azure.ai.agents` (ensure ≥0.1.27-preview) |
+| `azd ai agent` extension missing | Extension not installed | `azd extension install azure.ai.agents` (ensure ≥0.1.30-preview) |
 | Bot image overwritten on reprovision | Bicep resets container image | fetch-container-image.bicep + `SERVICE_BOT_RESOURCE_EXISTS` param |
 | Skills not loading | Wrong directory path | Must be `skills/` relative to `/app/` |
 | Import errors crash container | Missing dependency in pyproject.toml | Diagnostic HTTP server keeps container alive |

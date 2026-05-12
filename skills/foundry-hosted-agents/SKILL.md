@@ -338,11 +338,12 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core==1.1.1",
-    "agent-framework-foundry==1.1.1",
+    "agent-framework-core==1.3.0",
+    "agent-framework-foundry==1.3.0",
     "agent-framework-foundry-hosting>=1.0.0a260421",
     "azure-ai-projects>=2.1.0",
-    "azure-identity>=1.19.0",
+    "azure-identity>=1.19.0,<1.26.0a0",
+    "mcp>=1.10.0",
     "python-dotenv>=1.0.0",
     # Add these if using save_report file generation:
     # "openpyxl>=3.1.0",   # XLSX
@@ -352,25 +353,38 @@ dependencies = [
 [tool.uv]
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 prerelease = "if-necessary-or-explicit"
+
+[tool.setuptools]
+packages = []
 ```
 
-**Do NOT use `agent-framework>=1.1.0` as a meta-package.** On linux/amd64 it resolves
-to 1.3.0, which renames `Agent` and breaks `from agent_framework import Agent`.
-Pin `agent-framework-core==1.1.1` and `agent-framework-foundry==1.1.1` exactly
-instead; they provide the same surface (`Agent`, `@tool`, and `FoundryChatClient`
-via `agent-framework-foundry`). Verified working on linux/amd64 as of 2026-04-23.
+**Do NOT use `agent-framework>=1.1.0` as a meta-package.** The meta-package's transitive
+resolution is non-deterministic across uv versions. Pin `agent-framework-core==1.3.0` and
+`agent-framework-foundry==1.3.0` exactly instead. Verified working on linux/amd64 as the
+card-dispute-investigation reference shape (May 2026 — supersedes the prior 1.1.1 pinning
+guidance, which became fragile once `agent-framework-foundry-hosting` advanced its
+transitive pins).
+
+**Mandatory adjacent rules** (lessons from KYC v6-v9 burn cycle):
+- **Drop** any explicit `azure-ai-agentserver-responses` line — `agent-framework-foundry-hosting`
+  pins the right transitive itself; declaring it explicitly causes uv to resolve a stack that
+  passes install but crashes at first invocation with opaque `server_error/model:""`.
+- **Add** explicit `mcp>=1.10.0` whenever using `MCPStreamableHTTPTool`. `agent-framework-core 1.3.0`
+  does NOT auto-pull it.
+- **Include** `[tool.setuptools] packages = []` for clean uv resolution.
 
 **`prerelease = "if-necessary-or-explicit"` is correct** — packages with explicit
 prerelease markers (e.g. `>=1.0.0a260421`) resolve to prereleases; everything else
 stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 
-### Dependency Chain (verified on PyPI, April 2026)
+### Dependency Chain (verified on PyPI, May 2026 — card-dispute proven)
 
 | Package | Version | Type | Pulls in |
 |---------|---------|------|----------|
-| `agent-framework-core` | 1.1.1 | ✅ Stable | pydantic, opentelemetry-api |
-| `agent-framework-foundry` | 1.1.1 | ✅ Stable | core, openai, azure-ai-projects |
+| `agent-framework-core` | 1.3.0 | ✅ Stable | pydantic, opentelemetry-api |
+| `agent-framework-foundry` | 1.3.0 | ✅ Stable | core, openai, azure-ai-projects |
 | `agent-framework-foundry-hosting` | 1.0.0a260423 | ⚠️ Alpha | agentserver-core==2.0.0b2, agentserver-responses==1.0.0b4 |
+| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.3.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
 No `override-dependencies` needed — the hosting package pins its own transitive deps.
@@ -422,6 +436,7 @@ resources:
 | Protocol version `1.0.0` | Semver format — NOT `"v1"` (old preview) |
 | `resources: {cpu, memory}` flat object | NOT a YAML list `[{kind: model}]` |
 | NO `FOUNDRY_PROJECT_ENDPOINT` | Reserved — platform injects it. All `FOUNDRY_*` and `AGENT_*` prefixed vars are reserved |
+| NO `APPLICATIONINSIGHTS_CONNECTION_STRING` | Also reserved (verified 2026-05-12, req `820a502e2facc8e1cf46eb3ae71ea26e`). Platform attempts to auto-inject from the account-level `AppInsights` connection — but auto-injection is **best-effort**, can silently fail (see Troubleshooting), and you CANNOT escape-hatch via `agent.yaml`. Use guarded `_init_telemetry()` in `container.py` so the agent survives the failure (see `foundry-observability` gap rows O-011 / O-012) |
 | Model deployment in `azure.yaml` | NOT in agent.yaml — declared in `config.deployments` |
 
 > **Two schemas exist — don't confuse them:**
@@ -643,8 +658,12 @@ Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/con
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
 | Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. The PoC ran 1/3 reproducibility with mini + permissive MCP, **3/3 with gpt-5.4 + validate-or-reject**. |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` | Passed in `HostedAgentDefinition.environment_variables` | Remove it — platform injects telemetry config |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `agent.yaml` `environment_variables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Verified 2026-05-12, req `820a502e2facc8e1cf46eb3ae71ea26e` |
 | Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` OR AppInsights connection missing on account | Assign RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
+| **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; `azd ai agent show` reports active** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null`), the SDK raises `ValueError`. Container crashes before `ResponsesHostServer` binds. Foundry runtime sees no agent. **The agent itself is fine — telemetry init is what killed it.** | Wrap telemetry init in `_init_telemetry()` (no-ops on missing env / SDK ImportError / any SDK exception). Never call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` gap row O-011 |
+| **AppInsights connection PUT 400 ValidationError "AuthType for AppInsights Connection can only be ApiKey"** | Account-RP scope `2025-10-01-preview` in `swedencentral` (and possibly other regions) rejects `authType: AAD` despite skill guidance. Correlation `46a268ef71ff3893cbde7f9d1917ca7f`, verified 2026-05-12 | Use `authType: ApiKey` with `credentials.key` in body. **BUT:** the key is silently dropped server-side — GET returns `credentials: null` and platform never injects the env var. There is no working workaround at the platform layer. File a support ticket; ship with guarded `_init_telemetry()` so the agent functions without telemetry; consider region pivot |
+| **AppInsights connection account-level "1-per-category" limit** | Account-level `AppInsights` connections enforce a single-instance-per-category constraint — cannot create parallel connections in the same account. Re-creation requires DELETE first | DELETE the existing connection BEFORE re-PUT. Use `az rest --method DELETE` with full URI **as a variable** (do NOT inline `?api-version=...` — see next row) |
+| **`az rest --method DELETE` strips `?api-version=...` query string when URI is inlined on PowerShell** | PowerShell argument parsing eats the `?api-version=` before `az` sees it. The DELETE then fails with "MissingApiVersionParameter" or behaves inconsistently against the bare resource without the version | Workaround: assign the URI to a variable first, then pass via `--uri $delUri`: `$delUri = "https://management.azure.com/.../connections/<name>?api-version=2025-10-01-preview"; az rest --method DELETE --uri $delUri` |
 | ACA job uses old code after deploy | Postdeploy hook fails (`AZURE_AI_PROJECT_ENDPOINT not set`) | Run `cd infra/scripts && uv run deploy_job.py` manually after each `azd deploy` |
 | Container starts but `agent_reference` errors in logs | `FoundryAgent` used for sub-agents | Replace with client-swap pattern |
 | Protocol version error | Using `"v1"` | Use semver `"1.0.0"` |

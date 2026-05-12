@@ -270,13 +270,39 @@ environment_variables:
 Add it to `agent.yaml` and the agent runtime errors with
 `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved`.
 
+> **⚠️ Layer 2 caveat — hosted-agent containers MUST guard the init too.**
+> The "platform auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING`"
+> promise is **best-effort, not contractual** — we have field evidence
+> that it can silently fail. KYC PoC in `swedencentral` (2026-05-12)
+> ran with the AppInsights account-level connection persisted as
+> `credentials: null` (silent-drop on AAD-rejected → ApiKey-fallback PUT
+> — see "Auth-type platform forensic" below). The platform did NOT
+> inject the env var. The hosted-agent container called raw
+> `configure_azure_monitor()` as the first line of `main()`. The SDK
+> raised `ValueError`. The container crashed before `ResponsesHostServer`
+> bound. Foundry returned `server_error`/`model:""` on every smoke —
+> with ZERO telemetry to debug it (telemetry init was what crashed).
+> **The agent itself was fine.**
+>
+> **Discipline.** Hosted-agent `container.py` MUST use the same
+> guarded-init pattern as ACA workloads (Layer 3 helper below), NOT
+> raw `configure_azure_monitor()`. Treat the platform's auto-injection
+> guarantee as best-effort — guard it like Layer 3 does. See gap rows
+> O-011 / O-012 for the full forensic and the canonical inline helper
+> shape.
+
 ---
 
-## Layer 3 — ACA workloads (MCP / bot / workspace / cron)
+## Layer 3 — ACA workloads + hosted-agent containers (MCP / bot / workspace / cron / agent)
 
 The Foundry runtime auto-instruments hosted agents, but **everything
 else** (your MCP server, your bot, your workspace, your cron jobs) is
-plain Python or Node — you wire OTel yourself.
+plain Python or Node — you wire OTel yourself. **And per the Layer 2
+caveat above, hosted-agent `container.py` belongs in this bucket too**
+when the platform's auto-injection of `APPLICATIONINSIGHTS_CONNECTION_STRING`
+fails — they MUST use the same `init_telemetry()` helper as every other
+workload, just defensively guarded so a missing env var doesn't crash
+startup.
 
 ### Step 3.1 — Python init (one line of init code per workload)
 
@@ -477,6 +503,37 @@ are silent. This is the single most useful query when an ACA Job is
 | O-008 | Telemetry from two pilots collides in same AppIn | One AppIn shared across pilots without `cloud_RoleName` discipline | Pass distinct `logger_name` per service, OR provision one AppIn per pilot |
 | O-009 | Traces appear briefly then stop after redeploy | New ACA revision didn't get the env var (drift in revision template) | Check the most recent revision's container env explicitly: `az containerapp revision show -g <rg> -n <app> --revision <rev> --query 'properties.template.containers[0].env'` |
 | O-010 | Telemetry shows but with key-based auth (despite `disableLocalAuth=true`) | A previous deploy left the ingestion key path active | Force-set `DisableLocalAuth: true`; redeploy; old keys stop working immediately |
+| O-011 | **Hosted agent returns `server_error` / `model: ""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform's `APPLICATIONINSIGHTS_CONNECTION_STRING` auto-injection fails (e.g. account-level AppIn connection persisted with `credentials: null` — see O-012), the SDK raises `ValueError`. Container exits before `ResponsesHostServer` binds; Foundry runtime sees no agent. **The agent itself is fine — only telemetry init crashed it.** | **Hosted-agent `container.py` MUST use guarded init** — `init_telemetry()` from `references/python/otel_init.py` OR inline an 8-line equivalent that no-ops on (a) missing env var, (b) SDK ImportError, (c) any SDK exception. Never call `configure_azure_monitor()` raw at module/main scope. The agent works fine without telemetry — don't let telemetry init kill it |
+| O-012 | AppInsights connection PUT returns HTTP 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but `credentials: null` on subsequent GET (silent server-side drop) | Platform gap on account-RP scope `2025-10-01-preview` in some regions. Verified `swedencentral` 2026-05-12, correlation `46a268ef71ff3893cbde7f9d1917ca7f`. The connection persists with `isDefault: true, isSharedToAll: true` but no usable secret — the platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Document the gap. Ship the agent with O-011 guarded init so it functions without telemetry. File an Azure support ticket with the correlation IDs (we have 3 documented req IDs from the KYC PoC if you need a precedent). If AppIn telemetry is non-negotiable for the pilot, pivot region (`eastus` / `northcentralus` are the best initial bets — **verify auto-injection works BEFORE committing to a redeploy**) |
+
+### Auth-type platform forensic (KYC swedencentral, 2026-05-12)
+
+The Layer 2 caveat callout above and gap rows O-011 / O-012 are
+anchored on this forensic. Three remediation paths attempted, **all
+failed with documented evidence**:
+
+| Path | Outcome | Evidence anchor |
+|---|---|---|
+| 1. Set `APPLICATIONINSIGHTS_CONNECTION_STRING` in `agent.yaml` (escape hatch) | HTTP 400 `invalid_request_error`: "Environment variable 'APPLICATIONINSIGHTS_CONNECTION_STRING' is reserved for platform use" | Request ID `820a502e2facc8e1cf46eb3ae71ea26e` |
+| 2. AAD `authType` on PUT to AppInsights connection (skill-recommended) | HTTP 400 ValidationError: "AuthType for AppInsights Connection can only be ApiKey" | Correlation `46a268ef71ff3893cbde7f9d1917ca7f`, account-rp / swedencentral / `2025-10-01-preview` |
+| 3. ApiKey `authType` with `credentials.key` in body (workaround) | HTTP 200 on PUT, GET returns `credentials: null` (silent-drop on a brand-new clean account-level resource at canonical scope) | `isDefault: true, isSharedToAll: true` records on the connection; platform still does NOT inject the env var |
+
+**Lesson.** The Layer 2 promise ("platform auto-injects when you have
+an account-level `AppInsights` connection") cannot be relied upon as a
+runtime contract. Layer 2 is best-effort observability; **Layer 3
+(`init_telemetry()` everywhere — including in the hosted-agent
+container) is the contract that holds.** Build for Layer 3; treat
+Layer 2 as a bonus.
+
+> **App Insights blocked? Don't ship the hosted agent in this region.**
+> If a region returns 400 on AAD AND silently drops ApiKey, the platform
+> isn't going to auto-inject the connection string. The agent will run
+> fine without telemetry, but if telemetry is non-negotiable for the
+> pilot (compliance audit, eval analysis, post-mortem capacity), pivot
+> to a region where auto-injection is verified working BEFORE committing
+> to a deploy. Always start a new region with a smoke probe: deploy a
+> minimal hosted agent, invoke once, and run `first-trace-probe.kql` —
+> if 0 rows after 90s, the region has the same gap.
 
 ---
 
