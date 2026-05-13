@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -82,6 +82,176 @@ server.run()  # Serves on port 8088
 - `ResponsesHostServer` handles liveness/readiness probes natively
 - `DefaultAzureCredential` resolves to the container's App Service managed identity
 - Custom tools use `@tool(approval_mode="never_require")` with `Annotated` type hints
+
+### Skill Loading — `SkillsProvider` (recommended) vs. inline `_load_skills()` (legacy)
+
+> **Authoritative source.** [Microsoft Agent Framework — Agent Skills (Python)](https://learn.microsoft.com/en-us/agent-framework/agents/skills?pivots=programming-language-python).
+> `SkillsProvider` is a first-class **MAF Python class** shipped in the same
+> `agent_framework` package as `Agent`, `MCPStreamableHTTPTool`, and `@tool`
+> (no extra install). It implements the [agentskills.io](https://agentskills.io/)
+> 4-stage progressive disclosure pattern:
+> **Advertise (~100 tokens/skill) → `load_skill` → `read_skill_resource` → `run_skill_script`**.
+> Wired via `context_providers=[skills_provider]` on the `Agent(...)`
+> constructor — orthogonal to `tools=[...]`.
+
+#### ⚠️ Separation of concerns (read this first)
+
+When `SkillsProvider` is wired, `_load_instructions()` MUST contain **only**
+the baseline orchestration prompt (`copilot-instructions.md`) plus
+SPEC-derived constants (`config.json`: thresholds, enums, templates).
+
+It MUST NOT also concat `SKILL.md` content. `SkillsProvider` advertises
+each skill in ~100 tokens, then the agent calls `load_skill(name)` on
+demand. Concatenating both **double-counts** every skill body, blows
+out the static prompt, and silently defeats progressive disclosure.
+
+#### Recommended — `SkillsProvider` context provider
+
+Defensive-init helper. The agent stays runnable with `context_providers=[]`
+even if the skills directory is missing or a `SKILL.md` is malformed —
+critical for ops, since a single broken skill file should not crash the
+container at startup.
+
+```python
+import os
+from pathlib import Path
+from agent_framework import Agent, MCPStreamableHTTPTool, SkillsProvider, tool
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.identity import DefaultAzureCredential
+
+def _build_skills_provider() -> SkillsProvider | None:
+    """Wire SKILL.md playbooks via MAF's progressive-disclosure provider.
+
+    Returns None if the skills directory is missing or empty so the
+    agent stays runnable with context_providers=[] instead of crashing
+    at startup on a corrupt or absent skill folder.
+    """
+    skills_dir = Path(__file__).parent / "skills"
+    if not skills_dir.exists():
+        log.warning("Skills directory missing at %s; SkillsProvider disabled.", skills_dir)
+        return None
+    skill_subdirs = [
+        d for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+    ]
+    if not skill_subdirs:
+        log.warning("No SKILL.md files found under %s; SkillsProvider disabled.", skills_dir)
+        return None
+    try:
+        provider = SkillsProvider.from_paths(skills_dir)
+        log.info(
+            "SkillsProvider wired with %d skill(s): %s",
+            len(skill_subdirs),
+            ", ".join(sorted(d.name for d in skill_subdirs)),
+        )
+        return provider
+    except Exception as exc:  # never crash on a corrupt skill folder
+        log.warning("SkillsProvider init failed (%s); falling back to no-op.", exc)
+        return None
+
+
+def _load_instructions() -> str:
+    """Base prompt + SPEC-derived constants ONLY. Skills are NOT concatenated
+    here — they flow through SkillsProvider via context_providers."""
+    base = Path(__file__).parent
+    parts: list[str] = []
+    parts.append((base / "copilot-instructions.md").read_text(encoding="utf-8"))
+    config_path = base / "config" / "<process>.json"
+    if config_path.exists():
+        parts.append(
+            "\n\n---\n\n# Runtime configuration\n\n"
+            "These thresholds, lists, and templates are SPEC-derived constants. "
+            "Honour them in your behaviour:\n\n```json\n"
+            + config_path.read_text(encoding="utf-8")
+            + "\n```\n"
+        )
+    return "\n".join(parts)
+
+
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["MODEL_DEPLOYMENT_NAME"],
+    credential=DefaultAzureCredential(),
+)
+
+skills_provider = _build_skills_provider()
+context_providers = [skills_provider] if skills_provider is not None else []
+
+agent = Agent(
+    client=client,
+    instructions=_load_instructions(),       # base + config ONLY (NOT skills)
+    tools=[my_tool, mcp_tool],
+    context_providers=context_providers,     # ← progressive skill loading
+    default_options={"store": False},
+)
+ResponsesHostServer(agent).run()
+```
+
+**Constructor variants.** Both work and are equivalent:
+- `SkillsProvider.from_paths(skills_dir)` — classmethod, the form used in
+  production hosted agents. Use this.
+- `SkillsProvider(skill_paths=skills_dir)` — keyword constructor shown in
+  the official docs. Same outcome.
+
+The provider searches up to two levels deep, so `skills/<name>/SKILL.md`
+and `skills/<group>/<name>/SKILL.md` layouts are both auto-discovered.
+
+**Per-query cost.** `SkillsProvider` adds **+1 `load_skill` tool call per
+skill the agent activates per query** (typically 1-3 per query). This is
+**NOT** the 20-34-internal-call overhead seen on `CopilotClient` runs —
+that overhead lives in `CopilotClient` itself and is unrelated to
+`SkillsProvider`.
+
+**Quantified benefits** (from production MAF deployments):
+- **~75% token saving** on the static prompt vs. concatenating all
+  `SKILL.md` bodies into instructions.
+- **Per-skill App Insights telemetry** — every `load_skill(name)` is a
+  traceable tool-call span, so routing analysis (which skills get used?
+  which never load? which load on the wrong intent?) is free.
+
+#### Legacy alternative — inline `_load_skills()` concat
+
+The pre-`SkillsProvider` pattern: read every `skills/*/SKILL.md` at
+startup and append the bodies to the system prompt. Still supported,
+still works, occasionally still the right choice.
+
+```python
+def _load_skills() -> str:
+    chunks: list[str] = []
+    skills_dir = Path(__file__).parent / "skills"
+    for skill_file in sorted(skills_dir.glob("*/SKILL.md")):
+        chunks.append(
+            f"\n\n---\n\n# Skill: {skill_file.parent.name}\n\n"
+            + skill_file.read_text(encoding="utf-8")
+        )
+    return "".join(chunks)
+
+
+def _load_instructions_legacy() -> str:
+    base = (Path(__file__).parent / "copilot-instructions.md").read_text(encoding="utf-8")
+    return f"{base}\n\n{_load_skills()}"
+
+
+agent = Agent(
+    client=client,
+    instructions=_load_instructions_legacy(),   # everything baked into the prompt
+    tools=[my_tool, mcp_tool],
+    # context_providers omitted — skills already in instructions
+    default_options={"store": False},
+)
+```
+
+#### When to choose which
+
+| | `SkillsProvider` (recommended) | `_load_skills()` concat (legacy) |
+|---|---|---|
+| Per-query overhead | +1 `load_skill` per skill loaded (1-3/query typical) | None |
+| Static prompt size | ~100 tokens/skill advertised | Full SKILL.md bodies always present |
+| Total skill content >5 KB | ✅ recommended | ⚠️ blows up context budget every turn |
+| Strict latency budget (sub-2s tools) | ⚠️ adds `load_skill` round-trip | ✅ faster cold path |
+| Per-skill usage telemetry | ✅ free (every `load_skill` is a span) | ❌ invisible |
+| New PoCs | ✅ default | only if total skill content is small (<5 KB) |
+| Mixing both | ❌ never — double-counts every skill body | n/a |
 
 ### Multi-Agent: Calling Other Foundry Agents as Tools
 

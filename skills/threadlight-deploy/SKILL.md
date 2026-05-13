@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -223,7 +223,7 @@ Core deployment inputs:
 |--|----------------------|-------------------|
 | **Runtime** | `CopilotClient` + `InvocationAgentServerHost` | `Agent` + `FoundryChatClient` + `ResponsesHostServer` |
 | **Protocol** | Invocations (SSE streaming) | Responses |
-| **Skill loading** | `SkillsProvider` (progressive) | `_load_skills()` (all at startup) |
+| **Skill loading** | `SkillsProvider` (progressive) | `SkillsProvider.from_paths()` (progressive, recommended) **OR** `_load_skills()` concat (legacy) |
 | **MCP** | `mcp_servers` parameter | `client.get_mcp_tool()` |
 | **Custom `@tool`** | ❌ Not supported | ✅ Supported |
 | **Foundry Toolbox** | ❌ Not available | ✅ `client.get_toolbox()` |
@@ -233,7 +233,7 @@ Core deployment inputs:
 **Decision rules:**
 - **Default to GHCP** — preferred runtime, progressive skills, no timeout limits
 - **Use MAF when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions OR **file generation** (save_report → XLSX/PDF/CSV)
-- **Use MAF when**: agent primarily does data queries with fast MCP tools — MAF is 10-20x faster for these (19s vs 220s+), because GHCP's SkillsProvider adds 20-34 extra `load_skill` calls per query
+- **Use MAF when**: agent primarily does data queries with fast MCP tools — MAF is 10-20x faster for these (19s vs 220s+). The 20-34 extra `load_skill`-shaped calls per query are **`CopilotClient` runtime overhead**, NOT `SkillsProvider` overhead — `SkillsProvider` itself only adds +1 `load_skill` per skill the agent activates per query, and works on both runtimes (see `foundry-hosted-agents` § Skill Loading)
 - If the spec doesn't indicate either way → use GHCP
 
 #### 1e. Choose model access pattern
@@ -313,8 +313,11 @@ skills/
     └── SKILL.md
 ```
 
-These are loaded at startup by `_load_skills()` and appended to instructions.
-The agent discovers all skill content through its system prompt.
+These are surfaced to the agent through `SkillsProvider` (recommended,
+progressive disclosure) **or** loaded at startup by a `_load_skills()`
+helper that appends them to instructions (legacy concat). See
+`foundry-hosted-agents` § Skill Loading for the trade-off and a
+production-tested defensive `_build_skills_provider()` helper.
 
 ### 3. `src/agent/mcp-config.json` — MCP Server Configuration
 
@@ -459,8 +462,13 @@ The runtime uses `CopilotClient` + `InvocationAgentServerHost`:
 
 The runtime uses `Agent` + `FoundryChatClient` + `ResponsesHostServer`:
 1. `FoundryChatClient` with `DefaultAzureCredential` for Foundry auth
-2. `_load_skills()` reads all SKILL.md files and appends to instructions
-3. `_create_mcp_tools()` creates tools via `client.get_mcp_tool()`
+2. **Skill loading** — `SkillsProvider.from_paths(skills_dir)` wired via
+   `context_providers=[skills_provider]` for progressive disclosure
+   (recommended), **or** legacy `_load_skills()` that reads all SKILL.md
+   files and appends to instructions. Pick one — never both. See
+   `foundry-hosted-agents` § Skill Loading for the trade-off.
+3. `_create_mcp_tools()` creates tools via `MCPStreamableHTTPTool` with a
+   `parse_tool_results` extractor (avoids the [<Content>] repr leak)
 4. `ResponsesHostServer(agent).run()` serves the Responses protocol
 5. Diagnostic HTTP server on import failure
 
@@ -1391,11 +1399,13 @@ If it's a simple Q&A agent with built-in tools → Prompt Agent is simpler.
 
 ### Why GHCP SDK (Default Runtime)?
 
-- **Progressive skill loading**: `SkillsProvider` loads skills on-demand, not all at once
 - **No timeout**: Invocations protocol uses SSE — no 120s gateway timeout on long tool loops
 - **Streaming**: SSE event stream for real-time output
 - **Simpler MCP**: `mcp_servers` parameter vs manual `get_mcp_tool()` calls
-- **Smaller context**: Skills loaded progressively, instructions stay lean
+
+> Note: progressive skill loading via `SkillsProvider` is **NOT** a GHCP-only
+> feature — MAF supports it equally well. See `foundry-hosted-agents`
+> § Skill Loading for the MAF wiring (`context_providers=[skills_provider]`).
 
 ### When to Use MAF Instead
 
@@ -1439,10 +1449,15 @@ container.py (GHCP variant)
 container.py (MAF variant)
 │
 ├── _load_instructions()
-│   └── Read copilot-instructions.md
+│   └── Read copilot-instructions.md (+ config.json) — base prompt ONLY
 │
-├── _load_skills()
-│   └── Read skills/**\/SKILL.md → append to instructions
+├── Skill loading — pick ONE:
+│   ├── (option A, recommended)
+│   │     SkillsProvider.from_paths("skills/")
+│   │     └── Progressive disclosure: advertise (~100 tok/skill) → load_skill on demand
+│   └── (option B, legacy)
+│         _load_skills()
+│         └── Read skills/**/SKILL.md → append to instructions (concat at startup)
 │
 ├── _load_mcp_config()
 │   ├── Try /app/mcp-config.json (with ${ENV_VAR} expansion)
@@ -1452,9 +1467,13 @@ container.py (MAF variant)
 │   └── DefaultAzureCredential — keyless auth to Foundry
 │
 ├── _create_mcp_tools(client, config)
-│   └── client.get_mcp_tool(name, url, headers, approval_mode)
+│   └── MCPStreamableHTTPTool(url, parse_tool_results=_extractor)
 │
-├── Agent(client, instructions, tools, default_options={"store": False})
+├── Agent(
+│     client, instructions, tools,
+│     context_providers=[skills_provider] if option A else [],
+│     default_options={"store": False},
+│   )
 │
 └── ResponsesHostServer(agent).run()  →  port 8088
 ```

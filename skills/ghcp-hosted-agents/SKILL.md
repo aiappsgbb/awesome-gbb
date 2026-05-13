@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -30,7 +30,7 @@ Deploy Foundry hosted agents using the **GitHub Copilot SDK** with BYOK
 | **Protocol** | Responses API (request/response) | Invocations (SSE streaming) |
 | **Tool loop limit** | ~120s (Foundry gateway timeout) | ♾️ (SSE keeps connection alive) |
 | **Per-query overhead** | Low (1-3 internal turns) | High (20-34 internal tool calls per query) |
-| **Skill discovery** | Manual (load into instructions) | `SkillsProvider` progressive loading |
+| **Skill discovery** | `SkillsProvider.from_paths()` (recommended) **OR** inline concat (legacy) | `SkillsProvider` (default) |
 | **Custom tools** | `@tool` decorator | Not supported (use MCP servers instead) |
 | **Toolbox** | `client.get_toolbox()` | Not directly available |
 | **Maturity** | Production-proven | Validated (identical eval scores) |
@@ -61,6 +61,14 @@ The overhead is masked when tools are slow: bat-scraper Playwright calls take
 Decision rule: if your slowest tool is <2s, you almost certainly want MAF.
 If your slowest tool is >30s and you need streaming progress events to the caller,
 GHCP SDK is the better fit.
+
+> **Note on `SkillsProvider` cost (both runtimes).** `SkillsProvider` is
+> **not** GHCP-only — MAF supports it equally well via
+> `context_providers=[skills_provider]` (see `foundry-hosted-agents`
+> § Skill Loading). On both runtimes, `SkillsProvider` itself adds only
+> **+1 `load_skill` round-trip per skill the agent activates per query**
+> (typically 1-3 per query). The 20-34-call overhead above is the
+> `CopilotClient` runtime, an entirely separate concern.
 
 ---
 
@@ -413,7 +421,7 @@ GHCP SDK (Invocations Protocol):
 | Custom `@tool` functions | ✅ Required | ❌ Not supported |
 | Foundry Toolbox | ✅ `client.get_toolbox()` | ❌ Not available |
 | Streaming output | ❌ Response only | ✅ Event stream |
-| Progressive skills | Manual injection | ✅ `SkillsProvider` |
+| Progressive skills | ✅ `SkillsProvider.from_paths()` (or legacy concat) | ✅ `SkillsProvider` |
 | MCP tools | `client.get_mcp_tool()` | `mcp_servers` parameter |
 | Auth complexity | Low (DAC → FoundryChatClient) | Medium (BYOK token minting) |
 | Packages | Stable releases | Pre-release beta |
