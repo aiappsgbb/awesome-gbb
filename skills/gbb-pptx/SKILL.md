@@ -1,15 +1,25 @@
 ---
-name: pptx
+name: gbb-pptx
 description: >
-  Generate professional PowerPoint (PPTX) presentations using python-pptx.
+  Generate professional PowerPoint (PPTX) presentations using python-pptx
+  (the AI Apps GBB dark/light pitch-deck generator).
   USE FOR: create PowerPoint, generate PPTX, make slide deck, build presentation,
-  convert markdown to slides, pitch deck, report as PPTX, create slides.
-  DO NOT USE FOR: editing existing PPTX files, PDF generation, Google Slides.
+  convert markdown to slides, pitch deck, report as PPTX, create slides,
+  gbb-pptx, gbb deck, dark-themed deck.
+  DO NOT USE FOR: editing existing PPTX files (use the upstream `pptx` skill),
+  PDF generation, Google Slides.
 metadata:
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
-# PPTX Deck Generator Skill
+# GBB PPTX Deck Generator Skill
+
+> **Renamed from `pptx` in v2.0.0** to avoid name collision with the upstream
+> Anthropic-style `pptx` skill (which focuses on reading/editing existing
+> `.pptx` files via markitdown). This GBB variant generates fresh
+> dark/light-themed pitch decks from Markdown using `python-pptx`. Both can
+> coexist at user scope — invoke this one with the `gbb-pptx` / "GBB deck" /
+> "dark-themed deck" trigger phrases.
 
 Generate professional, dark-themed PowerPoint (PPTX) presentations using `python-pptx`.
 

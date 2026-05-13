@@ -56,7 +56,7 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 >
 > | ✅ Works in Cowork (markdown / JSON / config gen) | ❌ Needs a real shell (Copilot CLI, Coding Agent, Cursor, …) |
 > |---|---|
-> | `threadlight-design` · `threadlight-hitl-patterns` · `threadlight-event-triggers` (scaffold spec) · `threadlight-demo-data-factory` (data spec) · `citadel-spoke-onboarding` (config gen) · `ip-catalog` (read-only MCP) · `azure-tenant-isolation` (config files) · `foundry-cross-resource` (spec/Bicep authoring) | `threadlight-deploy` · `threadlight-local-test` · `threadlight-safe-check` · `threadlight-workspace-ui` · `foundry-hosted-agents` · `ghcp-hosted-agents` · `foundry-mcp-aca` · `foundry-evals` · `foundry-iq` · `foundry-doc-vision-speech` · `foundry-observability` · `foundry-teams-bot` · `foundry-vnet-deploy` · `azd-patterns` · `pptx` · `auto-demo-producer` |
+> | `threadlight-design` · `threadlight-hitl-patterns` · `threadlight-event-triggers` (scaffold spec) · `threadlight-demo-data-factory` (data spec) · `citadel-spoke-onboarding` (config gen) · `ip-catalog` (read-only MCP) · `azure-tenant-isolation` (config files) · `foundry-cross-resource` (spec/Bicep authoring) | `threadlight-deploy` · `threadlight-local-test` · `threadlight-safe-check` · `threadlight-workspace-ui` · `foundry-hosted-agents` · `ghcp-hosted-agents` · `foundry-mcp-aca` · `foundry-evals` · `foundry-iq` · `foundry-doc-vision-speech` · `foundry-observability` · `foundry-teams-bot` · `foundry-vnet-deploy` · `azd-patterns` · `gbb-pptx` · `auto-demo-producer` |
 >
 > Skills in the right column may still **author** their artifacts in Cowork
 > (the markdown / Bicep / Dockerfile generation step is text), but you'll
@@ -120,7 +120,7 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 
 | Skill | Description |
 |-------|-------------|
-| [**pptx**](skills/pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes |
+| [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
 ### 🔍 Discovery
