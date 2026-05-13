@@ -85,7 +85,8 @@ For backend systems you can't access (SAP, Oracle, CRM, corporate DBs):
 ### 3. Iterate Locally — `threadlight-local-test` *(optional, SE-recommended)*
 
 Before burning a full `azd up` cycle on a customer sandbox, the SE can run the
-designed agent **locally** in Copilot CLI / Cowork / Clawpilot:
+designed agent **locally** in Copilot CLI / Cursor / Clawpilot (a real shell
+— **not Cowork**, which can't subprocess FastMCP):
 
 - Three patterns: MCP-direct (point Copilot at a local FastMCP), full local
   loop (FoundryChatClient against the deployed Foundry account, MCP and
@@ -101,7 +102,10 @@ the SE just needs to refresh.
 Generate all Foundry deployment artifacts from the spec + agents:
 
 - `container.py` — GHCP SDK runtime by default (CopilotClient + InvocationAgentServerHost);
-  falls back to MAF (Agent + FoundryChatClient + ResponsesHostServer) when Toolbox needed
+  falls back to MAF (Agent + FoundryChatClient + ResponsesHostServer) when Toolbox needed.
+  Both runtimes support **`SkillsProvider` progressive skill loading** (advertise + on-demand
+  `load_skill`) via `context_providers=[skills_provider]` — see `foundry-hosted-agents`
+  § Skill Loading for the canonical defensive `_build_skills_provider()` helper
 - `Dockerfile` — uv-based, python:3.12-slim
 - `pyproject.toml` — with prerelease handling for hosting packages
 - `agent.yaml` + `azure.yaml` — azd ai agent extension scaffold
@@ -276,6 +280,7 @@ project/
 | `ghcp-hosted-agents` | GHCP SDK runtime (Invocations protocol, SSE) | For long-running agents (>120s) |
 | `azd-patterns` | azd hooks, ACA Job deployment, **silent-failure debug ladder** | For advanced azd workflows |
 | `azure-tenant-isolation` | Multi-tenant `az` / `azd` isolation for concurrent shells | When working across >1 Azure tenant |
+| `foundry-vnet-deploy` | Deploy Foundry with Agent Setup inside a private VNet — guided interview, optional Citadel spoke→hub peering modules | When the customer mandates network isolation (FSI, regulated industries, MCAPS pilots with strict posture) |
 | `citadel-spoke-onboarding` | Production landing zone — APIM, Access Contracts, JWT | Post-pilot opt-in |
 
 ---
@@ -283,6 +288,8 @@ project/
 ## Running a Customer Workshop
 
 > **Personas:** sellers craft the pitch in **Copilot Cowork** with `threadlight-design`; SEs run hands-on workshops with `threadlight-local-test` and/or `threadlight-deploy`.
+>
+> ⚠️ **Cowork can do `threadlight-design` end-to-end**, but **cannot run** `threadlight-local-test`, `threadlight-deploy`, `threadlight-safe-check`, or any `foundry-*` deploy skill — those need a real shell (Copilot CLI / Coding Agent / Cursor) for `azd`, `az`, `docker`, and package installs. The seller→SE handoff happens at the moment the SPEC moves from "designed" to "needs to run".
 
 A typical 2-hour customer workshop on a deployed PoC follows this rough rhythm. (For a deeper facilitator runbook with timing, demo scripts, and per-process beats, ask the SE to consult the `WORKSHOP-RUNBOOK.md` in their threadlight workspace.)
 
