@@ -104,6 +104,20 @@ grant the agent's `instance_identity`. Toolboxes need an MCP client that
 mints its own bearer token per request — exactly what
 `MCPStreamableHTTPTool` + `httpx.Auth` does in Pattern A below.
 
+Other dead ends ruled out by direct testing (May 2026):
+
+- `type: "namespace"` — exists, but `tools[]` inside a namespace only
+  accepts `function` and `custom` types. It's a way to group developer
+  functions, not a wrapper for toolboxes.
+- `type: "tool_search"` — newer OpenAI feature unsupported on
+  `gpt-4.1-mini` and has no `toolbox_name` / `namespaces` / `sources` /
+  `toolboxes` fields. It's not the toolbox consumer.
+- `type: "mcp"` + `project_connection_id` — the runtime DOES resolve the
+  connection (proven via a deliberate "not found" error path), but
+  toolbox endpoints require a fresh AAD bearer per request. Foundry
+  connections that hold static API keys can't authenticate to a toolbox
+  endpoint, so this path is blocked at the auth layer.
+
 If you want a Prompt-only agent (no code container) and you need just one
 or two tools, wire those tools directly into the Prompt agent's `tools`
 array — skip the toolbox abstraction entirely.
