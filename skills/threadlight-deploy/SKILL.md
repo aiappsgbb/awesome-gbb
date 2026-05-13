@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -2738,6 +2738,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | **Wrong built-in role GUID hard-coded in Bicep** | Easy to typo (`...406e-8b5a-...` vs `...408a-b874-...`); deploy doesn't fail until role-assignment resource provisions | **NEVER hard-code role GUIDs from memory.** Look up via `az role definition list --name "<role>" --query "[0].name" -o tsv`. Useful pins: AcrPull `7f951dda-4ed3-4680-a7ca-43fe172d538d` · KV Secrets User `4633458b-17de-408a-b874-0445c86b69e6` · KV Secrets Officer `b86a8fe4-44ce-4948-aee5-eccb2c155cd7` |
 | **`az rest --headers Content-Type=application/json` fails on Windows** ("non atteso" / "unexpected") | The `--headers` flag has inconsistent parsing between az CLI versions and locales | For redirect-URI updates, use `az ad app update --id <appId> --web-redirect-uris uri1 uri2 …` (replaces the full array — read existing first, merge, then update) |
 | **`az ad app credential reset` without `--append` blows away other secrets** | Default behavior is REPLACE, not append | Always pass `--append --display-name <label>`. Verify with `az ad app credential list --id <appId>` after |
+| **Redeploying ANY MCP service (`azd deploy <mcp>`) silently breaks the running agent** — every tool call returns `404 Session not found`, agent self-reports `case read failed` / `query failed` on EVERY call, MCP container is `Healthy`, MCP logs show `POST /mcp HTTP/1.1" 404 Not Found` WITHOUT a preceding `new transport with session ID: ...` line | Agent's MCP client caches the `mcp-session-id` from the previous initialize handshake. New MCP container = sessions wiped. Agent does NOT auto-re-handshake on `Session not found`. External probes to `/mcp` with proper Accept headers return `200 OK` — confirming the path is fine, the SESSION is gone | **Treat MCP + agent as a coupled deploy pair on running pilots.** After `azd deploy <mcp-service>`, also run `azd deploy <agent-service>` (creates new agent version, fresh MCP session pool) AND restart the bot replica: `az containerapp revision restart -g <rg> -n <bot-aca> --revision $(az containerapp revision list -g <rg> -n <bot-aca> --query "[?properties.active] | [0].name" -o tsv)`. Alternative: wait ~15 min idle for refreshed-preview auto-deprovision. See `foundry-mcp-aca` skill v1.0.3 for the full diagnostic table (FastMCP 3.x mount-path 404 vs stale-session 404). |
 
 > **See `foundry-hosted-agents`** for additional troubleshooting, migration guide,
 > and detailed RBAC scenarios.

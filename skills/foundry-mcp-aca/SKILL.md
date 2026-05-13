@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # Foundry MCP ACA Deployment
@@ -169,6 +169,52 @@ prefer managed identity over Cosmos keys.
 > kwarg used to be valid, and the runtime error message blames the tool name
 > not the SDK call. Catches every Cosmos MCP that pinned `azure-cosmos>=4.7`
 > instead of `>=4.15`.
+
+> **⚠️ `azd deploy <mcp-service>` poisons every running agent's MCP session — must redeploy the agent too.**
+> FastMCP's streamable-http maintains per-client session state in-memory on the MCP
+> container. When you redeploy the MCP server (`azd deploy cosmos-mcp` /
+> `azd deploy <mock-mcp-service>` / any new container revision), every session is wiped.
+> The Foundry hosted agent's MCP client **caches the `mcp-session-id` from the previous
+> initialize handshake and keeps sending it with every `tools/call`** — and **does NOT
+> auto-detect "Session not found" + re-handshake**. Result: every tool call returns
+> 404 silently, agent self-reports `case read failed` / `audit-log query failed`
+> on EVERY tool, MCP container is `Healthy` and `Running`, MCP logs show
+> `POST /mcp HTTP/1.1" 404 Not Found` **without** the preceding `new transport
+> with session ID: ...` log line that a fresh handshake would produce. External
+> probes to `/mcp` with proper Accept headers return `200 OK` — the path is fine,
+> the SESSION is gone.
+>
+> **Distinguishing this from the FastMCP 3.x mount-path 404:**
+>
+> | Symptom | FastMCP 3.x mount-path | Stale session-id |
+> |---|---|---|
+> | MCP log line | `POST /mcp HTTP/1.1" 404` (no transport log either way) | `POST /mcp HTTP/1.1" 404` (no `new transport with session ID` log preceding) |
+> | External probe with `Accept: application/json, text/event-stream` | `404 Not Found` (path moved) | `200 OK` (path fine) |
+> | External probe with stale `mcp-session-id` header | `404 Not Found` (path moved) | `404 {"error":{"code":-32600,"message":"Session not found"}}` |
+> | Fix | Pin `fastmcp<3.0.0`, rebuild MCP | Redeploy the AGENT after redeploying MCP |
+>
+> **Mandatory recovery sequence after redeploying any MCP server:**
+>
+> ```bash
+> # After: azd deploy cosmos-mcp   (or any MCP service)
+> # ALSO redeploy the agent so its in-memory MCP client cache is dropped:
+> azd deploy <agent-service-name>      # creates a new agent version, fresh compute
+>
+> # And restart the bot ACA replica so its connection pool is dropped:
+> az containerapp revision restart \
+>   -g <rg> -n <bot-aca-name> \
+>   --revision $(az containerapp revision list -g <rg> -n <bot-aca-name> \
+>                  --query "[?properties.active] | [0].name" -o tsv)
+> ```
+>
+> **Alternatively** — wait ~15 min idle and the refreshed-preview hosted agent
+> auto-deprovisions; the next user message will spin up fresh compute with a
+> fresh MCP session. But "wait 15 min" isn't a fix you can put in a runbook.
+>
+> **Where this should ideally be solved**: the agent runtime's MCP client should
+> catch JSON-RPC error code `-32600 Session not found` and re-initialize. Until
+> the platform handles this, treat MCP and agent as a **coupled deploy pair** —
+> you cannot redeploy one without the other on a running pilot.
 
 ### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh PoC)
 
