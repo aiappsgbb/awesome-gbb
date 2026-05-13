@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide
@@ -73,6 +73,40 @@ Copilot SDK**, and **`azd ai agent init`** declarative deployment.
    HTTPTool +      Toolbox          dots→underscores
    httpx.Auth)     one-liner)       in tool names)
 ```
+
+---
+
+## ⚠️ Toolbox is for code-based agents only (no Prompt / Declarative wiring)
+
+> **Verified end-to-end against a live Foundry project (May 2026):**
+> Toolboxes are consumed by an **MCP client running inside the agent's
+> code** — MAF (`MCPStreamableHTTPTool`), LangGraph (`AzureAIProjectToolbox`),
+> Copilot SDK (custom `McpBridge`), or any framework that speaks
+> Streamable-HTTP MCP. **There is no declarative `tools=[{type: "toolbox",
+> toolbox_name: ...}]` shape on a Foundry Prompt agent.** The Foundry agent
+> runtime accepts only this fixed list of `tools[].type` values:
+> `code_interpreter`, `function`, `namespace`, `tool_search`, `file_search`,
+> `web_search_preview`, `web_search_preview_2025_03_11`, `image_generation`,
+> `mcp`, `custom`, `computer`, `computer_use_preview`, `shell`, `apply_patch`.
+> No `toolbox` type.
+
+Why this matters: a Prompt agent can wire *individual* tools (code_interpreter,
+mcp pointing at a server, etc.) directly via its `tools` array, but it
+**cannot** delegate the bundle-of-tools fan-out to a toolbox endpoint at
+the runtime layer. The bundling lives one layer up — in the agent's code.
+
+What about wiring `tools=[{type: "mcp", server_url: <toolbox_mcp_endpoint>}]`?
+**Don't.** It passes shape validation at create time, but at invoke time
+the agent runtime calls the toolbox MCP endpoint **without** any `Authorization`
+header (no project-managed-identity injection), so it gets `401
+PermissionDenied` from the toolbox endpoint regardless of what RBAC you
+grant the agent's `instance_identity`. Toolboxes need an MCP client that
+mints its own bearer token per request — exactly what
+`MCPStreamableHTTPTool` + `httpx.Auth` does in Pattern A below.
+
+If you want a Prompt-only agent (no code container) and you need just one
+or two tools, wire those tools directly into the Prompt agent's `tools`
+array — skip the toolbox abstraction entirely.
 
 ---
 
@@ -256,8 +290,8 @@ project = AIProjectClient(
     credential=DefaultAzureCredential(),
 )
 
-toolbox_version = project.beta.toolboxes.create_toolbox_version(
-    toolbox_name="agent-tools",
+toolbox_version = project.beta.toolboxes.create_version(
+    name="agent-tools",
     description="Web search + product index + GitHub MCP",
     tools=[
         WebSearchTool(),
@@ -276,9 +310,21 @@ toolbox_version = project.beta.toolboxes.create_toolbox_version(
 print(f"Created {toolbox_version.name} v{toolbox_version.version}")
 ```
 
+> **SDK signature note:** the actual method on `azure-ai-projects` 2.1.0
+> is `client.beta.toolboxes.create_version(name=..., tools=[...])`. The
+> Microsoft Learn doc shows `create_toolbox_version(toolbox_name=...)` —
+> that's an older name kept in some samples. The SDK exposes
+> `create_version`, `get`, `list`, `delete`, `update`, `get_version`,
+> `list_versions`, and `delete_version` on `client.beta.toolboxes`.
+
 The first call creates the toolbox AND its `v1`, auto-promoted to
 default. Subsequent calls create new versions that stay un-promoted
 until you call `update(default_version=...)`.
+
+`AIProjectClient` must be constructed with **`allow_preview=True`** for
+the `client.get_openai_client(agent_name=...)` agent-scoped helper used
+in Pattern A below to be available; the toolbox CRUD methods on
+`client.beta.toolboxes` work without it.
 
 ---
 
