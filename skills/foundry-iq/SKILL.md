@@ -11,7 +11,7 @@ description: >
   DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
   MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
@@ -215,6 +215,42 @@ you cannot use managed identity or `az login`.
 > on the Search service for the **deploy-time** identity that creates indexes,
 > indexers, and knowledge agents (separate from the runtime UAMI; least
 > privilege at runtime).
+>
+> #### Hosted-agent runtime identity (the gotcha that breaks `corpus_query`)
+>
+> If the consumer is a **Foundry hosted agent** (`foundry-hosted-agents` /
+> `threadlight-deploy` Phase 5), the agent does **NOT** make outbound calls
+> under the Foundry **project** managed identity or the AI Services
+> **account** managed identity — even if you've granted those `Search
+> Index Data Reader`. Granting only those will leave you with a confidently
+> wrong "RBAC is set, why am I getting 403?" debug session.
+>
+> Each hosted-agent **version** has its own identities:
+>
+> | Identity | Stable across versions? | Granted via | Grant `Search Index Data Reader`? |
+> |---|---|---|---|
+> | `blueprint.principal_id` | ✅ Yes (stable per agent name) | Bicep post-deploy script (read after first agent create) | **YES** |
+> | `instance_identity.principal_id` | ❌ No (changes every `azd deploy agent`) | Postdeploy script that re-reads after each version create | **YES** |
+> | Foundry project SystemAssigned MI | ✅ | Bicep `principalId` output | No (not used for outbound tool calls) |
+> | AI Services account SystemAssigned MI | ✅ | Bicep `principalId` output | No (not used for outbound tool calls) |
+>
+> Read the version's identities via:
+> ```bash
+> az rest --method GET \
+>   --url "https://<account>.cognitiveservices.azure.com/api/projects/<project>/agents/<agent-name>/versions/<version>?api-version=2025-11-15-preview" \
+>   --resource "https://ai.azure.com" \
+>   --query "{blueprint:blueprint.principal_id, instance:instance_identity.principal_id}"
+> ```
+>
+> Then `az role assignment create --assignee-object-id <id> --assignee-principal-type ServicePrincipal --role "Search Index Data Reader" --scope <search-service-id>` for each.
+>
+> Persist this in IaC as a `postdeploy_grant_agent_search_rbac.py` hook
+> wired into `azure.yaml` after `azd deploy agent` — otherwise every new
+> agent version regresses the grant for the new `instance_identity`.
+>
+> **RBAC propagation on AI Search is slow** — up to 5-10 minutes (vs 30-60s
+> for most resources). If the first `corpus_query` after a fresh grant
+> 403s, wait, don't re-grant.
 >
 > See `foundry-doc-vision-speech` for the full keyless RBAC matrix across
 > all Cognitive Services.
@@ -428,6 +464,172 @@ response = requests.post(url, headers=headers, json=request_body)
 
 ---
 
+## Bootstrap script: hardening checklist
+
+> **The single biggest unforced quality regression in foundry-iq deploys is
+> a bootstrap script that *says* it succeeded while leaving the index empty
+> or partially populated.** Every item below has been observed in the wild
+> at least once. Treat the checklist as mandatory for any
+> `bootstrap_foundry_iq.py` you (or a sub-agent) generate.
+
+### 1. Don't shell out to `az rest` for the document upload step
+
+The `az rest --method POST .../docs/index?api-version=...` path tokenizes
+against `az login`'s cached credential, which on a deploy host is often
+"Reader on the search service" (or worse, the wrong tenant). When it
+returns `rc=1: ERROR: Forbidden`, the bootstrap will move on and log
+success unless you check rc.
+
+**Do this instead** — direct SDK upload via `azure-search-documents`:
+
+```python
+from azure.search.documents import SearchClient
+from azure.identity import DefaultAzureCredential
+
+client = SearchClient(
+    endpoint=os.environ["AI_SEARCH_ENDPOINT"],
+    index_name=os.environ["FOUNDRY_IQ_INDEX"],
+    credential=DefaultAzureCredential(),
+)
+results = client.upload_documents(documents=docs)
+ok = sum(1 for r in results if r.succeeded)
+fail = [(r.key, r.status_code, r.error_message) for r in results if not r.succeeded]
+if fail:
+    raise RuntimeError(f"Search upload partial: ok={ok} failed={len(fail)} first_fail={fail[0]}")
+print(f"Seeded {ok} docs into '{os.environ['FOUNDRY_IQ_INDEX']}'")
+```
+
+### 2. Fail-fast on every shell-out
+
+If you *must* shell out to `az rest` (e.g., for the `/agents/<name>` PUT
+when creating a Knowledge Agent — there's no first-party SDK path for
+that yet), check rc explicitly and **never** log success unconditionally:
+
+```python
+proc = subprocess.run(["az", "rest", "--method", "PUT", ...], capture_output=True, text=True)
+if proc.returncode != 0:
+    raise RuntimeError(f"az rest failed rc={proc.returncode}: {proc.stderr[:500]}")
+print("Knowledge Agent created")
+```
+
+The unconditional-success log pattern that caused the silent-empty-index
+incident:
+
+```python
+# ANTI-PATTERN — DO NOT DO THIS
+sh(["az", "rest", "--method", "POST", ...], check=False)
+print("[seeded 19 docs]")  # <-- ALWAYS prints, even on rc=1
+```
+
+### 3. Sanitize document keys to AI Search's allowed character set
+
+AI Search keys MUST match `[A-Za-z0-9_\-=]`. A naive
+`f.stem.replace(" ", "_").replace(".", "_")` leaves parentheses, brackets,
+quotes, accented chars, and unicode through — they all return
+`InvalidDocumentKey` 400 at upload time, which on a multi-doc upload
+shows up as a 207 multi-status that's easy to miss.
+
+```python
+import re
+
+def sanitize_key(name: str) -> str:
+    """AI Search keys allow only [A-Za-z0-9_\-=]. Replace anything else with _ and trim."""
+    s = re.sub(r"[^A-Za-z0-9_\-=]", "_", name)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s[:128] or "doc"
+```
+
+### 4. Chunk content to dodge the 32766-byte term limit
+
+AI Search rejects any single token > 32766 bytes (UTF-8). `text[:60000]`
+truncation does NOT fix this — it only caps the field length. If a
+source doc has one long unbroken token (a URL, a base64 blob, a long
+table row with no whitespace), upload fails with:
+
+> Field 'content' contains a term that is too large to process. The max length for UTF-8 encoded terms is 32766 bytes.
+
+Chunk before upload, splitting at paragraph / line / whitespace
+boundaries with a hard-cap fallback:
+
+```python
+def chunk_content(text: str, max_chars: int = 25000) -> list[str]:
+    if len(text) <= max_chars:
+        return [text]
+    chunks, pos = [], 0
+    while pos < len(text):
+        end = min(pos + max_chars, len(text))
+        if end < len(text):
+            cut = text.rfind("\n\n", pos, end)
+            if cut == -1: cut = text.rfind("\n", pos, end)
+            if cut == -1: cut = text.rfind(" ", pos, end)
+            if cut == -1 or cut <= pos: cut = end
+            else: cut = cut + 1
+        else:
+            cut = end
+        chunks.append(text[pos:cut])
+        pos = cut
+    return chunks
+
+# Then for each source doc, emit one record per chunk:
+for i, chunk in enumerate(chunks):
+    docs.append({
+        "id": f"{base_id}_p{i}" if len(chunks) > 1 else base_id,
+        "title": f"{name} (part {i+1}/{len(chunks)})" if len(chunks) > 1 else name,
+        "content": chunk,
+        ...
+    })
+```
+
+### 5. Wait for AI Search RBAC propagation before the first upload
+
+Most Azure resources propagate role assignments in 30-60s. **AI Search
+propagates in 5-10 minutes.** A bootstrap that grants `Search Index Data
+Contributor` and immediately uploads will 403 even though `az role
+assignment list` shows the grant exists.
+
+Add an explicit wait + probe loop:
+
+```python
+import time
+def wait_for_search_rbac(client, max_wait_s=600):
+    start = time.time()
+    while time.time() - start < max_wait_s:
+        try:
+            client.get_document_count()
+            return
+        except Exception as e:
+            if "403" not in str(e) and "Forbidden" not in str(e):
+                raise
+            print(f"[wait] RBAC not yet propagated ({int(time.time()-start)}s)...")
+            time.sleep(30)
+    raise RuntimeError(f"RBAC never propagated after {max_wait_s}s")
+```
+
+### 6. Verify after upload — never trust the upload log alone
+
+After upload, fetch `/docs/$count` and assert it matches expected:
+
+```python
+expected = len(docs)
+actual = client.get_document_count()
+if actual < expected:
+    raise RuntimeError(f"Index has {actual} docs, expected {expected}. Check upload errors above.")
+print(f"Verified {actual} docs in index '{index_name}'")
+```
+
+This is the cheapest insurance against "deploy looks green, agent
+silently returns no results" — one HTTP call.
+
+### 7. Recovery: a one-shot manual seed script
+
+When bootstrap leaves you with an empty/partial index in a deployed
+environment, ship a `manual_seed.py` next to the bootstrap that you can
+re-run interactively without re-provisioning. It should be idempotent
+(uses `MergeOrUpload` semantics, not `Upload`) so you can re-run after
+each fix without `az search index data delete` cycles.
+
+---
+
 ## Sample Use Cases
 
 ### PolicyBot - Enterprise Policy Assistant
@@ -514,6 +716,12 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 | API Version mismatch | Using old version | Pin `AI_SEARCH_API_VERSION=2025-01-01-preview` for legacy `/agents/` endpoint OR `2025-11-01-preview` for the new `/knowledgebases/` endpoint. The two are NOT interchangeable — see Knowledge Bases migration callout above. |
 | Missing index | Index not created | Run `/setup` endpoint first |
 | Authentication failed | 401 / 403 from Search or AOAI | Threadlight pilots are **keyless-by-mandate** — verify the agent's UAMI has the required Entra roles (Search Index Data Reader, Cognitive Services OpenAI User, Azure AI User on the Foundry project) AND that `AZURE_CLIENT_ID` is exported into the container so DefaultAzureCredential picks the UAMI (not the dev-loop user). Do NOT bypass by setting `AI_SEARCH_KEY` or `AZURE_OPENAI_API_KEY`. |
+| 403 from `corpus_query` after RBAC grant on Foundry hosted agent | Granted only to project / account MI; hosted-agent runtime uses `blueprint.principal_id` + `instance_identity.principal_id` instead | Grant `Search Index Data Reader` to BOTH MIs (see Hosted-agent runtime identity callout in § Environment Variables). Wait 5-10 min for AI Search RBAC propagation. |
+| `'search.in' invalid expression` from corpus filter | Wrong OData syntax — separate quoted args instead of single CSV string | Use `search.in(field, 'a,b,c', ',')` — single quoted CSV string + delimiter, NOT `search.in(field, 'a','b','c')`. Common copy-paste error. |
+| `KnowledgeAgent` PUT returns 500 (`Internal Server Error`) | Tenant not yet migrated to Knowledge Bases AND legacy Knowledge Agents path is preview-fluid | Bypass the Knowledge Agent surface entirely — use plain `SearchClient.search(query_type="semantic", semantic_configuration_name=...)`. You lose multi-hop query planning but get GA-stable retrieval. Migrate to `/knowledgebases/<name>` (api-version `2025-11-01-preview`) when the tenant supports it. |
+| Index doc count = 0 after "successful" bootstrap | Bootstrap script silently swallowed an `az rest` error (rc != 0 then `[seeded N]` logged unconditionally) | See § Bootstrap script: hardening checklist. Replace `az rest` with direct `SearchClient.upload_documents(...)`, fail-fast on rc != 0, and inspect per-doc result.succeeded. |
+| `InvalidDocumentKey` 400 on upload | Document key contains illegal chars (parens, brackets, dots, spaces) | Sanitize keys: `re.sub(r"[^A-Za-z0-9_\-=]", "_", name)` then collapse runs of `_` and trim to 128 chars. AI Search only accepts `[A-Za-z0-9_\-=]`. |
+| `Field 'content' contains a term that is too large to process. The max length for UTF-8 encoded terms is 32766 bytes.` | Source doc has a long unbroken token (URL, base64 blob, no whitespace) > 32k bytes | Chunk content > ~25k chars at paragraph / sentence / whitespace boundaries with a hard-cap fallback. Don't rely on `[:60000]` truncation — that doesn't fix the term length, only the field length. |
 | No results | Empty index | Index sample documents first |
 | Timeout | Large retrieval | Reduce reasoning effort or chunk size |
 

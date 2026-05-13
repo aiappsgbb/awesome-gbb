@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.1.3"
+  version: "1.1.4"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -2333,6 +2333,17 @@ hooks:
       uv run publish_aca_jobs.py
       uv run publish_aca_mcp.py
 ```
+
+> **`bootstrap_foundry_iq.py` MUST follow `foundry-iq/SKILL.md` § Bootstrap script: hardening checklist.**
+> The seven-point checklist (no `az rest` for uploads, fail-fast on rc, key
+> sanitization regex, content chunking for the 32766-byte term limit, RBAC
+> propagation wait, post-upload count verification, idempotent recovery script)
+> is mandatory — silent bootstrap failures here = empty index = silent agent
+> quality regression that doesn't show up until evals run. The hosted-agent
+> identity callout in that same skill file (blueprint + instance MIs need
+> `Search Index Data Reader` directly; project / account MIs are insufficient)
+> drives whether you also need a `postdeploy_grant_agent_search_rbac.py` hook
+> — add it whenever the consumer is a Foundry hosted agent.
 
 For more than two scripts, write a `infra/scripts/postdeploy.py`
 dispatcher that invokes each subscript in order — that keeps `azure.yaml`
