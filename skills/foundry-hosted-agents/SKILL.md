@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -252,6 +252,24 @@ agent = Agent(
 | Per-skill usage telemetry | ✅ free (every `load_skill` is a span) | ❌ invisible |
 | New PoCs | ✅ default | only if total skill content is small (<5 KB) |
 | Mixing both | ❌ never — double-counts every skill body | n/a |
+
+#### Centralizing skills via the Foundry Skills REST API
+
+The patterns above all assume `SKILL.md` files live in the agent's source
+tree. If multiple Hosted agents in the same project need to share a
+canonical set of `SKILL.md` files (without each repo carrying its own
+copy), publish them to the project-level **Foundry Skills** store
+(`{project}/skills`) and consume them via either:
+
+- **Build-time bundle** — `azd predeploy` hook downloads all published
+  skills into `src/skills/` so the standard `SkillsProvider(skill_paths=…)`
+  above keeps working unchanged.
+- **Runtime fetch** — `SkillsProvider(source=FoundrySkillsSource(…))` with
+  a custom `SkillsSource` that pulls from the REST API on session create.
+
+See **`foundry-skill-catalog`** for the REST surface, the silent
+JSON-mode-is-write-only trap, and the verified-working `FoundrySkillsSource`
+adapter.
 
 ### Multi-Agent: Calling Other Foundry Agents as Tools
 
