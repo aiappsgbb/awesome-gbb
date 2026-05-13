@@ -472,6 +472,15 @@ Also provide **color.png** (192×192) and **outline.png** (32×32) icons in the 
 
 Replaces all placeholder tokens in manifest.json and packages into `copilot_package.zip` for sideloading.
 
+> **⚠️ Silent-placeholder trap.** The script MUST fail loudly if `BOT_APP_ID` is
+> empty or still a placeholder (e.g., `<uami-client-id>`). A silent fallback produces
+> a zip that passes `azd deploy` without error but fails Teams schema validation at
+> sideload time: `String "<uami-client-id>" does not match regex pattern
+> "^[0-9a-fA-F]{8}-..."` on `id`, `copilotAgents[0].id`, and `bots[0].botId`.
+> The template now includes a guard: `if not bot_id or bot_id.startswith("<"):
+> raise SystemExit(...)`. For manual runs outside `azd up`:
+> `$env:BOT_APP_ID = azd env get-value BOT_APP_ID`.
+
 ### Wiring as azd postprovision hook (REQUIRED)
 
 > **This is NOT optional.** Without the postprovision hook, the Teams manifest

@@ -1082,8 +1082,8 @@ Check every file. Mark each ✅ or fix before presenting.
 - [ ] `src/bot/app.py` — aiohttp server with MsalConnectionManager
 - [ ] `src/bot/Dockerfile` — python:3.12-slim, port 80
 - [ ] `src/bot/requirements.txt` — includes microsoft-agents-* + openai
-- [ ] `src/bot/build_manifest.py` — replaces all manifest tokens
-- [ ] `src/bot/teams_package/manifest.json` — has placeholder tokens ready for postprovision
+- [ ] `src/bot/build_manifest.py` — replaces all manifest tokens; **MUST fail loudly** if `BOT_APP_ID` env var is missing or still a placeholder (e.g. `<uami-client-id>`) — silent fallback to a placeholder produces a zip that passes `azd deploy` but fails Teams schema validation at sideload time with `String "<uami-client-id>" does not match regex pattern`. Guard: `if not bot_id or bot_id.startswith("<"): raise SystemExit("BOT_APP_ID not set")`
+- [ ] `src/bot/teams_package/manifest.json` — has `__BOT_APP_ID__` placeholder tokens ready for postprovision (NEVER literal `<uami-client-id>` — use double-underscore `__` tokens that are obviously wrong if leaked)
 - [ ] **Bot ACA env block has ALL FOUR `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars** (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=`UserManagedIdentity`**) — missing `AUTHTYPE` is a silent-killer bug: bot looks healthy from outside, JWT probe passes, every real Teams message returns HTTP 500 with AADSTS7000216. See `foundry-teams-bot` skill § Bicep snippet.
 - [ ] **Bot Service `appType: UserAssignedMSI`** with `msaAppId` = UAMI clientId AND `msaAppMSIResourceId` = UAMI ARM ID
 - [ ] *(Skip this section entirely if Teams not needed)*
@@ -2016,6 +2016,21 @@ Replace these tokens **in all copied files**:
 | `__DEVELOPER_NAME__` | Developer/org name for Teams manifest | User/org | `src/bot/teams_package/manifest.json` |
 | `__BOT_APP_ID__` | UAMI client ID for bot (replaced at postprovision) | Bicep output | `src/bot/teams_package/manifest.json` |
 
+> **⚠️ `__BOT_APP_ID__` silent-placeholder trap.** The postprovision hook runs
+> `build_manifest.py` which reads `BOT_APP_ID` from the environment. `azd`
+> injects Bicep outputs as env vars during hooks, so this works during `azd up`.
+> But if anyone runs the script **manually** (e.g., `python scripts/build_manifest.py`
+> without first exporting the var), a silent fallback like `os.environ.get("BOT_APP_ID",
+> "<uami-client-id>")` produces a manifest that:
+> - Passes `azd deploy` without error (the zip is valid, just has wrong IDs)
+> - Fails at Teams sideload with: `String "<uami-client-id>" does not match regex
+>   pattern "^[0-9a-fA-F]{8}-..."` on `id`, `copilotAgents[0].id`, and `bots[0].botId`
+>
+> **Fix:** `build_manifest.py` MUST raise `SystemExit` if `BOT_APP_ID` is empty or
+> starts with `<`. Never use a human-readable fallback for UUID fields — use
+> `00000000-0000-0000-0000-000000000000` if you must have a default (it's obviously
+> wrong but passes the regex), or better, just fail.
+
 > **Note**: Model deployment is now declared in `azure.yaml` `config.deployments` —
 > NOT in Bicep. The `azd ai agent` extension handles model creation via pre-provision hooks.
 
@@ -2519,6 +2534,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 4 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars (CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=UserManagedIdentity**) |
 | **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** (synthetic JWT probe still passes!) | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` env var → MSAL falls back to ConfidentialClient flow → demands client_secret the keyless deploy never provisioned. Silent-killer auth bug.** | **Add `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity` to bot ACA env in Bicep. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`. The `safe-check --phase post-deploy` Step 5.7 catches this; channel JWT probe does NOT (JWT middleware fires before outbound token acquisition).** |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
+| **Teams sideload fails with regex validation error on `id`, `copilotAgents[0].id`, `bots[0].botId`** | **`build_manifest.py` used a silent fallback like `<uami-client-id>` when `BOT_APP_ID` env var was missing** | **Guard in `build_manifest.py`: `if not bot_id or bot_id.startswith("<"): raise SystemExit(...)`. Never use human-readable placeholders for UUID fields. When running the script manually: `$env:BOT_APP_ID = azd env get-value BOT_APP_ID; python scripts/build_manifest.py`** |
 | Streaming garbled in Teams | Sending each chunk separately | Collect all chunks, send as single message |
 | `azd deploy` fails with Docker error | Missing `remoteBuild: true` in azure.yaml | Add `remoteBuild: true` under `docker:` — azd builds via ACR Tasks, no local Docker |
 | **Model deployments not created** | **`azd deploy` doesn't create model deployments — only `azd provision`** | **Run `azd up` (full) or `azd provision` to create model deployments** |

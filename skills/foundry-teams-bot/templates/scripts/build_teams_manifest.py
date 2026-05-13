@@ -91,8 +91,17 @@ def build_manifest(
 
 
 if __name__ == "__main__":
+    bot_id = os.environ.get("BOT_APP_ID", "")
+    if not bot_id or bot_id.startswith("<"):
+        raise SystemExit(
+            "ERROR: BOT_APP_ID env var not set or still a placeholder.\n"
+            "This must be the UAMI client ID (a UUID). During azd up, Bicep outputs\n"
+            "inject it automatically. For manual runs:\n"
+            "  $env:BOT_APP_ID = azd env get-value BOT_APP_ID\n"
+            "  python scripts/build_teams_manifest.py"
+        )
     build_manifest(
-        bot_client_id=os.environ.get("BOT_APP_ID", "<uami-client-id>"),
+        bot_client_id=bot_id,
         agent_name=os.environ.get("AGENT_DISPLAY_NAME", "My Agent"),
         agent_description=os.environ.get("AGENT_DESCRIPTION", ""),
         developer_name=os.environ.get("DEVELOPER_NAME", ""),
