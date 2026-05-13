@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -301,23 +301,41 @@ ResponsesHostServer(orchestrator).run()
 
 ### MCP Tools via FoundryChatClient
 
-> **🔴 Known issue (v1.1.1 + v1.3.0 — bug-009/014).** The
-> `client.get_mcp_tool()` path renders MCP `CallToolResult` content as
-> `[<Content object at 0x...>]` Python reprs in the model's view. The
-> model reads that as "tool failed" and hallucinates an apology even
-> though the underlying MCP call succeeded and returned valid JSON.
-> Bug confirmed unresolved across two `agent_framework` releases; the
-> fix MUST be on the agent client side — server-side `json.dumps(...)`
-> is a no-op because the wrapping happens client-side. **Use the
-> `MCPStreamableHTTPTool + parse_tool_results` pattern below instead
-> — see § "MCP Tools — recommended pattern".**
+> **🟡 Status: bug-009/014 FIXED in `agent-framework-core` 1.3.0
+> (released 2026-05-07 via [PR #5581](https://github.com/microsoft/agent-framework/pull/5581),
+> merged 2026-04-30).** The fix prefers plain string entries, then
+> `.text` attribute, then `entry["text"]` for `Mapping` entries, then
+> `json.dumps(output, default=str)` final fallback — sidestepping the
+> `str()` fallback that produced `[<Content object at 0x...>]` Python
+> reprs from the canonical MCP raw-JSON shape. Companion fix
+> [PR #5687](https://github.com/microsoft/agent-framework/pull/5687)
+> (also in 1.3.0) stops `MCPStreamableHTTPTool` from swallowing
+> `asyncio.CancelledError` when the MCP server is unreachable.
+>
+> **Both surfaces are now valid in 1.3.0+:**
+> - `client.get_mcp_tool()` — concise, hosted MCP shape, **STATIC `headers: dict[str, str]`** only
+>   (no `header_provider` callback — bearer tokens expire after ~1h, so
+>   this path is **not viable for AAD-bearer-authenticated MCP servers**
+>   like AI Search KB MCP unless headers can be pinned for the agent's
+>   lifetime; fine for API-key auth or unauthenticated MCP)
+> - `MCPStreamableHTTPTool + parse_tool_results` — verbose,
+>   client-side, supports `header_provider: Callable[[dict], dict[str, str]]`
+>   for per-call token refresh — **REQUIRED for AAD-bearer auth**
+>
+> Choose `MCPStreamableHTTPTool` whenever the MCP server uses
+> short-lived bearer tokens or you need per-request header logic; choose
+> `client.get_mcp_tool()` for static-header MCP servers when you want
+> the hosted MCP execution model.
+>
+> **Pre-1.3.0 versions (1.1.x, 1.2.x) still have the bug.** If pinned
+> to an older release, stay on `MCPStreamableHTTPTool + parse_tool_results`.
 
 ```python
-# 🔴 BUGGY — triggers serialization bug; do not use until upstream fix
+# ✅ OK in 1.3.0+ (was buggy in 1.1.x/1.2.x); STATIC headers only
 mcp_tool = client.get_mcp_tool(
     name="my-mcp",
     url="https://my-mcp-server.azurecontainerapps.io/mcp",
-    headers={"Authorization": f"Bearer {token}"},
+    headers={"Authorization": f"Bearer {long_lived_or_api_key}"},
     approval_mode="never_require",
 )
 agent = Agent(client=client, tools=[my_tool, mcp_tool], ...)
@@ -410,11 +428,73 @@ field should be a plain JSON string (e.g. `{"case_id":"...","status":"..."}`),
 NOT `[<agent_framework._types.Content object at 0x...>]`. Your
 process repo should ship `tests/probe_mcp_output.py` for this.
 
-> **Status note.** Once the upstream `agent_framework` bug is fixed
-> (track at `microsoft-foundry/foundry-samples` issues), the
-> `client.get_mcp_tool()` shorthand becomes safe again. Until then,
-> the explicit `MCPStreamableHTTPTool` + extractor is the canonical
-> pattern. Captured from recent PoC retrospectives.
+> **Status note.** As of `agent-framework-core` 1.3.0 (2026-05-07,
+> [PR #5581](https://github.com/microsoft/agent-framework/pull/5581)),
+> `client.get_mcp_tool()` is also bug-free — but only supports STATIC
+> `headers` (no per-call refresh callback), so it cannot be used for
+> AAD-bearer-authenticated MCP servers like AI Search KB MCP. The
+> `MCPStreamableHTTPTool + parse_tool_results` pattern remains the
+> canonical choice for any MCP server that needs short-lived tokens
+> via `header_provider`. Captured from recent PoC retrospectives.
+
+### MCP with per-call AAD bearer (`header_provider`)
+
+For MCP servers backed by Azure services that authenticate with
+Microsoft Entra ID (e.g. AI Search Knowledge Base MCP, Azure Storage
+MCP behind PMI), use the `header_provider` callback to mint a fresh
+bearer token per tool invocation. Per the SDK's own docstring, the
+callback "receives the runtime keyword arguments" — a generic
+`dict[str, Any]` populated by MAF at tool-invoke time — and returns
+a `dict[str, str]` of HTTP headers attached to every outbound request
+during that tool call.
+
+```python
+import os
+from agent_framework import MCPStreamableHTTPTool
+from azure.identity import DefaultAzureCredential
+
+# Module-level singleton so the in-memory token cache is reused across
+# MCP calls; get_token() returns a cached token if it's valid for >= ~5 min
+_credential: DefaultAzureCredential | None = None
+
+def _get_credential() -> DefaultAzureCredential:
+    global _credential
+    if _credential is None:
+        _credential = DefaultAzureCredential()
+    return _credential
+
+def _bearer_headers(_kwargs: dict) -> dict[str, str]:
+    """MAF header_provider — mints a fresh AAD bearer per MCP call.
+    Cached by the credential layer; refreshed automatically on expiry.
+    """
+    tok = _get_credential().get_token("https://search.azure.com/.default")
+    return {"Authorization": f"Bearer {tok.token}"}
+
+kb_mcp = MCPStreamableHTTPTool(
+    name="my_kb_mcp",
+    url=f"{os.environ['AI_SEARCH_ENDPOINT']}/knowledgebases/<kb-name>/mcp"
+        f"?api-version=2025-11-01-preview",
+    approval_mode="never_require",
+    parse_tool_results=_mcp_text_extractor,   # same extractor as above
+    header_provider=_bearer_headers,           # 🔑 per-call refresh
+    request_timeout=60,
+)
+```
+
+> **⚠️ MCP `ping` trap on Foundry-hosted MCP servers.** MAF's
+> `MCPStreamableHTTPTool._ensure_connected()` issues an MCP `ping`
+> request during agent registration. **The Foundry Toolbox MCP
+> endpoint is documented to return HTTP 500 on `ping`** because the
+> server doesn't implement the optional MCP `ping` method (per the
+> Toolbox docs). The same failure mode has been observed on direct
+> KB MCP wiring (`/knowledgebases/<n>/mcp`) but is not yet documented
+> upstream — treat as suspected, not confirmed, until you've reproduced
+> it on your tenant. When the trap fires, agent registration fails and
+> every invoke returns `server_error` from the responses endpoint with
+> no useful log signal. Workarounds: (a) override
+> `MCPStreamableHTTPTool._ensure_connected` with a no-op subclass to
+> skip the ping, or (b) use the static-headers `client.get_mcp_tool()`
+> shape if your MCP doesn't need per-call AAD refresh.
 
 ### File Generation (@tool pattern)
 
