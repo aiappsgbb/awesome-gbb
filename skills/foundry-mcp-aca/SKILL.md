@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry MCP ACA Deployment
@@ -112,11 +112,33 @@ prefer managed identity over Cosmos keys.
 > ImportError swallowed by FastMCP. Pin in `src/mcp/requirements.txt`:
 >
 > ```
-> azure-cosmos>=4.7.0
+> fastmcp>=2.0.0,<3.0.0  # MUST upper-bound — see callout below
+> azure-cosmos>=4.15.0   # see kwarg callout below
 > azure-identity>=1.19.0
 > mcp>=1.10.0
-> aiohttp>=3.9.0       # REQUIRED — async HTTP transport for azure-cosmos
+> aiohttp>=3.9.0         # REQUIRED — async HTTP transport for azure-cosmos
 > ```
+
+> **⚠️ Pin `fastmcp<3.0.0` — the unbounded `>=2.0.0` pin is a re-deploy time bomb.**
+> FastMCP 3.x changed the streamable-http mount path. If `requirements.txt` says
+> `fastmcp>=2.0.0` (no upper bound), the next container rebuild will pull
+> **fastmcp 3.x silently** the moment it ships on PyPI. Symptoms — agent says
+> *"case read failed"* / *"audit-log screening read failed"* on every tool call,
+> bot/MCP logs show every single request as `POST /mcp HTTP/1.1" 404 Not Found`,
+> the MCP container itself is `Healthy` and `Running`. **FastMCP itself prints
+> the warning at boot:**
+>
+> ```
+> FastMCP 3.0 is coming!
+> Pin `fastmcp < 3` in production, then upgrade when you're ready.
+> ```
+>
+> If you skim past that and ship, every Cosmos tool call will 404. The KYC PoC
+> burned an hour on this when an unrelated `azd deploy cosmos-mcp` rebuild
+> jumped fastmcp 2.14.7 → 3.2.4 and broke point reads + queries simultaneously.
+> Always upper-bound: `fastmcp>=2.0.0,<3.0.0`. Same rule applies to **any
+> client** that imports `fastmcp` (e.g. an ACA Job that drives the MCP) — pin
+> client + server to the same major.
 
 > **⚠️ `enable_cross_partition_query` was DROPPED in `azure-cosmos>=4.15` async.**
 > If your `query_items` tool implementation passes `enable_cross_partition_query=True`,
