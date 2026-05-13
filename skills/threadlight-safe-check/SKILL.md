@@ -19,7 +19,7 @@ description: >
   orchestration (threadlight-deploy), schema authoring (threadlight-
   design).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Threadlight Safe Check — three lifecycle gates, one CLI
@@ -472,9 +472,11 @@ cosmos = CosmosClient(endpoint, credential=AzureCliCredential())
 db = cosmos.get_database_client(spec_database_name)
 for spec in expected_seeded:
     cont = db.get_container_client(spec["container"])
+    # NOTE: enable_cross_partition_query was dropped in azure-cosmos>=4.15 async.
+    # Cross-partition is now inferred when partition_key is omitted.
+    # See foundry-mcp-aca SKILL.md "azure-cosmos>=4.15" callout.
     count = list(cont.query_items(
         query="SELECT VALUE COUNT(1) FROM c",
-        enable_cross_partition_query=True,
     ))[0]
     if count < spec["min_docs"]:
         gaps.append(

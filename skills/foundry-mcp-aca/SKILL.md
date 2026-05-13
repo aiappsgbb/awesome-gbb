@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Foundry MCP ACA Deployment
@@ -117,6 +117,36 @@ prefer managed identity over Cosmos keys.
 > mcp>=1.10.0
 > aiohttp>=3.9.0       # REQUIRED — async HTTP transport for azure-cosmos
 > ```
+
+> **⚠️ `enable_cross_partition_query` was DROPPED in `azure-cosmos>=4.15` async.**
+> If your `query_items` tool implementation passes `enable_cross_partition_query=True`,
+> the kwarg leaks down to `aiohttp.ClientSession._request()` and raises
+> `TypeError: ClientSession._request() got an unexpected keyword argument
+> 'enable_cross_partition_query'`. FastMCP swallows the traceback and surfaces
+> only `Error calling tool 'query_items'` — the agent then says "case lookup
+> failed" on every related read while point reads (`get_item`) keep working.
+>
+> The new async signature is partition-key-aware by inference:
+>
+> ```python
+> # ❌ Old (works on azure-cosmos<4.15, breaks on >=4.15):
+> async for item in container.query_items(
+>     query=q, parameters=p, enable_cross_partition_query=True,
+> ):
+>     ...
+>
+> # ✅ New: omit partition_key for cross-partition; pass it for single-partition:
+> kwargs = {"query": q, "parameters": p}
+> if partition_key is not None:
+>     kwargs["partition_key"] = partition_key
+> async for item in container.query_items(**kwargs):
+>     ...
+> ```
+>
+> This is a **silent migration trap** — the SDK dependency floats forward, the
+> kwarg used to be valid, and the runtime error message blames the tool name
+> not the SDK call. Catches every Cosmos MCP that pinned `azure-cosmos>=4.7`
+> instead of `>=4.15`.
 
 ### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh PoC)
 
