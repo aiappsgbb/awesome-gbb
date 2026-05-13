@@ -752,6 +752,8 @@ Every `azd`-based deploy in this catalog should expose `mcapsPilotPosture`
 
 ---
 
+## Input contract / Output artifacts
+
 | Reads | From |
 |-------|------|
 | **SPEC.md § 11c Tech Stack module selectors** | `threadlight-design` |
