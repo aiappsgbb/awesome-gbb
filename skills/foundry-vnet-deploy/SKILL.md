@@ -20,13 +20,15 @@ metadata:
   version: "1.0.0"
 ---
 
-# Goal
+# Foundry VNet Deploy — Agent Setup inside a Private VNet
+
+## 1. Goal
 
 Guide the user step by step to deploy **Azure AI Foundry with Agent in a private VNet** using the Bicep files from the `15-private-network-standard-agent-setup` reference project. The skill collects all required parameters, generates the `.bicepparam` file, and runs the deployment.
 
 > **Optional scenario hint.** When the user invokes the skill, they may pass a one-line scenario hint such as `"new VNet in swedencentral"` or `"existing VNet with existing DNS zones"`. Use it to pre-fill defaults during the interview wherever it applies.
 
-# Architecture being deployed
+## 2. Architecture being deployed
 
 The deployment creates the following secure network architecture:
 
@@ -97,11 +99,11 @@ The deployment creates the following secure network architecture:
 └──────────────────────────────────────────────────────────┘
 ```
 
-# Workflow
+## 3. Workflow
 
 Follow these steps IN ORDER. Use the `ask_user` tool for every question.
 
-## Step 1: Verify prerequisites
+### Step 1: Verify prerequisites
 
 Before starting, verify:
 
@@ -109,7 +111,7 @@ Before starting, verify:
 2. If NOT logged in, indicate that they must run `az login` first.
 3. Show the current subscription and ask whether it is correct.
 
-## Step 2: Subscription and Resource Group
+### Step 2: Subscription and Resource Group
 
 Ask the user:
 
@@ -118,7 +120,7 @@ Ask the user:
    - If it needs to be created, ask for the name and location.
    - If it already exists, ask for the name.
 
-## Step 3: Location
+### Step 3: Location
 
 Ask for the deployment region. The allowed regions are:
 
@@ -129,7 +131,7 @@ Ask for the deployment region. The allowed regions are:
 
 Present the options as a list and offer `swedencentral` as the recommended one.
 
-## Step 4: AI service and project name
+### Step 4: AI service and project name
 
 Ask:
 
@@ -139,7 +141,7 @@ Ask:
 4. **projectDescription**: Project description (default: `A project for the AI Foundry account with network secured deployed Agent`).
 5. **accountCapHost**: Name of the account-level capability host (default: `caphostacct`). This resource sets `customerSubnet` for the agent runtime network injection.
 
-## Step 5: Model configuration
+### Step 5: Model configuration
 
 Ask:
 
@@ -149,7 +151,7 @@ Ask:
 4. **modelSkuName**: Deployment SKU (default: `GlobalStandard`). Options: GlobalStandard, Standard, ProvisionedManaged.
 5. **modelCapacity**: TPM (tokens per minute) in thousands (default: `30` = 30K TPM).
 
-## Step 6: Network configuration (VNet)
+### Step 6: Network configuration (VNet)
 
 Ask the user:
 
@@ -172,7 +174,7 @@ Ask:
 4. **agentSubnetPrefix**: CIDR of the agent subnet (mandatory if the subnet does not exist). WARNING: Must not overlap with existing subnets.
 5. **peSubnetPrefix**: CIDR of the PE subnet (mandatory if the subnet does not exist).
 
-## Step 7: Existing resources (optional)
+### Step 7: Existing resources (optional)
 
 Ask whether the user has existing resources they want to reuse:
 
@@ -185,7 +187,7 @@ If none are provided, all of them will be created automatically. The new resourc
 - **Storage**: StorageV2, ZRS (or GRS in southindia/westus), public access disabled, shared key disabled.
 - **CosmosDB**: Global Document DB, Session consistency, public access disabled, local auth disabled.
 
-## Step 8: Private DNS zones (optional)
+### Step 8: Private DNS zones (optional)
 
 Ask:
 
@@ -206,7 +208,7 @@ If YES → ask:
 
 The format is an object where each key is the zone name and the value is the resource group (empty = create a new one).
 
-## Step 8b: Hosted agent developers (optional but recommended)
+### Step 8b: Hosted agent developers (optional but recommended)
 
 Users / service principals that are going to **create hosted agents** in this Foundry need:
 - `Managed Identity Operator` on the Foundry account
@@ -221,7 +223,7 @@ Ask:
    - If the user does not want to use it now, leave the list empty and it can be added manually later.
 2. **Principal type** (User / Group / ServicePrincipal). Default `User`. All IDs must be of the same type (run the module twice if you need to mix types).
 
-## Step 8c: Application Insights + Log Analytics (recommended)
+### Step 8c: Application Insights + Log Analytics (recommended)
 
 The official [hosted agent permissions](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions) doc lists App Insights + Log Analytics Workspace as **required resources**:
 - They enable agent traces, logs and metrics
@@ -236,7 +238,7 @@ Optional question:
 
 1. **Do you want custom names for the Log Analytics workspace and App Insights?** If not, they are auto-generated with a unique suffix.
 
-## Step 9: Generate the .bicepparam file
+### Step 9: Generate the .bicepparam file
 
 With all the data collected, generate the `main.bicepparam` file with the following format:
 
@@ -311,7 +313,7 @@ param appInsightsName = ''
 - **DO NOT include `deploymentTimestamp`** in the `.bicepparam` file. This parameter is always passed via CLI (`--parameters deploymentTimestamp=...`) so it can be reused on retries without modifying the file.
 - Use a descriptive name for the `.bicepparam` file (e.g. `deploy-{resourceGroup}.bicepparam`) so as not to overwrite the project's original `main.bicepparam`.
 
-## Step 10: Confirm and deploy
+### Step 10: Confirm and deploy
 
 1. Show a **complete summary** of the configuration to the user, including:
    - Subscription and Resource Group
@@ -359,7 +361,7 @@ param appInsightsName = ''
 
 6. **If the deployment fails**, follow the retry procedure in Step 10b.
 
-## Step 10b: Safe retry (anti-duplication)
+### Step 10b: Safe retry (anti-duplication)
 
 If the deployment fails (frequently due to a timeout of the Account Capability Host),
 follow these steps to retry without duplicating resources:
@@ -418,7 +420,7 @@ follow these steps to retry without duplicating resources:
    use the direct REST API path (step 2 of this block) to create the capability
    hosts manually and then run the remaining role assignments via Bicep or CLI.
 
-## Step 11: Post-deployment verification
+### Step 11: Post-deployment verification
 
 After the deployment (successful or after completing the retry steps), run ALL these
 checks and present the results to the user as a status table.
@@ -602,7 +604,7 @@ If everything is ✅, inform that the deployment is **100% operational**.
 
 If there are ❌, indicate what is missing and offer to fix it automatically.
 
-## Step 12: VNet access configuration (optional)
+### Step 12: VNet access configuration (optional)
 
 Ask the user how they will access the private resources of the VNet. The options are:
 
@@ -772,7 +774,7 @@ ExpressRoute or other means:
    connected to the deployment's VNet (directly or via peering) and that the
    DNS zones have VNet links configured.
 
-## Step 13: Final notes
+### Step 13: Final notes
 
 After successful verification, remind the user:
 
@@ -781,7 +783,7 @@ After successful verification, remind the user:
 3. The account capability host (with `customerSubnet`) and the project one are already created — **there is NO need to run `createCapHost.sh`** manually.
 4. If they have a VPN Gateway with peering configured, they must **reconnect the VPN client** after creating the peering to load the new routes.
 
-# Important rules
+## 4. Important rules
 
 1. **Always** use `ask_user` for each question. DO NOT put multiple questions in a single one.
 2. **Offer default values** whenever possible to minimize user input.
@@ -795,77 +797,8 @@ After successful verification, remind the user:
 
 ---
 
-## Reference Files
+## 5. References
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `templates/main.bicep` | Top-level template that wires every module and exposes the parameter surface the interview collects | ✅ Included (byte-for-byte from upstream) |
-| `templates/main.bicepparam` | Stub `.bicepparam` showing every parameter with its default value — copied unmodified so users can diff future upstream updates against their own generated file | ✅ Included (byte-for-byte from upstream) |
-| `templates/modules-network-secured/` | 23 Bicep modules covering VNet, subnets, AI Services account + identity, project + identity, capability hosts (account + project), private endpoints + DNS, AI Search, Storage, CosmosDB, App Insights + Log Analytics, role assignments | ✅ Included (byte-for-byte from upstream) |
-
-> **Templates are canonical from upstream.** Do not edit the Bicep modules
-> in `templates/` to fix per-deployment quirks — adjust your generated
-> `.bicepparam` instead. If you find a real bug in the template, open an
-> issue on the upstream repo first (see the **Source** section below) so
-> every consumer of the template benefits from the fix.
-
----
-
-## Input contract / Output artifacts
-
-**Input contract — what this skill consumes:**
-- Free-form interview answers (subscription, RG, region, model, VNet shape, optional resource IDs to reuse, optional principal IDs for hosted-agent developer RBAC)
-- An optional one-line scenario hint passed at invocation time
-- A logged-in `az` CLI session with rights to `Microsoft.Resources/deployments/*` at the target resource group plus `Microsoft.Authorization/roleAssignments/write`
-
-**Output artifacts — what this skill produces:**
-
-| Artifact | Where | Consumed by |
-|---|---|---|
-| `deploy-{rg}.bicepparam` | working folder | `az deployment group create --parameters @{file}` (this skill's own Step 10) |
-| Foundry account + project + capability hosts | the target RG | hosted-agent developers (see `foundry-hosted-agents`); the agent runtime |
-| 4 private endpoints + 6 private DNS zones (or links) | the target RG (or `dnsZonesRg` if reusing) | private-network reachability for the agent + its dependencies |
-| Optional `appinsights` connection on the project | the project | `foundry-observability` (account-level App Insights connection) |
-| Optional Managed Identity Operator + Network Contributor RBAC | account + agent subnet | hosted-agent developer principals declared at deploy time |
-
----
-
-## See Also
-
-| Skill | Use When |
-|-------|----------|
-| [**azure-tenant-isolation**](../azure-tenant-isolation/) | **Set up first.** Per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard so this skill's `az deployment group create` lands in the intended subscription. Without it, a multi-tenant operator can silently deploy a private-VNet Foundry into the wrong tenant. |
-| [**foundry-hosted-agents**](../foundry-hosted-agents/) | After this skill provisions the **host**, deploy the actual hosted-agent container (refreshed preview: `Agent` + `FoundryChatClient` + `ResponsesHostServer`). Pair the developer RBAC granted here with the agent identity model documented there. |
-| [**threadlight-deploy**](../threadlight-deploy/) | Public-network or `azd`-orchestrated end-to-end PoC delivery — `azd up` from a designed project (Bicep + bot + workspace + MCP). Use **this** skill instead when the customer mandates a private VNet posture and `azd` is not the right driver. |
-| [**foundry-cross-resource**](../foundry-cross-resource/) | Wire the deployed Foundry project to a **shared model pool** behind APIM (cross-resource model invocation, `connectionName/deploymentName` strings). Complementary to private-VNet posture — APIM commonly fronts the private endpoints. |
-| [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Add governance on top — onboard the deployed Foundry project as a spoke under an AI Citadel Governance Hub (Access Contracts, KV secrets, JWT auth). Run this skill first; Citadel onboarding is additive. |
-| [**foundry-observability**](../foundry-observability/) | If you opted in to App Insights + Log Analytics (Step 8c), wire the runtime telemetry pattern (account-level connection → automatic injection into hosted agents + ACA workloads) so the OTel layer shows traces from day one. |
-
----
-
-## Source
-
-This skill is onboarded from the public peer repository:
-
-- **Upstream**: <https://github.com/asevillano/foundry-vnet-deploy>
-- **Author**: Angel Sevillano (Microsoft)
-- **License**: MIT (see upstream `LICENSE`)
-
-The Bicep templates under `templates/` are vendored byte-for-byte from
-upstream — see `README.md` in this skill folder for a checksum-based sync
-procedure to track upstream updates. The instructional body of this
-`SKILL.md` was adapted from upstream with the following deltas:
-
-1. Frontmatter rewritten to AGENTS.md § 2.4 shape (folded `description: >` with
-   USE FOR / DO NOT USE FOR triggers, `metadata.version: "1.0.0"`); upstream's
-   `argument-hint` field dropped (the concept is preserved as a "Goal" callout).
-2. Removed the upstream rule "Respond in Spanish" — the catalog is
-   language-neutral; respond in the language of the user's session.
-3. Updated Rule 6 to point at the `templates/` subfolder convention used
-   across `awesome-gbb` (instead of "same directory as this SKILL.md").
-4. Added the **Reference Files**, **Input contract / Output artifacts**, and
-   **See Also** sections to integrate with the rest of the catalog.
-5. Otherwise the workflow steps (interview, parameter generation, retry
-   path, post-deploy verification) are preserved as written by the upstream
-   author — they are the canonical hard-won procedure for this template set.
-
+- **Foundry Samples** — [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) — Bicep template set under `templates/` derives from this Foundry samples reference.
+- **Original interview/automation logic** — Angel Sevillano (Microsoft), [`asevillano/foundry-vnet-deploy`](https://github.com/asevillano/foundry-vnet-deploy).
+- **Related skills** — `azure-tenant-isolation` (set up first), `foundry-hosted-agents` (deploy agents into the host this skill creates), `threadlight-deploy` (`azd`-based public-network alternative), `foundry-cross-resource` (APIM cross-resource model wiring on top), `citadel-spoke-onboarding` (governance overlay), `foundry-observability` (App Insights wiring if Step 8c was opted in).
