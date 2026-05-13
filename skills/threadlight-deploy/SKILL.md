@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -87,10 +87,10 @@ Recommended (from `threadlight-design`):
 ## Workflow
 
 ```
-Phase 0  →  Phase 1   →  Phase 2  →  Phase 3   →  Phase 4   →  Phase 5  →  Phase 6  →  Phase 7
-Poly-repo   Analyze      Generate    Validate     Teams Bot    azd        Module      Citadel
-guard       SPEC +       runtime     scaffold     (optional)   project    composer    handoff
-            AGENTS.md    files                                  scaffold   (Bicep)     (opt-in)
+Phase 0  →  Phase 1   →  Phase 2  →  Phase 3   →  Phase 4   →  Phase 5  →  Phase 6  →  Phase 6.5 →  Phase 6.7    →  Phase 7
+Poly-repo   Analyze      Generate    Validate     Teams Bot    azd        Module      Demo data     Prep-guide       Citadel
+guard       SPEC +       runtime     scaffold     (optional)   project    composer    seed (when    live walkthrough handoff
+            AGENTS.md    files                                  scaffold   (Bicep)     mocks exist)  back-fill        (opt-in)
 ```
 
 ---
@@ -2433,6 +2433,168 @@ post-deploy completeness gate (`threadlight-safe-check --phase
 post-deploy` Step 5.8) then asserts that for each container declared
 in SPEC § 5b with `seed_from: sample-data`, document count is non-zero.
 If either step fails, the PoC is incomplete; do NOT declare victory.
+
+---
+
+## Phase 6.7: Update Seller Prep-Guide with Live MVP Walkthrough (when applicable)
+
+**Trigger**: `specs/prep-guide.html` exists in the repo **AND** the Phase 3.5
+post-deploy completeness gate passed (i.e., `tests/postdeploy-manifest.json`
+exists with `gaps: []`).
+
+**Skip silently** when:
+- `specs/prep-guide.html` is absent (deploy was run on a repo that didn't
+  go through `threadlight-design`, or the seller prep-guide was deliberately
+  not generated). This phase is **additive-only** — it never fails the deploy.
+- The post-deploy gate did not pass. Resolve the gap first; back-filling a
+  walkthrough that points at a half-deployed PoC is worse than no walkthrough.
+
+> **Why this phase exists.** `threadlight-design` writes the
+> "Demo Script (high-level)" section of `specs/prep-guide.html` deploy-agnostic
+> by construction (no FQDNs, no commands). That's correct — the seller may
+> open the prep-guide in Cowork before any infra exists. But the seller still
+> needs the **concrete** walkthrough once the PoC is live: the workspace URL
+> to open, the Teams package to sideload, the exact prompts to type, the
+> reset / eval / smoke commands. Phase 6.7 closes that loop in one shot,
+> immediately after `azd up` returns clean.
+>
+> **Recent "what was missing?" data point.** A pilot shipped with a complete
+> `prep-guide.html` Demo Script and a passing post-deploy gate, but the
+> seller had to hand-correlate `azd env get-values | grep FQDN`, the eval
+> dataset, and the bot package path on the morning of the demo. Phase 6.7
+> removes that scramble.
+
+### Step 1 — Decide whether to run
+
+```bash
+test -f specs/prep-guide.html || { echo "skip: no prep-guide.html"; exit 0; }
+test -f tests/postdeploy-manifest.json || { echo "skip: no postdeploy-manifest"; exit 0; }
+jq -e '.gaps == []' tests/postdeploy-manifest.json > /dev/null \
+  || { echo "skip: post-deploy gaps non-empty"; exit 0; }
+```
+
+### Step 2 — Gather concrete artifacts
+
+Pull from the artifacts already produced by Phase 3.5 + Phase 5 + Phase 6.5:
+
+| What | From | How |
+|---|---|---|
+| Workspace UI FQDN | `tests/deployed-containerapps.json` | `jq -r '.[] \| select(.name \| contains("workspace")) \| .fqdn'` |
+| Bot Container App name | `tests/deployed-containerapps.json` | `jq -r '.[] \| select(.name \| contains("bot")) \| .name'` |
+| Teams sideload package | repo path | `src/bot/copilot_package.zip` (built by Phase 4 / `build_teams_manifest.py`) |
+| Cron jobs + schedules | `tests/deployed-jobs.json` | `jq -r '.[] \| "\(.name) (\(.schedule))"'` |
+| Mock MCP FQDN (if seeded) | `tests/deployed-containerapps.json` | `jq -r '.[] \| select(.name \| contains("mcp")) \| .fqdn'` |
+| Reset / seed command | repo path | `python scripts/seed_data.py --reset` (when Phase 6.5 ran) |
+| Eval command | repo path | `python tests/run_evals.py` |
+| Smoke-test command | repo path | `python tests/invoke_agent.py "<prompt>"` |
+| Sample queries (3–5) | `specs/SPEC.md` § 9 | grep `S-\d+ .*happy` rows OR read `tests/eval_dataset.jsonl` and pick the first 3–5 happy-path inputs verbatim |
+| Resource group | `azd env get-value AZURE_RESOURCE_GROUP` | for the appendix |
+| Foundry project endpoint | `azd env get-value AZURE_AI_PROJECT_ENDPOINT` | for the appendix |
+
+> **Sample queries are not optional.** If `tests/eval_dataset.jsonl` is empty
+> or SPEC § 9 has no happy-path scenarios, the back-fill **cannot proceed** —
+> the seller would be left with "open the workspace" and no idea what to type.
+> Halt, log the gap, and ask the user to either fix § 9 or run
+> `threadlight-demo-data-factory` to regenerate the dataset.
+
+### Step 3 — Append the "Live MVP Walkthrough" section
+
+Open `specs/prep-guide.html` and **append** a new top-level section
+immediately after the existing `<section id="demo-script">` (or, if the file
+uses no `id` attributes, after the `<h2>Demo Script (high-level)</h2>`
+sibling block). **Never overwrite** the existing Demo Script — the high-level
+narrative stays as the seller's safety net for offline / pre-deploy use.
+
+Section shape:
+
+```html
+<section id="live-mvp-walkthrough">
+  <h2>Live MVP Walkthrough <small>(populated by threadlight-deploy)</small></h2>
+  <p class="callout-warning">
+    Generated <time>{ISO-8601 timestamp}</time> from
+    <code>tests/postdeploy-manifest.json</code>. Re-run
+    <code>threadlight-deploy</code> Phase 6.7 after any redeploy to refresh.
+  </p>
+
+  <h3>1. Open the workspace</h3>
+  <p>URL: <a href="https://{workspace-fqdn}/">{workspace-fqdn}</a></p>
+
+  <h3>2. Sideload the Teams app (one-time, per tenant)</h3>
+  <ol>
+    <li>Download <code>src/bot/copilot_package.zip</code> from the repo.</li>
+    <li>Teams Admin Center → Manage apps → Upload → select the zip.</li>
+    <li>Bot Container App: <code>{bot-name}</code> (already wired to
+        Azure Bot Service).</li>
+  </ol>
+
+  <h3>3. Run these prompts (in order)</h3>
+  <ol>
+    {for each sample query, in BR-order}
+    <li><code>{query verbatim from eval_dataset.jsonl or SPEC § 9}</code>
+        <br><small>demonstrates <strong>BR-{NNN}</strong></small></li>
+  </ol>
+
+  <h3>4. Scheduled jobs you can mention</h3>
+  <ul>
+    {for each row in tests/deployed-jobs.json}
+    <li><code>{job-name}</code> — runs <code>{cron}</code></li>
+  </ul>
+
+  <h3>5. Reset / re-run / score</h3>
+  <pre><code># Reset demo data to a clean state
+python scripts/seed_data.py --reset
+
+# Re-score the demo against the eval dataset
+python tests/run_evals.py
+
+# One-off smoke check
+python tests/invoke_agent.py "{first sample query}"</code></pre>
+
+  <h3>Appendix — environment</h3>
+  <ul>
+    <li>Resource group: <code>{rg-name}</code></li>
+    <li>Foundry project endpoint: <code>{project-endpoint}</code></li>
+    <li>Mock MCP endpoint: <code>{mcp-fqdn}</code> <em>(internal — only
+        relevant if the customer asks about backend wiring)</em></li>
+  </ul>
+</section>
+```
+
+**Idempotency**: if `<section id="live-mvp-walkthrough">` already exists in
+the file (re-deploy case), **replace** that single section in place (do not
+append a second one). This makes Phase 6.7 safe to re-run after every
+`azd deploy`.
+
+### Step 4 — Verify
+
+After write, re-open the file and assert:
+
+- [ ] Exactly one `<section id="live-mvp-walkthrough">` exists
+- [ ] Workspace URL resolves to a `containerapps.io` FQDN (sanity-check
+      against `tests/deployed-containerapps.json`)
+- [ ] Sample-query block has ≥ 3 entries, each tagged with a BR-XXX that
+      exists in SPEC § 3
+- [ ] Reset / eval / smoke command paths exist on disk (`scripts/seed_data.py`
+      only required when Phase 6.5 ran; tolerate absence with a `<!-- skipped:
+      no seed_data.py -->` comment instead of a broken link)
+- [ ] The original `<section id="demo-script">` (or "Demo Script" `<h2>`) is
+      still present and unmodified — Phase 6.7 is **append-only**
+
+> **Internal-only banner stays.** The "INTERNAL / MICROSOFT CONFIDENTIAL"
+> banner at the top of `specs/prep-guide.html` already covers the new
+> section. Do not add a second banner; do not weaken the existing one.
+
+### Step 5 — Tell the user
+
+Print one line at the end of Phase 6.7, regardless of skip/run:
+
+```
+Phase 6.7: prep-guide live walkthrough → <appended | refreshed | skipped: {reason}>
+```
+
+The seller opens `specs/prep-guide.html` in a browser and now has a single
+file containing both the offline-friendly narrative (from `threadlight-design`)
+and the live-deploy walkthrough (from this phase).
 
 ---
 

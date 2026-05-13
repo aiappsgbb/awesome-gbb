@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Threadlight Design
@@ -753,16 +753,52 @@ for the customer conversation, anticipate questions, and suggest next steps.
 **Sections:**
 
 1. **Use Case Summary** — one paragraph: what the agent does, for whom, why it matters
-2. **Discovery Questions** — 5-8 questions to deepen the conversation with the customer:
+2. **Demo Script (high-level)** — the narrative arc the seller will follow on the call.
+   This is **generic by construction** — no URLs, no commands, no resource names. It must
+   be useful even when `threadlight-deploy` hasn't run yet (Cowork seller, steering-
+   committee deck export, sandbox not yet provisioned). The four beats:
+
+   1. **Opening hook (≈30s)** — one line of customer-facing pain (the named persona +
+      the cost of *today*) and one line teasing the *wow* moment the agent enables.
+      Reuse the punchiest line from `specs/overview.html` § "Why this matters".
+   2. **Demo arc (3–5 acts)** — derive each act from a SPEC § 9 happy-path scenario
+      (S-XXX where variant=happy) crossed with a SPEC § 8 Human Interaction channel.
+      Phrase each act as **what to click + what to say**, not as commands. Example:
+      - *Act 1 — Trigger:* "Open the workspace and drop in a fresh case (or wait
+        for the cron to fire)." Say: "the agent picks this up the same way it would
+        in production — no manual prompt."
+      - *Act 2 — Reasoning:* "Show the workspace as the agent reads the case,
+        calls its tools, and updates the timeline." Say: "every step traces back
+        to BR-{NNN} — nothing magical."
+      - *Act 3 — Action gate:* "Approve / reject the adaptive card in Teams." Say:
+        "the agent never acts without a human in the loop on the hard calls."
+   3. **Reveal moment** — the single beat that proves the BR-XXX value prop. Almost
+      always one of: SLA collapse (hours → minutes), policy hit-rate (cited rules in
+      every decision), or scale-out (one analyst handling 10× the volume). Pick the
+      one that maps to the **primary KPI** in SPEC § 9.
+   4. **Q&A handoff** — one sentence transitioning to the Discovery Questions below.
+      Example: "Now I'd like to understand how this would land in *your* environment —
+      can I ask a few things?"
+
+   > **Style guidance for the generated acts:** speak in second person to the seller
+   > ("you'll click", "you'll say"), keep each act ≤ 3 sentences, tag each act with
+   > the BR-XXX it demonstrates so the seller can cite it on demand. Do NOT name
+   > Azure resources, FQDNs, or CLI commands here — `threadlight-deploy` Phase 6.7
+   > injects a separate **"Live MVP Walkthrough"** section after `azd up`
+   > succeeds, with the concrete URLs / sample queries / sideload steps. Keeping
+   > this section deploy-agnostic is what lets the seller use the prep-guide on
+   > calls before any infrastructure exists.
+
+3. **Discovery Questions** — 5-8 questions to deepen the conversation with the customer:
    - "What does this process look like today? Where are the bottlenecks?"
    - "Which systems hold the data the agent would need?"
    - "Who approves / escalates? What are the SLAs?"
    - Tailor to the domain and business rules
-3. **Expected Objections** — 3-5 likely pushbacks and suggested responses:
+4. **Expected Objections** — 3-5 likely pushbacks and suggested responses:
    - "How do we trust the agent's decisions?" → point to human-in-the-loop + audit trail
    - "What about our legacy systems?" → point to mock MCP → real swap path
    - "How long to production?" → point to fast-PoC → deploy → eval pipeline
-4. **Suggested Next Steps** — what to propose after the demo:
+5. **Suggested Next Steps** — what to propose after the demo:
    - Connect real data sources (replace mocks)
    - Run evals with customer-provided test scenarios
    - Deploy to Citadel landing zone (if governed)
@@ -771,9 +807,12 @@ for the customer conversation, anticipate questions, and suggest next steps.
 > [!TIP]
 > **For the SE who'll run the deploy or workshop:** `threadlight-local-test` is
 > available for fast inner-loop iteration without `azd up`, and
-> `threadlight-deploy` handles the full Foundry deployment. Mention these as
-> options to the customer's technical contact — but don't force them; some
-> demos go straight from `overview.html` to a steering-committee decision.
+> `threadlight-deploy` handles the full Foundry deployment **and back-fills the
+> "Live MVP Walkthrough" section of this prep-guide** with the real URLs +
+> commands once `azd up` returns clean. Mention these as options to the
+> customer's technical contact — but don't force them; some demos go straight
+> from `overview.html` to a steering-committee decision and never need the
+> live-walkthrough section at all.
 
 **Style:** Same dark theme as overview.html but with an "INTERNAL USE ONLY" banner
 at the top. Print-friendly (saves as clean PDF).
@@ -808,6 +847,7 @@ must catch its own mistakes.
 - [ ] `specs/manifest.json` matches the generated skills list and BR counts
 - [ ] `specs/overview.html` renders without errors (valid HTML structure)
 - [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
+- [ ] **`specs/prep-guide.html` § "Demo Script (high-level)" exists** with all four beats (Opening hook · Demo arc · Reveal moment · Q&A handoff), 3–5 acts, each act tagged with the BR-XXX it demonstrates, **and contains zero deploy-specific tokens** (no FQDNs, no `azd ` / `az ` / `python ` commands, no resource names) — those are reserved for `threadlight-deploy` Phase 6.7's "Live MVP Walkthrough" injection
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
 
@@ -870,6 +910,7 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | `specs/SPEC.md` § 11d | `threadlight-demo-data-factory` | Demo data realism rules — volumes, distribution, golden cases |
 | `specs/sample-data/{entity}.json` | `foundry-mcp-aca` Option D + `threadlight-demo-data-factory` | Seed data for mock MCP server |
 | `specs/manifest.json` | `threadlight-deploy` | Machine-readable deployment contract |
+| `specs/prep-guide.html` § "Demo Script (high-level)" | `threadlight-deploy` Phase 6.7 | Generic seller demo script — deploy back-fills a separate "Live MVP Walkthrough" section with concrete URLs / sample queries / sideload steps |
 | `AGENTS.md` + `src/agent/skills/` | `threadlight-deploy` | Skill catalog + behavioral guidelines |
 
 > If a section is missing or under-specified, the corresponding downstream skill
