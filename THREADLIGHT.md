@@ -281,6 +281,7 @@ project/
 | `azd-patterns` | azd hooks, ACA Job deployment, **silent-failure debug ladder** | For advanced azd workflows |
 | `azure-tenant-isolation` | Multi-tenant `az` / `azd` isolation for concurrent shells | When working across >1 Azure tenant |
 | `foundry-vnet-deploy` | Deploy Foundry with Agent Setup inside a private VNet — guided interview, optional Citadel spoke→hub peering modules | When the customer mandates network isolation (FSI, regulated industries, MCAPS pilots with strict posture) |
+| `foundry-toolbox` | Managed multi-tool MCP endpoint — 7 tool types, mandatory `Foundry-Features` header, four silent traps, version promote/rollback, `azd ai agent init kind: toolbox` | When the agent needs >1 tool / Toolbox-managed creds / OAuth or Entra MCP servers |
 | `citadel-spoke-onboarding` | Production landing zone — APIM, Access Contracts, JWT | Post-pilot opt-in |
 
 ---
