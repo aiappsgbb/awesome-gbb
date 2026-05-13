@@ -5,11 +5,14 @@ description: >
   and infrastructure scripting conventions.
   USE FOR: azd hooks, postdeploy, postprovision, ACA job deployment, container app
   job image update, publish_aca, deploy_job, azure.yaml hooks, cross-platform
-  deployment scripts, uv run, azd env, azd conventions, infra scripts.
+  deployment scripts, uv run, azd env, azd conventions, infra scripts,
+  MCAPS subscription, SecurityControl Ignore tag, resource group tagging,
+  Defender for Cloud noise, Azure Policy auto-remediation, AZURE_TAGS,
+  pilot posture, demo subscription tagging.
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # AZD Tips & Patterns
@@ -598,7 +601,156 @@ that wastes 45 min on every fresh PoC)".
 
 ---
 
-## Input contract / Output artifacts
+## RG Tagging — MCAPS Subscriptions (`SecurityControl: Ignore`)
+
+**MCAPS** (Microsoft Customer & Partner Solutions — the internal subscription
+class GBBs and the field use for customer demos / PoCs / tenant-specific
+work) ships with org-wide Defender for Cloud + Azure Policy assignments
+that aggressively flag and (in some MCAPS rings) auto-remediate resources
+the security team considers risky. For pilot work this manifests as:
+
+- Cosmos / Storage / KV firewalls flipped back to `Disabled` minutes after
+  `azd up` finishes — every demo breaks the next morning.
+- Container Apps with `ingress.external = true` flagged as critical
+  findings on the team's compliance dashboard.
+- `Microsoft.Security` policy emails landing in the deal lead's inbox the
+  day before the customer call.
+
+The supported escape hatch is the **`SecurityControl: Ignore`** tag.
+Applied at the **resource-group level**, every Defender / Policy
+assignment that reads it skips the RG and everything inside it. This is
+explicitly sanctioned for **non-production** subscriptions (PoC, demo,
+pre-sales sandbox) — never apply it in a customer's own production
+landing zone.
+
+> **Scope**: this section applies ONLY to Microsoft-internal MCAPS
+> subscriptions. In a customer tenant, leave the RG untagged and let
+> the customer's own governance posture apply.
+
+### Three ways to set it (pick one — they compose)
+
+#### 1 — Bicep, subscription-scope RG creation (preferred for `azd` repos)
+
+When `azd up` creates the RG via a subscription-scope deployment, set the
+tag on the RG resource itself:
+
+```bicep
+// infra/main.bicep — targetScope = 'subscription'
+@description('When true (default for MCAPS pilot subs), tags the RG so Defender for Cloud / Azure Policy skip it. Set false in customer-owned subscriptions.')
+param mcapsPilotPosture bool = true
+
+@description('Free-form tags to merge onto the RG and propagate to every resource.')
+param tags object = {}
+
+var baseTags = union(tags, mcapsPilotPosture ? { SecurityControl: 'Ignore' } : {})
+
+resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: rgName
+  location: location
+  tags: baseTags
+}
+```
+
+Then thread `tags: baseTags` into every resource-group-scope module call so
+**resources inherit the tag too** (some Defender controls evaluate at
+resource scope, not RG scope):
+
+```bicep
+module workload './modules/main.bicep' = {
+  scope: rg
+  name: 'workload'
+  params: {
+    tags: baseTags
+    // ...
+  }
+}
+```
+
+Every leaf module's resource declarations should accept `tags` and pass it
+through:
+
+```bicep
+// infra/modules/<any>.bicep
+param tags object = {}
+
+resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-12-01-preview' = {
+  // ...
+  tags: tags
+  // ...
+}
+```
+
+#### 2 — `AZURE_TAGS` (honored by `azd` for resource-group-scope deploys)
+
+If `infra/main.bicep` is **resource-group-scope** (i.e., `azd` creates the
+RG itself rather than a subscription-scope template), set the tag via the
+azd environment so `azd provision` applies it:
+
+```powershell
+azd env set AZURE_TAGS '{"SecurityControl":"Ignore","Workload":"<pilot-name>"}'
+azd provision
+```
+
+`azd` reads `AZURE_TAGS` and applies it to the RG it creates. This does
+**not** propagate to child resources automatically — pair with the Bicep
+`tags` param-threading shown above for full coverage.
+
+#### 3 — `az group update` postprovision hook (fallback for pre-existing RG)
+
+When the RG was created out-of-band (Cowork sandbox, manual `az group
+create`, BYO landing zone) and you can't reshape the deploy:
+
+```yaml
+# azure.yaml
+hooks:
+  postprovision:
+    shell: pwsh
+    run: |
+      az group update --name $env:AZURE_RESOURCE_GROUP `
+        --set tags.SecurityControl=Ignore `
+        --output none
+```
+
+This is the least invasive option but only tags the RG, not the resources
+inside. Defender controls that evaluate at resource scope (Cosmos
+firewall, Storage public access, KV soft-delete) may still fire.
+
+### Verifying it landed
+
+```powershell
+# RG tag present?
+az group show --name $env:AZURE_RESOURCE_GROUP `
+  --query "tags.SecurityControl" -o tsv      # → "Ignore"
+
+# Resource-level tag present? (spot-check the chattiest resource type)
+az resource list --resource-group $env:AZURE_RESOURCE_GROUP `
+  --query "[?type=='Microsoft.DocumentDB/databaseAccounts'].tags.SecurityControl" -o tsv
+```
+
+Defender / Policy honor the tag on the **next evaluation cycle** (typically
+≤ 1 hour). If a finding was already open before the tag was applied,
+manually dismiss it once — it won't re-open.
+
+### Cross-skill applicability
+
+Every `azd`-based deploy in this catalog should expose `mcapsPilotPosture`
++ `tags` the same way:
+
+- **`threadlight-deploy`** — Phase 6 module composer threads `tags` into
+  every selected module from the catalog above (when present in SPEC § 11c
+  or via `AZURE_TAGS`).
+- **`foundry-vnet-deploy`** — `templates/main.bicep` accepts `tags` (manual
+  apply via Step 8 interview); when the deploy lands in an MCAPS sub, the
+  operator should answer `yes` to the implicit MCAPS prompt.
+- **`foundry-mcp-aca`**, **`foundry-teams-bot`**, **`citadel-spoke-onboarding`** —
+  all consume the same module library; the tag rides along automatically
+  when `tags` is passed at the parent scope.
+
+> **Don't hard-code the tag value.** Apply `SecurityControl: Ignore` only
+> when `mcapsPilotPosture` is `true`. Letting it leak into a customer
+> tenant's deployment files is a finding in its own right.
+
+---
 
 | Reads | From |
 |-------|------|
