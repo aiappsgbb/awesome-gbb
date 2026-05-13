@@ -626,6 +626,93 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
                 entry["status"] = "OK"
             bot_auth_health_results.append(entry)
 
+    # ------------------------------------------------------------------
+    # G9.5 — Cosmos firewall pilot-posture (cosmos_firewall_health)
+    # When the SPEC declares cosmos-db, every Cosmos account in the RG
+    # MUST have publicNetworkAccess=Enabled OR the deploy is silently
+    # broken: seed scripts get Forbidden ("Request originated from IP
+    # X.X.X.X through public internet"), the data-realism gate (G9.6)
+    # then fails with empty containers, and the agent honestly reports
+    # "case not found" on every realistic prompt. Trips even when ACA
+    # workloads CAN reach Cosmos (because they're inside the trusted
+    # Azure backbone) — because operator workstations + postdeploy
+    # hooks cannot.
+    #
+    # Origin: pilot retrospective — Bicep declared PNA=Enabled but
+    # Azure Policy / a stray `az cosmosdb update --public-network-access
+    # Disabled` drifted it back. azd up returned 0; postdeploy seed
+    # crashed; analyst typed real case id; agent said "not found";
+    # 90 minutes lost diagnosing.
+    # ------------------------------------------------------------------
+    cosmos_firewall_health_results: list[dict[str, Any]] = []
+    if "cosmos-db" in selectors:
+        try:
+            cosmos_raw = _az(
+                "cosmosdb", "list", "-g", rg,
+                "--query",
+                "[].{name:name,pna:publicNetworkAccess,"
+                "bypass:networkAclBypass,"
+                "ipRules:ipRules[].ipAddressOrRange}",
+                "-o", "json",
+            )
+            cosmos_accounts = json.loads(cosmos_raw or "[]")
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+            cosmos_firewall_health_results.append({
+                "status": "probe_failed", "error": str(exc)[:200],
+            })
+            gaps.append(
+                f"cosmos-firewall probe failed: {exc} "
+                f"(unable to verify publicNetworkAccess in {rg})"
+            )
+        else:
+            if not cosmos_accounts:
+                cosmos_firewall_health_results.append({
+                    "status": "no_account_found",
+                })
+                gaps.append(
+                    f"cosmos-firewall: SPEC declared cosmos-db but NO "
+                    f"Microsoft.DocumentDB/databaseAccounts found in "
+                    f"{rg!r}. Structural check (G7) should also have "
+                    f"caught this — investigate Bicep composition."
+                )
+            for acct in cosmos_accounts:
+                pna = (acct.get("pna") or "").strip()
+                bypass = (acct.get("bypass") or "").strip()
+                ip_rules = acct.get("ipRules") or []
+                entry = {
+                    "name": acct.get("name"),
+                    "publicNetworkAccess": pna,
+                    "networkAclBypass": bypass,
+                    "ipRules": ip_rules,
+                }
+                if pna == "Disabled":
+                    entry["status"] = "PNA_DISABLED"
+                    gaps.append(
+                        f"cosmos-firewall {acct.get('name')!r}: "
+                        f"publicNetworkAccess=Disabled. Seed scripts "
+                        f"and operator workstations CANNOT reach "
+                        f"Cosmos (ipRules is IGNORED when PNA is "
+                        f"Disabled). Pilot fix: "
+                        f"`az cosmosdb update -g {rg} -n {acct.get('name')} "
+                        f"--public-network-access Enabled`. Permanent "
+                        f"fix: Bicep cosmos-db.bicep with "
+                        f"pilotPosture=true (PNA=Enabled + "
+                        f"networkAclBypass=AzureServices + ipAllowlist). "
+                        f"See azd-patterns Cosmos firewall callout + "
+                        f"foundry-mcp-aca runbook."
+                    )
+                else:
+                    entry["status"] = "OK"
+                cosmos_firewall_health_results.append(entry)
+    else:
+        cosmos_firewall_health_results.append({
+            "status": "not_required_by_spec",
+            "note": (
+                "SPEC § 11c did not include cosmos-db selector. "
+                "Add it to enable this gate."
+            ),
+        })
+
     channel_results: list[dict[str, Any]] = []
     for ch in channels:
         ch_type = ch.get("type", "").lower()
@@ -686,6 +773,7 @@ def phase_postdeploy(manifest_path: Path, out_path: Path,
         "job_health": job_health_results,
         "appin_health": appin_health_results,
         "bot_auth_health": bot_auth_health_results,
+        "cosmos_firewall_health": cosmos_firewall_health_results,
         "channels": channel_results,
         "scheduled_jobs": job_results,
         "gaps": gaps,

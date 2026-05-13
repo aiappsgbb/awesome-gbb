@@ -19,7 +19,7 @@ description: >
   orchestration (threadlight-deploy), schema authoring (threadlight-
   design).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Threadlight Safe Check — three lifecycle gates, one CLI
@@ -504,6 +504,60 @@ is below its declared minimum.
 > automatically on every `azd up` (see `threadlight-deploy` SKILL.md
 > § Phase 6.5 Step 3).
 
+### Step 5.9 — Cosmos firewall pilot-posture (catches "PNA drifted to Disabled")
+
+> **Behavioural check.** A Cosmos-backed pilot can deploy cleanly
+> (`azd up` returns 0, the Cosmos account exists, the Bicep declared
+> `publicNetworkAccess: Enabled`) and STILL fail at the seed step
+> because some upstream actor flipped PNA back to `Disabled` —
+> commonly an Azure Policy enforcement, a stray `az cosmosdb update`,
+> or a Bicep that never set the property explicitly so it defaulted to
+> `Disabled` on the first provision.
+>
+> When PNA is `Disabled`, **`ipRules` is IGNORED**. Even allowlisted
+> operator workstations get HTTP 403 `Forbidden — Request originated
+> from IP X.X.X.X through public internet`. The postdeploy seed
+> crashes; data-realism gate (Step 5.8) then fails with empty
+> containers; the agent honestly reports "case not found" on every
+> realistic prompt; the demo looks broken.
+>
+> Origin: pilot retrospective — Bicep declared `Enabled` but the
+> deployed account showed `Disabled`. ACA-MCP could still reach
+> Cosmos (Azure backbone), so the agent appeared "live" — but
+> nobody could ever seed it. 90 minutes lost diagnosing.
+
+For every Cosmos account in the RG (when SPEC § 11c selects
+`cosmos-db: yes`), the gate asserts `publicNetworkAccess: Enabled`:
+
+```python
+for acct in az("cosmosdb", "list", "-g", rg, ...):
+    if acct["publicNetworkAccess"] == "Disabled":
+        gaps.append(
+            f"cosmos-firewall {acct['name']!r}: PNA=Disabled. Seed "
+            f"scripts and operator workstations CANNOT reach Cosmos. "
+            f"Pilot fix: az cosmosdb update --public-network-access "
+            f"Enabled. Permanent fix: Bicep cosmos-db.bicep with "
+            f"pilotPosture=true."
+        )
+```
+
+The probe records every checked Cosmos account under
+`cosmos_firewall_health[]` with `publicNetworkAccess`,
+`networkAclBypass`, `ipRules`, and `status`. If the SPEC did NOT
+declare `cosmos-db`, the check is skipped silently.
+
+> **Quick fix when caught:**
+> ```bash
+> az cosmosdb update -g <rg> -n <cosmos-account> \
+>   --public-network-access Enabled
+> ```
+> AND patch `infra/<your-cosmos>.bicep` to follow the `azd-patterns`
+> pilot-posture pattern: `pilotPosture: bool = true` param defaulting
+> `publicNetworkAccess: 'Enabled'` + `networkAclBypass: 'AzureServices'`
+> + `ipAllowlist` (driven by `COSMOS_IP_ALLOWLIST` azd env var). See
+> `azd-patterns` SKILL.md § "Cosmos firewall — pilot-grade defaults"
+> and `foundry-mcp-aca` SKILL.md § "Cosmos firewall + ACA egress".
+
 ### Step 6 — write `tests/postdeploy-manifest.json`
 
 ```json
@@ -525,6 +579,9 @@ is below its declared minimum.
   ],
   "bot_auth_health": [
     { "bot_service": "<your-bot>", "aca": "ca-bot-<slug>", "appType": "UserAssignedMSI", "authtype": "UserManagedIdentity", "status": "OK" }
+  ],
+  "cosmos_firewall_health": [
+    { "name": "<your-cosmos>", "publicNetworkAccess": "Enabled", "networkAclBypass": "AzureServices", "ipRules": ["1.2.3.4"], "status": "OK" }
   ],
   "channels": [
     { "name": "Analyst Workspace", "type": "web", "fqdn": "ca-workspace-...azurecontainerapps.io", "status": "OK" },
