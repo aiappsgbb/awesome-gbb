@@ -7,6 +7,8 @@ description: >
   product demo, screen recording with voiceover, demo producer, make a demo video,
   record a walkthrough, create a screencast with narration, auto-generate demo.
   DO NOT USE FOR: editing existing videos, live streaming, webcam recording.
+metadata:
+  version: "1.0.0"
 ---
 
 # Auto Demo Producer

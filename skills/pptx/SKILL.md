@@ -5,6 +5,8 @@ description: >
   USE FOR: create PowerPoint, generate PPTX, make slide deck, build presentation,
   convert markdown to slides, pitch deck, report as PPTX, create slides.
   DO NOT USE FOR: editing existing PPTX files, PDF generation, Google Slides.
+metadata:
+  version: "1.0.0"
 ---
 
 # PPTX Deck Generator Skill
