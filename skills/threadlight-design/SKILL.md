@@ -10,11 +10,12 @@ description: >
   the demo even runs.
   USE FOR: design a process, spec out a use case, create agent architecture, automate
   a regulated workflow, threadlight design, skill factory, business process
-  specification, speckit, define a customer scenario, mock backend systems.
+  specification, speckit, define a customer scenario, mock backend systems,
+  seller prep guide, demo script, demo prompts.
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Threadlight Design
@@ -753,41 +754,112 @@ for the customer conversation, anticipate questions, and suggest next steps.
 **Sections:**
 
 1. **Use Case Summary** — one paragraph: what the agent does, for whom, why it matters
-2. **Demo Script (high-level)** — the narrative arc the seller will follow on the call.
-   This is **generic by construction** — no URLs, no commands, no resource names. It must
-   be useful even when `threadlight-deploy` hasn't run yet (Cowork seller, steering-
-   committee deck export, sandbox not yet provisioned). The four beats:
+2. **Demo Script** — the seller's runnable script for the call. **Generic by
+   construction** (no FQDNs, no commands, no resource names) so it works
+   even before `threadlight-deploy` has run, but **concrete enough that the
+   seller can run it verbatim** in any agent surface that can accept the
+   prompts (Foundry playground, post-deploy Teams, Cowork preview). The
+   structure is the same five beats every time:
 
-   1. **Opening hook (≈30s)** — one line of customer-facing pain (the named persona +
-      the cost of *today*) and one line teasing the *wow* moment the agent enables.
-      Reuse the punchiest line from `specs/overview.html` § "Why this matters".
-   2. **Demo arc (3–5 acts)** — derive each act from a SPEC § 9 happy-path scenario
-      (S-XXX where variant=happy) crossed with a SPEC § 8 Human Interaction channel.
-      Phrase each act as **what to click + what to say**, not as commands. Example:
-      - *Act 1 — Trigger:* "Open the workspace and drop in a fresh case (or wait
-        for the cron to fire)." Say: "the agent picks this up the same way it would
-        in production — no manual prompt."
-      - *Act 2 — Reasoning:* "Show the workspace as the agent reads the case,
-        calls its tools, and updates the timeline." Say: "every step traces back
-        to BR-{NNN} — nothing magical."
-      - *Act 3 — Action gate:* "Approve / reject the adaptive card in Teams." Say:
-        "the agent never acts without a human in the loop on the hard calls."
-   3. **Reveal moment** — the single beat that proves the BR-XXX value prop. Almost
-      always one of: SLA collapse (hours → minutes), policy hit-rate (cited rules in
-      every decision), or scale-out (one analyst handling 10× the volume). Pick the
-      one that maps to the **primary KPI** in SPEC § 9.
-   4. **Q&A handoff** — one sentence transitioning to the Discovery Questions below.
-      Example: "Now I'd like to understand how this would land in *your* environment —
-      can I ask a few things?"
+   1. **Opening hook** (≈30 seconds — say this *before* you type anything).
+      One paragraph of customer-facing pain (named persona + the cost of
+      *today*) and one tease of the *wow* moment the agent enables. Reuse
+      the punchiest line from `specs/overview.html` § "Why this matters".
+      Write it in **direct quotes** so the seller can read it aloud
+      verbatim.
 
-   > **Style guidance for the generated acts:** speak in second person to the seller
-   > ("you'll click", "you'll say"), keep each act ≤ 3 sentences, tag each act with
-   > the BR-XXX it demonstrates so the seller can cite it on demand. Do NOT name
-   > Azure resources, FQDNs, or CLI commands here — `threadlight-deploy` Phase 6.7
-   > injects a separate **"Live MVP Walkthrough"** section after `azd up`
-   > succeeds, with the concrete URLs / sample queries / sideload steps. Keeping
-   > this section deploy-agnostic is what lets the seller use the prep-guide on
-   > calls before any infrastructure exists.
+   2. **Demo arc — 4–6 acts.** Each act is **one** of two shapes; pick the
+      one matching SPEC § 8 Human Interaction:
+
+      - **Chat-style act** (default — agent answers prompts in Teams, web,
+        or Foundry playground). Each act MUST contain three labelled
+        sub-blocks in this exact order:
+
+        > **Type this:** `<pre><code>{literal prompt the seller types}</code></pre>`
+        > **What you'll see:** {1–2 sentences naming **specific** data
+        > points the agent will surface — entity names, numbers, deltas,
+        > anomalies — drawn from SPEC § 5 sample data and SPEC § 3
+        > business rules. NOT generic ("the agent shows performance")
+        > but concrete ("JPS share decline 16.8% → 13.2%, distribution
+        > 72% → 64%, BAT Pall Mall +4pp").}
+        > **Say:** {one sentence the seller says *after* the response
+        > lands, anchoring it to the BR-XXX value prop.}
+
+        Source the literal prompt either from a SPEC § 9 happy-path
+        scenario (S-XXX, variant=happy) **user input field** verbatim,
+        or — once `threadlight-demo-data-factory` has run — from
+        `tests/eval_dataset.jsonl`. **Never paraphrase.** The same
+        string must score green in the eval run.
+
+      - **Workspace-style act** (event-driven PoCs — adaptive cards,
+        cron-triggered queues, no chat). Replace **Type this:** with
+        **Click here:** describing the literal UI affordance ("click the
+        topmost card in the Inbox", "press *Approve* on the green
+        action gate"). Keep **What you'll see:** + **Say:** identical
+        in shape and concreteness.
+
+      Tag each act with **the BR-XXX it demonstrates** (small inline
+      label) so the seller can cite it on demand. Example structure (do
+      not copy the prose verbatim — generate from this PoC's SPEC):
+
+      ```html
+      <h3>Act 2 — Drill into the problem <small>BR-001, BR-002</small></h3>
+      <div class="card">
+        <strong>Type this:</strong>
+        <pre><code>Show me Midlands performance in detail</code></pre>
+        <strong>What you'll see:</strong> Account-level breakdown,
+        JPS share decline (16.8% → 13.2%), distribution gaps
+        (weighted distribution 72% → 64%), and BAT's Pall Mall
+        gaining +4pp.<br>
+        <strong>Say:</strong> "It's surfaced the distribution erosion
+        and the competitive threat without being asked — that's the
+        anomaly detection running against your business rules."
+      </div>
+      ```
+
+      Do NOT name Azure resources, FQDNs, or CLI commands inside acts —
+      `threadlight-deploy` Phase 6.7 injects a separate **"Live MVP
+      Walkthrough"** appendix after `azd up` succeeds, with the workspace
+      URL, Teams sideload steps, reset/eval/smoke commands.
+
+   3. **Bonus acts** (≥ 4 extras — "use if time allows or customer asks").
+      Group them into one card with short labels for the seller to scan.
+      Cover at minimum:
+      - 1–2 **competitive / depth prompts** drawn from S-XXX scenarios
+        that didn't make the main arc (e.g., *"What are competitors X
+        and Y doing in region Z?"*).
+      - 1 **cross-cut prompt** that demonstrates a different BR than the
+        main arc (e.g., promotion ROI, distribution gap analysis).
+      - 1 **edge case — data freshness / provenance** prompt that shows
+        the agent citing data vintages (e.g., *"How current are our X
+        feeds for Y?"*).
+      - 1 **edge case — out-of-scope / guardrail** prompt that shows the
+        agent declining or scoping correctly (e.g., *"Which portfolio
+        tier does {brand-not-in-portfolio} belong to?"*).
+      Each bonus prompt needs only **Type this:** (no See/Say) — the
+      seller improvises off the response.
+
+   4. **Reveal moment** (say this after the last main act). One short
+      paragraph that **quantifies the saved time** by contrasting
+      manual-effort-today (from SPEC § 1 Problem Statement / § 9
+      Functional success criteria) with the PoC time the seller just
+      demonstrated. Anchor to the **primary KPI** in SPEC § 9. Almost
+      always one of: SLA collapse (hours → minutes / days → seconds),
+      policy hit-rate (cited rules in every decision), or scale-out
+      (one analyst handling 10× the volume). Write in direct quotes.
+
+   5. **Q&A handoff.** One sentence transitioning to the Discovery
+      Questions below. Example: *"Now I'd like to understand how this
+      would land in **your** environment — can I ask a few things
+      about your current workflow?"*
+
+   > **Style guidance.** Speak in second person to the seller ("you'll
+   > type", "you'll say"). Each act ≤ 4 sentences across all three
+   > sub-blocks. **What you'll see:** must reference at least one
+   > entity name + one numeric data point from SPEC § 5 — without that,
+   > the seller has no way to know whether the agent's response is
+   > "right". Generic phrasing is the single biggest reason a prep-guide
+   > fails on the morning of the demo.
 
 3. **Discovery Questions** — 5-8 questions to deepen the conversation with the customer:
    - "What does this process look like today? Where are the bottlenecks?"
@@ -847,7 +919,7 @@ must catch its own mistakes.
 - [ ] `specs/manifest.json` matches the generated skills list and BR counts
 - [ ] `specs/overview.html` renders without errors (valid HTML structure)
 - [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
-- [ ] **`specs/prep-guide.html` § "Demo Script (high-level)" exists** with all four beats (Opening hook · Demo arc · Reveal moment · Q&A handoff), 3–5 acts, each act tagged with the BR-XXX it demonstrates, **and contains zero deploy-specific tokens** (no FQDNs, no `azd ` / `az ` / `python ` commands, no resource names) — those are reserved for `threadlight-deploy` Phase 6.7's "Live MVP Walkthrough" injection
+- [ ] **`specs/prep-guide.html` § "Demo Script" exists** with all five beats (Opening hook in direct quotes · Demo arc 4–6 acts · Bonus acts ≥ 4 · Quantified Reveal moment · Q&A handoff). For chat-style PoCs, **every** main-arc act must contain all three sub-blocks `<strong>Type this:</strong>` + `<strong>What you'll see:</strong>` + `<strong>Say:</strong>` (or `<strong>Click here:</strong>` for workspace-style). **What you'll see** must reference at least one entity name AND one numeric data point per act (grep each act for a digit; zero-digit acts fail). Each act tagged with the BR-XXX it demonstrates. **Bonus acts** card present with ≥ 4 prompts including ≥ 1 freshness/provenance edge case AND ≥ 1 out-of-scope/guardrail edge case. Reveal moment quantifies manual-effort-today vs PoC-time and cites the SPEC § 9 primary KPI. **Zero deploy-specific tokens** anywhere (no FQDNs, no `azd ` / `az ` / `python ` commands, no resource names) — those are reserved for `threadlight-deploy` Phase 6.7's "Live MVP Walkthrough" appendix.
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
 
@@ -910,7 +982,7 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | `specs/SPEC.md` § 11d | `threadlight-demo-data-factory` | Demo data realism rules — volumes, distribution, golden cases |
 | `specs/sample-data/{entity}.json` | `foundry-mcp-aca` Option D + `threadlight-demo-data-factory` | Seed data for mock MCP server |
 | `specs/manifest.json` | `threadlight-deploy` | Machine-readable deployment contract |
-| `specs/prep-guide.html` § "Demo Script (high-level)" | `threadlight-deploy` Phase 6.7 | Generic seller demo script — deploy back-fills a separate "Live MVP Walkthrough" section with concrete URLs / sample queries / sideload steps |
+| `specs/prep-guide.html` § "Demo Script" | `threadlight-deploy` Phase 6.7 | Runnable seller demo script (acts contain literal prompts + concrete expected data points + seller narration); deploy back-fills a separate "Live MVP Walkthrough" appendix with workspace URL / Teams sideload / reset / eval / smoke commands |
 | `AGENTS.md` + `src/agent/skills/` | `threadlight-deploy` | Skill catalog + behavioral guidelines |
 
 > If a section is missing or under-specified, the corresponding downstream skill
