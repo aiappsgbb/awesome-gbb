@@ -132,6 +132,24 @@ param logAnalyticsWorkspaceName string = ''
 param appInsightsName string = ''
 
 
+// ── Citadel hub integration (optional) ──────────────────────────────────────
+// All four parameters default to empty/no-op. Existing flows are unchanged.
+// Set them in tandem when the spoke will be onboarded as a Citadel hub spoke
+// (see SKILL.md Step 12D).
+
+@description('Optional: full ARM ID of the Citadel hub VNet to peer to. Empty = no peering created. When set, this deployment creates the SPOKE-side peering only; the reverse peering must be created by the hub team (see deployment output `hubReversePeeringCommand`).')
+param hubVnetResourceId string = ''
+
+@description('Friendly name for the spoke-side peering (used only when `hubVnetResourceId` is non-empty).')
+param hubPeeringName string = 'peering-to-hub'
+
+@description('Optional: full ARM ID of an existing `privatelink.azure-api.net` private DNS zone (typically owned by the Citadel hub team). Empty = no link created. When set, this deployment links the zone to the spoke VNet so the agent can resolve the APIM gateway hostname to its private IP.')
+param apimDnsZoneResourceId string = ''
+
+@description('Friendly name for the VNet-link record on the APIM DNS zone (used only when `apimDnsZoneResourceId` is non-empty). Must be unique within the zone.')
+param apimDnsZoneLinkName string = 'foundry-spoke-link'
+
+
 var projectName = toLower('${firstProjectName}${uniqueSuffix}')
 var cosmosDBName = toLower('${aiServices}${uniqueSuffix}cosmosdb')
 var aiSearchName = toLower('${aiServices}${uniqueSuffix}search')
@@ -166,6 +184,15 @@ var trimVnetName = trim(existingVnetName)
 
 // Resolve DNS zones subscription ID - use current subscription if not specified
 var resolvedDnsZonesSubscriptionId = empty(dnsZonesSubscriptionId) ? subscription().subscriptionId : dnsZonesSubscriptionId
+
+// ── Citadel hub integration: resolve targets ───────────────────────────────
+var hubPeeringEnabled = !empty(hubVnetResourceId)
+var apimDnsLinkEnabled = !empty(apimDnsZoneResourceId)
+
+var apimDnsZoneParts = split(apimDnsZoneResourceId, '/')
+var apimDnsZoneSubscriptionId = apimDnsLinkEnabled ? apimDnsZoneParts[2] : subscription().subscriptionId
+var apimDnsZoneResourceGroupName = apimDnsLinkEnabled ? apimDnsZoneParts[4] : resourceGroup().name
+var apimDnsZoneName = apimDnsLinkEnabled ? last(apimDnsZoneParts) : 'privatelink.azure-api.net'
 
 @description('The name of the project capability host to be created')
 param projectCapHost string = 'caphostproj'
@@ -532,3 +559,36 @@ module appInsightsRoleAssignments 'modules-network-secured/app-insights-role-ass
     projectPrincipalId: aiProject.outputs.projectPrincipalId
   }
 }
+
+// ── Citadel hub integration (optional) ─────────────────────────────────────
+// Spoke-side peering to the Citadel hub VNet. The hub-side reverse peering
+// is hub-team RBAC; this deployment emits `hubReversePeeringCommand` for them.
+module spokeHubPeering 'modules-network-secured/spoke-hub-peering.bicep' = if (hubPeeringEnabled) {
+  name: 'spoke-hub-peering-${uniqueSuffix}-deployment'
+  scope: resourceGroup(vnetSubscriptionId, vnetResourceGroupName)
+  params: {
+    spokeVnetName: vnet.outputs.virtualNetworkName
+    hubVnetResourceId: hubVnetResourceId
+    peeringName: hubPeeringName
+  }
+}
+
+// Link the hub's privatelink.azure-api.net DNS zone to the spoke VNet so
+// the agent resolves the APIM gateway hostname to its private IP.
+module apimDnsZoneLink 'modules-network-secured/apim-dns-zone-link.bicep' = if (apimDnsLinkEnabled) {
+  name: 'apim-dns-zone-link-${uniqueSuffix}-deployment'
+  scope: resourceGroup(apimDnsZoneSubscriptionId, apimDnsZoneResourceGroupName)
+  params: {
+    zoneName: apimDnsZoneName
+    spokeVnetResourceId: vnet.outputs.virtualNetworkId
+    linkName: apimDnsZoneLinkName
+  }
+}
+
+// Outputs the hub team needs to complete the bidirectional peering. Empty
+// when Citadel hub integration is not enabled.
+var hubVnetParts = split(hubVnetResourceId, '/')
+output hubReversePeeringCommand string = hubPeeringEnabled ? 'az network vnet peering create --resource-group ${hubVnetParts[4]} --vnet-name ${last(hubVnetParts)} --name peering-from-${trimVnetName} --remote-vnet ${vnet.outputs.virtualNetworkId} --allow-vnet-access --allow-forwarded-traffic --subscription ${hubVnetParts[2]}' : ''
+output spokeVnetId string = vnet.outputs.virtualNetworkId
+output spokeVnetAddressSpace string = vnetAddressPrefix
+output agentSubnetName string = vnet.outputs.agentSubnetName

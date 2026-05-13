@@ -83,3 +83,19 @@ param agentDeveloperPrincipalType = 'User'
 param logAnalyticsWorkspaceName = ''
 param appInsightsName = ''
 
+// ── Citadel hub integration (optional) ──────────────────────────────────────
+// Set these when the spoke will be onboarded as a Citadel hub spoke
+// (see SKILL.md Step 12D). Leave empty to skip — existing flows are unchanged.
+//
+// - `hubVnetResourceId`: full ARM ID of the Citadel hub VNet. When set,
+//   creates SPOKE-side peering only; deployment output `hubReversePeeringCommand`
+//   is the one-line `az` command for the hub team to create the reverse peering.
+// - `apimDnsZoneResourceId`: full ARM ID of the existing
+//   `privatelink.azure-api.net` zone (typically owned by the hub team).
+//   When set, links the zone to the spoke VNet so the agent resolves the
+//   APIM hostname to its private IP.
+param hubVnetResourceId = ''
+param hubPeeringName = 'peering-to-hub'
+param apimDnsZoneResourceId = ''
+param apimDnsZoneLinkName = 'foundry-spoke-link'
+

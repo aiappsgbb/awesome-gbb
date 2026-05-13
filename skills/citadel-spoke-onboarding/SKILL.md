@@ -5,12 +5,14 @@ description: >
   Covers Access Contracts, APIM connections, product policies, JWT auth.
   USE FOR: citadel spoke onboarding, access contract, connect foundry to citadel,
   APIM connection, bring your own ai gateway, govern agent, citadel JWT auth,
-  citadel product policy, unified ai api, citadel AGT.
+  citadel product policy, unified ai api, citadel AGT, vnet-isolated citadel
+  spoke, foundry-vnet-deploy spoke onboarding.
   DO NOT USE FOR: deploying the Citadel hub itself, APIM infrastructure,
   hub networking, hub provisioning, hub sizing, llm backend onboarding,
-  deploying model backends, apim backend pools, hub policy fragment deployment.
+  deploying model backends, apim backend pools, hub policy fragment deployment,
+  spoke-side VNet/peering creation (use foundry-vnet-deploy).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Citadel Spoke Onboarding — Reference Guide
@@ -572,12 +574,13 @@ Verify in Foundry portal: **Project → Operate → Admin → Connected resource
 
 ## Networking Considerations (Spoke Side)
 
-The spoke connects to the Citadel hub gateway over the network. Two patterns:
+The spoke connects to the Citadel hub gateway over the network. Three patterns:
 
 | Pattern | How It Works | Spoke Requirement |
 |---------|-------------|-------------------|
 | **Hub-based** | Citadel runs inside the hub VNet | Spoke has direct peering or routes through hub firewall |
 | **Spoke-based** | Citadel runs in a dedicated spoke VNet | Spoke routes via hub firewall → Citadel spoke VNet |
+| **VNet-isolated spoke** (e.g., Foundry-in-VNet from [`foundry-vnet-deploy`](../foundry-vnet-deploy/)) | Spoke Foundry account + project sit inside the customer's own private VNet (private endpoints, no public access) | Bidirectional peering spoke ↔ hub VNet **plus** a VNet link from `privatelink.azure-api.net` to the spoke VNet. `foundry-vnet-deploy` Step 8d / 12D auto-creates the spoke side; the hub team runs the emitted reverse-peering command. |
 
 As a spoke owner, verify DNS, routing, and firewall/NSG access to the APIM
 gateway. The platform team owns the hub-side VNet/APIM/private endpoint config.
@@ -589,6 +592,62 @@ gateway. The platform team owns the hub-side VNet/APIM/private endpoint config.
 > **Foundry Network Injection:** The hub now supports `foundryNetworkInjectionEnabled`,
 > which injects Foundry instances into the hub VNet with private endpoints. If your
 > platform team has enabled this, Foundry-to-APIM traffic stays fully private.
+
+### Combining with `foundry-vnet-deploy`
+
+When the Foundry project to be onboarded was deployed by
+[`foundry-vnet-deploy`](../foundry-vnet-deploy/) (i.e., it lives inside a
+customer-private VNet with public access disabled), the order of operations
+and auth posture are constrained:
+
+**Recommended ordering**
+
+1. Run [`azure-tenant-isolation`](../azure-tenant-isolation/) so all
+   subsequent `az` commands land in the intended subscription.
+2. Run [`foundry-vnet-deploy`](../foundry-vnet-deploy/). When prompted in
+   **Step 8d (Citadel hub integration)**, supply `hubVnetResourceId` and
+   `apimDnsZoneResourceId`; the deployment creates the spoke-side peering
+   and the `privatelink.azure-api.net` VNet link in the same pass.
+3. Run the one-line `hubReversePeeringCommand` emitted by the deployment
+   (or hand it to the hub team to run with their RBAC).
+4. Run **Step 12D** verification — both peerings `Connected`,
+   `{apim}.azure-api.net` resolves to a private IP, `Test-NetConnection
+   ... 443` succeeds.
+5. Run this skill (`citadel-spoke-onboarding`) against the Foundry project.
+6. **Use Option B (Foundry Connection)**, not Option A (KV secret pull) —
+   see the next section for why this is non-negotiable for VNet-isolated
+   spokes.
+
+**Auth posture (mandatory for VNet-isolated spokes)**
+
+Option A retrieves the APIM subscription key from Key Vault at runtime. In
+a VNet-isolated spoke this means the agent must:
+- Reach KV over the network (extra private endpoint + DNS link).
+- Hold a static subscription key (defeats keyless-by-mandate posture).
+
+**Option B** routes the call through a Foundry APIM connection so the
+agent's UAMI is the only credential, and APIM enforces JWT validation on
+the project's MI token. There is no static key in the agent. This is the
+**only** sane option when the spoke is private-VNet.
+
+**Pre-flight checklist before running this skill**
+
+```powershell
+# Run these from inside the spoke VNet (peered VM, Bastion, or VPN client)
+az network vnet peering show --resource-group <spoke-rg> --vnet-name <spoke-vnet> `
+  --name peering-to-hub --query peeringState -o tsv         # → "Connected"
+Resolve-DnsName "<apim>.azure-api.net"                      # → private IP
+Test-NetConnection -ComputerName "<apim>.azure-api.net" -Port 443
+
+# Confirm the Foundry project's UAMI exists (it does by default after foundry-vnet-deploy)
+az cognitiveservices account show --name <foundry-account> --resource-group <spoke-rg> `
+  --query "identity.principalId" -o tsv
+```
+
+If any check fails, **stop** and fix the network plumbing in
+`foundry-vnet-deploy` Step 12D before proceeding — onboarding the spoke
+against a misconfigured network will silently inject an APIM connection
+whose first call times out.
 
 ---
 
@@ -726,6 +785,17 @@ When onboarding a new spoke, request the following from the Citadel platform tea
 - Whether JWT, PII, Content Safety, or custom IdP support is configured
 - Gateway app registration ID (if using JWT auth)
 - Network routing: private endpoint DNS, firewall rules, VNet peering status
+
+**If the spoke itself sits in a private VNet** (e.g., deployed by
+[`foundry-vnet-deploy`](../foundry-vnet-deploy/)), the operator must also
+hand the hub team the spoke's network identity so the hub side of the
+peering can be created with their RBAC:
+
+- Spoke VNet ARM resource ID (full `/subscriptions/.../virtualNetworks/<vnet>`)
+- Spoke VNet address space (e.g., `10.50.0.0/16`)
+- Agent subnet name (default `agent-subnet`) and any custom NSG attached
+- The one-line `hubReversePeeringCommand` emitted by `foundry-vnet-deploy`
+  (it's pre-formatted for the hub team to paste into `az`)
 
 Reference the [LLM Backend Onboarding module](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/bicep/infra/llm-backend-onboarding) for platform-team context
 on how backends are onboarded to the hub (not a spoke deployment step).

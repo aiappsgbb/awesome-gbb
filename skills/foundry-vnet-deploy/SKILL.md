@@ -1,23 +1,24 @@
 ---
 name: foundry-vnet-deploy
 description: >
-  Deploys Azure AI Foundry with **Agent Setup inside a private VNet** using
-  Bicep templates from the `15-private-network-standard-agent-setup` reference.
-  Guided interview generates a `.bicepparam`, then runs `az deployment group
-  create` end-to-end with a fixed-timestamp anti-duplication retry path.
-  Supports new or existing VNets, reuse of existing CosmosDB / Storage / AI
-  Search / private DNS zones, optional hosted-agent developer RBAC, optional
-  App Insights + Log Analytics.
-  USE FOR: foundry private vnet, network-secured foundry, agent network
-  injection, private endpoint foundry, private DNS zone foundry, capability
-  host, customerSubnet, account/project capability host, agent subnet
-  delegation, bicepparam generator, capability host timeout retry, P2S VPN.
-  DO NOT USE FOR: azd-based deploys (use threadlight-deploy /
-  foundry-hosted-agents), public-network Foundry, APIM cross-resource (use
-  foundry-cross-resource), tenant isolation (use azure-tenant-isolation),
-  Citadel onboarding (use citadel-spoke-onboarding).
+  Deploys Azure AI Foundry with **Agent Setup inside a private VNet** via
+  Bicep (`15-private-network-standard-agent-setup` reference). Guided
+  interview produces a `.bicepparam` and runs `az deployment group create`
+  with fixed-timestamp anti-duplication retry. Handles new/existing VNets,
+  reuse of CosmosDB / Storage / AI Search / private DNS zones, optional
+  hosted-agent RBAC, App Insights, and optional spoke-side peering +
+  APIM-DNS-zone link to a Citadel hub VNet.
+  USE FOR: foundry private vnet, network-secured foundry, agent
+  injection, capability host, customerSubnet, bicepparam generator,
+  capability host timeout retry, P2S VPN, citadel hub peering,
+  vnet-isolated citadel spoke, apim private dns zone link.
+  DO NOT USE FOR: azd-based deploys (use threadlight-deploy or
+  foundry-hosted-agents), public-network Foundry, APIM cross-resource
+  (use foundry-cross-resource), tenant isolation
+  (use azure-tenant-isolation), Citadel app-layer onboarding (use
+  citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -238,6 +239,40 @@ Optional question:
 
 1. **Do you want custom names for the Log Analytics workspace and App Insights?** If not, they are auto-generated with a unique suffix.
 
+### Step 8d: Citadel hub integration (optional)
+
+If the spoke project will be onboarded into an **AI Citadel Governance Hub** as a spoke (see `citadel-spoke-onboarding`), this template can create the spoke-side network plumbing in the same deployment. Otherwise skip to Step 9.
+
+Ask:
+
+1. **Will this Foundry be a Citadel hub spoke?** (yes/no — default no).
+   - If **no**, leave the four `hub*` / `apimDnsZone*` parameters empty in Step 9 and continue. Citadel onboarding can also be added later via a re-deploy with the same `deploymentTimestamp`.
+   - If **yes**, ask the next questions.
+2. **`hubVnetResourceId`** — full ARM ID of the Citadel hub VNet. Format: `/subscriptions/{hubSub}/resourceGroups/{hubRg}/providers/Microsoft.Network/virtualNetworks/{hubVnet}`.
+   - The deployment will create **only the spoke→hub peering** (your RBAC). The hub→spoke reverse peering is hub-team RBAC; the deployment will emit a one-line `az network vnet peering create` in the `hubReversePeeringCommand` output for them to run.
+   - ⚠️ **Address-space requirement**: spoke and hub VNets must NOT overlap. Re-validate the values from Step 6 against the hub VNet's address space before continuing.
+3. **`apimDnsZoneResourceId`** (optional) — full ARM ID of the existing `privatelink.azure-api.net` private DNS zone (typically owned by the hub team). Format: `/subscriptions/{hubSub}/resourceGroups/{hubDnsRg}/providers/Microsoft.Network/privateDnsZones/privatelink.azure-api.net`.
+   - Required when the Citadel hub APIM uses a private endpoint (most common). Skip when APIM is reachable on a public endpoint.
+   - The deployment will link the zone to the spoke VNet so the agent resolves `{apim}.azure-api.net` to its private IP.
+4. **`hubPeeringName`** (optional, default `peering-to-hub`) — friendly name for the spoke-side peering.
+5. **`apimDnsZoneLinkName`** (optional, default `foundry-spoke-link`) — VNet-link name on the DNS zone (must be unique within the zone).
+
+Pre-flight (run **after** Step 11 verification, before invoking `citadel-spoke-onboarding`):
+
+```powershell
+# 1. Both peerings must be Connected
+az network vnet peering show --resource-group {rg} --vnet-name {vnetName} `
+  --name {hubPeeringName} --query peeringState -o tsv     # → "Connected"
+
+# 2. DNS resolution from inside the spoke VNet (run from a peered VM/Bastion):
+Resolve-DnsName "{apim}.azure-api.net"                    # must resolve to a 10.x / 192.168.x / 172.16.x private IP
+
+# 3. End-to-end TCP reachability:
+Test-NetConnection -ComputerName "{apim}.azure-api.net" -Port 443
+```
+
+If all three pass, the Foundry account in this VNet can now reach the Citadel hub APIM gateway, and you can run `citadel-spoke-onboarding` against the project to inject the APIM products + Foundry connection.
+
 ### Step 9: Generate the .bicepparam file
 
 With all the data collected, generate the `main.bicepparam` file with the following format:
@@ -304,6 +339,14 @@ param agentDeveloperPrincipalType = 'User'
 // project MI receives Log Analytics Reader + Azure AI User on the account.
 param logAnalyticsWorkspaceName = ''
 param appInsightsName = ''
+
+// Citadel hub integration (optional). Set to non-empty values when the spoke
+// will be onboarded as a Citadel hub spoke (Step 8d above + citadel-spoke-onboarding).
+// Leave empty to skip — existing flows are unchanged.
+param hubVnetResourceId = '{hubVnetResourceId}'
+param hubPeeringName = '{hubPeeringName}'           // default: 'peering-to-hub'
+param apimDnsZoneResourceId = '{apimDnsZoneResourceId}'
+param apimDnsZoneLinkName = '{apimDnsZoneLinkName}' // default: 'foundry-spoke-link'
 ```
 
 **IMPORTANT**: 
@@ -323,6 +366,7 @@ param appInsightsName = ''
    - VNet type (new/existing) and subnets
    - Reused existing resources
    - DNS zones (new/existing)
+   - **Citadel hub integration** (if Step 8d was completed): hub VNet ARM ID, APIM DNS zone ARM ID, peering name. Otherwise: "(none — local Foundry only)".
 
 2. Ask the user whether to proceed with the deployment.
 
@@ -611,7 +655,10 @@ Ask the user how they will access the private resources of the VNet. The options
 1. **Existing VPN Gateway** (P2S) in another VNet → Step 12A
 2. **VM / Bastion / ExpressRoute** already available in the same VNet or with peering → Step 12C
 3. **No access configured** → needs to create one → Step 12B
-4. **I will configure it later** → skip to Step 13
+4. **AI Citadel hub integration** (peering + DNS link were created in Step 8d / 9 / 10) → Step 12D **post-deploy verification**
+5. **I will configure it later** → skip to Step 13
+
+> Step 12 options are not mutually exclusive — a Citadel-spoke deployment commonly also needs operator access (Step 12A/B/C) for `az`-side validation.
 
 ### Step 12A — Access via existing VPN Gateway (with peering)
 
@@ -774,6 +821,72 @@ ExpressRoute or other means:
    connected to the deployment's VNet (directly or via peering) and that the
    DNS zones have VNet links configured.
 
+### Step 12D — AI Citadel hub spoke (post-deploy verification)
+
+If Step 8d enabled Citadel hub integration, the deployment has already created
+the **spoke-side** peering and (optionally) linked the APIM private DNS zone to
+the spoke VNet. Two things still need to happen before `citadel-spoke-onboarding`
+can run successfully against the project:
+
+#### 12D.1 — Hub team creates the reverse peering
+
+Retrieve the one-line `az` command from the deployment output and hand it to
+the Citadel hub team (separate RBAC; they own the hub VNet):
+
+```powershell
+$deploymentName = "foundry-vnet-{deployTimestamp}"
+az deployment group show --resource-group {rg} --name $deploymentName `
+  --query "properties.outputs.hubReversePeeringCommand.value" -o tsv
+```
+
+The output looks like:
+
+```
+az network vnet peering create --resource-group {hubRg} --vnet-name {hubVnet} \
+  --name peering-from-{spokeVnet} \
+  --remote-vnet /subscriptions/{spokeSub}/resourceGroups/{rg}/providers/Microsoft.Network/virtualNetworks/{spokeVnet} \
+  --allow-vnet-access --allow-forwarded-traffic --subscription {hubSub}
+```
+
+Paste it into a Teams/Slack handoff to the hub team.
+
+#### 12D.2 — Pre-flight checklist
+
+Once the hub team confirms the reverse peering is in place, verify end-to-end
+from inside the spoke VNet (a peered VM, Bastion, or VPN-connected client):
+
+```powershell
+# 1. Both peerings must be in "Connected" state
+az network vnet peering show --resource-group {rg} --vnet-name {vnetName} `
+  --name {hubPeeringName} --query peeringState -o tsv      # → "Connected"
+
+# 2. APIM hostname must resolve to a private IP (10.x / 192.168.x / 172.16.x)
+#    — this requires the privatelink.azure-api.net VNet link from Step 8d.
+Resolve-DnsName "{apim}.azure-api.net"
+
+# 3. End-to-end TCP reachability on 443
+Test-NetConnection -ComputerName "{apim}.azure-api.net" -Port 443
+```
+
+> **NSG egress (manual)** — if the customer attached a custom NSG to the agent
+> subnet (foundry-vnet-deploy never does this, since attaching an NSG to a
+> delegated subnet is destructive), ensure its outbound rules allow HTTPS (443)
+> to the hub VNet address space or to the `AzureCloud` service tag. The default
+> subnet NSG is permissive and needs no change.
+
+#### 12D.3 — Hand off to citadel-spoke-onboarding
+
+Once 12D.1 + 12D.2 pass, the project is ready to be onboarded as a Citadel
+spoke. Inform the operator:
+
+1. The Foundry account + project ARM IDs needed by `citadel-spoke-onboarding`
+   are visible in the deployment outputs (`spokeVnetId`, `agentSubnetName`).
+2. Use **Option B (Foundry Connection)** in `citadel-spoke-onboarding` —
+   Option A (Key Vault secret pull) violates the keyless-by-mandate posture
+   that VNet-isolated spokes require.
+3. The hub team-owned APIM gateway URL is what the Foundry connection routes
+   to; the agent's UAMI is the only credential threaded through the call.
+
 ### Step 13: Final notes
 
 After successful verification, remind the user:
@@ -794,6 +907,7 @@ After successful verification, remind the user:
 7. If the user passed a one-line scenario hint when invoking the skill (see the **Goal** section), use it to pre-fill values whenever possible.
 8. **Always generate and store a fixed `deploymentTimestamp`** before the first deployment. Pass it as `--parameters deploymentTimestamp={timestamp}` on every attempt (including retries). This guarantees that `uniqueSuffix` is identical and resources are not duplicated.
 9. **On retries**, first verify whether the Account Capability Host completed internally (via REST API PUT → look for "Conflict" error with "Succeeded"). If it already exists, create the Project Capability Host directly via the REST API and then re-run the full deployment with the same timestamp to complete the role assignments.
+10. **Citadel hub integration is opt-in via Step 8d.** When the spoke will be onboarded as a Citadel hub spoke, complete Step 12D (hub team creates the reverse peering, all three pre-flight checks pass) **before** running `citadel-spoke-onboarding`. Otherwise the injected APIM Foundry connection's first call will time out — either no route to the hub, or no DNS resolution for `{apim}.azure-api.net`.
 
 ---
 
@@ -801,4 +915,5 @@ After successful verification, remind the user:
 
 - **Foundry Samples** — [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) — Bicep template set under `templates/` derives from this Foundry samples reference.
 - **Original interview/automation logic** — Angel Sevillano (Microsoft), [`asevillano/foundry-vnet-deploy`](https://github.com/asevillano/foundry-vnet-deploy).
-- **Related skills** — `azure-tenant-isolation` (set up first), `foundry-hosted-agents` (deploy agents into the host this skill creates), `threadlight-deploy` (`azd`-based public-network alternative), `foundry-cross-resource` (APIM cross-resource model wiring on top), `citadel-spoke-onboarding` (governance overlay), `foundry-observability` (App Insights wiring if Step 8c was opted in).
+- **Related skills** — `azure-tenant-isolation` (set up first), `foundry-hosted-agents` (deploy agents into the host this skill creates), `threadlight-deploy` (`azd`-based public-network alternative), `foundry-cross-resource` (APIM cross-resource model wiring on top), **`citadel-spoke-onboarding` — see Step 8d + Step 12D for the network plumbing this skill creates so the deployed Foundry can be onboarded as a Citadel hub spoke**, `foundry-observability` (App Insights wiring if Step 8c was opted in).
+- **Template fork notice** — the `templates/` set started as a clone of [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup); awesome-gbb adds three optional integration paths on top: (1) `modules-network-secured/spoke-hub-peering.bicep` and (2) `modules-network-secured/apim-dns-zone-link.bicep` are awesome-gbb-only modules wired into `main.bicep` behind the new `hubVnetResourceId` / `apimDnsZoneResourceId` parameters; (3) `main.bicep` emits a `hubReversePeeringCommand` deployment output. Future upstream syncs must diff against the original 23 modules and re-apply these additions.
