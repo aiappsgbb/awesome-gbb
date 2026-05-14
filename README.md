@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-25-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-26-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -49,19 +49,20 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 > seller surface for `threadlight-design` (it shines at structured-document
 > generation), but its sandbox **does not allow `pip`/`npm`/`uv` installs,
 > cannot shell out to `azd`/`az`/`docker`/`gh`, and cannot run long-lived
-> processes**. Code-heavy skills that depend on those things — anything that
-> deploys, builds containers, runs evals against a live model, generates
-> binary artifacts (PPTX/MP4), or runs a local FastMCP — **will not work in
-> Cowork**. Use Copilot CLI or Coding Agent for those. Cheat-sheet:
+> processes**. As a rule of thumb, only a handful of skills are Cowork-friendly:
 >
-> | ✅ Works in Cowork (markdown / JSON / config gen) | ❌ Needs a real shell (Copilot CLI, Coding Agent, Cursor, …) |
-> |---|---|
-> | `threadlight-design` · `threadlight-hitl-patterns` · `threadlight-event-triggers` (scaffold spec) · `threadlight-demo-data-factory` (data spec) · `citadel-spoke-onboarding` (config gen) · `ip-catalog` (read-only MCP) · `azure-tenant-isolation` (config files) · `foundry-cross-resource` (spec/Bicep authoring) | `threadlight-deploy` · `threadlight-local-test` · `threadlight-safe-check` · `threadlight-workspace-ui` · `foundry-hosted-agents` · `ghcp-hosted-agents` · `foundry-mcp-aca` · `foundry-evals` · `foundry-iq` · `foundry-doc-vision-speech` · `foundry-observability` · `foundry-teams-bot` · `foundry-vnet-deploy` · `foundry-toolbox` · `foundry-skill-catalog` · `azd-patterns` · `gbb-pptx` · `auto-demo-producer` |
+> - **`threadlight-design`** — the seller pitch + spec generator (its primary home).
+> - **`ip-catalog`** — read-only MCP discovery of the GBB IP catalog.
+> - **`gbb-pptx`** — pitch-deck generator (works as long as `python-pptx` is
+>   available in the Cowork Python sandbox).
 >
-> Skills in the right column may still **author** their artifacts in Cowork
-> (the markdown / Bicep / Dockerfile generation step is text), but you'll
-> need a real shell to **execute** the resulting `azd up` / build / eval /
-> deploy step. Plan workshops accordingly.
+> Everything else in this catalog assumes a real shell. Skills that deploy,
+> build containers, run evals against a live model, render videos, or run a
+> local FastMCP **will not work in Cowork** — use Copilot CLI, Coding Agent,
+> Cursor, VS Code Copilot Chat, or Claude Code instead. They may still
+> **author** their artifacts in Cowork (markdown / Bicep / Dockerfile is text),
+> but the `azd up` / build / eval step needs a real shell. Plan workshops
+> accordingly.
 
 ---
 
@@ -95,18 +96,23 @@ Reference patterns for Microsoft Foundry hosted agents, MCP servers, evals, RAG,
 
 ### 🧵 Threadlight Pipeline
 
-End-to-end skill chain for rapid PoC delivery: customer brief → spec → local test → deploy → safe-check gate → demo. See [THREADLIGHT.md](THREADLIGHT.md) for the flow.
+The **Threadlight pipeline** is an end-to-end skill chain for rapid PoC
+delivery: customer brief → spec → local test → deploy → safe-check gate →
+demo. It bundles eight `threadlight-*` skills that compose tightly with each
+other and with the Foundry building blocks above.
 
-| Skill | Description |
-|-------|-------------|
-| [**threadlight-design**](skills/threadlight-design/) | Spec out a business process or customer use case (FSI, MFG, Retail, Telco, etc.) — durable SpecKit + AGENTS.md + skills + mock data + seller pitch page (`overview.html`). Cowork-friendly. |
-| [**threadlight-deploy**](skills/threadlight-deploy/) | Take a designed project and generate Foundry deployment artifacts — `container.py`, `Dockerfile`, `agent.yaml`, `azure.yaml`, Bicep modules. One-command `azd up` to a hosted agent. |
-| [**threadlight-local-test**](skills/threadlight-local-test/) | **For SEs.** Run a design output locally (FoundryChatClient + FastMCP + workspace UI + sample data) without `azd up` — fast iteration in Copilot CLI / Cursor / Clawpilot (needs a real shell — not Cowork). |
-| [**threadlight-safe-check**](skills/threadlight-safe-check/) | **Mandatory** three-lifecycle completeness gate (design / pre-deploy / post-deploy) — selectors → resources, image-probe (no placeholder), job-success, App Insights presence. Catches silent partial deploys. |
-| [**threadlight-event-triggers**](skills/threadlight-event-triggers/) | Scaffold non-interactive trigger receivers — ACA Jobs (cron) + KEDA-scaled consumers (Service Bus / Event Grid) + idempotency. |
-| [**threadlight-workspace-ui**](skills/threadlight-workspace-ui/) | Curated, framework-agnostic workspace UI reference per process (case-list, dashboard, console, kanban, map) with action toolbar + audit viewer. **ACA-hosted**, not file:// |
-| [**threadlight-hitl-patterns**](skills/threadlight-hitl-patterns/) | Teams Adaptive Card 1.5 flows + bot UX for the seven canonical action gates (approve, edit-and-approve, reject, escalate, signoff, audit-view, request-info). |
-| [**threadlight-demo-data-factory**](skills/threadlight-demo-data-factory/) | Per-domain synthetic data + Cosmos seed / reset scripts. Anchors on industry realism canons (FSI canon ready; Retail / Telco / MFG drafted as pilots ship). |
+> [!TIP]
+> **Threadlight has its own dedicated guide.** Because the pipeline is
+> opinionated about the order skills run in, the cross-skill contracts they
+> share (SPEC.md sections, kebab-case selectors, the three-lifecycle gate),
+> and the customer-workshop runbook, all of that lives in
+> **[THREADLIGHT.md](THREADLIGHT.md)** — including the per-skill summary, the
+> selector vocabulary, and the deploy / local-test / safe-check pre-flight.
+> The individual skills (`threadlight-design`, `threadlight-deploy`,
+> `threadlight-local-test`, `threadlight-safe-check`,
+> `threadlight-event-triggers`, `threadlight-workspace-ui`,
+> `threadlight-hitl-patterns`, `threadlight-demo-data-factory`) are listed
+> under `skills/` and install the same way as everything else.
 
 ### 🛠️ Cross-Cutting Helpers
 
