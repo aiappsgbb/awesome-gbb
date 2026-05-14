@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -457,9 +457,24 @@ process repo should ship `tests/probe_mcp_output.py` for this.
 
 ### MCP with per-call AAD bearer (`header_provider`)
 
+> **⚠️ Bootstrap caveat (CRITICAL — read first).** `header_provider=`
+> only covers `call_tool()` requests, NOT the MCP bootstrap exchange
+> (`initialize` + `tools/list` issued by `_ensure_connected`). For
+> AAD-secured MCP endpoints that require auth on bootstrap (Azure AI
+> Search Knowledge Base MCP, anything behind PMI), `header_provider=`
+> fails with **401** BEFORE the first `call_tool` ever fires — the
+> `_mcp_call_headers` ContextVar that `header_provider` writes to is
+> only set inside `call_tool()` (`agent_framework/_mcp.py` ~line 1589).
+> On hosted agents the symptom is every Responses request returning
+> `server_error` with no useful log signal. **Use `httpx.AsyncClient(auth=httpx.Auth)`
+> via `http_client=` instead** (companion example below) — see
+> `foundry-iq` SKILL § "KB access from a hosted MAF agent — three
+> routes" → Route B for the canonical pattern.
+
 For MCP servers backed by Azure services that authenticate with
-Microsoft Entra ID (e.g. AI Search Knowledge Base MCP, Azure Storage
-MCP behind PMI), use the `header_provider` callback to mint a fresh
+Microsoft Entra ID **where bootstrap does NOT require auth** (e.g.
+some custom MCP servers that auth-gate per-tool but allow open
+discovery), use the `header_provider` callback to mint a fresh
 bearer token per tool invocation. Per the SDK's own docstring, the
 callback "receives the runtime keyword arguments" — a generic
 `dict[str, Any]` populated by MAF at tool-invoke time — and returns
@@ -498,6 +513,52 @@ kb_mcp = MCPStreamableHTTPTool(
     request_timeout=60,
 )
 ```
+
+#### Companion: `httpx.Auth` for AAD-bootstrap-required MCPs (CANONICAL)
+
+When the MCP endpoint authenticates `initialize` / `tools/list` (any
+Azure AI Search KB MCP, any PMI-protected MCP), supply auth at the
+`httpx` transport layer instead — `httpx.Auth.auth_flow()` is invoked
+on EVERY outbound request including bootstrap, so the agent's MCP
+handshake completes successfully:
+
+```python
+import os, httpx
+from agent_framework import MCPStreamableHTTPTool
+from azure.identity import DefaultAzureCredential
+
+_credential = DefaultAzureCredential()
+
+class _AADBearerAuth(httpx.Auth):
+    """Mints AAD bearer per request — covers MCP bootstrap, not just call_tool."""
+    def __init__(self, scope: str) -> None:
+        self.scope = scope
+    def auth_flow(self, request: httpx.Request):
+        token = _credential.get_token(self.scope).token
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+_http = httpx.AsyncClient(
+    auth=_AADBearerAuth("https://search.azure.com/.default"),
+    timeout=120.0,
+)
+
+kb_mcp = MCPStreamableHTTPTool(
+    name="my_kb_mcp",
+    url=(f"{os.environ['AI_SEARCH_ENDPOINT']}/knowledgebases/<kb-name>/mcp"
+         f"?api-version=2025-11-01-preview"),
+    http_client=_http,            # 🔑 auth covers BOOTSTRAP, not just call_tool
+    parse_tool_results=_mcp_text_extractor,
+    load_prompts=False,           # avoid prompts/list 500s on KB MCP
+    request_timeout=120,
+)
+```
+
+> **Do NOT combine `header_provider=` AND `http_client=` (with auth).**
+> Pick one. `httpx.Auth` is canonical for AAD-secured Azure MCP
+> endpoints; `header_provider=` is appropriate only for tool-call-only
+> headers (e.g. per-call correlation IDs that don't need to cover
+> bootstrap).
 
 > **⚠️ MCP `ping` trap on Foundry-hosted MCP servers.** MAF's
 > `MCPStreamableHTTPTool._ensure_connected()` issues an MCP `ping`
@@ -910,6 +971,85 @@ Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/con
 
 ---
 
+## Gateway throttle finding (preview)
+
+The Foundry hosted-agent gateway has an undocumented preview-time
+throttle: **~6 sustained sequential invocations per warm period**
+before sticky `internal_server_error` responses with a **5–10 minute
+recovery window**. Validated in May 2026 against a real pilot agent
+across 3 successive eval runs.
+
+### Detection signature
+
+Look for ALL of these together:
+
+* Cold-start: first 1–2 warmup pings return `server_error` in 5–10s
+  before the platform brings a replica up
+* Warm phase: exactly **5–6 sequential invocations** answer in 30–60s
+  each (real tool work) with normal latency
+* Throttle phase: from invocation 7–9 onwards, every call returns
+  `internal_server_error` (or `server_error` / `model:""`) in **5–10s
+  consistent latency** — too fast for real tool work, too slow for a
+  4xx routing failure
+* Recovery: **5–10 min idle restores normal operation** (no manual
+  restart, no replica scale, no env change required)
+
+### What's NOT the cause
+
+Each lever was independently bumped in a controlled test (single pilot
+agent, 30-scenario eval) and the boundary did NOT move:
+
+| Lever | Before | After | Effect on 6-call boundary |
+|---|---|---|---|
+| Container CPU | 0.25 | 1.0 | none |
+| Container memory | 0.5Gi | 2Gi | none |
+| Replicas | 1 (no scale) | min=1 max=3 | none |
+| Model TPM | 50K | 300K | +1 answered scenario only |
+| Pacing between invocations | 5s | 30s | none |
+| Invocation retries | 1 | 3 | retry burst makes it WORSE |
+
+The boundary is **gateway-side, not container-side**. Container restart,
+replica swap, and `azd deploy agent` all leave the throttle window
+unchanged.
+
+### Mitigation (eval / workshop posture)
+
+* **Run evals in 5-scenario batches** with 5-minute cooldown between
+  batches. Pre-warm each batch with a throwaway invocation. See
+  `foundry-evals` SKILL § "Warmup retry loop, not single-shot" and
+  § "Resume-after-cooldown".
+* **Move tool work to INGEST time** where feasible — visual extraction,
+  document parsing, embedding generation should run in a one-shot
+  ACA Job or postprovision script, not inside the agent's tool budget.
+  See `foundry-doc-vision-speech` SKILL § Pattern X for the ingest-time
+  vision pattern that explicitly sidesteps this throttle.
+* **Sample, don't burst** for continuous-eval — see `foundry-evals`
+  SKILL § Continuous Evaluation Loop, Plan A `EvaluationRule` with
+  `event_type=SAMPLED` (not `RESPONSE_COMPLETED`).
+
+### Production posture (not just demo)
+
+* **Target architecture for production traffic at scale: APIM gateway
+  in front of the hosted agent**, with retry + queue semantics in the
+  gateway (not in every client). The hosted-agent runtime itself is the
+  bottleneck; horizontally scaling the agent container does NOT bypass
+  the throttle.
+* **File a Foundry support ticket** with detection-signature evidence
+  if the throttle blocks your production sizing — preview limits are
+  often raised on request once a pattern is documented end-to-end.
+
+### Diagnosis blocker
+
+Confirming root cause is hard because the throttle window typically
+coincides with **zero `AppExceptions` / `AppTraces` reaching App
+Insights** — the gateway absorbs the failed requests and never emits
+container-side telemetry for them. Ensure your `_init_telemetry()`
+guard is in place (see § Troubleshooting → AppInsights row + `gap O-011`
+in `foundry-observability`) BEFORE investigating; otherwise you're
+flying blind.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -933,6 +1073,8 @@ Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/con
 | ACA job uses old code after deploy | Postdeploy hook fails (`AZURE_AI_PROJECT_ENDPOINT not set`) | Run `cd infra/scripts && uv run deploy_job.py` manually after each `azd deploy` |
 | Container starts but `agent_reference` errors in logs | `FoundryAgent` used for sub-agents | Replace with client-swap pattern |
 | Protocol version error | Using `"v1"` | Use semver `"1.0.0"` |
+| **Sticky `424 session_not_ready` for 8+ minutes; ZERO AppIn / LAW signal** | New Python module added to agent code but NOT included in Dockerfile `COPY` line. Module import fails on container start → `ResponsesHostServer` never binds → `/readiness` never returns 200 → Foundry retries readiness in long backoff → every Responses request returns sticky `424`. App Insights shows nothing because `_init_telemetry()` never runs (the module that calls it didn't even import). Near-impossible to diagnose from logs because there are no logs | Explicitly enumerate every Python module in the Dockerfile `COPY` line; do NOT rely on `COPY ./* .` or `COPY . .` globs (silently skip dotfiles + reorder hazards + cache-bust footguns). Pattern: `COPY container.py corpus.py my_kb_tool.py copilot-instructions.md ./`. After ANY new `.py` added to the agent module, re-check Dockerfile + rebuild |
+| **`agent.yaml` `resources:` and `scale:` blocks silently dropped by `azd ai agent deploy`** | The deploy CLI accepts both blocks at the YAML schema layer but does NOT pass them through to the platform — deployed agents come up at `cpu=0.25 / memory=0.5Gi / no scale` regardless of what's in the YAML. Discovered May 2026; `PATCH versions/<n>` returns 405 (versions are immutable); `PUT versions/<n>` returns 405 (must auto-assign via POST) | **Workaround**: bypass `azd ai agent deploy` and POST directly to `<endpoint>/api/projects/<proj>/agents/<name>/versions?api-version=2025-11-15-preview` with the full `HostedAgentDefinition` body including `cpu`, `memory`, `min_replicas`, `max_replicas`, `image`, `env_vars`. Status transitions `creating` → `active` in <20s. File a CLI bug if not yet tracked upstream |
 
 ### Container Logs (Logstream API)
 
