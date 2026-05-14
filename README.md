@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-31-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-32-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -117,20 +117,32 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 |-------|-------------|
 | [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (`azd`) — hooks, postdeploy/postprovision, ACA Job deployment, **silent-failure debug playbook** (6-rung diagnostic ladder). |
 | [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
-| [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth. **Combines with `foundry-vnet-deploy` for VNet-isolated spokes** (Option B Foundry Connection auth posture mandatory). |
 | [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
 | [**ghcp-cli-config**](skills/ghcp-cli-config/) | Bootstrap GitHub Copilot CLI for GBB workflows — 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), `settings.json` baseline (model, `sessionSync`, `allowedUrls`, `trustedFolders`), work-iq plugin family for Microsoft staff, `autoApprove` safe-default matrix, and a **fresh-machine bootstrap procedure** the agent can execute step-by-step. Distilled from a live GBB engineer's `~/.copilot/`. |
 
 ### 🛡️ Governance
 
-Wrappers around runtime governance toolkits that sit **between** an agent's
-reasoning loop and the actions it takes — deterministic policy enforcement,
-capability allow/deny, hash-chained audit, and OWASP ASI 2026 coverage.
-Compose these with `foundry-hosted-agents` / `threadlight-deploy` (in-process
-middleware) or `azd-patterns` (sidecar pattern).
+The **AI Citadel** governance ladder — three skills that compose into
+defence-in-depth for production agent platforms:
+
+1. **Layer 1 (gateway infra)** — `citadel-hub-deploy` stands up the
+   shared APIM AI gateway + Foundry control plane + telemetry sink.
+2. **Layer 1 (per-spoke wiring)** — `citadel-spoke-onboarding` connects
+   each agent project to the hub via per-team Access Contracts.
+3. **Layer 1.5 (in-process)** — `foundry-agt` wraps the Microsoft Agent
+   Governance Toolkit around the agent runtime itself, catching attacks
+   the gateway can't see (intent classification, capability allow/deny,
+   hash-chained audit, OWASP ASI 2026 coverage). The 26.67% (prompt-only)
+   vs 0.00% (deterministic AGT) red-team gap is why both layers matter.
+
+Compose with `foundry-hosted-agents` / `threadlight-deploy` (in-process
+middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
+`azd-patterns` (sidecar pattern).
 
 | Skill | Description |
 |-------|-------------|
+| [**citadel-hub-deploy**](skills/citadel-hub-deploy/) | Deploy the **AI Citadel Governance Hub** (Layer 1 infra) — APIM AI Gateway + 2× Microsoft Foundry control plane + Cosmos usage telemetry + Logic App billing + 4 LLM APIs (Azure OpenAI / OpenAI Realtime / Universal LLM / Unified AI wildcard) + 13 Private DNS Zones + Managed Redis semantic cache. Wraps `Azure-Samples/ai-hub-gateway-solution-accelerator` `citadel-v1` branch (azd template, MIT) at a pinned commit; **does NOT fork or vendor upstream Bicep**. Ships 3 curated env profiles (`pilot-quickstart`, `enterprise-baseline`, `vnet-isolated-spoke-aware`), pre-flight checklist, live audit notes against a real `rg-citadel-hub-01` deployment in Sweden Central (resource inventory + APIM smoke calls + latency baselines + 8 Known Issues incl. `api-key` header convention + `max_completion_tokens` GPT-5.4 migration). |
+| [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth. **Combines with `foundry-vnet-deploy` for VNet-isolated spokes** (Option B Foundry Connection auth posture mandatory). Pairs with `citadel-hub-deploy` for the full Layer 1 story. |
 | [**foundry-agt**](skills/foundry-agt/) | Wrap the [Microsoft Agent Governance Toolkit (AGT)](https://github.com/microsoft/agent-governance-toolkit) v3.6.0 around Foundry hosted agents, MCP servers, and Citadel spokes. **Path A** (in-process MAF middleware, GBB-verified ~8–12 µs/eval on Win + Py 3.13) for hosted agents; **Path B** (ACA sidecar) for non-MAF workloads; **Path C** (Citadel adapter) for governed spokes. Ships 3 starter YAML policies (default conservative / HITL gate / PII deny), the `create_governance_middleware(...)` factory snippet (working — upstream Foundry doc shows stale kwargs that no longer exist), an ACA-sidecar Bicep fragment, and **5 field-tested Known Issues** (Windows UTF-8 CLI trap, stale Foundry-doc kwargs, `Agent` ctor rename, RogueDetection setup gotcha, verifier version skew). Wrapper skill — upstream is canon, links don't duplicate. |
 
 ### 📊 Content Generation
