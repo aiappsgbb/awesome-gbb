@@ -1,0 +1,48 @@
+# Default conservative policy — start here for every governed Foundry agent.
+#
+# Loaded by:
+#   from agent_os.policies import PolicyEvaluator
+#   ev = PolicyEvaluator()
+#   ev.load_policies("references/policies/")
+#
+# Behaviour:
+#   - DEFAULT ALLOW so the agent can do its job
+#   - Block obvious destructive SQL (drop / truncate / shutdown)
+#   - Block shell-exec attempts in the message body
+#   - Cap message length to discourage prompt-stuffing
+name: foundry-agt-default
+version: "1.0"
+description: |
+  Conservative default policy. Allows ordinary tool use, blocks the
+  three obvious destructive patterns. Tune to taste; never run
+  ungoverned.
+defaults:
+  action: allow
+rules:
+  - name: block-destructive-sql
+    priority: 100
+    condition:
+      field: message
+      operator: matches
+      # case-insensitive: word-boundary DROP|TRUNCATE|SHUTDOWN followed by anything
+      value: "(?i)\\b(drop\\s+(table|database|schema)|truncate\\s+table|shutdown\\b)"
+    action: deny
+    message: Destructive SQL pattern blocked by default policy.
+
+  - name: block-shell-exec
+    priority: 90
+    condition:
+      field: message
+      operator: matches
+      value: "(?i)\\b(rm\\s+-rf|sudo\\s+|powershell\\s+-enc|invoke-expression|iex\\s+\\()"
+    action: deny
+    message: Shell execution pattern blocked by default policy.
+
+  - name: cap-message-length
+    priority: 10
+    condition:
+      field: message
+      operator: length_gt
+      value: 16000
+    action: deny
+    message: Message exceeds 16k chars; refusing to forward to model.
