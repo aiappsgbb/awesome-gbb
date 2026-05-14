@@ -10,10 +10,10 @@
 ## Contents
 
 - [What Are Skills?](#what-are-skills)
+- [Featured Pipeline: Threadlight](#-featured-pipeline-threadlight)
 - [Supported Coding Runtimes](#supported-coding-runtimes)
 - [Skills Catalog](#skills-catalog)
   - [🏗️ Foundry Building Blocks](#️-foundry-building-blocks)
-  - [🧵 Threadlight Pipeline](#-threadlight-pipeline)
   - [🛠️ Cross-Cutting Helpers](#️-cross-cutting-helpers)
   - [📊 Content Generation](#-content-generation)
   - [🔍 Discovery](#-discovery)
@@ -28,6 +28,24 @@
 Skills are reusable, composable building blocks for AI agents. Each Skill encodes domain expertise as a structured markdown file (`SKILL.md`) that any compatible agentic coding runtime can load and execute.
 
 These are **developer-oriented skills** — they help you build, deploy, and ship faster. A skill tells the agent **what to do**, **when to activate**, and **how to do it** — step by step.
+
+---
+
+## 🧵 Featured Pipeline: Threadlight
+
+**Threadlight** is the flagship end-to-end pipeline in this catalog: a chain
+of eight `threadlight-*` skills that take a customer from a one-paragraph
+brief through spec → local test → deploy → safe-check gate → demo. It's
+opinionated about the order skills run in, the cross-skill contracts they
+share (SPEC.md sections, kebab-case selectors, the three-lifecycle gate),
+and the persona split — `threadlight-design` is the seller / Cowork entry
+point; the rest run in a real shell (Copilot CLI, Coding Agent, Cursor, …)
+during workshops.
+
+> 📖 **The full pipeline narrative, per-skill summary, selector vocabulary
+> and customer-workshop runbook live in [THREADLIGHT.md](THREADLIGHT.md).**
+> The individual skills are also listed under `skills/threadlight-*/` and
+> install the same way as everything else in this repo.
 
 ---
 
@@ -68,13 +86,6 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 
 ## Skills Catalog
 
-> [!TIP]
-> **Two primary personas use these skills:**
-> - **Sellers** (non-technical, in Microsoft Copilot Cowork) — start with `threadlight-design` to tailor-craft a use-case pitch.
-> - **Solution Engineers** (technical, running customer workshops) — use `threadlight-local-test` for fast inner-loop iteration, then `threadlight-deploy` for the customer sandbox.
->
-> See [THREADLIGHT.md](THREADLIGHT.md) for the end-to-end pipeline and a customer-workshop runbook.
-
 ### 🏗️ Foundry Building Blocks
 
 Reference patterns for Microsoft Foundry hosted agents, MCP servers, evals, RAG, vision/speech, and observability.
@@ -93,26 +104,6 @@ Reference patterns for Microsoft Foundry hosted agents, MCP servers, evals, RAG,
 | [**foundry-vnet-deploy**](skills/foundry-vnet-deploy/) | Deploy Foundry with **Agent Setup inside a private VNet** — guided interview generates `.bicepparam`, runs `az deployment group create` with fixed-timestamp anti-duplication retry, supports new/existing VNet + reused CosmosDB / Storage / AI Search / private DNS zones, **optional spoke→hub peering + APIM private DNS link modules for Citadel-spoke combinations** |
 | [**foundry-toolbox**](skills/foundry-toolbox/) | Wire the Foundry Toolbox into hosted agents — managed multi-tool MCP endpoint with all 7 tool types (`mcp` / `web_search` / `azure_ai_search` / `code_interpreter` / `file_search` / `openapi` / `a2a_preview`), the mandatory `Foundry-Features: Toolboxes=V1Preview` header, **the four silent traps** (`ping` / `prompts/list` / non-streaming `tools/call` / reserved `FOUNDRY_*` env vars), the `azure_ai_search`-is-INDEX-not-KB nuance, version promote/rollback flow, and `azd ai agent init` declarative `kind: toolbox` deployment |
 | [**foundry-skill-catalog**](skills/foundry-skill-catalog/) | Foundry Skills REST API (`{project}/skills`) — project-level store for instruction-only `SKILL.md` files. Documents the **JSON-mode-is-WRITE-ONLY trap** (instructions submitted at create are never returned by GET / list / download / `?include=`), the quoted-frontmatter → HTTP 500 trap, the mandatory `Foundry-Features: Skills=V1Preview` header, and ships a verified **`FoundrySkillsSource(SkillsSource)`** adapter so `agent_framework.SkillsProvider` can consume Foundry skills at runtime (not just file-copy at build time) |
-
-### 🧵 Threadlight Pipeline
-
-The **Threadlight pipeline** is an end-to-end skill chain for rapid PoC
-delivery: customer brief → spec → local test → deploy → safe-check gate →
-demo. It bundles eight `threadlight-*` skills that compose tightly with each
-other and with the Foundry building blocks above.
-
-> [!TIP]
-> **Threadlight has its own dedicated guide.** Because the pipeline is
-> opinionated about the order skills run in, the cross-skill contracts they
-> share (SPEC.md sections, kebab-case selectors, the three-lifecycle gate),
-> and the customer-workshop runbook, all of that lives in
-> **[THREADLIGHT.md](THREADLIGHT.md)** — including the per-skill summary, the
-> selector vocabulary, and the deploy / local-test / safe-check pre-flight.
-> The individual skills (`threadlight-design`, `threadlight-deploy`,
-> `threadlight-local-test`, `threadlight-safe-check`,
-> `threadlight-event-triggers`, `threadlight-workspace-ui`,
-> `threadlight-hitl-patterns`, `threadlight-demo-data-factory`) are listed
-> under `skills/` and install the same way as everything else.
 
 ### 🛠️ Cross-Cutting Helpers
 
