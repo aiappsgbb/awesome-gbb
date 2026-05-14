@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-26-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-27-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -73,6 +73,8 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 > - **`ip-catalog`** — read-only MCP discovery of the GBB IP catalog.
 > - **`gbb-pptx`** — pitch-deck generator (works as long as `python-pptx` is
 >   available in the Cowork Python sandbox).
+> - **`gbb-humanizer`** — pure prose-polish pass over `overview.html`,
+>   prep-guide, demo script, or speaker notes (text-only, no shell needed).
 >
 > Everything else in this catalog assumes a real shell. Skills that deploy,
 > build containers, run evals against a live model, render videos, or run a
@@ -114,6 +116,7 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 | [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (`azd`) — hooks, postdeploy/postprovision, ACA Job deployment, **silent-failure debug playbook** (6-rung diagnostic ladder). |
 | [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
 | [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth. **Combines with `foundry-vnet-deploy` for VNet-isolated spokes** (Option B Foundry Connection auth posture mandatory). |
+| [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
 
 ### 📊 Content Generation
 
