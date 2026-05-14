@@ -11,7 +11,7 @@ description: >
   DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
   MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
@@ -404,6 +404,92 @@ def retrieve(self, query: str) -> Dict[str, Any]:
 
 ---
 
+## KB access from a hosted MAF agent — three routes
+
+When a hosted MAF agent (`Agent + FoundryChatClient + ResponsesHostServer`)
+needs to call a Knowledge Base, you have three transport choices. All
+three implement the **same** agentic retrieval semantics (planner +
+multi-hop + answer synthesis); only the auth + lifecycle differ.
+
+| Route | What it is | Auth flavor | When to pick |
+|---|---|---|---|
+| **A. Direct SDK `@tool`** | `KnowledgeBaseRetrievalClient.retrieve()` wrapped in an `@tool` function | `DefaultAzureCredential` native, transparent token refresh | Fewest moving parts; no MCP transport. Pick when you don't need a uniform MCP surface across multiple backends. |
+| **B. Direct KB MCP via `httpx.Auth` (CANONICAL DEFAULT)** | `MCPStreamableHTTPTool` against `<search>/knowledgebases/<n>/mcp?api-version=2025-11-01-preview` | AAD bearer (`https://search.azure.com/.default`) injected by an `httpx.AsyncClient(auth=httpx.Auth-subclass)` passed via `http_client=` | Default when you want one MCP surface and per-call AAD refresh. **Do NOT use `header_provider=`** — see Common Errors row on bootstrap 401. |
+| **C. Toolbox MCP wrapping the KB** | Foundry Toolbox `mcp` tool with `project_connection_id` pointing at a `RemoteTool` connection of `authType: ProjectManagedIdentity` (audience `https://search.azure.com`) | Toolbox handles transport + token refresh centrally; agent only knows the Toolbox endpoint | Pick when multiple MCP backends need centralized auth / policy / versioning. See `foundry-toolbox` SKILL § "azure_ai_search — INDEX, not Knowledge Base" for connection wiring. |
+
+### Route A — Direct SDK `@tool` (minimal)
+
+```python
+import os
+from agent_framework import tool
+from azure.identity import DefaultAzureCredential
+from azure.search.documents.indexes import KnowledgeBaseRetrievalClient
+
+_credential = DefaultAzureCredential()
+_kb_client = KnowledgeBaseRetrievalClient(
+    endpoint=os.environ["AI_SEARCH_ENDPOINT"],
+    knowledge_base_name=os.environ["KB_NAME"],
+    credential=_credential,
+    api_version="2025-11-01-preview",
+)
+
+@tool(approval_mode="never_require")
+async def my_kb_tool(query: str) -> dict:
+    """Retrieve a grounded answer with citations from the knowledge base."""
+    result = _kb_client.retrieve(query=query)
+    return {"answer": result.answer, "references": result.references}
+```
+
+### Route B — Direct KB MCP via `httpx.Auth` (CANONICAL DEFAULT)
+
+```python
+import os, httpx
+from agent_framework import MCPStreamableHTTPTool
+from azure.identity import DefaultAzureCredential
+
+_credential = DefaultAzureCredential()
+
+class _KBSearchAuth(httpx.Auth):
+    """Mints AAD bearer on EVERY request — covers MCP bootstrap (initialize + tools/list)."""
+    def auth_flow(self, request: httpx.Request):
+        token = _credential.get_token("https://search.azure.com/.default").token
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+_http = httpx.AsyncClient(auth=_KBSearchAuth(), timeout=120.0)
+
+kb_mcp = MCPStreamableHTTPTool(
+    name="my_kb_mcp",
+    url=(f"{os.environ['AI_SEARCH_ENDPOINT'].rstrip('/')}"
+         f"/knowledgebases/{os.environ['KB_NAME']}/mcp?api-version=2025-11-01-preview"),
+    http_client=_http,        # 🔑 auth covers BOOTSTRAP, not just call_tool
+    load_prompts=False,       # avoid prompts/list 500s on KB MCP
+    request_timeout=120,
+)
+```
+
+> **Why `httpx.Auth` and NOT `header_provider=`.** MAF's `header_provider`
+> only fires inside `call_tool()` (via the `_mcp_call_headers` ContextVar
+> set in `agent_framework/_mcp.py` ~line 1589). The MCP bootstrap
+> (`initialize` + `tools/list`) runs FIRST during `_ensure_connected`,
+> when the ContextVar is still empty → no `Authorization` header → 401 →
+> agent registration fails → every Responses request returns
+> `server_error` with no useful log signal. `httpx.Auth.auth_flow()` is
+> invoked on every outbound request INCLUDING the bootstrap pair,
+> sidestepping the trap. See `foundry-hosted-agents` SKILL §
+> "MCP with per-call AAD bearer" → ⚠️ Bootstrap caveat.
+
+### Route C — Toolbox MCP wrapping the KB
+
+See `foundry-toolbox` SKILL § "azure_ai_search — INDEX, not Knowledge
+Base" for the connection (declarative YAML or ARM REST PUT) and toolbox
+shape. Consumed from the agent as a single `MCPStreamableHTTPTool`
+against the Toolbox consumer endpoint. **Tool name flattens** to
+`<tool_name_prefix>_<tool_name>` — `server_label` is dropped (validated
+MAF 1.3.0 + Toolbox v1, May 2026).
+
+---
+
 ## API Reference
 
 ### Knowledge Agent Retrieval
@@ -628,6 +714,139 @@ re-run interactively without re-provisioning. It should be idempotent
 (uses `MergeOrUpload` semantics, not `Upload`) so you can re-run after
 each fix without `az search index data delete` cycles.
 
+### 8. Content-gated bootstrap (don't re-ingest on routine `azd provision`)
+
+Postprovision MUST NOT rebuild the KB just because someone tweaked a
+network rule or bumped a SKU. Re-ingesting wipes the KB temporarily
+AND burns LLM tokens on per-source vision/extraction calls — both
+unacceptable for an unrelated infra change. Three-mode gate:
+
+```python
+# infra/scripts/postprovision.py (excerpt)
+import os, subprocess, sys
+from azure.search.documents import SearchClient
+from azure.identity import DefaultAzureCredential
+
+def kb_doc_count() -> int:
+    sc = SearchClient(
+        endpoint=os.environ["AI_SEARCH_ENDPOINT"],
+        index_name=os.environ["FOUNDRY_IQ_INDEX"],
+        credential=DefaultAzureCredential(),
+    )
+    return sc.get_document_count()
+
+force = os.getenv("PILOT_REINGEST_KB", "").lower() in ("1", "true", "yes")
+count = kb_doc_count()
+
+if count == 0 or force:
+    reason = "empty KB" if count == 0 else "PILOT_REINGEST_KB set"
+    print(f"[ingest] {reason} -> running refresh_kb.py")
+    subprocess.run([sys.executable, "refresh_kb.py"], check=True)
+else:
+    print(f"[skip] KB has {count} docs; set PILOT_REINGEST_KB=1 to force refresh")
+```
+
+Pair with a `--no-seed` flag on your `bootstrap_foundry_iq.py` so the
+index + Knowledge Agent / Knowledge Base are still created and
+idempotently ensured every postprovision, but the legacy text seed
+never overwrites the real ingest output.
+
+The operator-facing manual override is `PILOT_REINGEST_KB=1 python
+postprovision.py`, or wrap it as a tiny `refresh_kb.py` (~40 lines)
+that always runs the ingest chain unconditionally for hand-driven
+content refreshes.
+
+### 9. Visual chunks with `page_ref` and `visual_kind`
+
+When the corpus contains diagrams, flowcharts, or visual customer
+comms, extract them at INGEST time (see `foundry-doc-vision-speech`
+SKILL § Pattern X) and land the structured text as additional KB
+chunks alongside text chunks — same index, same retrieval path, **no
+runtime vision tool**. The chunk schema needs four extra fields:
+
+```jsonl
+{
+  "id": "vis_blueprint_p06",
+  "source_file": "journey-blueprint-v1.3.pdf",
+  "source_type": "journey",
+  "page_ref": "page:6",
+  "visual_kind": "flowchart",
+  "content_sha256": "abc123...",
+  "content": "PAGE SUMMARY\n...\nDIAGRAM STRUCTURE\n[START] ...\n[STEP] ...\n[DECIDE] ...",
+  "title": "Assisted journey — vulnerability branch (p.6)"
+}
+```
+
+`page_ref` flows into the cited answer as `[..., page 6]`; `visual_kind`
+helps the planner bias retrieval; `content_sha256` enables byte-identical
+duplicate detection across source files (real-world export bugs produce
+duplicate documents with different IDs but identical bodies — flag
+those for the customer's content-management team).
+
+### 10. `BOLD_PARA_RE` heading lift for mammoth-converted DOCX
+
+`mammoth.convert_to_html(...)` (or any pure-DOCX-to-Markdown path)
+emits section titles as `**Bold paragraph**\n\n`, NOT `## Heading\n`.
+A heading-aware chunker therefore puts the entire 24KB doc in ONE
+"Introduction" chunk before paragraph fallback fires, and ALL chunks
+inherit the same vague title. Pre-process bold-then-blank patterns to
+`##` BEFORE chunking:
+
+```python
+import re
+
+BOLD_PARA_RE = re.compile(r"^\*\*([^*\n]{3,120})\*\*\s*$", re.MULTILINE)
+
+def lift_bold_to_h2(md: str) -> str:
+    """Promote standalone **Bold** paragraphs to ## H2 so the chunker splits properly."""
+    return BOLD_PARA_RE.sub(r"## \1", md)
+```
+
+Validated on a 19-document corpus: ~140 bold paragraphs lifted; one
+24KB article went from 1 "Introduction" chunk → 30 properly-titled
+chunks; end-to-end retrieval precision on title-grounded queries jumped
+from ~30% to ~80%+ on the same eval dataset.
+
+### 11. Per-source manifest for cheap-skip-if-unchanged
+
+Long-running ingest pipelines (vision extraction, Document Intelligence
+calls, embedding) should consult a per-source manifest BEFORE re-extracting.
+Schema:
+
+```json
+{
+  "<source_path>": {
+    "sha256": "<content hash>",
+    "mtime": 1715600000.0,
+    "size": 569123,
+    "chunks": 12,
+    "extracted_at": "2026-05-13T14:22:01Z"
+  }
+}
+```
+
+Atomic write (`tmp + os.replace`) so a crash mid-rewrite doesn't leave
+a partial file. Cheap-skip at the top of the per-source loop:
+
+```python
+def source_unchanged(path, manifest):
+    cur_mtime = path.stat().st_mtime
+    cur_size = path.stat().st_size
+    entry = manifest.get(str(path))
+    if not entry or entry["mtime"] != cur_mtime or entry["size"] != cur_size:
+        return False
+    # mtime+size match — only THEN compute sha256 to confirm content equality
+    return entry["sha256"] == _sha256_file(path)
+```
+
+Skip-rewrites-prior-chunks: when source IS unchanged, leave the prior
+JSONL chunks for that source intact in the merged ingest output (don't
+re-emit). When source HAS changed, re-extract AND remove all prior
+chunks keyed to that source BEFORE appending the new ones.
+
+Cross-link: see `foundry-doc-vision-speech` SKILL § Pattern X for the
+matching extraction pipeline that this manifest skips against.
+
 ---
 
 ## Sample Use Cases
@@ -723,7 +942,8 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 | `InvalidDocumentKey` 400 on upload | Document key contains illegal chars (parens, brackets, dots, spaces) | Sanitize keys: `re.sub(r"[^A-Za-z0-9_\-=]", "_", name)` then collapse runs of `_` and trim to 128 chars. AI Search only accepts `[A-Za-z0-9_\-=]`. |
 | `Field 'content' contains a term that is too large to process. The max length for UTF-8 encoded terms is 32766 bytes.` | Source doc has a long unbroken token (URL, base64 blob, no whitespace) > 32k bytes | Chunk content > ~25k chars at paragraph / sentence / whitespace boundaries with a hard-cap fallback. Don't rely on `[:60000]` truncation — that doesn't fix the term length, only the field length. |
 | Hosted MAF agent returns `server_error` after wiring `MCPStreamableHTTPTool` against `/knowledgebases/<n>/mcp` | Suspected: MAF's `MCPStreamableHTTPTool._ensure_connected()` issues an MCP `ping` request during agent registration. The Foundry Toolbox MCP endpoint is documented to return HTTP 500 on `ping`; the same failure mode is **suspected but not yet confirmed upstream** for direct KB MCP wiring. Either way, the agent fails to register and every invoke returns `server_error` from the responses endpoint with no useful log signal | Either (a) override `MCPStreamableHTTPTool._ensure_connected` with a no-op subclass to skip the ping, OR (b) wrap the KB MCP behind a Foundry Toolbox MCP tool with `project_connection_id` so the Toolbox handles transport. See `foundry-hosted-agents` SKILL § "MCP `ping` trap on Foundry-hosted MCP servers". |
-| `401` from KB MCP endpoint on hosted MAF agent (despite agent identity having `Search Index Data Reader`) | `MCPStreamableHTTPTool` does not auto-mint AAD tokens for the MCP transport — for hosted MAF agents calling `https://search.azure.com`-audience endpoints, you must supply the bearer header yourself per call | Use `MCPStreamableHTTPTool(header_provider=callable)` — see worked example in `foundry-hosted-agents` SKILL § "MCP with per-call AAD bearer (`header_provider`)". Module-level singleton `DefaultAzureCredential` so the in-memory token cache is reused; `get_token()` auto-refreshes within ~5 min of expiry. |
+| `401` from KB MCP endpoint on hosted MAF agent (despite agent identity having `Search Index Data Reader`) | `MCPStreamableHTTPTool(header_provider=...)` does NOT cover the MCP bootstrap exchange. The `_mcp_call_headers` ContextVar is only set inside `call_tool()` (`agent_framework/_mcp.py` ~line 1589); `_ensure_connected` runs `initialize` + `tools/list` BEFORE the first `call_tool`, with the ContextVar still empty → no `Authorization` header → 401 → agent boot fails. The `server_error` surfaced to the responses endpoint has no useful log signal. | **Use `httpx.AsyncClient(auth=httpx.Auth)` via `http_client=`** instead of `header_provider=`. The `auth.auth_flow()` method runs on EVERY outbound request including bootstrap. See `foundry-hosted-agents` SKILL § "MCP with per-call AAD bearer (`header_provider`)" → ⚠️ Bootstrap caveat for the worked `httpx.Auth` example, and § KB access from a hosted MAF agent → Route B above. |
+| `references[].source_data` is `null` on KB MCP / SDK responses | Default `KnowledgeSource` definition omits `includeReferenceSourceData: true`; the KB returns reference IDs only — no title / version / effective_date / source_type metadata for programmatic citation rendering | When provisioning the searchIndex `KnowledgeSource`, set `"includeReferenceSourceData": true` in the body (`PUT {search}/knowledgesources/<n>?api-version=2025-11-01-preview`). Citations EMBEDDED in the synthesized answer (`[<source_label>]` markers) still render without this — only structured `references[i].source_data` field access requires it. |
 | `client.get_mcp_tool()` accepts only static `headers: dict[str, str]` — no `header_provider` | The hosted-MCP shape is designed for static API keys / unauthenticated MCPs; the static dict is pinned at agent build time | For MCP servers that need short-lived AAD tokens (e.g. KB MCP, Storage MCP behind PMI), do NOT use `client.get_mcp_tool()` — switch to `MCPStreamableHTTPTool + header_provider`. Static `Bearer` tokens in the dict will expire after ~1h and break the agent until container restart. Bug-009/014 itself is FIXED in `agent-framework-core` 1.3.0 ([PR #5581](https://github.com/microsoft/agent-framework/pull/5581)) — the static-headers limitation is a separate design constraint. |
 | Foundry Toolbox `azure_ai_search` tool type wraps an INDEX, not a Knowledge Base | The built-in Toolbox tool only exposes `index_name` + `query_type=vector_semantic_hybrid` — no agentic query planning or answer synthesis | If you need KB planning + synthesis from a Toolbox, use the `mcp` tool type (not `azure_ai_search`) with `server_url=<search>/knowledgebases/<n>/mcp?api-version=2025-11-01-preview` + a `project_connection_id` that authenticates with PMI to `https://search.azure.com`. The trade-off: extra hop, inherits the `ping` trap, but Toolbox handles token refresh centrally. |
 | No results | Empty index | Index sample documents first |
