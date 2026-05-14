@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-27-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-28-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -117,6 +117,7 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 | [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
 | [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth. **Combines with `foundry-vnet-deploy` for VNet-isolated spokes** (Option B Foundry Connection auth posture mandatory). |
 | [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
+| [**ghcp-cli-config**](skills/ghcp-cli-config/) | Bootstrap GitHub Copilot CLI for GBB workflows — 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), `settings.json` baseline (model, `sessionSync`, `allowedUrls`, `trustedFolders`), work-iq plugin family for Microsoft staff, `autoApprove` safe-default matrix, and a **fresh-machine bootstrap procedure** the agent can execute step-by-step. Distilled from a live GBB engineer's `~/.copilot/`. |
 
 ### 📊 Content Generation
 
@@ -136,6 +137,9 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 ## How to Use
 
 **Install with `gh` CLI:**
+
+> [!TIP]
+> **First time on Copilot CLI?** Install [**ghcp-cli-config**](skills/ghcp-cli-config/) first — it bootstraps `~/.copilot/` with the 6 recommended MCP servers (`mslearn`, `Azure`, `Playwright`, `context7`, `tavily`, `mem0`), a sensible `settings.json` baseline, and the work-iq plugin family for Microsoft staff. The agent can run the bootstrap end-to-end on a fresh machine.
 
 ```bash
 gh skill install aiappsgbb/awesome-gbb <skill-name> --scope user
