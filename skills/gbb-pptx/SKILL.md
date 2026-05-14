@@ -9,7 +9,7 @@ description: >
   DO NOT USE FOR: editing existing PPTX files (use the upstream `pptx` skill),
   PDF generation, Google Slides.
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
 ---
 
 # GBB PPTX Deck Generator Skill
@@ -141,6 +141,13 @@ def add_notes(slide, text):
     slide.notes_slide.notes_text_frame.text = text
 ```
 
+> **Polish pass (optional but recommended).** Speaker notes are pure prose
+> read aloud during the demo — AI-prose tells degrade credibility. After
+> the deck is assembled, run [`gbb-humanizer`](../gbb-humanizer/) over the
+> notes text using the pre-canned `gbb-seller-pitch.md` voice sample.
+> **Do not** humanize slide bullets or titles — those need to stay punchy
+> and parallel; the humanizer's section-aware mode skips them by default.
+
 ### Save with Lock Detection
 
 ```python
@@ -237,3 +244,10 @@ text_box(slide, 1.4, 5.65, 10.5, 0.7,
 add_notes(slide, "Speaker notes with source links here")
 prs.save("output.pptx")
 ```
+
+## See Also
+
+| Skill | Use When |
+|-------|----------|
+| [**gbb-humanizer**](../gbb-humanizer/) | **Polish pass** for speaker notes after the deck is generated. Section-aware mode skips slide bullets and titles (which need to stay punchy and parallel) and only rewrites the prose inside `notes_slide.notes_text_frame.text`. Use the pre-canned `gbb-seller-pitch.md` voice sample. |
+| [**threadlight-design**](../threadlight-design/) | Generates the SpecKit + `overview.html` that this deck's slides typically narrate — the deck is often a re-projection of the same content for an audience that prefers slides to long-form HTML. |

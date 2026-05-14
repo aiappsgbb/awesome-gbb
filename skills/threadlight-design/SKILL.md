@@ -15,7 +15,7 @@ description: >
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Threadlight Design
@@ -646,6 +646,19 @@ customer walkthroughs, and stakeholder alignment.
 - No external CDN, fonts, or scripts — everything inline
 - Print-friendly (can be saved as PDF from browser)
 
+> **Polish pass (optional but recommended).** After generating
+> `overview.html`, run [`gbb-humanizer`](../gbb-humanizer/) over the **body
+> paragraphs** of the Pain / Process / Agents / Architecture / Outcomes
+> sections. The humanizer skill ships a pre-canned `gbb-seller-pitch.md`
+> voice sample and a section-aware mode that **skips** the hero kicker
+> (already disciplined), tables, KPI cards, code blocks, SME quotes, and
+> the BR-XXX / S-XXX identifiers. It also has a density-preserving
+> override on rule-of-three that **preserves** domain triples like
+> `citation-grounded, version-aware, vulnerability-aware` where each
+> item carries a distinct technical claim. The polish pass is highest-ROI
+> on the `<p class="lede">` body paragraphs and the `pain-list` / outcome
+> `why` blurbs — sections sellers paste into customer-facing collateral.
+
 #### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (MANDATORY)
 
 A second seller-facing artifact that complements `overview.html`. Where the
@@ -892,6 +905,16 @@ at the top. Print-friendly (saves as clean PDF).
 > This is intentionally lean — NOT a 14-section seller enablement deck.
 > Just enough to prepare for the conversation.
 
+> **Polish pass (optional but recommended).** Sellers read the prep-guide
+> Demo Script aloud — even small AI-prose tells degrade credibility. After
+> generating `prep-guide.html`, run [`gbb-humanizer`](../gbb-humanizer/)
+> over the prose sections (Use Case Summary, the **Say:** lines inside
+> each demo act, Q&A handoff). Use the pre-canned `gbb-seller-pitch.md`
+> voice sample. **Do not** humanize the **Type this:** literal prompts,
+> the **What you'll see:** data-point lists, BR-XXX tags, command blocks,
+> or the live-walkthrough URLs that `threadlight-deploy` Phase 6.7
+> back-fills — those are factual scaffolding, not prose.
+
 ### Step 7: Review
 
 Walk through the generated structure with the user:
@@ -1022,3 +1045,4 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | [**foundry-evals**](../foundry-evals/) | Consumes SPEC § 9 KPI table — runs continuous evaluation loop |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Consumes SPEC § 11b Governance Posture — opt-in Citadel handoff after initial deploy |
 | [**azd-patterns**](../azd-patterns/) | Composable Bicep module library that all module-emitting skills above feed into |
+| [**gbb-humanizer**](../gbb-humanizer/) | **Polish pass** for the prose-heavy artifacts this skill generates (`overview.html` body, `prep-guide.html` Demo Script narration). 29 patterns from Wikipedia's "Signs of AI writing" + GBB-specific section-aware mode + density-preserving guardrail so domain rule-of-three lists survive |
