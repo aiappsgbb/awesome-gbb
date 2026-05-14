@@ -17,7 +17,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -32,30 +32,149 @@ metadata:
 
 ---
 
-## What AGT is (and isn't)
+## Why this matters (the 30-second version)
+
+Most agents today are governed by **prompt-based safety** — instructions
+in the system message that say "please don't do X". In red-team testing
+this leaks at a **26.67 %** policy-violation rate ([upstream
+benchmarks](https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/BENCHMARKS.md)).
+AGT moves the check **out** of the LLM and into a deterministic policy
+engine that runs **before** the action executes — measured at **0.00 %**
+violation under the same red team:
+
+```
+                          ┌──────────────────────┐
+   Agent decides          │   AGT Policy Check   │   Allow → tool runs
+   to call a tool ──────▶ │   (YAML / Rego /     │ ──────▶ Audit Log
+                          │    Cedar evaluator)  │
+                          └──────────────────────┘   Deny → tool blocked,
+                              ~8–12 µs/eval                 reason logged,
+                          (deterministic, not LLM)          HITL queue (opt)
+```
+
+What this buys you, concretely, in a Foundry hosted agent:
+
+| Without AGT (prompt-based safety only) | With AGT (Path A in-process middleware) |
+|---|---|
+| Agent can be jailbroken into calling `delete_account` | `delete_account` is on the deny-list — physically can't fire |
+| PII can leak into tool calls or model responses | Regex / classifier policy blocks the response before send |
+| No tamper-evident record of "what the agent did" | Hash-chained `AuditLog`, exportable as CloudEvents to App Insights |
+| "We covered OWASP ASI 2026" is a claim, not evidence | `agt verify --evidence ... --strict` is a CI-gateable proof |
+| HITL gating is bespoke per agent, hard to audit | YAML-declared HITL policy, same shape across every agent in the catalog |
+
+This is **defence-in-depth alongside** Azure AI Content Safety / APIM
+gateway policies / Citadel product policies — not a replacement for any
+of them. See "What AGT isn't (use these instead)" below for the
+layer-by-layer mapping.
+
+---
+
+## What AGT does
 
 The **Microsoft Agent Governance Toolkit** is a Microsoft-owned, MIT-licensed,
-OpenSSF-Best-Practices-badged toolkit that adds **deterministic, sub-millisecond
-policy enforcement** between an agent's reasoning loop and the actions it
-takes. It currently covers **10/10 OWASP Agentic Security Initiative (ASI)
-2026** controls — verifiable locally via `agt verify`.
+OpenSSF-Best-Practices-badged toolkit. It currently covers **10/10 OWASP
+Agentic Security Initiative (ASI) 2026** controls, with **13 000+ tests**
+in upstream CI, verifiable locally via `agt verify`.
 
-| AGT IS | AGT ISN'T |
-|--------|-----------|
-| Runtime policy enforcement (allow / deny / HITL) | A model / chat client |
-| Cryptographic identity for agents (Ed25519 / ML-DSA-65) | A vector store |
-| Hash-chain-signed audit ledger | An eval harness (use `foundry-evals`) |
-| MCP tool security scanner (poisoning, hidden instructions) | A prompt template library |
-| Capability profiling + rogue-behaviour detection | An orchestration framework — it sits **inside** MAF / your runtime |
-| OWASP ASI 2026 self-attestation (`agt verify --evidence ...`) | A replacement for Azure AI Content Safety — pair them |
+The capability surface — every line of which is exercisable via the
+`agt …` CLI or one of the language SDKs:
 
-**Upstream sources of truth** (all referenced from `references/upstream-pin.md`):
+| Capability | What it does | Status here |
+|---|---|---|
+| **Policy Engine** | YAML / OPA-Rego / Cedar policies evaluated per-action; sub-millisecond, deterministic | ✅ tested (Path A) |
+| **Capability Guard** | Explicit allow/deny lists for tool calls (`web_search` ✅, `delete_file` ❌) | ✅ tested |
+| **Audit Trail** | Hash-chained tamper-evident log; OTel CloudEvents export; `verify_integrity()` API | ✅ tested |
+| **MAF Middleware** | 4 stackable middleware classes auto-assembled by `create_governance_middleware()` | ✅ tested |
+| **Zero-Trust Identity** | Ed25519 + quantum-safe ML-DSA-65 credentials, trust scoring 0–1000, SPIFFE/SVID | 📖 upstream |
+| **Execution Sandboxing** | 4-tier privilege rings, saga orchestration, kill switch (for shell / code-interp tools) | 📖 upstream |
+| **MCP Security Scanner** | Detects tool poisoning, typosquatting, hidden instructions in MCP tool defs | 📖 upstream |
+| **PromptDefense Evaluator** | 12-vector adversarial test suite (injection, jailbreak, goal-hijack, …) | 📖 upstream |
+| **Agent SRE** | SLOs, error budgets, replay debugging, chaos engineering, circuit breakers | 📖 upstream |
+| **Contributor Reputation** | GitHub Action that screens PR/issue authors for credential laundering / spray patterns | 📖 upstream |
+| **Shadow AI Discovery** | Scans an org for unregistered agents using your services | 📖 upstream |
+| **OWASP self-attestation** | `agt verify --evidence ... --strict` — CI-gateable compliance proof | ✅ tested (10/10) |
+
+**Polyglot reality.** Although this skill targets Foundry hosted agents
+(Python / MAF), AGT itself ships SDKs for **Python, TypeScript, .NET,
+Rust, and Go** with adapters for **20+ frameworks** (AWS Bedrock,
+Google ADK, Azure AI, LangChain, CrewAI, AutoGen, OpenAI Agents…). If
+you find yourself governing a non-Foundry GBB workload (a TypeScript
+agent for a customer's React UI; a .NET MCP server; a Go data-plane
+worker), reach for the same toolkit — only the wiring changes, the
+policy YAML and the `agt verify` evidence shape don't.
+
+---
+
+## What AGT isn't (use these instead)
+
+AGT is narrow on purpose. The right column is what to reach for when
+you've mistaken the problem for an AGT one:
+
+| Need | Reach for | Why |
+|---|---|---|
+| Prompt / completion content moderation (toxicity, self-harm, jailbreak detection at the **token** level) | [**Azure AI Content Safety**](https://learn.microsoft.com/azure/ai-services/content-safety/) | AGT governs **actions**, not LLM I/O. Pair the two — Content Safety on the message bus, AGT on the tool/action bus. |
+| HTTP-edge gateway routing, auth, rate-limit, product policy | [`citadel-spoke-onboarding`](../citadel-spoke-onboarding/SKILL.md) (APIM-based) | APIM gates the **edge**; AGT gates **inside** the agent's tool loop. Compose, don't replace. |
+| Network isolation (private endpoints, VNet, capability host) | [`foundry-vnet-deploy`](../foundry-vnet-deploy/SKILL.md) | Different layer entirely — network plane, not policy plane. |
+| Eval scoring (task adherence, intent resolution, custom judges) | [`foundry-evals`](../foundry-evals/SKILL.md) | AGT's PromptDefense covers **adversarial** regression; `foundry-evals` covers **quality** regression. Run both. |
+| Telemetry plumbing (App Insights, OTel exporters) | [`foundry-observability`](../foundry-observability/SKILL.md) | AGT **emits** CloudEvents; the observability skill **owns** the pipe they flow through. |
+| Authoring or deploying the Foundry agent itself | [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md), [`threadlight-deploy`](../threadlight-deploy/SKILL.md) | AGT plugs **into** the agent runtime. It does not provision, deploy, or version your agent. |
+| Vector store / RAG / retrieval | [`foundry-iq`](../foundry-iq/SKILL.md) | AGT has no embeddings story — that's not its layer. |
+
+---
+
+## When NOT to use AGT at all
+
+Most Foundry workloads benefit from at least Path A. But there are
+situations where reaching for AGT is overkill or actively wrong:
+
+- **Pure eval / offline batch runs.** No runtime to govern — tools never
+  fire. Use [`foundry-evals`](../foundry-evals/SKILL.md) instead. AGT's
+  policies will run, but you're paying setup cost for no enforcement value.
+- **Single-tool, read-only agents** (e.g., a chat agent that only calls
+  `web_search`). The destructive-action surface is empty. A short
+  prompt-level instruction + Content Safety is usually enough; the YAML
+  policy ceremony isn't worth it until you add a second, write-capable tool.
+- **Hard-real-time constraints.** AGT adds 8–12 µs/eval — irrelevant for
+  any tool call that hits a network. But on an inner loop running 100 k+
+  evals/sec, you may want to bypass AGT for trusted internal calls and
+  re-engage it at the agent boundary.
+- **You need a GA, SLA-backed governance product, today.** AGT is
+  **Public Preview**. Microsoft-signed, MIT, production-quality releases
+  — but breaking changes are still possible before GA. For
+  contractually-bound governance use APIM + Content Safety (both GA) and
+  layer AGT in once your workload graduates from pilot.
+- **You only need LLM input / output filtering** (toxicity, prompt
+  injection at the message level). That is **Content Safety's** job.
+  AGT's PromptDefense Evaluator is a regression test harness, not a
+  runtime input filter.
+
+If two or more of these apply, skip this skill and revisit when you
+add tools or graduate from pilot.
+
+---
+
+## Stakeholder TL;DR
+
+| You are… | You care about… | Read this first |
+|---|---|---|
+| **Engineer** wiring a Foundry hosted agent | "Show me the working snippet" | [`references/maf-middleware-snippet.py`](references/maf-middleware-snippet.py) — 90-line factory you drop into your agent module |
+| **Solution architect** sizing a customer pilot | "Where does this sit; what does it own; how does it compose with APIM/VNet/Content Safety?" | "Why this matters" + "What AGT isn't" tables above; `Capability ↔ GBB scenario map` below |
+| **Compliance / SME** doing a risk review | "What does it certify, and is the evidence machine-checkable?" | `agt verify --evidence ... --strict` (CI-gateable) + the [OWASP-COMPLIANCE.md](https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md) coverage matrix; pair with this skill's "CI gating" section |
+| **Seller** building a demo | "Give me one slide and one demo step" | "Why this matters" 26.67 % vs 0.00 % stat (one slide); `python examples/quickstart/govern_in_60_seconds.py` (one demo step — 5 actions, 3 deny / 2 allow, 0.002 ms avg); follow with `agt verify` showing 10/10 OWASP ASI 2026 PASSED |
+| **Pilot lead** on a threadlight engagement | "Where in the pipeline does this hook?" | Path A wires into [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) (deploy time, via [`threadlight-deploy`](../threadlight-deploy/SKILL.md)); `agt verify --strict` becomes a [`threadlight-safe-check`](../threadlight-safe-check/SKILL.md) gate before the demo |
+
+---
+
+## Upstream sources of truth
+
+(All also referenced from `references/upstream-pin.md`.)
 
 - Repo: <https://github.com/microsoft/agent-governance-toolkit>
 - Docs site: <https://microsoft.github.io/agent-governance-toolkit>
 - Quickstart: <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/quickstart.md>
 - MAF adapter source: <https://github.com/microsoft/agent-governance-toolkit/tree/main/agent-governance-python/agent-os/src/agent_os/integrations>
 - OWASP coverage: <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md>
+- Benchmarks (the 26.67 % vs 0.00 % numbers): <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/BENCHMARKS.md>
 
 This skill is a **thin wrapper** — it adds the GBB-specific scenario map,
 working integration recipes, and field-tested Known Issues. It does **NOT**
@@ -399,11 +518,22 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
   <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md>
 - PyPI: <https://pypi.org/project/agent-governance-toolkit/>
 - agent-framework PyPI: <https://pypi.org/project/agent-framework/>
+- Benchmarks (the 26.67 % vs 0.00 % red-team numbers):
+  <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/BENCHMARKS.md>
 
 ---
 
 ## GBB Changelog
 
+- **v1.0.1** — Clarification pass (no API or policy changes). Added
+  "Why this matters" section with the 26.67 % vs 0.00 % red-team stat
+  and an ASCII flow diagram of where AGT sits. Refactored the
+  IS/ISN'T table into two cleaner sections ("What AGT does" capability
+  matrix; "What AGT isn't" → "use this instead" mapping). Added an
+  explicit "When NOT to use AGT at all" section. Added "Stakeholder
+  TL;DR" for engineer / architect / compliance / seller / pilot-lead
+  fast skim. Surfaced the polyglot reality (Python/TS/.NET/Rust/Go,
+  20+ frameworks). Added benchmarks URL to the upstream-references list.
 - **v1.0.0** — Initial wrapper. Pinned to AGT 3.6.0 + MAF 1.3.0. Live-smoke
   Path A on Windows + Python 3.13.13. Three starter policies, working
   middleware factory snippet, ACA sidecar Bicep fragment, Known Issues
