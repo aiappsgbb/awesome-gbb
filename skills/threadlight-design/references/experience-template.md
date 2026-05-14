@@ -168,6 +168,33 @@ CSP block, network glitch).
 
 NEVER use generic AI-purple gradients, teal, or "tech blue".
 
+#### Brand-override discipline (mandatory when customer brand declared)
+
+When SPEC § 1 declares (or discovery captured) a customer brand palette,
+swap the paradigm's **accent + key shadow** tokens to brand colours while
+leaving the **structural neutrals** that DEFINE the paradigm intact:
+
+- **Swap to brand:** `--accent`, `--accent-strong`, `--cta`, `--shadow-key`,
+  `--ring-focus` (the last two as de-saturated brand to keep shadows
+  brand-coherent without screaming).
+- **Preserve as paradigm signature:** `--parchment`, `--charcoal`,
+  `--ink`, `--brass`, `--linen` (and per-paradigm equivalents). These
+  ARE the paradigm — swapping them collapses the dossier / editorial /
+  blueprint look into a generic web page.
+- **Never negotiate:** `--success`, `--warn`, `--danger` — universally
+  legible.
+
+Worked example — dossier paradigm + a "brand red" customer (any
+insurer / telco / retailer with a red brand): parchment `#f3ede3` +
+serif body + brass wax-seal accent KEPT; paradigm oxblood `#7c1d1f`
+swapped to brand red (e.g. `#e60000`); binder leather pulled toward
+brand-darker (e.g. `#a30000` / `#7a0000`); brass NOT touched. The
+artefact still reads as a dossier; it just reads as **the customer's**
+dossier.
+
+Validation: grep that the brand accent hex (or rgb()/rgba()
+equivalent) IS present in the artefact's CSS before declaring done.
+
 ### Typography palettes
 
 - **Cinematic dark / NOC**: Inter or system-ui body + Cascadia Mono / Consolas for IDs
@@ -196,6 +223,21 @@ Between movements, use a soft visual transition — not a hard cut. Options:
 - A 1px sweep line that crosses the viewport and "wipes" the next section in
 - A color bleed: `::after { background: linear-gradient(to bottom, transparent, currentBg) }` to soften the seam between sections
 - A pin-and-fade: pin the previous section briefly while fading content underneath
+
+### Markdown modal in experience.html (when the artefact links to .md)
+
+The experience artefact is read aloud by sellers in the room — the modal
+that opens when they click *"Read the SPEC"* MUST look intentional, not
+like a stock browser pop-up. Use the **fixed dark substrate** pattern
+documented in `threadlight-design/SKILL.md` § Cross-cutting Pattern 2,
+NOT the host artefact's paradigm tokens. Why: a parchment-on-parchment
+modal disappears into the dossier; an editorial-on-editorial modal
+becomes invisible against the page. A fixed dark substrate
+(`rgba(10,12,18,.92)` overlay + parchment-on-dark card) reads cleanly
+against every paradigm AND signals "you're now reading source material,
+not the cinematic narrative." Render markdown via `marked.js` from CDN
+with a hand-rolled fallback (~50 lines) for offline / Cowork-with-CDN-
+blocked scenarios.
 
 ---
 
