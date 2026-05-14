@@ -15,7 +15,7 @@ description: >
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Threadlight Design
@@ -611,6 +611,177 @@ Project documentation covering:
 - Mock data status (which systems are mocked, how to replace)
 - Deployment path (reference threadlight-deploy)
 
+#### Cross-cutting HTML artefact patterns (overview / experience / prep-guide)
+
+Three patterns apply uniformly to **every** HTML artefact this skill emits.
+They have surfaced as user gripes during PoC walkthroughs ("nothing matches
+our brand", "this .md link is dead", "the seller doesn't want to read azd
+commands") often enough to be elevated from individual fixes to a default
+generation rule. Implement them once at generation time; never reach for
+them post-hoc.
+
+##### Pattern 1 — Brand cascade rule (mandatory when brand palette declared)
+
+When SPEC § 1 (Customer / domain) declares a customer brand palette OR the
+discovery transcript captured brand colours implicitly (logo url, "they're
+red like that well-known UK telco", "their site is the orange one"), every generated HTML
+artefact MUST cascade the brand accent + key shadow tokens while preserving
+the **structural neutrals** that give each visual paradigm its identity
+(parchment, charcoal, navy, brass wax-seal accents on the dossier paradigm;
+ink-blue + slate on the editorial paradigm; etc.).
+
+**Detection rule.** During Step 6 generation, scan SPEC § 1 + the discovery
+transcript for any of:
+
+- Explicit `customer.brand_palette: { primary: "#XXXXXX", secondary: "#YYYYYY" }`
+- Brand-colour mention captured in transcript ("they're red like the well-known UK telco", "their site is the orange one")
+- Logo URL → fetch + sample dominant non-neutral hex (offline if possible)
+- Sector convention ("any NHS trust uses #005EB8")
+
+When a brand palette is detected, inject ONE override block at the top of
+the artefact's CSS that swaps `--accent` / `--accent-strong` / `--shadow-key`
+while leaving paradigm tokens (`--parchment`, `--charcoal`, `--ink`,
+`--brass`, `--linen`) untouched.
+
+**Cascade table** (paradigm tokens that swap vs preserve):
+
+| Token category | Swap to brand? | Why |
+|---|---|---|
+| `--accent`, `--accent-strong`, `--cta` | YES | Carries the brand instantly recognisable on hero / CTAs |
+| `--shadow-key`, `--ring-focus` | YES (de-saturated brand) | Keeps shadows brand-coherent without screaming |
+| `--parchment`, `--charcoal`, `--ink`, `--brass`, `--linen` | NO | Structural neutrals define the **paradigm**, not the brand. Swapping them collapses the dossier / editorial / blueprint look into a generic web page. |
+| `--success`, `--warn`, `--danger` | NO | Universally legible; do not negotiate |
+
+**Validation.** Before declaring done, grep that the brand accent hex (or
+its rgb()/rgba() equivalent) IS present in the generated CSS for each of
+overview.html / experience.html / prep-guide.html. If absent → cascade
+rule wasn't applied → fix before presenting to user.
+
+##### Pattern 2 — Markdown modal pattern (mandatory in HTML artefacts that link to .md)
+
+Sellers cannot meaningfully open `.md` files. A `<a href="../specs/SPEC.md">`
+link either 404s on `file://` (the most common way sellers open the
+artefact during a Cowork pitch), or — if hosted — opens raw markdown as a
+plaintext blob with no formatting. Both outcomes degrade credibility.
+
+**Required behaviour.** Every `.md` link in any generated HTML artefact
+MUST open as a click-to-render dialog with:
+
+1. The markdown rendered in-browser
+2. A short explanatory blurb above ("This is the SpecKit specification —
+   the canonical source of truth the agent implements.") so the seller
+   knows *what they're looking at* before they read it
+3. Esc key + overlay click both close the modal
+4. Brand-styled dark substrate that looks consistent regardless of the
+   host artefact's theme (parchment / dark / dossier all coexist)
+
+**Self-contained anatomy.** No fetch() — works on `file://`. Pattern:
+
+1. **Embed the markdown** as opaque blobs at the bottom of the host HTML:
+   ```html
+   <script type="text/markdown" id="md-spec" data-source="../specs/SPEC.md">
+   # SpecKit Specification
+   ...full markdown here, no escaping needed because it lives in a script tag...
+   </script>
+   ```
+   Browsers do not parse the contents of `<script type="text/markdown">` —
+   they're inert blobs you read via `document.getElementById(...).textContent`.
+
+2. **Register the link → blob mapping** in a small JS object at the top of
+   the artefact:
+   ```javascript
+   const MD_REGISTRY = {
+     "../specs/SPEC.md":      { id: "md-spec",     title: "SpecKit Specification",
+                                intro: "The canonical source of truth..." },
+     "../README.md":          { id: "md-readme",   title: "README",
+                                intro: "Quick-start guide..." },
+     "../tests/eval-summary.md": { id: "md-eval",  title: "Evaluation Summary",
+                                   intro: "Latest quality bar..." }
+   };
+   ```
+
+3. **Rewrite `<a href="*.md">` to `<a data-md="*.md">`** at generation
+   time. Add a CSS affordance hint:
+   ```css
+   a[data-md]::after { content: " ◇"; opacity: .6; font-size: .85em; }
+   ```
+
+4. **Single document-level click delegate** intercepts:
+   ```javascript
+   document.addEventListener("click", (e) => {
+     const a = e.target.closest("a[data-md]");
+     if (!a) return;
+     e.preventDefault();
+     openMdModal(a.dataset.md);
+   });
+   ```
+
+5. **Renderer with fallback.** Try `marked.js` from CDN
+   (`cdn.jsdelivr.net/npm/marked@12`) loaded async at modal open; fall
+   back to a ~50-line hand-rolled subset that handles h1-h3, fenced
+   code, blockquotes, lists, tables, links, bold/italic. **Do not**
+   ship without the fallback — sellers in Cowork frequently have CDN
+   blocked.
+
+6. **Modal substrate** uses FIXED dark tokens independent of host page
+   tokens (so it looks consistent on parchment + dark hosts):
+   ```css
+   .md-modal { background: rgba(10,12,18,.92); }
+   .md-modal-card { background: #f6f3ec; color: #1a1c22; /* parchment-on-dark */ }
+   ```
+
+> **Reusable pattern, NOT shipped reference script.** Each pilot writes
+> its own ~120-line generator (`gen_md_modal.py` or inline Python in the
+> artefact-generation script). The pattern above is more durable than
+> any specific implementation; resist the urge to ship a reference
+> script that turns into the next stale dependency.
+
+##### Pattern 3 — `<details class="se-only">` audience-collapsible
+
+Sellers reading a prep-guide do NOT want to scan past `azd up` blocks,
+Bicep walkthroughs, raw GUIDs, or re-deploy procedures to reach the
+demo script. SA / SE engineering content MUST be wrapped in
+`<details class="se-only">` so seller-mode readers see only
+seller-relevant content by default.
+
+**Anatomy:**
+
+```html
+<details class="se-only">
+  <summary>
+    <span class="audience-pill">SA only</span>
+    <strong>Re-deploy after corpus refresh</strong>
+    <span class="hint">azd deploy agent · ~3 min</span>
+    <span class="chev">▸</span>
+  </summary>
+  <div class="se-body">
+    <pre><code>azd deploy agent
+azd ai agent invoke "test prompt"</code></pre>
+  </div>
+</details>
+```
+
+**CSS rules:**
+
+- `.audience-pill` — orange-bordered amber pill (use `--confidential`
+  token, default `#eb9700`); short label like "SA only" or "Engineer"
+- Bold dark `<strong>` summary text + right-aligned dim hint
+  (`margin-left: auto`, mono small) describing what's inside without
+  opening
+- `<span class="chev">▸</span>` rotates 90° via
+  `details[open] .chev { transform: rotate(90deg) }`
+- Native `summary::-webkit-details-marker { display: none }` suppressed
+- Mobile-responsive: hint wraps to its own line on narrow viewports
+- **Default closed** — sellers see the affordance (the orange pill is
+  obvious) but are not visually nagged by content they don't need
+
+**When to wrap.** Any block that contains:
+- `azd ` / `az ` / `python ` / `pwsh ` / `kubectl ` commands
+- Raw GUIDs (subscription IDs, tenant IDs, resource IDs)
+- Bicep / Terraform fragments
+- `infra/` / `tests/` paths sellers have no reason to open
+- "If something goes wrong..." troubleshooting
+
 #### 7. `specs/overview.html` — Seller Pitch Page
 
 Generate a **single self-contained HTML file** (no dependencies, opens in any browser)
@@ -764,7 +935,32 @@ can be saved as PDF via Print → Save as PDF). Sellers can't read markdown.
 A lean companion document for the person presenting the demo. Helps them prepare
 for the customer conversation, anticipate questions, and suggest next steps.
 
-**Sections:**
+**Sections** (in this order; numbering matters because sellers scan top-to-bottom):
+
+0. **Demo Entrypoint** *(placeholder pre-deploy)* — emit as a
+   `<section id="demo-entrypoint">` with the literal placeholder text
+   *"[populated by `threadlight-deploy` Phase 6.7 once `azd up` returns
+   clean: workspace URL, Teams sideload + manifest .zip path, Copilot
+   Studio agent ID + install link, Foundry playground URL]"*. Wrap the
+   filled-in version in `<details class="se-only">` (cross-cutting
+   Pattern 3) so the seller's main view stays clean and only opens
+   when they need the URL to share. Without this placeholder section,
+   sellers in Cowork pre-deploy have no visual map for where the demo
+   actually runs from.
+
+0.5. **What's deployed (MVP capabilities)** — emit as a
+    `<section id="mvp-capabilities">` panel above the Demo Script.
+    One-screen inventory of what the customer is actually getting:
+    channels available (Teams / web / playground), sample data shape
+    (*"X customer cases, Y journey documents, Z business rules"* —
+    pull literal numbers from the generated mock data and SPEC § 3 BR
+    count), the agent's tool surface (one-line per tool from
+    AGENTS.md), expected response latency (*"30-60 seconds per
+    answer"* — adjust based on tool surface), and any throttle limits
+    to demo within (*"5-7 questions per warm period; 5-min cooldown
+    between batches"* if the architecture has known platform
+    throttles). Without this panel, sellers improvise off the Demo
+    Script with no shared mental model of *what's behind the curtain*.
 
 1. **Use Case Summary** — one paragraph: what the agent does, for whom, why it matters
 2. **Demo Script** — the seller's runnable script for the call. **Generic by
@@ -889,6 +1085,20 @@ for the customer conversation, anticipate questions, and suggest next steps.
    - Deploy to Citadel landing zone (if governed)
    - Expand to additional process variants
 
+6. **Architecture: Microsoft services map** — emit as
+   `<section id="ms-services-map">` wrapped in `<details class="se-only">`
+   (this is SE/seller-handoff material — not customer-facing). Inventory
+   of every Azure / M365 service the deployed PoC uses, with each one
+   labelled *"Customer pays for: &lt;SKU&gt;"* so the seller can build
+   the commercial conversation directly off the prep-guide. Hot-link
+   each service name to the seller's price-list lookup (Azure Calculator
+   URL with the SKU pre-selected if known). Without this panel, sellers
+   asking *"what do they buy to take this to production?"* have to leave
+   the demo and reverse-engineer the architecture from the resource
+   group. Typical inventory: Foundry account (hosted agents + project),
+   AI Search (KB), Cosmos DB (audit + sample data), ACA (MCP server +
+   workspace UI), App Insights + LAW, Entra ID (UAMI), App Configuration.
+
 > [!TIP]
 > **For the SE who'll run the deploy or workshop:** `threadlight-local-test` is
 > available for fast inner-loop iteration without `azd up`, and
@@ -943,6 +1153,10 @@ must catch its own mistakes.
 - [ ] `specs/overview.html` renders without errors (valid HTML structure)
 - [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
 - [ ] **`specs/prep-guide.html` § "Demo Script" exists** with all five beats (Opening hook in direct quotes · Demo arc 4–6 acts · Bonus acts ≥ 4 · Quantified Reveal moment · Q&A handoff). For chat-style PoCs, **every** main-arc act must contain all three sub-blocks `<strong>Type this:</strong>` + `<strong>What you'll see:</strong>` + `<strong>Say:</strong>` (or `<strong>Click here:</strong>` for workspace-style). **What you'll see** must reference at least one entity name AND one numeric data point per act (grep each act for a digit; zero-digit acts fail). Each act tagged with the BR-XXX it demonstrates. **Bonus acts** card present with ≥ 4 prompts including ≥ 1 freshness/provenance edge case AND ≥ 1 out-of-scope/guardrail edge case. Reveal moment quantifies manual-effort-today vs PoC-time and cites the SPEC § 9 primary KPI. **Zero deploy-specific tokens** anywhere (no FQDNs, no `azd ` / `az ` / `python ` commands, no resource names) — those are reserved for `threadlight-deploy` Phase 6.7's "Live MVP Walkthrough" appendix.
+- [ ] **Brand cascade rule applied** (Cross-cutting Pattern 1) — if a customer brand palette was declared in SPEC § 1 or captured during discovery, grep that the brand accent hex IS present in the CSS of `overview.html`, `experience.html`, AND `prep-guide.html`. Structural neutrals (parchment, charcoal, navy, brass) must remain untouched.
+- [ ] **Markdown modal pattern present** (Cross-cutting Pattern 2) — every `<a href="*.md">` in any generated HTML artefact has been rewritten to `<a data-md="*.md">` AND the host artefact contains the modal markup (`<script type="text/markdown">` blobs + JS registry + click delegate + renderer with fallback). No raw `.md` href links remain.
+- [ ] **SE-only collapsibles applied** (Cross-cutting Pattern 3) — in `prep-guide.html`, every `<pre><code>` block containing `azd ` / `az ` / `python ` commands MUST be wrapped in `<details class="se-only">` with an audience pill summary. Sellers should see no engineering content in the default closed state.
+- [ ] **`prep-guide.html` contains the three required structural placeholders** — `id="demo-entrypoint"` (filled by `threadlight-deploy` Phase 6.7), `id="mvp-capabilities"` (filled by this skill from the SPEC), `id="ms-services-map"` (filled by this skill from the deployment_manifest module selectors).
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
 
