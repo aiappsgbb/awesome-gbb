@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: deploying the agent itself (use threadlight-deploy), MCP server
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Foundry Doc / Vision / Speech
@@ -585,6 +585,243 @@ API — submits a job, returns transcript JSON when complete.
 
 ---
 
+## Pattern X — Vision-at-INGEST (NOT runtime tool) for diagram/comms corpora
+
+> **Default to this pattern for any pilot whose source corpus contains
+> diagrams, flowcharts, decision trees, or comms-template images.** The
+> agent's runtime vision tool is the wrong layer for these — they're
+> static, batchable, and citation-anchored, so extract once at ingest
+> time and let `corpus_query` (or KB MCP) retrieve the structured text
+> with `page_ref` metadata.
+
+### Why ingest-time, not runtime
+
+| Runtime vision tool (`vision_describe_*`) | Vision-at-INGEST |
+|---|---|
+| Hits hosted-agent gateway throttle (~6 calls/warm period — see `foundry-hosted-agents` § Gateway throttle finding) | One-shot batch, runs in postprovision or ACA Job — never touches the gateway |
+| Adds 3–8s per query to user latency (vision call dominates the LLM round-trip) | Latency cost paid once at ingest; user sees instant retrieval |
+| Citations are unstable — model paraphrases on each call | Citations are stable text + `page_ref` field on the chunk |
+| Vision tool fails → user-facing failure | Ingest fails → re-run postprovision |
+| Sample images shipped in container = Dockerfile COPY trap (see Gotchas below) | Source corpus is a one-shot input, processed before deploy |
+
+### CU prebuilt-layout vs direct vision-LLM (validated tradeoff)
+
+Azure Content Understanding's `prebuilt-layout` analyzer is **excellent
+for text + tables** but **mangles diagram OCR**: flowchart node labels
+returned as `connects → cmnects → cmnects` style garbled output.
+Diagram semantics (which step → which decision → which next step) are
+LOST. Direct gpt-5.4-mini vision with a structured prompt recovers
+them. Recommended split:
+
+| Source kind | Recommended extractor |
+|---|---|
+| Native PDF text body, tables, headings | CU `prebuilt-layout` (fast, accurate, $0.01/page) |
+| Embedded diagrams / flowcharts / decision trees in PDFs | Direct vision-LLM per page (this pattern) |
+| Standalone JPG/PNG comms templates (SMS, email screenshots) | Direct vision-LLM per image |
+| .docx with semantic structure | `mammoth` direct extract — no OCR needed |
+| Audio / video | Azure Speech batch (separate path) |
+
+### `VisionClient` — minimal AAD-raw-requests pattern (no openai SDK dep)
+
+The ingest script runs in a postprovision hook or ACA Job. Pulling the
+full `openai` SDK just for chat-completions is overkill (50+ MB of
+transitive deps). This 60-line wrapper uses raw `requests` against the
+chat-completions endpoint with AAD bearer tokens:
+
+```python
+import base64, time
+import requests
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+DEFAULT_API_VERSION = "2024-12-01-preview"
+MAX_TOKENS = 1500
+
+
+class VisionClient:
+    """Minimal Azure OpenAI vision client using AAD auth, no SDK dependency.
+
+    Uses raw `requests` against the chat-completions endpoint so an
+    ingest script runs in postprovision without pulling the openai SDK.
+    """
+
+    def __init__(self, endpoint: str, deployment: str, api_version: str = DEFAULT_API_VERSION):
+        self.endpoint = endpoint.rstrip("/")
+        self.deployment = deployment
+        self.api_version = api_version
+        cred = DefaultAzureCredential()
+        self._token_provider = get_bearer_token_provider(
+            cred, "https://cognitiveservices.azure.com/.default"
+        )
+
+    def describe(self, image_bytes: bytes, prompt: str, mime: str = "image/png",
+                 max_tokens: int = MAX_TOKENS, retries: int = 3) -> str:
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        url = (f"{self.endpoint}/openai/deployments/{self.deployment}"
+               f"/chat/completions?api-version={self.api_version}")
+        body = {
+            "messages": [
+                {"role": "system",
+                 "content": "You are a precise visual extractor. Output plain text only."},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url",
+                         "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    ],
+                },
+            ],
+            "max_completion_tokens": max_tokens,   # NOT max_tokens (see Gotchas)
+            "temperature": 0.1,
+        }
+        for attempt in range(1, retries + 1):
+            tok = self._token_provider()
+            r = requests.post(url, headers={
+                "Authorization": f"Bearer {tok}",
+                "Content-Type": "application/json",
+            }, json=body, timeout=180)
+            if r.status_code == 429:
+                wait = int(r.headers.get("Retry-After", "30"))
+                time.sleep(wait)
+                continue
+            if r.status_code >= 500:
+                time.sleep(5 * attempt)
+                continue
+            if r.status_code >= 400:
+                raise RuntimeError(f"vision call failed HTTP {r.status_code}: {r.text[:400]}")
+            data = r.json()
+            choices = data.get("choices") or []
+            if not choices:
+                raise RuntimeError(f"no choices in response: {data}")
+            return (choices[0].get("message") or {}).get("content") or ""
+        raise RuntimeError("vision call exhausted retries")
+```
+
+### `DIAGRAM_PROMPT` — flowchart extraction template
+
+The prompt structure is the durable part — it forces the model to emit
+a parseable shape that the chunker downstream can split + index. Brand
+nouns, channel names, and trigger labels are pilot-specific:
+
+```python
+DIAGRAM_PROMPT = (
+    "You are extracting structure from a customer-journey blueprint page.\n"
+    "Describe the visual content of THIS PAGE in three sections, in plain text:\n\n"
+    "1) PAGE SUMMARY (1-2 sentences):\n"
+    "   What is on this page at a glance? (e.g. 'Day 1 overdue customer journey - "
+    "assisted channel decision tree from missed-payment trigger through to agent escalation')\n\n"
+    "2) DIAGRAM STRUCTURE (only if a flowchart/decision tree/process diagram is present):\n"
+    "   List nodes and decisions in the order they appear, using this format:\n"
+    "     [START]  Customer searches 'missed loan payment <brand>'\n"
+    "     [STEP]   Goes to <brand>.<tld>\n"
+    "     [DECIDE] Logged into MyAccount?  --YES--> [STEP] Navigates to Billing\n"
+    "                                       --NO---> [STEP] Information presented: Missed payments FAQ\n"
+    "     [STEP]   Customer reviews advice on page\n"
+    "     [END]    Connected Journey: I want to make a payment\n"
+    "   Capture branch labels (yes/no, channel name, etc) and decision conditions.\n"
+    "   If the page also shows pain points, KPIs or annotations beside the flow, list them.\n\n"
+    "3) KEY ENTITIES / NUMBERS (bullet list):\n"
+    "   Channels mentioned (Digital, Assisted, IVR, MyAccount, Bot, Webchat, Retail, etc.)\n"
+    "   Day numbers, frequency labels, decision timers\n"
+    "   Named systems (KM Tool, DPA-Security Checks, DCA, etc.)\n"
+    "   Connected journeys referenced\n\n"
+    "Be exhaustive but concise. If a section does not apply (no diagram, no entities), write 'N/A'.\n"
+    "Do NOT invent content not present on the page. If text is illegible, write '[illegible]'."
+)
+```
+
+The `[START] / [STEP] / [DECIDE] / [END]` brackets give the chunker a
+deterministic split point and downstream search a way to surface
+"decision points" specifically — the model converges on this format
+within a few examples and the resulting chunks are dramatically more
+queryable than free-form prose.
+
+### `COMMS_PROMPT` — customer-facing comms template extraction
+
+For SMS / email / letter screenshots, the goal is **verbatim message
+body** plus structured metadata. The 3-section shape (META / MESSAGE
+BODY / DESIGN NOTES) keeps the model honest:
+
+```python
+COMMS_PROMPT = (
+    "You are describing a customer-facing comms template image.\n"
+    "Output in three labeled sections in plain text:\n\n"
+    "1) META:\n"
+    "   - channel: SMS | email | letter | push | other\n"
+    "   - audience: who this targets (e.g. 'overdue Pay-Monthly customer Day 1')\n"
+    "   - trigger: what event sends this (e.g. 'missed payment + Day = 1')\n\n"
+    "2) MESSAGE BODY (verbatim text from the image, preserving line breaks):\n"
+    "   <copy the visible text exactly>\n\n"
+    "3) DESIGN NOTES:\n"
+    "   - branding cues (logo, colours)\n"
+    "   - links / CTAs visible\n"
+    "   - any disclaimer, regulatory text or accessibility note\n\n"
+    "If text is illegible write '[illegible]'."
+)
+```
+
+Token budget for COMMS_PROMPT can be tighter (~900) because the
+verbatim-body section is the only big payload; for DIAGRAM_PROMPT use
+1500–2500 tokens because dense diagram pages exhaust 900 quickly (see
+Gotchas).
+
+### PDF page rendering — `pypdfium2` over `pymupdf`
+
+The diagram extractor renders each PDF page to PNG, then sends to
+vision. **Use `pypdfium2`, not `pymupdf`** — `pymupdf` is AGPL-licensed
+which most enterprise pilots can't ship; `pypdfium2` is MIT-licensed
+PDFium-based and has API parity for the common case:
+
+```python
+import io
+import pypdfium2 as pdfium
+
+DEFAULT_DPI = 200   # sweet spot: fidelity vs cost (768 KB per page typical)
+
+def render_pdf_pages(pdf_path):
+    pdf = pdfium.PdfDocument(pdf_path)
+    scale = DEFAULT_DPI / 72.0
+    for i, page in enumerate(pdf, start=1):
+        try:
+            pil_image = page.render(scale=scale).to_pil()
+            buf = io.BytesIO()
+            pil_image.save(buf, format="PNG", optimize=True)
+            yield i, buf.getvalue()
+        finally:
+            page.close()
+    pdf.close()
+```
+
+DPI=200 is the validated sweet spot: lower (e.g. 150) starts dropping
+flowchart node-label legibility; higher (e.g. 300) doubles the image
+size with no measurable accuracy gain on chart/diagram OCR.
+
+### Output schema (for downstream KB indexing)
+
+Each extracted page → one JSONL line in `visual_chunks.jsonl`,
+co-located with the text-side `chunks.jsonl`. The downstream ingest
+merges both streams into the single KB index:
+
+```jsonl
+{"id": "journey-pdf-p06", "source_file": "I have missed a loan payment V1.3.pdf", "source_type": "journey", "kind": "visual", "visual_kind": "diagram", "page_ref": "page:6", "version": "1.3", "effective_date": "2025-06-04", "title": "Assisted journey - vulnerability branch", "content": "PAGE SUMMARY: ...\n\nDIAGRAM STRUCTURE:\n[START] ...\n\nKEY ENTITIES:\n- ..."}
+{"id": "comm-day1-overdue-evo", "source_file": "Overdue balance evo step 1 day 1.jpg", "source_type": "comms", "kind": "visual", "visual_kind": "comm", "page_ref": null, "version": "current", "title": "Day-1 overdue EVO email", "content": "META:\n- channel: email\n- audience: ...\n\nMESSAGE BODY:\n<verbatim>\n\nDESIGN NOTES:\n..."}
+```
+
+Cross-link with `foundry-iq` SKILL § 9 (visual chunks with `page_ref`)
+for the corresponding KB-side schema and § 11 for the per-source
+manifest pattern that makes re-extract cheap (sha256 + mtime; skip
+unchanged sources).
+
+### Cost reality check
+
+For a typical pilot corpus (1 PDF × 12 pages + 4 standalone comms
+JPGs + ~20 text DOCX): vision spend ≈ **$0.10 per full re-extract**
+(16 vision calls × ~2K tokens each at gpt-5.4-mini rates). Negligible
+compared to the operational cost of a per-query runtime vision tool
+that hits the gateway throttle.
+
+---
+
 ## SPEC § 7b decision rules (what this skill expects to read)
 
 The spec template forbids GPT-4o and prescribes the May-2026 model lineup.
@@ -691,3 +928,9 @@ Tool naming: verb_noun snake_case, prefixed by modality
 | Vision response slow (>30s) | Image too large (>4MP) | Pre-resize to 2048px max edge before passing to vision |
 | TTS audio file too large | Default WAV format | Use compressed `audio-24khz-48kbitrate-mono-mp3` output format |
 | Document Intelligence cost spike | Calling per-page on multi-page docs | Single API call handles whole doc — don't loop |
+| **gpt-5.4-mini vision returns truncated/garbled output** | Used `max_tokens=N` instead of `max_completion_tokens=N` in the chat-completions body | gpt-5.4-mini chat-completions vision REQUIRES `max_completion_tokens=N` — the older `max_tokens=N` is silently ignored or returns truncated output. Validated May 2026 |
+| **Vision API rejects image > 4MP** OR returns garbage on dense flowchart | Image too large for the model's vision token budget | Pre-resize ≤2048px max edge with `Image.LANCZOS` + JPEG re-encode quality=88 BEFORE base64 encode. Provide graceful fallback when Pillow not installed (skip resize, log a warning, attempt the call anyway): `try: from PIL import Image; resized = Image.open(io.BytesIO(image_bytes)).convert('RGB'); resized.thumbnail((2048, 2048), Image.LANCZOS); buf = io.BytesIO(); resized.save(buf, 'JPEG', quality=88, optimize=True); image_bytes = buf.getvalue() ; mime = 'image/jpeg'\\nexcept ImportError: pass` |
+| **`pymupdf` import fails enterprise license review** | `pymupdf` is AGPL-licensed; closed-source pilots cannot ship it | Use `pypdfium2` instead — MIT-licensed, PDFium-based, API-similar (`PdfDocument(path); for page in pdf: page.render(scale=dpi/72.0).to_pil()`). Defensive ingest scripts can `try: import pypdfium2 as pdfium\\nexcept ImportError: import pymupdf as ...` but ship pypdfium2 as the default in `pyproject.toml` |
+| **Vision tool returns `image_not_found` for every call** | Sample-data folder bundled with agent code at design time but NOT included in Dockerfile `COPY` line | Add `COPY sample-data/ ./sample-data/` (or whatever asset folder name) to Dockerfile explicitly. Do NOT rely on `COPY . .` glob — order + cache + dotfile gotchas. This is a specialization of the generic `foundry-hosted-agents` Dockerfile COPY trap |
+| **Vision tool returns `vision_unavailable` even though deployment exists** | `AZURE_OPENAI_ENDPOINT` env var set in azd env but NOT propagated to container's runtime env via agent.yaml `environment_variables` | Explicitly enumerate every env var the vision tool reads in `agent.yaml`'s `environment_variables` block — these are NOT auto-injected from azd env. Pattern: `environment_variables:\\n  - name: AZURE_OPENAI_ENDPOINT\\n    value: ${AZURE_OPENAI_ENDPOINT}\\n  - name: VISION_DEPLOYMENT_NAME\\n    value: my-vision-deployment` |
+| **Comms-tuned 900-token budget exhausts on diagram pages** | A vision tool tuned for SMS comms (3-block META/BODY/NOTES, 900 max_completion_tokens) is reused for dense diagram OCR | Diagram pages need 1500–2500 token budget AND the DIAGRAM_PROMPT shape (`[START]/[STEP]/[DECIDE]/[END]` brackets). Comms images use COMMS_PROMPT and 900 budget. Don't share one tool across both — the prompt + budget mismatch ruins both outputs |
