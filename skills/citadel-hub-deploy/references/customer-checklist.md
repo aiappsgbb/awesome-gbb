@@ -84,16 +84,19 @@ quota in the region.
 az cognitiveservices usage list --location <region> -o table
 ```
 
-Models in the upstream default config (capacity field):
+Models in the upstream default config (capacity field; for OpenAI
+GlobalStandard, `capacity: N` = N×1k TPM):
 
-- gpt-4.1 (100 TPM × 1k = 100k TPM)
+- gpt-4.1 (100k TPM)
 - gpt-5.4-mini (100k TPM)
-- gpt-5.4 (100k TPM)
-- gpt-5.2 (100k TPM)
+- gpt-5.2 (100k TPM, East US 2 instance only)
 - text-embedding-3-large (100k TPM)
 - DeepSeek-R1 (1k TPM)
-- Mistral-Large-3 (100k TPM)
+- Mistral-Large-3 (100k TPM, Sweden Central instance only)
 - Phi-4 (1k TPM)
+
+(The audit hub additionally deployed `gpt-5.4` — it's not in the upstream
+default but is commonly added for hubs that want the full gpt-5.4 family.)
 
 **Pilot-quickstart** profile uses upstream defaults. **Enterprise-baseline**
 should be tuned per region/project.

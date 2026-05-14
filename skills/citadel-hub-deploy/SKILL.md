@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -189,9 +189,14 @@ Goal: smallest hub that exercises every API surface. Developer SKU APIM,
 public access, all feature flags on, greenfield VNet + Log Analytics.
 
 ```bash
+# 0. Set the path to your awesome-gbb checkout (or `~/.copilot/skills`
+#    user-scope mirror) so the .env profiles below resolve.
+SKILL_DIR="$HOME/.copilot/skills/citadel-hub-deploy"  # or your repo path
+
 # 1. Tenant isolation (per azure-tenant-isolation skill)
 export AZURE_CONFIG_DIR="$HOME/.azure-tenants/<alias>"
 export AZD_CONFIG_DIR="$HOME/.azd-tenants/<alias>"
+az login --tenant "$TENANT_ID"
 azd auth login --tenant-id "$TENANT_ID"
 az account set --subscription "$DEFAULT_SUB"
 [ "$(az account show --query name -o tsv)" = "$DEFAULT_SUB" ] || exit 1
@@ -202,11 +207,11 @@ azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator \
          -e citadel-pilot-01 \
          --branch citadel-v1
 
-# 3. Apply the pilot-quickstart profile (env-var bundle)
+# 3. Apply the pilot-quickstart profile (env-var bundle from the skill)
 while IFS='=' read -r k v; do
   [[ -z "$k" || "$k" == \#* ]] && continue
   azd env set "$k" "$v"
-done < references/profiles/pilot-quickstart.env
+done < "$SKILL_DIR/references/profiles/pilot-quickstart.env"
 
 # 4. Deploy
 azd up
@@ -221,7 +226,7 @@ Goal: Standard v2 APIM, all backend services on private endpoints,
 BYO Log Analytics for the central observability landing zone.
 
 ```bash
-# (Tenant isolation as Path A)
+# (Tenant isolation + SKILL_DIR setup as Path A)
 mkdir my-citadel-hub && cd my-citadel-hub
 azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator \
          -e citadel-prod-01 \
@@ -237,7 +242,7 @@ azd env set EXISTING_LOG_ANALYTICS_SUBSCRIPTION_ID "<central-sub-id>"
 while IFS='=' read -r k v; do
   [[ -z "$k" || "$k" == \#* ]] && continue
   azd env set "$k" "$v"
-done < references/profiles/enterprise-baseline.env
+done < "$SKILL_DIR/references/profiles/enterprise-baseline.env"
 
 azd up
 ```
@@ -252,7 +257,7 @@ BYO Private DNS Zones (typical landing zone with central DNS), pre-wired
 for spokes deployed via `foundry-vnet-deploy`.
 
 ```bash
-# (Tenant isolation as Path A)
+# (Tenant isolation + SKILL_DIR setup as Path A)
 # Pre-requisites:
 #   - VNet vnet-citadel-hub already exists in rg-network-prod
 #     with subnets snet-apim, snet-private-endpoint, snet-functionapp, snet-agents
@@ -268,13 +273,15 @@ azd env set USE_EXISTING_VNET true
 azd env set VNET_NAME "vnet-citadel-hub"
 azd env set EXISTING_VNET_RG "rg-network-prod"
 azd env set EXISTING_DNS_ZONE_OPENAI "/subscriptions/<dns-sub-id>/resourceGroups/rg-dns-prod/providers/Microsoft.Network/privateDnsZones/privatelink.openai.azure.com"
-# … repeat EXISTING_DNS_ZONE_* for the other 12 zones (see references/profiles/vnet-isolated-spoke-aware.env)
+# … repeat EXISTING_DNS_ZONE_* for the other 12 zones — see
+# `$SKILL_DIR/references/profiles/vnet-isolated-spoke-aware.env` for the
+# full list of EXISTING_DNS_ZONE_* env vars.
 
 # Apply the vnet-isolated-spoke-aware profile
 while IFS='=' read -r k v; do
   [[ -z "$k" || "$k" == \#* ]] && continue
   azd env set "$k" "$v"
-done < references/profiles/vnet-isolated-spoke-aware.env
+done < "$SKILL_DIR/references/profiles/vnet-isolated-spoke-aware.env"
 
 azd up
 ```
@@ -287,9 +294,13 @@ resolve the hub APIM private FQDN.
 ### PowerShell equivalent (Windows)
 
 ```powershell
+# Path to the skill (repo or user-scope mirror)
+$skillDir = "$env:USERPROFILE\.copilot\skills\citadel-hub-deploy"
+
 # Tenant isolation (per azure-tenant-isolation skill)
 $env:AZURE_CONFIG_DIR = "$env:USERPROFILE\.azure-tenants\<alias>"
 $env:AZD_CONFIG_DIR   = "$env:USERPROFILE\.azd-tenants\<alias>"
+az login --tenant $tenantId
 azd auth login --tenant-id $tenantId
 az account set --subscription $defaultSub
 if ((az account show --query name -o tsv) -ne $defaultSub) { exit 1 }
@@ -298,7 +309,7 @@ if ((az account show --query name -o tsv) -ne $defaultSub) { exit 1 }
 mkdir my-citadel-hub; cd my-citadel-hub
 azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator `
          -e citadel-pilot-01 --branch citadel-v1
-Get-Content references/profiles/pilot-quickstart.env |
+Get-Content "$skillDir\references\profiles\pilot-quickstart.env" |
   Where-Object { $_ -and -not $_.StartsWith('#') } |
   ForEach-Object { $k,$v = $_.Split('=',2); azd env set $k $v }
 azd up
@@ -533,6 +544,15 @@ upstream pinned at `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`):
 
 ## 13. Changelog
 
+- **1.0.1** (2026-05) — Fix: profile `.env` path in Quickstart paths now
+  references `$SKILL_DIR` (the awesome-gbb skill dir) rather than the
+  azd project dir (which doesn't have it). Add `az login` before
+  `az account set` in Quickstart (per `azure-tenant-isolation` rule 4).
+  Audit notes correct an env-var naming mix-up
+  (`enableAIGatewayPiiRedaction` is the bicep param; the env var is
+  `ENABLE_PII_REDACTION` — profiles were already correct, only the
+  audit notes had the wrong name). Customer-checklist clarifies the
+  upstream default model list (gpt-5.4 is NOT in default config).
 - **1.0.0** (2026-05) — Initial release. Pinned upstream
   `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`. 3 curated profiles
   (pilot-quickstart, enterprise-baseline, vnet-isolated-spoke-aware).
