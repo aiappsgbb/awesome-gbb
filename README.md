@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-28-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-30-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -16,6 +16,7 @@
   - [🏗️ Foundry Building Blocks](#️-foundry-building-blocks)
   - [🛠️ Cross-Cutting Helpers](#️-cross-cutting-helpers)
   - [📊 Content Generation](#-content-generation)
+  - [🧬 Org Composition](#-org-composition)
   - [🔍 Discovery](#-discovery)
 - [How to Use](#how-to-use)
 - [Repository Structure](#repository-structure)
@@ -125,6 +126,17 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 |-------|-------------|
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
+
+### 🧬 Org Composition
+
+A two-skill pipeline for producing **digital-clone-grade** customer-flavoured forks of the [`zava-control-plane`](https://github.com/arturcrmbot/zava-control-plane) agentic substrate. Pair `research-company` → `compose-org` to take a target company name and emit a working sibling repo with the customer's branding, named ELT, vertical entity kinds, persona archetypes, and a stub-domain library — enough breadth for a credible mini-organisation, not just one or two hero use cases.
+
+| Skill | Description |
+|-------|-------------|
+| [**research-company**](skills/research-company/) | Profile a target organisation against its public web footprint — Wikipedia, `/about`, the latest annual report, the national company registry, vendor case-study pages, ASN data — and emit a thin `org-brief.yaml` overlay capturing identity, ownership, ~10 subsidiaries, the publicly named ELT, 3–5 strategic themes, and any stack overrides the company has disclosed. Ships **5 industry primers** (telco, airline, banking, retail, auto-OEM) carrying the vertical-canonical function tree, regulator catalogue, entity kinds, proposed-domain library, and KPI cinematics — so the brief itself stays thin (~300–500 lines) and the breadth lives in the primer. **Confidence-discipline** (every claim is `high`/`medium`/`low`/`inferred` with `source_refs[]`); gaps go in `uncertainties[]` rather than being invented. Per-engagement output lives under `briefs/` (gitignored) — no customer names ever land in this catalog. |
+| [**compose-org**](skills/compose-org/) | Fork the substrate into a customer-flavoured digital clone using a signed-off org-brief + the matching primer. Ten phases: clone substrate (no remote), literal token rebrand under a tight extension allowlist, repack the data fabric (subsidiaries / customers / services / cadenced rituals / narrative arcs), swap the Kuzu entity-kind tables to the vertical's canonical set, regenerate the function registry + persona folders for the named ELT, extend the domain registry with 25–35 vertical workflow stubs, scaffold Node MCP mocks for any disclosed stack overrides, re-seed the data fabric snapshot, and smoke-test. Local-only fork by default; refuses dirty trees; idempotent re-runnable with `--allow-overwrite`. After hand-off, individual stubs graduate to live workflows via `compose-domain` inside the new fork. |
+
+> **Quickstart:** From an empty directory in a `copilot` session, paste `Read https://raw.githubusercontent.com/arturcrmbot/zava-design-skills/main/RUNBOOK.md and follow it end-to-end. TARGET=<customer>.com MODE=full`. The agent fetches both skill files + the matching industry primer + the `zava-control-plane` substrate from GitHub, walks the two-skill pipeline (~60–90 minutes wall clock), and pauses for operator approval at each destructive step. Output: `briefs/<slug>-org-brief.yaml` + `zava-control-plane-<slug>/` ready to `make up` → http://localhost:5273.
 
 ### 🔍 Discovery
 
