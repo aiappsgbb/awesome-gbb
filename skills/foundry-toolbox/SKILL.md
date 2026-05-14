@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide
@@ -146,7 +146,7 @@ each. Always add a `description` so the model picks the right tool.
 
 | Type | Required fields | Auth | VNet | Quirks |
 |---|---|---|---|---|
-| `mcp` | `server_label`, `server_url` | None / Key / OAuth-managed / OAuth-custom / AgenticIdentity (Entra) / UserEntraToken (1P OBO) — via `project_connection_id` | ✅ via VNet subnet | Tool names prefixed `{server_label}.{tool_name}`. `UserEntraToken` requires `audience` field or `tools/list` returns 0 |
+| `mcp` | `server_label`, `server_url` | None / Key / OAuth-managed / OAuth-custom / AgenticIdentity (Entra) / UserEntraToken (1P OBO) — via `project_connection_id` | ✅ via VNet subnet | Tool names prefixed `{server_label}.{tool_name}` from the MCP server side; **when wrapped via MAF `MCPStreamableHTTPTool` with `tool_name_prefix=X`, the agent-visible name FLATTENS to `X_{tool_name}` and `server_label` is dropped** (validated MAF 1.3.0 + Toolbox v1, May 2026). `UserEntraToken` requires `audience` field or `tools/list` returns 0 |
 | `web_search` | (none) | Bing Grounding (no project conn) or `web_search.custom_search_configuration.project_connection_id` | ✅ public endpoint | Uses Grounding with Bing — first-party, billed separately, **no DPA**. Citations in `content[].resource._meta.annotations[]` |
 | `azure_ai_search` | `index_name`, `project_connection_id` | API key or MI via connection | ✅ private endpoint | **Wraps an INDEX, not a Knowledge Base** — no agentic query planning. For KB → use `mcp` tool type pointing at `/knowledgebases/<n>/mcp` (see `foundry-iq`). Defaults `top_k=5`, `query_type=vector_semantic_hybrid` |
 | `code_interpreter` | (none); optional `container.file_ids[]` | (none) | ✅ Microsoft backbone | **User isolation NOT supported in hosted agents** — all users share the same container context |
@@ -737,6 +737,10 @@ to the agent identity first or `tools/list` returns 0:
   target: https://<resource>.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview
 ```
 
+> **ARM REST equivalent**: `authType: ProjectManagedIdentity`, audience
+> moves to `metadata.audience`. See § ARM REST equivalents below for
+> the full mapping and a working PUT body.
+
 ### User Entra token (1P OBO)
 
 For MCP servers that need the calling user's identity (mail, calendar,
@@ -756,6 +760,55 @@ files):
 > Surface this to the user, have them open the URL in a browser,
 > complete the OAuth flow, then retry. Subsequent calls succeed
 > silently.
+
+### ARM REST equivalents (when not using `azd ai agent init`)
+
+Everything above is the **declarative DSL** that `azd ai agent init` /
+`azd ai agent provision` consumes. When you provision the same
+`RemoteTool` connection imperatively (ARM REST PUT, Bicep, or any
+non-azd path — common in BYOC / Bicep-only pilots), the ARM API
+**rejects** `authType: AgenticIdentity` AND `authType: AAD` with:
+
+```
+ValidationError: AuthType for RemoteTool Connection can only be
+  None, CustomKeys, ProjectManagedIdentity, OAuth2, DeveloperConnection,
+  UserEntraToken, ...
+```
+
+Mapping table (declarative DSL → ARM REST `authType`):
+
+| Declarative `authType` | ARM REST `authType` | Where the audience goes |
+|---|---|---|
+| `AgenticIdentity` (agent / Entra MI) | **`ProjectManagedIdentity`** | `metadata.audience` |
+| `UserEntraToken` (1P OBO) | `UserEntraToken` | `metadata.audience` |
+| `OAuth2Managed` (built-in OAuth) | `OAuth2` | `metadata.{authorizationUrl,tokenUrl,scopes,clientId,...}` |
+| `Key` | `CustomKeys` | `credentials.keys.{name}` |
+| `None` | `None` | (n/a) |
+
+Working ARM REST PUT body for the AgenticIdentity case (Search KB MCP):
+
+```http
+PUT /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>/connections/<conn-name>?api-version=2025-10-01-preview
+
+{
+  "properties": {
+    "category": "RemoteTool",
+    "target": "https://<search>.search.windows.net/knowledgebases/<kb>/mcp?api-version=2025-11-01-preview",
+    "authType": "ProjectManagedIdentity",
+    "isSharedToAll": true,
+    "metadata": { "audience": "https://search.azure.com" }
+  }
+}
+```
+
+> **SDK split-ownership trap.** `azure-ai-projects==2.1.0` exposes
+> `client.beta.toolboxes.create_version / update / get / list / delete`
+> (✅ writeable) BUT `client.connections` is **read-only**
+> (`get / list / get_default` only — no `.create()`). So Toolbox can
+> be SDK-provisioned end-to-end, but the `RemoteTool` connection MUST
+> go via ARM REST PUT (above) or Bicep. This split is undocumented
+> upstream and reliably traps anyone porting an `azd ai agent init`
+> pilot to a Bicep-only / IaC-only deployment shape.
 
 ---
 
@@ -787,10 +840,63 @@ PMI to `https://search.azure.com/.default`:
       project_connection_id: kb-mcp
 ```
 
+> **ARM REST equivalent**: the `connection` block above maps to
+> `authType: ProjectManagedIdentity` + `metadata.audience: "https://search.azure.com"`.
+> See § ARM REST equivalents above for the full PUT body and the
+> SDK split-ownership trap.
+
 The trade-off: extra hop through Toolbox, inherits the `ping` trap, but
 the Toolbox handles centralized token refresh. See `foundry-iq` SKILL §
-Common Errors (the `/knowledgebases/<n>/mcp` rows) for the direct-wire
-alternative and the matching `_ensure_connected` workaround.
+Common Errors (the `/knowledgebases/<n>/mcp` rows) and § "KB access from
+a hosted MAF agent — three routes" for the direct-wire alternative
+(Route B) and the matching `_ensure_connected` workaround.
+
+**Imperative provisioning (ARM REST + SDK).** When `azd ai agent init`'s
+declarative pipeline is not available (Bicep-only / IaC-only pilots),
+provision the connection via ARM REST and the toolbox via the SDK:
+
+```python
+import os, requests
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import MCPTool
+from azure.identity import DefaultAzureCredential
+
+cred = DefaultAzureCredential()
+arm_token = cred.get_token("https://management.azure.com/.default").token
+
+# 1. Connection — ARM REST PUT (SDK client.connections is read-only)
+requests.put(
+    f"https://management.azure.com/subscriptions/{os.environ['SUB']}"
+    f"/resourceGroups/{os.environ['RG']}/providers"
+    f"/Microsoft.CognitiveServices/accounts/{os.environ['ACCT']}"
+    f"/projects/{os.environ['PROJ']}/connections/kb-mcp"
+    f"?api-version=2025-10-01-preview",
+    headers={"Authorization": f"Bearer {arm_token}",
+             "Content-Type": "application/json"},
+    json={"properties": {
+        "category": "RemoteTool",
+        "target": os.environ["KB_MCP_URL"],
+        "authType": "ProjectManagedIdentity",
+        "isSharedToAll": True,
+        "metadata": {"audience": "https://search.azure.com"},
+    }},
+).raise_for_status()
+
+# 2. Toolbox + version — SDK
+project = AIProjectClient(endpoint=os.environ["FOUNDRY_ENDPOINT"],
+                          credential=cred, allow_preview=True)
+project.beta.toolboxes.create_version(
+    name="agent-tools",
+    tools=[MCPTool(server_label="kb", project_connection_id="kb-mcp")],
+)
+project.beta.toolboxes.update(name="agent-tools", default_version=1)
+```
+
+Consumer endpoint the agent binds to:
+
+```
+{FOUNDRY_ENDPOINT}/api/projects/{PROJ}/toolboxes/agent-tools/mcp?api-version=v1
+```
 
 ### `code_interpreter` & `file_search` — no user isolation
 
