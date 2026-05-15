@@ -192,7 +192,7 @@ from agent_os.integrations.maf_adapter import (
 ```python
 from agent_framework import Agent
 
-# Agent ctor (1.4.0):
+# Agent ctor (1.3.0):
 #   Agent(client, instructions=None, *, name=None, middleware=None, tools=None, ...)
 # - first positional is `client` (NOT `chat_client` as some doc snippets show)
 # - `middleware` accepts the list returned by create_governance_middleware()
@@ -271,7 +271,7 @@ ships the working pattern.
 ### Issue 3 — `agent_framework.Agent` ctor takes `client`, not `chat_client`
 
 Some doc snippets (and one of upstream's earlier blog posts) show
-`Agent(name=..., chat_client=..., middleware=...)`. In 1.4.0 the first
+`Agent(name=..., chat_client=..., middleware=...)`. In 1.3.0 the first
 positional is `client`:
 
 ```python

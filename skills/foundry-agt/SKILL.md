@@ -22,13 +22,16 @@ metadata:
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
 
-> **Status banner (re-pin every refresh, see `references/upstream-pin.md`):**
-> Pinned to **AGT v3.6.0** (Public Preview, MIT) + **agent-framework v1.4.0**.
-> Smoke-tested on Windows + Python 3.13.13. Latency observed: **~8 µs/eval ALLOW,
-> ~12 µs/eval DENY** — order of magnitude under upstream's "<100 µs" claim.
-> Public Preview = breaking changes possible; the SKILL.md
-> `metadata.version` only changes when **this skill** changes, NOT when AGT
-> bumps. Re-run `references/upstream-pin.md` checklist whenever you re-pin.
+> **Status banner:** This skill wraps a **Public Preview, MIT** upstream
+> (AGT) plus the **agent-framework** runtime. Concrete pinned versions and
+> SHA live in [`references/upstream-pin.md`](references/upstream-pin.md)
+> (single source of truth, refreshed by the automated freshness lifecycle —
+> AGENTS.md § 9). Smoke-tested on Windows + Python 3.13.13. Latency observed:
+> **~8 µs/eval ALLOW, ~12 µs/eval DENY** — order of magnitude under upstream's
+> "<100 µs" claim. Public Preview = breaking changes possible; the SKILL.md
+> `metadata.version` only changes when **this skill's prose** changes (or for
+> PATCH refresh bumps), NOT when AGT bumps. Re-run the pin file's checklist
+> whenever you re-pin.
 
 ---
 
