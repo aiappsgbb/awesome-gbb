@@ -406,7 +406,7 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
                 [
                     f"## 🔄 Refresh `{pin.skill}` — PyPI package `{name}` drift",
                     "",
-                    f"- **Pinned**: `{name}=={pinned}`",
+                    f"- **Pinned**: `{name}~={pinned}` (cap window covers patch upgrades)",
                     f"- **Latest**: `{name}=={latest}`",
                     f"- **Changelog**: {pkg.get('upstream_changelog', '(none)')}",
                     "",
@@ -418,9 +418,9 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
                     "",
                     "Edit ONLY these fields:",
                     f"- `references/upstream-pin.md`: `packages[name={name}].version` → `{latest}`",
-                    "- `references/upstream-pin.md`: the matching default in "
-                    "`validation.script` (e.g. `${PINNED_VERSION:-...}` "
-                    "default) so re-validation pins the new version",
+                    "- `references/upstream-pin.md`: the matching cap in "
+                    "`validation.script` (e.g. bump `~=X.Y.Z` floor — keep "
+                    "the `~=` operator, never switch to bare `==`)",
                     "- `references/upstream-pin.md`: `last_validated`, "
                     "`validated_by: copilot-bot`",
                     "- `SKILL.md`: `metadata.version` (PATCH bump)",
@@ -431,6 +431,17 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
                     f"`verified against {name} {pinned}`); those are "
                     "records, not refresh targets. The gate will reject "
                     "any SKILL.md body change without `[skill-rewrite]`.",
+                    "",
+                    "### Acceptance criteria",
+                    "",
+                    "- [ ] PR touches ONLY `references/upstream-pin.md` and "
+                    "`SKILL.md` (frontmatter only)",
+                    "- [ ] `metadata.version` bumped PATCH only",
+                    "- [ ] All pip specifiers stay `~=X.Y.Z` (compatible release)",
+                    "- [ ] CI gate `automation-pr-gate.yml` passes",
+                    "- [ ] CI gate `skill-validation.yml` passes",
+                    "- [ ] CI gate `pin-validation.yml` passes "
+                    "(re-runs `validation.script` on the runner — proof, not claim)",
                 ]
             )
             out.append(
