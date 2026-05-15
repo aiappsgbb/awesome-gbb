@@ -17,7 +17,7 @@ description: >
   (use azure-tenant-isolation), keyboard shortcuts and slash commands
   (runtime, not config), Cursor or Claude Code config (different runtimes).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # GHCP CLI Config

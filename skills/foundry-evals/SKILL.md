@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Foundry Agent Evaluations

@@ -17,7 +17,7 @@ description: >
   (use azure-tenant-isolation), Foundry project creation, APIM creation
   from scratch.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Cross-Resource Model Invocation via Foundry AI Gateway

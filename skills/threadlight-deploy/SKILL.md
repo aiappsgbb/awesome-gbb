@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.1.5"
+  version: "1.1.6"
 ---
 
 # Foundry Hosted Agent Deploy

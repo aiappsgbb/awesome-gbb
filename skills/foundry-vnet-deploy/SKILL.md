@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
