@@ -1,3 +1,88 @@
+---
+schema_version: 2
+freshness_tier: A
+automation_tier: issue_only
+
+upstream:
+  type: github_repo
+  repo: Azure-Samples/ai-hub-gateway-solution-accelerator
+  ref: citadel-v1
+  pinned_sha: f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4
+  pinned_commit_message: |
+    Merge pull request #117 from mohamedsaif/citadel-v1
+  license: MIT
+  notes: |
+    The Citadel Governance Hub — Layer 1 of the AI Citadel Platform.
+    Validation requires `azd up` against a real Azure subscription,
+    so this is issue_only.
+
+docs_to_revalidate:
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/README.md
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/bicep/infra/citadel-access-contracts/README.md
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/llm-routing-architecture.md
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/pii-masking-apim.md
+  - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/network-approach.md
+
+known_issues:
+  - id: KI-001
+    description: GPT-5.4 family models reject max_tokens — use max_completion_tokens
+    upstream_url: https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/issues/1
+    status: open
+    workaround_location: SKILL.md § 15 "Known issues" item 1
+  - id: KI-002
+    description: APIM subscription header is api-key (not Ocp-Apim-Subscription-Key)
+    upstream_url: https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/issues/2
+    status: open
+    workaround_location: SKILL.md § 15 item 2
+  - id: KI-003
+    description: Bicep BCP318 module-nullable warnings (intentional pattern)
+    upstream_url: https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/issues/3
+    status: open
+    workaround_location: SKILL.md § 15 item 3
+  - id: KI-004
+    description: Sub-level azd up can fail twice on first run (RBAC/APIM warm-up)
+    upstream_url: https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/issues/4
+    status: open
+    workaround_location: SKILL.md § 15 item 4
+
+validation:
+  requires:
+    - github_only
+    - azure_subscription
+  runnable: false
+  script: |
+    #!/usr/bin/env bash
+    # HUMAN EXECUTION ONLY — requires Azure subscription + tenant isolation
+    # Run from a shell with AZURE_CONFIG_DIR set per azure-tenant-isolation skill.
+    set -euo pipefail
+
+    # 1. Capture current upstream SHA
+    git ls-remote https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator citadel-v1
+
+    # 2. Shallow clone at the pinned SHA
+    git clone --depth 1 --branch citadel-v1 \
+      https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator citadel-upstream
+    cd citadel-upstream
+    git fetch origin "${PINNED_SHA}"
+    git checkout "${PINNED_SHA}"
+
+    # 3. Bicep build (offline; no Azure call needed for this step)
+    az bicep build --file bicep/infra/main.bicep --outfile /tmp/citadel-main.json
+    echo "Bicep build OK: $(wc -c < /tmp/citadel-main.json) bytes"
+
+    # 4. (Optional) azd up against a test subscription — costs apply
+    # azd env new citadel-hub-test
+    # azd up
+  expected_output:
+    - "Bicep build OK"
+
+last_validated: 2026-05-15
+validated_by: ricchi
+known_issues_count: 4
+---
+
 # Upstream Pin
 
 | Field | Value |

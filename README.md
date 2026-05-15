@@ -216,8 +216,9 @@ skills/
 > **Read [AGENTS.md](AGENTS.md) first** if you (or a sub-agent acting on your
 > behalf) are about to edit any skill. It captures the invariants — agnostic
 > wording, reference-data canon, `metadata.version` rules, the mass-edit
-> safety rails — that **are not enforced by CI** and have bitten us in
-> production.
+> safety rails — most of which are **now enforced by CI** (see § 9 of
+> AGENTS.md and the [`automation-pr-gate`](.github/workflows/automation-pr-gate.yml)
+> workflow).
 
 1. **Fork & branch** — create a feature branch from `main`.
 2. **Add your Skill** — place it under `skills/<your-skill-name>/SKILL.md`.
@@ -226,11 +227,36 @@ skills/
 
 ### Skill Quality Checklist
 
-- [ ] Clear, concise `description` in frontmatter
+- [ ] Clear, concise `description` in frontmatter (≤ 1024 chars — CI-enforced)
 - [ ] Well-defined trigger phrases (when should the skill activate?)
 - [ ] Actionable instructions (the agent *does* the work, not just advises)
 - [ ] No secrets or credentials embedded
 - [ ] Tested with at least one agentic runtime
+- [ ] If the skill wraps an external repo/SDK: include `references/upstream-pin.md`
+      from [`scripts/templates/upstream-pin.template.md`](scripts/templates/upstream-pin.template.md)
+      so the freshness lifecycle picks it up
+
+### 🪴 Freshness lifecycle
+
+Wrapper skills (those citing a `github.com/<org>/<repo>` or pinning a
+preview SDK version) ship a machine-readable `references/upstream-pin.md`
+declaring their upstream contract. The
+[`Skill freshness`](.github/workflows/skill-freshness.yml) GitHub Action
+runs weekly and opens a per-skill GitHub issue when it detects:
+
+- SHA drift on the pinned upstream branch
+- PyPI version drift on a pinned package
+- Closure of an upstream issue documented in `known_issues[]`
+- Link rot on a documented URL
+- Validation age > 180 days
+
+Issues for skills with `automation_tier: auto` are **assigned to
+`@Copilot`** — the GitHub Copilot coding agent autonomously executes the
+pin file's `validation.script` and opens a PR. The standard CI gates
+([`skill-validation`](.github/workflows/skill-validation.yml) and
+[`automation-pr-gate`](.github/workflows/automation-pr-gate.yml)) review
+the PR. A human reviews and merges. See [AGENTS.md § 9](AGENTS.md) for
+the full lifecycle convention.
 
 ## License
 

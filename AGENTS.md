@@ -202,6 +202,17 @@ hostile until proven otherwise.**
 For edits to fewer than 5 files, just edit them yourself. Sub-agent setup
 + verification cost more context than the edits would.
 
+> **CI enforcement (added with the freshness lifecycle — see § 9).**
+> As of `.github/workflows/automation-pr-gate.yml`, the mass-edit
+> invariants in this section are enforced as a CI gate on every PR
+> (Copilot-authored or human-authored). The gate rejects multi-skill
+> body edits, normalization of reference data, non-PATCH version bumps
+> for metadata-only changes, and description-length regressions beyond
+> 1024 chars. The opt-in commit-message tags `[multi-skill]`,
+> `[scrub-canon]`, and `[skill-rewrite]` bypass specific gates and
+> make the human intent explicit in `git log` — they are required for
+> legitimate cross-cutting work.
+
 ---
 
 ## 5 · Versioning (`metadata.version`)
@@ -326,16 +337,120 @@ discipline is the gate.
 
 ---
 
-## 9 · See also
+## 9 · Skill freshness lifecycle
+
+Every wrapper skill in the catalog declares a **machine-readable upstream
+pin** so the catalog can detect drift over time without humans manually
+checking 32 README files every quarter.
+
+### 9.1 · Three freshness tiers
+
+| Tier | Marker file | What's tracked |
+|------|-------------|----------------|
+| **A** — SHA-pinned wrapper | `references/upstream-pin.md` with `freshness_tier: A` | github SHA via `git ls-remote` + commits-since-pin |
+| **B** — SDK / preview-API wrapper | `references/upstream-pin.md` with `freshness_tier: B` | PyPI version + upstream issue closure |
+| **C** — internal IP | `references/last_validated.yaml` (lightweight) | days since human validation (cutoff: 180 days) |
+
+Schema reference: [`scripts/templates/upstream-pin.template.md`](scripts/templates/upstream-pin.template.md).
+The pin file's YAML front-matter is the contract; the prose below is the
+human audit trail. Keep them in sync.
+
+### 9.2 · Automation tier
+
+Each pin file declares an `automation_tier`:
+
+- **`auto`** — drift opens an issue **assigned to `@Copilot`**. The
+  GitHub Copilot coding agent autonomously executes the pin file's
+  `validation.script`, opens a PR, and the standard CI gates review
+  it. A human reviews and merges.
+- **`issue_only`** — drift opens an unassigned issue. Validation requires
+  credentials (Azure subscription, Foundry project) that we don't ship
+  to the coding agent. A human authors the refresh.
+
+Rule: if `validation.requires` includes anything beyond `github_only`
+or `pypi`, `automation_tier` MUST be `issue_only`. Enforced by
+[`scripts/validate-skills.py`](scripts/validate-skills.py).
+
+### 9.3 · The weekly loop
+
+[`.github/workflows/skill-freshness.yml`](.github/workflows/skill-freshness.yml)
+runs every Monday 07:00 UTC and on-demand via `workflow_dispatch`.
+For each skill it runs five drift detectors:
+
+1. **SHA drift** — `git ls-remote <repo> <ref>` vs `pinned_sha`
+2. **Package version drift** — PyPI JSON API vs `packages[*].version`
+3. **Upstream issue closure** — GitHub API on `known_issues[*].upstream_url`
+4. **Link rot** — HEAD on each `docs_to_revalidate[*]` URL
+5. **Validation age** — `today - last_validated > 180 days`
+
+Each drift event opens its own GitHub issue (`label: freshness,automation`).
+Auto-tier issues are assigned to `@Copilot`. The coding agent reads
+[`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) for
+its setup contract.
+
+### 9.4 · Re-pin procedure (manual or coding agent)
+
+When upstream advances:
+
+1. **Update front-matter** in the pin file:
+   - `upstream.pinned_sha` → new SHA (for SHA drift)
+   - `packages[*].version` → new version (for PyPI drift)
+   - `known_issues[*].status` → `closed_upstream_fixed` (for closure)
+2. **Run `validation.script`** with the new pin value. Each
+   `expected_output[*]` substring must appear in stdout.
+3. **Update audit trail**:
+   - `last_validated: <today>`
+   - `validated_by: <handle>` (or `copilot-bot`)
+4. **Bump SKILL.md `metadata.version` PATCH** (X.Y.Z → X.Y.(Z+1)).
+   Per § 5, pin refresh is PATCH — not MINOR.
+5. **Open PR** touching ONLY `references/upstream-pin.md` and
+   `SKILL.md` frontmatter. The
+   [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml)
+   workflow rejects anything else (unless the appropriate opt-in tag is
+   in the commit message).
+
+### 9.5 · Authoring a pin file from scratch
+
+For a new wrapper skill, copy
+[`scripts/templates/upstream-pin.template.md`](scripts/templates/upstream-pin.template.md)
+to `skills/<name>/references/upstream-pin.md` and fill every
+`<placeholder>`. The most important fields:
+
+- `validation.script` — must be a **copy-paste runnable bash script**.
+  The coding agent reads this as the executable spec. Narrative
+  steps ("verify the agent works") are forbidden — write real shell.
+- `validation.expected_output` — substrings the script prints on
+  success. The agent greps these to decide pass/fail.
+- `known_issues[*].upstream_url` — for each documented workaround,
+  link to the upstream issue/PR. The detector polls these weekly; when
+  the upstream issue closes, the skill is flagged for re-validation
+  WITHOUT the workaround.
+
+### 9.6 · Three CI gates that protect the catalog
+
+| Gate | When | What it checks |
+|------|------|---------------|
+| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2 |
+| [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
+| [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
+
+The first two run on every PR. The third runs autonomously.
+
+---
+
+## 10 · See also
 
 - [README.md](README.md) — public catalog and install instructions
 - [THREADLIGHT.md](THREADLIGHT.md) — end-to-end pipeline narrative
 - Each `skills/<skill>/SKILL.md` — the canonical contract for that skill
 - Each `skills/<skill>/README.md` (if present) — extended docs / changelog
+- Each `skills/<skill>/references/upstream-pin.md` (wrapper skills) — machine-readable freshness contract
+- [`scripts/templates/upstream-pin.template.md`](scripts/templates/upstream-pin.template.md) — canonical pin template (schema v2)
+- [`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) — GHCP coding agent contract for autonomous refresh
 
 ---
 
-## 10 · License & code of conduct
+## 11 · License & code of conduct
 
 This project is [MIT-licensed](LICENSE) and follows the
 [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
