@@ -17,13 +17,13 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
 
 > **Status banner (re-pin every refresh, see `references/upstream-pin.md`):**
-> Pinned to **AGT v3.6.0** (Public Preview, MIT) + **agent-framework v1.3.0**.
+> Pinned to **AGT v3.6.0** (Public Preview, MIT) + **agent-framework v1.4.0**.
 > Smoke-tested on Windows + Python 3.13.13. Latency observed: **~8 µs/eval ALLOW,
 > ~12 µs/eval DENY** — order of magnitude under upstream's "<100 µs" claim.
 > Public Preview = breaking changes possible; the SKILL.md

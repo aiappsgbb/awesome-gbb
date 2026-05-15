@@ -26,7 +26,7 @@ packages:
       Meta-package; install with `[full]` extra to pull all 6 sub-packages.
   - name: agent-framework
     source: pypi
-    version: "1.3.0"
+    version: "1.4.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Required for the in-process middleware integration path.
@@ -68,7 +68,7 @@ validation:
     export PYTHONUTF8=1
     python -m venv .venv-agt
     . .venv-agt/bin/activate
-    pip install --quiet "agent-governance-toolkit[full]==${PINNED_VERSION:-3.6.0}" "agent-framework==${PINNED_AGENT_FRAMEWORK_VERSION:-1.3.0}"
+    pip install --quiet "agent-governance-toolkit[full]==${PINNED_VERSION:-3.6.0}" "agent-framework==${PINNED_AGENT_FRAMEWORK_VERSION:-1.4.0}"
     agt --version
     agt doctor
     agt verify
@@ -78,7 +78,7 @@ validation:
     - "factory ok"
 
 last_validated: 2026-05-15
-validated_by: ricchi
+validated_by: copilot-bot
 known_issues_count: 3
 ---
 
@@ -97,7 +97,7 @@ re-pin to a newer upstream and re-run the smoke checklist below.
 |---------|--------|----------------|-------|
 | `agent-governance-toolkit` | PyPI (`pip install agent-governance-toolkit[full]`) | **3.6.0** | Meta-package; pulls 6 sub-packages with `[full]` extra |
 | `agent-governance-toolkit` repo | <https://github.com/microsoft/agent-governance-toolkit> | main `8c4692cf...` | Public Preview, MIT, Microsoft-owned |
-| `agent-framework` (MAF) | PyPI (`pip install agent-framework`) | **1.3.0** | Required for in-process middleware path |
+| `agent-framework` (MAF) | PyPI (`pip install agent-framework`) | **1.4.0** | Required for in-process middleware path |
 | Internal `agentmesh-runtime` | bundled with `[full]` | 2.3.0 | Independent versioning cadence — note skew |
 
 Sub-packages installed by `agent-governance-toolkit[full]` (verified via
@@ -192,7 +192,7 @@ from agent_os.integrations.maf_adapter import (
 ```python
 from agent_framework import Agent
 
-# Agent ctor (1.3.0):
+# Agent ctor (1.4.0):
 #   Agent(client, instructions=None, *, name=None, middleware=None, tools=None, ...)
 # - first positional is `client` (NOT `chat_client` as some doc snippets show)
 # - `middleware` accepts the list returned by create_governance_middleware()
@@ -271,7 +271,7 @@ ships the working pattern.
 ### Issue 3 — `agent_framework.Agent` ctor takes `client`, not `chat_client`
 
 Some doc snippets (and one of upstream's earlier blog posts) show
-`Agent(name=..., chat_client=..., middleware=...)`. In 1.3.0 the first
+`Agent(name=..., chat_client=..., middleware=...)`. In 1.4.0 the first
 positional is `client`:
 
 ```python
