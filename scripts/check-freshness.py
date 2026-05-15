@@ -66,7 +66,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 DEFAULT_REPO = os.environ.get("GH_REPO", "aiappsgbb/awesome-gbb")
 VALIDATION_AGE_DAYS = 180
-COPILOT_ASSIGNEE = "Copilot"
+COPILOT_ASSIGNEE = "copilot"
 
 USER_AGENT = "awesome-gbb-freshness-bot/1.0"
 HTTP_TIMEOUT = 10
@@ -592,6 +592,25 @@ def upsert_issue(
         return
 
     r = method(url, json=payload, headers=headers, timeout=HTTP_TIMEOUT)
+
+    # If GitHub rejects the assignee (422 with "invalid" on field "assignees"),
+    # retry without the assignee so the issue is still tracked. This happens
+    # when the Copilot Coding Agent is not yet enabled on the repo — the
+    # tracking value of the issue outweighs the lost auto-assignment.
+    if (
+        r.status_code == 422
+        and action == "create"
+        and "assignees" in payload
+        and '"field":"assignees"' in r.text
+    ):
+        retry_payload = {k: v for k, v in payload.items() if k != "assignees"}
+        print(
+            f"WARN: assignee '{COPILOT_ASSIGNEE}' rejected by repo "
+            f"(Coding Agent not enabled?). Re-creating issue without assignee.",
+            file=sys.stderr,
+        )
+        r = method(url, json=retry_payload, headers=headers, timeout=HTTP_TIMEOUT)
+
     if r.status_code >= 300:
         print(
             f"ERROR: issue {action} for {signal.skill} returned "
