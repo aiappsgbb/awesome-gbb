@@ -60,6 +60,27 @@ rejected if you violate them.
 | **PATCH bumps only** | Pin refreshes are PATCH (Z increments by 1). |
 | **Description ≤ 1024 chars** | If a description gets long, find content to drop — don't push the ceiling. |
 
+### ⚠️ No global search-and-replace across files
+
+**Do NOT** run `sed -i 's/1.3.0/1.4.0/g'` (or the IDE equivalent) across
+the repo. SKILL.md body and pin-file body often contain **historical
+proof-of-validation text** like `verified against agent-framework 1.3.0`
+or `Initial wrapper. Pinned to AGT 3.6.0 + MAF 1.3.0`. Those are
+deliberate historical records, not values to refresh.
+
+Only edit the explicit fields the issue lists:
+- `upstream.pinned_sha` (for SHA drift)
+- `packages[*].version` AND its sibling `validation.script` default
+  (for package drift; the script needs the new default for re-validation)
+- `known_issues[*].status` (for closure events)
+- `last_validated`, `validated_by`, `known_issues_count`
+- `metadata.version` in SKILL.md (PATCH bump only)
+
+Everything else — including version refs in SKILL.md body and pin-file
+prose sections — stays. If body refreshes are warranted, the issue
+template will explicitly include `[skill-rewrite]` in the Acceptance
+Criteria.
+
 ## Opt-in tags (only for issues that explicitly authorize them)
 
 If the issue body tells you to include one of these tags in the commit

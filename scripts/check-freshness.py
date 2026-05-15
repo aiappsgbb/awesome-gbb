@@ -313,6 +313,19 @@ def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
         "4. If fail → comment on this issue with the failure mode; do NOT "
         "open a PR.",
         "",
+        "### ⚠️ Surgical edits only — no search-and-replace",
+        "",
+        "Edit ONLY these fields, in these files:",
+        "- `references/upstream-pin.md`: `upstream.pinned_sha`, "
+        "`last_validated`, `validated_by` (set to `copilot-bot`)",
+        "- `SKILL.md`: `metadata.version` (PATCH bump)",
+        "",
+        "Do **NOT** run a global search-and-replace on the SHA or any "
+        "version strings. SKILL.md body and pin-file prose contain "
+        "historical proof-of-validation text (e.g. `verified against "
+        "<short-sha>`); those are records, not refresh targets. The gate "
+        "will reject any SKILL.md body change without `[skill-rewrite]`.",
+        "",
         "### Acceptance criteria",
         "",
         "- [ ] PR touches ONLY `references/upstream-pin.md` and "
@@ -398,6 +411,24 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
                     "Run the pin file's `validation.script` with "
                     f"`PINNED_VERSION={latest}` to verify the skill still "
                     "works against the new release.",
+                    "",
+                    "### ⚠️ Surgical edits only — no search-and-replace",
+                    "",
+                    "Edit ONLY these fields:",
+                    f"- `references/upstream-pin.md`: `packages[name={name}].version` → `{latest}`",
+                    "- `references/upstream-pin.md`: the matching default in "
+                    "`validation.script` (e.g. `${PINNED_VERSION:-...}` "
+                    "default) so re-validation pins the new version",
+                    "- `references/upstream-pin.md`: `last_validated`, "
+                    "`validated_by: copilot-bot`",
+                    "- `SKILL.md`: `metadata.version` (PATCH bump)",
+                    "",
+                    "Do **NOT** run a global search-and-replace on the "
+                    "version number. SKILL.md body and pin-file prose "
+                    f"contain historical proof-of-validation text (e.g. "
+                    f"`verified against {name} {pinned}`); those are "
+                    "records, not refresh targets. The gate will reject "
+                    "any SKILL.md body change without `[skill-rewrite]`.",
                 ]
             )
             out.append(
