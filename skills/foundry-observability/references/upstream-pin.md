@@ -40,7 +40,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-monitor-opentelemetry==1.6.0"
+    pip install --quiet "azure-monitor-opentelemetry~=1.6.0"
     python - <<'PY'
     from azure.monitor.opentelemetry import configure_azure_monitor
     print("ok foundry-observability imports")

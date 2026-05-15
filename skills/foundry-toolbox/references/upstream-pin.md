@@ -52,7 +52,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects==2.1.0" "agent-framework==1.3.0" "mcp==1.10.0"
+    pip install --quiet "azure-ai-projects~=2.1.0" "agent-framework~=1.3.0" "mcp~=1.10.0"
     python - <<'PY'
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import MCPTool, WebSearchTool, AzureAISearchTool

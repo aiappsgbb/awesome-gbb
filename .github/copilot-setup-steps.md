@@ -28,6 +28,12 @@ embeds the machine-runnable Verification Checklist.
    have been opened as `issue_only` (no automation_tier=auto label) and
    you should NOT have picked it up.
 
+   ⚠️ The `pin-validation.yml` CI job will **re-run your
+   validation.script** on the PR runner and assert every
+   `expected_output` substring is present. If you skip the validation
+   locally and the CI run fails, your PR is rejected. There is no
+   "trust me, I tested it" path.
+
 4. **On success**: edit the pin file's front-matter:
    - `upstream.pinned_sha` → new SHA (for SHA-drift issues)
    - `packages[*].version` → new version (for PyPI-drift issues)
@@ -49,8 +55,8 @@ embeds the machine-runnable Verification Checklist.
 
 ## Hard rules (per AGENTS.md § 4)
 
-These are enforced by `automation-pr-gate.yml` — your PR will be
-rejected if you violate them.
+These are enforced by `automation-pr-gate.yml` + `pin-validation.yml`
+on every PR — your PR will be rejected if you violate them.
 
 | Rule | How to comply |
 |------|---------------|
@@ -59,6 +65,8 @@ rejected if you violate them.
 | **No SKILL.md body changes** | Edit only the YAML frontmatter unless the issue says `[skill-rewrite]`. |
 | **PATCH bumps only** | Pin refreshes are PATCH (Z increments by 1). |
 | **Description ≤ 1024 chars** | If a description gets long, find content to drop — don't push the ceiling. |
+| **Validation actually runs** | `pin-validation.yml` re-executes your `validation.script` on the PR runner and asserts every `expected_output` substring. **You cannot fake "tested OK".** |
+| **Pin/cap policy on pip** | Every pip install in `validation.script` MUST use `~=X.Y.Z` (compatible release with implicit cap) — never bare `==`, never bare `>=`, never unpinned. Pre-releases (a/b/rc/dev) are the only `==` exception. |
 
 ### ⚠️ No global search-and-replace across files
 

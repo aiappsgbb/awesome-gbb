@@ -103,6 +103,13 @@ validation:
   # Copy-paste shell — what the coding agent executes.
   # Substitute ${PINNED_VERSION} / ${PINNED_SHA} at runtime; the detector
   # passes the candidate new value as the env var.
+  #
+  # 🔒 Pin/cap policy: ALL pip installs MUST use a bounded specifier.
+  # Use PEP 440 compatible-release (`~=X.Y.Z` ≡ `>=X.Y.Z,<X.(Y+1).0`)
+  # for stable releases. For pre-releases (a/b/rc/dev), use exact `==`
+  # because pre-release semantics don't survive cap math.
+  # NEVER use bare `>=` or unpinned package names — the freshness
+  # contract assumes every install is reproducible within a cap window.
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
@@ -110,7 +117,7 @@ validation:
     # Example for a Tier-B PyPI wrapper:
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "<package>==${PINNED_VERSION}"
+    pip install --quiet "<package>~=${PINNED_VERSION}"
     python -c "import <module>; print(<module>.__version__)"
     # ... skill-specific smoke commands ...
 

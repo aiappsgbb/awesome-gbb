@@ -47,7 +47,7 @@ validation:
     python -m venv "$WORK/.venv"
     . "$WORK/.venv/bin/activate"
     python -m pip install --quiet --upgrade pip
-    python -m pip install --quiet "azure-search-documents==${PINNED_VERSION}"
+    python -m pip install --quiet "azure-search-documents~=${PINNED_VERSION}"
     python - <<'PY'
     from azure.search.documents import SearchClient
     from azure.search.documents.indexes import SearchIndexClient
@@ -129,7 +129,7 @@ echo "pinned SHA verified: ${PINNED_SHA}"
 python -m venv "$WORK/.venv"
 . "$WORK/.venv/bin/activate"
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet "azure-search-documents==${PINNED_VERSION}"
+python -m pip install --quiet "azure-search-documents~=${PINNED_VERSION}"
 python - <<'PY'
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient

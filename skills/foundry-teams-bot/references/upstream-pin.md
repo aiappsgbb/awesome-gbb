@@ -91,15 +91,15 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "microsoft-agents-activity==0.9.0" \
-      "microsoft-agents-authentication-msal==0.9.0" \
-      "microsoft-agents-hosting-aiohttp==0.9.0" \
-      "microsoft-agents-hosting-core==0.9.0" \
-      "microsoft-agents-hosting-teams==0.9.0" \
-      "azure-ai-projects==2.1.0" \
-      "azure-identity==1.19.0" \
-      "aiohttp==3.9.0" \
-      "python-dotenv==1.0.0"
+      "microsoft-agents-activity~=0.9.0" \
+      "microsoft-agents-authentication-msal~=0.9.0" \
+      "microsoft-agents-hosting-aiohttp~=0.9.0" \
+      "microsoft-agents-hosting-core~=0.9.0" \
+      "microsoft-agents-hosting-teams~=0.9.0" \
+      "azure-ai-projects~=2.1.0" \
+      "azure-identity~=1.19.0" \
+      "aiohttp~=3.9.0" \
+      "python-dotenv~=1.0.0"
     python - <<'PY'
     import json
     import aiohttp

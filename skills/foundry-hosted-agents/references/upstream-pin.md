@@ -63,7 +63,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "agent-framework-core==1.3.0" "agent-framework-foundry==1.3.0" "agent-framework-foundry-hosting==1.0.0a260423" "azure-ai-projects==2.1.0" "azure-identity==1.25.3" "mcp==1.10.0" "python-dotenv==1.0.0"
+    pip install --quiet "agent-framework-core~=1.3.0" "agent-framework-foundry~=1.3.0" "agent-framework-foundry-hosting==1.0.0a260423" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.10.0" "python-dotenv~=1.0.0"
     python -c "from agent_framework.foundry import FoundryChatClient; from agent_framework_foundry_hosting import ResponsesHostServer; from azure.ai.projects import AIProjectClient; print('ok foundry-hosted-agents imports')"
   expected_output:
     - "ok foundry-hosted-agents imports"

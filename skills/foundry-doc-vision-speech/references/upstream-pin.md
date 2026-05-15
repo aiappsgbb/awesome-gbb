@@ -66,11 +66,11 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "azure-ai-projects==2.1.0" \
-      "agent-framework==1.3.0" \
-      "agent-framework-foundry==1.3.0" \
-      "azure-ai-documentintelligence==1.0.2" \
-      "azure-cognitiveservices-speech==1.40.0"
+      "azure-ai-projects~=2.1.0" \
+      "agent-framework~=1.3.0" \
+      "agent-framework-foundry~=1.3.0" \
+      "azure-ai-documentintelligence~=1.0.2" \
+      "azure-cognitiveservices-speech~=1.40.0"
     python - <<'PY'
     from azure.ai.projects.aio import AIProjectClient
     from agent_framework.foundry import FoundryChatClient

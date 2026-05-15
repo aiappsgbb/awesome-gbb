@@ -68,7 +68,7 @@ validation:
     export PYTHONUTF8=1
     python -m venv .venv-agt
     . .venv-agt/bin/activate
-    pip install --quiet "agent-governance-toolkit[full]==${PINNED_VERSION:-3.6.0}" "agent-framework==${PINNED_AGENT_FRAMEWORK_VERSION:-1.3.0}"
+    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-3.6.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.3.0}"
     agt --version
     agt doctor
     agt verify

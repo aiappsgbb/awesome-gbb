@@ -333,6 +333,8 @@ def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
         "- [ ] `metadata.version` bumped PATCH only",
         "- [ ] CI gate `automation-pr-gate.yml` passes",
         "- [ ] CI gate `skill-validation.yml` passes",
+        "- [ ] CI gate `pin-validation.yml` passes "
+        "(re-runs `validation.script` on the runner — proof, not claim)",
     ]
 
     if pin.automation_tier == "auto":

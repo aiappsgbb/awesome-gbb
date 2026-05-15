@@ -72,12 +72,12 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "fastmcp==2.14.7" \
-      "mcp==1.10.0" \
-      "azure-mgmt-appcontainers==4.0.0" \
-      "azure-cosmos==4.15.0" \
-      "azure-identity==1.19.0" \
-      "aiohttp==3.9.0"
+      "fastmcp~=2.14.7" \
+      "mcp~=1.10.0" \
+      "azure-mgmt-appcontainers~=4.0.0" \
+      "azure-cosmos~=4.15.0" \
+      "azure-identity~=1.19.0" \
+      "aiohttp~=3.9.0"
     python - <<'PY'
     from fastmcp import FastMCP
     import mcp

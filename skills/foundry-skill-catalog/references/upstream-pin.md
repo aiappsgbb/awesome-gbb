@@ -53,7 +53,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects==2.1.0" "agent-framework==1.3.0" "azure-identity==1.26.0b2"
+    pip install --quiet "azure-ai-projects~=2.1.0" "agent-framework~=1.3.0" "azure-identity==1.26.0b2"
     python - <<'PY'
     from azure.ai.projects import AIProjectClient
     from azure.identity import DefaultAzureCredential

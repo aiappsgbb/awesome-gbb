@@ -426,15 +426,37 @@ to `skills/<name>/references/upstream-pin.md` and fill every
   the upstream issue closes, the skill is flagged for re-validation
   WITHOUT the workaround.
 
-### 9.6 · Three CI gates that protect the catalog
+#### 🔒 Pin/cap policy on `validation.script` pip installs
+
+Every `pip install` in `validation.script` MUST use a **bounded
+specifier**. There are exactly three accepted patterns:
+
+| Pattern | When to use |
+|---------|-------------|
+| `~=X.Y.Z` (PEP 440 compatible release) | Default for stable releases. Equivalent to `>=X.Y.Z, <X.(Y+1).0`. Patch upgrades inside the cap window are auto-covered, no PR needed. |
+| `==X.Y.ZaN` / `==X.Y.ZbN` / `==X.Y.ZrcN` | Pre-releases (alpha/beta/rc/dev). Cap math doesn't survive across pre-release boundaries, so exact pin is the only safe choice. |
+| `~=X.Y` | Library where the maintainer commits to backward-compat across the minor — only with explicit author justification in `notes:`. |
+
+Forbidden patterns:
+- Bare `==X.Y.Z` for stable releases (caught the foundry-agt 1.3.0 → 1.4.0
+  refresh — `pin-validation.yml` rejects unbounded auto-bumps).
+- Bare `>=X.Y.Z` (no cap → next major can break silently).
+- Unpinned package name (`pip install pkg`).
+
+This policy is enforced both by the cap-aware
+[`pin-validation.yml`](.github/workflows/pin-validation.yml) gate (which
+re-runs the script on the runner) and by reviewer eyeball.
+
+### 9.6 · Four CI gates that protect the catalog
 
 | Gate | When | What it checks |
 |------|------|---------------|
 | [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2 |
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
+| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/*/references/upstream-pin.md` | **Re-runs `validation.script` on the runner** for auto-tier pin files; asserts every `expected_output` substring. No "trust me, I tested" path. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
 
-The first two run on every PR. The third runs autonomously.
+The first three run on every PR. The fourth runs autonomously.
 
 ---
 
@@ -446,6 +468,7 @@ The first two run on every PR. The third runs autonomously.
 - Each `skills/<skill>/README.md` (if present) — extended docs / changelog
 - Each `skills/<skill>/references/upstream-pin.md` (wrapper skills) — machine-readable freshness contract
 - [`scripts/templates/upstream-pin.template.md`](scripts/templates/upstream-pin.template.md) — canonical pin template (schema v2)
+- [`scripts/run-pin-validation.py`](scripts/run-pin-validation.py) — CI-side validation.script runner (the gate that proves tests ran)
 - [`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) — GHCP coding agent contract for autonomous refresh
 
 ---

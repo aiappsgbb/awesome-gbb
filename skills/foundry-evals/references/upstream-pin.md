@@ -54,7 +54,7 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     python -m pip install --upgrade pip --quiet
-    pip install --quiet "azure-ai-projects>=2.0.0" "azure-identity" "python-dotenv"
+    pip install --quiet "azure-ai-projects~=2.0" "azure-identity~=1.19" "python-dotenv~=1.0"
 
     python - <<'PY'
     import os
@@ -195,7 +195,7 @@ git checkout --quiet "$PINNED_SHA"
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip --quiet
-pip install --quiet "azure-ai-projects>=2.0.0" "azure-identity" "python-dotenv"
+pip install --quiet "azure-ai-projects~=2.0" "azure-identity~=1.19" "python-dotenv~=1.0"
 
 python - <<'PY'
 import os

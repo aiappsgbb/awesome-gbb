@@ -53,7 +53,7 @@ validation:
     python -m venv "$WORK/.venv"
     . "$WORK/.venv/bin/activate"
     python -m pip install --quiet --upgrade pip
-    python -m pip install --quiet "PyYAML==${PINNED_VERSION}"
+    python -m pip install --quiet "PyYAML~=${PINNED_VERSION}"
     python - <<'PY'
     import yaml
     sample = '''
@@ -150,7 +150,7 @@ echo "canonical config URLs ok"
 python -m venv "$WORK/.venv"
 . "$WORK/.venv/bin/activate"
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet "PyYAML==${PINNED_VERSION}"
+python -m pip install --quiet "PyYAML~=${PINNED_VERSION}"
 python - <<'PY'
 import yaml
 sample = '''
