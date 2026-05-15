@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: deploying the agent itself (use threadlight-deploy), MCP server
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Foundry Doc / Vision / Speech

@@ -19,7 +19,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Foundry Observability

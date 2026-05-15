@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide

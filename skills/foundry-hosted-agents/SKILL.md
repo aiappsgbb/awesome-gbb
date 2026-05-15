@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
