@@ -8,6 +8,10 @@ Subcommands (positional + flags):
   --info               print the discovered layout and exit (no LLM)
 
 All commands honour ``--root <path>`` to override discover start dir.
+
+Auto-loads ``<poc-root>/.env.local`` so users don't have to ``source`` it
+themselves. Existing process env always wins (so an explicit ``export``
+in the shell overrides the file).
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -74,6 +79,50 @@ def _setup_logging() -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+
+# Match KEY=VALUE lines in a .env file. Tolerant of:
+#   * leading "export " (so a file that doubles as a shell `source` works)
+#   * blank lines and "#" comments
+#   * surrounding single/double quotes on the value
+_ENV_LINE_RE = re.compile(
+    r"^\s*(?:export\s+)?(?P<key>[A-Z_][A-Z0-9_]*)\s*=\s*(?P<val>.*?)\s*$"
+)
+
+
+def _load_env_local(root: Path, filename: str = ".env.local") -> int:
+    """Load ``<root>/<filename>`` into ``os.environ`` (existing keys win).
+
+    Stdlib-only parser — no python-dotenv dependency. Returns the number
+    of variables actually injected (skipping ones already set in the
+    process env so that an explicit ``export`` can always override the
+    file).
+    """
+    path = root / filename
+    if not path.is_file():
+        return 0
+    injected = 0
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _ENV_LINE_RE.match(line)
+        if not m:
+            continue
+        key = m.group("key")
+        val = m.group("val")
+        # Strip a single matched pair of quotes around the value.
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+            val = val[1:-1]
+        if key in os.environ:
+            continue
+        os.environ[key] = val
+        injected += 1
+    if injected:
+        logging.getLogger(__name__).info(
+            "Loaded %d var(s) from %s", injected, path
+        )
+    return injected
 
 
 def _info(layout) -> int:
@@ -170,6 +219,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except PoCLayoutError as exc:
         print(f"❌ Layout error:\n{exc}")
         return 2
+
+    # Load <poc-root>/.env.local so users don't have to source it.
+    _load_env_local(layout.root)
 
     if args.info:
         return _info(layout)

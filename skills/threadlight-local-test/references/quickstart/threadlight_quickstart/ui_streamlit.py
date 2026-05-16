@@ -6,6 +6,10 @@ to wire the page to a specific PoC root:
   THREADLIGHT_QUICKSTART_ROOT       absolute path to the PoC root
   THREADLIGHT_QUICKSTART_SIMULATOR  "1" to enable the prompt simulator
 
+After every turn the UI appends a row to ``<root>/tests/quickstart.jsonl``
+in the shape ``foundry-evals`` consumes (query + response). Disable by
+setting ``THREADLIGHT_QUICKSTART_NO_TRANSCRIPT=1``.
+
 Deliberately stays single-file — no extra dirs, no theme, no auth.
 The PoC's own ``src/workspace/`` React UI keeps working unchanged
 for prod-parity demos; this page is the "I just want to see it work"
@@ -15,6 +19,8 @@ fallback.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
+import json
 import os
 from pathlib import Path
 
@@ -40,15 +46,16 @@ def _build(root: str):
     return layout, agent, stores, prompts
 
 
-def _format_tool(name: str) -> str:
-    return f"`{name}`"
-
-
 async def _stream_response(agent, prompt: str, placeholder) -> str:
+    """Stream `agent.run(prompt, stream=True)` into the placeholder.
+
+    Returns the full concatenated text so callers can persist a
+    transcript row.
+    """
     chunks: list[str] = []
     try:
-        async for event in agent.run_streaming(prompt):
-            text = getattr(event, "text", None) or getattr(event, "content", "")
+        async for update in agent.run(prompt, stream=True):
+            text = getattr(update, "text", None) or ""
             if text:
                 chunks.append(text)
                 placeholder.markdown("".join(chunks))
@@ -58,6 +65,32 @@ async def _stream_response(agent, prompt: str, placeholder) -> str:
         chunks.append(msg)
         placeholder.markdown("".join(chunks))
         return "".join(chunks)
+
+
+def _append_transcript(root: Path, query: str, response: str) -> None:
+    """Append one row to ``<root>/tests/quickstart.jsonl`` (foundry-evals shape).
+
+    Shape matches the `tool_definitions` / `tool_calls` schema documented
+    in ``foundry-evals`` § *Enriched dataset shape*; for the quickstart
+    we only have query + response (tools are stub CRUD), which is the
+    minimum the eval pipeline accepts.
+    """
+    if os.environ.get("THREADLIGHT_QUICKSTART_NO_TRANSCRIPT") == "1":
+        return
+    try:
+        tests_dir = root / "tests"
+        tests_dir.mkdir(parents=True, exist_ok=True)
+        path = tests_dir / "quickstart.jsonl"
+        row = {
+            "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            "query": query,
+            "response": response,
+        }
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        # Never block the demo on a write failure.
+        pass
 
 
 def _sidebar(layout, stores, prompts, simulator_on: bool):
@@ -89,6 +122,12 @@ def _sidebar(layout, stores, prompts, simulator_on: bool):
         st.sidebar.markdown("_(on, but no prompts found)_")
     else:
         st.sidebar.markdown(f"loaded **{len(prompts)}** prompt(s)")
+
+    st.sidebar.subheader("Transcript")
+    if os.environ.get("THREADLIGHT_QUICKSTART_NO_TRANSCRIPT") == "1":
+        st.sidebar.markdown("_(disabled)_")
+    else:
+        st.sidebar.markdown(f"appending to `tests/quickstart.jsonl`")
 
 
 def main():
@@ -151,6 +190,7 @@ def main():
             placeholder = st.empty()
             response = asyncio.run(_stream_response(agent, prompt, placeholder))
         st.session_state.messages.append({"role": "assistant", "content": response})
+        _append_transcript(layout.root, prompt, response)
 
 
 main()

@@ -106,18 +106,19 @@ def _require_env(name: str, hint: str) -> str:
 def _build_skills_provider(skills_dir: Path | None):
     """Defensive SkillsProvider init.
 
-    Returns None when the skills dir is missing/empty or import fails;
-    the agent stays runnable with ``context_providers=[]``.
+    Returns ``(provider, skill_count)``. ``provider`` is ``None`` when the
+    skills dir is missing/empty or import fails; the agent stays runnable
+    with ``context_providers=[]``.
     """
     if skills_dir is None or not skills_dir.is_dir():
         log.warning("Skills dir not found; SkillsProvider disabled.")
-        return None
+        return None, 0
     skill_subdirs = [
         d for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
     ]
     if not skill_subdirs:
         log.warning("No SKILL.md under %s; SkillsProvider disabled.", skills_dir)
-        return None
+        return None, 0
     try:
         from agent_framework import SkillsProvider  # type: ignore[import-not-found]
 
@@ -127,10 +128,10 @@ def _build_skills_provider(skills_dir: Path | None):
             len(skill_subdirs),
             ", ".join(sorted(d.name for d in skill_subdirs)),
         )
-        return provider
+        return provider, len(skill_subdirs)
     except Exception as exc:  # noqa: BLE001 - never crash on corrupt skills
         log.warning("SkillsProvider init failed (%s); continuing without it.", exc)
-        return None
+        return None, 0
 
 
 def _apply_overrides(
@@ -187,7 +188,7 @@ def build_agent(
     client = chat_client if chat_client is not None else build_chat_client()
     tools, stores = build_stub_tools(layout.sample_data_files)
     tools = _apply_overrides(layout, tools, stores)
-    skills_provider = _build_skills_provider(layout.skills_dir)
+    skills_provider, skill_count = _build_skills_provider(layout.skills_dir)
     context_providers = [skills_provider] if skills_provider is not None else []
 
     agent = Agent(
@@ -195,12 +196,11 @@ def build_agent(
         instructions=instructions or _DEFAULT_INSTRUCTIONS,
         tools=tools,
         context_providers=context_providers,
-        default_options={"store": False},
     )
     log.info(
         "Pattern 0 agent ready · entities=%d skills=%d tools=%d",
         len(stores),
-        len(skills_provider.skill_paths) if skills_provider else 0,
+        skill_count,
         len(tools),
     )
     return agent, stores

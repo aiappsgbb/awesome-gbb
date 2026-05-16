@@ -18,7 +18,7 @@ description: >
   validation (use threadlight-safe-check), hosted-agent runtime testing
   in cloud (use foundry-evals).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Threadlight — Local Test Loop (no azd up)
@@ -111,6 +111,20 @@ python -m threadlight_quickstart --simulator
 
 1. `<poc-root>/tests/demo-prompts.txt` (one prompt per line; `#` comments allowed)
 2. `<poc-root>/specs/prep-guide.html` § *Demo Script* (regex on `<strong>Type this:</strong>` blocks)
+
+> **`.env.local` is auto-loaded.** The CLI parses `<poc-root>/.env.local`
+> on every launch and injects the keys into the process env (only ones
+> not already set in the shell). No need to `source` it manually.
+> Disable with `THREADLIGHT_QUICKSTART_NO_TRANSCRIPT=1` if you don't
+> want the side-effect.
+
+> **Every UI turn appends to `<poc-root>/tests/quickstart.jsonl`.**
+> Shape matches what [`foundry-evals`](../foundry-evals/SKILL.md)
+> consumes — `{ts, query, response}` per row. Run a few Pattern 0
+> demos, then promote the JSONL into your Foundry eval dataset
+> without reshaping. Disable with `THREADLIGHT_QUICKSTART_NO_TRANSCRIPT=1`.
+> Add `tests/quickstart.jsonl` to your PoC's `.gitignore` (it's local
+> demo state, not a fixture).
 
 ### How the tools come from your SPEC
 

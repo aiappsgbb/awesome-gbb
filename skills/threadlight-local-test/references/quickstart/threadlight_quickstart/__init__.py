@@ -13,7 +13,7 @@ See SKILL.md § Pattern 0 — Quickstart for the full walkthrough.
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .discover import PoCLayout, discover
 from .agent_wiring import build_agent, build_chat_client
