@@ -100,6 +100,56 @@ def should_run(pin: dict, path: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _find_best_python() -> str:
+    """
+    Find the newest python3.X (>=3.10) available on PATH, falling back to
+    `python3` and finally `python` if nothing better exists.
+
+    The pin scripts target SDKs that require Python >=3.10 (e.g.
+    agent-framework). On macOS the system `python3` is 3.9 (too old), but
+    homebrew installs versioned binaries like `python3.13`. CI runners
+    using actions/setup-python expose both `python3.12` and `python3` →
+    either resolves correctly.
+    """
+    for ver in ("3.13", "3.12", "3.11", "3.10"):
+        found = shutil.which(f"python{ver}")
+        if found:
+            return found
+    fallback = shutil.which("python3") or shutil.which("python")
+    if fallback:
+        return fallback
+    raise RuntimeError("no python3 binary found on PATH")
+
+
+def _ensure_python_pip_shims(tmp: Path) -> Path:
+    """
+    Create a `bin/` dir with cross-platform `python` and `pip` shims that
+    point at the best python3 binary. Returns the dir path so the caller
+    can prepend it to PATH.
+
+    Why: the pin scripts use bare `python` and `pip` (works on CI runners
+    that install both via actions/setup-python). On macOS and minimal Linux
+    only `python3` (or `python3.13`) exists. Aliasing in a shim dir keeps
+    the pin scripts portable without touching every file.
+    """
+    python3 = _find_best_python()
+
+    bin_dir = tmp / "_shims"
+    bin_dir.mkdir()
+
+    py_shim = bin_dir / "python"
+    py_shim.write_text(f'#!/usr/bin/env bash\nexec "{python3}" "$@"\n', encoding="utf-8")
+    py_shim.chmod(0o755)
+
+    pip_shim = bin_dir / "pip"
+    pip_shim.write_text(
+        f'#!/usr/bin/env bash\nexec "{python3}" -m pip "$@"\n', encoding="utf-8"
+    )
+    pip_shim.chmod(0o755)
+
+    return bin_dir
+
+
 def run_one(path: Path, pin: dict) -> tuple[bool, str]:
     """
     Execute the pin's validation.script in a fresh temp dir. Capture
@@ -120,12 +170,24 @@ def run_one(path: Path, pin: dict) -> tuple[bool, str]:
     print(f"  failure_signatures: {failure_sigs}")
 
     with tempfile.TemporaryDirectory(prefix=f"pin-{skill}-") as tmp:
-        script_path = Path(tmp) / "validate.sh"
+        tmp_path = Path(tmp)
+        script_path = tmp_path / "validate.sh"
         script_path.write_text(script, encoding="utf-8")
         script_path.chmod(0o755)
 
         env = os.environ.copy()
         env.setdefault("PYTHONUTF8", "1")
+
+        # Cross-platform python/pip shims so pin scripts that use bare
+        # `python`/`pip` work on macOS (where only python3 exists) without
+        # changing the script itself.
+        try:
+            shim_dir = _ensure_python_pip_shims(tmp_path)
+            env["PATH"] = f"{shim_dir}{os.pathsep}{env.get('PATH', '')}"
+        except RuntimeError as e:
+            print("::endgroup::")
+            return False, str(e)
+
         try:
             proc = subprocess.run(
                 ["bash", str(script_path)],
@@ -188,12 +250,20 @@ def main(argv: list[str]) -> int:
         print("\nNo pin files to validate. ✅")
         return 0
 
-    # Sanity check that bash and pip exist (the runner needs them)
+    # Sanity check that bash exists and at least one python3 is on PATH.
+    # `pip` is invoked via `python3 -m pip` through the shim, so we don't
+    # require a standalone `pip` binary. We use _find_best_python to allow
+    # python3.13/3.12/etc fallback for SDKs that need >=3.10.
     if not skip_install_check:
-        for tool in ("bash", "python", "pip"):
-            if shutil.which(tool) is None:
-                print(f"::error::required tool '{tool}' not on PATH")
-                return 2
+        if shutil.which("bash") is None:
+            print("::error::required tool 'bash' not on PATH")
+            return 2
+        try:
+            chosen = _find_best_python()
+            print(f"::notice::using python interpreter: {chosen}")
+        except RuntimeError as e:
+            print(f"::error::{e}")
+            return 2
 
     failures: list[tuple[Path, str]] = []
     skipped: list[tuple[Path, str]] = []
