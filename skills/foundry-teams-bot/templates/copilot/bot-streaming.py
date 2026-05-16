@@ -108,9 +108,11 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
             if chunk:
                 yield TextChunk(chunk)
         elif event_type == "response.output_text.done":
-            text = getattr(event, "text", "")
-            if text:
-                yield TextChunk(text)
+            # SKIP: `.done` carries the full accumulated text as metadata, not
+            # a new content payload. Yielding it after streaming the deltas
+            # produces a duplicated reply in Teams ("Teams shows the bot's
+            # reply twice"). The deltas are the canonical content stream.
+            pass
         elif event_type == "response.function_call_arguments.start":
             tool_count += 1
             name = getattr(event, "name", "tool")

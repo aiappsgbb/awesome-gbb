@@ -9,7 +9,7 @@ description: >
   DO NOT USE FOR: designing the agent (use threadlight-design), deploying the hosted agent
   itself (use threadlight-deploy), general Bot Framework development.
 metadata:
-  version: "1.0.2"
+  version: "1.1.0"
 ---
 
 # Foundry Teams Bot
@@ -91,7 +91,9 @@ copilot/
 infra/bot/
 ├── uami.bicep                  # User-Assigned Managed Identity
 ├── bot-service.bicep           # Azure Bot Service + MsTeamsChannel
-└── aca.bicep                   # ACA environment + bot container app
+├── aca.bicep                   # ACA environment + bot container app
+├── bot-rbac.bicep              # Cross-resource RBAC: AcrPull + Foundry User on account+project
+└── fetch-container-image.bicep # Re-provision safety — preserve existing image
 
 scripts/
 └── build_teams_manifest.py     # postprovision: builds copilot_package.zip
@@ -326,6 +328,28 @@ Azure Bot Service (F0 SKU) with UAMI auth (`msaAppType: UserAssignedMSI`) and Ms
 
 Azure Container App with external ingress, UAMI identity, and env var injection.
 
+> **Private-ACR pull is required.** The template's `properties.configuration.registries`
+> block binds the bot's UAMI to the ACR login server so ACA can pull the bot image. You
+> MUST pass `acrLoginServer` (e.g. `myacr.azurecr.io`) as a module param. Without it, the
+> first revision will fail with `UNAUTHORIZED` against the private registry, ACA falls
+> back to the placeholder image, and the bot looks "running" but never serves real traffic.
+
+### `infra/bot/bot-rbac.bicep`
+
+> **Template:** [`templates/infra/bot/bot-rbac.bicep`](templates/infra/bot/bot-rbac.bicep)
+
+Cross-resource role grants for the bot UAMI. Three assignments wired in one module:
+
+| # | Role | Scope | GUID | Why |
+|---|------|-------|------|-----|
+| 1 | AcrPull | ACR | `7f951dda-…` | Pull the bot container image |
+| 2 | Foundry User | Foundry account | `53ca6127-…` | Model inference data-plane (post-May-2026 rename of `Azure AI User`) |
+| 3 | Foundry User | Foundry project | `53ca6127-…` | Storage, history, Responses API project endpoint |
+
+Role IDs are pinned by GUID so the May 2026 display-name rename (`Azure AI User` →
+`Foundry User`) doesn't break the deploy. **Both account AND project scopes are
+required** — `Foundry Account Owner` no longer implies data-plane access.
+
 ### Bicep integration in `main.bicep`:
 
 ```bicep
@@ -361,6 +385,7 @@ module copilotAca 'bot/aca.bicep' = {
     image: '${acrEndpoint}/copilot:latest'
     targetPort: 80
     userAssignedIdentityId: uami.outputs.id
+    acrLoginServer: acrEndpoint
     env: [
       { name: 'AZURE_CLIENT_ID', value: uami.outputs.clientId }
       { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
@@ -600,25 +625,15 @@ module bot 'bot/bot-service.bicep' = {
   }
 }
 
-// 3. RBAC — UAMI needs Azure AI Developer on Foundry project
-resource aiDevRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(subscription().subscriptionId, uami.outputs.principalId, 'ai-developer')
-  scope: aiProject
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')
-    principalId: uami.outputs.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// 4. UAMI → AcrPull on ACR
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(subscription().subscriptionId, uami.outputs.principalId, 'acr-pull')
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-    principalId: uami.outputs.principalId
-    principalType: 'ServicePrincipal'
+// 3. RBAC — AcrPull on ACR + Foundry User on account AND project
+// (see infra/bot/bot-rbac.bicep for the role-GUID + dual-scope rationale)
+module botRbac 'bot/bot-rbac.bicep' = {
+  name: 'bot-rbac'
+  params: {
+    botPrincipalId: uami.outputs.principalId
+    acrName: acrName
+    foundryAccountName: foundryAccountName
+    foundryProjectName: foundryProjectName
   }
 }
 
@@ -628,6 +643,7 @@ module botAca 'bot/aca.bicep' = {
     name: 'bot-${environmentName}'
     image: botAppExists ? fetchBotImage.outputs.image : '${acrEndpoint}/bot:latest'
     userAssignedIdentityId: uami.outputs.id
+    acrLoginServer: acrEndpoint
     env: [
       { name: 'AZURE_CLIENT_ID', value: uami.outputs.clientId }
       { name: 'PROJECT_ENDPOINT', value: projectEndpoint }
@@ -741,11 +757,14 @@ Common issues visible in logs:
 
 The bot's UAMI needs these role assignments to call the Foundry Hosted Agent:
 
-| Role | Scope | Purpose |
-|------|-------|---------|
-| `Azure AI Developer` | Foundry project | Create conversations, call Responses API |
-| `Cognitive Services OpenAI User` | AI Services account | Use model deployments |
-| `Cognitive Services User` | AI Services account | Access AI services |
+| Role | GUID (pin this — names rotate) | Scope | Purpose |
+|------|------------------------------|-------|---------|
+| `Foundry User` (was `Azure AI User` pre-May 2026) | `53ca6127-db72-4b80-b1b0-d745d6d5456d` | Foundry **account** | Data-plane: model inference. **Required since rename — `Foundry Account Owner` no longer implies this.** |
+| `Foundry User` | `53ca6127-db72-4b80-b1b0-d745d6d5456d` | Foundry **project** | Conversations, sessions, history, Responses API project endpoint |
+| `AcrPull` | `7f951dda-4ed3-4680-a7ca-43fe172d538d` | Azure Container Registry | Pull the bot container image (paired with `registries` block in `aca.bicep`) |
+
+> Both account AND project scopes are required. `bot-rbac.bicep` wires all three
+> in one module — call it from `main.bicep` (see "Main Bicep Wiring" above).
 
 ---
 
@@ -1146,7 +1165,7 @@ user_token = result["access_token"]
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |
 | Streaming garbled in Teams | Sending each chunk separately as `send_activity()` | Use `StreamingResponse` from `microsoft_agents.hosting.core.app.streaming.streaming_response`: `sr.queue_text_chunk(delta)` per chunk + `await sr.end_stream()` once. SDK handles batching + sequence numbers. See `templates/copilot/bot-streaming.py`. |
 | Bot delivers ONE big message after 60s of typing-dots silence (no progressive UX) | Bot uses the legacy collect-then-send pattern: SSE chunks accumulated into a list, joined, sent via single `send_activity()` at end | Refactor to streaming. Replace `chunks.append(delta)` + final `send_activity(answer)` with `StreamingResponse(context).queue_text_chunk(delta)` per chunk + `await streaming.end_stream()`. ~30 LOC change. **Origin:** recent pilot retrospective. |
-| Teams shows the bot's reply twice (full message appended after streaming completes) | Yielding `TextChunk` on both `response.output_text.delta` and `response.output_text.done` | Only yield from deltas; the done event is metadata/final accumulated text, not a separate content payload |
+| Teams shows the bot's reply twice (full message appended after streaming completes) | Yielding `TextChunk` on both `response.output_text.delta` and `response.output_text.done` | ✅ **Fixed in `templates/copilot/bot-streaming.py` (May 2026).** Only deltas yield `TextChunk`; the `.done` branch is now a deliberate `pass` because `.done` carries the full accumulated text as metadata, not a new content payload. If you fork an older copy of the template, drop the `.done` yield. |
 | Teams shows Invocations replies twice after streaming | Yielding `TextChunk` on both `assistant.message_delta` and final `assistant.message` | Track whether deltas were streamed; if yes, ignore final `assistant.message`, otherwise use it for non-delta backends |
 | Sideload fails | manifest schema wrong | Use `manifestVersion: "1.21"` (not `devPreview` — `devPreview` is rejected for new CEA uploads since GA May 2025) with `copilotAgents.customEngineAgents` |
 | Sideload fails with "Schema validation error" on `customEngineAgents` | Manifest had a `conversationStarters` field on the customEngineAgent | Remove it. Schema requires `additionalProperties: false` on customEngineAgents items (only `id` + `type` allowed). Prompt starters belong in `bots[0].commandLists[0].commands[]` with `{title, description}` |
@@ -1167,3 +1186,5 @@ user_token = result["access_token"]
 | "Questa risposta è stata arrestata" (stream killed) | Teams 2-min streaming timeout (403 ContentStreamNotAllowed) | Expected for long queries. `bot-streaming.py` catches this, sends courtesy message, then delivers full response as regular message. |
 | Stream cancelled but Foundry still running | Normal — Teams cancels the **display**, not the agent | Bot keeps consuming the Foundry stream. After agent finishes, sends full response via `context.send_activity()`. |
 | SDK 0.9.x pin warning in troubleshooting | Outdated — 0.9.x MsalConnectionManager is backward-compatible | `>=0.9.0` is safe. `streaming_response` requires it. |
+| `aca.bicep` first revision fails `UNAUTHORIZED` on image pull → falls back to placeholder image, bot looks "Running" but never receives traffic | `aca.bicep` missing `properties.configuration.registries` block, so ACA tries anonymous pull from the private ACR | ✅ **Fixed in `templates/infra/bot/aca.bicep` (May 2026).** Template now takes an `acrLoginServer` param and binds the UAMI as the registry credential. Make sure `main.bicep` passes `acrLoginServer: acrEndpoint` AND that the AcrPull role grant (via `bot-rbac.bicep`) has propagated. |
+| **Scary RED `404 NotFound` error block at the end of `azd deploy <any-service>` ("agents/agent/versions/<n> not found"); deploy itself succeeded** | `azure.yaml` declares a service with `host: azure.ai.agent` whose **service key** ≠ the actual agent name. The `azure.ai.agents` azd extension's postdeploy hook fires after **every** `azd deploy` (including unrelated services like `bot` / `workspace` / `mcp`) and looks up `agents/<service-key>/versions/<n>` — using the service key verbatim, not the real agent name. Benign-but-loud false alarm. See **`foundry-hosted-agents` SKILL § Troubleshooting** for the cross-reference. | Rename the agent service key in `azure.yaml` to match the actual agent name (e.g. service key `vf3-journey-advisor` ↔ agent name `vf3-journey-advisor`). If you can't rename (downstream scripts reference the key), the error is cosmetic — your deploy succeeded; check `azd ai agent show` to confirm. |
