@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.3.2"
+  version: "1.4.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -16,6 +16,16 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 (refreshed preview, April 2026). Covers the `Agent` + `FoundryChatClient` +
 `ResponsesHostServer` (MAF) variant exclusively.
 
+> **⚠️ MAF 1.4.0 cutover (May 2026) — three breaking changes.** If you have
+> hosted agents pinned to `agent-framework-core` 1.3.x or earlier, they
+> will start returning `401 Unauthorized` / `server_error` on every
+> Responses request once Azure completes the rolling Foundry data-plane
+> rename. **You must rebuild the orchestrator image** and re-import the
+> agent versions. See [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026)
+> for the full migration: `ai.azure.com` token scope, "Foundry User" role
+> rename (GUID unchanged), `AzureOpenAIChatClient` removal,
+> `:latest` vs `sha256@…` image-tag strategy.
+
 ## When to Use
 
 - Deploying a custom container agent to Foundry
@@ -23,6 +33,108 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 - Setting up RBAC for agent identities
 - Configuring `agent.yaml`, `azure.yaml`, Bicep parameters
 - Understanding the refreshed preview changes (packages, identity, invocation)
+- **Migrating from MAF 1.3.x → 1.4.0** ([§ below](#maf-140-breaking-changes-may-2026))
+
+---
+
+## MAF 1.4.0 breaking changes (May 2026)
+
+Azure renamed the Foundry data-plane role from **"Azure AI User"** to
+**"Foundry User"** and changed the AAD token audience the SDK requests
+from `https://cognitiveservices.azure.com/.default` to
+`https://ai.azure.com/.default`. **`agent-framework-core` 1.4.0**
+(2026-05-14, alongside `agent-framework-foundry-hosting` 1.0.0a260514)
+is the first SDK that requests the new scope; everything pinned to 1.3.x
+or earlier requests the old scope and gets **`401 Unauthorized`** from
+the post-rename data plane.
+
+### The three changes you have to absorb
+
+| # | Change | Symptom on pinned 1.3.x | Fix |
+|---|--------|------------------------|-----|
+| 1 | **AAD token scope:** `cognitiveservices.azure.com` → `ai.azure.com` | Every Responses request → `401 Unauthorized` (with valid `Foundry User` RBAC) | Upgrade to `agent-framework-core~=1.4.0` + `agent-framework-foundry~=1.4.0` + `agent-framework-foundry-hosting==1.0.0a260514` |
+| 2 | **Role display name** "Azure AI User" → "Foundry User" | `az role assignment create --role "Azure AI User"` fails with `RoleDefinitionNotFound` | Use `--role "Foundry User"` OR pin by GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d` (unchanged across the rename — the safest call-site form is the GUID) |
+| 3 | **`AzureOpenAIChatClient` removed** from `agent_framework.azure` | `ImportError: cannot import name 'AzureOpenAIChatClient'` after `pip install -U` | Use `OpenAIChatClient(azure_endpoint=..., model=..., credential=...)` from `agent_framework.openai` — see snippet below |
+
+### `AzureOpenAIChatClient` → `OpenAIChatClient` migration
+
+`FoundryChatClient` is the right choice for hosted Foundry agents and is
+unaffected. The removal hits **adjacent code paths** that talked directly
+to Azure OpenAI (eval judges, batch scoring, sidecar services, agents
+that route through APIM):
+
+```python
+# OLD (MAF 1.3.x — REMOVED in 1.4.0)
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import get_bearer_token_provider, DefaultAzureCredential
+client = AzureOpenAIChatClient(
+    endpoint=AZURE_OPENAI_ENDPOINT,
+    deployment_name=DEPLOYMENT,
+    ad_token_provider=get_bearer_token_provider(
+        DefaultAzureCredential(),
+        "https://cognitiveservices.azure.com/.default",
+    ),
+)
+
+# NEW (MAF 1.4.0)
+from agent_framework.openai import OpenAIChatClient
+from azure.identity import DefaultAzureCredential
+client = OpenAIChatClient(
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,    # NB: kwarg renamed from `endpoint`
+    model=DEPLOYMENT,                         # NB: kwarg renamed from `deployment_name`
+    credential=DefaultAzureCredential(),     # SDK derives the right token scope internally
+)
+```
+
+Drop the explicit `get_bearer_token_provider` / `ad_token_provider` —
+`OpenAIChatClient` now derives the scope itself. The unused
+`get_bearer_token_provider` import can be removed.
+
+### Image-tag staleness trap (mandatory read for any pilot that pins by digest)
+
+Hosted agent versions reference the orchestrator container by ACR
+image **reference**. There are two common shapes:
+
+- `<acr>.azurecr.io/tl-maf-orchestrator:latest` — re-resolves to the
+  newest pushed image on every container start. Auto-picks up MAF
+  rebuilds the next time the agent provisions.
+- `<acr>.azurecr.io/tl-maf-orchestrator@sha256:abc…` — pinned to a
+  specific layer digest. Reproducible, but **frozen at the MAF version
+  that was in the image when the digest was computed**.
+
+After a MAF 1.4.0 rebuild, agents using `:latest` work; agents using
+`@sha256:…` digests from the 1.3.x era keep hitting the old token scope
+and fail. **Re-import every hosted agent version** (or pin by digest to
+the freshly-built 1.4.0 image) as part of the upgrade. `azd ai agent
+deploy` does this automatically if the YAML references `:latest`.
+
+### Rebuild recipe (copy-paste)
+
+```bash
+# 1. Upgrade orchestrator pyproject.toml + regenerate uv.lock
+sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.4.0"/' src/orchestrator/pyproject.toml
+sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.4.0"/' src/orchestrator/pyproject.toml
+sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-hosting==1.0.0a260514"/' src/orchestrator/pyproject.toml
+(cd src/orchestrator && uv lock)
+
+# 2. ACR remote build — tag with :latest AND a date-pinned tag for forensics
+ACR=tl<your-acr-suffix>
+az acr build --registry "$ACR" \
+  --image "tl-maf-orchestrator:maf14-$(date +%Y%m%d%H%M)" \
+  --image "tl-maf-orchestrator:latest" \
+  --file src/orchestrator/dockerfile src/orchestrator/
+
+# 3. Re-deploy + re-import each agent so it picks up the fresh image
+azd deploy agents
+(cd infra/scripts && uv run deploy_job.py)
+# Then: azd ai agent show — confirm new image digest under each version
+```
+
+> **Why date-pinned tags matter.** `:latest` is fine for the agent
+> reference but leaves zero forensic trail in ACR's image history.
+> The `maf14-YYYYMMDDHHMM` tag lets you correlate "which agent
+> version is running which MAF build?" months later when a regression
+> bisect needs it.
 
 ---
 
@@ -672,9 +784,9 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core==1.3.0",
-    "agent-framework-foundry==1.3.0",
-    "agent-framework-foundry-hosting>=1.0.0a260421",
+    "agent-framework-core~=1.4.0",
+    "agent-framework-foundry~=1.4.0",
+    "agent-framework-foundry-hosting==1.0.0a260514",
     "azure-ai-projects>=2.1.0",
     "azure-identity>=1.19.0,<1.26.0a0",
     "mcp>=1.10.0",
@@ -692,32 +804,35 @@ prerelease = "if-necessary-or-explicit"
 packages = []
 ```
 
-**Do NOT use `agent-framework>=1.1.0` as a meta-package.** The meta-package's transitive
-resolution is non-deterministic across uv versions. Pin `agent-framework-core==1.3.0` and
-`agent-framework-foundry==1.3.0` exactly instead. Verified working on linux/amd64 as the
-current reference shape, superseding prior 1.1.1 pinning guidance that became fragile once `agent-framework-foundry-hosting` advanced its
-transitive pins).
+**Do NOT use `agent-framework>=1.4.0` as a meta-package.** The meta-package's transitive
+resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.4.0` and
+`agent-framework-foundry~=1.4.0` (PEP 440 compatible-release caps) instead, and pin the
+alpha hosting package by exact version `==1.0.0a260514` — pre-release cap math doesn't
+survive across alpha boundaries, so `~=` would silently jump to a later alpha. Verified
+working on linux/amd64 as the current reference shape, superseding prior 1.3.0 pinning
+guidance that became fragile once Azure renamed the Foundry data-plane role and changed
+the SDK's token-scope audience (see [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026)).
 
 **Mandatory adjacent rules** (lessons from recent dependency-resolution retrospectives):
 - **Drop** any explicit `azure-ai-agentserver-responses` line — `agent-framework-foundry-hosting`
   pins the right transitive itself; declaring it explicitly causes uv to resolve a stack that
   passes install but crashes at first invocation with opaque `server_error/model:""`.
-- **Add** explicit `mcp>=1.10.0` whenever using `MCPStreamableHTTPTool`. `agent-framework-core 1.3.0`
+- **Add** explicit `mcp>=1.10.0` whenever using `MCPStreamableHTTPTool`. `agent-framework-core 1.4.0`
   does NOT auto-pull it.
 - **Include** `[tool.setuptools] packages = []` for clean uv resolution.
 
 **`prerelease = "if-necessary-or-explicit"` is correct** — packages with explicit
-prerelease markers (e.g. `>=1.0.0a260421`) resolve to prereleases; everything else
+prerelease markers (e.g. `==1.0.0a260514`) resolve to prereleases; everything else
 stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 
 ### Dependency Chain (verified on PyPI)
 
 | Package | Version | Type | Pulls in |
 |---------|---------|------|----------|
-| `agent-framework-core` | 1.3.0 | ✅ Stable | pydantic, opentelemetry-api |
-| `agent-framework-foundry` | 1.3.0 | ✅ Stable | core, openai, azure-ai-projects |
-| `agent-framework-foundry-hosting` | 1.0.0a260423 | ⚠️ Alpha | agentserver-core==2.0.0b2, agentserver-responses==1.0.0b4 |
-| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.3.0 |
+| `agent-framework-core` | 1.4.0 | ✅ Stable | pydantic, opentelemetry-api |
+| `agent-framework-foundry` | 1.4.0 | ✅ Stable | core, openai, azure-ai-projects |
+| `agent-framework-foundry-hosting` | 1.0.0a260514 | ⚠️ Alpha | agentserver-core==2.0.0b2, agentserver-responses==1.0.0b4 |
+| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.4.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
 No `override-dependencies` needed — the hosting package pins its own transitive deps.
@@ -878,25 +993,44 @@ View them with `azd ai agent show`.
 
 | Role | Scope | Why |
 |------|-------|-----|
-| `Azure AI User` | Foundry account | Model inference |
-| `Azure AI User` | Foundry project | Storage, history, project-scoped APIs |
+| `Foundry User` (GUID `53ca6127-…`) | Foundry account | Model inference |
+| `Foundry User` (GUID `53ca6127-…`) | Foundry project | Storage, history, project-scoped APIs |
 
-**Project managed identity:**
+**Project managed identity (system-assigned on the Foundry account):**
 
 | Role | Scope | Why |
 |------|-------|-----|
-| `Azure AI User` | Foundry account | Model inference via project endpoint |
+| `Foundry User` (GUID `53ca6127-…`) | Foundry account | Model inference via project endpoint |
 | `Container Registry Repository Reader` | ACR | Pull container images |
+
+**Workload UAMI (user-assigned identity attached to companion services — agents service, ACA jobs, bot, MCP servers):**
+
+| Role | Scope | Why |
+|------|-------|-----|
+| `Foundry User` (GUID `53ca6127-…`) | Foundry **account** (CognitiveServices) | Data-plane access to call models / agents. **`Foundry Account Owner` no longer implies data-plane access** — you MUST grant `Foundry User` on the account directly, even if the UAMI already has `Foundry Account Owner` for control-plane work. Verified missing-then-added in May 2026 hosted-agent debug session |
+
+> **About the GUID.** `53ca6127-db72-4b80-b1b0-d745d6d5456d` is the
+> built-in role definition for what Azure now calls **Foundry User**
+> (formerly **Azure AI User**). The GUID is unchanged across the rename
+> — `az role assignment create --role 53ca6127-db72-4b80-b1b0-d745d6d5456d`
+> is the safest call-site form because it survives further display-name
+> rotations.
 
 ### Auto-Assignment via postdeploy Hook
 
-The `azd ai agent` extension's postdeploy hook **automatically assigns** `Azure AI User`
-to the agent identity. For this to work, you need:
+The `azd ai agent` extension's postdeploy hook **automatically assigns** `Foundry User`
+(GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) to the agent identity. For this to work, you need:
 
 1. `Azure AI Project Manager` role on the Foundry project
 2. `AZURE_TENANT_ID` set in azd env: `azd env set AZURE_TENANT_ID <tenant-id>`
 
 Without both, postdeploy fails silently and the agent gets 401 at runtime.
+
+> **Companion-service identities are NOT auto-assigned.** The postdeploy
+> hook only covers the hosted-agent identities. If you have a separate
+> agents service, ACA job, bot, or MCP server using its own UAMI, you
+> MUST grant `Foundry User` on the Foundry account to that UAMI yourself
+> (Bicep `roleAssignments` block — see the row above).
 
 ### Manual RBAC Assignment (if postdeploy failed)
 
@@ -908,9 +1042,12 @@ azd ai agent show
 ACCT="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
 PROJ="$ACCT/projects/<project>"
 
+# Pin by GUID — survives display-name rotations (e.g. "Azure AI User" → "Foundry User" in May 2026)
+FOUNDRY_USER_ROLE=53ca6127-db72-4b80-b1b0-d745d6d5456d
+
 # For EACH principal ID:
-az role assignment create --assignee <PRINCIPAL_ID> --role "Azure AI User" --scope $ACCT
-az role assignment create --assignee <PRINCIPAL_ID> --role "Azure AI User" --scope $PROJ
+az role assignment create --assignee <PRINCIPAL_ID> --role "$FOUNDRY_USER_ROLE" --scope $ACCT
+az role assignment create --assignee <PRINCIPAL_ID> --role "$FOUNDRY_USER_ROLE" --scope $PROJ
 ```
 
 > RBAC propagation takes **5-15 minutes** for new service principals. If still failing,
@@ -928,7 +1065,7 @@ azd up
   │   ├── Deploy model (from azure.yaml config.deployments)
   │   ├── Build container remotely via ACR
   │   ├── Create hosted agent version
-  │   └── postdeploy → auto-assign Azure AI User to agent identity
+  │   └── postdeploy → auto-assign Foundry User (53ca6127) to agent identity
   └── deploy other services (bot ACA, etc.)
 ```
 
@@ -1064,7 +1201,10 @@ flying blind.
 | `session_not_ready` (424) | Container crashed before readiness probe | Check logstream: `curl ...sessions/{sid}:logstream`. Common causes: import error, sync/async mismatch, missing dep |
 | Sub-agent tool calls return "Function failed" | `FoundryAgent` uses old `agent_reference` pattern | Use the client-swap pattern: `sub_client.client = project_client.get_openai_client(agent_name=...)` |
 | Sub-agent calls silently fail (empty output) | `AIProjectClient` imported from sync (`azure.ai.projects`) | MUST use `azure.ai.projects.aio` — sync `get_openai_client` returns sync OpenAI which fails in async `FoundryChatClient` |
-| `PermissionDenied: Principal does not have access` | Agent identity missing `Azure AI User` (53ca6127) on account AND project | Assign on both scopes; `_assign_agent_identity_roles()` does this automatically |
+| `PermissionDenied: Principal does not have access` | Agent identity missing `Foundry User` (GUID `53ca6127-…`, formerly "Azure AI User") on account AND project | Assign on both scopes; `_assign_agent_identity_roles()` does this automatically. If your role-assignment script still passes `--role "Azure AI User"`, replace with the GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d` to survive the May 2026 display-name rename |
+| **`401 Unauthorized` on every Responses call after `azd deploy`; RBAC visibly correct (`Foundry User` on both scopes)** | Orchestrator image still on `agent-framework-core` ≤ 1.3.x — requests the OLD `cognitiveservices.azure.com` token scope, which the post-rename Foundry data plane rejects. Most commonly happens to agent versions pinned by `sha256@…` digest (digest is frozen at the 1.3.x build) while a sibling agent on the same project that uses `:latest` works fine because ACR re-resolved it to a fresh 1.4.0 layer | Upgrade orchestrator `pyproject.toml` to `agent-framework-core~=1.4.0` + `agent-framework-foundry~=1.4.0` + `agent-framework-foundry-hosting==1.0.0a260514`, regenerate `uv.lock`, `az acr build` with BOTH `:latest` AND a date-pinned tag (`maf14-YYYYMMDDHHMM`), `azd deploy agents`, then re-import every agent version. See [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026) for the full recipe |
+| **`ImportError: cannot import name 'AzureOpenAIChatClient' from 'agent_framework.azure'`** after `pip install -U agent-framework-*` | `AzureOpenAIChatClient` was removed in `agent-framework-core` 1.4.0 (2026-05-14). Hits sidecars, agents service, eval judges — anywhere that talked directly to Azure OpenAI without going through `FoundryChatClient` | Swap to `from agent_framework.openai import OpenAIChatClient` and use `OpenAIChatClient(azure_endpoint=…, model=…, credential=DefaultAzureCredential())`. Drop the explicit `get_bearer_token_provider` / `ad_token_provider` — the SDK derives the right scope itself. See snippet in [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026) |
+| **Workload UAMI hits `Foundry User` 403 even with `Foundry Account Owner`** | Post-rename, **`Foundry Account Owner` no longer implies `Foundry User` data-plane access**. The owner role covers control-plane operations only; data-plane (model inference, agents endpoint) now requires `Foundry User` on the account explicitly | Add a Bicep `roleAssignments` block granting `Foundry User` (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) to the UAMI on the CognitiveServices account scope. See § Identity & RBAC "Workload UAMI" row |
 | `Experience not available for this subscription` | Region doesn't support hosted agents, or `ENABLE_CAPABILITY_HOST=true` | Set `ENABLE_CAPABILITY_HOST=false`, try `northcentralus` |
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
 | Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. Recent strict-smoke runs showed low reproducibility with mini + permissive MCP and high reproducibility with gpt-5.4 + validate-or-reject. |
