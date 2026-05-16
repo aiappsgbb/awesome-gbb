@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.1.6"
+  version: "1.1.7"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -680,6 +680,12 @@ This agent deploys as a **Microsoft Foundry Hosted Agent** using the
 > the calling shell **first** — see the **`azure-tenant-isolation`**
 > skill. Without isolation, an `azd up` here may silently deploy into
 > whatever subscription another shell last `az account set` against.
+
+> **Run [`threadlight-local-test` **Pattern 0 — Quickstart**](../threadlight-local-test/SKILL.md)
+> before `azd up`.** It exercises the same MAF `Agent + SkillsProvider`
+> wiring against `specs/sample-data/*.json` stubs — no Cosmos, no MCP
+> boot — so prompts/skills/tool calls are smoke-validated locally in
+> minutes, before the 20-30 min deploy round-trip.
 
 > **`azd` has its own auth chain — `az login` is not enough.**
 > `azd ai agent show`, `azd deploy`, and the rest of the `azd` family

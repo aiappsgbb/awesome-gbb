@@ -1,24 +1,24 @@
 ---
 name: threadlight-local-test
 description: >
-  Run a Threadlight design output (FoundryChatClient agent + FastMCP
-  server + workspace UI + sample data) locally without `azd up` — for
-  fast iteration loops in GitHub Copilot CLI / Cowork / Clawpilot.
-  Three patterns: (1) MCP-direct — register the PoC's local MCP at
-  `~/.copilot/mcp.json` so the CLI calls tools natively; (2)
-  Smoke-client — invoke `agent.run_async()` directly bypassing the
-  ResponsesHostServer; (3) Local-stack — docker-compose with Cosmos
-  emulator + nginx for end-to-end smoke. Replaces azure-deployed
-  Cosmos / Search / hosted-agent runtime with local stand-ins; AOAI
-  calls still go to a real deployment.
-  USE FOR: local test, smoke test, run agent locally, dev loop, no
-  azd, copilot cli mcp, ghcp local agent, faster iteration, debug
-  tools without redeploying, prompt tuning, cowork iteration.
-  DO NOT USE FOR: prod deployment (use threadlight-deploy), final
-  pre-pilot validation (use threadlight-safe-check), Foundry
-  hosted-agent runtime testing in cloud (use foundry-evals).
+  Run a threadlight-designed PoC locally without `azd up`. Four patterns:
+  (0) **Quickstart (default)** — `python -m threadlight_quickstart` boots
+  a MAF Agent + SkillsProvider + JSON stub tools + Streamlit UI on
+  localhost:8501; no Docker, no MCP boot, one LLM dep (Foundry project
+  OR Azure OpenAI). Closes design → screen-shareable demo to <30 min.
+  (1) MCP-direct — register the PoC's local MCP at `~/.copilot/mcp.json`;
+  (2) Smoke-client — `agent.run_async()` bypassing ResponsesHostServer;
+  (3) Local-stack — docker-compose + Cosmos emulator (Linux/Windows x86
+  only — fragile on macOS ARM). LLM calls always hit a real deployment.
+  USE FOR: local test, smoke test, run agent locally, dev loop, no azd,
+  copilot cli mcp, faster iteration, prompt tuning, cowork iteration,
+  demo rehearsal, screen-shareable PoC, streamlit demo, MAF
+  SkillsProvider quickstart.
+  DO NOT USE FOR: prod deployment (use threadlight-deploy), pre-pilot
+  validation (use threadlight-safe-check), hosted-agent runtime testing
+  in cloud (use foundry-evals).
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Threadlight — Local Test Loop (no azd up)
@@ -43,14 +43,148 @@ testing.
 
 | Pattern | What it runs | When to use |
 |---------|--------------|-------------|
+| **0. Quickstart** (default) | `python -m threadlight_quickstart` → MAF `Agent + SkillsProvider` + JSON stub tools + Streamlit UI on `localhost:8501` | **First reach-for after `threadlight-design`.** Closes the design → screen-shareable demo loop to <30 min. Zero Docker, zero MCP server boot, one LLM dep (Foundry project OR AOAI deployment). |
 | **1. MCP-direct** (CLI ↔ MCP) | Just the PoC's FastMCP server on `localhost:8000`; CLI calls tools natively | You're iterating on **MCP tool implementation** (DB queries, business rules, error handling). The CLI itself is the agent. |
 | **2. Smoke-client** (CLI → Python → Agent) | The PoC's `Agent + FoundryChatClient` invoked via `agent.run_async()` from a smoke script | You're iterating on the **prompt** or the **agent's tool-orchestration** behaviour. Skips the `ResponsesHostServer` HTTP layer. |
-| **3. Local-stack** (compose) | All of: MCP server + Cosmos emulator + workspace UI on nginx + (optional) Search mock | You're testing the **end-to-end flow** (UI → bot → agent → MCP → DB) before redeploying. Closest to prod fidelity short of real Azure. |
+| **3. Local-stack** (compose) ⚠️ | All of: MCP server + Cosmos emulator + workspace UI on nginx + (optional) Search mock | End-to-end smoke before redeploying. **Linux / Windows x86 only** — Cosmos emulator container is fragile on macOS ARM; use Pattern 0 there. |
 
-You'll typically run **#1** for tool dev, **#2** for prompt tuning,
-and **#3** as a final pre-deploy gate.
+Reach for **Pattern 0** first. Drop to **Pattern 1** when you need
+to iterate on the real MCP server. Use **Pattern 2** for headless
+prompt tuning that needs to be driven from the CLI. **Pattern 3** is
+a pre-deploy parity check on platforms where the Cosmos emulator
+container actually works.
 
 ---
+
+## Pattern 0 — Quickstart (default)
+
+The new default for "I just finished `threadlight-design`, now I want
+to see it run." Consumes what design already emits — `specs/sample-data/`,
+`src/agent/skills/<name>/SKILL.md` — and gives you a MAF agent + a
+chat UI on `localhost:8501` without ever touching Docker, the MCP
+server, or a real Cosmos.
+
+### What you need
+
+| Need | Why | One-time? |
+|------|-----|-----------|
+| **Python ≥ 3.10** + `pip` (or `uv`) | Run the reference package | Yes |
+| **A threadlight-designed PoC** (the cwd at minimum has `specs/sample-data/*.json`) | Pattern 0 auto-discovers it | Per PoC |
+| **One LLM endpoint** — Foundry project URL **OR** Azure OpenAI deployment | The only Azure dep | Per tenant (shared GBB sandbox is fine) |
+| **`az login`** to the LLM tenant | `DefaultAzureCredential` picks it up | Per tenant |
+
+> **No Docker. No Cosmos emulator. No MCP server boot.** Pattern 0
+> replaces all three with an in-memory dict-of-records loaded from
+> `specs/sample-data/<entity>.json` and three CRUD tools per entity
+> (`list_<entity>`, `get_<entity>`, `update_<entity>`).
+
+### The bootstrap (one-time per PoC)
+
+```bash
+# 1) Install the quickstart package once (editable, from the catalog)
+pip install -e <awesome-gbb>/skills/threadlight-local-test/references/quickstart
+
+# 2) Drop the env template into the PoC and edit it
+cp <awesome-gbb>/skills/threadlight-local-test/references/quickstart/.env.local.example .env.local
+$EDITOR .env.local        # set FOUNDRY_PROJECT_ENDPOINT + MODEL_DEPLOYMENT_NAME (or LLM_BACKEND=aoai + AOAI vars)
+echo .env.local >> .gitignore
+
+# 3) Sanity-check the wiring without a live LLM round-trip (<5s)
+python -m threadlight_quickstart --check
+```
+
+### The loop (every time)
+
+```bash
+az login --tenant <dev-tid>          # per azure-tenant-isolation skill
+python -m threadlight_quickstart     # Streamlit on http://localhost:8501
+```
+
+Or with the demo-prompt pump pre-loaded so you can step through the
+prep-guide acts hands-free:
+
+```bash
+python -m threadlight_quickstart --simulator
+```
+
+`--simulator` reads prompts in priority order from:
+
+1. `<poc-root>/tests/demo-prompts.txt` (one prompt per line; `#` comments allowed)
+2. `<poc-root>/specs/prep-guide.html` § *Demo Script* (regex on `<strong>Type this:</strong>` blocks)
+
+### How the tools come from your SPEC
+
+For every `specs/sample-data/<entity>.json` discovered, Pattern 0
+registers three MAF `@tool`-decorated callables backed by an
+in-memory `InMemoryStore`:
+
+| Tool | Returns | Notes |
+|------|---------|-------|
+| `list_<entity>(**filters)` | `list[dict]` | Equality match on each filter kwarg; no filter → all records |
+| `get_<entity>(id)` | `dict \| None` | Lookup by record id |
+| `update_<entity>(id, **fields)` | `dict` | Mutates the in-memory snapshot; **reset every launch** |
+
+The agent's `SkillsProvider` loads every `src/agent/skills/<name>/SKILL.md`
+under `from_paths(skills_dir)` — same progressive-disclosure shape
+documented in [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md)
+§ *Skill Loading*, so the prompt the agent sees is identical to prod.
+
+### Custom tools (when CRUD isn't enough)
+
+For cross-entity joins, derived fields, business rules — drop a
+`tests/quickstart_tools.py` next to the PoC, exposing:
+
+```python
+def register(tools: list, stores: dict) -> list:
+    """Return extra MAF tools to append to the auto-generated CRUD set."""
+    from agent_framework import tool
+
+    @tool
+    def reassign_urgent(assignee: str) -> int:
+        urgent = stores["tickets"].list_all(severity="urgent")
+        for row in urgent:
+            stores["tickets"].update(row["id"], assignee=assignee)
+        return len(urgent)
+
+    return [reassign_urgent]
+```
+
+`agent_wiring` auto-discovers and calls `register(tools, stores)` after
+the CRUD triple is built.
+
+### What ships in the reference package
+
+```
+references/quickstart/
+├── pyproject.toml                 # pip-installable; pins streamlit + agent-framework
+├── threadlight_quickstart/
+│   ├── __main__.py                # `python -m threadlight_quickstart`
+│   ├── cli.py                     # argparse: --check, --info, --simulator, --port
+│   ├── discover.py                # walks up cwd for the canonical PoC layout
+│   ├── agent_wiring.py            # Agent + SkillsProvider + tool registration
+│   ├── stub_tools.py              # InMemoryStore + CRUD tool factory
+│   ├── simulator.py               # demo-prompt cursor
+│   └── ui_streamlit.py            # the Streamlit chat page
+├── .env.local.example             # env-var template
+├── Makefile.demo                  # drop-in for PoCs that want `make demo`
+├── fixture-poc/                   # 1-skill, 1-entity toy PoC (smoke target)
+└── tests/                         # pytest against fixture-poc
+```
+
+### When Pattern 0 is **not** the right answer
+
+- **You need the real React workspace UI render** → Pattern 1 + run
+  the PoC's own `npm run dev:workspace` separately. Pattern 0 ships
+  Streamlit only on purpose (zero Node toolchain).
+- **You're debugging the real MCP server** → Pattern 1. Pattern 0
+  bypasses the MCP layer entirely.
+- **You need real Cosmos / Search semantics** (ranking, partition keys,
+  RU shape) → Pattern 3 on Linux/Windows x86, or `azd up` to a dev sub.
+- **You need multi-agent orchestration** → Pattern 2.
+
+---
+
+
 
 ## Prerequisites (one-time, dev box)
 
@@ -173,6 +307,16 @@ CLI: `uv run python tests/local_smoke_oneshot.py "investigate case dc001"`
 ---
 
 ## Pattern 3 — Local stack (docker-compose)
+
+> ⚠️ **Linux / Windows x86 only.** The Cosmos DB emulator container
+> (`mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator`) does not
+> run reliably on **macOS Apple Silicon (arm64)** — there is no native
+> ARM image as of 2026-05, and the x86 image under Rosetta fails the
+> internal endpoint validation (SSL bind on `0.0.0.0:8081`).
+> **On macOS ARM, use Pattern 0** for the design → demo loop and
+> Pattern 1/2 for tool / prompt work; reach for Pattern 3 only on a
+> Linux box or Windows x86 dev machine when you need true Cosmos-shape
+> parity before `azd up`.
 
 For **end-to-end smoke** with real Cosmos, real workspace UI, and
 the same FastMCP server you'd deploy. Closest fidelity to prod

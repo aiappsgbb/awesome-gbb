@@ -49,6 +49,15 @@ during workshops.
 > The individual skills are also listed under `skills/threadlight-*/` and
 > install the same way as everything else in this repo.
 
+> [!TIP]
+> **First time on Threadlight?** After running `threadlight-design`, reach for
+> [**threadlight-local-test**](skills/threadlight-local-test/) **Pattern 0 —
+> Quickstart** to see a screen-shareable demo in minutes — `python -m
+> threadlight_quickstart` boots a MAF Agent + Streamlit UI on `localhost:8501`
+> backed by JSON stub tools, with one Azure dep (Foundry project OR Azure
+> OpenAI deployment). Closes the design → demo loop to **&lt; 30 min** with
+> no Docker, no Cosmos emulator, no MCP server boot.
+
 ---
 
 ## Supported Coding Runtimes

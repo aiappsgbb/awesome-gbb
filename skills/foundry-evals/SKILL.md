@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry Agent Evaluations
@@ -490,6 +490,12 @@ the score craters.
 
 Capture the agent's tool transcript during Phase 1 invoke and emit it
 on every row:
+
+> **Tip — bootstrap your eval set from local-test transcripts.**
+> [`threadlight-local-test` **Pattern 0**](../threadlight-local-test/SKILL.md)
+> can append every Quickstart chat turn to `tests/quickstart.jsonl` —
+> exactly the schema this skill consumes. Run a few local demos, then
+> promote the JSONL into your Foundry eval dataset without reshaping.
 
 ```json
 {

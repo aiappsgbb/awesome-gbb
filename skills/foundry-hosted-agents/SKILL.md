@@ -7,7 +7,7 @@ description: >
   preview (April 2026): Agent + FoundryChatClient + ResponsesHostServer pattern,
   azd ai agent extension, identity model, RBAC, and troubleshooting.
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -93,6 +93,11 @@ server.run()  # Serves on port 8088
 > **Advertise (~100 tokens/skill) → `load_skill` → `read_skill_resource` → `run_skill_script`**.
 > Wired via `context_providers=[skills_provider]` on the `Agent(...)`
 > constructor — orthogonal to `tools=[...]`.
+
+> **Cross-link.** The exact same `SkillsProvider.from_paths(skills_dir)`
+> wiring shape is what [`threadlight-local-test` **Pattern 0 — Quickstart**](../threadlight-local-test/SKILL.md)
+> runs locally against a designed PoC — so the prompt context the local
+> demo agent sees is identical to what ships to Foundry.
 
 #### ⚠️ Separation of concerns (read this first)
 
