@@ -196,6 +196,9 @@ The skill produces:
 4. **Match narration to action** — Describe what's happening on screen as it happens.
 5. **Intro/outro slides** — Always use them for professional polish.
 6. **Test incrementally** — Record one scene first to check timing, then add more.
+7. **Brand consistency** — Intro/outro slide colors MUST match the PoC's brand palette (from `threadlight-design` Cross-cutting Pattern 1). Don't use default blue/purple gradients for a red-branded customer. Copy the CSS custom properties from the PoC's `demo-deck.html` into the slide HTML files.
+8. **Subtitles** — Generate a WebVTT file (`demo_subs.vtt`) from the narration text. Add `<track kind="subtitles" src="demo_subs.vtt" srclang="en" default>` inside the `<video>` element. Viewers on mute (common in async shares) still follow the story.
+9. **Embed in deck** — If the PoC ships a `demo-deck.html`, embed the video as a fallback on the live-demo holding card (press `V` to toggle). Saves alt-tabbing to a separate player.
 
 ## File Locations
 
