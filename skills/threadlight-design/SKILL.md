@@ -39,7 +39,7 @@ This skill is designed for two personas:
 
 - **Sellers (non-technical) — usually in Microsoft Copilot Cowork.** Use Cowork to
   tailor-craft a use-case pitch with the customer's named pain, sourced industry
-  stats, and a customer-facing `specs/overview.html` you can screen-share on the
+  stats, and a customer-facing `specs/demo-deck.html` you can screen-share on the
   next call. **Fast-PoC mode** is the right default in Cowork — the skill asks
   2–3 essential questions, assumes sensible defaults, and produces everything in
   one pass. You don't need to be a developer to drive this.
@@ -52,7 +52,7 @@ This skill is designed for two personas:
 
 > [!TIP]
 > **Cowork-specific tips:** keep the customer's industry vocabulary inline (don't
-> abstract to generic "the customer"); attach the generated `specs/overview.html`
+> abstract to generic "the customer"); attach the generated `specs/demo-deck.html`
 > directly to the conversation so the customer can react to the visual; if the
 > customer wants to see the agent run live, ask the SE to invoke
 > `threadlight-local-test` and screen-share back into Cowork.
@@ -85,8 +85,10 @@ Every PoC, regardless of mode, MUST have:
 - ✅ **AGENTS.md + skills** derived from spec
 - ✅ **Deployable scaffold** (`azd up` ready)
 - ✅ **Eval dataset** from spec § 9 scenarios — so the demo can be scored
-- ✅ **`specs/overview.html`** — seller pitch page (always)
+- ✅ **`specs/demo-deck.html`** — cinematic talk deck for the live customer moment (always — primary customer-facing artifact; **see Step 6 § 7**). Skip ONLY when spec § 12 assumptions explicitly flag `internal-no-demo: true`. Replaces the legacy `overview.html` — see migration note in `references/demo-deck-template.md`.
 - ✅ **`specs/experience.html`** — bespoke cinematic customer journey (always — every PoC is a demo by definition; **see Step 6 § 8**). Skip ONLY when spec § 12 assumptions explicitly flag `internal-no-demo: true`.
+- ✅ **`tests/killer-prompts.md`** — 5–10 ranked wow-prompts wired into `STARTER_{1,2,3}_TITLE/PROMPT` env vars (see Step 6 § 11). Mandatory under the same condition as the deck.
+- ✅ **`specs/demo-rehearsal.md`** — beat-by-beat run-of-show (T-24h / T-15min / T-5min / T-0) with backup paths (see Step 6 § 12). Mandatory under the same condition as the deck.
 
 ---
 
@@ -611,14 +613,17 @@ Project documentation covering:
 - Mock data status (which systems are mocked, how to replace)
 - Deployment path (reference threadlight-deploy)
 
-#### Cross-cutting HTML artefact patterns (overview / experience / prep-guide)
+#### Cross-cutting HTML artefact patterns (deck / experience / prep-guide)
 
-Three patterns apply uniformly to **every** HTML artefact this skill emits.
-They have surfaced as user gripes during PoC walkthroughs ("nothing matches
-our brand", "this .md link is dead", "the seller doesn't want to read azd
-commands") often enough to be elevated from individual fixes to a default
-generation rule. Implement them once at generation time; never reach for
-them post-hoc.
+Seven patterns apply uniformly to the HTML artefacts this skill emits.
+Patterns 1–3 have surfaced as user gripes during PoC walkthroughs ("nothing
+matches our brand", "this .md link is dead", "the seller doesn't want to read
+azd commands"); Patterns 4–7 are battle-scars from the VF3 demo-polish phase
+(persona leaks into the talk deck, internal jargon like "OneAsk" or "Sweden
+Central" leaking onto customer-facing slides, fabricated tool names
+contradicting AGENTS.md, and commit-language closings the seller can't
+defend). Implement them all once at generation time; never reach for them
+post-hoc.
 
 ##### Pattern 1 — Brand cascade rule (mandatory when brand palette declared)
 
@@ -654,8 +659,44 @@ while leaving paradigm tokens (`--parchment`, `--charcoal`, `--ink`,
 
 **Validation.** Before declaring done, grep that the brand accent hex (or
 its rgb()/rgba() equivalent) IS present in the generated CSS for each of
-overview.html / experience.html / prep-guide.html. If absent → cascade
+demo-deck.html / experience.html / prep-guide.html. If absent → cascade
 rule wasn't applied → fix before presenting to user.
+
+**Deeper rules for `demo-deck.html` (the talk deck).** A talk deck takes
+the cascade further than the brief/dossier/crib-sheet artifacts because the
+brand has to read at projector distance:
+
+- **Brand FLOODS** — full-bleed `bg-{brand}-flood` panels: **mandatory on
+  friction + follow-up + close** (the 3 emotional anchors) + ≥ 1 more
+  chosen from {hero, the-shift, scale, posture} → ≥ 4 flood panels per
+  deck. A **dark hero** with brand-accent gradient is a valid cinematic
+  opening (the VF3 reference deck uses this); it does NOT have to be one
+  of the brand-flood panels.
+- **Brandmark substitute** (when no logo licensed) — a 2-letter monogram
+  rendered on a white circle on the brand-flood panel. Echoed on slide 1
+  (cold-open) and slide N (close) as bookend. See
+  `references/demo-deck-template.md` § "Brandmark substitute recipe".
+- **Microsoft 4-color SVG co-brand bar** — canonical hex `#F25022 #7FBA00
+  #00A4EF #FFB900` (verbatim, do not approximate) + "Microsoft × {Customer}"
+  wordmark. Present on hero AND close.
+- **No third-color accents** — if the brand primary is `#E60000` red, the
+  deck CANNOT introduce cobalt / amber / purple as section accents. Use
+  brand-darker (`--brand-dark`) and brand-brighter (`--brand-bright`)
+  shades only.
+- **Reveal pacing tuned to brand identity** — telco / retail / consumer =
+  bold/fast (200ms stagger); FSI / healthcare / public-sector =
+  serif/measured (400ms stagger). Read the cue from SPEC § 1 domain.
+- **Convention fallback** — when `customer.brand_palette.primary` is NOT
+  captured and there's no logo URL, consult
+  `references/brand-palettes.md` for the sector convention (UK telco red
+  `#E60000`, NHS blue `#005EB8`, etc.). Annotate SPEC § 12 assumptions
+  with `brand_palette_source: convention-fallback` so the next iteration
+  confirms with the customer.
+
+**Auto-review for deck (in addition to the base validation above):** grep
+for ALL of (a) the brand hex, (b) `bg-{brand}-flood` class present, (c)
+brandmark substitute markup present on slide 1 + final slide, (d) MS
+co-brand block on hero + close.
 
 ##### Pattern 2 — Markdown modal pattern (mandatory in HTML artefacts that link to .md)
 
@@ -782,58 +823,244 @@ azd ai agent invoke "test prompt"</code></pre>
 - `infra/` / `tests/` paths sellers have no reason to open
 - "If something goes wrong..." troubleshooting
 
-#### 7. `specs/overview.html` — Seller Pitch Page
+##### Pattern 4 — Internal-jargon deny-list (mandatory on customer-facing artifacts)
 
-Generate a **single self-contained HTML file** (no dependencies, opens in any browser)
-that visualizes the SpecKit spec for non-technical audiences. Use for seller pitches,
-customer walkthroughs, and stakeholder alignment.
+Customer-facing artifacts (`demo-deck.html`, `experience.html`) MUST pass a
+deny-list grep before declaring done. Battle-scar source: the VF3 session,
+where the deck leaked `OneAsk`, `Sweden Central`, `v1.0`, `load_skill`, and
+an individual contributor's name across three rejection cycles before the
+user banned them outright.
 
-**Narrative arc** — the page should tell a story, not just list spec content:
+> **prep-guide.html is EXEMPT** from this pattern — it's internal-only and
+> legitimately references `azd`, region labels, command syntax, etc. inside
+> `<details class="se-only">` collapsibles (Pattern 3).
 
-1. **The Pain** — open with the customer's current problem (from spec § 1 goals + § 3 pain points implied by business rules). Make it specific to their domain.
-2. **The Process** — show the step-by-step flow as a visual diagram (from spec § 2). Color-code by actor type (agent / human / system).
-3. **The Agents at Work** — show which skills handle which steps (from the generated skills). This is the "watch the team solve the problem" moment.
-4. **The Architecture** — reveal the tools, integrations, and data sources that make it possible (from spec § 5, § 6, § 7). Show mock vs real status.
-5. **The Outcomes** — connect to success criteria and expected improvements (from spec § 9). Quantify if possible.
+**Deny-list tokens** (case-insensitive grep; zero hits required):
 
-**If target persona was captured**, adapt emphasis:
-- CIO/CTO → expand architecture section, add governance notes
-- CFO → lead with outcomes/ROI, show cost of current vs automated
-- COO → expand the process flow, show before/after
-- CISO → highlight compliance (spec § 11), audit trail, data boundaries
+| Category | Sample tokens |
+|---|---|
+| Microsoft internal product names | `OneAsk`, `OneCRM`, `MyCSS`, `OneMSAccount`, `Substrate`, `MyOrder`, `MTS` |
+| Azure region / SKU / engineering metadata | `Sweden Central`, `East US 2`, `S0`, `v1.0`, `Phase 26`, `gpt-5.4-mini-2024-07-18` (the date suffix only — the model name is fine) |
+| Individual seller / engineer PII | first+last name of any contributor, `@github_handle`, `@msft alias`, email addresses |
+| Fabricated function names | any `_skill` / `_tool` identifier that is NOT in the AGENTS.md `Foundry tools required` table (catches `load_skill`, `vf3_knowledge_base_retrieve`, etc.) — see Pattern 6 for the canonical-naming gate |
 
-**Must include:**
-- Process name, domain, and one-line description as hero section
-- Process flow as a visual step diagram (boxes + arrows, color-coded by actor type)
-- Business rules count and summary (collapsible detail)
-- Data models as entity cards (field names, types — no validation details)
-- System integrations table (name, direction, status badge: ✅ available / 🔶 mock)
-- Eval scenarios count with category breakdown (happy-path / edge-case / error)
-- Skill catalog with purposes
+**Extensible per pilot.** SPEC § 12 assumptions block can carry an
+`additional_denied_tokens: [...]` list that gets folded into the grep.
+Typical additions: customer-internal codenames, prior-vendor product
+names the customer has explicitly distanced from, regulatory boilerplate
+they want kept out of the visual narrative.
+
+**Validation.** Before declaring done, grep the customer-facing artifacts
+(deck + experience) for every deny-list token. Any hit → fix → re-grep.
+Document the grep result in the auto-review hand-off so the user can
+audit it.
+
+##### Pattern 5 — Persona placement rule
+
+Personas (named protagonists in the customer journey — e.g. Sarah / Carl /
+Sophie / Rashid in a Care-journey PoC) live in **exactly one** artifact:
+
+- ✅ `specs/experience.html` (the cinematic dossier) — personas ARE the
+  protagonists of the journey; this is where they belong
+- ❌ `specs/demo-deck.html` — the deck is the **customer journey**, not
+  the customer. Refer to roles instead of names: "the analyst", "the
+  agent", "the customer", "the case-handler". The talk-deck audience
+  hasn't met the personas; bringing in names mid-talk distracts from
+  the journey.
+- ❌ `specs/prep-guide.html` § Demo Script "Type this:" prompts — the
+  prompts go into the deployed agent as literal strings; the agent's
+  surfaces (Workspace / Teams / Foundry playground) don't know the
+  personas either. Use roles or generic IDs in prompts.
+
+**Battle-scar source.** The VF3 session — the user explicitly banned
+persona mentions in the deck after the third rejection cycle:
+*"I EXPLICITLY ASKED TO NOT BUG ME ABOUT USER PERSONA!"* The fix was a
+strict grep gate for known persona first-names sourced from
+`experience.html` itself.
+
+**Validation.** Extract the set of persona first-names from
+`experience.html` (parse `<h*>` and `<p class="protagonist">` elements
+matching SPEC § 5 persona schema). Grep the deck for any hit on that
+set → fail if found. Recommend a fix that swaps the persona name for
+its role descriptor from the same SPEC § 5 row.
+
+##### Pattern 6 — Canonical tool-naming gate
+
+Any artifact that depicts the skill chain (deck slide 6, experience trust
+panel, prep-guide architecture appendix) MUST use tool names verbatim from
+the AGENTS.md `Foundry tools required` table — not paraphrased, not
+abbreviated, not fabricated.
+
+**Battle-scar source.** The VF3 session — slide 7 of the deck originally
+had `vf3_knowledge_base_retrieve` (paraphrased) and `load_skill` (entirely
+fabricated). The user pointed it out: *"In the skill chain, why
+load_skill??"*. Both names were swapped to the canonical
+`vf3_journey_kb` from AGENTS.md.
+
+**Validation.** Extract every tool name from the deck/experience/prep-guide
+(parse `<code>` blocks, pill labels, and skill-chain SVG text nodes).
+Set-diff against the AGENTS.md `Foundry tools required` table column 1
+→ fail on any name not in the table. If a tool genuinely needs a
+display-friendly label, document the alias under `AGENTS.md § Tool
+display aliases` and let the diff treat it as canonical.
+
+##### Pattern 7 — No-commitment closing rule
+
+Microsoft GBB engagements cannot commit dates, effort, or follow-up
+motions in a customer demo. Customer-facing closing artifacts present
+concrete **options**, not **commitments**.
+
+**Battle-scar source.** The VF3 session — the deck's first closing slide
+read *"Pick one Care journey we'll build together by 12 June."* The user
+killed it: *"we can't commit dates or effort, we won't be doing the
+follow up likely"*. The fix evolved across v5-v8: first a Discussion slide
+(3 open questions), then a **Follow-up Proposal** (3 concrete next steps
+framed as options on the table, not promises).
+
+**Banned phrases** (case-insensitive grep over deck slides N-1 and N,
+plus the experience.html trust panel):
+
+- `we'll build`, `we will build`, `let's build`, `build together`
+- `by {date}`, `by ${MONTH}`, any literal future date within 90 days of
+  the deck generation timestamp (regex over ISO + "DD Month" formats)
+- `let's commit`, `let's lock`, `let's confirm dates`
+- `next month`, `phase 2 dates`, `Q3 milestones`
+- `pick one journey`, `pick one process`, `commit to`
+
+**Permitted phrasings** (style guidance for the Follow-up Proposal slide):
+
+- "Pick 5 high-friction journeys" (action, not commitment)
+- "Deploy governance hub" (option, not promise)
+- "Establish eval baseline" (technical step, not timeline)
+- "happy to explore", "happy to dig in"
+
+**Closing shape.** The deck's last two slides MUST follow the **Follow-up
+Proposal + Thank-you** bookend pattern (see § 7 slide grammar rows 10
+and 11). The follow-up presents 3 concrete next steps using
+`<div class="discussion-card">` cards with `<span class="qnum">Step
+01/02/03</span>` labels. Each step is an action the customer could take,
+framed as an option. Engineer-only commitments (workshop plans, eval
+runs, effort estimates) belong in `prep-guide.html § Suggested Next
+Steps` wrapped in `<details class="se-only">` collapsibles (Pattern 3).
+
+**Validation.** Grep deck slides N-1 and N for banned phrases → fail if
+found. The Thank-you slide MUST contain literal `Thank you.` and the MS
+× {Customer} co-brand bar. The Follow-up slide MUST contain ≥ 3
+`<div class="discussion-card">` (or equivalent) with step cards; if
+any card text matches a banned phrase, fail.
+
+#### 7. `specs/demo-deck.html` — Cinematic Talk Deck (MANDATORY — primary customer-facing artifact)
+
+> **Read `references/demo-deck-template.md` for the full kit-of-parts** — slide
+> grammar with "use when SPEC has X" rules, CSS token table, JS controller
+> pattern, brandmark substitute recipe, Microsoft 4-color SVG (canonical
+> hex), the 18-symbol icon library, and the "Reasons a deck gets rejected"
+> anti-pattern list drawn directly from the VF3 session pain.
+
+Generate a **single self-contained HTML file** (no external CDNs, no
+network dependencies) that the seller projects full-screen during the
+live customer talk. Keyboard-paced; speaker notes panel toggled from the
+keyboard; ≤ 8 minutes of presentation time.
+
+**This artifact REPLACES the legacy `overview.html`.** A long-form scrollable
+"seller pitch page" is the wrong shape for any live customer moment — too
+long to skim before the call, too brief and too scrollable to project, and
+too generic to compete with the bespoke dossier (experience.html). When
+upgrading an existing PoC, collapse the old `overview.html` to a 1.8 KB
+meta-refresh redirect → `demo-deck.html` (canonical migration recipe in
+`references/demo-deck-template.md` § "Migration"); archive the old content
+as `overview.html.bak` (add `specs/*.html.bak` to `.gitignore`).
+
+**Slide grammar — 10 to 13 slides, in order:**
+
+| # | Slide type | Mandatory? | Use when SPEC has |
+|---|---|---|---|
+| 1 | Cold-open (brandmark + customer journey name + headline) | ✅ Mandatory | Always |
+| 2 | Context (customer's stated goal — quote SPEC § 1) | ✅ Mandatory | Always |
+| 3 | Friction (3 numeric pain points — pulled from SPEC § 3 BRs implying current state) | ✅ Mandatory | Always |
+| 4 | The shift (before/after framing — pulled from SPEC § 9 functional success criteria) | Conditional | SPEC § 9 has a quantified primary KPI |
+| 5 | Preview answer (mock Q&A card with citation pill + version badge — visual insurance before the live demo; if the demo wobbles, flip back to this slide) | Conditional | Any PoC with a live demo path |
+| 6 | Live-demo cue ("Now let's watch" + optional pure-black holding card for tab-switching) | ✅ Mandatory | Always |
+| 7 | Skill chain (canonical tool sequence — verbatim from AGENTS.md `Foundry tools required` table) | ✅ Mandatory | Always |
+| 8 | Platform stack (6-7 layer cake: Surfaces · Channel runtime · Agent runtime · Knowledge · Tools+data · Observability · Foundation; each tech pill carries an inline SVG icon from the 18-symbol library) | ✅ Mandatory | Always |
+| 9 | Architecture — hub-spoke + governance (Feature→Service format in hub block, governance cards with repo links; see `references/demo-deck-template.md` § "Architecture slide") | Conditional | SPEC § 11 governance posture or scale targets |
+| 10 | Follow-up proposal (3 concrete next steps — options on the table, not commitments) | ✅ Mandatory | Always |
+| 11 | Close (brandmark echo + "Thank you." + Microsoft × {Customer} co-brand bar) | ✅ Mandatory | Always |
+
+The Follow-up + Close pair on slides N-1 and N is the **canonical closing
+shape** for every Microsoft GBB demo. The follow-up slide presents concrete
+next steps (not open questions) — "Pick 5 high-friction journeys", "Deploy
+governance hub", "Establish eval baseline" — as options, not commitments.
+See Cross-cutting Pattern 7 for the banned/permitted phrase enforcement.
+
+**Required interactions:**
+
+- **Keyboard nav** — `Space` / `→` advance · `←` back · `F` fullscreen · `S`
+  toggle speaker notes panel · `B` blackout · `0`–`9` jump · `Home`/`End`
+  first/last
+- **Sub-state reveals** — slides with `data-states="N"` advance through N
+  reveal states before going to the next slide (Space-paced); used on the
+  cold-open and friction slides for a controlled reveal cadence
+- **Progress bar + slide counter** — always visible, auto-derived from
+  `slides.length` so adding/removing slides doesn't break the counter
+- **Speaker notes panel** — 1:1 mapping `data-for="N"` ↔ slide N; toggled
+  by `S`; rendered in a side-panel that does not project (visible only on
+  the speaker's screen in extended-display mode)
+
+**Brand respect (Cross-cutting Pattern 1, deeper rules for the deck):**
+
+- **Brand FLOODS** — full-bleed `bg-{brand}-flood` panels: **friction +
+  follow-up + close mandatory**, plus ≥ 1 more chosen from {hero,
+  the-shift, scale, posture} → ≥ 4 flood panels total. **Dark hero** is
+  allowed (and used in the VF3 reference deck).
+- **Brandmark substitute** when no licensed customer logo is available —
+  2-letter monogram on a white circle on the brand-flood panel; echo on
+  slide 1 + final slide as bookend (e.g. "VF" for VodafoneThree)
+- **Microsoft 4-color SVG co-brand bar** with "Microsoft × {Customer}"
+  wordmark on hero AND close — canonical hex `#F25022 #7FBA00 #00A4EF
+  #FFB900`
+- **Canonical tool naming** — any deck/experience tool name MUST appear
+  verbatim in the AGENTS.md `Foundry tools required` table (column 1) OR
+  in the optional AGENTS.md `Tool display aliases` block. See Cross-cutting
+  Pattern 6 for the set-diff gate. Fabricated names (`load_skill`,
+  paraphrased MCP transports) fail validation.
+- **Convention fallback** — when brand palette isn't explicit in SPEC § 1
+  and there's no logo URL, look up `references/brand-palettes.md`; annotate
+  `brand_palette_source: convention-fallback` in SPEC § 12
 
 **Style:**
-- Dark professional theme (dark navy background, accent blues/cyans)
-- Responsive layout — works on laptop screens and projector
-- No external CDN, fonts, or scripts — everything inline
-- Print-friendly (can be saved as PDF from browser)
+
+- Single file, no external CDN, fonts, or scripts — everything inline
+- Inline `<svg>` symbol library defined in `<defs>` once, referenced via
+  `<use href="#ico-XXX">` in each tech pill (18 stock symbols documented
+  in `references/demo-deck-template.md` § "Tech-stack icon library")
+- Light-inverse slide (`.bg-light` + dark text) inserted mid-deck for a
+  rhythm break
+- Closing pair (slide N-1 + slide N) uses the **Follow-up + Thank you**
+  bookend pattern from Cross-cutting Pattern 7
+
+**Required validation (mandatory before declaring done):** see Step 8
+auto-review checklist for the full set; the deck-specific gates include
+brand-flood panel count ≥ 4, brandmark substitute markup on slide 1 +
+final slide, MS co-brand block on hero + close, persona deny-list zero
+hits (Cross-cutting Pattern 5), internal-jargon deny-list zero hits
+(Pattern 4), tool-name set ⊆ AGENTS.md tool table (Pattern 6), banned
+closing-phrase zero hits (Pattern 7).
 
 > **Polish pass (optional but recommended).** After generating
-> `overview.html`, run [`gbb-humanizer`](../gbb-humanizer/) over the **body
-> paragraphs** of the Pain / Process / Agents / Architecture / Outcomes
-> sections. The humanizer skill ships a pre-canned `gbb-seller-pitch.md`
-> voice sample and a section-aware mode that **skips** the hero kicker
-> (already disciplined), tables, KPI cards, code blocks, SME quotes, and
-> the BR-XXX / S-XXX identifiers. It also has a density-preserving
-> override on rule-of-three that **preserves** domain triples like
-> `citation-grounded, version-aware, vulnerability-aware` where each
-> item carries a distinct technical claim. The polish pass is highest-ROI
-> on the `<p class="lede">` body paragraphs and the `pain-list` / outcome
-> `why` blurbs — sections sellers paste into customer-facing collateral.
+> `demo-deck.html`, run [`gbb-humanizer`](../gbb-humanizer/) over the
+> **speaker-note prose** (the `<div class="note" data-for="N">…</div>`
+> blocks at the bottom of the deck). The seller reads these aloud during
+> the live talk — even small AI-prose tells degrade credibility. Use the
+> pre-canned `gbb-seller-pitch.md` voice sample. **Do not** humanize the
+> slide bodies themselves — those are display copy (kickers, headlines,
+> numeric data points) where the prose is already disciplined and the
+> humanizer adds nothing.
 
 #### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (MANDATORY)
 
-A second seller-facing artifact that complements `overview.html`. Where the
-overview is a **brief**, the experience is a **bespoke journey** that makes
+A second seller-facing artifact that complements `demo-deck.html`. Where the
+deck is a **live talk**, the experience is a **bespoke journey** that makes
 the customer feel the pain, the intervention, the outcome, and the trust
 posture of *this* process — through visuals native to *its* domain.
 
@@ -860,7 +1087,7 @@ posture of *this* process — through visuals native to *its* domain.
 
 **The bespoke design discipline:**
 
-1. **Extract the process DNA** from SPEC.md / AGENTS.md / overview.html:
+1. **Extract the process DNA** from SPEC.md / AGENTS.md / demo-deck.html:
    protagonist, artifact, moment of truth, backlog number, hard guardrail.
 2. **Pick the visual paradigm** from the catalog (or invent a new one).
    Examples in the reference doc: 4-act narrative scroll · live topology
@@ -876,7 +1103,7 @@ posture of *this* process — through visuals native to *its* domain.
    that fit your paradigm (entrance staggers, scroll-scrub, pin-and-scroll,
    SVG path drawing, color crossfade, camera pull-back).
 5. **Land on a trust panel** (visual inversion, 6 pillars with BR-XXX badges,
-   skill catalog from manifest.json, 3 CTAs to overview/SPEC/back).
+   skill catalog from manifest.json, 3 CTAs to demo-deck/SPEC/back).
 
 **Required validation (mandatory before declaring done):**
 
@@ -890,7 +1117,9 @@ posture of *this* process — through visuals native to *its* domain.
   visibly works (counter scrubs / topology heals / pages assemble / dashboard
   transitions / map heats), bidirectional scroll works, reduced-motion
   honored
-- `overview.html` has hero CTA linking to `experience.html`
+- `demo-deck.html` slide 5 (live-demo cue) explicitly invites the live agent
+  invocation; experience.html stands alone as a post-meeting leave-behind
+  (no cross-CTA needed)
 - Root catalog `index.html` has "🎬 Experience" button on the process card
 
 **Read the full playbook:** [`references/experience-template.md`](references/experience-template.md) —
@@ -929,7 +1158,7 @@ the user asks for an interactive dashboard or workshop tool.
 > share with the customer or include in any code repository shared externally.
 > Add `specs/prep-guide.html` to `.gitignore` if the repo may be shared.
 
-Generate as a **self-contained HTML file** (same as overview.html — opens in browser,
+Generate as a **self-contained HTML file** (same delivery shape as `demo-deck.html` — opens in browser,
 can be saved as PDF via Print → Save as PDF). Sellers can't read markdown.
 
 A lean companion document for the person presenting the demo. Helps them prepare
@@ -973,7 +1202,8 @@ for the customer conversation, anticipate questions, and suggest next steps.
    1. **Opening hook** (≈30 seconds — say this *before* you type anything).
       One paragraph of customer-facing pain (named persona + the cost of
       *today*) and one tease of the *wow* moment the agent enables. Reuse
-      the punchiest line from `specs/overview.html` § "Why this matters".
+      the punchiest line from `specs/demo-deck.html` slide 3 (Friction) or
+      slide 4 (The shift) speaker-notes.
       Write it in **direct quotes** so the seller can read it aloud
       verbatim.
 
@@ -1106,10 +1336,10 @@ for the customer conversation, anticipate questions, and suggest next steps.
 > "Live MVP Walkthrough" section of this prep-guide** with the real URLs +
 > commands once `azd up` returns clean. Mention these as options to the
 > customer's technical contact — but don't force them; some demos go straight
-> from `overview.html` to a steering-committee decision and never need the
-> live-walkthrough section at all.
+> from the `demo-deck.html` talk to a steering-committee decision and never
+> need the live-walkthrough section at all.
 
-**Style:** Same dark theme as overview.html but with an "INTERNAL USE ONLY" banner
+**Style:** Same dark theme as `demo-deck.html` (brand-cascade aware) but with an "INTERNAL USE ONLY" banner
 at the top. Print-friendly (saves as clean PDF).
 
 > This is intentionally lean — NOT a 14-section seller enablement deck.
@@ -1124,6 +1354,114 @@ at the top. Print-friendly (saves as clean PDF).
 > the **What you'll see:** data-point lists, BR-XXX tags, command blocks,
 > or the live-walkthrough URLs that `threadlight-deploy` Phase 6.7
 > back-fills — those are factual scaffolding, not prose.
+
+### Step 6.5: Phase C — Demo Polish (mandatory for customer-facing PoCs)
+
+> **Trigger**: SPEC § 12 does NOT carry `internal-no-demo: true`. The
+> default is on. Phase C exists because the VF3 PoC discovered that
+> "shipping a Foundry agent" is necessary-but-not-sufficient for landing
+> the demo — the polish layer (deck + killer prompts + rehearsal + score
+> card) is what turns a working agent into a successful customer moment.
+> If you skip Phase C, the user will discover the gap mid-demo. Don't
+> skip Phase C.
+
+Phase C generates four artifacts in addition to the durable agent layer:
+
+| # | Artifact | Audience | Section below |
+|---|---|---|---|
+| § 7 | `specs/demo-deck.html` | Live customer talk | already covered above |
+| § 11 | `tests/killer-prompts.md` | Sellers (drives `STARTER_N` env vars) | next |
+| § 12 | `specs/demo-rehearsal.md` | The seller delivering the talk | next |
+| § 13 | `tests/eval-summary.md` | Compliance / FCA-style reviewers | next |
+
+#### 11. `tests/killer-prompts.md` — Curated Wow-Prompts (MANDATORY)
+
+5–10 hand-picked prompts that surface the highest-impact behaviour of the
+deployed agent, ranked K1/K2/K3/… by demo wow-factor. They're the demo's
+emotional payload — generic starter prompts ("Tell me about X") burn the
+opening seconds; killer prompts trigger the "oh — *that's* what this
+thing does" reaction in the first 15 seconds of each beat.
+
+**Source.** Highest-scoring happy-path scenario per BR-XXX in
+`tests/eval_dataset.jsonl` — same literal string that scored green in
+evals, copied verbatim. **Do not invent prompts.** Eval-validated prompts
+are pre-tested for citation count, latency, and refusal rate.
+
+**Row schema** (markdown table):
+
+| Field | Purpose |
+|---|---|
+| `Rank` | K1, K2, K3, … in order of expected wow-factor |
+| `Prompt` | Verbatim literal text — same string scored green in evals |
+| `BR-XXX` | Which business rule it demonstrates (one only — the dominant one) |
+| `Expected anchors` | ≥ 1 named entity + ≥ 1 numeric data point the response must surface |
+| `Wow line` | The single sentence the seller says after the agent finishes (anchored to the BR — e.g. "*That citation is the FCA pack*") |
+| `Surfaces` | Demo surfaces this prompt should be tried on — Teams · Workspace · Foundry playground · M365 Copilot Chat |
+
+**Auto-wiring.** This file feeds `azure.yaml` env vars
+`STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` (Teams chip rendering
+limits titles to ~30 chars). Use the keeper script
+`infra/scripts/refresh_killer_prompts.py` (emitted by this skill) — it
+parses `tests/killer-prompts.md` and writes the env-var block into
+`azure.yaml` idempotently. The keeper script is wired into
+`threadlight-deploy` Phase 6.7 ("Live MVP Walkthrough" back-fill) so the
+deployed agent's home surface picks up changes automatically on the next
+`azd up`. Wow-prompts can then evolve post-demo without hand-editing the
+deploy manifest.
+
+**Validation.** ≥ 3 rows (K1 minimum + K2 + K3 — the deck's live-demo
+arc), each `Prompt` literal exists in `tests/eval_dataset.jsonl` (set
+membership), each `BR-XXX` exists in `specs/SPEC.md` § 3 (set
+membership), each `Expected anchors` row has ≥ 1 entity + ≥ 1 digit.
+
+#### 12. `specs/demo-rehearsal.md` — Run-of-Show (MANDATORY)
+
+Beat-by-beat stopwatch script for the seller delivering the live talk.
+The deck (§ 7) is the *visual*; the rehearsal is the *choreography*.
+
+**Required beats** (in order, each timestamped):
+
+| Time | What | Purpose |
+|---|---|---|
+| **T-24h** | Bench check — `healthz` probe, `curl K1`, Teams ping, M365 picker | Catch overnight breakage early |
+| **T-15 min** | Tab list — open every demo surface in a separate browser tab in the right order | One-glance "everything is up" |
+| **T-5 min** | Agent warm-up — invoke each killer prompt once to clear cold-start cost | The audience never sees the first-token-after-cold-start delay |
+| **T-0** | Hero → K1 → K2 → K3 → close | ≤ 8 minute total budget |
+| **Backup paths** | When primary surface fails | Terminal `azd ai agent invoke` fallback + pre-rendered MP4 (see `auto-demo-producer` skill) |
+| **Ship checklist** | Deck open, notes off, blackout key tested, lighting, mic, water | Pre-flight, ~T-2 min |
+
+Each T-0 beat names the killer prompt verbatim, the slide it lands on,
+the expected anchors the agent will return, and **one** spoken line the
+seller delivers as the agent finishes (the "wow line" from
+killer-prompts.md). This is the artifact the seller actually reads during
+rehearsal — not the deck, not the prep-guide.
+
+**Validation.** All six beat rows present, each killer prompt referenced
+verbatim by rank, total T-0 beat budget ≤ 8 minutes, at least one backup
+path documented per surface.
+
+#### 13. `tests/eval-summary.md` — Human-Readable Scorecard (MANDATORY when evals have run)
+
+A 1-page markdown scorecard derived from `tests/eval-results-*.jsonl`
+that any non-engineer reviewer (compliance, FCA-style auditor, exec
+sponsor) can read. The eval dataset is generated by this skill (in SPEC
+§ 9.4) and run by `foundry-evals`; this scorecard is the *summary* of
+that run, hand-curated because heuristic scorers produce false-negatives
+that an experienced operator must adjudicate.
+
+**Required sections:**
+
+| Section | Content |
+|---|---|
+| Top-line | pass/fail per scenario class (happy / edge / error), latency P50/P95, zero-citation rate, refusal rate on in-corpus questions |
+| K1/K2/K3 transcripts | Inline (full request + full response + citations panel) — the demo arc, evidence-grade |
+| Adjudicated scenarios | Any scenario where the heuristic scorer disagreed with hand-review (with one-line rationale) |
+| Sev-1 hypothesis | "What would Carl-grade fail look like" — e.g. cited but wrong version date = Sev-1 |
+| Dataset hygiene | Any rows that need rewriting before next run (typos, ambiguous queries) |
+
+**Validation.** Top-line numbers present, at least 3 transcripts inline,
+no engineering jargon in the prose layer (a non-developer compliance
+reviewer should be able to read the whole document).
 
 ### Step 7: Review
 
@@ -1150,12 +1488,20 @@ must catch its own mistakes.
 - [ ] Every eval scenario (S-XXX) in spec § 9 references valid BR-XXX rules
 - [ ] AGENTS.md skills table matches the actual `src/agent/skills/` directories
 - [ ] `specs/manifest.json` matches the generated skills list and BR counts
-- [ ] `specs/overview.html` renders without errors (valid HTML structure)
-- [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, overview.html has 🎬 CTA, catalog index.html has Experience button
+- [ ] **`specs/demo-deck.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, 10–13 `<section class="slide">` elements, speaker notes count == slide count (1:1 `data-for` mapping), all 4 keyboard chords wired (Space / F / S / B), `bg-{brand}-flood` panels ≥ 4 (friction + follow-up + close are the 3 mandatory; hero may be dark-cinematic), brandmark substitute present on slide 1 AND final slide (bookend), MS co-brand bar present on hero AND close, 18-symbol icon library present and all referenced via `<use href="#ico-XXX">`. See § 7 generation block + `references/demo-deck-template.md` for the full pattern.
+- [ ] **`specs/overview.html` is either absent OR a redirect-only stub.** If a legacy `specs/overview.html` exists from an older generation, it MUST contain the literal markers `<meta http-equiv="refresh"` AND `location.replace('demo-deck.html')` and be ≤ 3 KB (the canonical migration stub). Divergent narrative content in overview.html FAILS — collapse it to the meta-refresh redirect per `references/demo-deck-template.md` § "Migration".
+- [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, `demo-deck.html` slide N-1 (Discussion) or N (Close) has a 🎬 reference link to the experience dossier, catalog index.html has Experience button
 - [ ] **`specs/prep-guide.html` § "Demo Script" exists** with all five beats (Opening hook in direct quotes · Demo arc 4–6 acts · Bonus acts ≥ 4 · Quantified Reveal moment · Q&A handoff). For chat-style PoCs, **every** main-arc act must contain all three sub-blocks `<strong>Type this:</strong>` + `<strong>What you'll see:</strong>` + `<strong>Say:</strong>` (or `<strong>Click here:</strong>` for workspace-style). **What you'll see** must reference at least one entity name AND one numeric data point per act (grep each act for a digit; zero-digit acts fail). Each act tagged with the BR-XXX it demonstrates. **Bonus acts** card present with ≥ 4 prompts including ≥ 1 freshness/provenance edge case AND ≥ 1 out-of-scope/guardrail edge case. Reveal moment quantifies manual-effort-today vs PoC-time and cites the SPEC § 9 primary KPI. **Zero deploy-specific tokens** anywhere (no FQDNs, no `azd ` / `az ` / `python ` commands, no resource names) — those are reserved for `threadlight-deploy` Phase 6.7's "Live MVP Walkthrough" appendix.
-- [ ] **Brand cascade rule applied** (Cross-cutting Pattern 1) — if a customer brand palette was declared in SPEC § 1 or captured during discovery, grep that the brand accent hex IS present in the CSS of `overview.html`, `experience.html`, AND `prep-guide.html`. Structural neutrals (parchment, charcoal, navy, brass) must remain untouched.
+- [ ] **Brand cascade rule applied** (Cross-cutting Pattern 1) — if a customer brand palette was declared in SPEC § 1 or captured during discovery (or sector-convention fallback from `references/brand-palettes.md`), grep that the brand accent hex IS present in the CSS of `demo-deck.html`, `experience.html`, AND `prep-guide.html`. Structural neutrals (parchment, charcoal, navy, brass) must remain untouched. Deck-specific deep checks (Pattern 1 § "Deeper rules for demo-deck.html") additionally enforced: `bg-{brand}-flood` ≥ 4 panels with friction + follow-up + close mandatory (hero may be dark-cinematic), brandmark substitute markup, MS co-brand bar present.
 - [ ] **Markdown modal pattern present** (Cross-cutting Pattern 2) — every `<a href="*.md">` in any generated HTML artefact has been rewritten to `<a data-md="*.md">` AND the host artefact contains the modal markup (`<script type="text/markdown">` blobs + JS registry + click delegate + renderer with fallback). No raw `.md` href links remain.
 - [ ] **SE-only collapsibles applied** (Cross-cutting Pattern 3) — in `prep-guide.html`, every `<pre><code>` block containing `azd ` / `az ` / `python ` commands MUST be wrapped in `<details class="se-only">` with an audience pill summary. Sellers should see no engineering content in the default closed state.
+- [ ] **Internal-jargon deny-list zero hits** (Cross-cutting Pattern 4) — grep `demo-deck.html` AND `experience.html` for every token in the baseline deny-list (MS internal product names, region/SKU labels, contributor PII, fabricated `_skill` / `_tool` identifiers) PLUS any `additional_denied_tokens` from SPEC § 12. Zero hits required. `prep-guide.html` is exempt. Record the grep result in the auto-review summary so the user can audit it.
+- [ ] **Persona placement** (Cross-cutting Pattern 5) — extract the set of persona first-names from `experience.html` (the dossier where they belong). Grep `demo-deck.html` AND `prep-guide.html § Demo Script "Type this:"` prompts for any hit on that set. Zero hits required. Suggested fix: swap persona name → role descriptor from the same SPEC § 5 persona row.
+- [ ] **Canonical tool naming** (Cross-cutting Pattern 6) — extract every tool name from `<code>` blocks, pill labels, and skill-chain SVG text nodes across `demo-deck.html`, `experience.html`, `prep-guide.html`. Set-diff against the AGENTS.md `Foundry tools required` table column 1 (plus any AGENTS.md § Tool display aliases). Zero out-of-set names required. Fabricated names (e.g. `load_skill`, `vf3_knowledge_base_retrieve`) are the highest-frequency battle-scar — catch them here.
+- [ ] **No-commitment closing** (Cross-cutting Pattern 7) — grep deck slides N-1 and N (Follow-up proposal + Thank you) plus the `experience.html` trust panel for banned phrases (`we'll build`, `by {date}`, `let's commit`, `next month`, `pick one journey`, any literal future date within 90 days of the generation timestamp). Zero hits required. The Thank-you slide MUST contain literal `Thank you.` and the MS × {Customer} co-brand bar; the Follow-up slide MUST have ≥ 3 step cards with concrete actions (not open questions); if any card text matches a banned phrase, fail.
+- [ ] **`tests/killer-prompts.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with ≥ 3 ranked rows (K1, K2, K3 minimum). Each `Prompt` literal exists verbatim in `tests/eval_dataset.jsonl` (the eval-validated set). Each `BR-XXX` exists in SPEC § 3. Each `Expected anchors` row has ≥ 1 named entity + ≥ 1 digit. `azure.yaml` carries `STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` env vars synced from this file by `infra/scripts/refresh_killer_prompts.py`.
+- [ ] **`specs/demo-rehearsal.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with all six required beat rows (T-24h, T-15min, T-5min, T-0, backup paths, ship checklist). T-0 budget ≤ 8 minutes total. Each killer prompt referenced verbatim by rank with its wow-line.
+- [ ] **`tests/eval-summary.md` exists** when an eval run has produced `tests/eval-results-*.jsonl` (skip the gate gracefully if no eval results file exists yet — the dataset can be run later via `foundry-evals`). Top-line numbers present, ≥ 3 inline transcripts (K1/K2/K3), adjudicated scenarios documented when present.
 - [ ] **`prep-guide.html` contains the three required structural placeholders** — `id="demo-entrypoint"` (filled by `threadlight-deploy` Phase 6.7), `id="mvp-capabilities"` (filled by this skill from the SPEC), `id="ms-services-map"` (filled by this skill from the deployment_manifest module selectors).
 - [ ] No hardcoded secrets, API keys, or personal data in any file
 - [ ] Assumptions in spec § 12 are flagged clearly (especially fast-PoC defaults)
@@ -1185,6 +1531,8 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | `references/speckit-template.md` | Template for SpecKit specification documents (12 sections + abstract-vs-pure-coding contracts) | ✅ Included |
 | `references/process-traits.md` | Composable trait catalog for process pattern detection | ✅ Included |
 | `references/experience-template.md` | Bespoke cinematic `experience.html` design discipline + paradigm catalog | ✅ Included |
+| `references/demo-deck-template.md` | Cinematic `demo-deck.html` talk-deck kit-of-parts (slide grammar, CSS tokens, JS controller, brandmark substitute, MS 4-color SVG, 18-symbol icon library, rejection anti-patterns) | ✅ Included |
+| `references/brand-palettes.md` | Sector-convention fallback table (~30 well-known industry brand hex codes with citations) for Cross-cutting Pattern 1 when no logo URL captured | ✅ Included |
 | `references/data-realism/README.md` | Per-industry demo-data realism rules (FSI, Retail, Telco, Mfg) | ✅ Included |
 | `references/domains/` | Optional domain primers for industry-specific acceleration | ✅ Included |
 | `references/skill-template.md` | Template for generated SKILL.md files | 📎 From the upstream reference set |
@@ -1259,4 +1607,6 @@ The spec is durable and runtime-agnostic. You can derive different implementatio
 | [**foundry-evals**](../foundry-evals/) | Consumes SPEC § 9 KPI table — runs continuous evaluation loop |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Consumes SPEC § 11b Governance Posture — opt-in Citadel handoff after initial deploy |
 | [**azd-patterns**](../azd-patterns/) | Composable Bicep module library that all module-emitting skills above feed into |
-| [**gbb-humanizer**](../gbb-humanizer/) | **Polish pass** for the prose-heavy artifacts this skill generates (`overview.html` body, `prep-guide.html` Demo Script narration). 29 patterns from Wikipedia's "Signs of AI writing" + GBB-specific section-aware mode + density-preserving guardrail so domain rule-of-three lists survive |
+| [**gbb-pptx**](../gbb-pptx/) | **When a 1-slider PPTX leave-behind is requested** after the deck-led demo (exec brief, steering committee handout, asynchronous follow-up to non-attendees). Complements the deck, not a replacement. |
+| [**auto-demo-producer**](../auto-demo-producer/) | **When a narrated 90s MP4 backup is needed** — pre-rendered video that survives flaky agent surfaces, hotel wifi, and last-minute outages. Lists in `specs/demo-rehearsal.md` § "Backup paths". |
+| [**gbb-humanizer**](../gbb-humanizer/) | **Polish pass** for the prose-heavy artifacts this skill generates (`demo-deck.html` speaker-note prose, `experience.html` lede paragraphs, `prep-guide.html` Demo Script narration). 29 patterns from Wikipedia's "Signs of AI writing" + GBB-specific section-aware mode + density-preserving guardrail so domain rule-of-three lists survive |
