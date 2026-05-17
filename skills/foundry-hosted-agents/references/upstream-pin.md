@@ -73,6 +73,13 @@ known_issues:
     status: open
     workaround_location: SKILL.md § "Identity & RBAC" → Workload UAMI row + Manual RBAC Assignment
 
+  - id: KI-005
+    description: |
+      MAF 1.4.0: SkillsProvider(skill_paths=...) keyword constructor removed. Causes TypeError at container startup → sticky session_not_ready on every invocation (container never becomes ready). Use SkillsProvider.from_paths(...) classmethod instead.
+    upstream_url: https://pypi.org/project/agent-framework-core/1.4.0/
+    status: open
+    workaround_location: SKILL.md § "Skill Loading — SkillsProvider" → Constructor variants
+
 validation:
   requires: [pypi]
   runnable: true
@@ -102,7 +109,7 @@ validation:
 
 last_validated: 2026-05-16
 validated_by: ricchi
-known_issues_count: 4
+known_issues_count: 5
 ---
 
 # Upstream pin — `foundry-hosted-agents` skill

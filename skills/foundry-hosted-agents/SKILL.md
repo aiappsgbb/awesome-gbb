@@ -304,11 +304,13 @@ agent = Agent(
 ResponsesHostServer(agent).run()
 ```
 
-**Constructor variants.** Both work and are equivalent:
+**Constructor variants.**
 - `SkillsProvider.from_paths(skills_dir)` — classmethod, the form used in
-  production hosted agents. Use this.
-- `SkillsProvider(skill_paths=skills_dir)` — keyword constructor shown in
-  the official docs. Same outcome.
+  production hosted agents. **Use this.**
+- ~~`SkillsProvider(skill_paths=skills_dir)`~~ — **REMOVED in MAF 1.4.0.**
+  Causes `TypeError: SkillsProvider.__init__() got an unexpected keyword
+  argument 'skill_paths'` → container crashes before readiness → sticky
+  `session_not_ready` on every invocation. Always use `from_paths()`.
 
 The provider searches up to two levels deep, so `skills/<name>/SKILL.md`
 and `skills/<group>/<name>/SKILL.md` layouts are both auto-discovered.
@@ -379,7 +381,7 @@ copy), publish them to the project-level **Foundry Skills** store
 (`{project}/skills`) and consume them via either:
 
 - **Build-time bundle** — `azd predeploy` hook downloads all published
-  skills into `src/skills/` so the standard `SkillsProvider(skill_paths=…)`
+  skills into `src/skills/` so the standard `SkillsProvider.from_paths(…)`
   above keeps working unchanged.
 - **Runtime fetch** — `SkillsProvider(source=FoundrySkillsSource(…))` with
   a custom `SkillsSource` that pulls from the REST API on session create.
@@ -1219,6 +1221,7 @@ flying blind.
 | Container starts but `agent_reference` errors in logs | `FoundryAgent` used for sub-agents | Replace with client-swap pattern |
 | Protocol version error | Using `"v1"` | Use semver `"1.0.0"` |
 | **Sticky `424 session_not_ready` for 8+ minutes; ZERO AppIn / LAW signal** | New Python module added to agent code but NOT included in Dockerfile `COPY` line. Module import fails on container start → `ResponsesHostServer` never binds → `/readiness` never returns 200 → Foundry retries readiness in long backoff → every Responses request returns sticky `424`. App Insights shows nothing because `_init_telemetry()` never runs (the module that calls it didn't even import). Near-impossible to diagnose from logs because there are no logs | Explicitly enumerate every Python module in the Dockerfile `COPY` line; do NOT rely on `COPY ./* .` or `COPY . .` globs (silently skip dotfiles + reorder hazards + cache-bust footguns). Pattern: `COPY container.py corpus.py my_kb_tool.py copilot-instructions.md ./`. After ANY new `.py` added to the agent module, re-check Dockerfile + rebuild |
+| **Sticky `424 session_not_ready` after MAF 1.4.0 upgrade; logstream shows `TypeError: SkillsProvider.__init__() got an unexpected keyword argument 'skill_paths'`** | `SkillsProvider(skill_paths=...)` keyword constructor was **removed** in `agent-framework-core` 1.4.0. Container crashes at agent init before `ResponsesHostServer` binds. All agents using `skill_paths=` fail; agents without skills (or using `from_paths()`) work fine on the same base image | Replace `SkillsProvider(skill_paths=skills_dir)` with `SkillsProvider.from_paths(skills_dir)`. Rebuild base image + all per-job overlay images. Verify via logstream: look for `SkillsProvider configured` log line instead of `TypeError` |
 | **`agent.yaml` `resources:` and `scale:` blocks silently dropped by `azd ai agent deploy`** | The deploy CLI accepts both blocks at the YAML schema layer but does NOT pass them through to the platform — deployed agents come up at `cpu=0.25 / memory=0.5Gi / no scale` regardless of what's in the YAML. Discovered May 2026; `PATCH versions/<n>` returns 405 (versions are immutable); `PUT versions/<n>` returns 405 (must auto-assign via POST) | **Workaround**: bypass `azd ai agent deploy` and POST directly to `<endpoint>/api/projects/<proj>/agents/<name>/versions?api-version=2025-11-15-preview` with the full `HostedAgentDefinition` body including `cpu`, `memory`, `min_replicas`, `max_replicas`, `image`, `env_vars`. Status transitions `creating` → `active` in <20s. File a CLI bug if not yet tracked upstream |
 | **Scary RED `404 NotFound` block at the tail of `azd deploy <any-service>` (`agents/<key>/versions/<n>` not found); the actual deploy succeeded** | The `azure.ai.agents` azd extension's postdeploy hook fires after **every** `azd deploy` invocation (including unrelated services like `bot`, `workspace`, `mcp`) and looks up `agents/<service-key>/versions/<n>` — using the SERVICE KEY from `azure.yaml` verbatim, not the actual agent name. If your azure.yaml has e.g. `services.agent.host: azure.ai.agent` but the real agent is named `orchestrator`, the postdeploy hook 404s on `agents/agent/versions/<n>` every single time. Benign-but-loud false alarm; pollutes CI logs and CX in pilots | **Preferred**: rename the service key in `azure.yaml` to match the agent name (`services.orchestrator.host: azure.ai.agent`). **If you can't rename** (downstream scripts reference the key): error is cosmetic — verify with `azd ai agent show <agent-name>`. Track as `azure.ai.agents` extension bug; consider proposing an extension-level config like `agentName:` override |
 
