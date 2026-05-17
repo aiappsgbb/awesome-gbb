@@ -186,12 +186,17 @@ CopilotClient.create_session(provider={...})
 
 ### Provider Configuration
 
-Two equivalent shapes work; the `ProviderConfig` class form is the recommended
-(and ~2-3× faster) primary path because the SDK appends `?api-version=...`
-itself when `type="azure"`.
+`copilot.session.ProviderConfig` is a `TypedDict` — at runtime it produces a
+plain `dict`, so the "class" form and the "dict" form below are byte-identical
+runtime objects. Use the class form when you want IDE / typing help; use the
+dict form when you want a one-liner.
+
+What actually matters is the **values**: `type="azure"` + bare endpoint is the
+PRIMARY shape (matches the official Microsoft sample, ~2-3× faster); the
+legacy `type="openai"` + `/openai/v1/` is still accepted for backward compat.
 
 ```python
-# RECOMMENDED — class form, matches the official Microsoft sample.
+# RECOMMENDED — class form (TypedDict), gives you typing + IDE completion.
 from copilot.session import ProviderConfig
 
 provider = ProviderConfig(
@@ -203,7 +208,7 @@ provider = ProviderConfig(
 ```
 
 ```python
-# LEGACY — dict form, still backward-compatible but 2-3× slower per query.
+# LEGACY — same wire shape, type='openai' kept for backward compat (2-3× slower).
 provider = {
     "type": "openai",
     "base_url": f"{FOUNDRY_ENDPOINT}/openai/v1/",  # must end with /openai/v1/

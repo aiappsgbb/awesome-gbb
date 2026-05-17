@@ -118,10 +118,13 @@ validation:
     from azure.ai.agentserver.invocations import InvocationAgentServerHost
     print('ok ghcp-hosted-agents imports')
 
-    # Assert ProviderConfig accepts type='azure' (the recommended shape).
+    # ProviderConfig is a TypedDict — returns a plain dict at runtime.
+    # The meaningful contract is that type='azure' is accepted (the recommended
+    # shape against the post-rename Foundry data plane).
     p = ProviderConfig(type='azure', base_url='https://example/api/projects/p',
                       wire_api='responses', bearer_token='dummy')
-    assert p.type == 'azure', 'ProviderConfig.type=azure should be accepted'
+    assert isinstance(p, dict), 'ProviderConfig should be a TypedDict (dict at runtime)'
+    assert p['type'] == 'azure', 'ProviderConfig.type=azure should be accepted'
     print('ok ProviderConfig type=azure accepted')
 
     # Assert CopilotClient(auto_start=False) signature works.
