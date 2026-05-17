@@ -8,7 +8,7 @@ description: >
   record a walkthrough, create a screencast with narration, auto-generate demo.
   DO NOT USE FOR: editing existing videos, live streaming, webcam recording.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Auto Demo Producer
@@ -271,7 +271,7 @@ def make_segment(image_path, audio_path, output_path):
 Each segment's duration equals its narration audio — **the narrator
 always describes what's on screen**.
 
-### Anti-patterns (from 6 failed VF3 recording attempts)
+### Anti-patterns (from 6 failed recording attempts on a Foundry-hosted-agent PoC)
 
 | ❌ Approach | Why it fails |
 |---|---|
