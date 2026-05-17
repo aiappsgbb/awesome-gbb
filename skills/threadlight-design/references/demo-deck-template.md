@@ -34,9 +34,9 @@ Skip only when:
 
 ## The 10–14 slide grammar
 
-Think in **grammar**, not recipe. The VF3 v4 deck that finally stuck landed at
+Think in **grammar**, not recipe. The reference deck v4 that finally stuck landed at
 12 slides because it split the live handoff into a cue slide plus a pure-black
-holding slide. VF3 v8 then added a preview-answer insurance slide and a
+holding slide. Reference deck v8 then added a preview-answer insurance slide and a
 hub-spoke architecture slide. Most PoCs still land at 11 or 12. Ten is
 acceptable only when one conditional slide is collapsed into its neighbor.
 
@@ -66,7 +66,7 @@ Practical packaging rules:
 - **10 slides** is acceptable only when one conditional slide is merged into an
   adjacent conditional slide. Never drop rows **1, 5, 6, 7, 10, or 11**.
 
-> Dark hero with brand-accent gradient is a valid cinematic opening (VF3
+> Dark hero with brand-accent gradient is a valid cinematic opening (the
 > reference deck uses this). Brand-flood panels must still hit **≥ 4 total**:
 > **friction + follow-up proposal + close** are mandatory, plus at least one
 > more chosen from **hero, the shift, scale, or posture**.
@@ -100,7 +100,7 @@ The deck works because a small set of tokens does a lot of work: **brand flood**
 **neutral dark**, **one light inverse**, **one safe brandmark**, and **one
 consistent chrome system**.
 
-### Root tokens (verbatim from VF3)
+### Root tokens (verbatim from reference deck)
 ```css
     :root {
       /* === Vodafone Three brand-aligned palette === */
@@ -133,10 +133,10 @@ consistent chrome system**.
     }
 ```
 
-These are the canonical VF3 root tokens. For another customer, keep the **roles**
+These are the canonical reference root tokens. For another customer, keep the **roles**
 and swap only the brand values.
 
-| Token | VF3 value | Generic alias / meaning | Use in the deck |
+| Token | Reference value | Generic alias / meaning | Use in the deck |
 |-------|-----------|-------------------------|-----------------|
 | `--vf-red` | `#E60000` | `--brand-primary` | Primary brand flood, glyph accent, progress bar start. |
 | `--vf-red-bright` | `#FF2A2A` | `--brand-bright` | Highlight edge, reveal emphasis, progress bar end. |
@@ -178,7 +178,7 @@ The slide grammar and CSS tokens define **what** each slide contains. These
 density rules define **how much** — they are the guardrails that prevent a
 structurally correct deck from being visually broken.
 
-> **Battle-scar source.** The Imperial Commercial Sales PoC (May 2026) — the
+> **Battle-scar source.** A recent commercial-sales PoC (May 2026) — the
 > sub-agent produced an 11-slide deck that passed every automated gate
 > (correct slide count, speaker notes 1:1, brand-flood panels ≥ 4, tool
 > names canonical, zero banned phrases) but was **visually unusable**:
@@ -221,7 +221,7 @@ structurally correct deck from being visually broken.
 |------|--------------|-------------------|
 | `.bg-{brand}-flood` | Full-bleed brand panel | Use for the slides that need pressure or bookend force. Think hero / friction / follow-up proposal / close. |
 | `.bg-light` | Light-inverse rhythm break | Use once, maybe twice. It should feel like a breath, not a second theme. |
-| `.reveal.d1` … `.reveal.d6` | Staged entrance classes | VF3 uses 0.08–0.84s delays. Tune to the brand, but keep it human. |
+| `.reveal.d1` … `.reveal.d6` | Staged entrance classes | Reference deck uses 0.08–0.84s delays. Tune to the brand, but keep it human. |
 | `data-states="N"` | Per-slide sub-state machine | Lets one slide advance through N reveal states before the controller moves on. |
 | `.cobrand` | Hero / follow-up top chrome | Always Microsoft × Customer. Right-hand label stays anonymous. |
 | `.brandmark` | Safe customer logo substitute | Monogram + white circle + brand flood card. |
@@ -271,7 +271,7 @@ Sub-state example:
 
 ## JS controller pattern
 
-Keep the controller tiny, deterministic, and **slide-count agnostic**. The VF3
+Keep the controller tiny, deterministic, and **slide-count agnostic**. The reference
 deck works because the script does **not** hard-code a slide total; it asks the
 DOM how many slides exist, then updates the counter, notes, and progress bar
 from that.
@@ -289,7 +289,7 @@ from that.
 | `Home` / `End` | Jump to first / last slide |
 | Click stage | Advance |
 
-### Canonical controller (extracted from VF3)
+### Canonical controller (extracted from reference deck)
 ```js
   (function () {
     var stage = document.getElementById('stage');
@@ -352,7 +352,7 @@ from that.
         n.classList.toggle('is-active', parseInt(n.getAttribute('data-for'), 10) === current + 1);
       });
 
-      try { sessionStorage.setItem('vf3-deck-slide', String(current)); } catch (e) {}
+      try { sessionStorage.setItem('tld-deck-slide', String(current)); } catch (e) {}
     }
 
     function next() {
@@ -397,7 +397,7 @@ from that.
     function toggleBlackout() { body.classList.toggle('blackout'); }
 
     try {
-      var saved = sessionStorage.getItem('vf3-deck-slide');
+      var saved = sessionStorage.getItem('tld-deck-slide');
       if (saved !== null) {
         var n = parseInt(saved, 10);
         if (!isNaN(n) && n >= 0 && n < max) current = n;
@@ -469,7 +469,7 @@ before the call. They must sound like coaching, not documentation.
 
 | ✅ Good | ❌ Bad |
 |---------|--------|
-| "Open with tension: declining category, four fragmented systems." | "This slide anchors the conversation in Imperial's operating reality." |
+| "Open with tension: declining category, four fragmented systems." | "This slide anchors the conversation in the customer's operating reality." |
 | "Land on the <30s number — that's the metric to remember." | "The KPI matters because it converts an abstract AI story into a measurable business shift." |
 | "Let the pain build: fragmentation → effort → missed windows." | "Use the reveals to let the pain build in a commercial sequence." |
 
@@ -535,7 +535,7 @@ fallback:
 - Document the source URL in SPEC § 12 assumptions:
   `brand_logo_source: https://customer.com/path/to/logo.png`
 
-**Battle-scar.** The Imperial PoC attempted to recreate the logo as an
+**Battle-scar.** A recent PoC attempted to recreate the logo as an
 inline SVG path (produced an unrecognizable arrow shape), then tried the
 monogram (too generic for a FTSE 100 customer). The live-linked `<img>`
 with `onerror` fallback was the right answer.
@@ -580,12 +580,12 @@ Co-brand bar pattern:
 
 The platform and architecture slides only look finished when the pills and
 cards carry **real inline symbols**. Bare text pills read like placeholder UI.
-VF3 solved this with a single hidden SVG sprite at the top of the body.
+The reference deck solved this with a single hidden SVG sprite at the top of the body.
 
 > **Copy the whole sprite block once.** Do not rename the symbol IDs. Do not
 > swap them for emoji. Do not mix in random third-party icon packs.
 
-Extracted verbatim from the VF3 deck:
+Extracted verbatim from the reference deck:
 ```html
   <!-- ===== Icon symbol library (inline SVG sprites for tech-stack pills) ===== -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -840,7 +840,7 @@ specs/*.html.bak
 
 The **canonical name** is whatever appears in `AGENTS.md` **Foundry tools required**
 column 1. Period. If the wire-level MCP transport name is uglier
-(`vf3-journey-kb__mcp__search`) but the runtime alias is `vf3_journey_kb`, the
+(`customer-kb__mcp__search`) but the runtime alias is `customer_kb`, the
 alias wins for deck copy — that is what ships in the runtime and what the user
 actually types or says.
 
@@ -851,8 +851,8 @@ canonical **in addition to** the column-1 names.
 ```md
 | Canonical | Display alias |
 |---|---|
-| vf3_journey_kb | Journey KB |
-| vf3_get_account | Account lookup |
+| customer_kb | Journey KB |
+| customer_get_account | Account lookup |
 ```
 
 ---
@@ -860,7 +860,7 @@ canonical **in addition to** the column-1 names.
 ## "Reasons a deck gets rejected" — anti-pattern list
 
 These are not hypothetical. They are the exact classes of mistake that caused
-multiple rejected deck drafts before the VF3 v4 form stuck.
+multiple rejected deck drafts before the reference v4 form stuck.
 
 1. **Personas in the deck** — “I EXPLICITLY ASKED TO NOT BUG ME ABOUT USER PERSONA!”
    Personas live in `experience.html`, **not** the deck. Use roles, not names.
@@ -897,7 +897,7 @@ Run all of these. **ALL must pass.**
 - All 4 keyboard chords wired (Space / F / S / B)
 - Brand-flood panels ≥ 4 total: friction + follow-up proposal + close are
   mandatory, plus at least 1 of {hero, the-shift, scale, posture}
-- Dark hero with brand-accent gradient is valid (VF3 reference deck uses this)
+- Dark hero with brand-accent gradient is valid (the reference deck uses this)
 - Brandmark substitute present on slide 1 AND final slide
 - MS co-brand bar present on hero AND close
 - 18-symbol icon library present; the core 14 platform symbols must be

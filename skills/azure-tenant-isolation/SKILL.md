@@ -15,7 +15,7 @@ description: >
   cost optimization (use azure-cost-optimization), Foundry agents (use
   microsoft-foundry).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation

@@ -15,7 +15,7 @@ description: >
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Threadlight Design
@@ -89,6 +89,54 @@ Every PoC, regardless of mode, MUST have:
 - ✅ **`specs/experience.html`** — bespoke cinematic customer journey (always — every PoC is a demo by definition; **see Step 6 § 8**). Skip ONLY when spec § 12 assumptions explicitly flag `internal-no-demo: true`.
 - ✅ **`tests/killer-prompts.md`** — 5–10 ranked wow-prompts wired into `STARTER_{1,2,3}_TITLE/PROMPT` env vars (see Step 6 § 11). Mandatory under the same condition as the deck.
 - ✅ **`specs/demo-rehearsal.md`** — beat-by-beat run-of-show (T-24h / T-15min / T-5min / T-0) with backup paths (see Step 6 § 12). Mandatory under the same condition as the deck.
+
+---
+
+### Runtime capability probe (run before Phase A)
+
+Before starting discovery, probe what the runtime can actually do. Some
+runtimes (Cowork sandbox, locked-down Cloud Shell images, hardened
+corporate Codespaces) lack browser automation or media tooling — finding
+out at T-0 of a live demo is the worst failure mode. **Probe once at
+session start**; record the result in `specs/SPEC.md § 12` so downstream
+skills degrade gracefully instead of crashing.
+
+Run these probes from your active shell:
+
+| Capability | Probe | Used by | If unavailable |
+|---|---|---|---|
+| `playwright` (browser drive) | `python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); p.chromium.launch().close(); p.stop()" && echo OK` | Step 8 visual validation; `@playwright/mcp` MCP tools; `auto-demo-producer` recording phase | Visual validation drops to **manual** ("open `specs/demo-deck.html` at 1440×900, advance through every slide"); document the manual checklist in `tests/demo-rehearsal.md`. Drop `@playwright/mcp` from `mcp-config.json`. Disable `auto-demo-producer`. |
+| `ffmpeg` (media assembly) | `command -v ffmpeg && ffmpeg -version \| head -1` | `auto-demo-producer` (mandatory); any skill that stitches narration + screen recording | `auto-demo-producer` cannot run — note "record manually via OBS / Loom / Teams meeting recording" in `specs/demo-rehearsal.md`. |
+| `node` + `npx` | `command -v node && command -v npx && node --version` | `@playwright/mcp`, any Node-based MCP installer, `npx -y` MCP shorthand | Drop Node-based MCP servers from `mcp-config.json`; prefer Python-based equivalents (e.g. `fastmcp` over `@playwright/mcp` if web scraping is in scope). |
+| `uv` (Astral) | `command -v uv && uv --version` | `threadlight-local-test` Pattern 0 bootstrap; `threadlight-deploy` `container.py` prebuilds | Fall back to `pip` + `python -m venv` (slower); local-test Quickstart still works, just adds ~30 s to bootstrap. |
+| `docker` + daemon | `docker info > /dev/null 2>&1 && echo OK` | `threadlight-deploy` Phase 6 image build; ACR `az acr build` is a remote fallback when this fails | If daemon absent (Cowork, some CI runners), `threadlight-deploy` MUST use `az acr build` (remote build); skip any local-image smoke step. |
+
+Then write the result into `specs/SPEC.md § 12 assumptions`:
+
+```yaml
+runtime:
+  name: cowork                    # cowork | copilot-cli | cursor | codespace | local-mac | local-windows | local-linux
+  playwright_available: false     # browser-based visual checks + @playwright/mcp
+  ffmpeg_available: false         # auto-demo-producer video assembly
+  node_available: true
+  uv_available: true
+  docker_available: false         # if false, deploy must use az acr build
+```
+
+**Known-bad combinations:**
+
+| Runtime | Typical posture | Implication |
+|---|---|---|
+| **Cowork sandbox** | `python`+`pip`+`node`+`npx` ✅; `ffmpeg` ❌; `playwright` Chromium launch ❌ (sandbox blocks); `docker` ❌; `uv` ⚠️ (only if pre-installed) | Use **manual** visual validation; skip `auto-demo-producer`; use `az acr build` for any container; prefer Python MCP servers |
+| **Azure Cloud Shell** | `az`/`azd` ✅; `python` ✅; `node` ✅; `docker` ❌; `playwright` ⚠️ (works for HTML inspection, may fail for full-page screenshots) | Use `az acr build`; visual validation is half-OK (DOM inspection works, screenshots are flaky) |
+| **GitHub Codespaces (default image)** | Almost everything ✅; `playwright` install needs `playwright install chromium` first | Run `npx playwright install chromium` once at session start; otherwise full capability |
+| **Local laptop (Mac/Win/Linux)** | Full capability when the contributor has installed the tools | Probe is still mandatory — the contributor may not have `ffmpeg`/`playwright`/`docker` installed |
+
+**Downstream contract.** Every other skill in the chain reads
+`SPEC § 12 → runtime.*` and either runs the full path or its
+documented manual fallback. **No skill silently skips a step it
+can't run** — it either degrades to a documented manual flow or
+errors loudly with a pointer back to this probe.
 
 ---
 
@@ -618,7 +666,7 @@ Project documentation covering:
 Seven patterns apply uniformly to the HTML artefacts this skill emits.
 Patterns 1–3 have surfaced as user gripes during PoC walkthroughs ("nothing
 matches our brand", "this .md link is dead", "the seller doesn't want to read
-azd commands"); Patterns 4–7 are battle-scars from the VF3 demo-polish phase
+azd commands"); Patterns 4–7 are battle-scars from the demo-polish phase
 (persona leaks into the talk deck, internal jargon like "OneAsk" or "Sweden
 Central" leaking onto customer-facing slides, fabricated tool names
 contradicting AGENTS.md, and commit-language closings the seller can't
@@ -670,7 +718,7 @@ brand has to read at projector distance:
   friction + follow-up + close** (the 3 emotional anchors) + ≥ 1 more
   chosen from {hero, the-shift, scale, posture} → ≥ 4 flood panels per
   deck. A **dark hero** with brand-accent gradient is a valid cinematic
-  opening (the VF3 reference deck uses this); it does NOT have to be one
+  opening (the reference deck uses this); it does NOT have to be one
   of the brand-flood panels.
 - **Brandmark substitute** (when no logo licensed) — a 2-letter monogram
   rendered on a white circle on the brand-flood panel. Echoed on slide 1
@@ -826,7 +874,7 @@ azd ai agent invoke "test prompt"</code></pre>
 ##### Pattern 4 — Internal-jargon deny-list (mandatory on customer-facing artifacts)
 
 Customer-facing artifacts (`demo-deck.html`, `experience.html`) MUST pass a
-deny-list grep before declaring done. Battle-scar source: the VF3 session,
+deny-list grep before declaring done. Battle-scar source: a recent live session,
 where the deck leaked `OneAsk`, `Sweden Central`, `v1.0`, `load_skill`, and
 an individual contributor's name across three rejection cycles before the
 user banned them outright.
@@ -842,7 +890,7 @@ user banned them outright.
 | Microsoft internal product names | `OneAsk`, `OneCRM`, `MyCSS`, `OneMSAccount`, `Substrate`, `MyOrder`, `MTS` |
 | Azure region / SKU / engineering metadata | `Sweden Central`, `East US 2`, `S0`, `v1.0`, `Phase 26`, `gpt-5.4-mini-2024-07-18` (the date suffix only — the model name is fine) |
 | Individual seller / engineer PII | first+last name of any contributor, `@github_handle`, `@msft alias`, email addresses |
-| Fabricated function names | any `_skill` / `_tool` identifier that is NOT in the AGENTS.md `Foundry tools required` table (catches `load_skill`, `vf3_knowledge_base_retrieve`, etc.) — see Pattern 6 for the canonical-naming gate |
+| Fabricated function names | any `_skill` / `_tool` identifier that is NOT in the AGENTS.md `Foundry tools required` table (catches `load_skill`, `customer_knowledge_base_retrieve`, etc.) — see Pattern 6 for the canonical-naming gate |
 
 **Extensible per pilot.** SPEC § 12 assumptions block can carry an
 `additional_denied_tokens: [...]` list that gets folded into the grep.
@@ -872,7 +920,7 @@ Sophie / Rashid in a Care-journey PoC) live in **exactly one** artifact:
   surfaces (Workspace / Teams / Foundry playground) don't know the
   personas either. Use roles or generic IDs in prompts.
 
-**Battle-scar source.** The VF3 session — the user explicitly banned
+**Battle-scar source.** A recent live session — the user explicitly banned
 persona mentions in the deck after the third rejection cycle:
 *"I EXPLICITLY ASKED TO NOT BUG ME ABOUT USER PERSONA!"* The fix was a
 strict grep gate for known persona first-names sourced from
@@ -891,11 +939,11 @@ panel, prep-guide architecture appendix) MUST use tool names verbatim from
 the AGENTS.md `Foundry tools required` table — not paraphrased, not
 abbreviated, not fabricated.
 
-**Battle-scar source.** The VF3 session — slide 7 of the deck originally
-had `vf3_knowledge_base_retrieve` (paraphrased) and `load_skill` (entirely
+**Battle-scar source.** A recent live session — slide 7 of the deck originally
+had `customer_knowledge_base_retrieve` (paraphrased) and `load_skill` (entirely
 fabricated). The user pointed it out: *"In the skill chain, why
 load_skill??"*. Both names were swapped to the canonical
-`vf3_journey_kb` from AGENTS.md.
+`customer_kb` name from AGENTS.md.
 
 **Validation.** Extract every tool name from the deck/experience/prep-guide
 (parse `<code>` blocks, pill labels, and skill-chain SVG text nodes).
@@ -910,7 +958,7 @@ Microsoft GBB engagements cannot commit dates, effort, or follow-up
 motions in a customer demo. Customer-facing closing artifacts present
 concrete **options**, not **commitments**.
 
-**Battle-scar source.** The VF3 session — the deck's first closing slide
+**Battle-scar source.** A recent live session — the deck's first closing slide
 read *"Pick one Care journey we'll build together by 12 June."* The user
 killed it: *"we can't commit dates or effort, we won't be doing the
 follow up likely"*. The fix evolved across v5-v8: first a Discussion slide
@@ -955,7 +1003,7 @@ any card text matches a banned phrase, fail.
 > grammar with "use when SPEC has X" rules, CSS token table, JS controller
 > pattern, brandmark substitute recipe, Microsoft 4-color SVG (canonical
 > hex), the 18-symbol icon library, and the "Reasons a deck gets rejected"
-> anti-pattern list drawn directly from the VF3 session pain.
+> anti-pattern list drawn directly from prior live-session pain.
 
 Generate a **single self-contained HTML file** (no external CDNs, no
 network dependencies) that the seller projects full-screen during the
@@ -1012,7 +1060,7 @@ See Cross-cutting Pattern 7 for the banned/permitted phrase enforcement.
 - **Brand FLOODS** — full-bleed `bg-{brand}-flood` panels: **friction +
   follow-up + close mandatory**, plus ≥ 1 more chosen from {hero,
   the-shift, scale, posture} → ≥ 4 flood panels total. **Dark hero** is
-  allowed (and used in the VF3 reference deck).
+  allowed (and used in the reference deck).
 - **Brandmark substitute** when no licensed customer logo is available —
   2-letter monogram on a white circle on the brand-flood panel; echo on
   slide 1 + final slide as bookend (e.g. "VF" for VodafoneThree)
@@ -1358,7 +1406,7 @@ at the top. Print-friendly (saves as clean PDF).
 ### Step 6.5: Phase C — Demo Polish (mandatory for customer-facing PoCs)
 
 > **Trigger**: SPEC § 12 does NOT carry `internal-no-demo: true`. The
-> default is on. Phase C exists because the VF3 PoC discovered that
+> default is on. Phase C exists because a recent PoC discovered that
 > "shipping a Foundry agent" is necessary-but-not-sufficient for landing
 > the demo — the polish layer (deck + killer prompts + rehearsal + score
 > card) is what turns a working agent into a successful customer moment.
@@ -1496,7 +1544,7 @@ must catch its own mistakes.
 
 **Review checklist:**
 
-- [ ] **Visual validation (MANDATORY — not replaceable by code checks).** Open `specs/demo-deck.html` in a browser at 1440×900. Advance through all 11 slides with Space. Verify: no text overflow or card overlap, every slide readable at arm's length, big numbers visible as anchors, no cramped multi-column layouts with dense text. If Playwright is available, take a screenshot of slides 1 and 3 and inspect. **Battle-scar:** code-level validation (HTML parsing, class counting, grep patterns) is necessary but NOT sufficient — the Imperial PoC passed every automated gate but was visually broken (overlapping grids, walls of text, no breathing room). The browser is the final gate.
+- [ ] **Visual validation (MANDATORY — not replaceable by code checks).** Open `specs/demo-deck.html` in a browser at 1440×900. Advance through all 11 slides with Space. Verify: no text overflow or card overlap, every slide readable at arm's length, big numbers visible as anchors, no cramped multi-column layouts with dense text. If Playwright is available (see `runtime.playwright_available` in SPEC § 12, set by the **Runtime capability probe** earlier in this skill), take a screenshot of slides 1 and 3 and inspect; otherwise this gate is **manual** and the contributor MUST do it before declaring done. **Battle-scar:** code-level validation (HTML parsing, class counting, grep patterns) is necessary but NOT sufficient — a recent PoC passed every automated gate but was visually broken (overlapping grids, walls of text, no breathing room). The browser is the final gate.
 - [ ] Every BR-XXX in `specs/SPEC.md` § 3 is referenced by at least one skill's procedure
 - [ ] Every tool contract in spec § 6 has a matching tool in AGENTS.md
 - [ ] Every mocked system in spec § 5 has sample data in `specs/sample-data/`
@@ -1512,7 +1560,7 @@ must catch its own mistakes.
 - [ ] **SE-only collapsibles applied** (Cross-cutting Pattern 3) — in `prep-guide.html`, every `<pre><code>` block containing `azd ` / `az ` / `python ` commands MUST be wrapped in `<details class="se-only">` with an audience pill summary. Sellers should see no engineering content in the default closed state.
 - [ ] **Internal-jargon deny-list zero hits** (Cross-cutting Pattern 4) — grep `demo-deck.html` AND `experience.html` for every token in the baseline deny-list (MS internal product names, region/SKU labels, contributor PII, fabricated `_skill` / `_tool` identifiers) PLUS any `additional_denied_tokens` from SPEC § 12. Zero hits required. `prep-guide.html` is exempt. Record the grep result in the auto-review summary so the user can audit it.
 - [ ] **Persona placement** (Cross-cutting Pattern 5) — extract the set of persona first-names from `experience.html` (the dossier where they belong). Grep `demo-deck.html` AND `prep-guide.html § Demo Script "Type this:"` prompts for any hit on that set. Zero hits required. Suggested fix: swap persona name → role descriptor from the same SPEC § 5 persona row.
-- [ ] **Canonical tool naming** (Cross-cutting Pattern 6) — extract every tool name from `<code>` blocks, pill labels, and skill-chain SVG text nodes across `demo-deck.html`, `experience.html`, `prep-guide.html`. Set-diff against the AGENTS.md `Foundry tools required` table column 1 (plus any AGENTS.md § Tool display aliases). Zero out-of-set names required. Fabricated names (e.g. `load_skill`, `vf3_knowledge_base_retrieve`) are the highest-frequency battle-scar — catch them here.
+- [ ] **Canonical tool naming** (Cross-cutting Pattern 6) — extract every tool name from `<code>` blocks, pill labels, and skill-chain SVG text nodes across `demo-deck.html`, `experience.html`, `prep-guide.html`. Set-diff against the AGENTS.md `Foundry tools required` table column 1 (plus any AGENTS.md § Tool display aliases). Zero out-of-set names required. Fabricated names (e.g. `load_skill`, `customer_knowledge_base_retrieve`) are the highest-frequency battle-scar — catch them here.
 - [ ] **No-commitment closing** (Cross-cutting Pattern 7) — grep deck slides N-1 and N (Follow-up proposal + Thank you) plus the `experience.html` trust panel for banned phrases (`we'll build`, `by {date}`, `let's commit`, `next month`, `pick one journey`, any literal future date within 90 days of the generation timestamp). Zero hits required. The Thank-you slide MUST contain literal `Thank you.` and the MS × {Customer} co-brand bar; the Follow-up slide MUST have ≥ 3 step cards with concrete actions (not open questions); if any card text matches a banned phrase, fail.
 - [ ] **`tests/killer-prompts.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with ≥ 3 ranked rows (K1, K2, K3 minimum). Each `Prompt` literal exists verbatim in `tests/eval_dataset.jsonl` (the eval-validated set). Each `BR-XXX` exists in SPEC § 3. Each `Expected anchors` row has ≥ 1 named entity + ≥ 1 digit. `agent.yaml` carries `STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` env vars synced from this file by `infra/scripts/refresh_killer_prompts.py`.
 - [ ] **`specs/demo-rehearsal.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with all six required beat rows (T-24h, T-15min, T-5min, T-0, backup paths, ship checklist). T-0 budget ≤ 8 minutes total. Each killer prompt referenced verbatim by rank with its wow-line.
