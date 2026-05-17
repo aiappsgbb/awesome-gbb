@@ -172,6 +172,49 @@ Map the brand quartet explicitly:
 }
 ```
 
+## Visual density constraints
+
+The slide grammar and CSS tokens define **what** each slide contains. These
+density rules define **how much** — they are the guardrails that prevent a
+structurally correct deck from being visually broken.
+
+> **Battle-scar source.** The Imperial Commercial Sales PoC (May 2026) — the
+> sub-agent produced an 11-slide deck that passed every automated gate
+> (correct slide count, speaker notes 1:1, brand-flood panels ≥ 4, tool
+> names canonical, zero banned phrases) but was **visually unusable**:
+> overlapping two-column grids, walls of text in tiny cards, no breathing
+> room. The rebuild that landed was 334 lines instead of 1,677.
+
+**Per-slide rules:**
+
+| Rule | Constraint | Why |
+|------|-----------|-----|
+| Headlines | Max **1 H2** per slide (never two H2s on one slide) | Two headlines fight for attention at projection distance |
+| Subtitle | Max **1** `<p class="sub">` per slide | Second paragraphs never get read |
+| Cards per row | Max **3** (use `grid-template-columns: repeat(3, 1fr)`) | 4+ cards at 1440px become illegibly narrow |
+| Card body text | Max **2 lines** — title + one sentence | More text makes every card look the same = no hierarchy |
+| Speaker notes | Max **3 sentences** in imperative voice | Sellers skim notes; verbose meta-explanations get ignored |
+| Big numbers | At least **1 oversized typographic element** per slide that reads at 3m | Numbers, short words, or symbols — the visual anchor |
+| Frame padding | Min **clamp(32px, 4vw, 56px)** | Below 28px the content feels trapped |
+| Card padding | Min **28px** | Tight cards lose their border breathing room |
+
+**Layout rules:**
+
+| Pattern | When to use | When NOT to use |
+|---------|------------|-----------------|
+| Single column | Text-heavy slides (context, scale, posture) | Never force text-heavy content into 2-col |
+| 2-column | Before/after pairs, number + context (e.g. `<30s` beside explanation) | Not for two independent text blocks |
+| 3-column grid | Pain cards, option cards, scale horizons | Not for cards with > 2 lines of body text |
+| Pill grid (3×N) | Tool names, governance items — information-dense but low-text | Not for detailed descriptions |
+
+**Anti-patterns (fail the visual review):**
+
+- Two-column layout where both columns have > 3 lines of text each
+- Cards with `min-height` that forces whitespace gaps when content is short
+- `grid-template-columns: repeat(4, 1fr)` at 1440px with body text in each card
+- Slide with more than 6 distinct UI elements competing for attention
+- Layer cake where every layer has a full sentence description (keep to title + short phrase)
+
 ### Structural hooks
 
 | Hook | What it does | Canonical guidance |
@@ -417,12 +460,34 @@ What this controller guarantees:
 - Notes are a strict 1:1 mapping: `.note[data-for="N"]` ↔ slide `N`.
 - `sessionStorage` remembers the current slide if the presenter refreshes.
 
+### Speaker note voice rules
+
+Speaker notes are read aloud by sellers — often nervously, 15 minutes
+before the call. They must sound like coaching, not documentation.
+
+**Voice:** Imperative, direct, second-person.
+
+| ✅ Good | ❌ Bad |
+|---------|--------|
+| "Open with tension: declining category, four fragmented systems." | "This slide anchors the conversation in Imperial's operating reality." |
+| "Land on the <30s number — that's the metric to remember." | "The KPI matters because it converts an abstract AI story into a measurable business shift." |
+| "Let the pain build: fragmentation → effort → missed windows." | "Use the reveals to let the pain build in a commercial sequence." |
+
+**Rules:**
+- Max **3 sentences** per note
+- First sentence = what to say or do
+- Include **one concrete number or entity** from the SPEC (not generic)
+- Never start with "This slide..." or "The point of..."
+- Never use the word "emphasise" — just write what to say
+
 ---
 
 ## Brandmark substitute recipe
 
 When the customer's licensed logo is unavailable — which is **most PoCs** — use
 a safe substitute, not a bootleg logo.
+
+### Option A — Monogram substitute
 
 1. Start from the customer display name.
 2. Strip legal suffixes and filler words (`Ltd`, `plc`, `Group`, `Holdings`,
@@ -447,6 +512,33 @@ Notes:
 - A 24–32px white circle is the safe floor if you tighten the composition.
 - The point is **recognizable authorship without trademark risk**.
 - **Never** use the customer's actual licensed logo without explicit permission.
+
+### Option B — Live-linked customer logo (when publicly hosted)
+
+When the customer's logo is available on their public website and the
+presentation will have internet access, link it directly with an offline
+fallback:
+
+```html
+<div class="brandmark">
+  <img src="https://customer.com/path/to/logo.png"
+       alt="Customer Name"
+       style="width:68%;height:auto;object-fit:contain"
+       onerror="this.outerHTML='XX'">
+</div>
+```
+
+- `onerror` falls back to the monogram if offline or image fails
+- Works in all browsers including `file://` protocol (shows monogram)
+- **Never** download, trace, or recreate the logo as an SVG path — that's
+  copyright infringement regardless of intent
+- Document the source URL in SPEC § 12 assumptions:
+  `brand_logo_source: https://customer.com/path/to/logo.png`
+
+**Battle-scar.** The Imperial PoC attempted to recreate the logo as an
+inline SVG path (produced an unrecognizable arrow shape), then tried the
+monogram (too generic for a FTSE 100 customer). The live-linked `<img>`
+with `onerror` fallback was the right answer.
 
 ---
 
@@ -621,6 +713,29 @@ Mapping:
 | Managed Identity | `#ico-shield` |
 | Bicep + azd | `#ico-brackets` |
 | Application Insights | `#ico-chart` |
+
+### Emoji fallback (acceptable in specific contexts)
+
+The 18-symbol SVG sprite library remains the **default** for tech pills on
+the Platform stack and Architecture slides — monochrome line icons at 18px
+read clean and professional.
+
+However, **emoji are acceptable** in these contexts:
+
+- **Layer cake icons** — the stacked layers read better with emoji at
+  projection distance (💬 📊 🤖 📚 ⚙️ 🔒) because the color provides
+  instant differentiation that monochrome line icons lack
+- **Governance pills** — emoji shields, clocks, and locks carry enough
+  meaning without needing the full sprite library
+- **Decorative context** — any element where the icon adds visual rhythm
+  but isn't the primary information carrier
+
+**Never:**
+- Mix SVG sprites and emoji **on the same slide**
+- Use emoji on the Skill Chain slide (tool names need the professional
+  SVG treatment)
+- Use emoji where the icon disambiguates meaning (e.g., distinguishing
+  "AI Search" from "Cosmos DB" — use `#ico-search` vs `#ico-globe`)
 
 Architecture icon purposes:
 

@@ -1398,16 +1398,30 @@ are pre-tested for citation count, latency, and refusal rate.
 | `Wow line` | The single sentence the seller says after the agent finishes (anchored to the BR — e.g. "*That citation is the FCA pack*") |
 | `Surfaces` | Demo surfaces this prompt should be tried on — Teams · Workspace · Foundry playground · M365 Copilot Chat |
 
-**Auto-wiring.** This file feeds `azure.yaml` env vars
+**Auto-wiring.** This file feeds `agent.yaml` env vars
 `STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` (Teams chip rendering
 limits titles to ~30 chars). Use the keeper script
 `infra/scripts/refresh_killer_prompts.py` (emitted by this skill) — it
 parses `tests/killer-prompts.md` and writes the env-var block into
-`azure.yaml` idempotently. The keeper script is wired into
+`agent.yaml` idempotently. The keeper script is wired into
 `threadlight-deploy` Phase 6.7 ("Live MVP Walkthrough" back-fill) so the
 deployed agent's home surface picks up changes automatically on the next
 `azd up`. Wow-prompts can then evolve post-demo without hand-editing the
 deploy manifest.
+
+> **Target file clarification.** The `STARTER_{1,2,3}` env vars are injected into
+> `agent.yaml` (the ContainerAgent definition under `environment_variables:`), NOT
+> into `azure.yaml` (the azd project config). The `azure.yaml` `config.deployments`
+> block does not carry runtime environment variables for hosted agents — those live
+> in `agent.yaml`. The refresh script must target `agent.yaml` accordingly.
+
+> **Shell portability.** Default to `shell: sh` (not `shell: pwsh`) for
+> postprovision hooks that only run Python commands (`python scripts/...`).
+> macOS development machines rarely have PowerShell installed, and `azd`
+> silently fails extension loading when hooks reference an unavailable shell.
+> Use `shell: pwsh` only when the hook contains PowerShell-specific syntax
+> (e.g., `$env:VAR`, `Set-Content`, `-replace`). If the hook must run
+> cross-platform, prefer Python scripts invoked via `python script.py`.
 
 **Validation.** ≥ 3 rows (K1 minimum + K2 + K3 — the deck's live-demo
 arc), each `Prompt` literal exists in `tests/eval_dataset.jsonl` (set
@@ -1482,6 +1496,7 @@ must catch its own mistakes.
 
 **Review checklist:**
 
+- [ ] **Visual validation (MANDATORY — not replaceable by code checks).** Open `specs/demo-deck.html` in a browser at 1440×900. Advance through all 11 slides with Space. Verify: no text overflow or card overlap, every slide readable at arm's length, big numbers visible as anchors, no cramped multi-column layouts with dense text. If Playwright is available, take a screenshot of slides 1 and 3 and inspect. **Battle-scar:** code-level validation (HTML parsing, class counting, grep patterns) is necessary but NOT sufficient — the Imperial PoC passed every automated gate but was visually broken (overlapping grids, walls of text, no breathing room). The browser is the final gate.
 - [ ] Every BR-XXX in `specs/SPEC.md` § 3 is referenced by at least one skill's procedure
 - [ ] Every tool contract in spec § 6 has a matching tool in AGENTS.md
 - [ ] Every mocked system in spec § 5 has sample data in `specs/sample-data/`
@@ -1499,7 +1514,7 @@ must catch its own mistakes.
 - [ ] **Persona placement** (Cross-cutting Pattern 5) — extract the set of persona first-names from `experience.html` (the dossier where they belong). Grep `demo-deck.html` AND `prep-guide.html § Demo Script "Type this:"` prompts for any hit on that set. Zero hits required. Suggested fix: swap persona name → role descriptor from the same SPEC § 5 persona row.
 - [ ] **Canonical tool naming** (Cross-cutting Pattern 6) — extract every tool name from `<code>` blocks, pill labels, and skill-chain SVG text nodes across `demo-deck.html`, `experience.html`, `prep-guide.html`. Set-diff against the AGENTS.md `Foundry tools required` table column 1 (plus any AGENTS.md § Tool display aliases). Zero out-of-set names required. Fabricated names (e.g. `load_skill`, `vf3_knowledge_base_retrieve`) are the highest-frequency battle-scar — catch them here.
 - [ ] **No-commitment closing** (Cross-cutting Pattern 7) — grep deck slides N-1 and N (Follow-up proposal + Thank you) plus the `experience.html` trust panel for banned phrases (`we'll build`, `by {date}`, `let's commit`, `next month`, `pick one journey`, any literal future date within 90 days of the generation timestamp). Zero hits required. The Thank-you slide MUST contain literal `Thank you.` and the MS × {Customer} co-brand bar; the Follow-up slide MUST have ≥ 3 step cards with concrete actions (not open questions); if any card text matches a banned phrase, fail.
-- [ ] **`tests/killer-prompts.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with ≥ 3 ranked rows (K1, K2, K3 minimum). Each `Prompt` literal exists verbatim in `tests/eval_dataset.jsonl` (the eval-validated set). Each `BR-XXX` exists in SPEC § 3. Each `Expected anchors` row has ≥ 1 named entity + ≥ 1 digit. `azure.yaml` carries `STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` env vars synced from this file by `infra/scripts/refresh_killer_prompts.py`.
+- [ ] **`tests/killer-prompts.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with ≥ 3 ranked rows (K1, K2, K3 minimum). Each `Prompt` literal exists verbatim in `tests/eval_dataset.jsonl` (the eval-validated set). Each `BR-XXX` exists in SPEC § 3. Each `Expected anchors` row has ≥ 1 named entity + ≥ 1 digit. `agent.yaml` carries `STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` env vars synced from this file by `infra/scripts/refresh_killer_prompts.py`.
 - [ ] **`specs/demo-rehearsal.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with all six required beat rows (T-24h, T-15min, T-5min, T-0, backup paths, ship checklist). T-0 budget ≤ 8 minutes total. Each killer prompt referenced verbatim by rank with its wow-line.
 - [ ] **`tests/eval-summary.md` exists** when an eval run has produced `tests/eval-results-*.jsonl` (skip the gate gracefully if no eval results file exists yet — the dataset can be run later via `foundry-evals`). Top-line numbers present, ≥ 3 inline transcripts (K1/K2/K3), adjudicated scenarios documented when present.
 - [ ] **`prep-guide.html` contains the three required structural placeholders** — `id="demo-entrypoint"` (filled by `threadlight-deploy` Phase 6.7), `id="mvp-capabilities"` (filled by this skill from the SPEC), `id="ms-services-map"` (filled by this skill from the deployment_manifest module selectors).
