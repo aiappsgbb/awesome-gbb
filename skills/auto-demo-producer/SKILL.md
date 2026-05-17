@@ -197,8 +197,95 @@ The skill produces:
 5. **Intro/outro slides** — Always use them for professional polish.
 6. **Test incrementally** — Record one scene first to check timing, then add more.
 7. **Brand consistency** — Intro/outro slide colors MUST match the PoC's brand palette (from `threadlight-design` Cross-cutting Pattern 1). Don't use default blue/purple gradients for a red-branded customer. Copy the CSS custom properties from the PoC's `demo-deck.html` into the slide HTML files.
-8. **Subtitles** — Generate a WebVTT file (`demo_subs.vtt`) from the narration text. Add `<track kind="subtitles" src="demo_subs.vtt" srclang="en" default>` inside the `<video>` element. Viewers on mute (common in async shares) still follow the story.
-9. **Embed in deck** — If the PoC ships a `demo-deck.html`, embed the video as a fallback on the live-demo holding card (press `V` to toggle). Saves alt-tabbing to a separate player.
+8. **Subtitles** — Generate a WebVTT file from the narration text. **Do NOT use external `<track src="file.vtt">`** — Edge blocks CORS on `file://` protocol. Instead, embed the VTT inline as a JS blob URL: `var blob = new Blob([vttData], {type:'text/vtt'}); track.src = URL.createObjectURL(blob);` and dynamically append the `<track>` element. Timestamps MUST use `HH:MM:SS.mmm` format (not `MM:SS.mm` — Edge rejects it).
+9. **Embed in deck** — If the PoC ships a `demo-deck.html`, embed the video as a fallback on the live-demo holding card. Wire a `V` key toggle: press V to play the video inline on the `.is-cue` slide, press V again to stop. Add a visible control bar (play/pause button + clickable progress bar + time display) so the presenter doesn't depend on keyboard shortcuts alone. Auto-stop on `ended` event. The fallback hint ("Press V for pre-recorded fallback") shows below the cue text at low opacity.
+
+## Recording Agent Demos (battle-tested pattern)
+
+> **This section was extracted from 6 failed recording attempts on a
+> Foundry-hosted-agent PoC.** The patterns below are the only approach
+> that reliably produces a watchable video when agent response time is
+> unpredictable (10–50 seconds).
+
+### The problem
+
+AI agent demos are **not recordable in real time**. The agent takes
+10–50 seconds to respond. If you record the browser continuously and
+overlay pre-generated narration audio, the voice describes the answer
+while the screen still shows "Working...". No amount of post-production
+speed-up or audio-shifting fixes this reliably — the two timelines are
+fundamentally desynchronised.
+
+### The solution: screenshot-per-scene jump-cuts
+
+Never show "Working..." in the video. Jump-cut from "question typed"
+directly to "answer rendered". The agent wait happens **off-camera**
+between screenshots.
+
+**Per-scene workflow:**
+
+1. **Type the prompt** → screenshot the typed state (narrator introduces the question over this frame)
+2. **Click "Ask"** → poll until the response fully renders (off-camera — no recording)
+3. **Screenshot the completed answer** (narrator describes the response over this frame)
+4. **Build segment**: still image + matching narration audio clip (exact duration match)
+5. **Concatenate** all segments: intro → K1typed → K1done → K2typed → K2done → … → outro
+
+**Smart wait — appear → disappear polling:**
+
+```python
+# Phase 1: wait for loading indicator to APPEAR (confirms API call started)
+for _ in range(30):
+    if await page.evaluate("() => !!document.body.innerText.match(/Working/)"):
+        break
+    await page.wait_for_timeout(500)
+
+# Phase 2: wait for loading indicator to DISAPPEAR (confirms response rendered)
+for _ in range(120):
+    if not await page.evaluate("() => !!document.body.innerText.match(/Working/)"):
+        break
+    await page.wait_for_timeout(1000)
+await page.wait_for_timeout(2000)  # let DOM settle
+```
+
+Adapt the regex (`/Working/`) to match whatever loading indicator the
+workspace uses. The 2-phase pattern prevents the common bug where the
+script checks before "Working..." even appears and immediately proceeds.
+
+**Building a segment from a still image + audio:**
+
+```python
+def make_segment(image_path, audio_path, output_path):
+    audio_dur = ffprobe_duration(audio_path)
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", str(image_path),
+        "-i", str(audio_path),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k",
+        "-t", str(audio_dur),
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", str(output_path),
+    ], check=True)
+```
+
+Each segment's duration equals its narration audio — **the narrator
+always describes what's on screen**.
+
+### Anti-patterns (from 6 failed VF3 recording attempts)
+
+| ❌ Approach | Why it fails |
+|---|---|
+| Record continuously + overlay audio afterwards | Audio and video timelines never align — narrator talks about citations while screen shows "Working..." |
+| Speed up "Working..." video portions with `setpts` | Looks janky; speedup factor depends on unpredictable agent response time |
+| Fixed `> wait 35` timers in the script | Agent response time is 10–50s; fixed timers either cut off answers or waste 30s showing nothing |
+| Record video + audio simultaneously in real time | Playwright can't capture system audio; headless Chromium has no audio device |
+| Post-process with audio-shift detection | Too fragile; "Working..." text appears in DOM but visual loading spinners vary per workspace |
+
+### Voice selection for agent demos
+
+Use a **British voice** (`en-GB-SoniaNeural`) for UK-audience PoCs —
+it reads naturally at demo pace and matches the professional register.
+Avoid US casual voices for regulated-industry demos (FSI, telco, healthcare).
 
 ## File Locations
 
