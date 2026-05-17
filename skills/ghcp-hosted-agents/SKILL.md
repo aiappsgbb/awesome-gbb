@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -186,39 +186,74 @@ CopilotClient.create_session(provider={...})
 
 ### Provider Configuration
 
+Two equivalent shapes work; the `ProviderConfig` class form is the recommended
+(and ~2-3× faster) primary path because the SDK appends `?api-version=...`
+itself when `type="azure"`.
+
 ```python
+# RECOMMENDED — class form, matches the official Microsoft sample.
+from copilot.session import ProviderConfig
+
+provider = ProviderConfig(
+    type="azure",                          # SDK adds api-version itself
+    base_url=FOUNDRY_ENDPOINT,             # BARE project endpoint — no /openai/v1/
+    wire_api="responses",
+    bearer_token=token.token,              # from DefaultAzureCredential
+)
+```
+
+```python
+# LEGACY — dict form, still backward-compatible but 2-3× slower per query.
 provider = {
-    "type": "openai",                                    # Provider type
-    "base_url": f"{FOUNDRY_ENDPOINT}/openai/v1/",       # Must end with /openai/v1/
-    "bearer_token": token.token,                         # From DefaultAzureCredential
-    "wire_api": "responses",                             # Use Responses wire format
+    "type": "openai",
+    "base_url": f"{FOUNDRY_ENDPOINT}/openai/v1/",  # must end with /openai/v1/
+    "bearer_token": token.token,
+    "wire_api": "responses",
 }
 ```
+
+### Provider shape decision matrix
+
+Measured against `gpt-5.4-mini` on a live Foundry project (May 2026):
+
+| `type` | `base_url` suffix | Result | Latency |
+|--------|-------------------|--------|---------|
+| `"azure"` | bare endpoint | ✅ **Recommended** | ~2.6s |
+| `"azure"` | `/openai/v1/` | ✅ Works | ~7.9s |
+| `"openai"` | `/openai/v1/` | ✅ Legacy compat | ~6.9s |
+| `"openai"` | bare endpoint | ❌ `400 Missing api-version` | n/a |
+
+Both `github-copilot-sdk` `0.3.0` (stable) and `1.0.0b4` (preview) accept
+both shapes; the legacy dict form is preserved across releases for
+backward compatibility.
 
 ### Common BYOK Mistakes
 
 | Mistake | Symptom | Fix |
 |---------|---------|-----|
 | Wrong scope | 401 Unauthorized | Use `ai.azure.com` not `cognitiveservices.azure.com` |
-| Missing `/openai/v1/` | 404 Not Found | `base_url` must end with `/openai/v1/` |
+| `type="openai"` + bare endpoint | `400 Missing api-version` | Either switch to `type="azure"` + bare, or append `/openai/v1/` |
 | Token not refreshed | 401 after ~1h | Mint fresh token per session in `_get_provider()` |
-| `type: "azure"` | Connection error | Use `type: "openai"` with `wire_api: "responses"` |
-| Missing RBAC | 403 Forbidden | Agent identity needs `Azure AI User` on project + `Cognitive Services OpenAI User` on account |
+| Missing RBAC at account scope | 401 from provider inside the container (silent SSE error event) | Agent identity needs `Foundry User` (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) on BOTH the Foundry **account** AND **project**. `azd ai agent` postdeploy only assigns at PROJECT scope — add ACCOUNT scope manually (see § Identity & RBAC) |
 
 ---
 
 ## CopilotClient Session Parameters
 
 ```python
+# Recommended pattern (matches official Microsoft sample): explicit start().
+client = CopilotClient(auto_start=False)
+await client.start()
+
 session = await client.create_session(
-    provider=provider,                    # BYOK provider dict
-    model="gpt-5.4",                     # Model deployment name
+    provider=provider,                    # ProviderConfig OR dict — see "Provider Configuration"
+    model="gpt-5.4-mini",                 # Foundry model deployment name
     system_message={                      # MUST be dict, not string
         "mode": "replace",
         "content": "You are a helpful assistant.",
     },
     skill_directories=["/app/skills"],    # Paths to SKILL.md directories
-    mcp_servers=[                         # MCP server configs
+    mcp_servers=[                         # MCP server configs (list[dict] or dict[str, dict])
         {"name": "playwright", "url": "https://my-mcp.azurecontainerapps.io/mcp"},
     ],
     working_directory=str(Path.home()),   # Must be $HOME for hosted agents
@@ -247,16 +282,20 @@ session = await client.create_session(
 
 ## Invoking the Agent
 
+> ⚠️ **`azd ai agent invoke` is broken in `azure.ai.agents` 0.1.31-preview** —
+> it does NOT wrap user input in `{"input": "<text>"}`, so the official
+> Microsoft container template rejects it with `HTTP 400`. Use the curl
+> recipe below until the CLI is fixed.
+
 ### Via curl (SSE streaming)
 
 ```bash
 TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
 ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 
-curl -N -X POST "$ENDPOINT/agents/my-agent/endpoint/protocols/invocations?api-version=v1" \
+curl -N -X POST "$ENDPOINT/agents/<agent-name>/endpoint/protocols/invocations?api-version=2025-11-15-preview" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Foundry-Features: HostedAgents=V1Preview" \
   -d '{"input": "Hello"}'
 ```
 
@@ -357,6 +396,10 @@ Task Completion) are stable across both judge models.
 | **Agent traces missing** | Agent identity lacks telemetry RBAC | Assign `Monitoring Metrics Publisher` on AppInsights to BOTH `instance_identity` and `blueprint` principal IDs (from `azd ai agent show`). Project MI needs `Log Analytics Data Reader` on Log Analytics workspace. |
 | **gpt-4.1 encrypted content error** | gpt-4.1 deprecated, doesn't support encrypted content required by GHCP SDK | Default to `gpt-5.4-mini` or `gpt-5.4`. Update `MODEL_DEPLOYMENT_NAME` in agent.yaml. |
 | **agent.yaml not found by azd** | agent.yaml in project root but `azure.yaml` service points to a subdirectory | agent.yaml must be in the **service directory** (e.g., `src/agent/agent.yaml`), not just the project root. The `azd ai agent` extension looks relative to the service path. |
+| **`azd deploy` says "deployed in <1s" and nothing ships** | `azure.yaml` has no `services:` block — `azd ai agent init` creates the manifest but does NOT wire up a service for `azd deploy` | Add a `services:` entry pointing at the project root with `host: azure.ai.agent`, `language: docker`, `docker.remoteBuild: true`. See § "azure.yaml (required for `azd deploy`)" |
+| **`azd deploy` postdeploy fails: "AZURE_TENANT_ID is not set"** | The postdeploy RBAC hook reads `AZURE_TENANT_ID` from the azd environment, but `azd env new` does not populate it | `azd env set AZURE_TENANT_ID $(az account show --query tenantId -o tsv)` once after `azd env new`, then re-run `azd deploy` |
+| **Silent SSE error event: "Authentication failed with provider ... (HTTP 401)"** | `azd ai agent` postdeploy only assigns `Foundry User` at PROJECT scope. Container BYOK call to the Foundry model deployment needs Foundry User at ACCOUNT scope too | Grant `Foundry User` (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) at the CognitiveServices account scope to BOTH `instance_identity.principal_id` AND `blueprint.principal_id` (visible via `azd ai agent show`). See § "Identity & RBAC for hosted agents" |
+| **`azd ai agent invoke` returns HTTP 400 "missing input"** | `azure.ai.agents` 0.1.31-preview does NOT wrap user input in `{"input": "<text>"}` before POSTing | Invoke via curl/Python with the correct body shape — see § "Invoking the Agent" |
 
 ---
 
@@ -396,6 +439,69 @@ services:
 
 > **`remoteBuild: true` is critical** — without it, azd tries to build locally with Docker.
 > With it, azd pushes source to ACR and builds remotely via ACR Tasks.
+
+> **`AZURE_TENANT_ID` must be set in the azd env** before `azd deploy` — the
+> postdeploy RBAC hook reads it and fails with `"AZURE_TENANT_ID is not set"`
+> otherwise. After `azd env new`, run:
+>
+> ```bash
+> azd env set AZURE_TENANT_ID $(az account show --query tenantId -o tsv)
+> ```
+
+---
+
+## Identity & RBAC for hosted agents
+
+`azd ai agent` creates **two identities** per hosted agent (visible via
+`azd ai agent show`):
+
+| Field | Type | What it represents |
+|-------|------|--------------------|
+| `instance_identity.principal_id` | User-Assigned MI (`ServiceIdentity`) | The agent instance's runtime identity |
+| `blueprint.principal_id` | AAD Application | The agent template/blueprint's identity |
+
+The `azd ai agent` postdeploy hook **automatically assigns** `Foundry User`
+(GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) at the **project** scope to
+both identities.
+
+> ⚠️ **The postdeploy hook does NOT assign at the account scope.** The container's
+> BYOK call to the Foundry model deployment needs `Foundry User` at the
+> CognitiveServices **account** scope too. Without it, you get a silent
+> 401 SSE error event:
+>
+> ```text
+> Authentication failed with provider at <project endpoint> (HTTP 401).
+>   Check your COPILOT_PROVIDER_API_KEY or COPILOT_PROVIDER_BEARER_TOKEN.
+> ```
+>
+> The agent serves SSE successfully (session events fire normally) — the
+> failure only surfaces when the model call itself runs.
+
+### Manual account-scope assignment
+
+```bash
+ACCT="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
+FOUNDRY_USER="53ca6127-db72-4b80-b1b0-d745d6d5456d"
+
+# Get both principal IDs:
+azd ai agent show --output json | jq -r '.instance_identity.principal_id, .blueprint.principal_id'
+
+# Assign to both:
+for PID in <instance-pid> <blueprint-pid>; do
+  az role assignment create \
+    --role "$FOUNDRY_USER" \
+    --assignee-object-id "$PID" \
+    --assignee-principal-type ServicePrincipal \
+    --scope "$ACCT"
+done
+
+# Wait 60-90s for AAD propagation, then invoke.
+```
+
+> **Pin by GUID, not display name.** Azure renamed this role from
+> "Azure AI User" → "Foundry User" in May 2026; the GUID
+> `53ca6127-db72-4b80-b1b0-d745d6d5456d` is unchanged across the rename
+> and survives any future display-name rotation.
 
 ---
 
