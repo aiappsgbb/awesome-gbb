@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "skills/**"
+      - "plugins/**"
+      - ".github/plugin/**"
       - "AGENTS.md"
       - "scripts/**"
       - ".github/workflows/skill-validation.yml"
@@ -11,6 +13,8 @@ on:
     branches: [main]
     paths:
       - "skills/**"
+      - "plugins/**"
+      - ".github/plugin/**"
 
 permissions:
   contents: read
@@ -29,5 +33,8 @@ jobs:
       - name: Install deps
         run: pip install --quiet pyyaml
 
-      - name: Validate all SKILL.md and pin files
+      - name: Validate all SKILL.md, pin files, and plugin manifests
         run: python scripts/validate-skills.py
+
+      - name: Verify plugin skill copies are in sync with source
+        run: python scripts/build-plugins.py --check
