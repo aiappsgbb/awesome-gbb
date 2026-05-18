@@ -19,7 +19,7 @@ description: >
   monitoring (use azure-monitor-query directly), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # PAYGO vs PTU Cost Analyzer
@@ -173,7 +173,8 @@ references/
 │   ├── formatting.py              # fmt_num / fmt_cost
 │   └── models.json                # PTU + PAYGO pricing catalog
 ├── queries/
-│   └── default.kql                # AzureMetrics → required schema
+│   ├── default.kql                # AzureMetrics → required schema (InputTokens path)
+│   └── active_tokens.kql          # Alternative: derives cached from ActiveTokens
 ├── render_report.py               # md + json + 2× png (matplotlib, Agg backend)
 ├── run_report.py                  # CLI entry point
 ├── sample_input.csv               # ~10 KB demo CSV (240 rows, reproducible seed)
@@ -205,10 +206,26 @@ resource provider. Prereqs on the customer side:
    at the subscription scope).
 4. Allow at least 15 minutes for fresh metrics to land in `AzureMetrics`.
 
+### Two bundled queries — pick by metric availability
+
+| File | Cached-token derivation | Use when |
+|------|-------------------------|----------|
+| `references/queries/default.kql` | `InputTokens − ProcessedPromptTokens` | The standard path. Works on any Cognitive Services deployment with `InputTokens` enabled. |
+| `references/queries/active_tokens.kql` | `ProcessedPromptTokens − ActiveTokens` | Fallback when `InputTokens` is missing or zero — uses the `ActiveTokens` metric (non-cached tokens) as the subtractor. Some older diagnostic-setting configurations only expose this path. |
+
+Pass either with `--kql`:
+
+```bash
+python references/run_report.py \
+  --workspace <id> --kql references/queries/active_tokens.kql \
+  --model gpt-5.4 --out-dir ./report
+```
+
 If your workspace uses `AzureDiagnostics` instead of `AzureMetrics`,
 write a custom KQL that emits the same 4-column schema and pass it
 with `--kql`. See `docs/sample_kql_queries.md` in the upstream repo
-for several alternative shapes.
+for several alternative shapes (request-level breakdown, PTU
+utilisation, error analysis).
 
 ---
 

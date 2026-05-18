@@ -16,15 +16,17 @@ upstream:
   notes: |
     Tier B because the **execution surface** of this skill is its 5 PyPI
     dependencies (pandas, numpy, matplotlib, azure-identity,
-    azure-monitor-query). The upstream repo itself is vendored verbatim
-    (analysis.py, formatting.py, models.json, default_log_analytics_query.kql)
-    plus a Streamlit-stripped data.py. The `pinned_sha` above is the
-    **last-vendored marker** — it does NOT auto-refresh through this pin
-    (only PyPI versions do). When upstream advances on the analysis math
-    or the pricing catalog, a human re-vendors the 5 files and bumps the
-    SHA here in the same PATCH PR. The weekly detector still polls the
-    SHA so we get an unassigned issue when upstream commits — that's the
-    re-vendor trigger.
+    azure-monitor-query). The upstream repo itself is vendored verbatim:
+    - `analysis.py`, `formatting.py`, `models.json` — byte-identical
+    - `kql/default_log_analytics_query.kql` → `queries/default.kql`
+    - `kql/default_log_analytics_query.active_tokens_backup.kql` → `queries/active_tokens.kql`
+    - `data.py` — Streamlit-stripped (see KI-002)
+    The `pinned_sha` above is the **last-vendored marker** — it does NOT
+    auto-refresh through this pin (only PyPI versions do). When upstream
+    advances on the analysis math or the pricing catalog, a human
+    re-vendors the files and bumps the SHA here in the same PATCH PR.
+    The weekly detector still polls the SHA so we get an unassigned
+    issue when upstream commits — that's the re-vendor trigger.
 
 packages:
   - name: pandas
@@ -159,6 +161,9 @@ validation:
 last_validated: "2026-05-18"
 validated_by: ricchi
 known_issues_count: 3
+re_pin_log:
+  - "2026-05-18: initial pin v1.0.0 (ricchi)"
+  - "2026-05-18: v1.0.1 — also vendor active_tokens_backup.kql as queries/active_tokens.kql alternative (ricchi)"
 ---
 
 # Upstream pin — `paygo-ptu-cost-analyzer` skill
@@ -367,7 +372,7 @@ When upstream `aiappsgbb/ptu-paygo-mix` advances:
    ```bash
    git ls-remote https://github.com/aiappsgbb/ptu-paygo-mix main
    ```
-2. **Re-vendor the 5 files**:
+2. **Re-vendor the files**:
    ```bash
    git clone https://github.com/aiappsgbb/ptu-paygo-mix /tmp/ptu-upstream
    cd /tmp/ptu-upstream && git checkout <new-sha>
@@ -376,6 +381,8 @@ When upstream `aiappsgbb/ptu-paygo-mix` advances:
    cp src/paygo_ptu/models.json     <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
    cp src/paygo_ptu/kql/default_log_analytics_query.kql \
       <repo>/skills/paygo-ptu-cost-analyzer/references/queries/default.kql
+   cp src/paygo_ptu/kql/default_log_analytics_query.active_tokens_backup.kql \
+      <repo>/skills/paygo-ptu-cost-analyzer/references/queries/active_tokens.kql
    # data.py: copy then strip streamlit (see KI-002 for exact 3 line removals)
    ```
 3. **Re-run validation script** (front-matter `validation.script`) — must
