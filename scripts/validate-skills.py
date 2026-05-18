@@ -20,8 +20,10 @@ gate, and by every contributor before push per AGENTS.md § 8.
 from __future__ import annotations
 
 import io
+import json
 import pathlib
 import re
+import subprocess
 import sys
 from typing import Any
 
@@ -61,20 +63,23 @@ class ValidationError(Exception):
     pass
 
 
-def parse_frontmatter(path: pathlib.Path) -> dict[str, Any]:
-    text = path.read_text(encoding="utf-8")
+def parse_frontmatter_text(text: str, label: str) -> dict[str, Any]:
     if not text.startswith("---"):
-        raise ValidationError(f"{path}: file does not start with YAML front-matter (---)")
+        raise ValidationError(f"{label}: file does not start with YAML front-matter (---)")
     parts = text.split("---", 2)
     if len(parts) < 3:
-        raise ValidationError(f"{path}: front-matter not properly terminated by `---`")
+        raise ValidationError(f"{label}: front-matter not properly terminated by `---`")
     try:
         data = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
-        raise ValidationError(f"{path}: YAML parse error: {e}") from e
+        raise ValidationError(f"{label}: YAML parse error: {e}") from e
     if not isinstance(data, dict):
-        raise ValidationError(f"{path}: front-matter is not a mapping")
+        raise ValidationError(f"{label}: front-matter is not a mapping")
     return data
+
+
+def parse_frontmatter(path: pathlib.Path) -> dict[str, Any]:
+    return parse_frontmatter_text(path.read_text(encoding="utf-8"), str(path))
 
 
 def validate_skill_md(path: pathlib.Path) -> list[str]:
@@ -351,6 +356,208 @@ def validate_no_orphan_skills() -> list[str]:
     return errors
 
 
+def _body_after_frontmatter(text: str) -> str:
+    parts = text.split("---", 2)
+    if text.startswith("---") and len(parts) >= 3:
+        return parts[2]
+    return text
+
+
+def _plugin_skill_specs(data: dict[str, Any]) -> list[str]:
+    skills = data.get("skills") or []
+    if isinstance(skills, str):
+        skills = [skills]
+    if not isinstance(skills, list):
+        return []
+
+    specs: list[str] = []
+    for entry in skills:
+        if isinstance(entry, str):
+            specs.append(entry)
+        elif isinstance(entry, dict):
+            source = entry.get("source")
+            if isinstance(source, str):
+                specs.append(source)
+    return specs
+
+
+def _plugin_skill_name(spec: str) -> str | None:
+    normalized = spec[2:] if spec.startswith("./") else spec
+    parts = pathlib.PurePosixPath(normalized).parts
+    if len(parts) >= 2 and parts[0] == "skills":
+        return parts[1]
+    if len(parts) == 1:
+        return parts[0]
+    return None
+
+
+def _semver_core(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+    if not match:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
+
+
+def _version_bump_kind(old_version: str, new_version: str) -> str:
+    old_parts = _semver_core(old_version)
+    new_parts = _semver_core(new_version)
+    if not old_parts or not new_parts:
+        return "NONE"
+    if old_parts[0] != new_parts[0]:
+        return "MAJOR"
+    if old_parts[1] != new_parts[1]:
+        return "MINOR"
+    if old_parts[2] != new_parts[2]:
+        return "PATCH"
+    return "NONE"
+
+
+def _git_stdout(*args: str) -> str | None:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _merge_base_main() -> str | None:
+    for ref in ("origin/main", "main"):
+        stdout = _git_stdout("merge-base", "HEAD", ref)
+        if stdout and stdout.strip():
+            return stdout.strip()
+    return None
+
+
+def validate_threadlight_dep_closure() -> list[str]:
+    """Ensure the threadlight plugin bundles every skill threadlight-* skills mention."""
+    errors: list[str] = []
+    plugin_path = PLUGINS_DIR / "awesome-gbb-threadlight" / "plugin.json"
+    if not plugin_path.exists():
+        return errors
+
+    try:
+        plugin_data = json.loads(plugin_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [f"{plugin_path}: JSON parse error: {e}"]
+    if not isinstance(plugin_data, dict):
+        return [f"{plugin_path}: not a JSON object"]
+
+    known_skills = sorted(
+        p.name for p in SKILLS_DIR.iterdir()
+        if p.is_dir() and (p / "SKILL.md").exists()
+    )
+    bundled_skills = {
+        skill_name
+        for spec in _plugin_skill_specs(plugin_data)
+        if (skill_name := _plugin_skill_name(spec))
+    }
+
+    for skill_md in sorted(SKILLS_DIR.glob("threadlight-*/SKILL.md")):
+        body = _body_after_frontmatter(skill_md.read_text(encoding="utf-8"))
+        referenced: set[str] = set()
+        for name in known_skills:
+            if re.search(rf"(?<![A-Za-z0-9-]){re.escape(name)}(?![A-Za-z0-9-])", body):
+                referenced.add(name)
+
+        rel = skill_md.relative_to(REPO_ROOT).as_posix()
+        for name in sorted(referenced - bundled_skills):
+            errors.append(
+                f"awesome-gbb-threadlight is missing dep '{name}' "
+                f"(referenced by {rel})"
+            )
+
+    return errors
+
+
+def validate_skill_plugin_version_consistency() -> list[str]:
+    """Warn when MAJOR/MINOR skill bumps leave containing plugin versions unchanged."""
+    warnings: list[str] = []
+    merge_base = _merge_base_main()
+    if not merge_base or not PLUGINS_DIR.is_dir():
+        return warnings
+
+    plugins: list[tuple[str, pathlib.Path, str, set[str]]] = []
+    for plugin_json in sorted(PLUGINS_DIR.glob("*/plugin.json")):
+        try:
+            plugin_data = json.loads(plugin_json.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(plugin_data, dict):
+            continue
+
+        plugin_name = str(plugin_data.get("name") or plugin_json.parent.name)
+        plugin_version = plugin_data.get("version")
+        if not isinstance(plugin_version, str):
+            continue
+
+        bundled_skills = {
+            skill_name
+            for spec in _plugin_skill_specs(plugin_data)
+            if (skill_name := _plugin_skill_name(spec))
+        }
+        plugins.append((plugin_name, plugin_json, plugin_version, bundled_skills))
+
+    for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        try:
+            current_fm = parse_frontmatter(skill_md)
+        except ValidationError:
+            continue
+
+        current_metadata = current_fm.get("metadata") or {}
+        current_version = current_metadata.get("version") if isinstance(current_metadata, dict) else None
+        if not isinstance(current_version, str):
+            continue
+
+        rel = skill_md.relative_to(REPO_ROOT).as_posix()
+        old_text = _git_stdout("show", f"{merge_base}:{rel}")
+        if old_text is None:
+            continue
+        try:
+            old_fm = parse_frontmatter_text(old_text, f"{merge_base}:{rel}")
+        except ValidationError:
+            continue
+
+        old_metadata = old_fm.get("metadata") or {}
+        old_version = old_metadata.get("version") if isinstance(old_metadata, dict) else None
+        if not isinstance(old_version, str):
+            continue
+
+        bump_kind = _version_bump_kind(old_version, current_version)
+        if bump_kind not in ("MAJOR", "MINOR"):
+            continue
+
+        skill_name = skill_md.parent.name
+        for plugin_name, plugin_json, plugin_version, bundled_skills in plugins:
+            if skill_name not in bundled_skills:
+                continue
+
+            plugin_rel = plugin_json.relative_to(REPO_ROOT).as_posix()
+            old_plugin_text = _git_stdout("show", f"{merge_base}:{plugin_rel}")
+            if old_plugin_text is None:
+                continue
+            try:
+                old_plugin_data = json.loads(old_plugin_text)
+            except Exception:
+                continue
+            if not isinstance(old_plugin_data, dict):
+                continue
+
+            old_plugin_version = old_plugin_data.get("version")
+            if old_plugin_version == plugin_version:
+                warnings.append(
+                    f"WARN: skill '{skill_name}' bumped {old_version}→{current_version} "
+                    f"({bump_kind}), but plugin '{plugin_name}' version unchanged at {plugin_version}"
+                )
+
+    return warnings
+
+
 def main() -> int:
     if not SKILLS_DIR.is_dir():
         print(f"ERROR: {SKILLS_DIR} does not exist", file=sys.stderr)
@@ -382,6 +589,9 @@ def main() -> int:
     if plugin_count:
         all_errors.extend(validate_no_orphan_skills())
 
+    all_errors.extend(validate_threadlight_dep_closure())
+    warnings = validate_skill_plugin_version_consistency()
+
     print(
         f"Validated {skill_md_count} SKILL.md files + {pin_count} pin files + "
         f"{plugin_count} plugin manifests" + (
@@ -389,6 +599,8 @@ def main() -> int:
         ),
         file=sys.stderr,
     )
+    for w in warnings:
+        print(f"⚠️  {w}", file=sys.stderr)
 
     if all_errors:
         print(f"\n❌ {len(all_errors)} validation error(s):\n", file=sys.stderr)

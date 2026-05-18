@@ -298,6 +298,55 @@ the reverse direction, then commit.
 > **Don't let drift accumulate.** Two-way drift is hard to reconcile —
 > always sync in one direction at a time, then verify with SHA256.
 
+### Plugin mirror (when contributing to plugins)
+
+For plugin work there are two delivery paths:
+
+| Path | When to use |
+|---|---|
+| **Direct robocopy/rsync** to `C:\Users\<u>\.copilot\plugins\<plugin>\` (`~/.copilot/plugins/<plugin>/` on Unix) | One-off iteration on a single plugin |
+| **Register the repo as a local marketplace** | Default for active contributors — installs feel identical to the production GitHub marketplace |
+
+Register the repo itself as a local marketplace:
+
+```bash
+# Unix
+copilot plugin marketplace add /absolute/path/to/awesome-gbb
+copilot plugin install awesome-gbb-basic@awesome-gbb
+copilot plugin install awesome-gbb-azure@awesome-gbb
+copilot plugin install awesome-gbb-threadlight@awesome-gbb
+```
+
+```powershell
+# Windows
+copilot plugin marketplace add 'C:\Users\<u>\Repos\awesome-gbb'
+copilot plugin install awesome-gbb-basic@awesome-gbb
+```
+
+This consumes the actual `plugins/<plugin>/plugin.json` in the repo. If
+you edit a manifest, run `copilot plugin update <plugin>@awesome-gbb` to
+pick it up — **not** a fresh install. If you edit source content under
+`skills/<name>/`, run `python scripts/build-plugins.py --write` first so
+the plugin-tree copies reflect your change.
+
+After your PR lands and you want to drop the local hack:
+
+```bash
+copilot plugin marketplace remove awesome-gbb       # the local one
+copilot plugin marketplace add aiappsgbb/awesome-gbb # the canonical one
+copilot plugin update awesome-gbb-basic@awesome-gbb
+copilot plugin update awesome-gbb-azure@awesome-gbb
+copilot plugin update awesome-gbb-threadlight@awesome-gbb
+```
+
+> **Don't let plugin drift accumulate.** `plugin.json` and the synced
+> `skills/` subtree under `plugins/` MUST stay byte-identical to the
+> source — `build-plugins.py --check` enforces that in CI. NEVER
+> hand-edit anything under `plugins/<plugin>/skills/<name>/` in either
+> location (repo or user-scope mirror). All skill edits go in
+> `skills/<name>/` at the repo root, then `build-plugins.py --write`
+> syncs them into the plugin tree.
+
 ---
 
 ## 7 · References & shared data
