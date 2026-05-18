@@ -186,7 +186,22 @@ A two-skill pipeline for producing **digital-clone-grade** customer-flavoured fo
 
 ## How to Use
 
-**Install with `gh` CLI:**
+> [!TIP]
+> **Install whole domains in one command via plugins.** The catalog ships 3 [Copilot CLI plugins](plugins/) so you don't have to install skills one-by-one:
+>
+> ```bash
+> # Register the marketplace once:
+> copilot plugin marketplace add aiappsgbb/awesome-gbb
+>
+> # Then install whichever domain you need:
+> copilot plugin install awesome-gbb-basic@awesome-gbb         #  7 skills — pre-sales / cross-cutting
+> copilot plugin install awesome-gbb-azure@awesome-gbb         # 18 skills — Foundry / governance / azd
+> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 23 skills — full Threadlight pipeline (self-contained)
+> ```
+>
+> Plugins also work in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect. See [`plugins/README.md`](plugins/) for details.
+
+**Or install one skill at a time with `gh` CLI:**
 
 > [!TIP]
 > **First time on Copilot CLI?** Install [**ghcp-cli-config**](skills/ghcp-cli-config/) first — it bootstraps `~/.copilot/` with the 6 recommended MCP servers (`mslearn`, `Azure`, `Playwright`, `context7`, `tavily`, `mem0`), a sensible `settings.json` baseline, and the work-iq plugin family for Microsoft staff. The agent can run the bootstrap end-to-end on a fresh machine.

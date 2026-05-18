@@ -1,0 +1,22 @@
+// first-trace-probe.kql
+// SMOKE PROBE — "did ANY trace land in the last 5 minutes?"
+//
+// Run after every PoC smoke test. Used by threadlight-safe-check Step 3.6
+// to gate post-deploy completeness. If count_ == 0 across all four tables,
+// the AppInsights connection is broken at one of the three layers.
+//
+// Expected result for a healthy pilot after first agent invocation:
+//   - traces        : ≥ 1 from cloud_RoleName 'AgentService-*'
+//   - dependencies  : ≥ 1 from cloud_RoleName containing 'mcp'
+//   - requests      : ≥ 1 from cloud_RoleName containing 'mcp' OR 'bot'
+//   - exceptions    : ideally 0, but presence is OK if there were errors
+//
+// Failure modes:
+//   - 0 rows everywhere    →  Layer 1 broken (env var never set)
+//   - AgentService missing →  Layer 2 broken (no account-level connection)
+//   - mcp/bot missing      →  Layer 3 broken (configure_azure_monitor never called)
+
+union traces, requests, dependencies, exceptions
+| where timestamp > ago(5m)
+| summarize count() by table=$table, cloud_RoleName
+| order by table asc, count_ desc

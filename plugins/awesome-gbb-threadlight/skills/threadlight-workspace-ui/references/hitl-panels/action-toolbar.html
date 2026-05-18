@@ -1,0 +1,201 @@
+<!--
+  action-toolbar.html — BR-XXX-derived action gates (approve / edit / reject / escalate)
+  Drop-in panel that renders inside the .tl-dp-actions-slot of decision-pane.html
+  (or standalone, top of any pane). Vanilla HTML/CSS/JS. No framework.
+
+  Data contract (read from window.threadlight.actions):
+    Array<{
+      id:           string,        // "approve" | "edit" | "reject" | "escalate" | custom
+      label:        string,        // button text
+      br:           string,        // BR-XXX gate (shown as caption)
+      needsReason:  boolean,       // true → opens a reason prompt before submit
+      destructive?: boolean,       // true → renders red (escalate / reject)
+      disabled?:    boolean,       // pre-disabled (e.g. SLA expired)
+      hint?:        string         // tooltip
+    }>
+
+  Submit:
+    - On click, calls window.threadlight.onAction(actionId, { reason, caseId })
+    - For needsReason actions, opens a tiny inline reason-prompt before calling
+    - Buttons disable + show a spinner while onAction is awaited
+    - Emits 'threadlight:action-submitted' event on success (audit-viewer listens)
+-->
+<section class="tl-action-toolbar" data-panel="action-toolbar" hidden>
+  <div class="tl-at-row" role="toolbar" aria-label="Decision actions"></div>
+  <div class="tl-at-reason-prompt" hidden>
+    <label>
+      <span class="tl-at-reason-label">Reason</span>
+      <textarea class="tl-at-reason-input" rows="3" maxlength="500" placeholder="Required (10+ chars). Logged to audit."></textarea>
+    </label>
+    <div class="tl-at-reason-actions">
+      <button type="button" class="tl-at-btn tl-at-btn-ghost" data-action="cancel">Cancel</button>
+      <button type="button" class="tl-at-btn tl-at-btn-primary" data-action="confirm">Submit</button>
+    </div>
+  </div>
+  <div class="tl-at-status" role="status" aria-live="polite"></div>
+</section>
+
+<style>
+  .tl-action-toolbar {
+    --accent: #0078d4;
+    --bg: #ffffff;
+    --surface: #f8f8fb;
+    --ink: #20232a;
+    --muted: #5b6271;
+    --border: #e1e3e8;
+    --bad: #a4262c;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+  }
+  .tl-at-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .tl-at-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--bg); color: var(--ink); transition: all .15s;
+  }
+  .tl-at-btn:hover:not(:disabled) { background: var(--surface); }
+  .tl-at-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .tl-at-btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .tl-at-btn-primary:hover:not(:disabled) { filter: brightness(.92); background: var(--accent); }
+  .tl-at-btn-destructive { color: var(--bad); border-color: var(--bad); background: var(--bg); }
+  .tl-at-btn-destructive:hover:not(:disabled) { background: rgba(164, 38, 44, .06); }
+  .tl-at-btn-ghost { background: transparent; }
+  .tl-at-btn-caption { font-size: 10px; color: var(--muted); margin-left: 6px; font-weight: 500; }
+  .tl-at-spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%;
+    animation: tl-at-spin .8s linear infinite;
+  }
+  @keyframes tl-at-spin { to { transform: rotate(360deg); } }
+
+  .tl-at-reason-prompt {
+    margin-top: 12px; padding: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  }
+  .tl-at-reason-label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  .tl-at-reason-input {
+    width: 100%; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: 3px; padding: 8px;
+    font-family: inherit; font-size: 13px; resize: vertical;
+  }
+  .tl-at-reason-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
+  .tl-at-status { margin-top: 8px; font-size: 12px; min-height: 16px; }
+  .tl-at-status[data-state="success"] { color: #107c10; }
+  .tl-at-status[data-state="error"]   { color: var(--bad); }
+</style>
+
+<script>
+  (function () {
+    const root = document.querySelector('[data-panel="action-toolbar"]');
+    if (!root) return;
+
+    const rowEl    = root.querySelector('.tl-at-row');
+    const promptEl = root.querySelector('.tl-at-reason-prompt');
+    const inputEl  = root.querySelector('.tl-at-reason-input');
+    const statusEl = root.querySelector('.tl-at-status');
+
+    let pendingAction = null;
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function buttonClass(act) {
+      if (act.id === 'approve' || act.id === 'edit') return 'tl-at-btn tl-at-btn-primary';
+      if (act.destructive || act.id === 'reject' || act.id === 'escalate') {
+        return 'tl-at-btn tl-at-btn-destructive';
+      }
+      return 'tl-at-btn';
+    }
+
+    function render() {
+      const tl = window.threadlight || {};
+      const acts = Array.isArray(tl.actions) ? tl.actions : [];
+      if (!acts.length) { root.hidden = true; return; }
+      root.hidden = false;
+
+      rowEl.innerHTML = acts.map(a => `
+        <button type="button" class="${buttonClass(a)}"
+                data-act-id="${escapeHtml(a.id)}"
+                data-needs-reason="${a.needsReason ? '1' : '0'}"
+                ${a.disabled ? 'disabled' : ''}
+                title="${escapeHtml(a.hint || '')}">
+          ${escapeHtml(a.label)}
+          <span class="tl-at-btn-caption">${escapeHtml(a.br || '')}</span>
+        </button>
+      `).join('');
+
+      rowEl.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => onActionClick(btn));
+      });
+    }
+
+    function onActionClick(btn) {
+      const id = btn.getAttribute('data-act-id');
+      const needsReason = btn.getAttribute('data-needs-reason') === '1';
+      pendingAction = { id, btn };
+      if (needsReason) {
+        promptEl.hidden = false;
+        inputEl.value = '';
+        inputEl.focus();
+      } else {
+        submit('');
+      }
+    }
+
+    promptEl.querySelector('[data-action="cancel"]').addEventListener('click', () => {
+      promptEl.hidden = true;
+      pendingAction = null;
+    });
+    promptEl.querySelector('[data-action="confirm"]').addEventListener('click', () => {
+      const reason = (inputEl.value || '').trim();
+      if (reason.length < 10) {
+        statusEl.textContent = 'Reason must be at least 10 characters.';
+        statusEl.dataset.state = 'error';
+        inputEl.focus();
+        return;
+      }
+      promptEl.hidden = true;
+      submit(reason);
+    });
+
+    async function submit(reason) {
+      if (!pendingAction) return;
+      const { id, btn } = pendingAction;
+      const tl = window.threadlight || {};
+      const caseId = (tl.activeCase || {}).id || '(unknown)';
+      btn.disabled = true;
+      const originalLabel = btn.querySelector('.tl-at-btn-caption').previousSibling.textContent;
+      btn.querySelector('.tl-at-btn-caption').previousSibling.textContent = '\u00A0';
+      btn.insertAdjacentHTML('afterbegin', '<span class="tl-at-spinner" aria-hidden="true"></span>\u00A0');
+      statusEl.textContent = '';
+      statusEl.removeAttribute('data-state');
+      try {
+        const handler = typeof tl.onAction === 'function' ? tl.onAction : async () => ({ ok: true });
+        const res = await handler(id, { reason, caseId });
+        statusEl.textContent = `${id} submitted.`;
+        statusEl.dataset.state = 'success';
+        window.dispatchEvent(new CustomEvent('threadlight:action-submitted', {
+          detail: { actionId: id, caseId, reason, response: res }
+        }));
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err && err.message ? err.message : err}`;
+        statusEl.dataset.state = 'error';
+      } finally {
+        btn.disabled = false;
+        const spinner = btn.querySelector('.tl-at-spinner');
+        if (spinner) spinner.remove();
+        btn.querySelector('.tl-at-btn-caption').previousSibling.textContent = originalLabel;
+        pendingAction = null;
+      }
+    }
+
+    render();
+    window.addEventListener('threadlight:actions-updated', render);
+    window.addEventListener('threadlight:case-changed', render);
+  })();
+</script>

@@ -1,0 +1,30 @@
+{
+  "name": "awesome-gbb-basic",
+  "version": "1.0.0",
+  "description": "Cross-cutting Microsoft GBB skills usable in any pre-sales or pilot engagement, regardless of cloud or stack. Bundles: research-company (web research → org brief), compose-org (fork an agentic substrate into a customer-flavoured digital clone), gbb-humanizer (polish prose with the GBB voice), gbb-pptx (Office-quality deck generation), auto-demo-producer (Playwright + edge-tts + ffmpeg narrated demos), ip-catalog (shared IP discovery), ghcp-cli-config (bootstrap Copilot CLI with 6 recommended MCP servers + settings + plugins). USE FOR: any engagement that needs research, prose polish, demo video production, deck authoring, or Copilot CLI baseline setup. DO NOT USE FOR: Azure or Foundry work (use awesome-gbb-azure) or Threadlight pipelines (use awesome-gbb-threadlight).",
+  "author": "Microsoft GBB",
+  "homepage": "https://github.com/aiappsgbb/awesome-gbb",
+  "repository": "https://github.com/aiappsgbb/awesome-gbb",
+  "license": "MIT",
+  "category": "productivity",
+  "keywords": [
+    "gbb",
+    "pre-sales",
+    "research",
+    "humanizer",
+    "pptx",
+    "demo-video",
+    "ip-catalog",
+    "copilot-cli-bootstrap",
+    "compose-org"
+  ],
+  "skills": [
+    "skills/auto-demo-producer",
+    "skills/compose-org",
+    "skills/gbb-humanizer",
+    "skills/gbb-pptx",
+    "skills/ghcp-cli-config",
+    "skills/ip-catalog",
+    "skills/research-company"
+  ]
+}

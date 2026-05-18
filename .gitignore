@@ -13,6 +13,10 @@ Desktop.ini
 # Environment
 .env
 .env.*
+# Allow committed template / example env files (sources of truth + plugin copies)
+!**/.env.sample
+!**/.env.example
+!**/.env.local.example
 
 # Node (if tooling is added later)
 node_modules/

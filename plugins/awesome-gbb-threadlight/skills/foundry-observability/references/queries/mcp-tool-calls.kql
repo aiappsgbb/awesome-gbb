@@ -1,0 +1,33 @@
+// mcp-tool-calls.kql
+// MCP tool invocation breakdown for the last hour.
+//
+// Use to:
+//   - rank tools by call volume (which is hot, which is cold)
+//   - measure latency p50/p95/p99 per tool
+//   - spot tools that error frequently
+//   - confirm validate-or-reject pattern is firing (look for high-count
+//     tools that always succeed — often means the agent is self-correcting
+//     after a structured rejection)
+
+let window = 1h;
+dependencies
+| where timestamp > ago(window)
+| where cloud_RoleName has "mcp"
+| where name has "tools/call" or name startswith "POST /mcp"
+| extend
+    tool         = tostring(customDimensions['mcp.tool.name']),
+    success_flag = iif(success, 1, 0),
+    fail_flag    = iif(success, 0, 1)
+| where isnotempty(tool)
+| summarize
+    calls       = count(),
+    successes   = sum(success_flag),
+    failures    = sum(fail_flag),
+    avg_ms      = avg(duration),
+    p50_ms      = percentile(duration, 50),
+    p95_ms      = percentile(duration, 95),
+    p99_ms      = percentile(duration, 99)
+    by tool
+| extend success_rate = round(100.0 * successes / calls, 1)
+| project tool, calls, success_rate, avg_ms, p50_ms, p95_ms, p99_ms, failures
+| order by calls desc

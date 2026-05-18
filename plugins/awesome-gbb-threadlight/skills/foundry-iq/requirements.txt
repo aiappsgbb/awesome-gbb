@@ -1,0 +1,21 @@
+# Python dependencies for Foundry IQ skill
+#
+# Install with: pip install -r requirements.txt
+
+# Azure SDK packages
+azure-search-documents>=11.7.0b1
+azure-ai-projects
+azure-core
+azure-identity
+
+# OpenAI
+openai
+
+# Web framework
+fastapi
+uvicorn
+
+# Utilities
+python-dotenv
+requests
+aiohttp
