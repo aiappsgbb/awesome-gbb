@@ -69,10 +69,11 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 | Runtime | Shell + package installs | Long-running processes | Best for |
 |---|---|---|---|
 | **GitHub Copilot CLI** (`gh copilot`) | ✅ Full | ✅ | **Primary target**. Every skill works end-to-end. |
+| **GitHub Copilot App** ([`github/app`](https://github.com/github/app)) | ✅ Full | ✅ | **Desktop GUI built on the CLI** — inherits skills, MCP servers, plugins, hooks. Best for users who prefer a click-installer (DMG/EXE/AppImage) over `npm install -g`. Public preview. |
 | **GitHub Copilot Coding Agent** (cloud) | ✅ Full | ✅ | All skills, hands-off cloud runs. |
 | **Cursor** | ✅ Full | ✅ | All skills (load via project `.cursorrules` shim). |
-| **VS Code GitHub Copilot Chat** | ✅ Full | ✅ | All skills (terminal-attached). |
-| **Claude Code** (`clawpilot`) | ✅ Full | ✅ | All skills. |
+| **VS Code GitHub Copilot Chat** | ✅ Full | ✅ | All skills (terminal-attached). Agent-mode also supports the agent-plugin bundle format (preview). |
+| **Claude Code** (`clawpilot`) | ✅ Full | ✅ | All skills. Native plugin format (`.claude-plugin/plugin.json`) is auto-detected by VS Code and Copilot too. |
 | **Microsoft Copilot Cowork** | ❌ Restricted | ❌ | Spec / pitch / config-gen skills only — see callout below. |
 
 > [!IMPORTANT]
@@ -189,6 +190,14 @@ A two-skill pipeline for producing **digital-clone-grade** customer-flavoured fo
 
 > [!TIP]
 > **First time on Copilot CLI?** Install [**ghcp-cli-config**](skills/ghcp-cli-config/) first — it bootstraps `~/.copilot/` with the 6 recommended MCP servers (`mslearn`, `Azure`, `Playwright`, `context7`, `tavily`, `mem0`), a sensible `settings.json` baseline, and the work-iq plugin family for Microsoft staff. The agent can run the bootstrap end-to-end on a fresh machine.
+
+> [!TIP]
+> **Prefer a GUI over the terminal?** Install the [**GitHub Copilot App**](https://github.com/github/app) (public preview) — a native macOS / Windows / Linux desktop application built on Copilot CLI. Because it shares `~/.copilot/`, **every skill in this catalog works in the app out of the box** — same `gh skill install` commands, same MCP servers, same plugins. Lower-friction onramp for SEs and sellers who don't live in a terminal.
+>
+> - **Business / Enterprise subscribers:** Download today: [Mac (Apple Silicon)](https://github.com/github/app/releases/latest/download/GitHub-Copilot-darwin-arm64.dmg) · [Windows](https://github.com/github/app/releases/latest/download/GitHub-Copilot-windows-x64-setup.exe) · [Linux AppImage](https://github.com/github/app/releases/latest/download/GitHub-Copilot-linux-x64.AppImage) · [Mac (Intel)](https://github.com/github/app/releases/latest/download/GitHub-Copilot-darwin-x64.dmg) · [Windows (ARM)](https://github.com/github/app/releases/latest/download/GitHub-Copilot-windows-arm64-setup.exe)
+> - **Pro / Pro+ subscribers:** [Sign up for early access](https://gh.io/github-app) (waitlist).
+> - **Docs + walkthrough:** <https://gh.io/github-app-docs>
+> - **First-launch tip:** if you have Copilot CLI installed already, the app picks up your existing `~/.copilot/` automatically. Otherwise run the [**ghcp-cli-config**](skills/ghcp-cli-config/) skill from inside the app to seed the directory.
 
 ```bash
 gh skill install aiappsgbb/awesome-gbb <skill-name> --scope user
