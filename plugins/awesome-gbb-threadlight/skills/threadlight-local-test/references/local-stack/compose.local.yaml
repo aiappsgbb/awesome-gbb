@@ -1,0 +1,53 @@
+# docker-compose for local Threadlight PoC test stack
+#
+# Starts: Cosmos DB Emulator + nginx serving the workspace UI.
+# Does NOT start: the MCP server, the agent, the bot — those run
+# directly via `uv run python ...` so you can iterate on Python
+# code without rebuilding containers.
+#
+# Bring up:    docker compose -f references/local-stack/compose.local.yaml --env-file .env.local up -d
+# Tear down:   docker compose -f references/local-stack/compose.local.yaml down -v
+
+services:
+
+  cosmos:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+    container_name: tl-cosmos-emulator
+    ports:
+      - "8081:8081"      # data + management API
+      - "10250-10256:10250-10256"  # legacy gateway range (some SDKs probe these)
+    environment:
+      AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "3"
+      AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "true"
+      AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
+    volumes:
+      - cosmos-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --insecure --silent --fail https://localhost:8081/_explorer/index.html >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - tl
+
+  ui:
+    image: nginx:1.27-alpine
+    container_name: tl-workspace-ui
+    ports:
+      - "8080:80"
+    volumes:
+      # Mount the PoC's workspace static dir read-only
+      # The PoC root is the parent of the directory holding this compose file
+      - ../../src/workspace:/usr/share/nginx/html:ro
+    networks:
+      - tl
+    depends_on:
+      - cosmos
+
+volumes:
+  cosmos-data:
+
+networks:
+  tl:
+    driver: bridge

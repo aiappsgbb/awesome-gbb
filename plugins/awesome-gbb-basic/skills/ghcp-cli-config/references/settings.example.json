@@ -1,0 +1,36 @@
+{
+  "_comment": "Recommended baseline for ~/.copilot/settings.json. Copilot CLI rewrites this file when you change settings via the UI; comments survive but ordering may shift. Never edit ~/.copilot/m-*.json — those are managed.",
+
+  "model": "claude-opus-4.7",
+
+  "renderMarkdown": true,
+  "showReasoning": false,
+
+  "allowedUrls": [
+    "https://raw.githubusercontent.com",
+    "https://docs.github.com"
+  ],
+
+  "sessionSync": [
+    { "origin": "*", "level": "user" }
+  ],
+
+  "trustedFolders": [
+    "<absolute-path-to-your-repos-root>",
+    "<absolute-path-to-another-trusted-folder>"
+  ],
+
+  "extraKnownMarketplaces": {
+    "copilot-plugins": {
+      "source": { "source": "github", "repo": "github/copilot-plugins" }
+    }
+  },
+
+  "enabledPlugins": {},
+
+  "disabledSkills": [],
+
+  "telemetryEnabled": true,
+  "sessionRetentionDays": 90,
+  "preventSleepEnabled": true
+}
