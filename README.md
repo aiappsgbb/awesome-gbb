@@ -35,6 +35,8 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 ## 🧵 Featured Pipeline: Threadlight
 
+> **▶ Live experience (org members only):** <https://fluffy-carnival-6qny72q.pages.github.io/> — cinematic one-pager that explains the pipeline in five scrolls. Mirrors [`threadlight-experience.html`](threadlight-experience.html) (open the file directly via [htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/threadlight-experience.html) if you can't reach the Pages URL).
+
 **Threadlight** is the flagship end-to-end pipeline in this catalog: a chain
 of eight `threadlight-*` skills that take a customer from a one-paragraph
 brief through spec → local test → deploy → safe-check gate → demo. It's
