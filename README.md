@@ -35,7 +35,7 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 ## 🧵 Featured Pipeline: Threadlight
 
-> **▶ Live experience (org members only):** <https://fluffy-carnival-6qny72q.pages.github.io/> — cinematic one-pager that explains the pipeline in five scrolls. Mirrors [`threadlight-experience.html`](threadlight-experience.html) (open the file directly via [htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/threadlight-experience.html) if you can't reach the Pages URL).
+> **▶ Live experience (org members only):** <https://fluffy-carnival-6qny72q.pages.github.io/threadlight/> — cinematic one-pager that explains the pipeline in five scrolls. Mirrors [`threadlight-experience.html`](threadlight-experience.html) at repo root (open the source via [htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/threadlight-experience.html) if you can't reach the Pages URL).
 
 **Threadlight** is the flagship end-to-end pipeline in this catalog: a chain
 of eight `threadlight-*` skills that take a customer from a one-paragraph
@@ -185,6 +185,9 @@ A two-skill pipeline for producing **digital-clone-grade** customer-flavoured fo
 ---
 
 ## How to Use
+
+> [!TIP]
+> **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
 > **Install whole domains in one command via plugins.** The catalog ships 3 [Copilot CLI plugins](plugins/) so you don't have to install skills one-by-one:

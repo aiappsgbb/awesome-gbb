@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>threadlight-safe-check — awesome-gbb</title>
+<meta name="description" content="Microsoft GBB Copilot skills + plugins for Azure AI, Foundry, and governance.">
+<meta name="theme-color" content="#4f6dff">
+<link rel="canonical" href="https://aiappsgbb.github.io/awesome-gbb/skills/threadlight-safe-check/">
+<link rel="stylesheet" href="/_styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="brand"><span class="brand-mark"></span><span>awesome-gbb</span></a>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/skills/" class="active">Skills</a>
+      <a href="/plugins/">Plugins</a>
+      <a href="/threadlight/">Threadlight</a>
+      <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
+    </div>
+  </div>
+</nav>
+<main>
+<div class="detail-head"><h1>threadlight-safe-check</h1><div class="meta"><span class="badge ver">v1.0.2</span> <span class="badge cat">🧵 Threadlight Pipeline</span></div></div><div class="detail-body"><p>Mandatory three-lifecycle completeness gate for threadlight pilots (design / pre-deploy / post-deploy). Reads SPEC § 11c selectors via `specs/manifest.json` `deployment_manifest` and asserts: every selector maps to deployed `Microsoft.*` types, every channel reaches, every scheduled job is wired. Post-deploy ALSO runs behavioural checks — deployed images must NOT match the azuredocs helloworld placeholder, no ACA Job may have its last 5 executions all Failed, and an App Insights resource must exist when SPEC declared it. USE FOR: completeness gate, deploy gate, safe check, post-deploy gate, pre-deploy check, manifest drift, orphan modules, partial PoC, missing bot/workspace/aca-job, deployment_manifest, postdeploy- manifest.json, placeholder image, helloworld image, image probe, job execution failed, cron rot, app insights missing, telemetry not flowing, blank appin. DO NOT USE FOR: invocation/runtime tests (foundry-evals), `azd up` orchestration (threadlight-deploy), schema authoring (threadlight- design).</p><h2>Install</h2><pre><code>gh skill install aiappsgbb/awesome-gbb threadlight-safe-check</code></pre><p><a class="cta" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-safe-check/SKILL.md">Open SKILL.md on GitHub →</a></p><h2>Bundled in</h2><ul class="bundled-list"><li><a href="/plugins/awesome-gbb-threadlight/">awesome-gbb-threadlight</a></li></ul></div>
+</main>
+<footer>
+  <div class="stats">33 skills · 3 plugins · MIT license</div>
+  <div>Built from <code>16b3f38</code> on 2026-05-19 · <a href="https://github.com/aiappsgbb/awesome-gbb">aiappsgbb/awesome-gbb</a> · MIT</div>
+</footer>
+</body>
+</html>
