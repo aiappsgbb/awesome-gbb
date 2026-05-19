@@ -17,7 +17,7 @@ description: >
   (use azure-tenant-isolation), Foundry project creation, APIM creation
   from scratch.
 metadata:
-  version: "1.0.1"
+  version: "1.2.0"
 ---
 
 # Cross-Resource Model Invocation via Foundry AI Gateway
@@ -356,7 +356,16 @@ For Azure OpenAI deployments use `OpenAI`.
 | Connection with **no** `metadata` at all | `400 Model gateway error: Upstream gateway returned NotFound` |
 | Connection with `metadata.modelDiscovery` (stringified) but **no** `models` | `400 Model gateway error: Upstream gateway returned NotFound` (against AOAI backends — AOAI's `/deployments` data-plane endpoint isn't a list) |
 | `models` passed as a real JSON array (not stringified) | Foundry stores it but inference returns `Upstream gateway returned NotFound`; this is a silent footgun |
-| `authType: "AAD"` (legacy alias) | Inconsistent — sometimes accepted, sometimes rejected. Always use `ProjectManagedIdentity`. |
+| `authType: "AAD"` (legacy alias) on **Responses API** | Inconsistent — sometimes accepted, sometimes rejected. Use `ProjectManagedIdentity` for Responses API / hosted agents. |
+| `authType: "ProjectManagedIdentity"` on **Assistants v1 API** | **Rejected** — `"AuthType ProjectManagedIdentity for connection <name> is not supported"`. The standard-agent Assistants API (`/assistants`, `/threads/<id>/runs`) only accepts `authType: "AAD"`. |
+| `authType: "AAD"` on **private VNet standard agents** (Responses API) | Runtime internally maps AAD to ProjectManagedIdentity, then rejects with `"AuthType ProjectManagedIdentity not supported"`. Use `ApiKey` with an APIM subscription key for private VNet standard-agent setups. |
+| Connection `target` **without the APIM API path** (e.g. `https://apim.azure-api.net` instead of `https://apim.azure-api.net/openai`) | `400 Connection '<name>' not found` on `responses.create()`. The Responses API uses the target path to route to the correct APIM API; without it the connection resolver fails silently. |
+| **Assistants v1 runtime** (`POST /threads/<id>/runs`) with `model: "conn/dep"` through APIM | `server_error` with `prompt_tokens: 0` and **zero APIM traffic**. The runtime does not resolve `<connection>/<deployment>` model strings through APIM connections — the failure is inside Foundry before any upstream call. Reproduced 2026-05-19 across NEU/WE/EUS2/FRC/CHN on `switzerlandnorth+swedencentral` private VNet topology. |
+
+> **`authType` decision tree (May 2026):**
+> - **Responses API, public endpoint** (`oai.responses.create()`, Patterns A/B/C) → use `ProjectManagedIdentity` (preferred) or `ApiKey`
+> - **Responses API, private VNet standard agents** → use `ApiKey` with APIM subscription key (AAD is internally mapped to PMI which is rejected in private VNet standard-agent setups)
+> - **Standard Agents / Assistants v1** (`/assistants`, `/threads/<id>/runs`) → use `AAD` (PMI is rejected); note the runtime itself fails server-side with APIM connections regardless of metadata correctness — this is a platform limitation, v1 retires May 22 2026
 
 ---
 
@@ -516,7 +525,7 @@ REST equivalent (refreshed preview): include header
 `Foundry-Features: HostedAgents=V1Preview` on the call, per
 `learn.microsoft.com/azure/foundry/agents/how-to/migrate-hosted-agent-preview`.
 
-### 7.4 Negative pattern — DOES NOT work
+### 7.4 Negative patterns — DO NOT work
 
 ```python
 # 404 DeploymentNotFound — Foundry only routes the conn/dep alias on /v1/responses,
@@ -527,6 +536,17 @@ oai.chat.completions.create(model="aigw-strmeta/gpt-5.4-mini", messages=[...])
 If you have legacy code that must use `chat.completions`, point it at the
 backend resource directly (with proper RBAC) — not at the Foundry project's
 OpenAI surface.
+
+> **Assistants v1 runtime (`/threads/<id>/runs`) also fails.** Creating an
+> assistant with `model: "conn/dep"` succeeds (the string is stored), but
+> `POST /threads/<id>/runs` returns `server_error` with `prompt_tokens: 0`
+> and no upstream APIM traffic. The standard-agent runtime does not resolve
+> `<connection>/<deployment>` model strings through APIM. Reproduced
+> 2026-05-19 on a private VNet topology (Switzerland North + Sweden Central)
+> with correct connection metadata (`models`, `deploymentInPath`,
+> `inferenceAPIVersion` all present). This is a platform-side limitation,
+> not a configuration issue. If you need the Assistants v1 API shape with
+> cross-resource models, file a Microsoft support case.
 
 ### 7.5 Hosted Agents container (`MODEL_DEPLOYMENT_NAME`)
 
@@ -603,6 +623,9 @@ Run them as a regression gate when you provision new APIM/Foundry combinations.
 |---------|-----------|-----|
 | `400 Model gateway error: Upstream gateway returned NotFound` on EVERY call | Connection `metadata` is missing or `models`/`modelDiscovery` not stringified | PUT a connection that matches §5.1 verbatim. Stringify `models`. |
 | `404 DeploymentNotFound` from `chat.completions.create()` with `model="conn/dep"` | Foundry routes `conn/dep` only on the Responses API | Use `responses.create()` (Pattern A) or one of the agent patterns. |
+| **Assistants v1 `server_error`** — `POST /threads/<id>/runs` with `model: "conn/dep"` returns `status: failed`, `last_error.code: server_error`, `prompt_tokens: 0`, no APIM traffic | Platform limitation — the standard-agent Assistants v1 runtime does not resolve `<connection>/<deployment>` model strings through APIM connections. The failure is inside Foundry before any upstream call is made. | **No workaround on Assistants v1.** Migrate to the Responses API (`oai.responses.create()`, Pattern A/B/C) which does support `conn/dep` routing. Or file a Microsoft support case if Assistants v1 is required. |
+| `400 AuthType ProjectManagedIdentity for connection <name> is not supported` on `/assistants` | Standard-agent Assistants v1 API rejects PMI connections | Use `authType: "AAD"` for standard agents. PMI is only supported on the Responses API path. |
+| `400 Connection '<name>' not found` from `responses.create()` — connection exists and is visible via SDK `project.connections.get()` | Connection `target` is missing the APIM API path suffix (e.g. target is `https://apim.azure-api.net` instead of `https://apim.azure-api.net/openai`). The Responses API uses the target path to route to the correct APIM API. Also occurs when `authType` is `AAD` on private VNet standard-agent setups (runtime maps AAD→PMI internally, then rejects). | Set target to `https://<apim>.azure-api.net/<api-path>` (match the APIM API's `path` property). For private VNet: use `authType: ApiKey` with a subscription key. |
 | `401 Access denied due to missing subscription key` (ApiKey path) | `api-key` header missing OR API/product `subscriptionRequired=false` is set | Either ensure connection holds the key (`credentials.key`) and APIM API requires sub; or switch to PMI and clear `subscriptionRequired`. |
 | `401 Invalid token (audience or xms_mirid claim mismatch)` (PMI path) | Either audience mismatch or `xms_mirid` required-claim doesn't match Foundry's actual MI token | Validate using `<client-application-ids>` with the project MI clientId. (See §4.3 — `xms_mirid` value from Foundry is unreliable.) |
 | Connection PUT with KV reference fails: "Azure Key Vault connections can only be created or updated at the workspace hub level" | Trying to store API key in a project-level KV connection on a Foundry V2 project | Don't. The 2025-04-01-preview ARM API stores ApiKey credentials inline. KV is not required. |
@@ -622,6 +645,14 @@ endpoint on APIM + DNS), see template
 Conceptually identical to the public path — the connection target becomes
 `https://<apim-private-host>/<api-path>`; Foundry resolves it through the
 project's outbound private DNS zone.
+
+> **Agent subnet CIDR restriction (verified 2026-05-19).** In some regions
+> (observed in Switzerland North; may apply elsewhere), the Foundry RP
+> rejects `networkInjections` with 10.x.x.x subnets:
+> _"Provided subnet must be of the proper address space. Please provide a
+> subnet which has address space in the range of 172 or 192."_
+> Use 172.16.x.x/xx or 192.168.x.x/xx CIDRs for the agent VNet and its
+> subnets in those regions. West Europe and East US 2 accept 10.x ranges.
 
 ---
 
