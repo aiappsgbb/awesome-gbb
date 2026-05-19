@@ -297,6 +297,85 @@ pre code { background: transparent; border: 0; padding: 0; }
 
 .bundled-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .bundled-list li { padding: 4px 0; }
+
+/* ---------- accessibility helper ---------- */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* ---------- home browse grid ---------- */
+.browse-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+  margin: 32px 0 16px;
+}
+.browse-card {
+  position: relative;
+  display: flex; gap: 18px; align-items: flex-start;
+  padding: 22px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink-0);
+  text-decoration: none;
+  transition: transform .18s, box-shadow .18s, border-color .18s;
+}
+.browse-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink-0);
+}
+.browse-icon {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-1);
+  transition: background .18s, color .18s;
+}
+.browse-icon svg { width: 26px; height: 26px; }
+.browse-card:hover .browse-icon { background: var(--lime-soft); color: var(--lime); }
+.browse-body { display: block; flex: 1; min-width: 0; }
+.browse-body h3 {
+  font-family: var(--sans); font-weight: 600; font-size: 18px;
+  margin: 0 0 6px; color: var(--ink-0); letter-spacing: -.005em;
+}
+.browse-body p {
+  font-size: 14px; color: var(--ink-2); margin: 0; line-height: 1.5;
+}
+.browse-count {
+  position: absolute; top: 16px; right: 18px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--ink-3); letter-spacing: .02em;
+}
+
+/* ---------- chip bar (skills index) ---------- */
+.chip-bar {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 22px 0 14px;
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px;
+  font: inherit; font-size: 13px;
+  background: var(--bg-1); color: var(--ink-1);
+  border: 1px solid var(--line); border-radius: 999px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.chip:hover { border-color: var(--accent); color: var(--ink-0); }
+.chip.active {
+  background: var(--accent-soft);
+  color: var(--accent-1);
+  border-color: var(--accent-soft);
+}
+.chip-count { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.chip.active .chip-count { color: var(--accent-1); }
 </style>
 </head>'''
 
@@ -403,71 +482,116 @@ def _skill_categories(skill_name: str, categories: dict[str, list[str]]) -> list
 # Home
 # ---------------------------------------------------------------------------
 
+_ICON_SKILLS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M12 3 2 8l10 5 10-5-10-5Z"/>'
+    '<path d="m2 16 10 5 10-5"/>'
+    '<path d="m2 12 10 5 10-5"/>'
+    '</svg>'
+)
+_ICON_PLUGINS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="3" y="3" width="7" height="7" rx="1.5"/>'
+    '<rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+    '<rect x="3" y="14" width="7" height="7" rx="1.5"/>'
+    '<rect x="14" y="14" width="7" height="7" rx="1.5"/>'
+    '</svg>'
+)
+_ICON_THREAD = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0Z"/>'
+    '<circle cx="12" cy="12" r="2.5"/>'
+    '</svg>'
+)
+_ICON_DOCS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M4 4h10l4 4v12H4z"/>'
+    '<path d="M14 4v4h4"/>'
+    '<path d="M8 13h8M8 17h6"/>'
+    '</svg>'
+)
+
+
+def _browse_card(
+    href: str, icon: str, title: str, desc: str, *,
+    count: str | int | None = None, external: bool = False,
+) -> str:
+    ext_attr = ' target="_blank" rel="noopener"' if external else ''
+    count_html = (
+        f'<span class="browse-count" aria-label="{_esc(title)} count">{_esc(str(count))}</span>'
+        if count is not None else ''
+    )
+    return (
+        f'<a class="browse-card" href="{_esc(href)}"{ext_attr}>'
+        f'<span class="browse-icon" aria-hidden="true">{icon}</span>'
+        '<span class="browse-body">'
+        f'<h3>{_esc(title)}</h3>'
+        f'<p>{_esc(desc)}</p>'
+        '</span>'
+        f'{count_html}'
+        '</a>'
+    )
+
+
 def render_home(
     categories: dict[str, list[str]],
     skills: list[dict[str, Any]],
     plugins: list[dict[str, Any]],
 ) -> str:
-    """Render the landing page body."""
-    skills_by_name = {s['name']: s for s in skills}
+    """Render the landing page body.
 
-    plugin_cards = ['<div class="grid">']
-    for p in plugins:
-        plugin_cards.append(
-            '<div class="card">'
-            f'<h3><a href="/plugins/{_esc(p["name"])}/">{_esc(p["name"])}</a></h3>'
-            f'<p>{_esc(_first_sentence(p.get("description", ""), max_chars=220))}</p>'
-            f'<pre><code>copilot plugin install {_esc(p["name"])}@awesome-gbb</code></pre>'
-            f'<div class="meta"><span class="badge">{len(p.get("skills", []))} skills</span>'
-            f' <span class="badge ver">v{_esc(p.get("version", "1.0.0"))}</span></div>'
-            '</div>'
-        )
-    plugin_cards.append('</div>')
+    Mirrors awesome-copilot.github.com: hero + small grid of resource-type
+    browse cards. Skill-level browsing happens on /skills/ (with category
+    chip filter). Categories are kept in the signature for forward-compat
+    but no longer surface on the home page.
+    """
+    _ = categories  # unused on home — preserved for API stability
 
-    cat_sections: list[str] = []
-    for cat_name, members in categories.items():
-        cat_sections.append(
-            f'<div class="section-head"><h2>{_esc(cat_name)}</h2>'
-            f'<span class="count">{len(members)} skill{"s" if len(members) != 1 else ""}</span></div>'
-        )
-        cat_sections.append('<div class="grid">')
-        for skill_name in members:
-            s = skills_by_name.get(skill_name)
-            if not s:
-                continue
-            blurb = _first_sentence(s.get('description', ''))
-            cat_sections.append(
-                '<div class="card">'
-                f'<h3><a href="/skills/{_esc(skill_name)}/">{_esc(skill_name)}</a></h3>'
-                f'<p>{_esc(blurb)}</p>'
-                f'<div class="meta"><span class="badge ver">v{_esc(s.get("version", ""))}</span></div>'
-                '</div>'
-            )
-        cat_sections.append('</div>')
-
-    threadlight_tile = (
-        '<div class="section-head"><h2>🧵 Threadlight experience</h2></div>'
-        '<div class="card" style="max-width:760px;">'
-        '<h3><a href="/threadlight/">Threadlight — one paragraph to a deployed agent</a></h3>'
-        '<p>Cinematic single-page narrative for the end-to-end Threadlight pipeline. '
-        'Eight skills compress eight weeks of pilot into a single working session.</p>'
-        '<p><a href="/threadlight/">Open the experience →</a></p>'
-        '</div>'
-    )
+    cards = [
+        _browse_card(
+            '/skills/', _ICON_SKILLS, 'Skills',
+            'Self-contained Copilot skills for Azure AI, Microsoft Foundry, '
+            'threadlight, and agent governance.',
+            count=len(skills),
+        ),
+        _browse_card(
+            '/plugins/', _ICON_PLUGINS, 'Plugins',
+            'One-command bundles of related skills. Work in Copilot CLI, '
+            'Desktop, VS Code agent mode, and Claude Code.',
+            count=len(plugins),
+        ),
+        _browse_card(
+            '/threadlight/', _ICON_THREAD, 'Threadlight',
+            'Cinematic walkthrough of the end-to-end agentic pipeline that '
+            'bundles eight skills into a single working session.',
+            count='peer track',
+        ),
+        _browse_card(
+            f'{GITHUB_BASE}/blob/main/AGENTS.md', _ICON_DOCS, 'Contributing',
+            'AGENTS.md, THREADLIGHT.md, freshness lifecycle, mass-edit '
+            'playbook, CI invariants.',
+            external=True,
+        ),
+    ]
 
     body = (
         '<section class="hero">'
         '<p class="eyebrow"><span class="dot"></span>Microsoft GBB · Copilot skill catalog</p>'
         '<h1><strong>awesome-gbb</strong></h1>'
         '<p class="lede">Microsoft GBB Copilot skills + plugins for Azure AI, '
-        'Microsoft Foundry, and governance. 33 production-tested skills bundled into '
-        '3 one-command plugins.</p>'
+        'Microsoft Foundry, and governance. Production-tested. Versioned. '
+        'Installable individually or as one-command plugin bundles.</p>'
         '</section>'
-        '<div class="section-head"><h2>Plugins</h2>'
-        f'<span class="count">{len(plugins)} bundles</span></div>'
-        + ''.join(plugin_cards)
-        + ''.join(cat_sections)
-        + threadlight_tile
+        '<section aria-labelledby="browse-h">'
+        '<h2 id="browse-h" class="sr-only">Browse</h2>'
+        '<div class="browse-grid">'
+        + ''.join(cards)
+        + '</div>'
+        '</section>'
     )
     return body
 
@@ -480,19 +604,32 @@ _SKILLS_FILTER_JS = '''<script>
 (function () {
   var input = document.getElementById('filter');
   var items = Array.prototype.slice.call(document.querySelectorAll('.skill-list li'));
+  var chips = Array.prototype.slice.call(document.querySelectorAll('.chip-bar .chip'));
   var count = document.getElementById('skill-count');
+  var activeCat = '';
   function apply() {
     var q = (input.value || '').trim().toLowerCase();
     var shown = 0;
     items.forEach(function (li) {
       var hay = li.getAttribute('data-search') || '';
-      var match = !q || hay.indexOf(q) !== -1;
+      var cat = li.getAttribute('data-category') || '';
+      var matchQ = !q || hay.indexOf(q) !== -1;
+      var matchCat = !activeCat || cat === activeCat;
+      var match = matchQ && matchCat;
       li.hidden = !match;
       if (match) shown += 1;
     });
     if (count) count.textContent = shown + ' / ' + items.length;
   }
   input.addEventListener('input', apply);
+  chips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      chips.forEach(function (c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      activeCat = chip.getAttribute('data-cat') || '';
+      apply();
+    });
+  });
   apply();
 })();
 </script>'''
@@ -502,7 +639,18 @@ def render_skills_index(
     skills: list[dict[str, Any]],
     categories: dict[str, list[str]],
 ) -> str:
-    """Render the flat searchable skill list."""
+    """Render the flat searchable skill list with category chip filter."""
+    chips = [
+        f'<button type="button" class="chip active" data-cat="">All '
+        f'<span class="chip-count">{len(skills)}</span></button>'
+    ]
+    for cat_name, members in categories.items():
+        chips.append(
+            f'<button type="button" class="chip" data-cat="{_esc(cat_name)}">'
+            f'{_esc(cat_name)} <span class="chip-count">{len(members)}</span>'
+            '</button>'
+        )
+
     items = []
     for s in sorted(skills, key=lambda x: x['name']):
         name = s['name']
@@ -512,7 +660,7 @@ def render_skills_index(
         search_blob = f'{name} {cat} {blurb}'.lower()
         cat_badge = f'<span class="badge cat">{_esc(cat)}</span>' if cats else ''
         items.append(
-            f'<li data-search="{_esc(search_blob)}">'
+            f'<li data-search="{_esc(search_blob)}" data-category="{_esc(cat)}">'
             f'<div class="title"><a href="/skills/{_esc(name)}/">{_esc(name)}</a></div>'
             f'<div class="meta">{cat_badge} <span class="badge ver">v{_esc(s.get("version", ""))}</span></div>'
             f'<div class="desc">{_esc(blurb)}</div>'
@@ -521,9 +669,12 @@ def render_skills_index(
     body = (
         '<h1>Skills</h1>'
         f'<p>{len(skills)} production-tested Microsoft GBB Copilot skills. '
-        'Type to filter by name, category, or description.</p>'
+        'Click a category to filter, or type to search by name or description.</p>'
+        '<div class="chip-bar" role="tablist" aria-label="Filter by category">'
+        + ''.join(chips)
+        + '</div>'
         '<div class="filter-bar">'
-        '<input id="filter" type="search" placeholder="Filter skills…" autocomplete="off" autofocus>'
+        '<input id="filter" type="search" placeholder="Filter skills…" autocomplete="off">'
         f'<span class="count" id="skill-count">{len(skills)} / {len(skills)}</span>'
         '</div>'
         '<ul class="skill-list">'
