@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "default_alias": "prod",
+  "tenants": {
+    "prod": {
+      "tenant_id": "00000000-0000-0000-0000-000000000001",
+      "description": "Production tenant",
+      "config_dir": null,
+      "azd_config_dir": null,
+      "default_subscription": "acme-prod",
+      "allowed_subscriptions": [
+        "acme-prod"
+      ]
+    },
+    "dev": {
+      "tenant_id": "00000000-0000-0000-0000-000000000002",
+      "description": "Development tenant",
+      "config_dir": null,
+      "azd_config_dir": null,
+      "default_subscription": "acme-dev",
+      "allowed_subscriptions": [
+        "acme-dev",
+        "acme-test"
+      ]
+    },
+    "partner": {
+      "tenant_id": "00000000-0000-0000-0000-000000000003",
+      "description": "Partner / customer tenant (B2B)",
+      "config_dir": "~/.azure-tenants/partner-custom",
+      "azd_config_dir": "~/.azd-tenants/partner-custom",
+      "default_subscription": "partner-shared",
+      "allowed_subscriptions": [
+        "partner-shared"
+      ]
+    }
+  }
+}

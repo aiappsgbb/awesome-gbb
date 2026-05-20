@@ -1,0 +1,40 @@
+name: Skill validation
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - "plugins/**"
+      - ".github/plugin/**"
+      - "AGENTS.md"
+      - "scripts/**"
+      - ".github/workflows/skill-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "skills/**"
+      - "plugins/**"
+      - ".github/plugin/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: Validate all SKILL.md, pin files, and plugin manifests
+        run: python scripts/validate-skills.py
+
+      - name: Verify plugin skill copies are in sync with source
+        run: python scripts/build-plugins.py --check

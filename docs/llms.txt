@@ -1,0 +1,65 @@
+# awesome-gbb
+
+> Microsoft GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.
+
+## Skills
+
+### 🏗️ Foundry Building Blocks
+
+- [foundry-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-hosted-agents/SKILL.md): Deploy, evaluate, and manage Foundry hosted agents on the refreshed April 2026 preview (Agent + FoundryChatClient + ResponsesHostServer pattern, MAF 1.4.0, Foundry User role).
+- [foundry-teams-bot](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-teams-bot/SKILL.md): Connect a Microsoft Foundry Hosted Agent to Microsoft Teams — generate the bot code, Bicep infrastructure, Teams manifest, and ACA deployment.
+- [ghcp-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-hosted-agents/SKILL.md): Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK authentication and Invocations protocol.
+- [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.
+- [foundry-evals](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-evals/SKILL.md): Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry built-in evaluators.
+- [foundry-iq](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-iq/SKILL.md): Build enterprise RAG into every threadlight process via Foundry IQ — Azure AI Search Knowledge Bases with agentic retrieval (multi-hop reasoning, query planning, citation-backed responses).
+- [foundry-doc-vision-speech](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-doc-vision-speech/SKILL.md): Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) into a Foundry hosted agent.
+- [foundry-observability](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-observability/SKILL.md): End-to-end observability for Threadlight pilots — App Insights + Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers, ACA jobs, bot service, workspace UIs.
+- [foundry-cross-resource](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-cross-resource/SKILL.md): Cross-resource model invocation in Microsoft Foundry via an Azure APIM AI Gateway, using the `connectionName/deploymentName` model string.
+- [foundry-vnet-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-vnet-deploy/SKILL.md): Deploys Azure AI Foundry with **Agent Setup inside a private VNet** via Bicep (`15-private-network-standard-agent-setup` reference).
+- [foundry-toolbox](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-toolbox/SKILL.md): Wire the Microsoft Foundry Toolbox into hosted agents — a managed multi-tool bundle (mcp, web_search, azure_ai_search, code_interpreter, file_search, openapi, a2a_preview) behind…
+- [foundry-skill-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-skill-catalog/SKILL.md): Centrally store and distribute instruction-only `SKILL.md` files via the Foundry **Skills** REST API (`{project}/skills`) — and consume them at runtime from MAF agents through a custom `SkillsSource` adapter.
+
+### 🧵 Threadlight Pipeline
+
+- [threadlight-design](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-design/SKILL.md): Spec out a business process or customer use case for an enterprise pilot, then generate agent architecture (AGENTS.md + Skills) — a durable SpecKit specification first (process…
+- [threadlight-local-test](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-local-test/SKILL.md): Run a threadlight-designed PoC locally without `azd up`.
+- [threadlight-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-deploy/SKILL.md): Take a designed agent project (from threadlight-design or manually crafted) and generate all deployment artifacts for Microsoft Foundry Hosted Agents.
+- [threadlight-safe-check](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-safe-check/SKILL.md): Three-lifecycle completeness gate for threadlight pilots (design / pre-deploy / post-deploy).
+- [threadlight-event-triggers](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-event-triggers/SKILL.md): Scaffold non-interactive trigger receivers for a threadlight process — ACA-first (jobs, app HTTP receivers, KEDA-scaled consumers) with Azure Functions only when narrow constraints demand it.
+- [threadlight-hitl-patterns](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-hitl-patterns/SKILL.md): Generate Teams Adaptive Card flows + bot UX components for the seven canonical action gates (approve, edit-and-approve, reject, escalate, signoff, audit-view, request-info) declared in spec § 8 Human Interaction Points.
+- [threadlight-workspace-ui](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-workspace-ui/SKILL.md): Generate a curated, framework-agnostic workspace UI reference for a threadlight process — case-list / inbox / dashboard / console / kanban / map shape with detail pane, action toolbar, audit viewer.
+- [threadlight-demo-data-factory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-demo-data-factory/SKILL.md): Generate per-domain Faker-style synthetic data + Cosmos seed/reset scripts for a threadlight process.
+
+### 🛠️ Cross-Cutting Helpers
+
+- [azd-patterns](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azd-patterns/SKILL.md): Tips and patterns for Azure Developer CLI (azd) workflows, ACA job deployment, and infrastructure scripting conventions.
+- [azure-tenant-isolation](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-tenant-isolation/SKILL.md): Multi-tenant Azure CLI and AZD isolation for concurrent terminal sessions.
+- [gbb-humanizer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-humanizer/SKILL.md): Remove signs of AI-generated writing from prose.
+- [ghcp-cli-config](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-cli-config/SKILL.md): Bootstrap GitHub Copilot CLI for GBB workflows: 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), settings.json baseline (model, sessionSync,…
+- [paygo-ptu-cost-analyzer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/paygo-ptu-cost-analyzer/SKILL.md): Headless Azure OpenAI PAYGO-vs-PTU cost analysis and sizing report.
+
+### 🛡️ Governance
+
+- [citadel-hub-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/citadel-hub-deploy/SKILL.md): Deploy the **AI Citadel Governance Hub** (Layer 1) — APIM AI Gateway, Microsoft Foundry control plane, telemetry, 4 LLM APIs (Azure OpenAI, OpenAI Realtime, Universal LLM, Unified…
+- [citadel-spoke-onboarding](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/citadel-spoke-onboarding/SKILL.md): Onboard a Foundry project as a spoke into an AI Citadel Governance Hub.
+- [foundry-agt](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-agt/SKILL.md): Wrap the Microsoft Agent Governance Toolkit (AGT) around Foundry hosted agents, MCP servers, and Citadel spokes.
+
+### 📊 Content Generation
+
+- [gbb-pptx](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-pptx/SKILL.md): Generate professional PowerPoint (PPTX) presentations using python-pptx (the AI Apps GBB dark/light pitch-deck generator).
+- [auto-demo-producer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/auto-demo-producer/SKILL.md): Produce narrated video demos of web applications automatically.
+
+### 🧬 Org Composition
+
+- [research-company](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/research-company/SKILL.md): Emit a thin org-brief YAML profiling a target organisation — the company-specific overlay that pairs with an industry primer to drive a digital-clone-grade substrate fork.
+- [compose-org](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/compose-org/SKILL.md): Fork an agentic substrate into a customer-flavoured digital clone using an org-brief YAML (from research-company) + the matching industry primer.
+
+### 🔍 Discovery
+
+- [ip-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ip-catalog/SKILL.md): Discover AI Apps GBB IP catalog via MCP server.
+
+## Plugins
+
+- [awesome-gbb-azure](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb-azure/plugin.json): Microsoft GBB skills for Azure + Microsoft Foundry pilots.
+- [awesome-gbb-basic](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb-basic/plugin.json): Cross-cutting Microsoft GBB skills usable in any pre-sales or pilot engagement, regardless of cloud or stack.
+- [awesome-gbb-threadlight](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb-threadlight/plugin.json): End-to-end Threadlight engagement pipeline as a single self-contained plugin.

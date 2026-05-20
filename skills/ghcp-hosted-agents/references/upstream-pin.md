@@ -1,0 +1,172 @@
+---
+schema_version: 2
+freshness_tier: B
+automation_tier: auto
+
+upstream:
+  type: pypi
+  notes: |
+    Wrapper around the GitHub Copilot SDK + azure-ai-agentserver-invocations preview stack.
+    Version-pinned via PyPI; no git SHA tracking.
+
+    Verified end-to-end against a Foundry test project (`<test-rg>`) on 2026-05-17:
+    `azd ai agent init` -> `azd up` -> direct invocations curl returned an
+    assistant.message with the expected text in <8s on gpt-5.4-mini.
+
+packages:
+  - name: github-copilot-sdk
+    source: pypi
+    version: "0.3.0"
+    upstream_changelog: https://pypi.org/project/github-copilot-sdk/#history
+  - name: azure-ai-agentserver-invocations
+    source: pypi
+    version: "1.0.0b3"
+    upstream_changelog: https://pypi.org/project/azure-ai-agentserver-invocations/#history
+  - name: azure-identity
+    source: pypi
+    version: "1.25.3"
+    upstream_changelog: https://pypi.org/project/azure-identity/#history
+  - name: python-dotenv
+    source: pypi
+    version: "1.0.0"
+    upstream_changelog: https://pypi.org/project/python-dotenv/#history
+
+docs_to_revalidate:
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/develop/copilot-agent
+  - https://pypi.org/project/github-copilot-sdk/
+  - https://pypi.org/project/azure-ai-agentserver-invocations/
+  - https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/bring-your-own/invocations/github-copilot
+
+known_issues:
+  - id: KI-001
+    description: |
+      May 2026 Foundry data-plane rename: `azd ai agent` postdeploy hook assigns
+      "Foundry User" (GUID 53ca6127-db72-4b80-b1b0-d745d6d5456d) to the agent
+      identity at PROJECT scope only. The BYOK provider call inside the container
+      requires Foundry User at ACCOUNT scope (CognitiveServices) as well. Without
+      it the container reports a silent SSE error event:
+      "Authentication failed with provider ... (HTTP 401). Check your
+      COPILOT_PROVIDER_API_KEY or COPILOT_PROVIDER_BEARER_TOKEN." Add an account-
+      scope role assignment for both `instance_identity.principal_id` AND
+      `blueprint.principal_id` (visible in `azd ai agent show`).
+    upstream_url: https://learn.microsoft.com/azure/ai-foundry/concepts/rbac-azure-ai-foundry
+    status: open
+    workaround_location: SKILL.md § "Identity & RBAC for hosted agents"
+
+  - id: KI-002
+    description: |
+      `azd ai agent invoke` (azure.ai.agents extension 0.1.31-preview) sends a
+      body the official Microsoft container template rejects with HTTP 400
+      "Request body must be a JSON object with a non-empty \"input\" string".
+      The CLI does NOT wrap user input in `{"input": "<text>"}` before posting.
+      Workaround: invoke via curl/Python with the correct body shape — see
+      SKILL.md § "Invoking the Agent".
+    upstream_url: https://github.com/Azure/azure-dev/issues
+    status: open
+    workaround_location: SKILL.md § "Invoking the Agent" -> curl recipe
+
+  - id: KI-003
+    description: |
+      `azd ai agent init` does NOT add a `services:` block to azure.yaml.
+      Without one, `azd deploy` says "deployed in <1s" and ships nothing.
+      Caller must add the services entry pointing at the project root with
+      `host: azure.ai.agent` and `docker.remoteBuild: true`.
+    upstream_url: https://learn.microsoft.com/azure/developer/azure-developer-cli/reference#azd-ai-agent-init
+    status: open
+    workaround_location: SKILL.md § "azure.yaml (required for azd deploy)"
+
+  - id: KI-004
+    description: |
+      `azd deploy` postdeploy hook for `azd ai agent` requires `AZURE_TENANT_ID`
+      to be set in the azd environment. Failure mode: "AZURE_TENANT_ID is not
+      set" mid-deploy. Fix: `azd env set AZURE_TENANT_ID <tenant-guid>` once
+      after `azd env new`.
+    upstream_url: https://learn.microsoft.com/azure/developer/azure-developer-cli/reference#azd-env-set
+    status: open
+    workaround_location: SKILL.md § "azure.yaml (required for azd deploy)" -> AZURE_TENANT_ID note
+
+  - id: KI-005
+    description: |
+      Provider shape changed in github-copilot-sdk 0.3.0+: prefer
+      `ProviderConfig(type="azure", base_url=<bare project endpoint>,
+      wire_api="responses", bearer_token=<token>)` over the legacy dict form
+      `{"type": "openai", "base_url": ".../openai/v1/", ...}`. The legacy form
+      still works (backward-compatible) but is 2-3x slower per query.
+      The combination `type="openai" + bare endpoint` (without /openai/v1/) is
+      GENUINELY BROKEN — yields "Missing required query parameter: api-version".
+    upstream_url: https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/bring-your-own/invocations/github-copilot/main.py
+    status: open
+    workaround_location: SKILL.md § "BYOK Authentication Deep Dive" -> provider shape decision matrix
+
+validation:
+  requires: [pypi]
+  runnable: true
+  script: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python -m venv .venv
+    . .venv/bin/activate
+    pip install --quiet \
+      "github-copilot-sdk~=0.3.0" \
+      "azure-ai-agentserver-invocations==1.0.0b3" \
+      "azure-identity~=1.25.3" \
+      "python-dotenv~=1.0.0"
+    python -c "
+    from copilot import CopilotClient, SubprocessConfig
+    from copilot.session import PermissionHandler, ProviderConfig
+    from copilot.generated.session_events import SessionEventType
+    from azure.ai.agentserver.invocations import InvocationAgentServerHost
+    print('ok ghcp-hosted-agents imports')
+
+    # ProviderConfig is a TypedDict — returns a plain dict at runtime.
+    # The meaningful contract is that type='azure' is accepted (the recommended
+    # shape against the post-rename Foundry data plane).
+    p = ProviderConfig(type='azure', base_url='https://example/api/projects/p',
+                      wire_api='responses', bearer_token='dummy')
+    assert isinstance(p, dict), 'ProviderConfig should be a TypedDict (dict at runtime)'
+    assert p['type'] == 'azure', 'ProviderConfig.type=azure should be accepted'
+    print('ok ProviderConfig type=azure accepted')
+
+    # Assert CopilotClient(auto_start=False) signature works.
+    c = CopilotClient(auto_start=False)
+    assert c is not None
+    print('ok CopilotClient(auto_start=False)')
+    "
+  expected_output:
+    - "ok ghcp-hosted-agents imports"
+    - "ok ProviderConfig type=azure accepted"
+    - "ok CopilotClient(auto_start=False)"
+
+last_validated: 2026-05-17
+validated_by: ricchi
+known_issues_count: 5
+---
+
+# Upstream pin — `ghcp-hosted-agents` skill
+
+This Tier-B pin captures the PyPI package stack for the GitHub Copilot SDK
+hosted-agent wrapper (BYOK + Invocations protocol).
+
+## Why pinned
+
+The skill wraps two preview PyPI packages whose release cadences are not
+coordinated:
+
+- `github-copilot-sdk` — current stable `0.3.0`, with a `1.0.0b4` preview in
+  flight. Both proven to work for our use case (see § "Version drift" in
+  SKILL.md). The `~=0.3.0` cap covers PATCH bumps inside 0.3.x.
+- `azure-ai-agentserver-invocations` — `1.0.0b3` is the only public version;
+  pinned exact (`==`) because the cap pattern doesn't apply across the b3 -> b4
+  pre-release boundary.
+
+## Last validation
+
+`2026-05-17` (ricchi) — full end-to-end on a Foundry test project:
+
+- `azd ai agent init -t github-copilot` -> downloaded official MS sample
+- Added `services:` block manually (KI-003)
+- `azd env set AZURE_TENANT_ID <id>` (KI-004)
+- `azd up` -> Foundry account + project + ACR + ManagedAgentIdentityBlueprint
+- Added Foundry User at ACCOUNT scope to both agent identities (KI-001)
+- `curl -X POST .../invocations -d '{"input":"..."}'` -> assistant.message in 7.4s
+- `azd ai agent invoke` confirmed broken with HTTP 400 (KI-002)

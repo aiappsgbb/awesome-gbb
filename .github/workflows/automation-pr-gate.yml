@@ -1,0 +1,42 @@
+name: Automation PR gate
+
+# Enforces AGENTS.md § 4 mass-edit invariants on every PR.
+# Rejects PRs that:
+#   - Touch more than one skill without [multi-skill] opt-in
+#   - Edit references/data-realism/** canon without [scrub-canon] opt-in
+#   - Modify SKILL.md body outside frontmatter without [skill-rewrite] opt-in
+#   - Bump version non-PATCH for metadata-only PRs
+#   - Push description over 1024 chars
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch enough history for diff against base
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: Run unit tests
+        run: python scripts/tests/test_automation_pr_gate.py
+
+      - name: Enforce mass-edit invariants
+        run: |
+          python scripts/automation-pr-gate.py \
+            --base origin/${{ github.base_ref }}

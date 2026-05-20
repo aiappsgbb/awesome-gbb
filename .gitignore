@@ -1,0 +1,31 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+# Allow committed template / example env files (sources of truth + plugin copies)
+!**/.env.sample
+!**/.env.example
+!**/.env.local.example
+
+# Node (if tooling is added later)
+node_modules/
+
+# Python (if tooling is added later)
+__pycache__/
+*.pyc
+.venv/
+
+# local upload artifacts (cowork zips)
+skills/*.zip
+

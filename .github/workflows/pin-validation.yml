@@ -1,0 +1,41 @@
+name: Pin validation
+
+# Runs validation.script for every modified upstream-pin.md and asserts
+# expected_output substrings appear. This is the CI proof-of-test for
+# every freshness PR (human or Copilot Coding Agent).
+#
+# Skips pin files where:
+#   - automation_tier != auto (human-validated tiers)
+#   - validation.runnable is false
+#   - validation.requires has anything outside {github_only, pypi}
+#     (because the runner has no Azure / Foundry credentials)
+
+on:
+  pull_request:
+    paths:
+      - "skills/*/references/upstream-pin.md"
+      - "scripts/run-pin-validation.py"
+      - ".github/workflows/pin-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runner deps
+        run: pip install --quiet pyyaml
+
+      - name: Run validation.script for changed pins
+        run: |
+          python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }}

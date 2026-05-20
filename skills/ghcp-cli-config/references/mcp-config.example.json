@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "mslearn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "tools": ["*"],
+      "headers": {}
+    },
+    "Azure": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "tools": ["*"]
+    },
+    "Playwright": {
+      "type": "local",
+      "command": "cmd",
+      "args": [
+        "/c", "npx", "-y",
+        "@playwright/mcp@0.0.42",
+        "--isolated",
+        "--headless"
+      ],
+      "tools": ["*"]
+    }
+  }
+}
