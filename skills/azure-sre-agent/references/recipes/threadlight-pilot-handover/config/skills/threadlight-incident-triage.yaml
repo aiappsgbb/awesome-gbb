@@ -1,0 +1,10 @@
+metadata:
+  name: threadlight-incident-triage
+  description: "Triage incidents fired by the Threadlight runtime's exception handler — correlate ACA replica logs, App Insights traces, and pilot step ID to a root cause."
+  spec:
+    tools:
+    - RunAzCliReadCommands
+    - QueryAppInsightsByAppId
+    - QueryLogAnalyticsByWorkspaceId
+skillContent: skills/threadlight-incident-triage.md
+additionalFiles: []

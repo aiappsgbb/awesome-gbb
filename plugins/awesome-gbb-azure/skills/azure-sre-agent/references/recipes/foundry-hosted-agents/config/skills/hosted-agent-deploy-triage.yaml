@@ -1,0 +1,10 @@
+metadata:
+  name: hosted-agent-deploy-triage
+  description: "Investigate failed Foundry hosted-agent deploys — correlate Foundry project events, ACR push status, ACA revision rollout, and MAF SDK version pins."
+  spec:
+    tools:
+    - RunAzCliReadCommands
+    - QueryLogAnalyticsByWorkspaceId
+    - QueryAppInsightsByAppId
+skillContent: skills/hosted-agent-deploy-triage.md
+additionalFiles: []

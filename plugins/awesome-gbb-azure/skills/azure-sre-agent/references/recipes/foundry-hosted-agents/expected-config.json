@@ -1,0 +1,33 @@
+{
+  "_description": "Expected configuration for foundry-hosted-agents recipe.",
+  "_scenario": "foundry-hosted-agents",
+
+  "agent": {
+    "accessLevel": "Low",
+    "actionMode": "Review",
+    "upgradeChannel": "Preview",
+    "defaultModelProvider": "Azure OpenAI"
+  },
+
+  "connectors": [
+    { "name": "app-insights", "type": "ApplicationInsights" },
+    { "name": "log-analytics", "type": "LogAnalytics" },
+    { "name": "azure-monitor", "type": "AzureMonitor" }
+  ],
+
+  "skills": [
+    "hosted-agent-deploy-triage"
+  ],
+
+  "subagents": [
+    "byok-401-investigator"
+  ],
+
+  "commonPrompts": [],
+
+  "scheduledTasks": [
+    "daily-hosted-agent-health-check"
+  ],
+
+  "repos": []
+}

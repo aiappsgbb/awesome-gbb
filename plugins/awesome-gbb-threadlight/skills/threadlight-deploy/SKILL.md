@@ -1555,6 +1555,26 @@ The scaffold's `infra/main.parameters.json` includes these critical parameters:
 > az rest --method DELETE --url "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/capabilityHosts/agents?api-version=2025-10-01-preview"
 > ```
 > Deletion takes 2-5 minutes. Also remove the `capabilityHosts` resource from `ai-project.bicep`.
+>
+> **⚠️ Foundry project Bicep MUST include `identity` block.** The
+> `Microsoft.CognitiveServices/accounts/projects` resource **silently fails
+> with 500 InternalServerError** if the `identity` block is omitted. The
+> backend AML RP rejects with 400 (missing managed identity) but the
+> CogServices RP wraps it as 500 with no actionable message. Always include:
+> ```bicep
+> resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = {
+>   parent: aiAccount
+>   name: aiProjectName
+>   location: location
+>   identity: {
+>     type: 'SystemAssigned'   // MANDATORY — omitting causes misleading 500
+>   }
+>   properties: { displayName: aiProjectName }
+> }
+> ```
+> The parent AI account also needs `allowProjectManagement: true` in its
+> `properties` block (requires `2025-04-01-preview` or later API version —
+> `2024-10-01` silently ignores the property).
 
 ### Region Availability
 
@@ -2778,6 +2798,7 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
+| **Foundry project creation returns 500 InternalServerError** | **`PUT .../accounts/{account}/projects/{project}` without an `identity` block in the request body. Backend AML RP rejects with 400 (missing managed identity) but CogServices RP wraps it as 500. Affects Bicep, REST, and `azd up` — any path that creates a project without identity.** | **Add `identity: { type: 'SystemAssigned' }` to the Bicep project resource (or `"identity":{"type":"SystemAssigned"}` in REST body). The AI account also needs `allowProjectManagement: true` (set via `2025-04-01-preview` or later API). Without both, project creation silently fails. Discovered May 2026 — cost 36+ hours across 2 tenants, 5 regions, 10+ accounts before PG provided the Kusto pointer.** |
 | Agent returns empty responses | TPM too low — 429 rate limits | Use ≥300K TPM deployment |
 | **`FOUNDRY_PROJECT_ENDPOINT` in agent.yaml** | **All `FOUNDRY_*` and `AGENT_*` env vars are reserved by the platform (injected automatically)** | **Remove from `environment_variables` in agent.yaml. Container reads it via `os.environ` at runtime.** |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null` — see next row), the SDK raises `ValueError` and the container crashes before `ResponsesHostServer` binds. Foundry runtime then sees no agent → `server_error`. **The agent itself is fine.** | Wrap telemetry init in `_init_telemetry()` helper that no-ops on missing env / SDK ImportError / SDK exception. NEVER call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` skill, gap rows O-011 / O-012 for the full forensic and reference template. |

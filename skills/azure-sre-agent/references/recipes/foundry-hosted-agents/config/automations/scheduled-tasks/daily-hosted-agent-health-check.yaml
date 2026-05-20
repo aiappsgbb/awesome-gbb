@@ -1,0 +1,25 @@
+metadata:
+  name: daily-hosted-agent-health-check
+spec:
+  description: "Daily 06:00 UTC sweep — checks every Foundry hosted agent in monitored RGs for failed deployments, BYOK 401s in the last 24h, and quota approaching limit."
+  schedule: "0 6 * * *"
+  prompt: |
+    Run a health check across all Foundry hosted agents in the monitored
+    resource groups. For each agent:
+
+    1. List its deployments and flag any with `provisioningState != Succeeded`
+    2. Query App Insights for `cloud_RoleName == "<agent-name>"` in the last
+       24h for any `severityLevel >= 3` entries
+    3. Check the underlying AOAI deployment's TPM utilization — flag any
+       above 80% of `currentCapacity`
+    4. Check for BYOK 401 patterns ("Authentication failed with provider")
+       in the same window
+
+    Output a single Markdown table:
+
+    | Agent | RG | Status | Issues | Last incident |
+    |---|---|---|---|---|
+
+    If everything is green, output `All <N> hosted agents healthy.`
+  enabled: true
+  mode: schedule

@@ -1,0 +1,19 @@
+# Required roles/credentials for the citadel-routed scenario.
+# deploy.sh processes this after the UAMI is created.
+
+roles:
+  # The agent's UAMI needs read access to APIM diagnostic logs.
+  - name: APIM Reader on Citadel APIM
+    type: rbac
+    role: "Reader"
+    scope: "{{citadelApimResourceId}}"
+
+  # The agent's UAMI needs the Citadel Access Contract (llm:read) for outbound LLM calls.
+  - name: Citadel Access Contract (llm:read)
+    type: manual
+    instructions: |
+      Run citadel-spoke-onboarding with:
+        gbb_access_contracts=["llm:read"]
+        spoke_uami_id={{agentUamiId}}
+      OR, if you provided citadelProductKey, no Access Contract is needed —
+      APIM will accept the subscription key on the Ocp-Apim-Subscription-Key header.

@@ -65,6 +65,7 @@ CATEGORIES: dict[str, list[str]] = {
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',
+        'azure-sre-agent',
     ],
     '📊 Content Generation': [
         'gbb-pptx', 'auto-demo-producer',

@@ -43,6 +43,7 @@
 - [citadel-hub-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/citadel-hub-deploy/SKILL.md): Deploy the **AI Citadel Governance Hub** (Layer 1) — APIM AI Gateway, Microsoft Foundry control plane, telemetry, 4 LLM APIs (Azure OpenAI, OpenAI Realtime, Universal LLM, Unified…
 - [citadel-spoke-onboarding](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/citadel-spoke-onboarding/SKILL.md): Onboard a Foundry project as a spoke into an AI Citadel Governance Hub.
 - [foundry-agt](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-agt/SKILL.md): Wrap the Microsoft Agent Governance Toolkit (AGT) around Foundry hosted agents, MCP servers, and Citadel spokes.
+- [azure-sre-agent](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-sre-agent/SKILL.md): Adopt Azure SRE Agent (Microsoft.App/agents) in GBB engagements without rebuilding what Microsoft already ships.
 
 ### 📊 Content Generation
 

@@ -539,9 +539,9 @@ The first three run on every PR. The fourth runs autonomously.
 
 ## 10 · Plugin bundles (`plugins/` + marketplace.json)
 
-The catalog ships **three Copilot CLI plugins** that bundle the 33 skills
+The catalog ships **three Copilot CLI plugins** that bundle the 34 skills
 into installable domains: `awesome-gbb-basic` (7 skills),
-`awesome-gbb-azure` (18 skills), and `awesome-gbb-threadlight` (23 skills,
+`awesome-gbb-azure` (19 skills), and `awesome-gbb-threadlight` (23 skills,
 self-contained — bundles its Foundry/Azure deps via the spec's
 skill-dedup-by-name mechanism). Customers run:
 

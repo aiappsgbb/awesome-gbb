@@ -1,0 +1,11 @@
+{
+  "toggles": {
+    "enableAppInsightsConnector": true,
+    "appInsightsResourceId": "{{threadlightAppInsightsId}}",
+    "enableLogAnalyticsConnector": true,
+    "lawResourceId": "{{threadlightLawId}}",
+    "enableAzureMonitorConnector": true,
+    "azureMonitorLookbackDays": 7
+  },
+  "connectors": []
+}

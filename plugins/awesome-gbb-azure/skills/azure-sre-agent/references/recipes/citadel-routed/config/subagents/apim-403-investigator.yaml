@@ -1,0 +1,15 @@
+metadata:
+  name: apim-403-investigator
+spec:
+  instructions: subagents/apim-403-investigator.instructions.md
+  handoffDescription: Investigates 401 and 403 responses from APIM — decodes JWT claims, verifies Access Contract scope grants, and validates Foundry MI token audience.
+  handoffs: []
+  tools:
+  - RunAzCliReadCommands
+  - QueryLogAnalyticsByWorkspaceId
+  - SearchMemory
+  agentType: Autonomous
+  temperature: 0.1
+  enableSkills: true
+  allowedSkills:
+  - citadel-gateway-debug

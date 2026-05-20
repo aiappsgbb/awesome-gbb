@@ -1,0 +1,33 @@
+{
+  "_description": "Expected configuration for threadlight-pilot-handover recipe.",
+  "_scenario": "threadlight-pilot-handover",
+
+  "agent": {
+    "accessLevel": "Low",
+    "actionMode": "Review",
+    "upgradeChannel": "Preview",
+    "defaultModelProvider": "Azure OpenAI"
+  },
+
+  "connectors": [
+    { "name": "app-insights", "type": "ApplicationInsights" },
+    { "name": "log-analytics", "type": "LogAnalytics" },
+    { "name": "azure-monitor", "type": "AzureMonitor" }
+  ],
+
+  "skills": [
+    "threadlight-incident-triage"
+  ],
+
+  "subagents": [
+    "threadlight-runtime-investigator"
+  ],
+
+  "commonPrompts": [],
+
+  "scheduledTasks": [
+    "daily-pipeline-health"
+  ],
+
+  "repos": []
+}

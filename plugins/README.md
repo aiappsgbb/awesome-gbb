@@ -1,6 +1,6 @@
 # `awesome-gbb` plugins
 
-Three Copilot CLI plugins that bundle subsets of the 33-skill catalog so
+Three Copilot CLI plugins that bundle subsets of the 34-skill catalog so
 sellers and customers can install whole domains with one command instead
 of one skill at a time.
 

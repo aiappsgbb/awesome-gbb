@@ -1,0 +1,22 @@
+roles:
+  - name: Reader on Threadlight pilot RG
+    type: rbac
+    role: "Reader"
+    scope: "/subscriptions/{{subscription}}/resourceGroups/{{threadlightResourceGroup}}"
+
+  - name: ContainerApp ReadOnly on the pilot's ACA env
+    type: rbac
+    role: "ContainerApp ReadOnly"
+    scope: "/subscriptions/{{subscription}}/resourceGroups/{{threadlightResourceGroup}}/providers/Microsoft.App/managedEnvironments/{{threadlightAcaEnvName}}"
+
+  - name: Webhook wiring (post-deploy)
+    type: manual
+    instructions: |
+      After deploy.sh prints `webhookBridgeTriggerUrl`, set it on every
+      Threadlight ACA app:
+
+        az containerapp update -n <app> -g {{threadlightResourceGroup}} \
+          --set-env-vars SRE_AGENT_WEBHOOK_URL=<url>
+
+      The Threadlight runtime's global exception handler reads this env
+      var and posts JSON incidents on unhandled errors.
