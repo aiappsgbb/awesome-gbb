@@ -598,7 +598,7 @@ opentelemetry-sdk>=1.27.0
 **Copy from `references/dockerfile-template`** and adapt:
 
 ```dockerfile
-FROM python:3.12-slim
+FROM mcr.microsoft.com/oryx/python:3.12
 
 WORKDIR /app
 
@@ -622,6 +622,7 @@ CMD [".venv/bin/python", "container.py"]
 ```
 
 **Key facts:**
+- **Use MCR base images** — `mcr.microsoft.com/oryx/python:3.12` (no Docker Hub rate limits on ACR Tasks builds). Do NOT use `python:3.12-slim` from Docker Hub — ACR Tasks hits unauthenticated pull limits.
 - Self-contained — NO base image dependency, NO ACR reference
 - Uses **uv** (not pip) for dependency management — `prerelease = "if-necessary-or-explicit"` in pyproject.toml
 - Port 8088 is the standard Foundry agent port
