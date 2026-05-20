@@ -23,6 +23,13 @@ from typing import Any
 
 GITHUB_BASE = 'https://github.com/aiappsgbb/awesome-gbb'
 
+# Site lives at https://aiappsgbb.github.io/awesome-gbb/ — a GitHub Pages
+# project URL with a subpath. Every root-relative href/src MUST start with
+# this prefix or the browser resolves them against the user-domain root
+# (aiappsgbb.github.io/) and 404s. If/when a CNAME is added that puts the
+# site at a domain root, set this to '' (empty string).
+SITE_BASE = '/awesome-gbb'
+
 
 # ---------------------------------------------------------------------------
 # Stylesheet — palette + variable names taken verbatim from
@@ -485,17 +492,17 @@ _LAYOUT = '''<!doctype html>
 <meta name="description" content="Microsoft GBB Copilot skills + plugins for Azure AI, Foundry, and governance.">
 <meta name="theme-color" content="#4f6dff">
 <link rel="canonical" href="{canonical}">
-<link rel="stylesheet" href="/_styles.css">
+<link rel="stylesheet" href="{base}/_styles.css">
 </head>
 <body>
 <nav class="nav">
   <div class="nav-inner">
-    <a href="/" class="brand"><span class="brand-mark"></span><span>awesome-gbb</span></a>
+    <a href="{base}/" class="brand"><span class="brand-mark"></span><span>awesome-gbb</span></a>
     <div class="links">
-      <a href="/"{a_home}>Home</a>
-      <a href="/skills/"{a_skills}>Skills</a>
-      <a href="/plugins/"{a_plugins}>Plugins</a>
-      <a href="/threadlight/"{a_threadlight}>Threadlight</a>
+      <a href="{base}/"{a_home}>Home</a>
+      <a href="{base}/skills/"{a_skills}>Skills</a>
+      <a href="{base}/plugins/"{a_plugins}>Plugins</a>
+      <a href="{base}/threadlight/"{a_threadlight}>Threadlight</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
     </div>
   </div>
@@ -530,6 +537,7 @@ def render_layout(
         title=html.escape(title),
         canonical=html.escape(canonical_url),
         body=body,
+        base=SITE_BASE,
         a_home=active['home'],
         a_skills=active['skills'],
         a_plugins=active['plugins'],
@@ -642,19 +650,19 @@ def render_home(
 
     cards = [
         _browse_card(
-            '/skills/', _ICON_SKILLS, 'Skills',
+            f'{SITE_BASE}/skills/', _ICON_SKILLS, 'Skills',
             'Self-contained Copilot skills for Azure AI, Microsoft Foundry, '
             'threadlight, and agent governance.',
             count=len(skills),
         ),
         _browse_card(
-            '/plugins/', _ICON_PLUGINS, 'Plugins',
+            f'{SITE_BASE}/plugins/', _ICON_PLUGINS, 'Plugins',
             'One-command bundles of related skills. Work in Copilot CLI, '
             'Desktop, VS Code agent mode, and Claude Code.',
             count=len(plugins),
         ),
         _browse_card(
-            '/threadlight/', _ICON_THREAD, 'Threadlight',
+            f'{SITE_BASE}/threadlight/', _ICON_THREAD, 'Threadlight',
             'Cinematic walkthrough of the end-to-end agentic pipeline that '
             'bundles eight skills into a single working session. '
             'Live preview now online — preconfigured demos coming soon.',
@@ -791,7 +799,7 @@ def render_skills_index(
         cat_badge = f'<span class="badge cat">{_esc(cat)}</span>' if cats else ''
         items.append(
             f'<li data-search="{_esc(search_blob)}" data-category="{_esc(cat)}">'
-            f'<div class="title"><a href="/skills/{_esc(name)}/">{_esc(name)}</a></div>'
+            f'<div class="title"><a href="{SITE_BASE}/skills/{_esc(name)}/">{_esc(name)}</a></div>'
             f'<div class="meta">{cat_badge} <span class="badge ver">v{_esc(s.get("version", ""))}</span></div>'
             f'<div class="desc">{_esc(blurb)}</div>'
             '</li>'
@@ -851,7 +859,7 @@ def render_skill_detail(
     bundled_html = ''
     if plugins_containing:
         items = ''.join(
-            f'<li><a href="/plugins/{_esc(p)}/">{_esc(p)}</a></li>'
+            f'<li><a href="{SITE_BASE}/plugins/{_esc(p)}/">{_esc(p)}</a></li>'
             for p in plugins_containing
         )
         bundled_html = (
@@ -894,7 +902,7 @@ def render_plugins_index(plugins: list[dict[str, Any]]) -> str:
     for p in plugins:
         cards.append(
             '<div class="card">'
-            f'<h3><a href="/plugins/{_esc(p["name"])}/">{_esc(p["name"])}</a></h3>'
+            f'<h3><a href="{SITE_BASE}/plugins/{_esc(p["name"])}/">{_esc(p["name"])}</a></h3>'
             f'<p>{_esc(_first_sentence(p.get("description", ""), max_chars=240))}</p>'
             f'<pre><code>copilot plugin install {_esc(p["name"])}@awesome-gbb</code></pre>'
             f'<div class="meta"><span class="badge">{len(p.get("skills", []))} skills</span>'
@@ -943,7 +951,7 @@ def render_plugin_detail(
             blurb = _first_sentence(s.get('description', ''))
             cards.append(
                 '<div class="card">'
-                f'<h3><a href="/skills/{_esc(skill_name)}/">{_esc(skill_name)}</a></h3>'
+                f'<h3><a href="{SITE_BASE}/skills/{_esc(skill_name)}/">{_esc(skill_name)}</a></h3>'
                 f'<p>{_esc(blurb)}</p>'
                 f'<div class="meta"><span class="badge ver">v{_esc(s.get("version", ""))}</span></div>'
                 '</div>'

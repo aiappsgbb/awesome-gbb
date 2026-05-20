@@ -38,6 +38,7 @@ except ImportError:
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import site_templates as tpl  # noqa: E402
+from site_templates import SITE_BASE  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -210,6 +211,13 @@ def _validate_links(out_dir: pathlib.Path) -> int:
                 continue
             # strip fragments / query
             path_only = url.split('#', 1)[0].split('?', 1)[0]
+            # Strip the SITE_BASE prefix before resolving against out_dir
+            # (the live site serves out_dir at SITE_BASE; locally we map
+            # SITE_BASE/foo → out_dir/foo).
+            if SITE_BASE and path_only.startswith(SITE_BASE + '/'):
+                path_only = path_only[len(SITE_BASE):]
+            elif SITE_BASE and path_only == SITE_BASE:
+                path_only = '/'
             if not path_only or path_only == '/':
                 target = out_dir / 'index.html'
             elif path_only.endswith('/'):
@@ -347,7 +355,7 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
         '<title>awesome-gbb — this URL has moved</title>\n'
-        '<link rel="stylesheet" href="/_styles.css">\n'
+        f'<link rel="stylesheet" href="{SITE_BASE}/_styles.css">\n'
         '</head>\n'
         '<body>\n'
         '<main>\n'
@@ -360,12 +368,12 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
         '— Threadlight is one of four resources in the hub.'
         '</p>\n'
         '<div class="browse-grid" style="max-width:680px;margin:0 auto;">\n'
-        '<a class="browse-card" href="/">'
+        f'<a class="browse-card" href="{SITE_BASE}/">'
         '<span class="browse-icon" aria-hidden="true">→</span>'
         '<span class="browse-body"><h3>awesome-gbb hub</h3>'
         '<p>Skills · Plugins · Threadlight · Contributing</p></span>'
         '</a>\n'
-        '<a class="browse-card" href="/threadlight/">'
+        f'<a class="browse-card" href="{SITE_BASE}/threadlight/">'
         '<span class="browse-icon" aria-hidden="true">🧵</span>'
         '<span class="browse-body"><h3>Threadlight experience</h3>'
         '<p>Cinematic walkthrough (the page you used to land on).</p></span>'
