@@ -598,7 +598,7 @@ opentelemetry-sdk>=1.27.0
 **Copy from `references/dockerfile-template`** and adapt:
 
 ```dockerfile
-FROM mcr.microsoft.com/oryx/python:3.12
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -622,7 +622,6 @@ CMD [".venv/bin/python", "container.py"]
 ```
 
 **Key facts:**
-- **Use MCR base images** — `mcr.microsoft.com/oryx/python:3.12` (no Docker Hub rate limits on ACR Tasks builds). Do NOT use `python:3.12-slim` from Docker Hub — ACR Tasks hits unauthenticated pull limits.
 - Self-contained — NO base image dependency, NO ACR reference
 - Uses **uv** (not pip) for dependency management — `prerelease = "if-necessary-or-explicit"` in pyproject.toml
 - Port 8088 is the standard Foundry agent port
@@ -1556,26 +1555,6 @@ The scaffold's `infra/main.parameters.json` includes these critical parameters:
 > az rest --method DELETE --url "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/capabilityHosts/agents?api-version=2025-10-01-preview"
 > ```
 > Deletion takes 2-5 minutes. Also remove the `capabilityHosts` resource from `ai-project.bicep`.
->
-> **⚠️ Foundry project Bicep MUST include `identity` block.** The
-> `Microsoft.CognitiveServices/accounts/projects` resource **silently fails
-> with 500 InternalServerError** if the `identity` block is omitted. The
-> backend AML RP rejects with 400 (missing managed identity) but the
-> CogServices RP wraps it as 500 with no actionable message. Always include:
-> ```bicep
-> resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = {
->   parent: aiAccount
->   name: aiProjectName
->   location: location
->   identity: {
->     type: 'SystemAssigned'   // MANDATORY — omitting causes misleading 500
->   }
->   properties: { displayName: aiProjectName }
-> }
-> ```
-> The parent AI account also needs `allowProjectManagement: true` in its
-> `properties` block (requires `2025-04-01-preview` or later API version —
-> `2024-10-01` silently ignores the property).
 
 ### Region Availability
 
@@ -2116,20 +2095,6 @@ azd up
       ├── Builds src/bot/ container via ACR (if bot service declared)
       └── Deploys to ACA (external ingress)
 ```
-
-> **Post-provision rule (mandatory).** After running `azd provision` — whether
-> to add a new service, update Bicep, or change parameters — ALWAYS run
-> `azd deploy` for **ALL services**, not just the new one. Reason: Bicep
-> modules declare ACA containers with a placeholder image
-> (`mcr.microsoft.com/azuredocs/containerapps-helloworld`). Provision
-> resets every ACA to that placeholder unless the module uses the
-> `fetch-container-image` pattern (see `azd-patterns` skill). Running
-> `azd deploy` (no service argument) rebuilds and deploys all services,
-> restoring the correct images.
->
-> **Battle-scar.** `azd provision` to add a workspace ACA
-> silently reset the Teams bot and MCP server to the helloworld page.
-> The bot stopped responding in Teams the night before the demo.
 
 ### Complete output structure
 
@@ -2799,7 +2764,6 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| **Foundry project creation returns 500 InternalServerError** | **`PUT .../accounts/{account}/projects/{project}` without an `identity` block in the request body. Backend AML RP rejects with 400 (missing managed identity) but CogServices RP wraps it as 500. Affects Bicep, REST, and `azd up` — any path that creates a project without identity.** | **Add `identity: { type: 'SystemAssigned' }` to the Bicep project resource (or `"identity":{"type":"SystemAssigned"}` in REST body). The AI account also needs `allowProjectManagement: true` (set via `2025-04-01-preview` or later API). Without both, project creation silently fails. Discovered May 2026 — cost 36+ hours across 2 tenants, 5 regions, 10+ accounts before PG provided the Kusto pointer.** |
 | Agent returns empty responses | TPM too low — 429 rate limits | Use ≥300K TPM deployment |
 | **`FOUNDRY_PROJECT_ENDPOINT` in agent.yaml** | **All `FOUNDRY_*` and `AGENT_*` env vars are reserved by the platform (injected automatically)** | **Remove from `environment_variables` in agent.yaml. Container reads it via `os.environ` at runtime.** |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null` — see next row), the SDK raises `ValueError` and the container crashes before `ResponsesHostServer` binds. Foundry runtime then sees no agent → `server_error`. **The agent itself is fine.** | Wrap telemetry init in `_init_telemetry()` helper that no-ops on missing env / SDK ImportError / SDK exception. NEVER call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` skill, gap rows O-011 / O-012 for the full forensic and reference template. |
@@ -2833,7 +2797,10 @@ Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
 | **`azd ai agent show` hangs or says "not logged in"** | `azd` has its own auth chain (`AzureDeveloperCliCredential`) — `az login` does NOT populate it, even with `AZURE_CONFIG_DIR` set | Run `azd auth login --tenant-id <id>` in the same shell. The `azd` token cache lives in `$AZD_CONFIG_DIR/auth/`, separate from `az`'s. Bake both `az login` and `azd auth login` into your shell startup script. |
 | **`postdeploy` fails with AZURE_TENANT_ID** | Extension postdeploy hook expects tenant ID for RBAC auto-assignment | **Set `AZURE_TENANT_ID` in azd env. Without it, postdeploy can't assign `Azure AI User` to agent identity → runtime 401 on storage** |
 | **Two identities in `azd ai agent show`** | Refreshed preview creates `instance_identity` + `blueprint` per agent | Both need RBAC — assign same roles to both principal IDs |
-| **MCP `server_url` invalid URI error** | `${ENV_VAR}` in mcp-config.json not set → expands to empty string → `/mcp` is not a valid URI | **Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. The container skips empty URLs, but `FoundryChatClient.get_mcp_tool()` registers them and Foundry rejects at runtime.** |
+| **MCP `server_url` invalid URI error** | `${ENV_VAR}` in mcp-config.json not set → expands to empty string → `/mcp` is not a valid URI | **Check `url.startswith("http")` not just truthiness in `_create_mcp_tools()`. The expansion `${MCP_SERVER_URL}/mcp` → `/mcp` is truthy but invalid. Agent should gracefully skip and run instruction-only. Remove entries with unresolved env vars from mcp-config.json when possible.** |
+| **`@MCP.tool` decorated function not callable from another tool** | FastMCP's `@MCP.tool` wraps the function in a `FunctionTool` object. Calling it directly from Python → `TypeError: 'FunctionTool' object is not callable` | **Extract shared logic into a plain `_helper()` function. The `@MCP.tool` function calls the helper; other tools also call the helper. Never call one `@MCP.tool` function from inside another.** |
+| **MCP server runs but agent can't reach it (ACA internal ingress)** | `az containerapp create --ingress internal` → only resources in the same VNET can reach the MCP server. Foundry hosted agents run in Foundry's own infra, NOT your VNET. | **Use `--ingress external` for MCP ACA containers that Foundry agents will call. For VNET-injected agents (private VNet topology), internal ingress works IF the agent subnet is peered/injected into the same VNET.** |
+| **`FastMCP` server.py starts but returns 000/timeout** | `MCP.run()` with no args defaults to `stdio` transport (reads stdin) — not HTTP. Container starts, never binds a port, ACA health probe fails. | **Always use `MCP.run(transport="http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))`. Never bare `MCP.run()` for ACA-deployed MCP servers.** |
 | **Deployer needs `Azure AI Project Manager`** | The extension postdeploy hook auto-assigns `Azure AI User` to agent identity, but needs role-assignment permission to do so | **Assign `Azure AI Project Manager` to deployer on Foundry project scope. Also set `AZURE_TENANT_ID` in azd env.** |
 | **MCP ACA 200-500s cold start** | Default 0.5 CPU / scale-to-0 causes massive latency | Use 1 CPU / 2Gi minimum, set `minReplicas: 1` in Bicep (see `foundry-mcp-aca` skill) |
 | **Missing `[tool.setuptools] packages = []`** | GHCP SDK pyproject.toml needs it for uv to resolve correctly | Add `[tool.setuptools]\npackages = []` to pyproject.toml |
