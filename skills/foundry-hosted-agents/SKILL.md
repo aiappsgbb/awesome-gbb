@@ -754,35 +754,6 @@ def save_report(
     return f"Report saved: {filename} ({filepath.stat().st_size:,} bytes). User can download it."
 ```
 
-#### Session Files API (accessing generated files from other services)
-
-Files written to `$HOME` by the agent container are accessible via the
-Foundry session files API. This is how the Teams bot and web workspace
-retrieve generated reports.
-
-**List files in a session:**
-```
-GET {PROJECT_ENDPOINT}/agents/{AGENT_NAME}/endpoint/sessions/{SESSION_ID}/files?api-version=v1&path=.
-```
-
-**Download a specific file:**
-```
-GET {PROJECT_ENDPOINT}/agents/{AGENT_NAME}/endpoint/sessions/{SESSION_ID}/files/content?api-version=v1&path={FILENAME}
-```
-
-**Required headers:**
-```
-Authorization: Bearer {token}     # scope: https://ai.azure.com/.default
-Foundry-Features: HostedAgents=V1Preview
-```
-
-**Who calls this:**
-- **Teams bot** (`foundry-teams-bot`) — downloads files then delivers via FileConsentCard
-- **Web workspace** (`threadlight-workspace-ui`) — serves via `/api/files/{session_id}/{filename}` proxy endpoint
-- **CLI testing** — `curl` with a bearer token from `az account get-access-token --resource "https://ai.azure.com"`
-
-**File types:** Filter by extension — `.xlsx`, `.csv`, `.html`, `.json`, `.md`, `.txt`, `.pdf`
-
 **Required dependencies** in `pyproject.toml`:
 
 ```toml
@@ -1257,6 +1228,7 @@ flying blind.
 | **AppInsights connection account-level "1-per-category" limit** | Account-level `AppInsights` connections enforce a single-instance-per-category constraint — cannot create parallel connections in the same account. Re-creation requires DELETE first | DELETE the existing connection BEFORE re-PUT. Use `az rest --method DELETE` with full URI **as a variable** (do NOT inline `?api-version=...` — see next row) |
 | **`az rest --method DELETE` strips `?api-version=...` query string when URI is inlined on PowerShell** | PowerShell argument parsing eats the `?api-version=` before `az` sees it. The DELETE then fails with "MissingApiVersionParameter" or behaves inconsistently against the bare resource without the version | Workaround: assign the URI to a variable first, then pass via `--uri $delUri`: `$delUri = "https://management.azure.com/.../connections/<name>?api-version=2025-10-01-preview"; az rest --method DELETE --uri $delUri` |
 | ACA job uses old code after deploy | Postdeploy hook fails (`AZURE_AI_PROJECT_ENDPOINT not set`) | Run `cd infra/scripts && uv run deploy_job.py` manually after each `azd deploy` |
+| **`mcp-config.json` `${ENV_VAR}/mcp` expands to `/mcp` when env var unset** | Regex expansion `${MCP_SERVER_URL}` → `""` produces URL `"/mcp"` — truthy but not a valid HTTP URL. `get_mcp_tool(url="/mcp")` either crashes or sends requests to localhost. | **In `_create_mcp_tools()`, guard with `if not url or not url.startswith("http")` instead of just `if not url`. Agent gracefully skips and runs instruction-only when no MCP server is deployed.** |
 | Container starts but `agent_reference` errors in logs | `FoundryAgent` used for sub-agents | Replace with client-swap pattern |
 | Protocol version error | Using `"v1"` | Use semver `"1.0.0"` |
 | **Sticky `424 session_not_ready` for 8+ minutes; ZERO AppIn / LAW signal** | New Python module added to agent code but NOT included in Dockerfile `COPY` line. Module import fails on container start → `ResponsesHostServer` never binds → `/readiness` never returns 200 → Foundry retries readiness in long backoff → every Responses request returns sticky `424`. App Insights shows nothing because `_init_telemetry()` never runs (the module that calls it didn't even import). Near-impossible to diagnose from logs because there are no logs | Explicitly enumerate every Python module in the Dockerfile `COPY` line; do NOT rely on `COPY ./* .` or `COPY . .` globs (silently skip dotfiles + reorder hazards + cache-bust footguns). Pattern: `COPY container.py corpus.py my_kb_tool.py copilot-instructions.md ./`. After ANY new `.py` added to the agent module, re-check Dockerfile + rebuild |
