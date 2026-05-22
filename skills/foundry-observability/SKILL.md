@@ -506,7 +506,8 @@ are silent. This is the single most useful query when an ACA Job is
 | O-009 | Traces appear briefly then stop after redeploy | New ACA revision didn't get the env var (drift in revision template) | Check the most recent revision's container env explicitly: `az containerapp revision show -g <rg> -n <app> --revision <rev> --query 'properties.template.containers[0].env'` |
 | O-010 | Telemetry shows but with key-based auth (despite `disableLocalAuth=true`) | A previous deploy left the ingestion key path active | Force-set `DisableLocalAuth: true`; redeploy; old keys stop working immediately |
 | O-011 | **Hosted agent returns `server_error` / `model: ""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform's `APPLICATIONINSIGHTS_CONNECTION_STRING` auto-injection fails (e.g. account-level AppIn connection persisted with `credentials: null` — see O-012), the SDK raises `ValueError`. Container exits before `ResponsesHostServer` binds; Foundry runtime sees no agent. **The agent itself is fine — only telemetry init crashed it.** | **Hosted-agent `container.py` MUST use guarded init** — `init_telemetry()` from `references/python/otel_init.py` OR inline an 8-line equivalent that no-ops on (a) missing env var, (b) SDK ImportError, (c) any SDK exception. Never call `configure_azure_monitor()` raw at module/main scope. The agent works fine without telemetry — don't let telemetry init kill it |
-| O-012 | AppInsights connection PUT returns HTTP 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but `credentials: null` on subsequent GET (silent server-side drop) | Platform gap on account-RP scope `2025-10-01-preview` in some regions; correlation IDs are available in platform logs. The connection persists with `isDefault: true, isSharedToAll: true` but no usable secret — the platform never auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into hosted agents | **No code workaround exists today.** Document the gap. Ship the agent with O-011 guarded init so it functions without telemetry. File an Azure support ticket with the correlation IDs from platform logs. If AppIn telemetry is non-negotiable for the pilot, pivot region (`eastus` / `northcentralus` are the best initial bets — **verify auto-injection works BEFORE committing to a redeploy**) |
+| O-012 | AppInsights connection PUT returns HTTP 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but `credentials: null` on subsequent GET (silent server-side drop) | Platform gap on account-RP scope — confirmed on `2025-04-01-preview`, `2025-06-01`, `2025-10-01-preview`, `2026-03-01`, `2026-03-15-preview` across `northcentralus` and `eastus2`. The data-plane `getConnectionWithCredentials` API also returns `credentials: {}`. `FoundryChatClient.configure_azure_monitor()` (SDK path) calls `telemetry.get_application_insights_connection_string()` → `_get_with_credentials` → empty credentials → `ValueError`. **Neither the platform env var injection NOR the SDK telemetry path work on O-012 affected accounts.** | **WORKAROUND FOUND (May 2026).** Pass `APPLICATION_INSIGHTS_CONNECTION_STRING` (note: underscore between APPLICATION and INSIGHTS) directly in `HostedAgentDefinition.environment_variables` via `create_version()`. The platform reserves `APPLICATIONINSIGHTS_CONNECTION_STRING` (no underscore) but accepts the underscored variant. In `container.py`, read both names with priority to the underscored variant, validate with `startswith("InstrumentationKey=")`, and call `configure_azure_monitor(connection_string=...)` explicitly. Verified: 88 traces + gen\_ai dependency spans landed in App Insights from a hosted agent on `northcentralus`. See `threadlight-deploy` § deploy.py env var passthrough for the exact wiring. |
+| O-013 | `FoundryChatClient.configure_azure_monitor()` fails with `ValueError("Application Insights connection does not have a connection string.")` even after account-level connection created | SDK calls `telemetry.get_application_insights_connection_string()` → lists connections → `_get_with_credentials(name)` → data-plane returns `credentials: {}` (empty dict, not the key stored via management API PUT). Same root cause as O-012 — management and data plane don't share the credential. | Use the O-012 workaround (env var passthrough). The SDK path (`FoundryChatClient.configure_azure_monitor()`) is a clean fallback for accounts where O-012 is NOT present — keep it as Path 2 after the env var Path 1. |
 
 ### Auth-type platform forensic (some regions)
 
@@ -534,15 +535,34 @@ runtime contract. Layer 2 is best-effort observability; **Layer 3
 container) is the contract that holds.** Build for Layer 3; treat
 Layer 2 as a bonus.
 
-> **App Insights blocked? Don't ship the hosted agent in this region.**
-> If a region returns 400 on AAD AND silently drops ApiKey, the platform
-> isn't going to auto-inject the connection string. The agent will run
-> fine without telemetry, but if telemetry is non-negotiable for the
-> pilot (compliance audit, eval analysis, post-mortem capacity), pivot
-> to a region where auto-injection is verified working BEFORE committing
-> to a deploy. Always start a new region with a smoke probe: deploy a
-> minimal hosted agent, invoke once, and run `first-trace-probe.kql` —
-> if 0 rows after 90s, the region has the same gap.
+> **O-012 workaround found (May 2026).** Pass `APPLICATION_INSIGHTS_CONNECTION_STRING`
+> (underscored variant) directly in `HostedAgentDefinition.environment_variables`
+> via `create_version()`. The platform reserves `APPLICATIONINSIGHTS_CONNECTION_STRING`
+> (no underscore) but accepts the underscored name. In the container entrypoint:
+>
+> ```python
+> def _valid_cs(cs: str | None) -> str:
+>     cs = (cs or "").strip()
+>     return cs if cs.startswith("InstrumentationKey=") else ""
+>
+> _CS = _valid_cs(os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING")) \
+>     or _valid_cs(os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"))
+> if _CS:
+>     os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = _CS
+>     configure_azure_monitor(connection_string=_CS, logger_name="hosted-agent-maf")
+> ```
+>
+> This bypasses both the broken platform auto-injection AND the broken
+> SDK `FoundryChatClient.configure_azure_monitor()` path (which also
+> hits O-012 via `_get_with_credentials` → empty credentials).
+> Verified: 88+ traces from a hosted agent on `northcentralus`.
+>
+> **Also requires**: `no_cache=True` on `DockerBuildRequest` + a used
+> `ARG BUILD_TS` (`RUN echo $BUILD_TS > /dev/null`) in the per-job
+> Dockerfile, otherwise ACR layer caching produces identical digests
+> and Foundry deduplicates `create_version` — the new code never
+> reaches the container. See `foundry-hosted-agents` § Image-tag
+> staleness trap.
 
 ---
 

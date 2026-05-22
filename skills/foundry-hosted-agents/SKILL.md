@@ -146,6 +146,35 @@ azd deploy agents
 > version is running which MAF build?" months later when a regression
 > bisect needs it.
 
+### ACR layer cache trap (per-job images built via `DockerBuildRequest`)
+
+When per-job images are built via the Azure Container Registry
+`DockerBuildRequest` API (e.g., from `deploy.py`), ACR Tasks uses
+**layer caching by default**. If the per-job Dockerfile's `COPY . ./`
+content hasn't changed (only the base image changed), ACR produces
+the **identical digest** — and Foundry deduplicates the
+`create_version` call, silently returning the existing version.
+New base-image code never reaches the container.
+
+**Fix (both are required):**
+
+1. **`no_cache=True`** on `DockerBuildRequest` — forces ACR to
+   rebuild all layers from scratch.
+2. **A used `ARG`** in the generated Dockerfile — Docker only
+   invalidates cache when an ARG changes AND is consumed:
+   ```dockerfile
+   ARG BASE_IMAGE=hosted-agent-base-maf:v6
+   FROM ${BASE_IMAGE}
+   ARG BUILD_TS=1716400000
+   RUN echo "build=$BUILD_TS" > /app/.build_ts
+   # ... rest of Dockerfile
+   ```
+   Without the `RUN` line, Docker ignores the ARG for caching.
+
+Discovered May 2026: base image rebuild with `SkillsProvider.from_paths()`
+fix + observability fix never reached any agent until both guards were
+applied.
+
 ---
 
 ## Runtime Pattern (MAF Variant)

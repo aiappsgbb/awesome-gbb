@@ -79,6 +79,12 @@ known_issues:
     upstream_url: https://pypi.org/project/agent-framework-core/1.4.0/
     status: open
     workaround_location: SKILL.md § "Skill Loading — SkillsProvider" → Constructor variants
+  - id: KI-006
+    description: |
+      ACR layer caching produces identical per-job image digests when only the base image changed (domain files same). Foundry deduplicates create_version → new base image code never reaches the container. Fix: no_cache=True on DockerBuildRequest + ARG BUILD_TS with RUN echo $BUILD_TS.
+    upstream_url: https://learn.microsoft.com/azure/container-registry/container-registry-tasks-reference-yaml
+    status: open
+    workaround_location: SKILL.md § "ACR layer cache trap"
 
 validation:
   requires: [pypi]
@@ -109,7 +115,7 @@ validation:
 
 last_validated: 2026-05-16
 validated_by: ricchi
-known_issues_count: 5
+known_issues_count: 6
 ---
 
 # Upstream pin — `foundry-hosted-agents` skill
