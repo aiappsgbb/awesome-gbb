@@ -2,23 +2,20 @@
 name: threadlight-local-test
 description: >
   Run a threadlight-designed PoC locally without `azd up`. Four patterns:
-  (0) **Quickstart (default)** — `python -m threadlight_quickstart` boots
-  a MAF Agent + SkillsProvider + JSON stub tools + Streamlit UI on
-  localhost:8501; no Docker, no MCP boot, one LLM dep (Foundry project
-  OR Azure OpenAI). Closes design → screen-shareable demo to <30 min.
-  (1) MCP-direct — register the PoC's local MCP at `~/.copilot/mcp.json`;
+  (0) **Quickstart** — `python -m threadlight_quickstart` boots MAF Agent
+  + SkillsProvider + stub tools + Streamlit UI on localhost:8501; one LLM
+  dep (Foundry OR AOAI OR GitHub Models via GITHUB_TOKEN — zero Azure).
+  (1) MCP-direct — local MCP at `~/.copilot/mcp.json`;
   (2) Smoke-client — `agent.run_async()` bypassing ResponsesHostServer;
-  (3) Local-stack — docker-compose + Cosmos emulator (Linux/Windows x86
-  only — fragile on macOS ARM). LLM calls always hit a real deployment.
+  (3) Local-stack — docker-compose + Cosmos emulator (Linux/Win x86 only).
   USE FOR: local test, smoke test, run agent locally, dev loop, no azd,
   copilot cli mcp, faster iteration, prompt tuning, cowork iteration,
-  demo rehearsal, screen-shareable PoC, streamlit demo, MAF
-  SkillsProvider quickstart.
+  demo rehearsal, screen-shareable PoC, streamlit demo, GitHub Models.
   DO NOT USE FOR: prod deployment (use threadlight-deploy), pre-pilot
   validation (use threadlight-safe-check), hosted-agent runtime testing
   in cloud (use foundry-evals).
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # Threadlight — Local Test Loop (no azd up)
@@ -43,7 +40,7 @@ testing.
 
 | Pattern | What it runs | When to use |
 |---------|--------------|-------------|
-| **0. Quickstart** (default) | `python -m threadlight_quickstart` → MAF `Agent + SkillsProvider` + JSON stub tools + Streamlit UI on `localhost:8501` | **First reach-for after `threadlight-design`.** Closes the design → screen-shareable demo loop to <30 min. Zero Docker, zero MCP server boot, one LLM dep (Foundry project OR AOAI deployment). |
+| **0. Quickstart** (default) | `python -m threadlight_quickstart` → MAF `Agent + SkillsProvider` + JSON stub tools + Streamlit UI on `localhost:8501` | **First reach-for after `threadlight-design`.** Closes the design → screen-shareable demo loop to <30 min. Zero Docker, zero MCP server boot, one LLM dep (Foundry project OR AOAI deployment OR GitHub Models via `GITHUB_TOKEN`). |
 | **1. MCP-direct** (CLI ↔ MCP) | Just the PoC's FastMCP server on `localhost:8000`; CLI calls tools natively | You're iterating on **MCP tool implementation** (DB queries, business rules, error handling). The CLI itself is the agent. |
 | **2. Smoke-client** (CLI → Python → Agent) | The PoC's `Agent + FoundryChatClient` invoked via `agent.run_async()` from a smoke script | You're iterating on the **prompt** or the **agent's tool-orchestration** behaviour. Skips the `ResponsesHostServer` HTTP layer. |
 | **3. Local-stack** (compose) ⚠️ | All of: MCP server + Cosmos emulator + workspace UI on nginx + (optional) Search mock | End-to-end smoke before redeploying. **Linux / Windows x86 only** — Cosmos emulator container is fragile on macOS ARM; use Pattern 0 there. |
@@ -70,8 +67,8 @@ server, or a real Cosmos.
 |------|-----|-----------|
 | **Python ≥ 3.10** + `pip` (or `uv`) | Run the reference package | Yes |
 | **A threadlight-designed PoC** (the cwd at minimum has `specs/sample-data/*.json`) | Pattern 0 auto-discovers it | Per PoC |
-| **One LLM endpoint** — Foundry project URL **OR** Azure OpenAI deployment | The only Azure dep | Per tenant (shared GBB sandbox is fine) |
-| **`az login`** to the LLM tenant | `DefaultAzureCredential` picks it up | Per tenant |
+| **One LLM endpoint** — Foundry project URL **OR** Azure OpenAI deployment **OR** GitHub Models (zero Azure) | The only external dep | Per tenant (shared GBB sandbox is fine; or just `gh auth token` for GitHub Models) |
+| **Auth** — `az login` to the LLM tenant (Foundry/AOAI) **OR** `GITHUB_TOKEN` (GitHub Models) | Credential for the LLM call | Per tenant |
 
 > **No Docker. No Cosmos emulator. No MCP server boot.** Pattern 0
 > replaces all three with an in-memory dict-of-records loaded from
@@ -86,7 +83,7 @@ pip install -e <awesome-gbb>/skills/threadlight-local-test/references/quickstart
 
 # 2) Drop the env template into the PoC and edit it
 cp <awesome-gbb>/skills/threadlight-local-test/references/quickstart/.env.local.example .env.local
-$EDITOR .env.local        # set FOUNDRY_PROJECT_ENDPOINT + MODEL_DEPLOYMENT_NAME (or LLM_BACKEND=aoai + AOAI vars)
+$EDITOR .env.local        # set LLM_BACKEND: foundry (default), aoai, or copilot (GitHub Models, no Azure)
 echo .env.local >> .gitignore
 
 # 3) Sanity-check the wiring without a live LLM round-trip (<5s)
@@ -206,7 +203,7 @@ references/quickstart/
 |------|-----|---------|
 | **Python 3.13** + `uv` | Run agent/MCP code | [uv install](https://docs.astral.sh/uv/) |
 | **Docker Desktop** (or Rancher) | Cosmos emulator + nginx | Standard install |
-| **Azure OpenAI deployment** of `gpt-5.4-mini` (or any model) | Agent needs a real LLM | Any AOAI account; the cheapest path is a personal sandbox sub. **The skill does NOT require Foundry locally.** |
+| **Azure OpenAI deployment** of `gpt-5.4-mini` (or any model), **OR** GitHub Models via `GITHUB_TOKEN` | Agent needs a real LLM | Any AOAI account, or just a GitHub account for GitHub Models. **The skill does NOT require Foundry locally.** |
 | **`az` logged in** to the AOAI tenant | DefaultAzureCredential in the agent code resolves to your `az` token | `az login --tenant <tid>` (per `azure-tenant-isolation`) |
 | **GitHub Copilot CLI** ≥ 1.0.40 | For Pattern 1 (MCP-direct) | `gh extension install github/gh-copilot-cli` |
 

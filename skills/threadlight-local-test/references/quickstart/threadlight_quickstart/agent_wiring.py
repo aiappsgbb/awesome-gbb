@@ -46,14 +46,16 @@ operator can see the demo land. Reply concisely.
 
 
 def build_chat_client():
-    """Return a MAF ChatClient based on ``LLM_BACKEND`` (foundry|aoai)."""
+    """Return a MAF ChatClient based on ``LLM_BACKEND`` (foundry|aoai|copilot)."""
     backend = os.environ.get("LLM_BACKEND", "foundry").lower()
     if backend == "foundry":
         return _build_foundry_client()
     if backend in {"aoai", "azure_openai", "azureopenai"}:
         return _build_aoai_client()
+    if backend in {"copilot", "github", "gh"}:
+        return _build_copilot_client()
     raise ValueError(
-        f"Unknown LLM_BACKEND={backend!r}. Use 'foundry' (default) or 'aoai'."
+        f"Unknown LLM_BACKEND={backend!r}. Use 'foundry' (default), 'aoai', or 'copilot'."
     )
 
 
@@ -93,6 +95,30 @@ def _build_aoai_client():
         endpoint=endpoint,
         deployment_name=deployment,
         credential=DefaultAzureCredential(),
+    )
+
+
+def _build_copilot_client():
+    """Build a chat client using GitHub Models (OpenAI chat/completions endpoint).
+
+    Uses ``GITHUB_TOKEN`` for auth and ``https://models.github.ai/inference/``
+    as the base URL. Zero Azure dependency — just a GitHub account.
+    Suitable for local dev/demo only (rate-limited).
+
+    Get a token via ``gh auth token`` or a PAT with ``models`` scope.
+    """
+    from agent_framework.openai import OpenAIChatCompletionClient  # type: ignore[import-not-found]
+
+    token = _require_env(
+        "GITHUB_TOKEN",
+        "Set GITHUB_TOKEN to a GitHub PAT or run `export GITHUB_TOKEN=$(gh auth token)`.",
+    )
+    model = os.environ.get("COPILOT_MODEL", "openai/gpt-4o")
+    log.info("GitHub Models backend: model=%s (no Azure required)", model)
+    return OpenAIChatCompletionClient(
+        model=model,
+        api_key=token,
+        base_url="https://models.github.ai/inference/",
     )
 
 

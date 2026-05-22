@@ -47,7 +47,7 @@
     },
     {
       "name": "awesome-gbb-threadlight",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "End-to-end Threadlight engagement pipeline: design (SPEC + demo data factory), local test (Pattern 0 \u2192 3 cinematic UI), deploy (Bicep + azd), safe-check gate, event triggers, HITL patterns, workspace UI, plus the foundry/azure skills the pipeline depends on. Self-contained \u2014 install this one plugin to run a Threadlight pilot.",
       "source": "./plugins/awesome-gbb-threadlight",
       "category": "azure",

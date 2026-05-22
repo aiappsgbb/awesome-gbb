@@ -1,6 +1,6 @@
 {
   "name": "awesome-gbb-threadlight",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "End-to-end Threadlight engagement pipeline as a single self-contained plugin. Bundles 8 threadlight-* skills (design \u2192 demo-data-factory \u2192 local-test \u2192 safe-check \u2192 deploy \u2192 event-triggers \u2192 hitl-patterns \u2192 workspace-ui) PLUS the 15 Foundry/Azure/basic skills they cross-reference at runtime (foundry-hosted-agents, foundry-iq, foundry-observability, foundry-mcp-aca, foundry-evals, foundry-doc-vision-speech, foundry-teams-bot, foundry-cross-resource, ghcp-hosted-agents, azd-patterns, azure-tenant-isolation, citadel-spoke-onboarding, auto-demo-producer, gbb-humanizer, gbb-pptx). Install this plugin alone for a full Threadlight pilot \u2014 no other awesome-gbb plugins required. USE FOR: scoping a Threadlight pilot, designing a process SPEC, generating demo data, local Pattern 0/1/2/3 testing, pre-deploy safe-check gate, azd deploy, HITL + Teams + event triggers, cinematic workspace UI. DO NOT USE FOR: non-Threadlight Foundry pilots \u2014 use awesome-gbb-azure instead.",
   "author": "Microsoft GBB",
   "homepage": "https://github.com/aiappsgbb/awesome-gbb/blob/main/THREADLIGHT.md",
