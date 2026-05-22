@@ -12,7 +12,7 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.1.7"
+  version: "1.2.0"
 ---
 
 # Foundry Hosted Agent Deploy
@@ -2725,25 +2725,28 @@ and the live-deploy walkthrough (from this phase).
 
 ---
 
-## Phase 7: Citadel Handoff (opt-in)
+## Phase 7: Citadel Handoff (opt-in — interactive when SPEC is silent)
 
-**Trigger**: SPEC § 11b sets `governance_hub.required: yes`.
+**Trigger (two paths):**
+1. **Explicit**: SPEC § 11b sets `governance_hub.required: yes` → proceed automatically.
+2. **Interactive**: SPEC § 11b is absent or sets `governance_hub.required: no` → **ask the operator**.
 
 If the customer wants the deployed agent to land as a **spoke under their
 AI Governance Hub** (centralized model gateway, key vault inheritance,
 APIM policies, JWT auth), Phase 7 invokes the `citadel-spoke-onboarding`
 skill AFTER the base deployment is provisioned.
 
-### Why this is opt-in (not default)
+### Why this is opt-in (default: no)
 
 - Citadel adds APIM connection wiring + product policy + JWT auth steps that
   are unnecessary for cx who just want a PoC running in their tenant
 - Customers with no Citadel hub in place would face an extra dependency
-- Pilot stage usually doesn't need governance — that comes when production-bound
-- Adding Citadel later is a clean, additive change (no rewrite); doing it
-  early when not needed is wasted setup
+- Adding Citadel later is a clean, additive change (no rewrite)
+- **But**: customers who DO have a hub benefit from day-1 governance — hence
+  the interactive prompt. Asking costs nothing; missing the window costs a
+  follow-up engagement.
 
-### When SPEC § 11b sets `governance_hub.required: yes`
+### Path 1: SPEC § 11b sets `governance_hub.required: yes`
 
 Phase 7 reads SPEC § 11b for the rest of the AI Governance Hub spoke
 posture:
@@ -2782,12 +2785,40 @@ named generically because some customers run other hub products):
 4. Redeploy agent (azd deploy <service>) to pick up the new MODEL_DEPLOYMENT_NAME
 ```
 
-### When `governance_hub.required: no` (or missing)
+### Path 2: SPEC § 11b absent or `governance_hub.required: no` — interactive prompt
 
-Phase 7 is a **no-op** — log "Governance hub onboarding skipped per SPEC
-§ 11b" and end. Customer can re-enable later by setting
+When the SPEC does not pre-declare a governance hub, Phase 7 **asks the
+operator** before skipping:
+
+> **Citadel governance hub.** Does this customer have an AI Governance Hub
+> (Azure APIM AI Gateway) deployed on their tenant?
+> If yes, we can onboard this agent as a spoke now — governed from day 1.
+> Onboard to Citadel? [yes / **no** (default)]
+
+**If the operator answers no** (or accepts the default): Phase 7 is a
+**no-op** — log "Governance hub onboarding skipped (operator declined)" and
+end. The customer can re-enable later by setting
 `governance_hub.required: yes` in SPEC § 11b and running
 `threadlight-deploy` Phase 7 again (it is incrementally re-runnable).
+
+**If the operator answers yes**, collect the hub details interactively:
+
+```
+1. Hub endpoint URL?  → e.g. https://hub-prod.<customer-apim>.azure-api.net
+2. Access contracts?  → comma-separated, e.g. hub-llm-gateway, hub-knowledge-search
+3. Secrets via Key Vault? [yes/no, default: yes]
+4. JWT auth? [yes/no, default: yes]
+```
+
+Then proceed with the same `citadel-spoke-onboarding` handoff as Path 1.
+The operator-provided values are equivalent to SPEC § 11b — the skill
+treats them identically.
+
+> **Why ask at deploy time, not design time?** The customer's hub may not
+> exist (or be known to the GBB) when the SPEC is authored. By the time
+> `threadlight-deploy` runs, the operator is in the customer's Azure
+> subscription and can check. The prompt surfaces the option without
+> forcing SPEC rewrites.
 
 > **See `citadel-spoke-onboarding` skill** for the full step-by-step
 > onboarding procedure, APIM access contract details, and validation

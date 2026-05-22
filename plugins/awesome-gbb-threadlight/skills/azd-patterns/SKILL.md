@@ -159,6 +159,115 @@ The script does `az acr build` + `az containerapp job update`. This works but is
 
 ---
 
+## Fetch-Latest-Image Pattern (Bicep + ACR)
+
+When Bicep provisions a Container App (or Job), it needs an image reference.
+On **first deploy** the real image hasn't been built yet, so Bicep uses a
+placeholder. On **subsequent deploys**, `azd deploy` builds the real image into
+ACR and patches the running container. This is the expected lifecycle — the
+placeholder in Bicep is intentional, not a bug.
+
+### Why the placeholder exists
+
+```bicep
+// infra/main.bicep — first-deploy bootstrap
+resource mcpApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
+  ...
+  properties: {
+    template: {
+      containers: [
+        {
+          name: 'mcp'
+          // Placeholder: azd deploy will swap this to the real ACR image
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+        }
+      ]
+    }
+  }
+}
+```
+
+On `azd up`:
+1. `azd provision` runs Bicep → Container App created with placeholder image
+2. `azd deploy` builds `src/mcp/` → pushes to ACR → patches the Container App with the real image
+3. Subsequent `azd deploy` calls repeat step 2 only
+
+### Pattern A — `azure.yaml` service binding (recommended)
+
+Let `azd` manage the image lifecycle. Declare each container as a service:
+
+```yaml
+# azure.yaml
+services:
+  mcp:
+    host: containerapp
+    project: src/mcp
+    docker:
+      path: src/mcp/Dockerfile
+      context: src/mcp
+```
+
+`azd deploy` will:
+- Build the Dockerfile into ACR (tag = `azd-deploy-{timestamp}`)
+- Set env var `SERVICE_MCP_IMAGE_NAME` = full ACR image ref
+- Patch the Container App to use the new image
+
+### Pattern B — `postdeploy` hook with `SERVICE_*_IMAGE_NAME`
+
+For Container Apps **Jobs** (not managed by `azd deploy`), use a postdeploy
+hook that reads the azd-generated image name:
+
+```yaml
+hooks:
+  postdeploy:
+    shell: pwsh
+    run: 'cd infra/scripts && uv sync --frozen && uv run deploy_job.py'
+```
+
+```python
+# infra/scripts/deploy_job.py
+image_name = os.getenv("SERVICE_MCP_IMAGE_NAME")  # set by azd deploy
+# ... patch the Container App Job with this image
+```
+
+### Pattern C — Bicep `containerImage` parameter with default
+
+For repos where the image is pre-built (e.g., shared ACR across teams):
+
+```bicep
+param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+resource app 'Microsoft.App/containerApps@2024-10-02-preview' = {
+  ...
+  properties: {
+    template: {
+      containers: [{ name: 'app', image: containerImage }]
+    }
+  }
+}
+```
+
+Override at deploy time: `azd provision --parameter containerImage=myacr.azurecr.io/app:v2`
+
+### The `SERVICE_*_IMAGE_NAME` convention
+
+`azd` auto-generates env vars for each service declared in `azure.yaml`:
+
+| azure.yaml service name | Env var | Example value |
+|---|---|---|
+| `mcp` | `SERVICE_MCP_IMAGE_NAME` | `acrfoo.azurecr.io/mcp:azd-deploy-1716300000` |
+| `agent` | `SERVICE_AGENT_IMAGE_NAME` | `acrfoo.azurecr.io/agent:azd-deploy-1716300000` |
+
+These are available in `postdeploy` hooks and in `.azure/{env}/.env`.
+
+> **⚠️ Don't treat the Bicep placeholder as a bug.** When reviewing Bicep
+> that uses `containerapps-helloworld:latest`, check whether `azure.yaml`
+> declares the corresponding service. If it does, `azd deploy` handles the
+> image swap automatically. The placeholder is a bootstrap artifact, not a
+> deployment gap.
+
+---
+
 ## ACA Job: silent-failure debug playbook
 
 **Symptom we keep hitting.** ACA Job execution flips to `Failed`
@@ -311,7 +420,6 @@ works, surfaces structured root-cause diagnostics (e.g.
 
 | Symptom in logs | Likely cause | Fix |
 |---|---|---|
-| Bot/MCP returns helloworld default page after `azd provision` | Container image was reset to placeholder | Use the mandatory `fetch-container-image` pattern in all `container-app.bicep` modules, or run `azd deploy` for all services after provision |
 | ConsoleLogs empty + SystemLogs `Type=Pull`, `Reason=ImagePullError` | ACR pull RBAC missing on env's UAMI, or image tag doesn't exist in ACR | Verify `az acr repository show-tags`; grant `AcrPull` to env UAMI |
 | ConsoleLogs empty + SystemLogs `Reason=ContainerStartedExited` ExitCode 1 within 5s | Import-time crash before logger setup | Apply Rung 3 first-line stderr breadcrumbs |
 | ConsoleLogs empty + activity log `Forbidden` | Cosmos / Search data-plane RBAC not granted to job's UAMI (note: a Foundry hosted-agent's runtime UAMI is `ServiceIdentity` and **cannot** receive Cosmos data-plane RBAC — see `foundry-hosted-agents` § "Agent Identities · ServiceIdentity Cosmos limitation") | Use a separate User-Assigned MI for the job; grant role `00000000-0000-0000-0000-000000000002` (Cosmos DB Built-in Data Contributor) at the account scope |
@@ -342,37 +450,6 @@ works, surfaces structured root-cause diagnostics (e.g.
 **Tip:** `azd up` runs both hooks in sequence (provision → deploy). `azd deploy` only runs `postdeploy`.
 
 ---
-
-## Bicep: Mandatory fetch-container-image Pattern (ALL ACA resources)
-
-> **Battle-scar (live ACA workshop, May 2026).** `azd provision` to add a new
-> workspace ACA silently reset the bot and MCP containers back to the
-> `helloworld` placeholder image. The bot stopped responding in Teams the
-> night before the demo. Root cause: the `container-app.bicep` module
-> hardcoded `image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'`
-> without checking if the resource already had a deployed image.
-
-**Every `container-app.bicep` module MUST use the fetch-latest-image pattern.**
-Without it, `azd provision` silently clobbers deployed images.
-
-```bicep
-param exists bool = false
-
-module fetchLatestImage 'fetch-container-image.bicep' = {
-  name: '${containerAppName}-image'
-  params: {
-    exists: exists
-    name: containerAppName
-  }
-}
-
-// In the container spec:
-image: exists ? fetchLatestImage.outputs.containers[0].image : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-```
-
-Wire the `exists` param from `SERVICE_*_RESOURCE_EXISTS` azd env vars via `main.parameters.json`.
-
-**Corollary rule:** After `azd provision`, ALWAYS run `azd deploy` (all services) — not just the new service — unless all ACA modules use the fetch-image pattern.
 
 ## Bicep: ACA Job Pattern
 

@@ -15,7 +15,7 @@ description: >
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.5.0"
+  version: "1.5.1"
 ---
 
 # Threadlight Design
@@ -86,7 +86,7 @@ Every PoC, regardless of mode, MUST have:
 - ✅ **Deployable scaffold** (`azd up` ready)
 - ✅ **Eval dataset** from spec § 9 scenarios — so the demo can be scored
 - ✅ **`specs/demo-deck.html`** — cinematic talk deck for the live customer moment (always — primary customer-facing artifact; **see Step 6 § 7**). Skip ONLY when spec § 12 assumptions explicitly flag `internal-no-demo: true`. Replaces the legacy `overview.html` — see migration note in `references/demo-deck-template.md`.
-- ✅ **`specs/experience.html`** — bespoke cinematic customer journey (always — every PoC is a demo by definition; **see Step 6 § 8**). Skip ONLY when spec § 12 assumptions explicitly flag `internal-no-demo: true`.
+- ✅ **`specs/experience.html`** — bespoke cinematic customer journey (**optional — on request**; **see Step 6 § 8**). Generate when the user asks for a "cinematic", "experience", or "journey", or when spec § 12 sets `experience: true`. Skip otherwise.
 - ✅ **`tests/killer-prompts.md`** — 5–10 ranked wow-prompts wired into `STARTER_{1,2,3}_TITLE/PROMPT` env vars (see Step 6 § 11). Mandatory under the same condition as the deck.
 - ✅ **`specs/demo-rehearsal.md`** — beat-by-beat run-of-show (T-24h / T-15min / T-5min / T-0) with backup paths (see Step 6 § 12). Mandatory under the same condition as the deck.
 
@@ -924,7 +924,7 @@ body.mode-se details.se-only { display: block; }
 
 ##### Pattern 4 — Internal-jargon deny-list (mandatory on customer-facing artifacts)
 
-Customer-facing artifacts (`demo-deck.html`, `experience.html`) MUST pass a
+Customer-facing artifacts (`demo-deck.html`, and `experience.html` if generated) MUST pass a
 deny-list grep before declaring done. Battle-scar source: a recent live session,
 where the deck leaked `OneAsk`, `Sweden Central`, `v1.0`, `load_skill`, and
 an individual contributor's name across three rejection cycles before the
@@ -950,7 +950,7 @@ names the customer has explicitly distanced from, regulatory boilerplate
 they want kept out of the visual narrative.
 
 **Validation.** Before declaring done, grep the customer-facing artifacts
-(deck + experience) for every deny-list token. Any hit → fix → re-grep.
+(deck, and experience if generated) for every deny-list token. Any hit → fix → re-grep.
 Document the grep result in the auto-review hand-off so the user can
 audit it.
 
@@ -959,7 +959,7 @@ audit it.
 Personas (named protagonists in the customer journey — e.g. Sarah / Carl /
 Sophie / Rashid in a Care-journey PoC) live in **exactly one** artifact:
 
-- ✅ `specs/experience.html` (the cinematic dossier) — personas ARE the
+- ✅ `specs/experience.html` (the cinematic dossier, if generated) — personas ARE the
   protagonists of the journey; this is where they belong
 - ❌ `specs/demo-deck.html` — the deck is the **customer journey**, not
   the customer. Refer to roles instead of names: "the analyst", "the
@@ -996,7 +996,7 @@ fabricated). The user pointed it out: *"In the skill chain, why
 load_skill??"*. Both names were swapped to the canonical
 `customer_kb` name from AGENTS.md.
 
-**Validation.** Extract every tool name from the deck/experience/prep-guide
+**Validation.** Extract every tool name from the deck/prep-guide (and experience if generated)
 (parse `<code>` blocks, pill labels, and skill-chain SVG text nodes).
 Set-diff against the AGENTS.md `Foundry tools required` table column 1
 → fail on any name not in the table. If a tool genuinely needs a
@@ -1118,7 +1118,7 @@ See Cross-cutting Pattern 7 for the banned/permitted phrase enforcement.
 - **Microsoft 4-color SVG co-brand bar** with "Microsoft × {Customer}"
   wordmark on hero AND close — canonical hex `#F25022 #7FBA00 #00A4EF
   #FFB900`
-- **Canonical tool naming** — any deck/experience tool name MUST appear
+- **Canonical tool naming** — any deck/prep-guide (and experience if generated) tool name MUST appear
   verbatim in the AGENTS.md `Foundry tools required` table (column 1) OR
   in the optional AGENTS.md `Tool display aliases` block. See Cross-cutting
   Pattern 6 for the set-diff gate. Fabricated names (`load_skill`,
@@ -1156,24 +1156,21 @@ closing-phrase zero hits (Pattern 7).
 > numeric data points) where the prose is already disciplined and the
 > humanizer adds nothing.
 
-#### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (MANDATORY)
+#### 8. `specs/experience.html` — Bespoke Cinematic Customer Journey (OPTIONAL — on request)
 
 A second seller-facing artifact that complements `demo-deck.html`. Where the
 deck is a **live talk**, the experience is a **bespoke journey** that makes
 the customer feel the pain, the intervention, the outcome, and the trust
 posture of *this* process — through visuals native to *its* domain.
 
-> **Generate this for every PoC, period.** Threadlight's curation premise
-> ("we deliver fewer processes, but reliably and beautifully") demands a
-> cinematic artifact for every process — there is no such thing as a
-> threadlight PoC without an `experience.html`. The skill must NOT wait
-> for the user to say "demo" / "cinematic" / "walkthrough" — those words
-> are implicit in the request to design a threadlight process.
+> **Generate when requested.** This artifact is optional — produce it when:
+> - The user explicitly asks for a "cinematic", "experience", "journey", or
+>   "walkthrough"
+> - SPEC § 12 assumptions set `experience: true`
+> - The process has a clear dramatic moment and a seller will present live
 >
-> **The only valid skip** is when SPEC § 12 assumptions explicitly carry
-> `internal-no-demo: true` (e.g., a pure backend automation with no
-> seller motion). Even then, log the skip in your hand-off message so
-> the user can override.
+> Skip when not requested. The demo-deck.html is the primary customer-facing
+> artifact and is sufficient for most engagements.
 
 > ⚠️ **Bespoke per process — not a template.** The single biggest mistake in
 > `experience.html` generation is reusing the same 4-act layout for every
@@ -1687,15 +1684,15 @@ must catch its own mistakes.
 - [ ] **`specs/demo-deck.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, 10–13 `<section class="slide">` elements, speaker notes count == slide count (1:1 `data-for` mapping), all 4 keyboard chords wired (Space / F / S / B), `bg-{brand}-flood` panels ≥ 4 (friction + follow-up + close are the 3 mandatory; hero may be dark-cinematic), brandmark substitute present on slide 1 AND final slide (bookend), MS co-brand bar present on hero AND close, 18-symbol icon library present and all referenced via `<use href="#ico-XXX">`. See § 7 generation block + `references/demo-deck-template.md` for the full pattern.
 - [ ] **`specs/overview.html` is either absent OR a redirect-only stub.** If a legacy `specs/overview.html` exists from an older generation, it MUST contain the literal markers `<meta http-equiv="refresh"` AND `location.replace('demo-deck.html')` and be ≤ 3 KB (the canonical migration stub). Divergent narrative content in overview.html FAILS — collapse it to the meta-refresh redirect per `references/demo-deck-template.md` § "Migration".
 - [ ] **Migration grep (when upgrading from legacy `overview.html`).** Run `grep -rn 'overview.html' specs/ src/ README.md AGENTS.md` and verify zero hits outside of `specs/overview.html` itself. Common missed references: `experience.html` CTA links, `prep-guide.html` opening hook source, `README.md` architecture section. All must point to `demo-deck.html` after migration.
-- [ ] **`specs/experience.html` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, `demo-deck.html` slide N-1 (Discussion) or N (Close) has a 🎬 reference link to the experience dossier, catalog index.html has Experience button
+- [ ] **`specs/experience.html` if generated** (optional — only when user requested or SPEC § 12 sets `experience: true`): HTMLParser passes, whitelabel grep zero hits, **bespoke check passes (no `id="act-N"` reuse, no `giant-counter` reuse unless KYC)**, Playwright validates the paradigm's signature interaction (counter scrubs / topology heals / pages assemble / dashboard transitions / map heats) bidirectionally, `demo-deck.html` slide N-1 (Discussion) or N (Close) has a 🎬 reference link to the experience dossier, catalog index.html has Experience button
 - [ ] **`specs/prep-guide.html` § "Demo Script" exists** with all five beats (Opening hook in direct quotes · Demo arc 4–6 acts · Bonus acts ≥ 4 · Quantified Reveal moment · Q&A handoff). For chat-style PoCs, **every** main-arc act must contain all three sub-blocks `<strong>Type this:</strong>` + `<strong>What you'll see:</strong>` + `<strong>Say:</strong>` (or `<strong>Click here:</strong>` for workspace-style). **What you'll see** must reference at least one entity name AND one numeric data point per act (grep each act for a digit; zero-digit acts fail). Each act tagged with the BR-XXX it demonstrates. **Bonus acts** card present with ≥ 4 prompts including ≥ 1 freshness/provenance edge case AND ≥ 1 out-of-scope/guardrail edge case. Reveal moment quantifies manual-effort-today vs PoC-time and cites the SPEC § 9 primary KPI. **Zero deploy-specific tokens** anywhere (no FQDNs, no `azd ` / `az ` / `python ` commands, no resource names) — those are reserved for `threadlight-deploy` Phase 6.7's "Live MVP Walkthrough" appendix.
-- [ ] **Brand cascade rule applied** (Cross-cutting Pattern 1) — if a customer brand palette was declared in SPEC § 1 or captured during discovery (or sector-convention fallback from `references/brand-palettes.md`), grep that the brand accent hex IS present in the CSS of `demo-deck.html`, `experience.html`, AND `prep-guide.html`. Structural neutrals (parchment, charcoal, navy, brass) must remain untouched. Deck-specific deep checks (Pattern 1 § "Deeper rules for demo-deck.html") additionally enforced: `bg-{brand}-flood` ≥ 4 panels with friction + follow-up + close mandatory (hero may be dark-cinematic), brandmark substitute markup, MS co-brand bar present.
+- [ ] **Brand cascade rule applied** (Cross-cutting Pattern 1) — if a customer brand palette was declared in SPEC § 1 or captured during discovery (or sector-convention fallback from `references/brand-palettes.md`), grep that the brand accent hex IS present in the CSS of `demo-deck.html` AND `prep-guide.html` (and `experience.html` if generated). Structural neutrals (parchment, charcoal, navy, brass) must remain untouched. Deck-specific deep checks (Pattern 1 § "Deeper rules for demo-deck.html") additionally enforced: `bg-{brand}-flood` ≥ 4 panels with friction + follow-up + close mandatory (hero may be dark-cinematic), brandmark substitute markup, MS co-brand bar present.
 - [ ] **Markdown modal pattern present** (Cross-cutting Pattern 2) — every `<a href="*.md">` in any generated HTML artefact has been rewritten to `<a data-md="*.md">` AND the host artefact contains the modal markup (`<script type="text/markdown">` blobs + JS registry + click delegate + renderer with fallback). No raw `.md` href links remain.
 - [ ] **SE-only collapsibles applied** (Cross-cutting Pattern 3) — in `prep-guide.html`, every `<pre><code>` block containing `azd ` / `az ` / `python ` commands MUST be wrapped in `<details class="se-only">` with an audience pill summary. Sellers should see no engineering content in the default closed state.
-- [ ] **Internal-jargon deny-list zero hits** (Cross-cutting Pattern 4) — grep `demo-deck.html` AND `experience.html` for every token in the baseline deny-list (MS internal product names, region/SKU labels, contributor PII, fabricated `_skill` / `_tool` identifiers) PLUS any `additional_denied_tokens` from SPEC § 12. Zero hits required. `prep-guide.html` is exempt. Record the grep result in the auto-review summary so the user can audit it.
-- [ ] **Persona placement** (Cross-cutting Pattern 5) — extract the set of persona first-names from `experience.html` (the dossier where they belong). Grep `demo-deck.html` AND `prep-guide.html § Demo Script "Type this:"` prompts for any hit on that set. Zero hits required. Suggested fix: swap persona name → role descriptor from the same SPEC § 5 persona row.
-- [ ] **Canonical tool naming** (Cross-cutting Pattern 6) — extract every tool name from `<code>` blocks, pill labels, and skill-chain SVG text nodes across `demo-deck.html`, `experience.html`, `prep-guide.html`. Set-diff against the AGENTS.md `Foundry tools required` table column 1 (plus any AGENTS.md § Tool display aliases). Zero out-of-set names required. Fabricated names (e.g. `load_skill`, `customer_knowledge_base_retrieve`) are the highest-frequency battle-scar — catch them here.
-- [ ] **No-commitment closing** (Cross-cutting Pattern 7) — grep deck slides N-1 and N (Follow-up proposal + Thank you) plus the `experience.html` trust panel for banned phrases (`we'll build`, `by {date}`, `let's commit`, `next month`, `pick one journey`, any literal future date within 90 days of the generation timestamp). Zero hits required. The Thank-you slide MUST contain literal `Thank you.` and the MS × {Customer} co-brand bar; the Follow-up slide MUST have ≥ 3 step cards with concrete actions (not open questions); if any card text matches a banned phrase, fail.
+- [ ] **Internal-jargon deny-list zero hits** (Cross-cutting Pattern 4) — grep `demo-deck.html` (and `experience.html` if generated) for every token in the baseline deny-list (MS internal product names, region/SKU labels, contributor PII, fabricated `_skill` / `_tool` identifiers) PLUS any `additional_denied_tokens` from SPEC § 12. Zero hits required. `prep-guide.html` is exempt. Record the grep result in the auto-review summary so the user can audit it.
+- [ ] **Persona placement** (Cross-cutting Pattern 5) — if `experience.html` was generated, extract the set of persona first-names from it (the dossier where they belong). Grep `demo-deck.html` AND `prep-guide.html § Demo Script "Type this:"` prompts for any hit on that set. Zero hits required. Suggested fix: swap persona name → role descriptor from the same SPEC § 5 persona row. If `experience.html` was not generated, extract personas from SPEC § 5 directly for the same check.
+- [ ] **Canonical tool naming** (Cross-cutting Pattern 6) — extract every tool name from `<code>` blocks, pill labels, and skill-chain SVG text nodes across `demo-deck.html`, `prep-guide.html` (and `experience.html` if generated). Set-diff against the AGENTS.md `Foundry tools required` table column 1 (plus any AGENTS.md § Tool display aliases). Zero out-of-set names required. Fabricated names (e.g. `load_skill`, `customer_knowledge_base_retrieve`) are the highest-frequency battle-scar — catch them here.
+- [ ] **No-commitment closing** (Cross-cutting Pattern 7) — grep deck slides N-1 and N (Follow-up proposal + Thank you) (and the `experience.html` trust panel if generated) for banned phrases (`we'll build`, `by {date}`, `let's commit`, `next month`, `pick one journey`, any literal future date within 90 days of the generation timestamp). Zero hits required. The Thank-you slide MUST contain literal `Thank you.` and the MS × {Customer} co-brand bar; the Follow-up slide MUST have ≥ 3 step cards with concrete actions (not open questions); if any card text matches a banned phrase, fail.
 - [ ] **`tests/killer-prompts.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with ≥ 3 ranked rows (K1, K2, K3 minimum). Each `Prompt` literal exists verbatim in `tests/eval_dataset.jsonl` (the eval-validated set). Each `BR-XXX` exists in SPEC § 3. Each `Expected anchors` row has ≥ 1 named entity + ≥ 1 digit. `agent.yaml` carries `STARTER_{1,2,3}_TITLE` + `STARTER_{1,2,3}_PROMPT` env vars synced from this file by `infra/scripts/refresh_killer_prompts.py`.
 - [ ] **`specs/demo-rehearsal.md` exists** (mandatory unless SPEC § 12 carries `internal-no-demo: true`) with all six required beat rows (T-24h, T-15min, T-5min, T-0, backup paths, ship checklist). T-0 budget ≤ 8 minutes total. Each killer prompt referenced verbatim by rank with its wow-line.
 - [ ] **`tests/eval-summary.md` exists** when an eval run has produced `tests/eval-results-*.jsonl` (skip the gate gracefully if no eval results file exists yet — the dataset can be run later via `foundry-evals`). Top-line numbers present, ≥ 3 inline transcripts (K1/K2/K3), adjudicated scenarios documented when present.
