@@ -1175,9 +1175,9 @@
             <div class="io-arrow">→</div>
             <div class="io-block"><span class="io-lbl">Outputs</span><span class="io-val"><code>specs/SPEC.md</code> · <code>manifest.json</code> · <code>AGENTS.md</code> · <code>skills/</code> · <code>overview.html</code></span></div>
           </div>
-          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Design a claims-triage process for an FSI customer. Fast PoC mode."</span></div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Use threadlight-design to design a claims-triage process for an FSI customer. Fast PoC mode."</span></div>
           <div class="skill-footer">
-            <span>The coding agent picks up the <code>threadlight-design</code> skill automatically.</span>
+            <span>The coding agent reads the skill instructions and generates all artefacts.</span>
             <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-design/SKILL.md">SKILL.md →</a>
           </div>
         </article>
@@ -1232,9 +1232,9 @@
             <div class="io-arrow">→</div>
             <div class="io-block"><span class="io-lbl">Outputs</span><span class="io-val"><code>container.py</code> · <code>Dockerfile</code> · <code>infra/</code> · <code>agent.yaml</code> · <code>azure.yaml</code></span></div>
           </div>
-          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Deploy this agent to the customer's Azure with governance and telemetry."</span></div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Use threadlight-deploy to deploy this agent to the customer's Azure with governance and telemetry."</span></div>
           <div class="skill-footer">
-            <span>The coding agent picks up <code>threadlight-deploy</code> + <code>foundry-observability</code> automatically. Telemetry is non-optional.</span>
+            <span>The coding agent reads the skill, generates Bicep + Dockerfile + azd project, and runs <code>azd up</code>.</span>
             <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-deploy/SKILL.md">SKILL.md →</a>
           </div>
         </article>
@@ -1437,11 +1437,11 @@
       <p class="sub reveal" data-delay="2">Then run <code>threadlight-deploy</code> before you finish your coffee.</p>
 
       <div class="cta-prompts reveal" data-delay="3" role="note" aria-label="Example invocations">
-<span class="cmt"># 1. Tell the agent what you need</span>
-<br><span class="prompt">&gt;</span> <span class="cmd">"Design a claims-triage process for an FSI customer. Fast PoC mode."</span>
+<span class="cmt"># 1. Design — tell the coding agent which skill and what you need</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Use threadlight-design to design a claims-triage process for an FSI customer."</span>
 <br>
-<br><span class="cmt"># 2. Deploy to the customer's tenant</span>
-<br><span class="prompt">&gt;</span> <span class="cmd">"Deploy this agent to the customer's Azure subscription with governance."</span>
+<br><span class="cmt"># 2. Deploy — same pattern, the agent handles Bicep, azd, governance</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Use threadlight-deploy to deploy this to the customer's Azure with Citadel governance."</span>
       </div>
 
       <div class="hero-cta-row reveal" data-delay="4">
