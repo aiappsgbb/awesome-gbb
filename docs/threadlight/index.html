@@ -1085,20 +1085,21 @@
 
           <div class="compare reveal" data-delay="3">
             <div class="compare-row is-old">
-              <div class="label">The old way</div>
+              <div class="label">❌ The old way</div>
               <div class="body">
                 Eight weeks. Discovery → architecture → slide review → eventual
                 proof-of-concept. The artefact is a deck. The customer never
-                sees the agent run end-to-end.
+                sees the agent run.
               </div>
             </div>
             <div class="compare-row is-new">
-              <div class="label">With Threadlight</div>
+              <div class="label">✅ With Threadlight skills</div>
               <div class="body">
-                <strong>One conversation with Copilot.</strong> Describe the process → design
-                the spec → test locally (optional) → deploy to your Azure → governed &amp;
-                observable from day zero. The artefact is a <strong>running agent on your
-                tenant</strong>, with a paved path to production via AI Citadel &amp; AGT.
+                <strong>One conversation with a coding agent.</strong> Describe the process →
+                Copilot designs the spec → tests locally (optional) → deploys to
+                your Azure → <strong>governed &amp; observable from day zero</strong> via
+                AI Citadel + AGT. Your artefact is a running agent on your tenant
+                with a paved path to production.
               </div>
             </div>
           </div>
@@ -1147,14 +1148,15 @@
   <section class="scene" id="scene-chain" aria-labelledby="chain-h">
     <div class="wrap">
       <div class="copy reveal">
-        <p class="eyebrow"><span class="dot"></span>The flow</p>
-        <h2 id="chain-h">Tell Copilot what you need. <em>It handles the rest.</em></h2>
+        <p class="eyebrow"><span class="dot"></span>The skills chain</p>
+        <h2 id="chain-h">You prompt. The coding agent <em>picks up the right skills.</em></h2>
         <p class="lede" style="margin-left:auto;margin-right:auto;text-align:left;">
-          Describe the business process to GitHub Copilot. It designs the spec,
-          generates the agent code, optionally tests it locally, then deploys
-          to your Azure subscription &mdash; with a <strong>paved path to production</strong>
-          via AI Citadel governance hub and AGT in-process middleware.
-          Everything runs inside Copilot CLI, VS Code, or Claude Code.
+          Skills are composable building blocks — Markdown instructions that any
+          coding agent (GitHub Copilot CLI, VS Code, Claude Code) reads and follows.
+          You describe what you need in a prompt. The agent discovers the matching
+          skill, runs it, and hands you the artefacts — all the way to a
+          <strong>governed agent on your Azure</strong> with a paved path to production
+          via AI Citadel and AGT.
         </p>
       </div>
 
@@ -1173,9 +1175,9 @@
             <div class="io-arrow">→</div>
             <div class="io-block"><span class="io-lbl">Outputs</span><span class="io-val"><code>specs/SPEC.md</code> · <code>manifest.json</code> · <code>AGENTS.md</code> · <code>skills/</code> · <code>overview.html</code></span></div>
           </div>
-          <div class="skill-invoke"><span class="prompt">&gt;</span> threadlight-design <span class="arg"># "Design a {process} for a {industry} customer. Fast PoC mode."</span></div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Design a claims-triage process for an FSI customer. Fast PoC mode."</span></div>
           <div class="skill-footer">
-            <span>The only skill that runs end-to-end in Microsoft Copilot Cowork.</span>
+            <span>The coding agent picks up the <code>threadlight-design</code> skill automatically.</span>
             <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-design/SKILL.md">SKILL.md →</a>
           </div>
         </article>
@@ -1230,9 +1232,9 @@
             <div class="io-arrow">→</div>
             <div class="io-block"><span class="io-lbl">Outputs</span><span class="io-val"><code>container.py</code> · <code>Dockerfile</code> · <code>infra/</code> · <code>agent.yaml</code> · <code>azure.yaml</code></span></div>
           </div>
-          <div class="skill-invoke"><span class="prompt">&gt;</span> threadlight-deploy <span class="arg">&amp;&amp;</span> azd up</div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Deploy this agent to the customer's Azure with governance and telemetry."</span></div>
           <div class="skill-footer">
-            <span><code>foundry-observability</code> is always wired in. Telemetry is non-optional.</span>
+            <span>The coding agent picks up <code>threadlight-deploy</code> + <code>foundry-observability</code> automatically. Telemetry is non-optional.</span>
             <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-deploy/SKILL.md">SKILL.md →</a>
           </div>
         </article>
