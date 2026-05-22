@@ -1012,24 +1012,26 @@
     </div>
 
     <div class="wrap hero-inner">
-      <p class="eyebrow"><span class="dot"></span>Build PoCs, demos, and MVPs — tailored to any domain</p>
+      <p class="eyebrow"><span class="dot"></span>AI agent PoCs, demos, and MVPs — dramatically simplified</p>
 
       <h1 class="hero-headline" id="hero-headline">
-        <span class="word">Design.</span>
-        <span class="word">Test.</span>
-        <span class="word"><em>Deploy.</em></span>
-        <span class="word"><em>Governed.</em></span>
+        <span class="word">Business</span>
+        <span class="word">process</span>
+        <span class="word">→</span>
+        <span class="word"><em>working</em></span>
+        <span class="word"><em>agent.</em></span>
       </h1>
 
       <p class="hero-sub">
-        Describe a business process. GitHub Copilot designs the agent, tests it locally,
-        and lands it on <em>your Azure</em> &mdash; with governance, telemetry, and evals
-        wired in from minute one. <strong>Any domain. Any industry.</strong>
+        Describe a business process to a coding agent. It drafts the spec,
+        scaffolds the agent code, validates it locally, and deploys it to
+        <em>your Azure</em> &mdash; with governance, telemetry, and evals
+        generated as auditable artefacts. <strong>One guided session.</strong>
       </p>
 
       <p class="hero-tag" aria-label="Pipeline status indicator">
         <span class="pip"></span>
-        <span>Design → Test → Deploy → Governed &amp; Observable</span>
+        <span>FSI · MFG · Retail · Telco · Healthcare &mdash; each tailored to domain-specific rules and data</span>
       </p>
 
       <div class="hero-cta-row">
@@ -1075,12 +1077,12 @@
 
         <div class="promise-copy">
           <p class="eyebrow reveal"><span class="dot"></span>How it works</p>
-          <h2 id="promise-h" class="reveal" data-delay="1">Describe what you need. GitHub Copilot builds it.</h2>
+          <h2 id="promise-h" class="reveal" data-delay="1">Describe the process. The coding agent handles the rest.</h2>
           <p class="lede reveal" data-delay="2">
-            You describe a business process in plain language. Copilot designs the
-            agent, generates the code, tests it locally, and deploys it to your Azure
-            subscription &mdash; all automatically. Tailored to your domain, your data,
-            your compliance needs.
+            You describe a business process in plain language. The coding agent
+            (GitHub Copilot CLI, VS Code, Claude Code) drafts a versioned spec,
+            scaffolds the agent code, validates it locally, and deploys to your
+            Azure subscription with observability and governance controls.
           </p>
 
           <div class="compare reveal" data-delay="3">
@@ -1088,55 +1090,55 @@
               <div class="label">❌ The old way</div>
               <div class="body">
                 Eight weeks. Discovery → architecture → slide review → eventual
-                proof-of-concept. The artefact is a deck. The customer never
-                sees the agent run.
+                PoC. The artefact is a deck. The customer never sees the agent run.
               </div>
             </div>
             <div class="compare-row is-new">
               <div class="label">✅ With Threadlight skills</div>
               <div class="body">
-                <strong>One conversation with a coding agent.</strong> Describe the process →
-                Copilot designs the spec → tests locally (optional) → deploys to
-                your Azure → <strong>governed &amp; observable from day zero</strong> via
-                AI Citadel + AGT. Your artefact is a running agent on your tenant
-                with a paved path to production.
+                <strong>One guided session.</strong> You say:
+                <em>&ldquo;Use threadlight-design to design a claims-triage process
+                for an FSI customer.&rdquo;</em> The coding agent generates:<br/>
+                <code>SPEC.md</code> → <code>AGENTS.md</code> → agent code →
+                <code>Bicep</code> → <code>azd up</code> → governed agent on your Azure
+                &mdash; with App Insights, evals, and AI Citadel gateway from day zero.
               </div>
             </div>
           </div>
         </div>
 
-        <aside class="kpis" aria-label="What ships at day zero">
+        <aside class="kpis" aria-label="What ships from one session">
           <div class="kpi reveal" data-delay="1">
-            <div class="kpi-label">🚀 Time-to-working-agent</div>
+            <div class="kpi-label">🚀 What you get</div>
             <div class="kpi-arrow">
-              <span class="kpi-from">8 weeks</span>
+              <span class="kpi-from">Prompt</span>
               <span class="kpi-glyph">→</span>
-              <span class="kpi-to" data-counter data-to="1" data-suffix="">0</span>
-              <span class="kpi-unit">SESSION</span>
+              <span class="kpi-to" data-counter data-to="12" data-suffix="+">0+</span>
+              <span class="kpi-unit">ARTEFACTS</span>
             </div>
-            <p class="kpi-cap">From description to a deployed Foundry hosted agent on your Azure — with telemetry, evals, and governance — in one session.</p>
+            <p class="kpi-cap">SPEC.md · AGENTS.md · agent code · Dockerfile · Bicep · azure.yaml · eval dataset · demo deck · prep guide · telemetry config · governance policy · audit trail.</p>
           </div>
 
           <div class="kpi reveal" data-delay="2">
-            <div class="kpi-label">🛡️ Governed from day zero</div>
+            <div class="kpi-label">🛡️ Governed from deploy</div>
             <div class="kpi-arrow">
               <span class="kpi-from">Bolt-on</span>
               <span class="kpi-glyph">→</span>
-              <span class="kpi-to" data-counter data-to="0" data-suffix="">0</span>
-              <span class="kpi-unit">GAPS AT DEPLOY</span>
+              <span class="kpi-to" data-counter data-to="2" data-suffix="">0</span>
+              <span class="kpi-unit">LAYERS AT DAY 0</span>
             </div>
-            <p class="kpi-cap"><strong>AI Citadel</strong> APIM gateway + <strong>AGT</strong> in-process middleware ship with every pilot. Your CISO signs in week 1, not Q3. Paved path to production.</p>
+            <p class="kpi-cap"><strong>AI Citadel</strong> APIM gateway on the perimeter + <strong>AGT</strong> in-process middleware inside the agent. Your CISO reviews Bicep before anything ships.</p>
           </div>
 
           <div class="kpi reveal" data-delay="3">
-            <div class="kpi-label">🎯 Tailored to your domain</div>
+            <div class="kpi-label">⚡ Azure services wired</div>
             <div class="kpi-arrow">
-              <span class="kpi-from">Generic</span>
+              <span class="kpi-from">Manual</span>
               <span class="kpi-glyph">→</span>
-              <span class="kpi-to" data-counter data-to="5" data-suffix="+">0+</span>
-              <span class="kpi-unit">INDUSTRIES</span>
+              <span class="kpi-to" data-counter data-to="8" data-suffix="+">0+</span>
+              <span class="kpi-unit">SERVICES</span>
             </div>
-            <p class="kpi-cap">FSI, manufacturing, retail, telco, healthcare — each process is designed with domain-specific data, rules, and compliance. Your SME reviews the spec before code ships.</p>
+            <p class="kpi-cap">Foundry · Container Apps · Cosmos DB · AI Search · App Insights · Log Analytics · APIM · Key Vault — all Bicep, all <code>azd up</code>, all on your tenant.</p>
           </div>
         </aside>
 
@@ -1432,16 +1434,16 @@
   <!-- ====================== SCENE 6 · CTA ====================== -->
   <section class="scene" id="scene-cta" aria-labelledby="cta-h">
     <div class="wrap">
-      <p class="eyebrow reveal" style="display:inline-block;"><span class="dot"></span>Start the chain</p>
-      <h2 id="cta-h" class="display reveal" data-delay="1">Run <em>threadlight-design</em> on your next MVP today.</h2>
-      <p class="sub reveal" data-delay="2">Then run <code>threadlight-deploy</code> before you finish your coffee.</p>
+      <p class="eyebrow reveal" style="display:inline-block;"><span class="dot"></span>Get started</p>
+      <h2 id="cta-h" class="display reveal" data-delay="1">See the artefacts. <em>Then try it yourself.</em></h2>
+      <p class="sub reveal" data-delay="2">One prompt. One session. Governed agent on your Azure.</p>
 
       <div class="cta-prompts reveal" data-delay="3" role="note" aria-label="Example invocations">
-<span class="cmt"># 1. Design — tell the coding agent which skill and what you need</span>
+<span class="cmt"># Tell the coding agent which skill to use and what you need</span>
 <br><span class="prompt">&gt;</span> <span class="cmd">"Use threadlight-design to design a claims-triage process for an FSI customer."</span>
 <br>
-<br><span class="cmt"># 2. Deploy — same pattern, the agent handles Bicep, azd, governance</span>
-<br><span class="prompt">&gt;</span> <span class="cmd">"Use threadlight-deploy to deploy this to the customer's Azure with Citadel governance."</span>
+<br><span class="cmt"># When you're happy with the spec, deploy it</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Use threadlight-deploy to ship this to the customer's Azure with Citadel governance."</span>
       </div>
 
       <div class="hero-cta-row reveal" data-delay="4">
