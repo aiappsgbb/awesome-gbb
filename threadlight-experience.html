@@ -1279,14 +1279,14 @@
         </article>
 
         <article class="proof-tile reveal" data-delay="3">
-          <div class="proof-stat" data-counter data-to="0" data-suffix="%">0%</div>
-          <h3 class="proof-title">Prompt-injection success rate.</h3>
+          <div class="proof-stat" data-counter data-to="2" data-suffix="">0</div>
+          <h3 class="proof-title">Governance layers, defense in depth.</h3>
           <p class="proof-body">
-            AGT in-process governance middleware. 8&ndash;12&thinsp;&micro;s per eval.
-            Hash-chained audit trail on every tool call. OWASP ASI 2026
-            attack corpus: 26.67% → 0.00%.
+            <strong>AI Citadel</strong> APIM gateway on the perimeter (JWT, rate limit,
+            content filter). <strong>AGT</strong> in-process middleware inside the agent
+            (8&ndash;12&thinsp;&micro;s/eval, hash-chained audit). Two layers, one audit chain.
           </p>
-          <p class="proof-foot">AGT 3.6 · CITADEL APIM · DEFENSE IN DEPTH</p>
+          <p class="proof-foot">CITADEL APIM · AGT 3.6 · OWASP ASI 2026</p>
         </article>
       </div>
     </div>
@@ -1307,7 +1307,7 @@
       <div class="pillars">
 
         <article class="pillar reveal" data-delay="1">
-          <div class="pillar-num">I</div>
+          <div class="pillar-num">🔑</div>
           <div class="pillar-icon">id</div>
           <h3>Keyless identity, end-to-end.</h3>
           <p>
@@ -1317,7 +1317,7 @@
         </article>
 
         <article class="pillar reveal" data-delay="2">
-          <div class="pillar-num">II</div>
+          <div class="pillar-num">📊</div>
           <div class="pillar-icon">obs</div>
           <h3>Telemetry from minute one.</h3>
           <p>
@@ -1327,7 +1327,7 @@
         </article>
 
         <article class="pillar reveal" data-delay="3">
-          <div class="pillar-num">III</div>
+          <div class="pillar-num">📎</div>
           <div class="pillar-icon">ci</div>
           <h3>Citation-grounded answers.</h3>
           <p>
@@ -1337,7 +1337,7 @@
         </article>
 
         <article class="pillar reveal" data-delay="4">
-          <div class="pillar-num">IV</div>
+          <div class="pillar-num">📜</div>
           <div class="pillar-icon">au</div>
           <h3>Audit-grade trail.</h3>
           <p>
@@ -1347,86 +1347,13 @@
         </article>
 
         <article class="pillar reveal" data-delay="5">
-          <div class="pillar-num">V</div>
+          <div class="pillar-num">✅</div>
           <div class="pillar-icon">ev</div>
           <h3>Evals from day one.</h3>
           <p>
             SPEC § 9 eval scenarios are generated from BR-XXX rules. The eval dataset shape carries <code>tool_calls</code> + <code>tool_outputs</code> so the scorer can see what the agent read. Continuous-eval baseline ships with the deploy.
           </p>
           <div class="ref">Owned by <code>foundry-evals</code></div>
-        </article>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- ====================== SCENE 4c · TRAPS ====================== -->
-  <section class="scene" id="scene-traps" aria-labelledby="traps-h">
-    <div class="wrap">
-      <div class="copy reveal">
-        <p class="eyebrow"><span class="dot"></span>Silent failures · caught by the gate</p>
-        <h2 id="traps-h">The bugs <em>azd up returns 0</em> for.</h2>
-        <p class="lede" style="margin: 18px auto 0;">
-          The chain exists because we&rsquo;ve been bitten by every one of these.
-          Each trap below is a real failure mode that shipped clean in a past
-          pilot. Each one is now a hard fail in <code>threadlight-safe-check</code>.
-        </p>
-      </div>
-
-      <div class="trap-grid">
-
-        <article class="trap reveal" data-delay="1">
-          <div class="trap-mark">!</div>
-          <div class="trap-body">
-            <h4>Resource group looks clean &mdash; container runs the helloworld placeholder.</h4>
-            <p>Bicep hard-coded <code>mcr.microsoft.com/azuredocs/containerapps-helloworld</code>; <code>azd deploy &lt;service&gt;</code> was never run after <code>azd provision</code>. Eval scores look plausible because the agent runtime is fine; the MCP server is a static webpage.</p>
-            <div class="caught"><span class="by">caught by</span><code>safe-check --phase post-deploy</code> · image-probe regex</div>
-          </div>
-        </article>
-
-        <article class="trap reveal" data-delay="2">
-          <div class="trap-mark">!</div>
-          <div class="trap-body">
-            <h4>Cron job has 13 consecutive <code>Failed</code> executions and nobody noticed.</h4>
-            <p>Scheduled jobs don&rsquo;t surface in chat surfaces. Nothing pages on silent rot. Eval pass-rates are unaffected because evals don&rsquo;t invoke the job.</p>
-            <div class="caught"><span class="by">caught by</span><code>safe-check --phase post-deploy</code> · job-success check</div>
-          </div>
-        </article>
-
-        <article class="trap reveal" data-delay="3">
-          <div class="trap-mark">!</div>
-          <div class="trap-body">
-            <h4>App Insights resource exists. Empty for the whole pilot.</h4>
-            <p>Bicep substrate provisioned but Foundry account-level connection missing, or <code>configure_azure_monitor()</code> never called. Telemetry never flows. The first KQL query of the post-mortem is the first one anyone ran.</p>
-            <div class="caught"><span class="by">caught by</span><code>foundry-observability</code> · first-trace probe</div>
-          </div>
-        </article>
-
-        <article class="trap reveal" data-delay="4">
-          <div class="trap-mark">!</div>
-          <div class="trap-body">
-            <h4>Eval <code>tool_output_utilization</code> FAILs every grounded answer as fabricated.</h4>
-            <p>Eval dataset shape is missing <code>tool_calls</code> + <code>tool_outputs</code>. The evaluator can&rsquo;t see what the agent read, so it scores every cited fact as confabulated.</p>
-            <div class="caught"><span class="by">caught by</span><code>foundry-evals</code> · enriched dataset shape</div>
-          </div>
-        </article>
-
-        <article class="trap reveal" data-delay="5">
-          <div class="trap-mark">!</div>
-          <div class="trap-body">
-            <h4>SPEC selector added by hand &mdash; downstream skills never re-ran.</h4>
-            <p>Bot, workspace, ACA job marked <code>yes</code> in SPEC § 11c, but no module / no <code>src/&lt;dir&gt;/</code> / no <code>azure.yaml</code> service. Manifest drift ships clean.</p>
-            <div class="caught"><span class="by">caught by</span><code>safe-check --phase pre-deploy</code> · orphan-selector check</div>
-          </div>
-        </article>
-
-        <article class="trap reveal" data-delay="6">
-          <div class="trap-mark">!</div>
-          <div class="trap-body">
-            <h4>Demo data isn&rsquo;t reset between takes &mdash; second run breaks.</h4>
-            <p>No <code>scripts/reset_data.py</code>; demo state accumulates. The customer&rsquo;s second test of a scenario does not match what they just watched.</p>
-            <div class="caught"><span class="by">caught by</span><code>threadlight-demo-data-factory</code> · idempotent reset</div>
-          </div>
         </article>
 
       </div>
@@ -1508,14 +1435,11 @@
       <p class="sub reveal" data-delay="2">Then run <code>threadlight-deploy</code> before you finish your coffee.</p>
 
       <div class="cta-prompts reveal" data-delay="3" role="note" aria-label="Example invocations">
-<span class="cmt"># 1. Spec it — tell the agent what you need</span>
+<span class="cmt"># 1. Tell the agent what you need</span>
 <br><span class="prompt">&gt;</span> <span class="cmd">"Design a claims-triage process for an FSI customer. Fast PoC mode."</span>
 <br>
-<br><span class="cmt"># 2. See it on your laptop in &lt; 30 min</span>
-<br><span class="prompt">&gt;</span> <span class="cmd">python -m threadlight_quickstart</span>   <span class="cmt"># → http://localhost:8501</span>
-<br>
-<br><span class="cmt"># 3. Ship it to the customer's tenant</span>
-<br><span class="prompt">&gt;</span> <span class="cmd">"Deploy this to the customer's Azure subscription"</span>   <span class="cmt"># → azd up</span>
+<br><span class="cmt"># 2. Deploy to the customer's tenant</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Deploy this agent to the customer's Azure subscription with governance."</span>
       </div>
 
       <div class="hero-cta-row reveal" data-delay="4">
