@@ -155,8 +155,9 @@ azd deploy agents
 
 `agent-framework-core` 1.6.0 and `agent-framework-foundry-hosting`
 1.0.0a260521 ship with **instrumentation enabled by default**. The
-hosting package now pulls `microsoft-opentelemetry>=1.0.0` which
-bundles all OTel instrumentors:
+hosting package transitively pulls `azure-ai-agentserver-core>=2.0.0b3`
+which depends on `microsoft-opentelemetry>=1.0.0` (resolves to 1.1.0),
+bundling all OTel instrumentors:
 
 | Bundled instrumentor | What it captures |
 |---|---|
@@ -957,7 +958,7 @@ stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 |---------|---------|------|----------|
 | `agent-framework-core` | 1.6.0 | ✅ Stable | pydantic, opentelemetry-api (instrumentation enabled by default) |
 | `agent-framework-foundry` | 1.6.0 | ✅ Stable | core, openai, azure-ai-projects |
-| `agent-framework-foundry-hosting` | 1.0.0a260521 | ⚠️ Alpha | agentserver-core==2.0.0b4, agentserver-responses==1.0.0b6, **microsoft-opentelemetry==1.2.0** (bundles all OTel instrumentors + exporters) |
+| `agent-framework-foundry-hosting` | 1.0.0a260521 | ⚠️ Alpha | agentserver-core==2.0.0b4, agentserver-responses==1.0.0b6. **agentserver-core** pulls **microsoft-opentelemetry>=1.0.0** (resolves to 1.1.0, bundles all OTel instrumentors + exporters) |
 | `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.6.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
@@ -1336,7 +1337,7 @@ flying blind.
 | Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. Recent strict-smoke runs showed low reproducibility with mini + permissive MCP and high reproducibility with gpt-5.4 + validate-or-reject. |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `agent.yaml` `environment_variables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Observed in hosted-agent validation |
-| Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` OR AppInsights connection missing on account | Assign RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
+| Agent traces not appearing in AppInsights | Agent identities lack `Application Insights Data Ingestor` (GUID `f526a384-...`) OR AppInsights connection missing on account. Note: `Monitoring Metrics Publisher` is NOT sufficient when `DisableLocalAuth: true` — it only covers custom metrics, not OTel trace/log ingestion | Assign `Application Insights Data Ingestor` RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; `azd ai agent show` reports active** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null`), the SDK raises `ValueError`. Container crashes before `ResponsesHostServer` binds. Foundry runtime sees no agent. **The agent itself is fine — telemetry init is what killed it.** | Wrap telemetry init in `_init_telemetry()` (no-ops on missing env / SDK ImportError / any SDK exception). Never call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` gap row O-011 |
 | **AppInsights connection PUT 400 ValidationError "AuthType for AppInsights Connection can only be ApiKey"** | Account-RP scope `2025-10-01-preview` in some regions rejects `authType: AAD` despite skill guidance (correlation IDs available) | Use `authType: ApiKey` with `credentials.key` in body. **BUT:** the key is silently dropped server-side — GET returns `credentials: null` and platform never injects the env var. There is no working workaround at the platform layer. File a support ticket; ship with guarded `_init_telemetry()` so the agent functions without telemetry; consider region pivot |
 | **AppInsights connection account-level "1-per-category" limit** | Account-level `AppInsights` connections enforce a single-instance-per-category constraint — cannot create parallel connections in the same account. Re-creation requires DELETE first | DELETE the existing connection BEFORE re-PUT. Use `az rest --method DELETE` with full URI **as a variable** (do NOT inline `?api-version=...` — see next row) |

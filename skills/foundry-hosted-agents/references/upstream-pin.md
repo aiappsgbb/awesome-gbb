@@ -114,16 +114,16 @@ validation:
         raise SystemExit('FAIL: AzureOpenAIChatClient unexpectedly still importable on MAF 1.6.0')
     except ImportError:
         print('ok AzureOpenAIChatClient correctly removed in 1.4.0+')
-    # Assert microsoft-opentelemetry bundled via hosting
+    # Assert microsoft-opentelemetry bundled via agentserver-core (transitive: hosting → agentserver-core → microsoft-opentelemetry)
     from microsoft.opentelemetry import configure_azure_monitor as _cam
-    print('ok microsoft-opentelemetry bundled via hosting')
+    print('ok microsoft-opentelemetry bundled via agentserver-core')
     from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
     print('ok opentelemetry-instrumentation-openai-v2 bundled')
     "
   expected_output:
     - "ok foundry-hosted-agents imports"
     - "ok AzureOpenAIChatClient correctly removed in 1.4.0+"
-    - "ok microsoft-opentelemetry bundled via hosting"
+    - "ok microsoft-opentelemetry bundled via agentserver-core"
     - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
 last_validated: 2026-05-23

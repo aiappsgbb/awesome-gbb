@@ -10,11 +10,11 @@ description: >
   AppInsights`) so hosted agents auto-inject
   `APPLICATIONINSIGHTS_CONNECTION_STRING`; ACA-side
   `configure_azure_monitor()` for MCP / bot / workspace / cron.
-  Includes `Monitoring Metrics Publisher` RBAC and KQL queries.
+  Includes `Application Insights Data Ingestor` RBAC and KQL queries.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
-  Monitoring Metrics Publisher, AppInsights connection foundry,
+  Application Insights Data Ingestor, AppInsights connection foundry,
   account-level appin.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
@@ -56,7 +56,7 @@ bot service, workspace UI. **Default discipline**, not optional.
 │ Layer 2: Foundry hosted agent (the runtime)                         │
 │   • Account-level AppInsights connection (category: AppInsights)    │
 │   • Platform AUTO-INJECTS APPLICATIONINSIGHTS_CONNECTION_STRING     │
-│   • RBAC: Monitoring Metrics Publisher on agent identities          │
+│   • RBAC: Application Insights Data Ingestor on agent identities     │
 │   • Tracing emitted by the runtime — no app code change             │
 └─────────────────────────────────┼───────────────────────────────────┘
                                   │
@@ -84,7 +84,7 @@ foundry-observability/
 └── references/
     ├── bicep/
     │   ├── log-analytics.bicep          # LAW (workspace) — required by both AppIn and ACA env
-    │   ├── app-insights.bicep           # AppIn workspace-based + UAMI Monitoring Metrics Publisher
+    │   ├── app-insights.bicep           # AppIn workspace-based + UAMI Application Insights Data Ingestor
     │   └── aca-env-monitoring.bicep     # ACA env wired to LAW + AppIn
     ├── python/
     │   └── otel_init.py                 # configure_azure_monitor() for ACA workloads
@@ -132,7 +132,7 @@ output workspaceName string = law.name
 
 ```bicep
 // infra/modules/app-insights.bicep — drop-in
-@description('App Insights component. workspace-based (legacy classic mode is deprecated). Auto-grants Monitoring Metrics Publisher to the workload UAMI so Foundry hosted agents can publish metrics keylessly.')
+@description('App Insights component. workspace-based (legacy classic mode is deprecated). Auto-grants Application Insights Data Ingestor to the workload UAMI so OTel traces, logs, and metrics can be ingested keylessly.')
 param location string = resourceGroup().location
 param name string
 param workspaceId string
@@ -151,17 +151,20 @@ resource appin 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// Monitoring Metrics Publisher — required for the agent UAMI to write metrics
-// Role GUID: 3913510d-42f4-4e42-8a64-420c390055eb (well-known)
-resource metricsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// Application Insights Data Ingestor — required for OTel trace/log/metric ingestion
+// when DisableLocalAuth is true. "Monitoring Metrics Publisher" covers only custom
+// metrics API — it does NOT cover OTel exporter ingestion and will cause HTTP 400
+// "Bad Request" from the azure-monitor-opentelemetry-exporter.
+// Role GUID: f526a384-b230-433a-b45c-95f59c4a2dec (well-known)
+resource dataIngestor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: appin
-  name: guid(appin.id, uamiPrincipalId, '3913510d-42f4-4e42-8a64-420c390055eb')
+  name: guid(appin.id, uamiPrincipalId, 'f526a384-b230-433a-b45c-95f59c4a2dec')
   properties: {
     principalId: uamiPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '3913510d-42f4-4e42-8a64-420c390055eb'
+      'f526a384-b230-433a-b45c-95f59c4a2dec'
     )
   }
 }
@@ -175,7 +178,11 @@ output instrumentationKey string = appin.properties.InstrumentationKey
 > **Why `DisableLocalAuth: true`.** Threadlight pilots are keyless by
 > mandate (see `azure-tenant-isolation` and `citadel-spoke-onboarding`).
 > AppIn ingestion keys are a back-door around RBAC — disable them and
-> rely on `Monitoring Metrics Publisher` to gate writes.
+> rely on `Application Insights Data Ingestor` to gate writes.
+> **⚠️ `Monitoring Metrics Publisher` is NOT sufficient** — it covers
+> only the custom metrics API, not the OTel trace/log ingestion endpoint.
+> Using the wrong role with `DisableLocalAuth: true` causes HTTP 400
+> "Bad Request" from the `azure-monitor-opentelemetry-exporter`.
 
 ### Step 1.3 — main.bicep wiring
 
@@ -264,9 +271,9 @@ container revision automatically.
 
 The hosted-agent platform creates **two** managed identities per agent
 (`AgentService-<agent-name>` + `Foundry-<workspace>`). Both need
-`Monitoring Metrics Publisher` (role GUID `3913510d-...`) on the
-AppInsights resource, OR they fail to publish metrics with a silent
-403. The Bicep in Step 1.2 grants it to your workload UAMI; the
+`Application Insights Data Ingestor` (role GUID `f526a384-...`) on the
+AppInsights resource, OR they fail to ingest telemetry with HTTP 400
+"Bad Request". The Bicep in Step 1.2 grants it to your workload UAMI; the
 postprovision script extends the same grant to the platform-managed
 identities.
 
@@ -437,7 +444,7 @@ at one of the three layers above. Most common causes:
 | Symptom | Layer | Fix |
 |---|---|---|
 | `count_ == 0` everywhere, never recovered | Layer 1 — connection string never reached the workload | `az containerapp show -g <rg> -n <app> --query 'properties.template.containers[0].env'` — confirm `APPLICATIONINSIGHTS_CONNECTION_STRING` is present |
-| Hosted agent absent (`AgentService-*` cloudRoleName), ACA workloads fine | Layer 2 — Foundry account-level connection missing or RBAC missing | Re-run `connect_foundry_appinsights.py`; verify `Monitoring Metrics Publisher` on agent identities |
+| Hosted agent absent (`AgentService-*` cloudRoleName), ACA workloads fine | Layer 2 — Foundry account-level connection missing or RBAC missing | Re-run `connect_foundry_appinsights.py`; verify `Application Insights Data Ingestor` on agent identities |
 | MCP traces present, agent traces absent | Layer 2 only — agent runtime not emitting | Check the agent's `agent.yaml` — make sure `APPLICATIONINSIGHTS_CONNECTION_STRING` is NOT in `environment_variables` (manual override breaks platform injection) |
 | Some workloads fine, one missing | Layer 3 — that workload didn't call `configure_azure_monitor()` | Grep that service's entry-point file for the call; add it as the first line of `__main__` |
 | Traces present but no `customDimensions` from your code | Logging not bridged into OTel | `import logging; logging.getLogger(__name__).info("...")` should auto-flow once `configure_azure_monitor()` ran. If it doesn't, check `logging` is in the `instrumentation_options` |
@@ -515,7 +522,7 @@ are silent. This is the single most useful query when an ACA Job is
 | `threadlight-design` | SPEC § 11c selectors must include `app-insights: yes` and `log-analytics: yes` (always — never opt-out). manifest.json `deployment_manifest.expected_resource_types` must list `Microsoft.Insights/components` and `Microsoft.OperationalInsights/workspaces` |
 | `threadlight-deploy` | Phase 6 always-include modules: `app-insights.bicep` + `log-analytics.bicep`. Postprovision hook must call `connect_foundry_appinsights.py`. Every ACA service module passes `APPLICATIONINSIGHTS_CONNECTION_STRING` env. Every Python entry-point starts with `configure_azure_monitor()` |
 | `threadlight-safe-check` | NEW Step 5.6 (App Insights existence) — see that skill's post-deploy phase. Gate FAILS if `Microsoft.Insights/components` not in deployed RG when SPEC declared `app-insights: yes`. Optional smoke query (`first-trace-probe.kql`) can be invoked manually after PoC smoke to confirm traces actually flow |
-| `foundry-hosted-agents` | RBAC pin (`Monitoring Metrics Publisher`) on agent identities; `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` rule for `agent.yaml` |
+| `foundry-hosted-agents` | RBAC pin (`Application Insights Data Ingestor`) on agent identities; `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` rule for `agent.yaml` |
 | `foundry-mcp-aca` | Layer 3 init (`configure_azure_monitor()` in `server.py`); ACA env wiring (env var passthrough) |
 | `foundry-teams-bot` | Layer 3 init (`configure_azure_monitor()` in `app.py`); same env wiring |
 | `threadlight-event-triggers` | ACA Job init pattern (OTel as first line of `__main__` so cron crashes leave a trace) |
@@ -534,7 +541,7 @@ are silent. This is the single most useful query when an ACA Job is
 | O-002 | AppIn provisioned but zero traces | Foundry account-level connection never created | Run postprovision hook `connect_foundry_appinsights.py` |
 | O-003 | Hosted agent OK, MCP / bot / cron silent | `configure_azure_monitor()` not called in those services | Add as first line of `__main__` (or module-level) |
 | O-004 | Agent emits `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` | Connection string set in `agent.yaml` `environment_variables` | Remove it — platform auto-injects |
-| O-005 | Metrics fail silently with 403 | `Monitoring Metrics Publisher` not granted to agent identity | Re-run RBAC bicep block; verify both `AgentService-*` and `Foundry-*` UAMI principals have it |
+| O-005 | OTel exporter returns HTTP 400 "Bad Request" when `DisableLocalAuth: true` | Wrong RBAC role: `Monitoring Metrics Publisher` covers only custom metrics API, NOT OTel trace/log ingestion | Grant `Application Insights Data Ingestor` (GUID `f526a384-b230-433a-b45c-95f59c4a2dec`) instead. Verify both `AgentService-*` and `Foundry-*` UAMI principals have it. If `DisableLocalAuth: false`, this is not the issue |
 | O-006 | Cron logs empty in `ContainerAppConsoleLogs_CL` despite failure | Container exits before stdout flushed; OTel ran first → `exceptions` table has the trace | Use the `silent-cron-debug.kql` union query — don't trust console logs alone |
 | O-007 | Local-test runs spam errors at startup | OTel init unguarded against missing env var | Wrap `configure_azure_monitor()` in `if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):` |
 | O-008 | Telemetry from two pilots collides in same AppIn | One AppIn shared across pilots without `cloud_RoleName` discipline | Pass distinct `logger_name` per service, OR provision one AppIn per pilot |
@@ -611,8 +618,8 @@ Before declaring a pilot "deploy-complete":
 - [ ] Every ACA service in `azure.yaml` (MCP, bot, workspace, cron) passes `APPLICATIONINSIGHTS_CONNECTION_STRING` env from bicep outputs
 - [ ] Every Python entry-point under `src/` calls `configure_azure_monitor()` before any other init
 - [ ] `agent.yaml` does NOT include `APPLICATIONINSIGHTS_CONNECTION_STRING` in `environment_variables`
-- [ ] `Monitoring Metrics Publisher` granted to workload UAMI in `app-insights.bicep`
-- [ ] Postprovision hook also grants Monitoring Metrics Publisher to `AgentService-*` and `Foundry-*` platform identities
+- [ ] `Application Insights Data Ingestor` granted to workload UAMI in `app-insights.bicep`
+- [ ] Postprovision hook also grants Application Insights Data Ingestor to `AgentService-*` and `Foundry-*` platform identities
 - [ ] After `azd up` smoke + first agent invocation, the smoke probe `first-trace-probe.kql` returns ≥ 1 row from each of: hosted-agent (`AgentService-*` cloudRoleName), MCP (`mcp` cloudRoleName), bot (`bot` cloudRoleName)
 - [ ] `threadlight-safe-check` Step 5.6 (App Insights existence) PASSES
 
@@ -628,7 +635,7 @@ KQL probe catches it.
 - App Insights workspace-based components: <https://learn.microsoft.com/azure/azure-monitor/app/create-workspace-resource>
 - `azure-monitor-opentelemetry` Python SDK: <https://learn.microsoft.com/python/api/overview/azure/monitor-opentelemetry-readme>
 - Foundry account-level connections (AppInsights category): <https://learn.microsoft.com/azure/ai-foundry/concepts/connections>
-- Monitoring Metrics Publisher role: <https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/monitor#monitoring-metrics-publisher>
+- Application Insights Data Ingestor role: <https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/monitor#application-insights-data-ingestor>
 - ACA env LAW + AppIn binding: <https://learn.microsoft.com/azure/container-apps/observability>
 - KQL reference: <https://learn.microsoft.com/azure/data-explorer/kusto/query/>
 
