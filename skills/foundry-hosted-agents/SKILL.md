@@ -2,8 +2,8 @@
 name: foundry-hosted-agents
 description: >
   Deploy, evaluate, and manage Foundry hosted agents on the refreshed
-  April 2026 preview (Agent + FoundryChatClient + ResponsesHostServer
-  pattern, MAF 1.4.0, Foundry User role). Covers ACR build/push,
+  May 2026 preview (Agent + FoundryChatClient + ResponsesHostServer
+  pattern, MAF 1.6.0, Foundry User role). Covers ACR build/push,
   hosted/prompt agent create, container start, batch eval, prompt
   optimization, agent.yaml, dataset curation, azd ai agent extension,
   identity, RBAC, troubleshooting. USE FOR: deploy foundry agent,
@@ -17,7 +17,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.4.3"
+  version: "1.5.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -26,15 +26,15 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 (refreshed preview, April 2026). Covers the `Agent` + `FoundryChatClient` +
 `ResponsesHostServer` (MAF) variant exclusively.
 
-> **⚠️ MAF 1.4.0 cutover (May 2026) — three breaking changes.** If you have
-> hosted agents pinned to `agent-framework-core` 1.3.x or earlier, they
-> will start returning `401 Unauthorized` / `server_error` on every
-> Responses request once Azure completes the rolling Foundry data-plane
-> rename. **You must rebuild the orchestrator image** and re-import the
-> agent versions. See [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026)
-> for the full migration: `ai.azure.com` token scope, "Foundry User" role
-> rename (GUID unchanged), `AzureOpenAIChatClient` removal,
-> `:latest` vs `sha256@…` image-tag strategy.
+> **⚠️ MAF 1.6.0 recommended (May 2026) — gen_ai telemetry built-in.** Upgrade
+> from 1.4.0 to 1.6.0 to get OpenTelemetry gen_ai spans (model name, token
+> usage, latency) without any manual instrumentor code. The new hosting
+> package (`1.0.0a260521`) bundles `microsoft-opentelemetry` which includes
+> `opentelemetry-instrumentation-openai-v2` and `opentelemetry-instrumentation-openai-agents-v2`
+> automatically. See [§ MAF 1.6.0 update](#maf-160-update-may-2026).
+>
+> If you are still on 1.3.x, upgrade directly to 1.6.0 — absorb both the
+> 1.4.0 breaking changes below AND the 1.6.0 telemetry improvements.
 
 ## When to Use
 
@@ -48,6 +48,11 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 ---
 
 ## MAF 1.4.0 breaking changes (May 2026)
+
+> **If upgrading from 1.3.x today, skip to 1.6.0 directly.** The version
+> pins below show 1.4.0 for historical accuracy; use the 1.6.0 pins from
+> [§ MAF 1.6.0 update](#maf-160-update-may-2026) instead — they absorb
+> all 1.4.0 breaking changes AND add gen_ai telemetry.
 
 Azure renamed the Foundry data-plane role from **"Azure AI User"** to
 **"Foundry User"** and changed the AAD token audience the SDK requests
@@ -145,6 +150,83 @@ azd deploy agents
 > The `maf14-YYYYMMDDHHMM` tag lets you correlate "which agent
 > version is running which MAF build?" months later when a regression
 > bisect needs it.
+
+## MAF 1.6.0 update (May 2026)
+
+`agent-framework-core` 1.6.0 and `agent-framework-foundry-hosting`
+1.0.0a260521 ship with **instrumentation enabled by default**. The
+hosting package now pulls `microsoft-opentelemetry>=1.0.0` which
+bundles all OTel instrumentors:
+
+| Bundled instrumentor | What it captures |
+|---|---|
+| `opentelemetry-instrumentation-openai-v2==2.3b0` | gen_ai spans: model name, token usage, latency for every OpenAI/Responses call |
+| `opentelemetry-instrumentation-openai-agents-v2==0.1.0` | Agent-level invocation spans |
+| `opentelemetry-instrumentation-httpx` | HTTP dependency spans |
+| `azure-core-tracing-opentelemetry` | Azure SDK call tracing |
+
+### What this means for `container.py`
+
+**Remove all manual OTel code.** No `configure_azure_monitor()`, no
+`OpenAIInstrumentor().instrument()`, no custom `TracerProvider`. The
+platform handles everything. Your container code only needs:
+
+```python
+# Ensure env var is set (deploy.py passthrough for O-012 workaround)
+cs = os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING") or \
+     os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if cs:
+    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = cs
+
+# Optionally: SDK-level telemetry setup (after FoundryChatClient creation)
+try:
+    await client.configure_azure_monitor(enable_sensitive_data=True)
+except Exception:
+    pass  # Agent works without telemetry
+```
+
+### gen_ai spans appear under `cloud_RoleName = "agent_framework"`
+
+**Important for KQL queries:** gen_ai dependency spans use
+`cloud_RoleName = "agent_framework"`, NOT `agent-{jobId}-maf`.
+Queries filtering `cloud_RoleName startswith "agent-"` will miss them.
+
+```kql
+// gen_ai spans — model, tokens, latency
+dependencies
+| where timestamp > ago(1h)
+| where cloud_RoleName == "agent_framework"
+| project timestamp, name, duration,
+    model=tostring(customDimensions['gen_ai.response.model']),
+    input_tokens=tostring(customDimensions['gen_ai.usage.input_tokens']),
+    output_tokens=tostring(customDimensions['gen_ai.usage.output_tokens']),
+    op=tostring(customDimensions['gen_ai.operation.name'])
+| order by timestamp desc
+```
+
+### Upgrade recipe (1.4.0 → 1.6.0)
+
+```bash
+sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.6.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.6.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-hosting==1.0.0a260521"/' pyproject.toml
+# Remove explicit OTel deps — now bundled via hosting package:
+# azure-monitor-opentelemetry, opentelemetry-sdk, opentelemetry-instrumentation-*
+```
+
+### `create_version` deduplication trap
+
+Foundry deduplicates `create_version` when environment variables and
+metadata are **identical** — even if the container image tag/digest
+differs. This is SEPARATE from the ACR layer cache trap below. After
+a base image rebuild, new code never reaches the container because
+Foundry returns the existing version.
+
+**Fix:** Add a changing environment variable to force a new version:
+```python
+import time
+env_vars["_BUILD_TS"] = str(int(time.time()))
+```
 
 ### ACR layer cache trap (per-job images built via `DockerBuildRequest`)
 
@@ -825,16 +907,14 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core~=1.4.0",
-    "agent-framework-foundry~=1.4.0",
-    "agent-framework-foundry-hosting==1.0.0a260514",
-    "azure-ai-projects>=2.1.0",
+    "agent-framework-core~=1.6.0",
+    "agent-framework-foundry~=1.6.0",
+    "agent-framework-foundry-hosting==1.0.0a260521",
     "azure-identity>=1.19.0,<1.26.0a0",
     "mcp>=1.10.0",
     "python-dotenv>=1.0.0",
-    # Add these if using save_report file generation:
-    # "openpyxl>=3.1.0",   # XLSX
-    # "fpdf2>=2.8.0",      # PDF (pure Python)
+    # OTel + gen_ai instrumentors are bundled via hosting → microsoft-opentelemetry.
+    # Do NOT add explicit azure-monitor-opentelemetry or opentelemetry-* lines.
 ]
 
 [tool.uv]
@@ -845,14 +925,19 @@ prerelease = "if-necessary-or-explicit"
 packages = []
 ```
 
-**Do NOT use `agent-framework>=1.4.0` as a meta-package.** The meta-package's transitive
-resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.4.0` and
-`agent-framework-foundry~=1.4.0` (PEP 440 compatible-release caps) instead, and pin the
-alpha hosting package by exact version `==1.0.0a260514` — pre-release cap math doesn't
+**Do NOT use `agent-framework>=1.6.0` as a meta-package.** The meta-package's transitive
+resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.6.0` and
+`agent-framework-foundry~=1.6.0` (PEP 440 compatible-release caps) instead, and pin the
+alpha hosting package by exact version `==1.0.0a260521` — pre-release cap math doesn't
 survive across alpha boundaries, so `~=` would silently jump to a later alpha. Verified
-working on linux/amd64 as the current reference shape, superseding prior 1.3.0 pinning
-guidance that became fragile once Azure renamed the Foundry data-plane role and changed
-the SDK's token-scope audience (see [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026)).
+working on linux/amd64 as the current reference shape.
+
+**Simplified deps (1.6.0).** The hosting package now bundles `microsoft-opentelemetry`
+which transitively pulls ALL OTel instrumentors (openai-v2, agents-v2, httpx, logging,
+fastapi, etc.) and the Azure Monitor exporter. **Remove** any explicit
+`azure-monitor-opentelemetry`, `opentelemetry-sdk`, `opentelemetry-instrumentation-*`
+lines from your pyproject — they are now transitive and declaring them explicitly causes
+version conflicts.
 
 **Mandatory adjacent rules** (lessons from recent dependency-resolution retrospectives):
 - **Drop** any explicit `azure-ai-agentserver-responses` line — `agent-framework-foundry-hosting`
@@ -870,10 +955,10 @@ stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 
 | Package | Version | Type | Pulls in |
 |---------|---------|------|----------|
-| `agent-framework-core` | 1.4.0 | ✅ Stable | pydantic, opentelemetry-api |
-| `agent-framework-foundry` | 1.4.0 | ✅ Stable | core, openai, azure-ai-projects |
-| `agent-framework-foundry-hosting` | 1.0.0a260514 | ⚠️ Alpha | agentserver-core==2.0.0b2, agentserver-responses==1.0.0b4 |
-| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.4.0 |
+| `agent-framework-core` | 1.6.0 | ✅ Stable | pydantic, opentelemetry-api (instrumentation enabled by default) |
+| `agent-framework-foundry` | 1.6.0 | ✅ Stable | core, openai, azure-ai-projects |
+| `agent-framework-foundry-hosting` | 1.0.0a260521 | ⚠️ Alpha | agentserver-core==2.0.0b4, agentserver-responses==1.0.0b6, **microsoft-opentelemetry==1.2.0** (bundles all OTel instrumentors + exporters) |
+| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.6.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
 No `override-dependencies` needed — the hosting package pins its own transitive deps.

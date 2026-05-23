@@ -227,6 +227,21 @@ The hosted agent runtime emits traces automatically — but ONLY if the
 account has an AppInsights connection registered. **Without that
 connection, the runtime silently drops every span.**
 
+> **Architecture (MAF 1.6.0+).** The platform (`azure.ai.agentserver`)
+> manages its OWN OTel pipeline via `_tracing.py:_setup_log_export()`.
+> This pipeline captures platform log records (HTTP requests, agent
+> lifecycle, message routing) but does NOT export dependency spans.
+> With 1.6.0, the hosting package bundles `microsoft-opentelemetry`
+> which adds the SpanExporter + all instrumentors (openai-v2, httpx,
+> etc.) — gen_ai dependency spans flow automatically.
+>
+> **Do NOT call standalone `configure_azure_monitor()` in
+> `container.py`** — it conflicts with the platform's TracerProvider
+> setup, causing duplicate log records and/or lost spans. The only
+> telemetry code you need is the env var passthrough (for O-012
+> workaround) and optionally `client.configure_azure_monitor()`.
+> See `foundry-hosted-agents` § MAF 1.6.0 update.
+
 ### Step 2.1 — Create the account-level connection (postprovision)
 
 ```bash
@@ -430,10 +445,30 @@ at one of the three layers above. Most common causes:
 ### Hosted-agent traces, last hour
 
 ```kql
+// Platform log traces (HTTP, messages, agent lifecycle)
 traces
 | where timestamp > ago(1h)
-| where cloud_RoleName startswith "AgentService-"
-| project timestamp, severityLevel, message, customDimensions.['gen_ai.system'], customDimensions.['gen_ai.operation.name']
+| where cloud_RoleName startswith "AgentService-" or cloud_RoleName startswith "agent-"
+| project timestamp, severityLevel, message, cloud_RoleName
+| order by timestamp desc
+```
+
+### Hosted-agent gen_ai spans (model, tokens, latency)
+
+> **Note (MAF 1.6.0+):** gen_ai dependency spans use
+> `cloud_RoleName == "agent_framework"` — NOT the agent name prefix.
+> Queries filtering `startswith "agent-"` will miss these spans.
+
+```kql
+dependencies
+| where timestamp > ago(1h)
+| where cloud_RoleName == "agent_framework"
+| project timestamp, name,
+    model=tostring(customDimensions['gen_ai.response.model']),
+    op=tostring(customDimensions['gen_ai.operation.name']),
+    input_tokens=tostring(customDimensions['gen_ai.usage.input_tokens']),
+    output_tokens=tostring(customDimensions['gen_ai.usage.output_tokens']),
+    duration
 | order by timestamp desc
 ```
 
