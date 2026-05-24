@@ -54,6 +54,7 @@
 
 - [research-company](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/research-company/SKILL.md): Emit a thin org-brief YAML profiling a target organisation — the company-specific overlay that pairs with an industry primer to drive a digital-clone-grade substrate fork.
 - [compose-org](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/compose-org/SKILL.md): Fork an agentic substrate into a customer-flavoured digital clone using an org-brief YAML (from research-company) + the matching industry primer.
+- [zava-workspace-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/zava-workspace-deploy/SKILL.md): Deploy custom React/Vite SPAs to Azure Container Apps as static-serve containers. Builds the SPA, packages with nginx, generates Bicep + azure.yaml service entry.
 
 ### 🔍 Discovery
 

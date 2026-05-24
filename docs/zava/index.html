@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zava — Company name to a living digital twin.</title>
+<meta name="description" content="Zava is how Microsoft GBB AI Apps turns a company name into a branded digital-clone workspace — research the org, fork the substrate, deploy to Azure. One pipeline, one session.">
+<meta name="theme-color" content="#f59e0b">
+<style>
+  /* ============================================================
+     ZAVA EXPERIENCE — single-file cinematic landing page
+     ------------------------------------------------------------
+     No external CSS, no external JS, no external fonts, no build.
+     Vanilla ES2020+. IntersectionObserver for reveals; rAF for
+     the hero pulse + counter animations.
+     Dark-first; falls back to light via prefers-color-scheme.
+     ============================================================ */
+
+  :root {
+    --bg-0:   #0a0d14;
+    --bg-1:   #11151f;
+    --bg-2:   #181c2a;
+    --bg-3:   #232a3d;
+    --line:   #2a3149;
+    --line-2: #3a4366;
+
+    --ink-0:  #f5f5f7;
+    --ink-1:  #cfd2dc;
+    --ink-2:  #8e95a8;
+    --ink-3:  #5a6178;
+
+    /* Accents — warm amber + cyan, Zava-flavoured */
+    --accent:        #f59e0b;
+    --accent-1:      #fbbf24;
+    --accent-soft:   rgba(245,158,11,.18);
+    --accent-glow:   rgba(245,158,11,.42);
+
+    --cyan:          #22d3ee;
+    --cyan-1:        #67e8f9;
+
+    /* typography */
+    --sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    --serif: Georgia, 'Times New Roman', serif;
+
+    --page-pad: 24px;
+    --max-w:    1100px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg-0);
+    color: var(--ink-1);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent-1); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--bg-3); padding: 2px 6px; border-radius: 4px; }
+
+  .wrap { max-width: var(--max-w); margin: 0 auto; padding: 0 var(--page-pad); }
+
+  /* --- HEADER --------------------------------------------------- */
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    backdrop-filter: blur(14px) saturate(1.8);
+    background: rgba(10,13,20,.72);
+    border-bottom: 1px solid var(--line);
+  }
+  header nav {
+    display: flex; align-items: center; gap: 20px;
+    max-width: var(--max-w); margin: 0 auto; padding: 12px var(--page-pad);
+    font-size: .82rem; color: var(--ink-2);
+  }
+  header nav .logo { font-weight: 700; color: var(--ink-0); letter-spacing: -.02em; font-size: .95rem; margin-right: auto; }
+  header nav .logo .accent { color: var(--accent); }
+  header nav a { color: var(--ink-2); }
+  header nav a:hover { color: var(--ink-0); text-decoration: none; }
+
+  /* --- SCENES (full-viewport sections) ----------------------------- */
+  .scene { position: relative; padding: 100px 0 80px; }
+
+  /* --- HERO ------------------------------------------------------- */
+  .hero-stage { position: absolute; inset: 0; overflow: hidden; z-index: 0; }
+  .hero-aurora {
+    position: absolute; inset: -40% -20%; z-index: 0;
+    background: radial-gradient(ellipse 70% 50% at 30% 40%, rgba(245,158,11,.10) 0%, transparent 70%),
+                radial-gradient(ellipse 50% 40% at 70% 60%, rgba(34,211,238,.08) 0%, transparent 60%);
+    animation: aurora 18s ease-in-out infinite alternate;
+  }
+  @keyframes aurora { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(30px,-20px) scale(1.08); } }
+  .hero-grid {
+    position: absolute; inset: 0; z-index: 1;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px),
+                      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 80px 80px;
+    opacity: .18;
+    mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, black, transparent);
+  }
+  .hero-particles span {
+    position: absolute; display: block; width: 3px; height: 3px; border-radius: 50%;
+    background: var(--accent); opacity: 0;
+    animation: particle-up 12s linear infinite;
+  }
+  @keyframes particle-up {
+    0% { opacity: 0; transform: translateY(0); }
+    10% { opacity: .6; }
+    90% { opacity: .3; }
+    100% { opacity: 0; transform: translateY(-85vh); }
+  }
+  .hero-inner { position: relative; z-index: 2; text-align: center; padding-top: 60px; }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: .78rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--ink-2); margin-bottom: 16px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent-glow); flex-shrink: 0; }
+
+  .hero-headline {
+    font-size: clamp(2.2rem, 6vw, 4.2rem); font-weight: 800;
+    line-height: 1.08; letter-spacing: -.03em; color: var(--ink-0);
+    margin-bottom: 20px;
+  }
+  .hero-headline .word { display: inline-block; opacity: 0; transform: translateY(18px); transition: opacity .5s, transform .5s; }
+  .hero-headline .word.in { opacity: 1; transform: translateY(0); }
+  .hero-headline em { font-style: normal; color: var(--accent); }
+
+  .hero-sub {
+    max-width: 640px; margin: 0 auto 18px; font-size: 1.05rem;
+    color: var(--ink-1); line-height: 1.65;
+  }
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: .82rem; color: var(--ink-2); margin-bottom: 28px;
+  }
+  .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); animation: pip-pulse 2s ease infinite; }
+  @keyframes pip-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
+  .hero-cta-row { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 32px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 20px; border-radius: 8px; font-size: .88rem; font-weight: 600;
+    transition: background .2s, color .2s, box-shadow .2s;
+  }
+  .btn-primary { background: var(--accent); color: #0a0d14; }
+  .btn-primary:hover { background: var(--accent-1); text-decoration: none; box-shadow: 0 0 20px var(--accent-glow); }
+  .btn-ghost { background: var(--bg-3); color: var(--ink-1); border: 1px solid var(--line-2); }
+  .btn-ghost:hover { background: var(--bg-2); color: var(--ink-0); text-decoration: none; }
+  .arrow { font-size: 1.1em; }
+
+  .hero-live-strip {
+    display: flex; align-items: flex-start; gap: 12px;
+    max-width: 620px; margin: 0 auto;
+    padding: 14px 18px; border-radius: 10px;
+    background: var(--bg-2); border: 1px solid var(--line);
+    text-align: left; font-size: .82rem;
+  }
+  .live-pip { width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px rgba(52,211,153,.5); flex-shrink: 0; margin-top: 5px; animation: pip-pulse 2s ease infinite; }
+  .live-label { font-weight: 700; color: var(--ink-0); }
+  .wip { font-size: .65rem; padding: 1px 5px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); font-weight: 700; margin-left: 6px; vertical-align: 1px; }
+  .live-headline { display: block; color: var(--ink-2); margin: 2px 0; }
+  .live-headline a { color: var(--accent-1); font-family: var(--mono); font-size: .78rem; }
+  .live-note { display: block; color: var(--ink-3); font-size: .78rem; margin-top: 2px; }
+
+  .scroll-cue {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    font-size: .7rem; text-transform: uppercase; letter-spacing: .15em;
+    color: var(--ink-3); animation: bob 2.5s ease infinite;
+  }
+  @keyframes bob { 0%,100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(6px); } }
+
+  /* --- STACK STRIP ------------------------------------------------ */
+  .stack-strip {
+    display: flex; justify-content: center; align-items: center; gap: 10px;
+    padding: 12px var(--page-pad); font-size: .78rem; color: var(--ink-2);
+    background: var(--bg-1); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .stack-strip strong { color: var(--ink-0); }
+  .sep { color: var(--line-2); }
+  .built { margin-right: 4px; }
+
+  /* --- REVEAL ANIMATION ------------------------------------------- */
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+  .reveal[data-delay="1"] { transition-delay: .12s; }
+  .reveal[data-delay="2"] { transition-delay: .24s; }
+  .reveal[data-delay="3"] { transition-delay: .36s; }
+  .reveal[data-delay="4"] { transition-delay: .48s; }
+
+  /* --- PROMISE SCENE --------------------------------------------- */
+  .promise-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  @media (max-width: 800px) { .promise-grid { grid-template-columns: 1fr; } }
+  .promise-copy h2 { font-size: 1.8rem; color: var(--ink-0); line-height: 1.2; margin-bottom: 14px; }
+  .lede { color: var(--ink-1); font-size: .95rem; margin-bottom: 20px; }
+
+  .compare { margin-top: 20px; }
+  .compare-row { padding: 14px 16px; border-radius: 8px; margin-bottom: 10px; }
+  .compare-row .label { font-weight: 700; font-size: .82rem; margin-bottom: 4px; }
+  .compare-row .body { font-size: .88rem; color: var(--ink-2); line-height: 1.55; }
+  .compare-row.is-old { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.18); }
+  .compare-row.is-old .label { color: #ef4444; }
+  .compare-row.is-new { background: var(--accent-soft); border: 1px solid rgba(245,158,11,.25); }
+  .compare-row.is-new .label { color: var(--accent); }
+
+  /* --- KPI TILES ------------------------------------------------- */
+  .kpis { display: flex; flex-direction: column; gap: 18px; }
+  .kpi { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .kpi-label { font-size: .78rem; color: var(--ink-2); margin-bottom: 8px; }
+  .kpi-arrow { display: flex; align-items: baseline; gap: 10px; }
+  .kpi-from { font-size: .82rem; color: var(--ink-3); text-decoration: line-through; }
+  .kpi-glyph { color: var(--accent); font-size: 1.1rem; }
+  .kpi-to { font-size: 2rem; font-weight: 800; color: var(--ink-0); letter-spacing: -.02em; }
+  .kpi-unit { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-2); }
+  .kpi-cap { font-size: .82rem; color: var(--ink-2); margin-top: 8px; line-height: 1.5; }
+
+  /* --- CHAIN SCENE ----------------------------------------------- */
+  .chain-rail { position: relative; padding: 32px 0 0; }
+  .chain-rail::before {
+    content: ''; position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 2px; background: var(--line);
+    transform: translateX(-50%);
+  }
+  .chain-rail::after {
+    content: ''; position: absolute; left: 50%; top: 0;
+    width: 2px; height: var(--chain-progress, 0%);
+    background: linear-gradient(to bottom, var(--accent), var(--cyan));
+    transform: translateX(-50%);
+    transition: height .15s linear;
+  }
+
+  .skill-card {
+    position: relative; max-width: 580px; margin: 0 auto 40px;
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px; overflow: hidden;
+    transition: border-color .4s, box-shadow .4s;
+  }
+  .skill-card.is-on { border-color: var(--accent); box-shadow: 0 0 24px var(--accent-soft); }
+  .skill-card::before {
+    content: attr(data-step); position: absolute; top: -1px; right: 20px;
+    font-size: .65rem; font-weight: 800; letter-spacing: .1em;
+    background: var(--accent); color: #0a0d14; padding: 4px 10px;
+    border-radius: 0 0 6px 6px;
+  }
+  .skill-head { margin-bottom: 10px; }
+  .skill-name { font-size: 1.1rem; font-weight: 700; color: var(--ink-0); font-family: var(--mono); }
+  .skill-name .accent { color: var(--accent); }
+  .skill-tag {
+    display: inline-block; font-size: .65rem; font-weight: 600;
+    padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: 2px;
+  }
+  .skill-tag.is-amber { background: var(--accent-soft); color: var(--accent); }
+  .skill-tag.is-cyan  { background: rgba(34,211,238,.12); color: var(--cyan); }
+  .skill-tag.is-grey  { background: var(--bg-3); color: var(--ink-2); }
+  .skill-purpose { font-size: .88rem; color: var(--ink-2); line-height: 1.55; margin-bottom: 12px; }
+
+  .skill-io {
+    display: flex; align-items: center; gap: 10px;
+    font-size: .78rem; color: var(--ink-2);
+    padding: 10px 12px; background: var(--bg-1); border-radius: 8px;
+    margin-bottom: 12px;
+  }
+  .io-lbl { font-weight: 600; color: var(--ink-3); font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; display: block; }
+  .io-val { display: block; color: var(--ink-1); }
+  .io-arrow { color: var(--accent); font-size: 1.2rem; flex-shrink: 0; }
+
+  .skill-invoke {
+    font-family: var(--mono); font-size: .78rem; color: var(--ink-2);
+    background: var(--bg-0); padding: 10px 14px; border-radius: 6px;
+    margin-bottom: 12px; line-height: 1.5;
+  }
+  .skill-invoke .prompt { color: var(--accent); }
+  .skill-invoke .arg { color: var(--ink-1); }
+
+  .skill-footer { display: flex; justify-content: space-between; align-items: center; font-size: .78rem; color: var(--ink-3); }
+  .skill-footer .link { color: var(--accent-1); }
+
+  .copy { text-align: center; max-width: 700px; margin: 0 auto 36px; }
+  .copy h2 { font-size: 1.8rem; color: var(--ink-0); line-height: 1.2; margin-bottom: 14px; }
+  .copy h2 em { font-style: normal; color: var(--accent); }
+
+  /* --- PROOF TILES ----------------------------------------------- */
+  .proof-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 36px; }
+  @media (max-width: 800px) { .proof-grid { grid-template-columns: 1fr; } }
+  .proof-tile {
+    background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 24px; text-align: center;
+  }
+  .proof-stat { font-size: 2.8rem; font-weight: 800; color: var(--accent); letter-spacing: -.03em; }
+  .proof-title { font-size: 1rem; color: var(--ink-0); margin: 8px 0; }
+  .proof-body { font-size: .85rem; color: var(--ink-2); line-height: 1.55; }
+  .proof-foot { font-size: .68rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; margin-top: 12px; }
+
+  /* --- BRIDGE QUOTE ---------------------------------------------- */
+  .bridge-quote {
+    padding: 44px 0; text-align: center;
+    background: var(--bg-1); border-top: 1px solid var(--line);
+  }
+
+  /* --- CTA SCENE ------------------------------------------------- */
+  #scene-cta .display { font-size: clamp(1.6rem, 4vw, 2.4rem); color: var(--ink-0); text-align: center; }
+  #scene-cta .display em { font-style: normal; color: var(--accent); }
+  #scene-cta .sub { text-align: center; color: var(--ink-2); margin: 10px 0 28px; }
+  .cta-prompts {
+    max-width: 640px; margin: 0 auto 28px;
+    font-family: var(--mono); font-size: .82rem; color: var(--ink-2);
+    background: var(--bg-1); padding: 18px 22px; border-radius: 10px;
+    border: 1px solid var(--line); line-height: 1.7;
+  }
+  .cta-prompts .cmt { color: var(--ink-3); }
+  .cta-prompts .prompt { color: var(--accent); }
+  .cta-prompts .cmd { color: var(--ink-1); }
+
+  /* --- FOOTER ---------------------------------------------------- */
+  footer {
+    padding: 20px var(--page-pad); font-size: .75rem; color: var(--ink-3);
+    border-top: 1px solid var(--line); background: var(--bg-0);
+  }
+  footer .row { max-width: var(--max-w); margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+  footer a { color: var(--ink-2); margin-left: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <nav>
+    <div class="logo"><span class="accent">zava</span>-workspace</div>
+    <a href="#scene-hero">Home</a>
+    <a href="#scene-promise">How it works</a>
+    <a href="#scene-chain">Skills</a>
+    <a href="#scene-proof">Proof</a>
+    <a href="#scene-cta">Start</a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ====================== SCENE 1 · HERO ====================== -->
+  <section class="scene" id="scene-hero" aria-labelledby="hero-headline">
+    <div class="hero-stage" aria-hidden="true">
+      <div class="hero-aurora"></div>
+      <div class="hero-grid"></div>
+      <div class="hero-particles" id="hero-particles"></div>
+    </div>
+
+    <div class="wrap hero-inner">
+      <p class="eyebrow"><span class="dot"></span>Digital-clone workspaces &mdash; from a company name</p>
+
+      <h1 class="hero-headline" id="hero-headline">
+        <span class="word">Company</span>
+        <span class="word">name</span>
+        <span class="word">&rarr;</span>
+        <span class="word"><em>living</em></span>
+        <span class="word"><em>digital&nbsp;twin.</em></span>
+      </h1>
+
+      <p class="hero-sub">
+        Name a company. The coding agent profiles the org, forks the
+        agentic substrate with their brand, executives, and industry
+        rules, then deploys a control-plane dashboard to
+        <em>your Azure</em> &mdash; with 170 API routes, SSE fleet
+        telemetry, and OTel observability. <strong>One pipeline.</strong>
+      </p>
+
+      <p class="hero-tag" aria-label="Industry coverage">
+        <span class="pip"></span>
+        <span>Telco &middot; FSI &middot; Airline &middot; Retail &middot; Auto&nbsp;OEM &mdash; each with vertical entity kinds and domain stubs</span>
+      </p>
+
+      <div class="hero-cta-row">
+        <a class="btn btn-primary" href="https://zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io/" target="_blank" rel="noopener">See the live workspace <span class="arrow">&nearr;</span></a>
+        <a class="btn btn-ghost"   href="#scene-chain">See the pipeline <span class="arrow">&rarr;</span></a>
+        <a class="btn btn-ghost"   href="https://github.com/aiappsgbb/awesome-gbb/blob/main/ZAVA.md">Read the briefing</a>
+      </div>
+
+      <div class="hero-live-strip" role="status" aria-label="Live workspace">
+        <span class="live-pip" aria-hidden="true"></span>
+        <div class="live-body">
+          <span class="live-label">Live now <span class="wip">DEMO</span></span>
+          <span class="live-headline">
+            Zava Control Plane &mdash;
+            <a href="https://zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io/" target="_blank" rel="noopener">zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io</a>
+          </span>
+          <span class="live-note">12 operational domains &middot; 170 routes &middot; SSE fleet streams &middot; OTel &rarr; App Insights. React 19 + FastAPI on ACA.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="scroll-cue" aria-hidden="true">Scroll</div>
+  </section>
+
+  <!-- ====================== STACK STRIP ====================== -->
+  <div class="stack-strip" aria-label="Technologies that Zava composes">
+    <span class="built">Built with</span>
+    <strong>React&nbsp;19</strong><span class="sep">&middot;</span>
+    <strong>FastAPI</strong><span class="sep">&middot;</span>
+    <strong>Container&nbsp;Apps</strong><span class="sep">&middot;</span>
+    <strong>App&nbsp;Insights</strong><span class="sep">&middot;</span>
+    <strong>OpenTelemetry</strong><span class="sep">&middot;</span>
+    <strong>Vite&nbsp;6</strong><span class="sep">&middot;</span>
+    <strong>TailwindCSS</strong><span class="sep">&middot;</span>
+    <strong>azd</strong>
+  </div>
+
+
+  <!-- ====================== SCENE 2 · THE PROMISE ====================== -->
+  <section class="scene" id="scene-promise" aria-labelledby="promise-h">
+    <div class="wrap">
+      <div class="promise-grid">
+
+        <div class="promise-copy">
+          <p class="eyebrow reveal"><span class="dot"></span>How it works</p>
+          <h2 id="promise-h" class="reveal" data-delay="1">Name the company. The coding agent builds the workspace.</h2>
+          <p class="lede reveal" data-delay="2">
+            You give a company name. The coding agent (GitHub Copilot CLI,
+            VS Code, Claude Code) researches the org, forks a 37-domain
+            agentic substrate with their brand and executives, and deploys
+            a control-plane dashboard to Azure Container Apps &mdash; with
+            persona-driven orchestration, SSE streams, and telemetry.
+          </p>
+
+          <div class="compare reveal" data-delay="3">
+            <div class="compare-row is-old">
+              <div class="label">&cross; The old way</div>
+              <div class="body">
+                Manual research. A slide with org charts. Mock screenshots.
+                The customer sees a generic demo with placeholder names and
+                never feels it&rsquo;s <em>theirs</em>.
+              </div>
+            </div>
+            <div class="compare-row is-new">
+              <div class="label">&check; With Zava skills</div>
+              <div class="body">
+                <strong>One pipeline.</strong> You say:
+                <em>&ldquo;Profile Contoso Bank, fork the substrate, deploy to
+                Azure.&rdquo;</em> The coding agent produces a branded
+                workspace with their CFO, their compliance rules, their
+                industry&rsquo;s entity kinds &mdash; running live at a URL
+                they can bookmark.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="kpis" aria-label="What the pipeline produces">
+          <div class="kpi reveal" data-delay="1">
+            <div class="kpi-label">&nbsp; What you get</div>
+            <div class="kpi-arrow">
+              <span class="kpi-from">Slides</span>
+              <span class="kpi-glyph">&rarr;</span>
+              <span class="kpi-to" data-counter data-to="170" data-suffix="+">0+</span>
+              <span class="kpi-unit">API ROUTES</span>
+            </div>
+            <p class="kpi-cap">Workflows &middot; exceptions &middot; entities &middot; personas &middot; KPIs &middot; memory &middot; simulator &middot; fleet economics &middot; authority &middot; policy &middot; governance &middot; portal.</p>
+          </div>
+
+          <div class="kpi reveal" data-delay="2">
+            <div class="kpi-label">&#x1f465; Persona-driven</div>
+            <div class="kpi-arrow">
+              <span class="kpi-from">Generic</span>
+              <span class="kpi-glyph">&rarr;</span>
+              <span class="kpi-to" data-counter data-to="37" data-suffix="">0</span>
+              <span class="kpi-unit">DOMAINS</span>
+            </div>
+            <p class="kpi-cap">Named executives making decisions across expense claims, vendor KYC, contract renewal, hiring, treasury FX &mdash; each domain with its own workflow lifecycle and policy rules.</p>
+          </div>
+
+          <div class="kpi reveal" data-delay="3">
+            <div class="kpi-label">&nbsp; Observable from day one</div>
+            <div class="kpi-arrow">
+              <span class="kpi-from">Silent</span>
+              <span class="kpi-glyph">&rarr;</span>
+              <span class="kpi-to" data-counter data-to="9" data-suffix="">0</span>
+              <span class="kpi-unit">SSE EVENT TYPES</span>
+            </div>
+            <p class="kpi-cap">Real-time fleet streams: workflow lifecycle, exception detection, HITL gates, OTel spans, fleet heartbeat &mdash; all visible in the React dashboard.</p>
+          </div>
+        </aside>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== SCENE 3 · THE CHAIN ====================== -->
+  <section class="scene" id="scene-chain" aria-labelledby="chain-h">
+    <div class="wrap">
+      <div class="copy reveal">
+        <p class="eyebrow"><span class="dot"></span>The skills pipeline</p>
+        <h2 id="chain-h">Three skills. <em>Company name to deployed workspace.</em></h2>
+        <p class="lede" style="margin-left:auto;margin-right:auto;text-align:left;">
+          Each skill is a composable building block &mdash; Markdown instructions
+          that any coding agent reads and follows. You name a company. The agent
+          discovers the matching skills, chains them, and hands you a branded
+          control-plane running on Azure.
+        </p>
+      </div>
+
+      <div class="chain-rail" id="chain-rail">
+
+        <!-- 1 — RESEARCH -->
+        <article class="skill-card reveal" data-step="01" data-skill="research-company">
+          <div class="skill-head">
+            <div class="skill-name"><span class="accent">research</span>-company</div>
+            <span class="skill-tag is-amber">Entry skill</span>
+            <span class="skill-tag is-grey">15&ndash;40 min</span>
+          </div>
+          <p class="skill-purpose">Profile the target company against its public web footprint &mdash; Wikipedia, annual reports, registry data &mdash; and emit a thin <code>org-brief.yaml</code> with named ELT, subsidiaries, strategic themes, and stack overrides.</p>
+          <div class="skill-io" aria-label="Inputs and outputs">
+            <div class="io-block"><span class="io-lbl">Input</span><span class="io-val">Company name or domain</span></div>
+            <div class="io-arrow">&rarr;</div>
+            <div class="io-block"><span class="io-lbl">Output</span><span class="io-val"><code>briefs/&lt;slug&gt;-org-brief.yaml</code></span></div>
+          </div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Use research-company to profile Contoso Bank."</span></div>
+          <div class="skill-footer">
+            <span>Every claim tagged high/medium/low/inferred with source refs.</span>
+            <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/research-company/SKILL.md">SKILL.md &rarr;</a>
+          </div>
+        </article>
+
+        <!-- 2 — COMPOSE -->
+        <article class="skill-card reveal" data-step="02" data-skill="compose-org">
+          <div class="skill-head">
+            <div class="skill-name"><span class="accent">compose</span>-org</div>
+            <span class="skill-tag is-cyan">Fork substrate</span>
+            <span class="skill-tag is-grey">30&ndash;60 min</span>
+          </div>
+          <p class="skill-purpose">Fork the <code>zava-control-plane</code> substrate into a customer-branded digital clone &mdash; rebrand tokens, repack data fabric, swap entity kinds, regenerate personas and functions, scaffold 25&ndash;35 domain stubs.</p>
+          <div class="skill-io" aria-label="Inputs and outputs">
+            <div class="io-block"><span class="io-lbl">Input</span><span class="io-val"><code>org-brief.yaml</code> + industry primer</span></div>
+            <div class="io-arrow">&rarr;</div>
+            <div class="io-block"><span class="io-lbl">Output</span><span class="io-val"><code>zava-control-plane-&lt;slug&gt;/</code> (standalone repo)</span></div>
+          </div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Use compose-org to fork the substrate for Contoso Bank using the banking primer."</span></div>
+          <div class="skill-footer">
+            <span>Ten phases. Pauses for operator approval at each destructive step.</span>
+            <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/compose-org/SKILL.md">SKILL.md &rarr;</a>
+          </div>
+        </article>
+
+        <!-- 3 — DEPLOY -->
+        <article class="skill-card reveal" data-step="03" data-skill="zava-workspace-deploy">
+          <div class="skill-head">
+            <div class="skill-name"><span class="accent">zava</span>-workspace-deploy</div>
+            <span class="skill-tag is-amber">azd deploy</span>
+            <span class="skill-tag is-grey">~5 min</span>
+          </div>
+          <p class="skill-purpose">Build the React SPA, package with FastAPI, deploy to Azure Container Apps with OpenTelemetry &rarr; App Insights. Ships 170+ routes, SSE fleet streams, and a polished dashboard &mdash; all from one <code>azd deploy</code>.</p>
+          <div class="skill-io" aria-label="Inputs and outputs">
+            <div class="io-block"><span class="io-lbl">Input</span><span class="io-val">Branded fork + Azure subscription</span></div>
+            <div class="io-arrow">&rarr;</div>
+            <div class="io-block"><span class="io-lbl">Output</span><span class="io-val">Live ACA workspace + App Insights telemetry</span></div>
+          </div>
+          <div class="skill-invoke"><span class="prompt">&gt;</span> <span class="arg">"Use zava-workspace-deploy to ship this to Azure."</span></div>
+          <div class="skill-footer">
+            <span>Single container: FastAPI serves API + React SPA + SSE + OTel.</span>
+            <a class="link" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/zava-workspace-deploy/SKILL.md">SKILL.md &rarr;</a>
+          </div>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== SCENE 4 · PROOF ====================== -->
+  <section class="scene" id="scene-proof" aria-labelledby="proof-h">
+    <div class="wrap">
+      <div class="copy reveal">
+        <p class="eyebrow"><span class="dot"></span>What ships</p>
+        <h2 id="proof-h">From company name to <em>this</em> &mdash; in one session.</h2>
+      </div>
+
+      <div class="proof-grid">
+        <article class="proof-tile reveal" data-delay="1">
+          <div class="proof-stat" data-counter data-to="170" data-suffix="+">0+</div>
+          <h3 class="proof-title">API routes, live on Azure.</h3>
+          <p class="proof-body">
+            Workflows, exceptions, entities, personas, KPIs, memory,
+            simulator, fleet economics, governance, policy, authority,
+            portal, voice &mdash; all returning JSON with camelCase
+            Pydantic models.
+          </p>
+          <p class="proof-foot">FASTAPI &middot; PYDANTIC V2 &middot; ACA</p>
+        </article>
+
+        <article class="proof-tile reveal" data-delay="2">
+          <div class="proof-stat" data-counter data-to="12" data-suffix="">0</div>
+          <h3 class="proof-title">Operational domains running.</h3>
+          <p class="proof-body">
+            Expense claims, vendor KYC, contract renewal, treasury FX,
+            AP invoices, privacy DPIA &mdash; each with full workflow lifecycle,
+            exception handling, and persona-driven decisions.
+          </p>
+          <p class="proof-foot">12 OPERATIONAL &middot; 25 STRATEGIC STUBS</p>
+        </article>
+
+        <article class="proof-tile reveal" data-delay="3">
+          <div class="proof-stat" data-counter data-to="9" data-suffix="">0</div>
+          <h3 class="proof-title">SSE event types streaming.</h3>
+          <p class="proof-body">
+            Workflow lifecycle, exception detection, HITL gates, OTel
+            span emission, fleet heartbeat &mdash; all in the React
+            dashboard&rsquo;s real-time feed. No polling.
+          </p>
+          <p class="proof-foot">SERVER-SENT EVENTS &middot; REAL-TIME</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== BREATHING BEAT ====================== -->
+  <section class="bridge-quote">
+    <div class="wrap">
+      <p class="reveal" style="font-family:var(--serif);font-size:1.35rem;font-style:italic;color:var(--ink-2);max-width:680px;margin:0 auto;line-height:1.7;">
+        &ldquo;The demo is their company, not ours.
+        The executives are named, not generic.
+        The workspace is a URL, not a screenshot.&rdquo;
+      </p>
+    </div>
+  </section>
+
+  <!-- ====================== SCENE 5 · ZAVA + THREADLIGHT ====================== -->
+  <section class="scene" id="scene-compose" aria-labelledby="compose-h">
+    <div class="wrap">
+      <div class="copy reveal">
+        <p class="eyebrow"><span class="dot"></span>Enterprise story</p>
+        <h2 id="compose-h">Zava + Threadlight = <em>the full operating system.</em></h2>
+        <p class="lede" style="margin: 18px auto 0;">
+          Threadlight designs and deploys individual business-process agents.
+          Zava wraps them in a multi-domain control plane with fleet
+          orchestration, persona decisions, and a polished dashboard.
+          Use Threadlight for the &ldquo;one process&rdquo; pitch; Zava
+          for the &ldquo;enterprise operating system&rdquo; pitch. Together,
+          they tell the complete story.
+        </p>
+      </div>
+
+      <div class="proof-grid" style="margin-top: 24px;">
+        <article class="proof-tile reveal" data-delay="1">
+          <div class="proof-stat" style="font-size: 1.6rem;">&nbsp; Morning</div>
+          <h3 class="proof-title">Research + Compose</h3>
+          <p class="proof-body">
+            <code>research-company</code> profiles the customer.
+            <code>compose-org</code> forks the branded substrate.
+            The customer sees their own org structure.
+          </p>
+        </article>
+
+        <article class="proof-tile reveal" data-delay="2">
+          <div class="proof-stat" style="font-size: 1.6rem;">&nbsp; Afternoon</div>
+          <h3 class="proof-title">Design + Deploy Agents</h3>
+          <p class="proof-body">
+            <code>threadlight-design</code> specs 2&ndash;3 hero processes.
+            <code>threadlight-deploy</code> ships Foundry hosted agents.
+            Process-level personas handle individual cases.
+          </p>
+        </article>
+
+        <article class="proof-tile reveal" data-delay="3">
+          <div class="proof-stat" style="font-size: 1.6rem;">&nbsp; End of day</div>
+          <h3 class="proof-title">Deploy Dashboard</h3>
+          <p class="proof-body">
+            <code>zava-workspace-deploy</code> ships the branded control plane.
+            Executive personas orchestrate the fleet. The customer bookmarks
+            the URL.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== SCENE 6 · CTA ====================== -->
+  <section class="scene" id="scene-cta" aria-labelledby="cta-h">
+    <div class="wrap">
+      <p class="eyebrow reveal" style="display:inline-block;"><span class="dot"></span>Get started</p>
+      <h2 id="cta-h" class="display reveal" data-delay="1">Name the company. <em>See the workspace.</em></h2>
+      <p class="sub reveal" data-delay="2">Three skills. One session. Branded digital twin on your Azure.</p>
+
+      <div class="cta-prompts reveal" data-delay="3" role="note" aria-label="Example invocations">
+<span class="cmt"># Step 1: Profile the company</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Use research-company to profile Contoso Bank."</span>
+<br>
+<br><span class="cmt"># Step 2: Fork the substrate</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Use compose-org to fork the substrate for Contoso Bank."</span>
+<br>
+<br><span class="cmt"># Step 3: Deploy to Azure</span>
+<br><span class="prompt">&gt;</span> <span class="cmd">"Use zava-workspace-deploy to ship this to Azure."</span>
+      </div>
+
+      <div class="hero-cta-row reveal" data-delay="4">
+        <a class="btn btn-primary" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/ZAVA.md">Open the technical briefing <span class="arrow">&rarr;</span></a>
+        <a class="btn btn-ghost" href="https://zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io/" target="_blank" rel="noopener">See the live workspace <span class="arrow">&nearr;</span></a>
+        <a class="btn btn-ghost" href="https://github.com/aiappsgbb/awesome-gbb#readme">Browse the catalog</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="row">
+    <div>Microsoft GBB &middot; <code>awesome-gbb</code> &middot; internal use</div>
+    <div class="right">
+      <a href="https://github.com/aiappsgbb/awesome-gbb#readme">README.md</a>
+      <a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/ZAVA.md">ZAVA.md</a>
+      <a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/THREADLIGHT.md">THREADLIGHT.md</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   ZAVA EXPERIENCE — vanilla ES2020+, no framework, no CDN
+   ============================================================ */
+(function () {
+  'use strict';
+
+  function spawnParticles() {
+    const stage = document.getElementById('hero-particles');
+    if (!stage) return;
+    for (let i = 0; i < 24; i++) {
+      const p = document.createElement('span');
+      p.style.left = (Math.random() * 100) + '%';
+      p.style.bottom = (-10 - Math.random() * 20) + 'px';
+      p.style.animationDelay = (Math.random() * 9) + 's';
+      p.style.animationDuration = (8 + Math.random() * 7) + 's';
+      stage.appendChild(p);
+    }
+  }
+
+  function revealHero() {
+    const words = document.querySelectorAll('.hero-headline .word');
+    words.forEach((w, i) => {
+      setTimeout(() => w.classList.add('in'), 220 + i * 110);
+    });
+  }
+
+  function wireReveal() {
+    const els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+      els.forEach(el => el.classList.add('in'));
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          e.target.classList.add('in');
+          io.unobserve(e.target);
+        }
+      });
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.08 });
+    els.forEach(el => io.observe(el));
+  }
+
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+  function animateCounter(el) {
+    const to = parseInt(el.dataset.to, 10) || 0;
+    const suffix = el.dataset.suffix || '';
+    const dur = 1400;
+    const t0 = performance.now();
+    function tick(now) {
+      const t = Math.min(1, (now - t0) / dur);
+      const v = Math.round(easeOutCubic(t) * to);
+      el.textContent = v + suffix;
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function wireCounters() {
+    const els = document.querySelectorAll('[data-counter]');
+    if (!('IntersectionObserver' in window)) {
+      els.forEach(animateCounter);
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          animateCounter(e.target);
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.4 });
+    els.forEach(el => io.observe(el));
+  }
+
+  function wireChainProgress() {
+    const rail  = document.getElementById('chain-rail');
+    const cards = rail ? rail.querySelectorAll('.skill-card') : [];
+    if (!rail || !cards.length) return;
+    let raf = 0;
+    function update() {
+      raf = 0;
+      const rect = rail.getBoundingClientRect();
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const start = vh * 0.55;
+      const end = -rect.height + vh * 0.45;
+      const span = (start - end) || 1;
+      const t = Math.max(0, Math.min(1, (start - rect.top) / span));
+      rail.style.setProperty('--chain-progress', (t * 100) + '%');
+      cards.forEach((c) => {
+        const r = c.getBoundingClientRect();
+        if (r.top < vh * 0.6) c.classList.add('is-on');
+        else c.classList.remove('is-on');
+      });
+    }
+    function onScroll() { if (!raf) raf = requestAnimationFrame(update); }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    update();
+  }
+
+  function wireSmoothScroll() {
+    document.querySelectorAll('a[href^="#"]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        const id = a.getAttribute('href');
+        if (id.length < 2) return;
+        const target = document.querySelector(id);
+        if (!target) return;
+        e.preventDefault();
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }
+
+  function init() {
+    spawnParticles();
+    wireReveal();
+    wireCounters();
+    wireChainProgress();
+    wireSmoothScroll();
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.querySelectorAll('.hero-headline .word').forEach(w => w.classList.add('in'));
+    } else {
+      revealHero();
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+
+</body>
+</html>
