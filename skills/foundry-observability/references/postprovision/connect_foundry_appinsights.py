@@ -25,10 +25,10 @@ What this script does
 ---------------------
 1. PUTs a connection of category=AppInsights to the Foundry ACCOUNT
    (NOT the project — common trap that causes silent telemetry loss).
-2. Optionally grants Monitoring Metrics Publisher to the platform-managed
-   identities AgentService-* and Foundry-* (if they exist by the time
-   this hook runs — they may not, in which case the grant is deferred
-   to first agent invocation).
+2. Optionally grants Application Insights Data Ingestor to the
+   platform-managed identities AgentService-* and Foundry-* (if they
+   exist by the time this hook runs — they may not, in which case the
+   grant is deferred to first agent invocation).
 
 Idempotent. Safe to re-run.
 """
@@ -45,7 +45,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 API_VERSION = "2025-04-01-preview"
-MONITORING_METRICS_PUBLISHER_ROLE_ID = "3913510d-42f4-4e42-8a64-420c390055eb"
+APPINSIGHTS_DATA_INGESTOR_ROLE_ID = "f526a384-b230-433a-b45c-95f59c4a2dec"
 
 
 def _require_env(name: str) -> str:
@@ -130,20 +130,20 @@ def create_appinsights_connection(
     return True
 
 
-def grant_metrics_publisher(
+def grant_data_ingestor(
     *,
     appinsights_id: str,
     principal_id: str,
     principal_type: str = "ServicePrincipal",
     label: str = "agent identity",
 ) -> bool:
-    """Grant Monitoring Metrics Publisher. Idempotent (az treats existing as success)."""
-    log.info("granting Monitoring Metrics Publisher to %s (%s)", label, principal_id)
+    """Grant Application Insights Data Ingestor. Idempotent (az treats existing as success)."""
+    log.info("granting Application Insights Data Ingestor to %s (%s)", label, principal_id)
     args = [
         "role", "assignment", "create",
         "--assignee-object-id", principal_id,
         "--assignee-principal-type", principal_type,
-        "--role", MONITORING_METRICS_PUBLISHER_ROLE_ID,
+        "--role", APPINSIGHTS_DATA_INGESTOR_ROLE_ID,
         "--scope", appinsights_id,
     ]
     result = _az(*args)
@@ -191,7 +191,7 @@ def main() -> int:
         log.error("connection step FAILED — agent traces will not reach AppIn")
         return 1
 
-    # Best-effort: grant Monitoring Metrics Publisher to platform identities
+    # Best-effort: grant Application Insights Data Ingestor to platform identities
     # if they exist. If not, the user should re-run after first agent invocation.
     platform_ids = find_foundry_platform_identities(
         subscription_id=sub_id, account_rg=account_rg, account_name=account_name
@@ -199,12 +199,12 @@ def main() -> int:
     if not platform_ids:
         log.info(
             "no Foundry platform identities found yet — re-run this script after "
-            "first agent invocation to grant Monitoring Metrics Publisher to "
+            "first agent invocation to grant Application Insights Data Ingestor to "
             "AgentService-* and Foundry-* UAMIs (or grant manually)"
         )
     else:
         for pid, label in platform_ids:
-            grant_metrics_publisher(
+            grant_data_ingestor(
                 appinsights_id=appinsights_id,
                 principal_id=pid,
                 label=label,

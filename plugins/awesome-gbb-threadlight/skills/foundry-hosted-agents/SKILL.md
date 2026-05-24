@@ -2,8 +2,8 @@
 name: foundry-hosted-agents
 description: >
   Deploy, evaluate, and manage Foundry hosted agents on the refreshed
-  April 2026 preview (Agent + FoundryChatClient + ResponsesHostServer
-  pattern, MAF 1.4.0, Foundry User role). Covers ACR build/push,
+  May 2026 preview (Agent + FoundryChatClient + ResponsesHostServer
+  pattern, MAF 1.6.0, Foundry User role). Covers ACR build/push,
   hosted/prompt agent create, container start, batch eval, prompt
   optimization, agent.yaml, dataset curation, azd ai agent extension,
   identity, RBAC, troubleshooting. USE FOR: deploy foundry agent,
@@ -17,7 +17,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.4.3"
+  version: "1.5.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -26,15 +26,15 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 (refreshed preview, April 2026). Covers the `Agent` + `FoundryChatClient` +
 `ResponsesHostServer` (MAF) variant exclusively.
 
-> **⚠️ MAF 1.4.0 cutover (May 2026) — three breaking changes.** If you have
-> hosted agents pinned to `agent-framework-core` 1.3.x or earlier, they
-> will start returning `401 Unauthorized` / `server_error` on every
-> Responses request once Azure completes the rolling Foundry data-plane
-> rename. **You must rebuild the orchestrator image** and re-import the
-> agent versions. See [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026)
-> for the full migration: `ai.azure.com` token scope, "Foundry User" role
-> rename (GUID unchanged), `AzureOpenAIChatClient` removal,
-> `:latest` vs `sha256@…` image-tag strategy.
+> **⚠️ MAF 1.6.0 recommended (May 2026) — gen_ai telemetry built-in.** Upgrade
+> from 1.4.0 to 1.6.0 to get OpenTelemetry gen_ai spans (model name, token
+> usage, latency) without any manual instrumentor code. The new hosting
+> package (`1.0.0a260521`) bundles `microsoft-opentelemetry` which includes
+> `opentelemetry-instrumentation-openai-v2` and `opentelemetry-instrumentation-openai-agents-v2`
+> automatically. See [§ MAF 1.6.0 update](#maf-160-update-may-2026).
+>
+> If you are still on 1.3.x, upgrade directly to 1.6.0 — absorb both the
+> 1.4.0 breaking changes below AND the 1.6.0 telemetry improvements.
 
 ## When to Use
 
@@ -48,6 +48,11 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 ---
 
 ## MAF 1.4.0 breaking changes (May 2026)
+
+> **If upgrading from 1.3.x today, skip to 1.6.0 directly.** The version
+> pins below show 1.4.0 for historical accuracy; use the 1.6.0 pins from
+> [§ MAF 1.6.0 update](#maf-160-update-may-2026) instead — they absorb
+> all 1.4.0 breaking changes AND add gen_ai telemetry.
 
 Azure renamed the Foundry data-plane role from **"Azure AI User"** to
 **"Foundry User"** and changed the AAD token audience the SDK requests
@@ -145,6 +150,113 @@ azd deploy agents
 > The `maf14-YYYYMMDDHHMM` tag lets you correlate "which agent
 > version is running which MAF build?" months later when a regression
 > bisect needs it.
+
+## MAF 1.6.0 update (May 2026)
+
+`agent-framework-core` 1.6.0 and `agent-framework-foundry-hosting`
+1.0.0a260521 ship with **instrumentation enabled by default**. The
+hosting package transitively pulls `azure-ai-agentserver-core>=2.0.0b3`
+which depends on `microsoft-opentelemetry>=1.0.0` (resolves to 1.1.0),
+bundling all OTel instrumentors:
+
+| Bundled instrumentor | What it captures |
+|---|---|
+| `opentelemetry-instrumentation-openai-v2==2.3b0` | gen_ai spans: model name, token usage, latency for every OpenAI/Responses call |
+| `opentelemetry-instrumentation-openai-agents-v2==0.1.0` | Agent-level invocation spans |
+| `opentelemetry-instrumentation-httpx` | HTTP dependency spans |
+| `azure-core-tracing-opentelemetry` | Azure SDK call tracing |
+
+### What this means for `container.py`
+
+**Remove all manual OTel code.** No `configure_azure_monitor()`, no
+`OpenAIInstrumentor().instrument()`, no custom `TracerProvider`. The
+platform handles everything. Your container code only needs:
+
+```python
+# Ensure env var is set (deploy.py passthrough for O-012 workaround)
+cs = os.getenv("APPLICATION_INSIGHTS_CONNECTION_STRING") or \
+     os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if cs:
+    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = cs
+
+# Optionally: SDK-level telemetry setup (after FoundryChatClient creation)
+try:
+    await client.configure_azure_monitor(enable_sensitive_data=True)
+except Exception:
+    pass  # Agent works without telemetry
+```
+
+### gen_ai spans appear under `cloud_RoleName = "agent_framework"`
+
+**Important for KQL queries:** gen_ai dependency spans use
+`cloud_RoleName = "agent_framework"`, NOT `agent-{jobId}-maf`.
+Queries filtering `cloud_RoleName startswith "agent-"` will miss them.
+
+```kql
+// gen_ai spans — model, tokens, latency
+dependencies
+| where timestamp > ago(1h)
+| where cloud_RoleName == "agent_framework"
+| project timestamp, name, duration,
+    model=tostring(customDimensions['gen_ai.response.model']),
+    input_tokens=tostring(customDimensions['gen_ai.usage.input_tokens']),
+    output_tokens=tostring(customDimensions['gen_ai.usage.output_tokens']),
+    op=tostring(customDimensions['gen_ai.operation.name'])
+| order by timestamp desc
+```
+
+### Upgrade recipe (1.4.0 → 1.6.0)
+
+```bash
+sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.6.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.6.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-hosting==1.0.0a260521"/' pyproject.toml
+# Remove explicit OTel deps — now bundled via hosting package:
+# azure-monitor-opentelemetry, opentelemetry-sdk, opentelemetry-instrumentation-*
+```
+
+### `create_version` deduplication trap
+
+Foundry deduplicates `create_version` when environment variables and
+metadata are **identical** — even if the container image tag/digest
+differs. This is SEPARATE from the ACR layer cache trap below. After
+a base image rebuild, new code never reaches the container because
+Foundry returns the existing version.
+
+**Fix:** Add a changing environment variable to force a new version:
+```python
+import time
+env_vars["_BUILD_TS"] = str(int(time.time()))
+```
+
+### ACR layer cache trap (per-job images built via `DockerBuildRequest`)
+
+When per-job images are built via the Azure Container Registry
+`DockerBuildRequest` API (e.g., from `deploy.py`), ACR Tasks uses
+**layer caching by default**. If the per-job Dockerfile's `COPY . ./`
+content hasn't changed (only the base image changed), ACR produces
+the **identical digest** — and Foundry deduplicates the
+`create_version` call, silently returning the existing version.
+New base-image code never reaches the container.
+
+**Fix (both are required):**
+
+1. **`no_cache=True`** on `DockerBuildRequest` — forces ACR to
+   rebuild all layers from scratch.
+2. **A used `ARG`** in the generated Dockerfile — Docker only
+   invalidates cache when an ARG changes AND is consumed:
+   ```dockerfile
+   ARG BASE_IMAGE=hosted-agent-base-maf:v6
+   FROM ${BASE_IMAGE}
+   ARG BUILD_TS=1716400000
+   RUN echo "build=$BUILD_TS" > /app/.build_ts
+   # ... rest of Dockerfile
+   ```
+   Without the `RUN` line, Docker ignores the ARG for caching.
+
+Discovered May 2026: base image rebuild with `SkillsProvider.from_paths()`
+fix + observability fix never reached any agent until both guards were
+applied.
 
 ---
 
@@ -796,16 +908,14 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core~=1.4.0",
-    "agent-framework-foundry~=1.4.0",
-    "agent-framework-foundry-hosting==1.0.0a260514",
-    "azure-ai-projects>=2.1.0",
+    "agent-framework-core~=1.6.0",
+    "agent-framework-foundry~=1.6.0",
+    "agent-framework-foundry-hosting==1.0.0a260521",
     "azure-identity>=1.19.0,<1.26.0a0",
     "mcp>=1.10.0",
     "python-dotenv>=1.0.0",
-    # Add these if using save_report file generation:
-    # "openpyxl>=3.1.0",   # XLSX
-    # "fpdf2>=2.8.0",      # PDF (pure Python)
+    # OTel + gen_ai instrumentors are bundled via hosting → microsoft-opentelemetry.
+    # Do NOT add explicit azure-monitor-opentelemetry or opentelemetry-* lines.
 ]
 
 [tool.uv]
@@ -816,14 +926,19 @@ prerelease = "if-necessary-or-explicit"
 packages = []
 ```
 
-**Do NOT use `agent-framework>=1.4.0` as a meta-package.** The meta-package's transitive
-resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.4.0` and
-`agent-framework-foundry~=1.4.0` (PEP 440 compatible-release caps) instead, and pin the
-alpha hosting package by exact version `==1.0.0a260514` — pre-release cap math doesn't
+**Do NOT use `agent-framework>=1.6.0` as a meta-package.** The meta-package's transitive
+resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.6.0` and
+`agent-framework-foundry~=1.6.0` (PEP 440 compatible-release caps) instead, and pin the
+alpha hosting package by exact version `==1.0.0a260521` — pre-release cap math doesn't
 survive across alpha boundaries, so `~=` would silently jump to a later alpha. Verified
-working on linux/amd64 as the current reference shape, superseding prior 1.3.0 pinning
-guidance that became fragile once Azure renamed the Foundry data-plane role and changed
-the SDK's token-scope audience (see [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026)).
+working on linux/amd64 as the current reference shape.
+
+**Simplified deps (1.6.0).** The hosting package now bundles `microsoft-opentelemetry`
+which transitively pulls ALL OTel instrumentors (openai-v2, agents-v2, httpx, logging,
+fastapi, etc.) and the Azure Monitor exporter. **Remove** any explicit
+`azure-monitor-opentelemetry`, `opentelemetry-sdk`, `opentelemetry-instrumentation-*`
+lines from your pyproject — they are now transitive and declaring them explicitly causes
+version conflicts.
 
 **Mandatory adjacent rules** (lessons from recent dependency-resolution retrospectives):
 - **Drop** any explicit `azure-ai-agentserver-responses` line — `agent-framework-foundry-hosting`
@@ -841,10 +956,10 @@ stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 
 | Package | Version | Type | Pulls in |
 |---------|---------|------|----------|
-| `agent-framework-core` | 1.4.0 | ✅ Stable | pydantic, opentelemetry-api |
-| `agent-framework-foundry` | 1.4.0 | ✅ Stable | core, openai, azure-ai-projects |
-| `agent-framework-foundry-hosting` | 1.0.0a260514 | ⚠️ Alpha | agentserver-core==2.0.0b2, agentserver-responses==1.0.0b4 |
-| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.4.0 |
+| `agent-framework-core` | 1.6.0 | ✅ Stable | pydantic, opentelemetry-api (instrumentation enabled by default) |
+| `agent-framework-foundry` | 1.6.0 | ✅ Stable | core, openai, azure-ai-projects |
+| `agent-framework-foundry-hosting` | 1.0.0a260521 | ⚠️ Alpha | agentserver-core==2.0.0b4, agentserver-responses==1.0.0b6. **agentserver-core** pulls **microsoft-opentelemetry>=1.0.0** (resolves to 1.1.0, bundles all OTel instrumentors + exporters) |
+| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.6.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
 No `override-dependencies` needed — the hosting package pins its own transitive deps.
@@ -1222,7 +1337,7 @@ flying blind.
 | Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. Recent strict-smoke runs showed low reproducibility with mini + permissive MCP and high reproducibility with gpt-5.4 + validate-or-reject. |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `agent.yaml` `environment_variables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Observed in hosted-agent validation |
-| Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` OR AppInsights connection missing on account | Assign RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
+| Agent traces not appearing in AppInsights | Agent identities lack `Application Insights Data Ingestor` (GUID `f526a384-...`) OR AppInsights connection missing on account. Note: `Monitoring Metrics Publisher` is NOT sufficient when `DisableLocalAuth: true` — it only covers custom metrics, not OTel trace/log ingestion | Assign `Application Insights Data Ingestor` RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; `azd ai agent show` reports active** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null`), the SDK raises `ValueError`. Container crashes before `ResponsesHostServer` binds. Foundry runtime sees no agent. **The agent itself is fine — telemetry init is what killed it.** | Wrap telemetry init in `_init_telemetry()` (no-ops on missing env / SDK ImportError / any SDK exception). Never call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` gap row O-011 |
 | **AppInsights connection PUT 400 ValidationError "AuthType for AppInsights Connection can only be ApiKey"** | Account-RP scope `2025-10-01-preview` in some regions rejects `authType: AAD` despite skill guidance (correlation IDs available) | Use `authType: ApiKey` with `credentials.key` in body. **BUT:** the key is silently dropped server-side — GET returns `credentials: null` and platform never injects the env var. There is no working workaround at the platform layer. File a support ticket; ship with guarded `_init_telemetry()` so the agent functions without telemetry; consider region pivot |
 | **AppInsights connection account-level "1-per-category" limit** | Account-level `AppInsights` connections enforce a single-instance-per-category constraint — cannot create parallel connections in the same account. Re-creation requires DELETE first | DELETE the existing connection BEFORE re-PUT. Use `az rest --method DELETE` with full URI **as a variable** (do NOT inline `?api-version=...` — see next row) |

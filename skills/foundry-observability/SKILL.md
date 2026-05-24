@@ -14,12 +14,12 @@ description: >
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
-  Application Insights Data Ingestor, AppInsights connection foundry,
-  account-level appin.
+  Data Ingestor RBAC, AppInsights connection foundry, account-level
+  appin.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry Observability

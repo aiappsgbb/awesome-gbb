@@ -61,13 +61,20 @@ def init_telemetry(
     if _initialized:
         return True
 
-    conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
-    if not conn:
+    # O-012 workaround: check the underscore variant first (deploy.py passthrough),
+    # then the standard name (platform auto-injection or explicit Bicep wiring).
+    conn = os.environ.get("APPLICATION_INSIGHTS_CONNECTION_STRING") \
+        or os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if not conn or not conn.strip().startswith("InstrumentationKey="):
         _log.info(
-            "APPLICATIONINSIGHTS_CONNECTION_STRING not set — telemetry disabled "
+            "No valid App Insights connection string — telemetry disabled "
             "(this is expected in local-test; see threadlight-local-test skill)"
         )
         return False
+
+    # Normalize to the standard name so configure_azure_monitor picks it up
+    conn = conn.strip()
+    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = conn
 
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor

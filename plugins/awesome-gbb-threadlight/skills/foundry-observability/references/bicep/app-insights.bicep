@@ -5,9 +5,9 @@
 // Wiring contract:
 //   - workspaceId (input)        : LAW ARM ID from log-analytics.bicep output
 //   - uamiPrincipalId (input)    : Workload UAMI principal ID (the one your
-//                                  ACA services run as). Granted Monitoring
-//                                  Metrics Publisher so containers can write
-//                                  metrics keylessly.
+//                                  ACA services run as). Granted Application
+//                                  Insights Data Ingestor so containers can
+//                                  write traces/logs/metrics keylessly.
 //   - connectionString (output)  : Consumed by ACA service modules and
 //                                  agent.yaml-via-platform-injection.
 
@@ -20,7 +20,7 @@ param name string
 @description('Log Analytics workspace ARM ID (from log-analytics.bicep output).')
 param workspaceId string
 
-@description('Workload UAMI principal ID — receives Monitoring Metrics Publisher on this AppIn.')
+@description('Workload UAMI principal ID — receives Application Insights Data Ingestor on this AppIn.')
 param uamiPrincipalId string
 
 @description('Disable local (key-based) ingestion. Threadlight default: true (keyless mandate).')
@@ -40,24 +40,26 @@ resource appin 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// Monitoring Metrics Publisher (well-known role GUID — DO NOT change)
-// Required for the workload UAMI to write metrics to AppIn under
-// disableLocalAuth=true. The same role must also be granted to the
-// Foundry platform-managed identities (AgentService-* and Foundry-*) by
-// the postprovision script connect_foundry_appinsights.py — that part
-// can't be done at provision time because those identities don't exist
-// until the agent is created.
-var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
+// Application Insights Data Ingestor (well-known role GUID — DO NOT change)
+// Required for the workload UAMI to ingest OTel traces/logs/metrics into
+// AppIn under disableLocalAuth=true. "Monitoring Metrics Publisher"
+// (3913510d-...) covers only the custom metrics API — it does NOT cover
+// OTel exporter ingestion and will cause HTTP 400 "Bad Request".
+// The same role must also be granted to the Foundry platform-managed
+// identities (AgentService-* and Foundry-*) by the postprovision script
+// connect_foundry_appinsights.py — that part can't be done at provision
+// time because those identities don't exist until the agent is created.
+var dataIngestorRoleId = 'f526a384-b230-433a-b45c-95f59c4a2dec'
 
-resource metricsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource dataIngestor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: appin
-  name: guid(appin.id, uamiPrincipalId, monitoringMetricsPublisherRoleId)
+  name: guid(appin.id, uamiPrincipalId, dataIngestorRoleId)
   properties: {
     principalId: uamiPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      monitoringMetricsPublisherRoleId
+      dataIngestorRoleId
     )
   }
 }

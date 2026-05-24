@@ -11,15 +11,15 @@ upstream:
 packages:
   - name: agent-framework-core
     source: pypi
-    version: "1.4.0"
+    version: "1.6.0"
     upstream_changelog: https://pypi.org/project/agent-framework-core/#history
   - name: agent-framework-foundry
     source: pypi
-    version: "1.4.0"
+    version: "1.6.0"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0a260514"
+    version: "1.0.0a260521"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
   - name: azure-ai-projects
     source: pypi
@@ -79,6 +79,18 @@ known_issues:
     upstream_url: https://pypi.org/project/agent-framework-core/1.4.0/
     status: open
     workaround_location: SKILL.md § "Skill Loading — SkillsProvider" → Constructor variants
+  - id: KI-006
+    description: |
+      ACR layer caching produces identical per-job image digests when only the base image changed (domain files same). Foundry deduplicates create_version → new base image code never reaches the container. Fix: no_cache=True on DockerBuildRequest + ARG BUILD_TS with RUN echo $BUILD_TS.
+    upstream_url: https://learn.microsoft.com/azure/container-registry/container-registry-tasks-reference-yaml
+    status: open
+    workaround_location: SKILL.md § "ACR layer cache trap"
+  - id: KI-007
+    description: |
+      Foundry create_version deduplication: even with a different image tag/digest, create_version returns the existing version when env vars + metadata are identical. New base image code never reaches the container. SEPARATE from KI-006 (image-level vs version-level). Fix: add a changing env var (_BUILD_TS=timestamp) to environment_variables in create_version().
+    upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/migrate-hosted-agent-preview
+    status: open
+    workaround_location: SKILL.md § "MAF 1.6.0 update" → create_version deduplication trap
 
 validation:
   requires: [pypi]
@@ -88,7 +100,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "agent-framework-core~=1.4.0" "agent-framework-foundry~=1.4.0" "agent-framework-foundry-hosting==1.0.0a260514" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.10.0" "python-dotenv~=1.0.0"
+    pip install --quiet "agent-framework-core~=1.6.0" "agent-framework-foundry~=1.6.0" "agent-framework-foundry-hosting==1.0.0a260521" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.10.0" "python-dotenv~=1.0.0"
     python -c "
     from agent_framework import Agent, SkillsProvider, tool, MCPStreamableHTTPTool
     from agent_framework.foundry import FoundryChatClient
@@ -99,17 +111,24 @@ validation:
     # Assert breaking change: AzureOpenAIChatClient must NOT be importable from agent_framework.azure
     try:
         from agent_framework.azure import AzureOpenAIChatClient  # noqa: F401
-        raise SystemExit('FAIL: AzureOpenAIChatClient unexpectedly still importable on MAF 1.4.0')
+        raise SystemExit('FAIL: AzureOpenAIChatClient unexpectedly still importable on MAF 1.6.0')
     except ImportError:
-        print('ok AzureOpenAIChatClient correctly removed in 1.4.0')
+        print('ok AzureOpenAIChatClient correctly removed in 1.4.0+')
+    # Assert microsoft-opentelemetry bundled via agentserver-core (transitive: hosting → agentserver-core → microsoft-opentelemetry)
+    from microsoft.opentelemetry import configure_azure_monitor as _cam
+    print('ok microsoft-opentelemetry bundled via agentserver-core')
+    from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
+    print('ok opentelemetry-instrumentation-openai-v2 bundled')
     "
   expected_output:
     - "ok foundry-hosted-agents imports"
-    - "ok AzureOpenAIChatClient correctly removed in 1.4.0"
+    - "ok AzureOpenAIChatClient correctly removed in 1.4.0+"
+    - "ok microsoft-opentelemetry bundled via agentserver-core"
+    - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
-last_validated: 2026-05-16
+last_validated: 2026-05-23
 validated_by: ricchi
-known_issues_count: 5
+known_issues_count: 7
 ---
 
 # Upstream pin — `foundry-hosted-agents` skill
