@@ -17,7 +17,7 @@ description: >
   setup (use citadel-hub-deploy), Foundry agent deploy (use
   foundry-hosted-agents).
 metadata:
-  version: "3.0.0"
+  version: "3.0.1"
 ---
 
 # Zava Workspace Deploy — Agentic-Org Control Plane → ACA via azd
@@ -457,6 +457,25 @@ LLM calls through the appropriate backend pool based on domain config.
 
 ---
 
+## Verified deployment (fruocco-2)
+
+Tested on ACA with `LLM_RUNTIME=fake` (no real LLM calls). The in-process
+workflow runner replaces Azure Durable Functions with a generator-based
+orchestrator running inside the same uvicorn process.
+
+**Fleet test results (v9, 2026-05-24):** 34/34 workflows completed, 0 failed.
+
+| Domain type | IDs tested | Status |
+|-------------|-----------|--------|
+| expense-claim | EXP-0001..0004 | ✅ completed |
+| hiring (10-phase pipeline) | HIRE-0001..0002 | ✅ completed |
+| employee-transfer | EXF-0001 | ✅ completed |
+| training-request | TRQ-0001 | ✅ completed |
+| ap-invoice, contract-renewal, contract-review, employee-onboarding, it-access-request, perf-review, privacy-dpia, purchase-order, treasury-fx, vendor-kyc, travel | 1 each + constellation | ✅ completed |
+| creative-campaign | CMP-0001..0002 | ✅ completed |
+
+---
+
 ## Local development
 
 ```bash
@@ -476,11 +495,17 @@ curl -X POST http://localhost:3101/api/simulator/inject \
 | Symptom | Fix |
 |---------|-----|
 | ACR build timeout | Increase `--timeout` to 1200s; `github-copilot-sdk` may fail — pin to `0.2.0` |
+| ACR build `--mount=type=cache` fails | ACR doesn't support BuildKit; use plain `RUN` in Dockerfile |
 | `ModuleNotFoundError: kuzu` | Native deps missing in runtime stage — check `libpango`, `libcairo` |
 | SPAs show blank page | Check `/app/static/client/index.html` exists in container; verify StaticFiles mount order |
 | SSE streams drop | ACA ingress timeout is 240s default — set `--session-affinity sticky` for long-lived SSE |
 | KuzuDB `PermissionDenied` | Azure Files volume not mounted — check ACA env volume config |
 | `torch` import crashes | CPU-only wheel not installed — verify `UV_EXTRA_INDEX_URL` in build stage |
+| Hiring workflows show `status=failed` at Voice | HITL auto-resolve returns `"approved"` but orchestrator expects `"approve"`. Fix `_auto_resolve_hitl()` decision vocabulary |
+| Validators return `{"ok": true}` but next phase crashes | Fake-mode validators must return domain-specific Pydantic stubs, not raw passthrough. Each segment's `SegmentXOutput` has required fields (`verdict`, `jd_draft_id`, etc.) |
+| State wiped after ACA revision update | In-memory `StateStore` is ephemeral; re-inject via `/api/simulator/inject` after new revisions |
+| mem0 `401 missing subscription key` | Non-blocking — caught in try/except. mem0 calls embeddings via APIM without the subscription key header. Ignore in `LLM_RUNTIME=fake` mode |
+| Event bus `dropped N events (cap=20/sec)` | Burst injection exceeds the 20/sec EventBus cap. Use `/api/simulator/inject` (single) instead of `/api/simulator/inject-burst` for testing |
 
 ---
 
