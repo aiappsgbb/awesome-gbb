@@ -26,7 +26,7 @@
     },
     {
       "name": "awesome-gbb-azure",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "description": "Azure + Microsoft Foundry skills for hosted agents, RAG, MCP servers, evaluation, observability, governance (Citadel, AGT), cost analysis (PayGo vs PTU), tenant isolation, azd infra patterns, Azure SRE Agent operator deployment, and Zava workspace deploy. The full stack a GBB seller needs to scope, deploy, govern, and operate a Foundry-based pilot.",
       "source": "./plugins/awesome-gbb-azure",
       "category": "azure",
@@ -47,7 +47,7 @@
     },
     {
       "name": "awesome-gbb-threadlight",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "End-to-end Threadlight engagement pipeline: design (SPEC + demo data factory), local test (Pattern 0 \u2192 3 cinematic UI), deploy (Bicep + azd), safe-check gate, event triggers, HITL patterns, workspace UI, Zava workspace deploy, plus the foundry/azure skills the pipeline depends on. Self-contained \u2014 install this one plugin to run a Threadlight pilot.",
       "source": "./plugins/awesome-gbb-threadlight",
       "category": "azure",
