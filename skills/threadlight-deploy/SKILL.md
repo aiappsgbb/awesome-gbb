@@ -12,10 +12,17 @@ description: >
   Teams bot deep dive (use foundry-teams-bot), MCP server deployment (use foundry-mcp-aca),
   GHCP SDK variant (use ghcp-hosted-agents), tenant/subscription isolation for azd (use azure-tenant-isolation).
 metadata:
-  version: "1.2.0"
+  version: "1.3.1"
 ---
 
 # Foundry Hosted Agent Deploy
+
+> ⚠️ **Azure Tenant Isolation (mandatory).** Before running any Phase that
+> touches Azure (`azd up`, `az deployment`, `az acr build`), verify tenant
+> isolation per the [`azure-tenant-isolation`](../azure-tenant-isolation/)
+> skill: set `AZURE_CONFIG_DIR` + `AZD_CONFIG_DIR`, assert tenant +
+> subscription with `az account show`, then proceed. Check token validity
+> first — only prompt `az login` if `az account show` fails.
 
 Take a project folder (containing AGENTS.md, `src/agent/skills/`, config/, etc.) and enrich
 it with all files needed to deploy as a **Microsoft Foundry Hosted Agent**.
@@ -81,6 +88,7 @@ Recommended (from `threadlight-design`):
 > | `foundry-doc-vision-speech` | If SPEC § 7b selects any vision / DocIntel / Speech model |
 > | `foundry-evals` | For post-deployment evaluation AND continuous evaluation: **Plan A** (default) — Foundry's built-in scheduled evaluations (no extra infra). **Plan B** (fallback) — ACA Job cron eval that reads from App Insights and writes to Workbook (use only when Plan A doesn't yet support hosted-agent eval kinds you need). Phase 6 includes the ACA Job ONLY when SPEC § 9 sets `continuous_eval.plan: "B"` |
 > | `citadel-spoke-onboarding` | **Phase 7 (opt-in)** — runs ONLY when SPEC § 11b sets `governance_hub.required: yes` |
+> | `threadlight-workflow` | **Phase 2 alternative** — runs ONLY when SPEC § 11e sets `workflow_model: "workflow"`. Generates MAF Workflow container instead of Agent container. This skill then picks up the container for Phase 5-6. |
 >
 > Use `/skills list` to check availability. If missing, install from `aiappsgbb/awesome-gbb`.
 
@@ -207,6 +215,7 @@ SpecKit specification from `threadlight-design`. Extract:
 - **§ 9 Success Criteria** → eval scenarios for post-deploy validation (→ `foundry-evals`)
 - **§ 10 Trigger & Run Model** → model capacity, container resources
 - **§ 11 Security/Compliance** → regulatory constraints, data retention
+- **§ 11e Workflow Model** → `agent` (default) or `workflow` → drives Phase 1d variant selection and Phase 2 container shape
 
 #### 1c. Read `AGENTS.md` and all skills (always)
 Core deployment inputs:
@@ -219,21 +228,24 @@ Core deployment inputs:
 
 #### 1d. Choose runtime variant
 
-| | **GHCP SDK (default)** | **MAF (fallback)** |
-|--|----------------------|-------------------|
-| **Runtime** | `CopilotClient` + `InvocationAgentServerHost` | `Agent` + `FoundryChatClient` + `ResponsesHostServer` |
-| **Protocol** | Invocations (SSE streaming) | Responses |
-| **Skill loading** | `SkillsProvider` (progressive) | `SkillsProvider.from_paths()` (progressive, recommended) **OR** `_load_skills()` concat (legacy) |
-| **MCP** | `mcp_servers` parameter | `client.get_mcp_tool()` |
-| **Custom `@tool`** | ❌ Not supported | ✅ Supported |
-| **Foundry Toolbox** | ❌ Not available | ✅ `client.get_toolbox()` |
-| **Tool loop timeout** | No limit (SSE keeps alive) | 120s gateway timeout |
-| **Auth** | BYOK (`DefaultAzureCredential` → bearer token) | `DefaultAzureCredential` → `FoundryChatClient` |
+| | **GHCP SDK (default)** | **MAF Agent (fallback)** | **MAF Workflow** (when `workflow_model: "workflow"` in SPEC § 11e) |
+|--|----------------------|-------------------|-----|
+| **Runtime** | `CopilotClient` + `InvocationAgentServerHost` | `Agent` + `FoundryChatClient` + `ResponsesHostServer` | `Workflow` + typed `Executor` nodes + `FoundryChatClient` |
+| **Protocol** | Invocations (SSE streaming) | Responses | Responses (workflow orchestrator manages step sequence) |
+| **Orchestration** | Agent-driven (LLM decides tool order) | Agent-driven (LLM decides tool order) | **Deterministic** (workflow graph defines phase order; LLM runs inside individual executors) |
+| **Skill loading** | `SkillsProvider` (progressive) | `SkillsProvider.from_paths()` (progressive, recommended) | Per-executor skill context (each phase reads its own skills) |
+| **MCP** | `mcp_servers` parameter | `client.get_mcp_tool()` | Per-executor MCP tools (same as MAF agent) |
+| **HITL** | Tool-mediated | Tool-mediated | **Workflow pause points** (durable wait-for-external-event; persona gates map to pause/resume) |
+| **Custom `@tool`** | ❌ Not supported | ✅ Supported | ✅ Supported (inside executors) |
+| **Tool loop timeout** | No limit (SSE keeps alive) | 120s gateway timeout | Per-executor timeout (workflow manages overall) |
+| **Auth** | BYOK (`DefaultAzureCredential` → bearer token) | `DefaultAzureCredential` → `FoundryChatClient` | Same as MAF Agent |
+| **Best for** | Open-ended chat, Q&A, RAG, exploration | Data queries, Toolbox, file generation | **Deterministic multi-phase processes with persona gates** (expense claim, hiring, KYC, contract review) |
 
 **Decision rules:**
 - **Default to GHCP** — preferred runtime, progressive skills, no timeout limits
-- **Use MAF when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions OR **file generation** (save_report → XLSX/PDF/CSV)
-- **Use MAF when**: agent primarily does data queries with fast MCP tools — MAF is 10-20x faster for these (19s vs 220s+). The 20-34 extra `load_skill`-shaped calls per query are **`CopilotClient` runtime overhead**, NOT `SkillsProvider` overhead — `SkillsProvider` itself only adds +1 `load_skill` per skill the agent activates per query, and works on both runtimes (see `foundry-hosted-agents` § Skill Loading)
+- **Use MAF Agent when**: agent needs Foundry Toolbox (web_search, code_interpreter) OR custom `@tool` functions OR **file generation** (save_report → XLSX/PDF/CSV)
+- **Use MAF Agent when**: agent primarily does data queries with fast MCP tools — MAF is 10-20x faster for these (19s vs 220s+). The 20-34 extra `load_skill`-shaped calls per query are **`CopilotClient` runtime overhead**, NOT `SkillsProvider` overhead — `SkillsProvider` itself only adds +1 `load_skill` per skill the agent activates per query, and works on both runtimes (see `foundry-hosted-agents` § Skill Loading)
+- **Use MAF Workflow when**: SPEC § 11e sets `workflow_model: "workflow"` — deterministic multi-phase processes where the phase order is fixed, persona gates control progression, and the orchestrator (not the LLM) decides what runs next. This is the MAF equivalent of Zava-style durable orchestration.
 - If the spec doesn't indicate either way → use GHCP
 
 #### 1e. Choose model access pattern
@@ -267,6 +279,16 @@ When using AI Gateway:
 ---
 
 ## Phase 2: Generate Deployment Artifacts
+
+> **Workflow model gate.** If SPEC § 11e sets `workflow_model: "workflow"`,
+> **delegate container generation to the `threadlight-workflow` skill** and
+> skip Phase 2 entirely. `threadlight-workflow` generates `container.py`,
+> `executors/`, `workflow_graph.py`, `Dockerfile`, and `pyproject.toml` in
+> the same `src/agent/` layout that Phase 5-6 expects. Resume at Phase 3
+> (Validate) after `threadlight-workflow` completes.
+>
+> If `workflow_model` is absent or `"agent"`, proceed with Phase 2 below
+> (the existing agent container path — unchanged).
 
 Create these files in the project root:
 
@@ -542,6 +564,20 @@ prerelease = "if-necessary-or-explicit"
 [tool.setuptools]
 packages = []
 ```
+
+> **If using `hatchling` as the build backend** (instead of `setuptools`),
+> replace `[tool.setuptools] packages = []` with:
+> ```toml
+> [build-system]
+> requires = ["hatchling"]
+> build-backend = "hatchling.build"
+>
+> [tool.hatch.build.targets.wheel]
+> packages = ["src"]
+> ```
+> Without `packages = ["src"]`, `pip install .` fails with
+> "Unable to determine which files to ship inside the wheel" because
+> hatchling can't auto-discover the project directory.
 
 **CRITICAL: Uses `uv` (not `pip`)** — the `prerelease = "if-necessary-or-explicit"` setting
 lets uv resolve prerelease packages that have explicit prerelease markers in their version
@@ -1220,6 +1256,13 @@ remove them.
 ---
 
 ## Phase 3.5: Post-deploy completeness gate (MANDATORY)
+
+> ⚠️ **If `azd up` fails or the container doesn't respond, CHECK LOGS
+> FIRST before retrying.** Run `az containerapp logs show -g <rg> -n <app>
+> --type system --tail 20` for infrastructure events (port mismatch,
+> probe failures, image pull errors) and `--type console` for application
+> crashes. See `azd-patterns` § "ACA Container Debugging" for the full
+> playbook. Never retry blind.
 
 > **Canonical implementation: `threadlight-safe-check` skill.** Invoke as
 > `python -m threadlight.safe_check --phase post-deploy` immediately after

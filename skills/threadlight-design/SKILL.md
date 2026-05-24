@@ -15,7 +15,7 @@ description: >
   DO NOT USE FOR: running existing skills, executing code, deploying (use threadlight-deploy),
   general Q&A, internal Microsoft tooling automation, generic chatbot prototyping.
 metadata:
-  version: "1.5.1"
+  version: "1.6.0"
 ---
 
 # Threadlight Design
@@ -121,6 +121,14 @@ runtime:
   node_available: true
   uv_available: true
   docker_available: false         # if false, deploy must use az acr build
+workflow_model: agent             # agent (default) | workflow
+  # agent   — MAF Agent.run() with skills + tools (current threadlight default)
+  # workflow — MAF DurableWorkflow with typed executors + HITL pause points
+  #            (deterministic multi-phase processes; Zava-style orchestration)
+  # The trait matrix (Phase A) auto-suggests based on the process:
+  #   - Deterministic multi-phase with persona gates → workflow
+  #   - Open-ended chat / Q&A / RAG-heavy → agent
+  # The operator confirms or overrides in § 12.
 ```
 
 **Known-bad combinations:**
@@ -258,6 +266,22 @@ Reference: `references/process-traits.md`
    > Points) with their action gates. A regulated process whose write
    > surface stays at "read-only" forever is a tutorial, not a pilot.
 
+9. **Is this process better modeled as an agent conversation or a deterministic workflow?** (Workflow Model trait)
+   - **Agent** (default) — open-ended chat, RAG-heavy, user-driven exploration, Q&A
+   - **Workflow** — deterministic multi-phase pipeline, ordered stages with persona gates, orchestrated execution, minimal free-form interaction
+
+   > **Classification heuristic:** If the process has ≥ 3 ordered phases AND
+   > ≥ 2 persona/approval gates AND the outputs are deterministic (same input
+   > → same phases → same outcome), suggest `workflow`. If the process is
+   > primarily conversational, knowledge-grounded, or exploratory, suggest
+   > `agent`. Record the choice in spec § 12: `workflow_model: agent | workflow`.
+   >
+   > **Both are valid.** Agent mode runs as a MAF Agent with skills + tools.
+   > Workflow mode runs as a MAF DurableWorkflow with typed executors and HITL
+   > pause points. Both deploy to Foundry via `threadlight-deploy` and get the
+   > same governance (Citadel + AGT), telemetry, and eval chain. The choice
+   > affects only the runtime container shape.
+
 #### Trait-Driven Branching
 
 Based on detected traits, ask the relevant follow-up questions from `references/process-traits.md`.
@@ -322,6 +346,7 @@ Must include all sections from the template:
 > ```
 > If missing: read the existing `azure.yaml` services + `infra/main.bicep` modules, write the corresponding kebab-case selector table, prepend it to the SPEC at the right anchor, and re-validate.
 11d. **Demo Data (Realism rules)** — per-entity volumes, distribution, golden cases, reset semantics, industry realism rules. **INPUT CONTRACT for `threadlight-demo-data-factory`.** *Required for every process with mocked systems.*
+11e. **Workflow Model** — `workflow_model: agent | workflow`. **INPUT CONTRACT for `threadlight-deploy` Phase 2** (determines whether to generate an Agent container or a DurableWorkflow container). Defaults to `agent` if absent. When `workflow`, the SPEC additionally emits a `WORKFLOW.md` alongside `AGENTS.md` with executor/phase definitions instead of agent/tool definitions.
 12. **Assumptions & Open Questions** — what's given, what needs stakeholder input
 
 > **The abstract / pure-coding split.** Sections **5b, 7b, 8 (action gate), 8b, 9 (KPI table),

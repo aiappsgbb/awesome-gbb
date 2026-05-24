@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.1.0"
+  version: "1.1.2"
 ---
 
 # AZD Tips & Patterns
@@ -173,6 +173,9 @@ placeholder in Bicep is intentional, not a bug.
 // infra/main.bicep — first-deploy bootstrap
 resource mcpApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
   ...
+  tags: {
+    'azd-service-name': 'mcp'  // REQUIRED — azd deploy uses this tag to find the resource
+  }
   properties: {
     template: {
       containers: [
@@ -186,6 +189,13 @@ resource mcpApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
   }
 }
 ```
+
+> ⚠️ **The `azd-service-name` tag is MANDATORY.** `azd deploy` locates the
+> Container App to patch by searching for a resource tagged with
+> `azd-service-name: <service>` matching the service name in `azure.yaml`.
+> Without this tag, `azd deploy` fails with "resource not found: unable to
+> find a resource tagged with 'azd-service-name: mcp'". This is not
+> documented prominently in the azd docs — add it to every ACA Bicep.
 
 On `azd up`:
 1. `azd provision` runs Bicep → Container App created with placeholder image
@@ -877,6 +887,237 @@ Every `azd`-based deploy in this catalog should expose `mcapsPilotPosture`
 | `infra/main.parameters.json` | Wires SPEC selectors → Bicep parameters |
 | `azure.yaml` `hooks:` | postprovision/postdeploy entries for ACA Jobs and Bot wiring |
 | `infra/scripts/*.py` | Hook script implementations (uv-managed) |
+
+---
+
+## ACA Persistent Volume (Azure Files)
+
+When an ACA container needs persistent storage across restarts (e.g.,
+embedded databases like KuzuDB, file caches, local state), use an Azure
+Files volume mount. This is the simplest persistent storage pattern for
+ACA — no Cosmos DB, no Blob SDK, just a filesystem path.
+
+### Bicep module: `aca-volume.bicep`
+
+```bicep
+// infra/modules/aca-volume.bicep
+@description('Storage account for ACA volumes')
+param storageAccountName string
+param location string = resourceGroup().location
+param shareName string = 'aca-data'
+param shareQuotaGb int = 5
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageAccountName
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+}
+
+resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource share 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: fileServices
+  name: shareName
+  properties: {
+    shareQuota: shareQuotaGb
+  }
+}
+
+output storageAccountName string = storage.name
+output shareName string = share.name
+output storageAccountKey string = storage.listKeys().keys[0].value
+```
+
+### ACA environment volume binding
+
+In the ACA environment Bicep, register the storage as a volume:
+
+```bicep
+// In the ACA app resource
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
+  // ...
+  properties: {
+    template: {
+      volumes: [
+        {
+          name: 'persistent-data'
+          storageType: 'AzureFile'
+          storageName: acaEnvStorage.name  // registered on the ACA env
+        }
+      ]
+      containers: [
+        {
+          // ...
+          volumeMounts: [
+            {
+              volumeName: 'persistent-data'
+              mountPath: '/data'           // KuzuDB writes here
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+### Register storage on ACA environment
+
+```bicep
+resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  parent: acaEnvironment
+  name: 'persistent-data'
+  properties: {
+    azureFile: {
+      accountName: storageAccount.name
+      accountKey: storageAccount.listKeys().keys[0].value
+      shareName: fileShare.name
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+```
+
+### When to use
+
+- Embedded databases (KuzuDB, SQLite) that must survive container restarts
+- File caches that are expensive to rebuild
+- Demo data snapshots that persist between `azd deploy` cycles
+
+### When NOT to use
+
+- High-throughput data → use Cosmos DB
+- Large datasets (>5 GB) → use Blob Storage via SDK
+- Multi-replica writes → Azure Files is ReadWriteMany but NOT designed
+  for concurrent high-frequency writes from multiple containers
+
+---
+
+## `azd up` is THE deployment path
+
+> ⚠️ **`azd up` (= `azd provision` + `azd deploy`) is the default and
+> preferred way to deploy ACA workloads.** It handles Bicep provisioning,
+> Docker image build, ACR push, and ACA image swap in one command.
+>
+> Raw `az deployment sub create` + `az acr build` + `az containerapp update`
+> is an **escape hatch only** — use it when `azd` is unavailable (e.g., CI
+> without `azd` installed, or debugging a specific Bicep module). Never use
+> raw `az` as the primary deploy path when `azd` is available.
+
+---
+
+## ACR + ACA Registry Binding (complete example)
+
+When `azd deploy` pushes an image to ACR, the ACA must be configured to
+pull from that ACR. This requires three things in Bicep:
+
+```bicep
+// 1. ACR resource
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: 'acr${uniqueSuffix}'
+  location: location
+  sku: { name: 'Basic' }
+  properties: { adminUserEnabled: true }
+}
+
+// 2. ACA with registry binding + secret
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
+  name: 'myapp-${uniqueSuffix}'
+  location: location
+  tags: { 'azd-service-name': 'agent' }  // MANDATORY for azd deploy
+  properties: {
+    managedEnvironmentId: acaEnv.id
+    configuration: {
+      registries: [
+        {
+          server: acr.properties.loginServer
+          username: acr.listCredentials().username
+          passwordSecretRef: 'acr-password'
+        }
+      ]
+      secrets: [
+        { name: 'acr-password', value: acr.listCredentials().passwords[0].value }
+      ]
+      ingress: { external: true, targetPort: 8080 }
+    }
+    template: {
+      containers: [
+        {
+          name: 'agent'
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'  // placeholder
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+        }
+      ]
+    }
+  }
+}
+
+// 3. Output for azd
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = acr.properties.loginServer
+```
+
+Without all three pieces, `azd deploy` pushes to ACR successfully but the
+ACA fails to pull the image (401 unauthorized).
+
+---
+
+## ACA Container Debugging — check logs FIRST
+
+> ⚠️ **When an ACA container fails, ALWAYS check system logs before
+> retrying.** Port mismatches, startup probe failures, image pull errors,
+> and OOM kills are all visible in system logs. Retrying without reading
+> logs wastes time.
+
+```bash
+# System logs — infrastructure events (port mismatch, probe fail, OOM)
+az containerapp logs show -g <rg> -n <app> --type system --tail 20
+
+# Console logs — application stdout/stderr
+az containerapp logs show -g <rg> -n <app> --type console --tail 20
+```
+
+### Common failures and what they look like in logs
+
+| System log message | Cause | Fix |
+|---|---|---|
+| `TargetPort 8080 does not match the listening port 80` | Bicep `targetPort` ≠ container's actual listen port | Fix `targetPort` in Bicep to match the app |
+| `Container failed startup probe, will be restarted` | App crashes or takes too long to start | Check console logs for the crash reason |
+| `Failed to pull image ... 401 Unauthorized` | ACA can't auth to ACR | Add registry binding + secret (see ACR section above) |
+| `Persistent Failure to start container` / `ContainerBackOff` | Container exits immediately | Check console logs — likely a Python crash or missing entrypoint |
+
+---
+
+## ACA Scale-to-Zero Gotcha
+
+`minReplicas: 0` means the container **doesn't start until the first
+request arrives**. This is efficient for production but confusing during
+deploy testing — you deploy, curl the endpoint, get a timeout, and think
+the deploy failed when it's actually just cold-starting.
+
+**For pilots and deploy testing:** use `minReplicas: 1` so the container
+starts immediately after deploy. Switch to `0` for production when you
+want cost savings.
+
+```bicep
+scale: {
+  minReplicas: 1   // 1 for pilots/testing, 0 for production cost savings
+  maxReplicas: 3
+}
+```
+
+---
+
+## Azure Tenant Isolation (mandatory preflight)
+
+> ⚠️ **Before ANY `az` or `azd` command in this skill, verify tenant
+> isolation per the [`azure-tenant-isolation`](../azure-tenant-isolation/)
+> skill.** Set `AZURE_CONFIG_DIR` + `AZD_CONFIG_DIR`, assert the tenant +
+> subscription with `az account show`, then proceed. This is the #1 cause
+> of "deployed to the wrong subscription" incidents.
 
 ---
 

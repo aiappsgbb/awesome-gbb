@@ -15,7 +15,7 @@ description: >
   cost optimization (use azure-cost-optimization), Foundry agents (use
   microsoft-foundry).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation
@@ -165,10 +165,25 @@ Before running **any** `az` / `azd` command in a session:
    involved) is already set in the current shell.
 2. **If NOT set → STOP.** Ask the user which alias from the index this
    session targets. Do not guess. Do not fall back to `~/.azure`.
-3. **If set → verify** with `az account show --query tenantId -o tsv`
-   that the live context matches the expected alias's tenant id from
-   the index.
-4. Only then proceed.
+3. **If set → check if token is still valid** with `az account show`.
+   - **If `az account show` succeeds** → verify tenantId matches the
+     expected alias. If it does, the token is valid — **do NOT re-login.**
+   - **If `az account show` fails** (exit code ≠ 0) → token expired.
+     Only THEN prompt login:
+     ```bash
+     az login --tenant "$TENANT_ID"
+     az account set --subscription "$DEFAULT_SUB"
+     azd auth login --tenant-id "$TENANT_ID"  # if azd is involved
+     ```
+4. **Also check `azd auth`** if the session will use `azd`:
+   `azd auth login --check-status`. If "Not logged in", prompt
+   `azd auth login --tenant-id "$TENANT_ID"`.
+5. Only then proceed.
+
+> ⚠️ **Never force `az login` when the token is still valid.** `az login`
+> opens a browser (or device-code prompt) which blocks automated sessions.
+> `az account show` is a zero-cost check — use it every time before
+> deciding whether login is needed.
 
 ### Tenant index = single source of truth
 

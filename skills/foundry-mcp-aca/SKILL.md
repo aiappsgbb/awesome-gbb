@@ -10,10 +10,15 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.4"
+  version: "1.0.5"
 ---
 
 # Foundry MCP ACA Deployment
+
+> ⚠️ **Azure Tenant Isolation (mandatory).** Before any `azd` or `az`
+> operation, verify tenant isolation per
+> [`azure-tenant-isolation`](../azure-tenant-isolation/): set config dirs,
+> check token, assert subscription. See that skill's Agent preflight.
 
 Deploy custom MCP servers as **Azure Container Apps** or **Azure Functions** for
 use with Foundry hosted agents. The hosted agent container connects to these MCP
