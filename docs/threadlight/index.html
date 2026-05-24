@@ -769,6 +769,7 @@
   .flywheel-stage[data-stage="2"] .stage-glyph { color: var(--lime-1); border-color: var(--lime); background: var(--lime-soft); }
   .flywheel-stage[data-stage="3"] .stage-glyph { color: var(--warn); border-color: rgba(255,184,74,.4); background: rgba(255,184,74,.10); }
   .flywheel-stage[data-stage="4"] .stage-glyph { color: var(--ink-0); border-color: var(--ink-2); background: var(--bg-3); }
+  .flywheel-stage[data-stage="5"] .stage-glyph { color: #f59e0b; border-color: rgba(245,158,11,.4); background: rgba(245,158,11,.10); }
 
   .stage-label {
     font-family: var(--mono); font-size: 10.5px; letter-spacing: .18em;
@@ -794,6 +795,7 @@
   .flywheel-stage[data-stage="2"] .stage-list li .dot { background: var(--lime); box-shadow: 0 0 6px rgba(168,255,96,.6); }
   .flywheel-stage[data-stage="3"] .stage-list li .dot { background: var(--warn); box-shadow: 0 0 6px rgba(255,184,74,.6); }
   .flywheel-stage[data-stage="4"] .stage-list li .dot { background: var(--ink-2); box-shadow: none; }
+  .flywheel-stage[data-stage="5"] .stage-list li .dot { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,.6); }
 
   /* the connecting arrow between stages on wide screens */
   .flywheel-stage:not(:last-child)::after {
@@ -1437,6 +1439,18 @@
           </ul>
         </div>
 
+        <div class="flywheel-stage reveal" data-stage="5" data-delay="5">
+          <div class="stage-glyph">🏙️</div>
+          <div class="stage-label">Step 5</div>
+          <div class="stage-name">Scale &mdash; Zava</div>
+          <p class="stage-tag">Wrap your agents in a <strong>multi-domain control plane</strong>. Research the customer&rsquo;s org, compose a branded digital twin, deploy a live dashboard with 170 API routes, SSE fleet telemetry, and persona-driven decision orchestration.</p>
+          <ul class="stage-list">
+            <li><span class="dot"></span><a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/research-company/SKILL.md">research-company</a></li>
+            <li><span class="dot"></span><a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/compose-org/SKILL.md">compose-org</a></li>
+            <li><span class="dot"></span><a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/zava-workspace-deploy/SKILL.md">zava-workspace-deploy</a></li>
+          </ul>
+        </div>
+
       </div>
     </div>
   </section>
@@ -1456,6 +1470,52 @@
       <a class="btn btn-primary reveal" data-delay="3" href="https://threadlight-site-tl1.kindsmoke-427b5f0a.swedencentral.azurecontainerapps.io/" target="_blank" rel="noopener" style="display:inline-block;">
         Browse the process library <span class="arrow">&nearr;</span>
       </a>
+    </div>
+  </section>
+
+  <!-- ====================== ZAVA CALLOUT ====================== -->
+  <section class="scene" style="padding:56px 0 48px;background:linear-gradient(180deg, var(--bg-1) 0%, var(--bg-2) 100%);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+    <div class="wrap" style="text-align:center;max-width:860px;">
+      <p class="eyebrow reveal"><span class="dot" style="background:#f59e0b;box-shadow:0 0 10px rgba(245,158,11,.6);"></span>The bigger picture</p>
+      <h2 class="reveal" data-delay="1" style="font-size:1.7rem;margin:12px 0 14px;color:var(--ink-0);">
+        Threadlight builds one agent. <em style="color:#f59e0b;">Zava runs the whole organisation.</em>
+      </h2>
+      <p class="reveal" data-delay="2" style="color:var(--ink-2);font-size:.95rem;margin:0 auto 16px;max-width:680px;line-height:1.7;">
+        Zava is the <strong style="color:var(--ink-1);">multi-domain control plane</strong> that wraps your
+        Threadlight agents into a living organisational twin &mdash; branded with
+        the customer&rsquo;s executives, their industry&rsquo;s entity kinds,
+        and 170 live API routes with SSE fleet telemetry. Use Threadlight
+        for the <em>&ldquo;one process&rdquo;</em> pitch; Zava for the
+        <em>&ldquo;enterprise operating system&rdquo;</em> pitch; both together
+        for the full-day workshop.
+      </p>
+      <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:28px;margin:24px 0 20px;">
+        <div class="reveal" data-delay="2" style="text-align:center;">
+          <div style="font-size:2rem;margin-bottom:4px;">🧵</div>
+          <div style="font-size:.75rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em;">Threadlight</div>
+          <div style="color:var(--ink-1);font-size:.85rem;margin-top:4px;">&ldquo;Here&rsquo;s your claims agent&rdquo;</div>
+        </div>
+        <div class="reveal" data-delay="2" style="font-size:1.8rem;color:var(--ink-3);align-self:center;">+</div>
+        <div class="reveal" data-delay="3" style="text-align:center;">
+          <div style="font-size:2rem;margin-bottom:4px;">🏙️</div>
+          <div style="font-size:.75rem;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em;">Zava</div>
+          <div style="color:var(--ink-1);font-size:.85rem;margin-top:4px;">&ldquo;Here&rsquo;s your org running it&rdquo;</div>
+        </div>
+        <div class="reveal" data-delay="3" style="font-size:1.8rem;color:var(--ink-3);align-self:center;">=</div>
+        <div class="reveal" data-delay="4" style="text-align:center;">
+          <div style="font-size:2rem;margin-bottom:4px;">🚀</div>
+          <div style="font-size:.75rem;color:#f59e0b;text-transform:uppercase;letter-spacing:.08em;font-weight:600;">Full story</div>
+          <div style="color:var(--ink-1);font-size:.85rem;margin-top:4px;">&ldquo;Your AI operating model&rdquo;</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:22px;">
+        <a class="btn btn-primary reveal" data-delay="4" href="https://aiappsgbb.github.io/awesome-gbb/zava/" style="display:inline-block;background:#f59e0b;border-color:#f59e0b;">
+          Open the Zava experience <span class="arrow">&nearr;</span>
+        </a>
+        <a class="btn btn-ghost reveal" data-delay="4" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/ZAVA.md" style="display:inline-block;">
+          Read the technical briefing <span class="arrow">&rarr;</span>
+        </a>
+      </div>
     </div>
   </section>
 
@@ -1490,6 +1550,7 @@
     <div class="right">
       <a href="https://github.com/aiappsgbb/awesome-gbb#readme">README.md</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/THREADLIGHT.md">THREADLIGHT.md</a>
+      <a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/ZAVA.md">ZAVA.md</a>
       <a href="AGENTS.md">AGENTS.md</a>
     </div>
   </div>
