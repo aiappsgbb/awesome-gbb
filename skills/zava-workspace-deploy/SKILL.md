@@ -17,7 +17,7 @@ description: >
   setup (use citadel-hub-deploy), Foundry agent deploy (use
   foundry-hosted-agents).
 metadata:
-  version: "3.0.1"
+  version: "3.1.0"
 ---
 
 # Zava Workspace Deploy — Agentic-Org Control Plane → ACA via azd
@@ -229,9 +229,11 @@ This runs:
 1. `azd provision` — creates RG, UAMI, Storage, ACA env + app, RBAC
 2. `azd deploy` — builds image in ACR (~5-8 min), deploys to ACA
 
-> **Build timeout.** ACR builds take ~5-8 min (npm ci + uv sync + heavy
-> wheels: kuzu, weasyprint, sentence-transformers). If ACR times out,
-> increase `--timeout` in the Dockerfile build args or retry.
+> **Build timeout.** ACR builds take ~2-3 min (npm ci + uv sync). Local
+> Docker builds with `--platform linux/amd64` take ~30s with layer cache.
+> v10 trimmed `agent-framework==1.0.1` (pulled PyTorch 532MB) →
+> `agent-framework-core~=1.6.0` (421KB), dropping image from 3.17GB to
+> 697MB.
 
 ---
 
@@ -310,14 +312,14 @@ FastAPI API routes + 3 SPA bundles via Starlette `StaticFiles(html=True)`.
 
 ```
 Stage 1 (node:20-slim)    → npm ci + vite build for 3 SPAs
-Stage 2 (python:3.13-slim) → uv sync (CPU-only torch via UV_EXTRA_INDEX_URL)
+Stage 2 (python:3.13-slim) → uv sync (lean deps — no torch, no weasyprint)
 Stage 3 (python:3.13-slim) → copy venv + SPA bundles → uvicorn :80
 ```
 
 Key design decisions:
 - **No nginx, no entrypoint.sh** — uvicorn IS the process, PID 1
-- **CPU-only torch** — `UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu`
-  (ACA has no GPU; saves ~1.5 GiB image size)
+- **MAF core only** — `agent-framework-core~=1.6.0` (421KB) replaces the
+  meta-package that pulled PyTorch (532MB). Image: 697MB (was 3.17GB)
 - **uv from ghcr.io/astral-sh/uv** — multi-stage COPY for fast deterministic installs
 - **SPA bundles at `/app/static/`** — `static_production.py` mounts them:
 
@@ -359,8 +361,8 @@ integration layer. Set via `azd env set` before `azd up`.
 | `SIMULATOR_RAMP_ENABLED` | `1` | Auto-spawn workflows |
 | `SIMULATOR_RAMP_AVG_INTERVAL_SECONDS` | `60` | Seconds between spawns |
 | `SIMULATOR_RAMP_DOMAINS` | `expense-claim` | CSV of active domains |
-| `DEMO_TIME_WARP_FACTOR` | `60` | 1 day = 24 min of demo |
-| `PERSONA_AUTO_CLOSE` | (empty) | CSV of personas to auto-decide |
+| `DEMO_TIME_WARP_FACTOR` | `3600` | 1 day = 24s of demo (fast cadence) |
+| `PERSONA_AUTO_CLOSE` | (39 senior roles) | CSV of personas to auto-decide |
 
 ### Entity plane & memory
 
@@ -463,7 +465,19 @@ Tested on ACA with `LLM_RUNTIME=fake` (no real LLM calls). The in-process
 workflow runner replaces Azure Durable Functions with a generator-based
 orchestrator running inside the same uvicorn process.
 
-**Fleet test results (v9, 2026-05-24):** 34/34 workflows completed, 0 failed.
+**v10 deployment (2026-05-25):** Image 697MB (78% reduction from v9's 3.17GB).
+Rebuild ~30s with Docker layer cache. All SPA routes verified:
+
+| Route | Status |
+|-------|--------|
+| `/` (Operator UI) | ✅ 200 |
+| `/portal` | ✅ 301 → `/portal/` |
+| `/portal/dashboard` | ✅ 200 (deep link) |
+| `/blueprint` | ✅ 301 → `/blueprint/` |
+| `/api/health` | ✅ `{"ok":true}` |
+
+**Fleet test results (v9→v10):** 34/34 workflows completed, 0 failed.
+Constellation spawns all 38 domains; completes within ~10s in fake mode.
 
 | Domain type | IDs tested | Status |
 |-------------|-----------|--------|
@@ -473,6 +487,76 @@ orchestrator running inside the same uvicorn process.
 | training-request | TRQ-0001 | ✅ completed |
 | ap-invoice, contract-renewal, contract-review, employee-onboarding, it-access-request, perf-review, privacy-dpia, purchase-order, treasury-fx, vendor-kyc, travel | 1 each + constellation | ✅ completed |
 | creative-campaign | CMP-0001..0002 | ✅ completed |
+
+---
+
+## Demo walkthrough
+
+### Quick deploy (local Docker → ACA)
+
+v10 supports direct Docker build + push without ACR cloud builds:
+
+```bash
+# Build for ACA platform (from zava-control-plane root)
+docker build --platform linux/amd64 \
+  -t <acr>.azurecr.io/zava-control-plane:v10 \
+  -f deploy/Dockerfile .
+
+# Push
+docker push <acr>.azurecr.io/zava-control-plane:v10
+
+# Update ACA revision
+export AZURE_CONFIG_DIR="$AZ_CFG"
+[ "$(az account show --query name -o tsv)" = "$DEFAULT_SUB" ] || exit 1
+az containerapp update --name zava-control-plane --resource-group rg-zava \
+  --image <acr>.azurecr.io/zava-control-plane:v10
+```
+
+> **ACA tag caching gotcha.** Pushing a new image with the SAME tag does
+> NOT trigger a new revision. Always use a new tag (v10→v10.1→v10.2).
+
+### 5-minute demo script
+
+1. **Open Operator UI** — navigate to `https://<FQDN>/`
+2. **Pick a role** from the dropdown (e.g., CFO, VP-HR, Director-Ops)
+3. **Trigger constellation** — POST to `/api/simulator/constellation-start`
+   or use the Operator UI's "Start Constellation" button
+4. **Watch the feed** — workflows spawn across all 38 domains. With
+   `DEMO_TIME_WARP_FACTOR=3600`, everything moves in seconds
+5. **Navigate to Portal** — `https://<FQDN>/portal/` — shows the
+   candidate-facing experience (hiring domain)
+
+### 15-minute deep dive
+
+| Time | Action | Talking point |
+|------|--------|---------------|
+| 0-2 min | Open Operator UI, show architecture diagram | "Single container, 38 domains, 79 personas, entity graph" |
+| 2-4 min | Trigger constellation, watch SSE feed | "Real-time orchestration — every workflow is a directed graph" |
+| 4-6 min | Click into expense-claim workflow | "4-phase pipeline: submission → policy check → approval → payment" |
+| 6-8 min | Show HITL gate (if still open) | "Human-in-the-loop gates for senior decisions — CFO approves >$10K" |
+| 8-10 min | Open Portal, show candidate experience | "Same platform, different persona — candidate sees their journey" |
+| 10-12 min | Show entity graph via API | "KuzuDB property graph — Person, Org, Workflow entities and edges" |
+| 12-15 min | Open Blueprint, show constellation view | "All 38 domains running concurrently — the full enterprise sim" |
+
+### Per-domain talking points
+
+| Domain | Key demo moment | Business angle |
+|--------|----------------|----------------|
+| expense-claim | CFO approval gate at >$10K threshold | "Policy enforcement baked into the workflow graph" |
+| hiring | 10-phase pipeline from job-spec to onboarding | "Longest pipeline — shows scale of agent orchestration" |
+| vendor-kyc | External system checks (sanctions, beneficial ownership) | "Compliance as code — KYC/AML rules are graph nodes" |
+| travel-preapproval | Budget check + manager approval chain | "Cross-domain — hits the same entity graph as expense-claim" |
+| creative-campaign | gpt-image-2 image generation step | "Multi-modal — agents generate campaign visuals" |
+| perf-review | 360° feedback aggregation | "Ambient agents synthesize peer reviews into calibration scores" |
+
+### Known demo limitations (v10)
+
+- **HITL auto-resolve:** All persona gates clear instantly in fake mode.
+  Workflows complete within seconds of spawn. Fix in v11 (generator-parking).
+- **Mem0 disabled:** FallbackMemory (keyword-based) runs instead. Lesson
+  consolidation UI shows "0 lessons". Future: Mem0 ACA sidecar.
+- **No real LLM calls:** `LLM_RUNTIME=fake` — agent responses are template-based.
+  Set `LLM_RUNTIME=azure` + Citadel endpoint for live model responses.
 
 ---
 
@@ -494,18 +578,18 @@ curl -X POST http://localhost:3101/api/simulator/inject \
 
 | Symptom | Fix |
 |---------|-----|
-| ACR build timeout | Increase `--timeout` to 1200s; `github-copilot-sdk` may fail — pin to `0.2.0` |
-| ACR build `--mount=type=cache` fails | ACR doesn't support BuildKit; use plain `RUN` in Dockerfile |
-| `ModuleNotFoundError: kuzu` | Native deps missing in runtime stage — check `libpango`, `libcairo` |
+| ACR build timeout | v10 builds in ~2-3 min (was 8+). If still slow, check ACR tier (Basic has cold-pull overhead) |
+| `No module named 'openai'` | `openai>=1.50` must be in pyproject.toml — was transitive via old meta-package, now explicit |
+| `No module named 'mem0'` | Expected — FallbackMemory handles demo. Mem0 is for future ACA sidecar pattern |
+| `/portal` returns 404 | `_TrailingSlashRedirect` middleware must be registered in `static_production.py`. Check container startup logs for import errors |
 | SPAs show blank page | Check `/app/static/client/index.html` exists in container; verify StaticFiles mount order |
+| ACA tag caching (new image not pulled) | ACA caches digests per tag — use a NEW tag (v10→v10.1) to force pull |
+| Platform mismatch (`no child with platform linux/amd64`) | Build with `docker build --platform linux/amd64` — macOS defaults to arm64 |
 | SSE streams drop | ACA ingress timeout is 240s default — set `--session-affinity sticky` for long-lived SSE |
 | KuzuDB `PermissionDenied` | Azure Files volume not mounted — check ACA env volume config |
-| `torch` import crashes | CPU-only wheel not installed — verify `UV_EXTRA_INDEX_URL` in build stage |
 | Hiring workflows show `status=failed` at Voice | HITL auto-resolve returns `"approved"` but orchestrator expects `"approve"`. Fix `_auto_resolve_hitl()` decision vocabulary |
-| Validators return `{"ok": true}` but next phase crashes | Fake-mode validators must return domain-specific Pydantic stubs, not raw passthrough. Each segment's `SegmentXOutput` has required fields (`verdict`, `jd_draft_id`, etc.) |
-| State wiped after ACA revision update | In-memory `StateStore` is ephemeral; re-inject via `/api/simulator/inject` after new revisions |
-| mem0 `401 missing subscription key` | Non-blocking — caught in try/except. mem0 calls embeddings via APIM without the subscription key header. Ignore in `LLM_RUNTIME=fake` mode |
-| Event bus `dropped N events (cap=20/sec)` | Burst injection exceeds the 20/sec EventBus cap. Use `/api/simulator/inject` (single) instead of `/api/simulator/inject-burst` for testing |
+| State wiped after ACA revision update | In-memory `StateStore` is ephemeral; trigger constellation again after new revisions |
+| Event bus `dropped N events (cap=20/sec)` | Burst injection exceeds the 20/sec EventBus cap. Use `/api/simulator/inject` (single) instead of burst |
 
 ---
 
