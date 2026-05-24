@@ -10,16 +10,16 @@ description: >
   AppInsights`) so hosted agents auto-inject
   `APPLICATIONINSIGHTS_CONNECTION_STRING`; ACA-side
   `configure_azure_monitor()` for MCP / bot / workspace / cron.
-  Includes `Application Insights Data Ingestor` RBAC and KQL queries.
+  Includes `Monitoring Metrics Publisher` RBAC and KQL queries.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
-  Data Ingestor RBAC, AppInsights connection foundry, account-level
-  appin.
+  Monitoring Metrics Publisher RBAC, AppInsights connection foundry,
+  account-level appin.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # Foundry Observability
@@ -151,20 +151,19 @@ resource appin 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// Application Insights Data Ingestor — required for OTel trace/log/metric ingestion
-// when DisableLocalAuth is true. "Monitoring Metrics Publisher" covers only custom
-// metrics API — it does NOT cover OTel exporter ingestion and will cause HTTP 400
-// "Bad Request" from the azure-monitor-opentelemetry-exporter.
-// Role GUID: f526a384-b230-433a-b45c-95f59c4a2dec (well-known)
+// Monitoring Metrics Publisher — required for OTel trace/log/metric ingestion
+// when DisableLocalAuth is true. Has both Microsoft.Insights/Metrics/Write and
+// Microsoft.Insights/Telemetry/Write dataActions.
+// Role GUID: 3913510d-42f4-4e42-8a64-420c390055eb (well-known)
 resource dataIngestor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: appin
-  name: guid(appin.id, uamiPrincipalId, 'f526a384-b230-433a-b45c-95f59c4a2dec')
+  name: guid(appin.id, uamiPrincipalId, '3913510d-42f4-4e42-8a64-420c390055eb')
   properties: {
     principalId: uamiPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      'f526a384-b230-433a-b45c-95f59c4a2dec'
+      '3913510d-42f4-4e42-8a64-420c390055eb'
     )
   }
 }
@@ -271,7 +270,7 @@ container revision automatically.
 
 The hosted-agent platform creates **two** managed identities per agent
 (`AgentService-<agent-name>` + `Foundry-<workspace>`). Both need
-`Application Insights Data Ingestor` (role GUID `f526a384-...`) on the
+`Monitoring Metrics Publisher` (role GUID `3913510d-...`) on the
 AppInsights resource, OR they fail to ingest telemetry with HTTP 400
 "Bad Request". The Bicep in Step 1.2 grants it to your workload UAMI; the
 postprovision script extends the same grant to the platform-managed
@@ -541,7 +540,7 @@ are silent. This is the single most useful query when an ACA Job is
 | O-002 | AppIn provisioned but zero traces | Foundry account-level connection never created | Run postprovision hook `connect_foundry_appinsights.py` |
 | O-003 | Hosted agent OK, MCP / bot / cron silent | `configure_azure_monitor()` not called in those services | Add as first line of `__main__` (or module-level) |
 | O-004 | Agent emits `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` | Connection string set in `agent.yaml` `environment_variables` | Remove it — platform auto-injects |
-| O-005 | OTel exporter returns HTTP 400 "Bad Request" when `DisableLocalAuth: true` | Wrong RBAC role: `Monitoring Metrics Publisher` covers only custom metrics API, NOT OTel trace/log ingestion | Grant `Application Insights Data Ingestor` (GUID `f526a384-b230-433a-b45c-95f59c4a2dec`) instead. Verify both `AgentService-*` and `Foundry-*` UAMI principals have it. If `DisableLocalAuth: false`, this is not the issue |
+| O-005 | OTel exporter returns HTTP 403 "Forbidden" when `DisableLocalAuth: true` | Wrong RBAC role assigned. GUID `f526a384-...` is **Azure Event Hubs Data Owner** (completely unrelated to App Insights) — NOT "Application Insights Data Ingestor" (which does not exist as a built-in role). If `DisableLocalAuth: false`, RBAC is not needed — ikey auth works | Grant `Monitoring Metrics Publisher` (GUID `3913510d-42f4-4e42-8a64-420c390055eb`) which has `Microsoft.Insights/Telemetry/Write`. Verify both `AgentService-*` and `Foundry-*` UAMI principals have it. Allow 5-10 min for RBAC propagation. Simplest path: start with `DisableLocalAuth: false` |
 | O-006 | Cron logs empty in `ContainerAppConsoleLogs_CL` despite failure | Container exits before stdout flushed; OTel ran first → `exceptions` table has the trace | Use the `silent-cron-debug.kql` union query — don't trust console logs alone |
 | O-007 | Local-test runs spam errors at startup | OTel init unguarded against missing env var | Wrap `configure_azure_monitor()` in `if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):` |
 | O-008 | Telemetry from two pilots collides in same AppIn | One AppIn shared across pilots without `cloud_RoleName` discipline | Pass distinct `logger_name` per service, OR provision one AppIn per pilot |

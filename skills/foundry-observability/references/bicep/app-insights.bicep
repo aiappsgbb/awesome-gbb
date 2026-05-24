@@ -42,14 +42,16 @@ resource appin 'Microsoft.Insights/components@2020-02-02' = {
 
 // Application Insights Data Ingestor (well-known role GUID — DO NOT change)
 // Required for the workload UAMI to ingest OTel traces/logs/metrics into
-// AppIn under disableLocalAuth=true. "Monitoring Metrics Publisher"
-// (3913510d-...) covers only the custom metrics API — it does NOT cover
-// OTel exporter ingestion and will cause HTTP 400 "Bad Request".
+// Monitoring Metrics Publisher — required for OTel trace/log/metric ingestion on
+// AppIn under disableLocalAuth=true. Has Microsoft.Insights/Telemetry/Write and
+// Microsoft.Insights/Metrics/Write dataActions. NOTE: GUID f526a384-... is
+// "Azure Event Hubs Data Owner" — a completely wrong role despite being
+// mislabeled "Application Insights Data Ingestor" in some docs.
 // The same role must also be granted to the Foundry platform-managed
 // identities (AgentService-* and Foundry-*) by the postprovision script
 // connect_foundry_appinsights.py — that part can't be done at provision
 // time because those identities don't exist until the agent is created.
-var dataIngestorRoleId = 'f526a384-b230-433a-b45c-95f59c4a2dec'
+var dataIngestorRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
 
 resource dataIngestor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: appin

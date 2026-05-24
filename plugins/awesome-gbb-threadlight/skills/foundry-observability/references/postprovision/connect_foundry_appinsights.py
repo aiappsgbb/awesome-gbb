@@ -45,7 +45,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 API_VERSION = "2025-04-01-preview"
-APPINSIGHTS_DATA_INGESTOR_ROLE_ID = "f526a384-b230-433a-b45c-95f59c4a2dec"
+APPINSIGHTS_DATA_INGESTOR_ROLE_ID = "3913510d-42f4-4e42-8a64-420c390055eb"  # Monitoring Metrics Publisher
 
 
 def _require_env(name: str) -> str:
