@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-32-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-35-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -11,6 +11,7 @@
 
 - [What Are Skills?](#what-are-skills)
 - [Featured Pipeline: Threadlight](#-featured-pipeline-threadlight)
+- [Featured Workspace: Zava](#-featured-workspace-zava)
 - [Supported Coding Runtimes](#supported-coding-runtimes)
 - [Skills Catalog](#skills-catalog)
   - [🏗️ Foundry Building Blocks](#️-foundry-building-blocks)
@@ -78,6 +79,52 @@ When ready, uncomment and link:
   - DEPLOY-ROADMAP.md (Citadel-spoke deploy steps)
 Do NOT mirror or vendor that repo here — link only. Source of truth stays separate.
 -->
+
+---
+
+## 🏙️ Featured Workspace: Zava
+
+> **▶ Live experience:** [`zava-experience.html`](zava-experience.html) — cinematic one-pager that explains the pipeline in three scrolls ([htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/zava-experience.html) if you can't reach Pages).
+
+> **▶ Live workspace:** <https://zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io/> — the deployed control-plane dashboard with 170 API routes, real-time SSE fleet streams, and OpenTelemetry flowing to App Insights.
+
+**Zava** is the agentic substrate that powers digital-clone demos: a
+full-stack control-plane (React 19 + FastAPI) with 37 domains, 167 routes,
+45+ MCP tools, persona-driven decision orchestration, SSE fleet telemetry,
+and a knowledge graph. Instead of showing customers a slide, you show them
+a **living organisational twin** running their own processes with their
+named ELT, their industry's entity kinds, and their brand.
+
+The workspace ships as three skills that chain together:
+
+```
+research-company → compose-org → zava-workspace-deploy
+```
+
+1. **`research-company`** — profile the target company (Wikipedia, annual
+   reports, registry data) → `org-brief.yaml` with named ELT, subsidiaries,
+   strategic themes, stack overrides.
+2. **`compose-org`** — fork the [`zava-control-plane`](https://github.com/arturcrmbot/zava-control-plane)
+   substrate into a customer-branded clone: rebrand tokens, repack data
+   fabric, swap entity kinds, regenerate personas, scaffold domain stubs.
+3. **`zava-workspace-deploy`** — build the React SPA, package with
+   nginx/FastAPI, deploy to Azure Container Apps with OTel telemetry.
+
+> 📖 **The full architecture, domain registry, SSE event catalog, and deploy
+> runbook live in [ZAVA.md](ZAVA.md).**
+
+> [!TIP]
+> **Quick demo path.** Run `research-company` → `compose-org` to produce the
+> branded fork (~60–90 min), then `zava-workspace-deploy` to ship it to ACA
+> (~5 min). The customer sees their own org structure, their named executives
+> making decisions, their industry's compliance rules — running live on Azure.
+
+> [!TIP]
+> **Zava + Threadlight = full story.** Threadlight designs and deploys
+> individual business-process agents. Zava wraps them in a multi-domain
+> control plane with fleet orchestration, persona decisions, and a polished
+> dashboard. Use Threadlight for the "one process" pitch; Zava for the
+> "enterprise operating system" pitch.
 
 ---
 
@@ -185,16 +232,17 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
-### 🧬 Org Composition
+### 🧬 Org Composition & Zava Workspace
 
-A two-skill pipeline for producing **digital-clone-grade** customer-flavoured forks of the [`zava-control-plane`](https://github.com/arturcrmbot/zava-control-plane) agentic substrate. Pair `research-company` → `compose-org` to take a target company name and emit a working sibling repo with the customer's branding, named ELT, vertical entity kinds, persona archetypes, and a stub-domain library — enough breadth for a credible mini-organisation, not just one or two hero use cases.
+The **Zava pipeline** — three skills that take a company name and produce a deployed, branded digital-clone workspace on Azure. The substrate is [`zava-control-plane`](https://github.com/arturcrmbot/zava-control-plane) (37 domains, 167 routes, React 19 SPA, persona-driven orchestration). See [ZAVA.md](ZAVA.md) for the full architecture.
 
 | Skill | Description |
 |-------|-------------|
 | [**research-company**](skills/research-company/) | Profile a target organisation against its public web footprint — Wikipedia, `/about`, the latest annual report, the national company registry, vendor case-study pages, ASN data — and emit a thin `org-brief.yaml` overlay capturing identity, ownership, ~10 subsidiaries, the publicly named ELT, 3–5 strategic themes, and any stack overrides the company has disclosed. Ships **5 industry primers** (telco, airline, banking, retail, auto-OEM) carrying the vertical-canonical function tree, regulator catalogue, entity kinds, proposed-domain library, and KPI cinematics — so the brief itself stays thin (~300–500 lines) and the breadth lives in the primer. **Confidence-discipline** (every claim is `high`/`medium`/`low`/`inferred` with `source_refs[]`); gaps go in `uncertainties[]` rather than being invented. Per-engagement output lives under `briefs/` (gitignored) — no customer names ever land in this catalog. |
 | [**compose-org**](skills/compose-org/) | Fork the substrate into a customer-flavoured digital clone using a signed-off org-brief + the matching primer. Ten phases: clone substrate (no remote), literal token rebrand under a tight extension allowlist, repack the data fabric (subsidiaries / customers / services / cadenced rituals / narrative arcs), swap the Kuzu entity-kind tables to the vertical's canonical set, regenerate the function registry + persona folders for the named ELT, extend the domain registry with 25–35 vertical workflow stubs, scaffold Node MCP mocks for any disclosed stack overrides, re-seed the data fabric snapshot, and smoke-test. Local-only fork by default; refuses dirty trees; idempotent re-runnable with `--allow-overwrite`. After hand-off, individual stubs graduate to live workflows via `compose-domain` inside the new fork. |
+| [**zava-workspace-deploy**](skills/zava-workspace-deploy/) | Deploy custom React/Vite SPAs to Azure Container Apps — builds the SPA bundle, packages with nginx or FastAPI static-serve, generates Bicep + `azure.yaml` service entry, configures API proxy + SSE passthrough. Handles the **SPA → ACA deploy pattern** for control-plane dashboards, candidate portals, blueprint microsites, or any custom web UI beyond `threadlight-workspace-ui`'s generated reference UIs. |
 
-> **Quickstart:** From an empty directory in a `copilot` session, ask the agent to _"profile `<customer>.com` with `research-company`, then fork the substrate with `compose-org`"_. The pipeline (~60–90 minutes wall clock) loads both skills from this catalog, clones the `zava-control-plane` substrate from GitHub, and pauses for operator approval at each destructive step. Output: `briefs/<slug>-org-brief.yaml` + `zava-control-plane-<slug>/` ready to `make up` → http://localhost:5273.
+> **Quickstart:** From an empty directory in a `copilot` session, ask the agent to _"profile `<customer>.com` with `research-company`, then fork the substrate with `compose-org`, then deploy with `zava-workspace-deploy`"_. The pipeline (~60–90 min research + compose, ~5 min deploy) clones the substrate, brands it, and ships a live ACA workspace. Output: `briefs/<slug>-org-brief.yaml` + `zava-control-plane-<slug>/` deployed to `https://<app>.azurecontainerapps.io/`.
 
 ### 🔍 Discovery
 
@@ -218,8 +266,8 @@ A two-skill pipeline for producing **digital-clone-grade** customer-flavoured fo
 >
 > # Then install whichever domain you need:
 > copilot plugin install awesome-gbb-basic@awesome-gbb         #  7 skills — pre-sales / cross-cutting
-> copilot plugin install awesome-gbb-azure@awesome-gbb         # 19 skills — Foundry / governance / azd / SRE Agent
-> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 23 skills — full Threadlight pipeline (self-contained)
+> copilot plugin install awesome-gbb-azure@awesome-gbb         # 20 skills — Foundry / governance / azd / Zava
+> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 24 skills — full Threadlight + Zava pipeline (self-contained)
 > ```
 >
 > Plugins also work in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect. See [`plugins/README.md`](plugins/) for details.
@@ -254,17 +302,25 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 ```
 
 > [!TIP]
-> **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. Other skills can stay at project scope.
+> **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `research-company`, `compose-org`, `zava-workspace-deploy`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. Other skills can stay at project scope.
 
 ---
 
 ## Repository Structure
 
 ```
+README.md                 # This file — catalog index + install instructions
+THREADLIGHT.md            # Threadlight pipeline technical briefing
+ZAVA.md                   # Zava workspace technical briefing
+AGENTS.md                 # Contributor & sub-agent safety guide
 skills/
   <skill-name>/
-    SKILL.md          # Skill definition (frontmatter + instructions)
-    README.md         # Optional: extended docs, examples, changelog
+    SKILL.md              # Skill definition (frontmatter + instructions)
+    README.md             # Optional: extended docs, examples, changelog
+plugins/
+  awesome-gbb-basic/      # 7 skills — pre-sales / cross-cutting
+  awesome-gbb-azure/      # 20 skills — Foundry / governance / Zava
+  awesome-gbb-threadlight/ # 24 skills — full pipeline (self-contained)
 ```
 
 ---

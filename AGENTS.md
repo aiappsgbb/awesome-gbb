@@ -633,6 +633,7 @@ uninstall and reinstall. Avoid both.
 
 - [README.md](README.md) — public catalog and install instructions
 - [THREADLIGHT.md](THREADLIGHT.md) — end-to-end pipeline narrative
+- [ZAVA.md](ZAVA.md) — digital-clone workspace technical briefing
 - Each `skills/<skill>/SKILL.md` — the canonical contract for that skill
 - Each `skills/<skill>/README.md` (if present) — extended docs / changelog
 - Each `skills/<skill>/references/upstream-pin.md` (wrapper skills) — machine-readable freshness contract
