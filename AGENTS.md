@@ -146,6 +146,36 @@ Cross-skill contracts to preserve:
 
 If your edit changes a contract, update **all** consumers in the same PR.
 
+### 2.6 `azd` is the default for any skill that deploys infrastructure
+
+Any skill that provisions Azure resources or deploys containers **MUST**
+use `azd` (Azure Developer CLI) as the deployment model unless there is a
+documented, compelling reason not to (e.g., the upstream project is an ARM
+template-only accelerator with no azd support).
+
+Concretely:
+- ✅ Ship `azure.yaml` + Bicep (`infra/main.bicep`) — never hand-rolled
+  `az deployment` / `az acr build` / `az containerapp create` sequences
+- ✅ Use `azd up` (provision + deploy) or `azd provision` / `azd deploy`
+  as the documented workflow — never multi-step `az` CLI scripts
+- ✅ Follow `azd-patterns` for Bicep module shapes, hooks, and env-var
+  conventions (see that skill for the canonical library)
+- ✅ Tag every ACA resource with `azd-service-name: <service>` so `azd
+  deploy` can discover the container app
+- ✅ Use placeholder images in Bicep (`containerapps-helloworld:latest`) —
+  `azd deploy` swaps them to the real ACR image automatically
+- ❌ **NO hand-rolled Docker builds + `az acr build` + `az containerapp
+  update`** — this is the pattern `azd deploy` replaces
+- ❌ **NO VM-based deployments** — all workloads run on ACA (or Azure
+  Functions where appropriate)
+- ❌ **NO `az account set` without `azure-tenant-isolation`** — see that
+  skill for the mandatory two-layer guard
+
+The `azd-patterns` skill is the **single source of truth** for Bicep
+module conventions. If your skill needs a new module shape (e.g., a new
+Azure resource type), extend the library in `azd-patterns` — don't fork
+it in your skill.
+
 ---
 
 ## 3 · Editing checklist (run before every commit)
@@ -162,6 +192,8 @@ Mechanical checks. None of these are CI-enforced yet (see § 8).
 - [ ] **Cross-skill links resolve** — if you renamed a section header, grep
       the rest of the repo for stale `#section-name` anchors
 - [ ] **Sync to user scope mirror** if you test locally (see § 6)
+- [ ] **azd is the deploy model** for any skill with infra — no hand-rolled
+      `az` CLI deploy scripts (see § 2.6)
 
 ---
 
