@@ -84,7 +84,7 @@ Do NOT mirror or vendor that repo here — link only. Source of truth stays sepa
 
 ## 🏙️ Featured Workspace: Zava
 
-> **▶ Live experience:** [`zava-experience.html`](zava-experience.html) — cinematic one-pager that explains the pipeline in three scrolls ([htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/zava-experience.html) if you can't reach Pages).
+> **▶ Live experience:** <https://aiappsgbb.github.io/awesome-gbb/zava/> — cinematic one-pager that explains the pipeline in three scrolls. Mirrors [`zava-experience.html`](zava-experience.html) at repo root ([htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/zava-experience.html) if you can't reach the Pages URL).
 
 > **▶ Live workspace:** <https://zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io/> — the deployed control-plane dashboard with 170 API routes, real-time SSE fleet streams, and OpenTelemetry flowing to App Insights.
 
