@@ -4,7 +4,7 @@ description: >
   Deploy the Zava agentic-org control plane to Azure Container Apps via
   azd (Azure Developer CLI). Single uvicorn process: FastAPI backend
   (462 files, 38 domains, 48 routes, 46 MCP tools, 62 agent graphs,
-  19 ambient agents, KuzuDB entity graph, Mem0 memory, AGT governance)
+  19 ambient agents, KuzuDB entity graph, working memory, AGT governance)
   + 3 React/Vite SPAs served via Starlette StaticFiles. Bicep infra
   plugs into existing shared resources (ACR, App Insights, Citadel APIM).
   UAMI + RBAC — keyless everywhere.
@@ -17,7 +17,7 @@ description: >
   setup (use citadel-hub-deploy), Foundry agent deploy (use
   foundry-hosted-agents).
 metadata:
-  version: "3.1.0"
+  version: "3.2.0"
 ---
 
 # Zava Workspace Deploy — Agentic-Org Control Plane → ACA via azd
@@ -54,7 +54,7 @@ APIM gateway).
 │  ├── 19 ambient agents (CEO, Finance, HR, Legal, Ops, …)          │
 │  ├── Fleet Manager + simulator orchestrator                         │
 │  ├── KuzuDB entity graph (Person, Org, Workflow, edges)            │
-│  ├── Mem0 memory layer (working + distilled lessons)               │
+│  ├── FallbackMemory (keyword-based working memory; Mem0 planned)   │
 │  ├── AGT governance kernel (policy, authority, kill-switch)        │
 │  ├── SSE hub (real-time UI push)                                   │
 │  ├── Event bus (in-process pub/sub)                                │
@@ -83,6 +83,43 @@ APIM gateway).
 | React/Vite SPAs | 3 + 1 shared lib |
 | Data fabric generators | 12 |
 | Services | 47 |
+
+---
+
+## MAF compatibility
+
+Zava uses the Microsoft Agent Framework (MAF) **selectively** — graph
+topology only, not the full hosted-agent runtime.
+
+| MAF Feature | Status | Notes |
+|-------------|--------|-------|
+| `Workflow` / `WorkflowBuilder` | ✅ Used | 59 graph files define agent DAGs |
+| `TrackedExecutor` (custom wrapper) | ✅ Used | Wraps MAF `Executor` pattern with telemetry |
+| `SkillsProvider` | ❌ Not used | MCP tools are plain Python functions, not MAF skills |
+| `Agent` class | ❌ Not used | Fleet manager / ambient agents are custom implementations |
+| `Agent.run()` / `ChatOptions` | ❌ Not used | In-process runner handles orchestration directly |
+
+### Dependencies
+
+```
+agent-framework-core~=1.6.0          # ← USED: Workflow, WorkflowBuilder, Executor
+openai>=1.50                          # ← USED: image_gen.py, LLM calls
+```
+
+### What this means for demos
+
+- **MAF Workflow graphs work** — Zava's 59 agent graphs use MAF's DAG
+  builder and execute through the in-process runner
+- **MAF SkillsProvider does NOT work** — the 46 MCP tools are registered
+  as plain Python functions, not discoverable via MAF's skill resolution
+- **Foundry hosted-agent patterns don't apply directly** — Zava is a
+  custom orchestrator, not a Foundry-hosted agent container
+
+### v11 roadmap
+
+- Wire `SkillsProvider` so MAF-native skills can coexist with MCP tools
+- Mem0 as a separate ACA sidecar (replace FallbackMemory)
+- HITL generator-parking (fix auto-resolve, enable real human gates)
 
 ---
 

@@ -11,11 +11,11 @@ description: >
   deploy to Azure, Bicep deploy, az deployment, azd auth, ChainedTokenCredential,
   Azure identity, verify subscription, confirm tenant, tenant index, prevent
   cross-tenant deployment.
-  DO NOT USE FOR: creating Azure resources from scratch (use azure-prepare),
-  cost optimization (use azure-cost-optimization), Foundry agents (use
-  microsoft-foundry).
+  DO NOT USE FOR: provisioning Azure resources (use azd-patterns),
+  deploying Foundry agents (use foundry-hosted-agents), deploying
+  Citadel gateway (use citadel-hub-deploy).
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation

@@ -15,10 +15,10 @@ description: >
   USE FOR: fork the substrate for a named customer (Telco, FSI,
   Airline, Retail, OEM, …), produce a digital-clone-grade demo repo.
   DO NOT USE FOR: incrementally adding one domain (use compose-domain
-  inside the fork), authoring a new substrate from scratch, pitch
-  decks.
+  inside the fork — planned, not yet available), authoring a new substrate
+  from scratch, pitch decks.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # compose-org

@@ -664,6 +664,7 @@ uninstall and reinstall. Avoid both.
 ## 11 · See also
 
 - [README.md](README.md) — public catalog and install instructions
+- [DEMOS.md](DEMOS.md) — demo guide for Threadlight, Zava, and Foundry walkthroughs
 - [THREADLIGHT.md](THREADLIGHT.md) — end-to-end pipeline narrative
 - [ZAVA.md](ZAVA.md) — digital-clone workspace technical briefing
 - Each `skills/<skill>/SKILL.md` — the canonical contract for that skill

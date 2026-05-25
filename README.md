@@ -12,6 +12,7 @@
 - [What Are Skills?](#what-are-skills)
 - [Featured Pipeline: Threadlight](#-featured-pipeline-threadlight)
 - [Featured Workspace: Zava](#-featured-workspace-zava)
+- [Demo Guide](DEMOS.md)
 - [Supported Coding Runtimes](#supported-coding-runtimes)
 - [Skills Catalog](#skills-catalog)
   - [🏗️ Foundry Building Blocks](#️-foundry-building-blocks)
@@ -310,6 +311,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 
 ```
 README.md                 # This file — catalog index + install instructions
+DEMOS.md                  # Demo guide for Threadlight, Zava, and Foundry walkthroughs
 THREADLIGHT.md            # Threadlight pipeline technical briefing
 ZAVA.md                   # Zava workspace technical briefing
 AGENTS.md                 # Contributor & sub-agent safety guide

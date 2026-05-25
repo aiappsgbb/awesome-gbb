@@ -12,12 +12,12 @@ description: >
   permissions-config.json, copilot cli plugins, install workiq,
   extraKnownMarketplaces, ghcp first time, copilot cli onboarding,
   recommended copilot cli config, gbb engineer setup.
-  DO NOT USE FOR: authoring new skills (use skill-creator), installing
-  Microsoft 365 Agents Toolkit (use install-atk), Azure tenant isolation
-  (use azure-tenant-isolation), keyboard shortcuts and slash commands
-  (runtime, not config), Cursor or Claude Code config (different runtimes).
+  DO NOT USE FOR: authoring new skills (use skill-creator), Azure tenant
+  isolation (use azure-tenant-isolation), keyboard shortcuts and slash
+  commands (runtime, not config), Cursor or Claude Code config (different
+  runtimes).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # GHCP CLI Config
@@ -52,7 +52,6 @@ Invoke this skill when:
 ## When NOT to use
 
 - **Authoring a new skill** → use `skill-creator`
-- **Installing M365 Agents Toolkit alone** → use `install-atk`
 - **Per-tenant Azure isolation** → use `azure-tenant-isolation` (sets
   `AZURE_CONFIG_DIR` per shell — the Azure MCP server below honors it)
 - **Cursor / Claude Code / Zed config** → different runtimes, different
@@ -320,8 +319,7 @@ Then in `settings.json`:
 }
 ```
 
-Cross-link: [`install-atk`](../install-atk/) is the dedicated skill for
-the M365 Agents Toolkit slice.
+The work-iq family includes the M365 Agents Toolkit plugin.
 
 ---
 
@@ -477,8 +475,8 @@ copilot plugin install microsoft-365-agents-toolkit@work-iq
 copilot plugin install workiq-productivity@work-iq
 ```
 
-Cross-link to [`install-atk`](../install-atk/) for the M365 Agents
-Toolkit-specific install ceremony if the user wants the full toolkit.
+The work-iq family includes the M365 Agents Toolkit plugin — install
+via `copilot plugin install microsoft-365-agents-toolkit@work-iq`.
 
 ### Step 6 — Verify
 
@@ -533,7 +531,6 @@ gh skill install aiappsgbb/awesome-gbb gbb-humanizer --scope user
 | Skill | Use When |
 |-------|----------|
 | [**skill-creator**](../skill-creator/) | You want to **author** a new skill (this skill **configures** the runtime that loads skills — different concern). |
-| [**install-atk**](../install-atk/) | You only need the Microsoft 365 Agents Toolkit plugin and don't want the rest of the work-iq family. |
 | [**azure-tenant-isolation**](../azure-tenant-isolation/) | You work across multiple Azure tenants. The `Azure` MCP server above honors the per-shell `AZURE_CONFIG_DIR` set by that skill. |
 | [**ip-catalog**](../ip-catalog/) | You want to discover GBB IP via MCP — installs as another MCP server (`gbb_ip_catalog`) on top of this baseline. |
 | [**gbb-humanizer**](../gbb-humanizer/) | After this skill helps generate prose (e.g. a personal `~/.copilot/AGENTS.md`), polish it. |
