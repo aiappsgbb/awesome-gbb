@@ -17,7 +17,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.0"
+  version: "1.7.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -278,6 +278,13 @@ applied.
 > a few cents per scenario at idle the deployment ticks negligibly,
 > so the typical pilot cost is dominated by the scenarios you actually
 > run. Don't downgrade to mini just to save on the deployment standby.
+>
+> **Full model catalog.** For the complete May 2026 Foundry model selector
+> (task/modality tables, region availability tiers, embeddings, rerank,
+> image/video gen, Document AI, audio), see the
+> [`agentic-loop` skill](https://github.com/aiappsgbb/agentic-loop) §
+> "Foundry Model Selector". That table is the single source of truth for
+> model selection across all awesome-gbb skills — we don't duplicate it here.
 
 ```python
 import os

@@ -233,6 +233,7 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 |-------|-------------|
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
+| [**lean-seller-guide**](skills/lean-seller-guide/) | Generate a cinematic demo deck and seller prep guide from a lean toolkit (Spec2Cloud) solution — reads `spec.md`, `plan.md`, `deploy.md` and the deployed endpoint. Dual-mode toggle (🎤 Seller / 🔧 SE), no tech jargon in seller view. Run after `/lean:deploy` completes. |
 
 ### 🧬 Org Composition & Zava Workspace
 
@@ -305,6 +306,28 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 
 > [!TIP]
 > **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `research-company`, `compose-org`, `zava-workspace-deploy`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. Other skills can stay at project scope.
+
+---
+
+## Agentic Loop — The BUILD → RUN → SCALE Pipeline
+
+The [`agentic-loop`](https://github.com/aiappsgbb/agentic-loop) initiative provides the **orchestration layer** that drives awesome-gbb skills through a 5-stage development loop: **Specify → Plan → Implement → Verify → Deploy**. It uses the [Lean Toolkit (Spec2Cloud)](https://github.com/Azure-Samples/Spec2Cloud) plugin and an `agentic-loop` skill that applies GBB defaults (Foundry hosted agents, model selection, region picker) and recommends which awesome-gbb skills to install for each spec.
+
+**Quick setup:**
+
+```bash
+# 1. Install the lean toolkit plugin (5-stage loop)
+copilot plugin marketplace add Azure-Samples/Spec2Cloud
+copilot plugin install lean@Spec2Cloud
+
+# 2. Install the agentic-loop skill (GBB defaults + skill recommender)
+gh skills install aiappsgbb/agentic-loop agentic-loop --dir .github/skills --agent github-copilot
+
+# 3. Run the loop
+copilot -p "/lean:specify <your idea here>"
+```
+
+The agentic-loop skill will recommend awesome-gbb skills based on your spec's content — foundational skills for every build, plus specialized skills when the spec mentions evals, governance, MCP, VNet isolation, or production gateway patterns. See the [getting-started playbook](https://github.com/aiappsgbb/agentic-loop/tree/main/playbooks/getting-started) for a step-by-step walkthrough.
 
 ---
 
