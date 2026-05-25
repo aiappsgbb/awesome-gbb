@@ -171,11 +171,12 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 
 ### 🏗️ Foundry Building Blocks
 
-Reference patterns for Microsoft Foundry hosted agents, MCP servers, evals, RAG, vision/speech, and observability.
+Reference patterns for Microsoft Foundry hosted agents, memory, MCP servers, evals, RAG, vision/speech, and observability.
 
 | Skill | Description |
 |-------|-------------|
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Refreshed hosted-agents preview — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, MCP wiring, **`SkillsProvider` progressive skill loading** vs. legacy concat, troubleshooting |
+| [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |

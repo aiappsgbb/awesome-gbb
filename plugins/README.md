@@ -1,14 +1,14 @@
 # `awesome-gbb` plugins
 
-Three Copilot CLI plugins that bundle subsets of the 34-skill catalog so
+Three Copilot CLI plugins that bundle subsets of the 36-skill catalog so
 sellers and customers can install whole domains with one command instead
 of one skill at a time.
 
 | Plugin | Skills | One-command install |
 |---|---|---|
 | [`awesome-gbb-basic`](./awesome-gbb-basic/) | 7 — cross-cutting (research, humanizer, pptx, demo, ip-catalog, copilot-cli-bootstrap) | `copilot plugin install awesome-gbb-basic@awesome-gbb` |
-| [`awesome-gbb-azure`](./awesome-gbb-azure/) | 18 — Foundry, governance, azd, cost, tenant isolation | `copilot plugin install awesome-gbb-azure@awesome-gbb` |
-| [`awesome-gbb-threadlight`](./awesome-gbb-threadlight/) | ~19 — 8 threadlight-* + the Foundry/Azure skills it depends on | `copilot plugin install awesome-gbb-threadlight@awesome-gbb` |
+| [`awesome-gbb-azure`](./awesome-gbb-azure/) | 21 — Foundry, memory, governance, azd, cost, tenant isolation | `copilot plugin install awesome-gbb-azure@awesome-gbb` |
+| [`awesome-gbb-threadlight`](./awesome-gbb-threadlight/) | 25 — 8 threadlight-* + the Foundry/Azure/basic skills it depends on | `copilot plugin install awesome-gbb-threadlight@awesome-gbb` |
 
 Register the marketplace first:
 
@@ -64,8 +64,9 @@ the same skill can appear in multiple plugins safely.
 
 This is how `awesome-gbb-threadlight` declares its dependencies: it bundles
 the Foundry/Azure skills its 8 threadlight-* skills cross-reference
-(foundry-hosted-agents, foundry-observability, foundry-iq, azd-patterns,
-azure-tenant-isolation, etc.). Install just the threadlight plugin → fully
+(foundry-hosted-agents, foundry-memory, foundry-observability,
+foundry-iq, azd-patterns, azure-tenant-isolation, etc.). Install just the
+threadlight plugin → fully
 working pipeline. Install both threadlight + azure → dedup resolves the
 overlap at runtime.
 
