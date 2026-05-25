@@ -17,7 +17,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1116,6 +1116,23 @@ View them with `azd ai agent show`.
 | `Azure AI Project Manager` | Foundry project | Create agents + auto-assign RBAC to agent identity |
 | `Contributor` | Resource group | Provision Azure resources |
 
+**Automated deployer MI (backend service, CI/CD pipeline, or ACA app that creates agents programmatically):**
+
+| Role | Scope | Why |
+|------|-------|-----|
+| `Contributor` | Resource group | Provision Azure resources |
+| `User Access Administrator` (GUID `18d7d88d-d35e-4fb5-a5c3-7773c20a72d9`) | Foundry **account** (CognitiveServices) | Write `roleAssignments` for per-agent identities |
+
+> **⚠️ `Contributor` alone is insufficient for RBAC assignment.** The `Contributor`
+> built-in role explicitly **excludes** `Microsoft.Authorization/roleAssignments/write`.
+> If your deploy script calls `az role assignment create` (or the ARM REST API) to
+> assign `Foundry User` / `Azure AI Developer` / `Cognitive Services OpenAI User`
+> to per-agent identities, the deployer MI needs `User Access Administrator` on the
+> target scope. Without it, RBAC assignment fails silently (deploy logs a warning
+> and continues), and the agent starts with **zero roles** → `server_error` on
+> every inference call, especially for APIM gateway model routes.
+> Scope the role to the Foundry account (not the whole subscription) for least privilege.
+
 **Agent identities (both instance + blueprint):**
 
 | Role | Scope | Why |
@@ -1225,6 +1242,17 @@ POST {project_endpoint}/agents/{name}/endpoint/protocols/openai/responses
 - Provisions on first request
 - Deprovisions after 15 minutes of inactivity
 - No replica management
+
+> **⚠️ Container status API returns 404 on refreshed preview.** The
+> `.../versions/{v}/containers/default` endpoint (and the `:start` action)
+> returns HTTP 404 for refreshed-preview hosted agents — the platform
+> auto-provisions containers and does not expose the legacy container
+> management API. If your deploy or eval script polls this endpoint to
+> check readiness, **skip straight to a warmup chat** when you get 404.
+> Polling for 3 minutes on 404 wastes time and blocks eval pipelines.
+> Pattern: attempt a `responses.create("ping")` warmup with retry/backoff
+> instead of relying on the container status API. Discovered May 2026 in
+> threadlight-vnext eval pipeline — saved 3 min per eval run.
 
 ---
 
@@ -1350,6 +1378,8 @@ flying blind.
 | **Sticky `424 session_not_ready` after MAF 1.4.0 upgrade; logstream shows `TypeError: SkillsProvider.__init__() got an unexpected keyword argument 'skill_paths'`** | `SkillsProvider(skill_paths=...)` keyword constructor was **removed** in `agent-framework-core` 1.4.0. Container crashes at agent init before `ResponsesHostServer` binds. All agents using `skill_paths=` fail; agents without skills (or using `from_paths()`) work fine on the same base image | Replace `SkillsProvider(skill_paths=skills_dir)` with `SkillsProvider.from_paths(skills_dir)`. Rebuild base image + all per-job overlay images. Verify via logstream: look for `SkillsProvider configured` log line instead of `TypeError` |
 | **`agent.yaml` `resources:` and `scale:` blocks silently dropped by `azd ai agent deploy`** | The deploy CLI accepts both blocks at the YAML schema layer but does NOT pass them through to the platform — deployed agents come up at `cpu=0.25 / memory=0.5Gi / no scale` regardless of what's in the YAML. Discovered May 2026; `PATCH versions/<n>` returns 405 (versions are immutable); `PUT versions/<n>` returns 405 (must auto-assign via POST) | **Workaround**: bypass `azd ai agent deploy` and POST directly to `<endpoint>/api/projects/<proj>/agents/<name>/versions?api-version=2025-11-15-preview` with the full `HostedAgentDefinition` body including `cpu`, `memory`, `min_replicas`, `max_replicas`, `image`, `env_vars`. Status transitions `creating` → `active` in <20s. File a CLI bug if not yet tracked upstream |
 | **Scary RED `404 NotFound` block at the tail of `azd deploy <any-service>` (`agents/<key>/versions/<n>` not found); the actual deploy succeeded** | The `azure.ai.agents` azd extension's postdeploy hook fires after **every** `azd deploy` invocation (including unrelated services like `bot`, `workspace`, `mcp`) and looks up `agents/<service-key>/versions/<n>` — using the SERVICE KEY from `azure.yaml` verbatim, not the actual agent name. If your azure.yaml has e.g. `services.agent.host: azure.ai.agent` but the real agent is named `orchestrator`, the postdeploy hook 404s on `agents/agent/versions/<n>` every single time. Benign-but-loud false alarm; pollutes CI logs and CX in pilots | **Preferred**: rename the service key in `azure.yaml` to match the agent name (`services.orchestrator.host: azure.ai.agent`). **If you can't rename** (downstream scripts reference the key): error is cosmetic — verify with `azd ai agent show <agent-name>`. Track as `azure.ai.agents` extension bug; consider proposing an extension-level config like `agentName:` override |
+| **Agent returns `server_error` on every call; RBAC looks correct from deployer's perspective; `az role assignment list --assignee <principal_id> --all` returns ZERO rows** | Deploy script calls ARM `PUT roleAssignments/` for the per-agent identity, but the deployer MI only has `Contributor` — which **excludes** `Microsoft.Authorization/roleAssignments/write`. The ARM PUT returns 403, deploy script logs a warning and continues. Agent boots with zero roles → inference calls fail, especially APIM gateway model routes (`remote-gw/…`) that require `Cognitive Services OpenAI User` | Grant `User Access Administrator` (GUID `18d7d88d-d35e-4fb5-a5c3-7773c20a72d9`) to the deployer MI, scoped to the Foundry account (`Microsoft.CognitiveServices/accounts/<name>`). **NOT** the whole subscription — least-privilege scope to the account. Verify: `az role assignment list --assignee <deployer_mi> --scope <account_id> --query "[].roleDefinitionName"`. See § Identity & RBAC "Automated deployer MI" row |
+| **Deploy script polls `.../versions/{v}/containers/default` and gets 404 for minutes; agent is actually working** | Refreshed-preview hosted agents auto-provision containers — the legacy `/containers/default` status endpoint and `:start` action are not exposed. Polling this endpoint wastes 3+ min and blocks downstream steps (RBAC assignment, eval warmup) | Skip the container status/start API entirely. Go straight to a warmup chat (`responses.create("ping")`) with retry/backoff. If the warmup succeeds, the agent is ready — no container API needed. See § Compute Lifecycle note on refreshed preview |
 
 ### Container Logs (Logstream API)
 

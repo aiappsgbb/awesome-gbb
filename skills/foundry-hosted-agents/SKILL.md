@@ -17,7 +17,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
