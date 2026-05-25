@@ -11,13 +11,13 @@ description: >
   FoundryChatClient, ResponsesHostServer, MAF agent framework,
   OpenAIChatClient, refreshed preview April 2026, ACR push, batch
   eval, dataset curation, agent identity, Foundry User role, prompt
-  optimization, azd ai agent extension. DO NOT USE FOR: ACA MCP
+  optimization, azd ai agent extension, entra-agent-id. DO NOT USE FOR: ACA MCP
   server deployment (use foundry-mcp-aca), GHCP coding agent (use
   ghcp-hosted-agents), Citadel hub/spoke (use citadel-hub-deploy or
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.6.0"
+  version: "1.7.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1106,6 +1106,15 @@ View them with `azd ai agent show`.
 > the data-plane role to that UAMI, give the agent only the MCP tool;
 > the agent never touches the data plane directly. Captured from
 > recent PoC retrospectives.
+
+> **Per-instance identity for Graph API.** When a hosted agent needs its own
+> audit-distinct identity — calling Microsoft Graph (Calendar, Mail, Teams),
+> performing on-behalf-of (OBO) flows, or operating cross-tenant — the
+> standard project-scoped Managed Identity is not enough. The official
+> `entra-agent-id` skill documents the `fmi_path` token-exchange pattern,
+> app-registration setup, and the `ai.azure.com` token-scope requirement.
+> ⚠️ Note: `entra-agent-id` v1.0.1 still uses `cognitiveservices.azure.com`
+> scope in its Step 2 — Foundry targets require `ai.azure.com` instead.
 
 ### Required Role Assignments
 
