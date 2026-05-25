@@ -81,6 +81,7 @@ for query in test_queries:
 - **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
 - **Pace invocations** — add a **5s** `time.sleep()` between calls. Rapid-fire requests produce empty responses even after warm-up
 - **Warmup retry loop, not single-shot** — a single warmup ping is NOT enough for hosted agents that scale to zero. First call to a cold container returns `server_error` in 5-10s before the platform has even brought a replica up. **Pattern (validated across recent hosted-agent evals):**
+- **Skip container status API on refreshed preview** — do NOT poll `.../versions/{v}/containers/default` to check readiness. This endpoint returns **HTTP 404** on refreshed-preview hosted agents (the platform auto-provisions containers and does not expose the legacy container management API). Polling it wastes 3+ minutes. Go straight to the warmup chat loop below instead.
 
 ```python
 # Warmup with retry loop — handles scale-from-zero hosted agents
