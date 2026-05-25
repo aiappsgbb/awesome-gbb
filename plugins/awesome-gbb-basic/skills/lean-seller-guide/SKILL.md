@@ -38,6 +38,7 @@ The skill reads:
 
 - `./docs/spec.md` — what was specified (scenario, requirements, non-goals)
 - `./docs/plan.md` — what was planned (architecture, resource graph, RBAC)
+- `./docs/verify.md` — what was verified (smoke tests, traces, eval results)
 - `./docs/deploy.md` — what was deployed (URLs, resource IDs, smoke test results)
 - The live endpoint — for screenshots and content grounding
 
@@ -49,7 +50,9 @@ The skill expects these files in the workspace (produced by the lean toolkit):
 |------|----------|----------|
 | `./docs/spec.md` | Yes | Scenario narrative, agent capabilities, tool descriptions |
 | `./docs/plan.md` | Yes | Architecture choices, resource graph, identity model |
+| `./docs/verify.md` | Yes | Smoke test results, trace validation, eval outcomes |
 | `./docs/deploy.md` | Yes | Live URLs, resource IDs, deployed model, region |
+| `./.azure/deployment-plan.md` | Optional | Detailed Azure resource graph for architecture slide |
 | `azure.yaml` | Optional | Service-to-resource bindings for the architecture diagram |
 
 ## Output Artifacts
@@ -119,6 +122,7 @@ run the demo confidently, anticipate questions, and suggest next steps.
 | 1 | Executive Summary | 3-sentence pitch: problem, solution, why Microsoft | `spec.md` |
 | 2 | Value Proposition | Business outcomes (not features), competitive edge | `spec.md` requirements |
 | 3 | Demo Script | Step-by-step with prompts, expected responses, timing | `spec.md` tools + `deploy.md` |
+| 3.5 | Proof It Works | Smoke test results, end-to-end trace screenshot, eval scores | `verify.md` |
 | 4 | Anticipated Questions | FAQ with suggested answers | Derived from spec non-goals + architecture |
 | 5 | Architecture | `se-only`: full resource graph. Seller view: product grid | `plan.md` |
 | 6 | Next Steps | Phase 2 ideas, production path, pricing discussion points | `spec.md` non-goals |
@@ -139,9 +143,9 @@ Show product names and business outcomes only.
 
 ## Workflow
 
-1. Read `docs/spec.md`, `docs/plan.md`, `docs/deploy.md`
+1. Read `docs/spec.md`, `docs/plan.md`, `docs/verify.md`, `docs/deploy.md`
 2. Extract: scenario narrative, agent capabilities, tool descriptions, architecture,
-   deployed URLs, model/region, smoke test results
+   deployed URLs, model/region, smoke test results, trace validation outcomes
 3. Generate `docs/demo-deck.html` (customer-facing)
 4. Generate `docs/seller-guide.html` (internal, dual-mode)
 5. Add `docs/seller-guide.html` to `.gitignore` if not already excluded
@@ -154,7 +158,7 @@ produced by `threadlight-design`. The key differences:
 
 | | threadlight-design | lean-seller-guide |
 |---|---|---|
-| Input | SPEC.md (threadlight format) | spec.md + plan.md + deploy.md (lean toolkit format) |
+| Input | SPEC.md (threadlight format) | spec.md + plan.md + verify.md + deploy.md (lean toolkit format) |
 | Pipeline | threadlight (design → deploy → safe-check) | lean toolkit (specify → plan → implement → verify → deploy) |
 | Scope | Full PoC lifecycle including data models, business rules, mock data | Post-deploy seller enablement only |
 | Output | demo-deck + experience + prep-guide + demo-rehearsal | demo-deck + seller-guide (leaner) |
