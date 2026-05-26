@@ -487,7 +487,17 @@ For each skill it runs five drift detectors:
 4. **Link rot** — HEAD on each `docs_to_revalidate[*]` URL
 5. **Validation age** — `today - last_validated > 180 days`
 
-Each drift event opens its own GitHub issue (`label: freshness,automation`).
+Signals are **consolidated per skill** — one issue per skill, listing all
+drift signals with an impact classification:
+
+| Impact | Label | Typical signals |
+|--------|-------|-----------------|
+| 🔴 CRITICAL | `impact:critical` | Package MAJOR bump, deprecated API in code |
+| 🟠 HIGH | `impact:high` | Package MINOR bump, upstream KI closed |
+| 🟡 MEDIUM | `impact:medium` | SHA drift, validation age > 180 days |
+| 🟢 LOW | `impact:low` | Link rot, package PATCH bump (auto-covered by `~=`) |
+
+Issue title format: `🔄 Refresh \`<skill>\` — <N> signal(s), impact: <level>`.
 Auto-tier issues are assigned to `@Copilot`. The coding agent reads
 [`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) for
 its setup contract.
@@ -651,7 +661,75 @@ copilot plugin install awesome-gbb@awesome-gbb
 
 ---
 
-## 12 · License & code of conduct
+## 12 · Repo design philosophy
+
+This catalog is built on three principles. Every process, workflow, and
+CI gate traces back to one of them.
+
+### 12.1 Quality is the only differentiator
+
+The catalog is shared publicly with peers and customers. A single stale
+import path, a broken code sample, or a wrong SDK version destroys
+credibility instantly. Consequences:
+
+- **Every skill is a contract.** Code samples in SKILL.md are not
+  suggestions — they are the exact code a consumer will copy. If it
+  doesn't run, the skill is broken.
+- **Testing tiers are mandatory.** § 2.7 defines T0–T3. PRs that skip
+  the appropriate tier are rejected, no exceptions.
+- **CI gates are real gates.** The four workflows in § 9.6 are not
+  advisory — they block merge. If CI can't prove a change is safe, the
+  change doesn't land.
+
+### 12.2 Self-healing freshness
+
+Upstream SDKs move fast. Manual tracking doesn't scale past 10 skills.
+The freshness lifecycle (§ 9) is the answer:
+
+```
+Weekly cron → drift detection → consolidated issue (per skill, impact-classified)
+  → @Copilot auto-assigned → coding agent opens PR → CI gates validate
+  → human reviews → merge
+```
+
+The loop is **closed**: detection → action → validation → merge, with
+human review as the quality gate, not the bottleneck. Key design choices:
+
+- **Consolidated issues, not per-signal spam.** One issue per skill with
+  all signals and an impact label. Reduces noise from ~50 issues to ~15.
+- **Impact classification drives priority.** CRITICAL (MAJOR SDK bumps)
+  surfaces above LOW (link rot). Reviewers triage by label.
+- **The coding agent reads `copilot-setup-steps.md`.** That file is the
+  agent's instruction set — it tells the agent what to touch, what NOT
+  to touch, and how to validate. Keep it precise and current.
+- **`automation-pr-gate.yml` constrains agent scope.** The agent can
+  bump pin files and frontmatter. It CANNOT rewrite SKILL.md body
+  without `[skill-rewrite]` tag. This prevents accidental prose damage.
+
+### 12.3 The repo IS the product
+
+This is not a docs-only repository. The repo is a **Copilot CLI plugin**
+(§ 10) — `plugin.json` at the root, `skills/` auto-discovered. Consumers
+install it with one command and every skill is immediately available in
+their CLI, Desktop App, VS Code, or Claude Code session.
+
+Consequences:
+
+- **No build step.** Skills are self-contained markdown contracts.
+  Runtime reads SKILL.md directly. There is nothing to compile.
+- **No duplication.** One `plugin.json`, one `skills/` directory, one
+  source of truth. The old 3-plugin model that duplicated 17 skill trees
+  is gone (§ 10.1).
+- **Docs site is pre-built.** `scripts/build-site.py` generates static
+  HTML into `docs/`. GitHub Pages serves it — there is no server-side
+  build. If you change a skill, rebuild docs before pushing.
+- **Pin files are machine-readable.** `upstream-pin.md` frontmatter is
+  YAML, consumed by CI scripts. The prose below is human audit trail.
+  Both must stay in sync.
+
+---
+
+## 13 · License & code of conduct
 
 This project is [MIT-licensed](LICENSE) and follows the
 [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
