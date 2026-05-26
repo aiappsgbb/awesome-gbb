@@ -1,6 +1,6 @@
 # awesome-gbb
 
-> Microsoft GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.
+> Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.
 
 ## Skills
 

@@ -489,7 +489,7 @@ _LAYOUT = '''<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
-<meta name="description" content="Microsoft GBB Copilot skills + plugins for Azure AI, Foundry, and governance.">
+<meta name="description" content="Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Foundry, and governance.">
 <meta name="theme-color" content="#4f6dff">
 <link rel="canonical" href="{canonical}">
 <link rel="stylesheet" href="{base}/_styles.css">
@@ -717,9 +717,9 @@ def render_home(
 
     body = (
         '<section class="hero">'
-        '<p class="eyebrow"><span class="dot"></span>Microsoft GBB · Copilot skill catalog</p>'
+        '<p class="eyebrow"><span class="dot"></span>Microsoft AI Apps GBB · Copilot skill catalog</p>'
         '<h1><strong>awesome-gbb</strong></h1>'
-        '<p class="lede">Microsoft GBB Copilot skills + plugins for Azure AI, '
+        '<p class="lede">Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, '
         'Microsoft Foundry, and governance. Production-tested. Versioned. '
         'Installable individually or as one-command plugin bundles.</p>'
         '<div class="runtimes-row" aria-label="Supported runtimes">'
@@ -811,7 +811,7 @@ def render_skills_index(
         )
     body = (
         '<h1>Skills</h1>'
-        f'<p>{len(skills)} production-tested Microsoft GBB Copilot skills. '
+        f'<p>{len(skills)} production-tested Microsoft AI Apps GBB Copilot skills. '
         'Click a category to filter, or type to search by name or description.</p>'
         '<div class="chip-bar" role="tablist" aria-label="Filter by category">'
         + ''.join(chips)
@@ -1004,7 +1004,7 @@ def render_llms_txt(
     lines: list[str] = []
     lines.append('# awesome-gbb')
     lines.append('')
-    lines.append('> Microsoft GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.')
+    lines.append('> Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.')
     lines.append('')
     lines.append('## Skills')
     lines.append('')
