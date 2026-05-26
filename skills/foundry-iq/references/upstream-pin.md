@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: ad95f2f2fa7c75f8ff7df5d6531e19d505b53783
+  pinned_sha: 08697f8037491cf21cc5cdf64fdbd9728f15a558
   pinned_commit_message: |
     .NET: Add Hosted-MemoryAgent sample with isolation key plumbing (#5692) (#5702)
   license: MIT
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-ad95f2f2fa7c75f8ff7df5d6531e19d505b53783}"
+    PINNED_SHA="${PINNED_SHA:-08697f8037491cf21cc5cdf64fdbd9728f15a558}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -65,8 +65,8 @@ validation:
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 0
 ---
 

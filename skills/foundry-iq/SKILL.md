@@ -11,7 +11,7 @@ description: >
   DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
   MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
 metadata:
-  version: "1.2.1"
+  version: "1.2.2"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
