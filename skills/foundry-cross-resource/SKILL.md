@@ -1,13 +1,13 @@
 ---
 name: foundry-cross-resource
 description: >
-  Cross-resource model invocation in Microsoft Foundry via an Azure APIM AI
-  Gateway, using the `connectionName/deploymentName` model string. Documents
-  the verified ApiKey and ProjectManagedIdentity (PMI) auth paths, three
-  invocation patterns (Responses API, PromptAgentDefinition, refreshed-preview
-  hosted-agent client), the APIM inbound policy XML, and the connection
-  ARM/REST schema with the metadata-stringification quirk that catches users
-  out. USE FOR: connectionName/deploymentName, cross-resource model access,
+  Cross-resource model invocation in Microsoft Foundry via an Azure APIM
+  AI Gateway, using the `connectionName/deploymentName` model string.
+  Covers ApiKey and ProjectManagedIdentity (PMI) auth paths, multiple
+  invocation patterns, APIM inbound policy, connection ARM/REST schema,
+  and the metadata-stringification quirk. Read the full skill body for
+  auth wiring and policy XML — do not configure from this summary alone.
+  USE FOR: connectionName/deploymentName, cross-resource model access,
   AI Gateway, APIM connection, ApiManagement connection, remote model
   invocation, Foundry gateway, use models from another Foundry project, APIM AI
   gateway setup, Foundry Agent Service gateway, model gateway connection,
@@ -17,7 +17,7 @@ description: >
   (use azure-tenant-isolation), Foundry project creation, APIM creation
   from scratch.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Cross-Resource Model Invocation via Foundry AI Gateway

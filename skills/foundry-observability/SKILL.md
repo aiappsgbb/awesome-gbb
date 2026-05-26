@@ -1,16 +1,14 @@
 ---
 name: foundry-observability
 description: >
-  End-to-end observability for Threadlight pilots — App Insights +
+  End-to-end observability for Azure AI pilots — App Insights +
   Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers,
-  ACA jobs, bot service, workspace UIs. Closes the silent gap where
-  `azd up` returns 0 but **zero traces ever reach App Insights**.
-  Three layers: Bicep `app-insights.bicep` + `log-analytics.bicep`
-  always included; Foundry account-level connection (`category:
-  AppInsights`) so hosted agents auto-inject
-  `APPLICATIONINSIGHTS_CONNECTION_STRING`; ACA-side
-  `configure_azure_monitor()` for MCP / bot / workspace / cron.
-  Includes `Monitoring Metrics Publisher` RBAC and KQL queries.
+  ACA jobs, bot service, workspace UIs. Closes the silent telemetry gap
+  where `azd up` returns 0 but **zero traces ever reach App Insights**.
+  Covers Bicep modules, Foundry account-level telemetry connection,
+  ACA-side instrumentation, `Monitoring Metrics Publisher` RBAC, and
+  KQL diagnostic queries. Read the full skill body for the 3-layer
+  wiring sequence — do not instrument from this summary alone.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
@@ -19,7 +17,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.0.4"
+  version: "1.1.0"
 ---
 
 # Foundry Observability
@@ -630,6 +628,31 @@ If any box is unchecked, **the pilot is not deploy-complete**. The
 visible "agent works in the portal" smoke does not catch this gap —
 the agent works exactly the same with or without telemetry. Only the
 KQL probe catches it.
+
+## Verification before claiming telemetry is wired
+
+**DO NOT report "observability is configured" until you have run the KQL
+probe and seen actual traces.** Bicep deploying successfully does NOT
+mean traces are flowing.
+
+After wiring all 3 layers, execute this gate:
+
+1. **Invoke the agent once** via the Foundry playground or a `curl` to the
+   ACA endpoint — this generates the first trace.
+2. **Wait 2 minutes** for ingestion (App Insights has ~90-second ingestion
+   delay).
+3. **Run the first-trace-probe KQL** and verify ≥ 1 row per workload role:
+
+   ```kql
+   union traces, requests, dependencies
+   | where timestamp > ago(10m)
+   | summarize count() by cloud_RoleName
+   | order by count_ desc
+   ```
+
+4. **If zero rows**: check (a) connection string propagation, (b) RBAC
+   assignment, (c) `configure_azure_monitor()` import order — in that
+   sequence. Do NOT report "wiring looks correct" without trace evidence.
 
 ---
 

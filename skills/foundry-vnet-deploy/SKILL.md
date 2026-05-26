@@ -1,13 +1,13 @@
 ---
 name: foundry-vnet-deploy
 description: >
-  Deploys Azure AI Foundry with **Agent Setup inside a private VNet** via
-  Bicep (`15-private-network-standard-agent-setup` reference). Guided
-  interview produces a `.bicepparam` and runs `az deployment group create`
-  with fixed-timestamp anti-duplication retry. Handles new/existing VNets,
-  reuse of CosmosDB / Storage / AI Search / private DNS zones, optional
-  hosted-agent RBAC, App Insights, and optional spoke-side peering +
-  APIM-DNS-zone link to a Citadel hub VNet.
+  Deploy Azure AI Foundry with **Agent Setup inside a private VNet** —
+  the `15-private-network-standard-agent-setup` Bicep reference
+  architecture. Supports new/existing VNets, resource reuse (CosmosDB /
+  Storage / AI Search / private DNS zones), hosted-agent RBAC,
+  App Insights, and spoke-side peering + APIM-DNS-zone link to a
+  Citadel hub VNet. Read the full skill body for the guided interview,
+  retry logic, and subnet sizing — do not deploy from this summary.
   USE FOR: foundry private vnet, network-secured foundry, agent
   injection, capability host, customerSubnet, bicepparam generator,
   capability host timeout retry, P2S VPN, citadel hub peering,
@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet

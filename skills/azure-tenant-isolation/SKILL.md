@@ -15,7 +15,7 @@ description: >
   deploying Foundry agents (use foundry-hosted-agents), deploying
   Citadel gateway (use citadel-hub-deploy).
 metadata:
-  version: "1.0.3"
+  version: "1.1.0"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation
@@ -434,6 +434,15 @@ az account list --query "[].{name:name, tenantId:tenantId, isDefault:isDefault}"
 
 ## The mandatory verify-before-act pattern
 
+<!-- <HARD-GATE>
+  STOP. Before ANY destructive Azure operation (azd up, azd deploy,
+  az deployment create, az group create, az resource delete, container
+  image updates), you MUST run the tenant+subscription assertion below
+  and verify the output matches the expected values. Do NOT skip this
+  step. Do NOT assume the correct tenant is active. Do NOT rely on
+  prior verification from a different command invocation.
+</HARD-GATE> -->
+
 Before **any** destructive operation (`azd up`, `azd deploy`,
 `az deployment ... create`, `az group create`, `az resource delete`,
 container/job image updates, etc.), run the assertion below. It uses
@@ -496,6 +505,15 @@ az account set --subscription "$DEFAULT_SUB"
 [ "$(az account show --query name -o tsv)" = "$DEFAULT_SUB" ] || exit 1
 azd up
 ```
+
+### Rationalisation prevention
+
+| Excuse | Reality |
+|--------|---------|
+| "I already verified the tenant earlier" | Shell state is mutable. Another terminal, hook, or `az login` may have changed it. Verify again, immediately before the destructive command. |
+| "I'm using `--subscription` flags so I don't need isolation" | `--subscription` doesn't set `AZURE_CONFIG_DIR`. Token refresh, `azd env`, and hooks all read the default config dir. Flags are not isolation. |
+| "It worked last time without this" | Azure state is mutable. The fact that the right subscription was active 10 minutes ago doesn't mean it still is. |
+| "I'll just be quick" | Cross-tenant deployments cost real money ($200-1000+/mo for a Citadel hub). The 5 seconds this check takes prevents a $1000 mistake. |
 
 ### Assertion variants — strict vs whitelist
 

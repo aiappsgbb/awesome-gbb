@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -176,6 +176,17 @@ Don't deploy a hub when:
 ---
 
 ## 5. Quickstart
+
+<!-- <HARD-GATE>
+  STOP. Before running ANY azd or az command in this section:
+  1. You MUST have selected a profile (pilot-quickstart, enterprise-baseline,
+     or vnet-isolated-spoke-aware). Do NOT deploy without a profile.
+  2. You MUST have set AZURE_CONFIG_DIR and AZD_CONFIG_DIR per
+     azure-tenant-isolation. A Citadel hub costs $200-1000+/mo — deploying
+     to the wrong subscription is expensive.
+  3. You MUST run the tenant assertion (az account show) and verify output.
+  If any of these are not done, STOP and complete them first.
+</HARD-GATE> -->
 
 > **TENANT ISOLATION FIRST.** Per `azure-tenant-isolation`, set both
 > `AZURE_CONFIG_DIR` and `AZD_CONFIG_DIR` to per-tenant directories

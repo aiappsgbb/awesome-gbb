@@ -3,12 +3,10 @@ name: paygo-ptu-cost-analyzer
 description: >
   Headless Azure OpenAI PAYGO-vs-PTU cost analysis and sizing report.
   Wraps the analysis library of aiappsgbb/ptu-paygo-mix (NOT its
-  Streamlit UI). Reads token usage from a CSV (`minute_bin,
-  input_tokens_sum, cached_tokens_sum, output_tokens_sum`) OR from an
-  Azure Log Analytics workspace via a vendored KQL against
-  `AzureMetrics`. Renders `report.md`, `report.json`, and two PNG
-  charts (TPM-over-time, sizing bars). Bundles a synthetic-data
-  generator for offline demos.
+  Streamlit UI). Supports CSV token-usage input and Log Analytics
+  queries via vendored KQL against `AzureMetrics`. Produces a markdown
+  report, JSON data, and charts. Bundles a synthetic-data generator
+  for offline demos.
   USE FOR: ptu sizing, paygo vs ptu, provisioned throughput unit
   recommendation, AOAI capacity planning, TPM percentile report,
   spillover cost estimate, log analytics token query, AzureMetrics
@@ -19,7 +17,7 @@ description: >
   monitoring (use azure-monitor-query directly), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # PAYGO vs PTU Cost Analyzer

@@ -1,14 +1,13 @@
 ---
 name: gbb-humanizer
 description: >
-  Remove signs of AI-generated writing from prose. Detects 29 patterns from
+  Remove signs of AI-generated writing from prose. Targets 29 patterns from
   Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three,
   significance inflation, AI vocabulary, copula avoidance, false ranges,
-  sycophantic openers, signposting, filler) and rewrites in a human voice.
-  Two-pass: first rewrite, then AI-tell audit, then second rewrite. Ships
-  pre-canned Microsoft GBB voice samples (seller pitch + technical blog) plus
-  density-preserving and section-aware guardrails so domain rule-of-three
-  lists and code blocks survive.
+  sycophantic openers, signposting, filler). Ships Microsoft GBB voice
+  samples (seller pitch + technical blog) and density-preserving guardrails
+  so domain lists and code blocks survive. Read the full skill body for
+  the multi-pass procedure and pattern catalog.
   USE FOR: humanize prose, remove AI-isms, polish overview.html, polish demo
   script, polish speaker notes, AI tells, ChatGPT cadence, em dash overuse,
   rule of three, voice calibration, GBB seller voice, Cowork prose polish,
@@ -17,7 +16,7 @@ description: >
   SKILL.md frontmatter, tables / KPI cards / code blocks, SME verbatim quotes,
   structured data.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # GBB Humanizer — remove AI tells from prose

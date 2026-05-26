@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.1.3"
+  version: "1.2.0"
 ---
 
 # AZD Tips & Patterns
@@ -471,6 +471,61 @@ works, surfaces structured root-cause diagnostics (e.g.
 
 > Captured from recent cron-debug retrospectives. Future cron debugs
 > should rerun this ladder top-to-bottom.
+
+### Escalation rule: 3-fix limit
+
+If you have attempted **3 or more fixes** and each one reveals a new
+problem in a different place (auth → RBAC → identity → timing → retry),
+**STOP**. This is not a configuration problem — it is an architecture
+problem. Each fix exposing a new failure in a different subsystem means
+the design assumptions are wrong.
+
+| Excuse | Reality |
+|--------|---------|
+| "I'm almost there, one more fix" | You said that 2 fixes ago. The pattern is divergent. |
+| "Each fix is small and targeted" | Small fixes to the wrong architecture produce infinite small fixes. |
+| "I just need to try a different parameter" | If 3 different parameters in 3 different subsystems all fail, the subsystems don't compose the way you assumed. |
+
+**Action:** Report the 3+ failed attempts to the user with a 1-sentence
+diagnosis of why the fixes diverge, and ask whether to continue with the
+current architecture or redesign.
+
+---
+
+## Verification before completion
+
+**DO NOT report deployment success until evidence is collected.** `azd up`
+returning exit code 0 means Bicep succeeded — it does NOT mean the
+application works.
+
+After every `azd up` / `azd deploy`, run this 5-step gate:
+
+1. **Identify** the verification command (e.g., `curl`, `az containerapp show`,
+   App Insights KQL query).
+2. **Run it fresh** — do not rely on cached output or prior runs.
+3. **Read the full output** — do not truncate or skip error sections.
+4. **Verify** the output matches expected behavior (HTTP 200 with correct
+   body, container in `Running` state, traces present).
+5. **Only then claim success** — include the verification evidence in your
+   response.
+
+Minimum verification checklist after `azd up`:
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| ACA running | `az containerapp show -g <rg> -n <app> --query "properties.runningStatus"` | `Running` |
+| No placeholder image | `az containerapp show -g <rg> -n <app> --query "properties.template.containers[0].image"` | Not `containerapps-helloworld` |
+| Health endpoint | `curl -fsS <app-url>/health` | HTTP 200 |
+| App Insights traces | KQL: `traces \| where timestamp > ago(5m) \| count` | Count > 0 (warn-only if 0) |
+
+### Rationalisation prevention
+
+| Excuse | Reality |
+|--------|---------|
+| "`azd up` returned 0, so it worked" | Exit code 0 means Bicep succeeded. It says nothing about whether the application started, responds to requests, or emits telemetry. |
+| "I'll verify later" | You won't. The next task will consume your attention. Verify now while the deployment context is fresh. |
+| "The logs looked fine" | Deployment logs show Bicep resource creation. They don't show runtime health. A container can deploy successfully and crash-loop immediately. |
+| "It worked in my last deployment" | Azure state is mutable. Image tags, RBAC propagation, network rules, and secret expiry all change between deployments. |
 
 ---
 
