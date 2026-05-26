@@ -1,0 +1,125 @@
+name: Skill tests
+
+# Consolidated test suite for the awesome-gbb catalog.
+# - unit-tests + catalog-lint: run on push to main + schedule + dispatch
+# - pin-smoke: run ALL auto-tier pin scripts (weekly + dispatch)
+# - e2e-azure: run ALL pin scripts including Azure-dependent ones (weekly + dispatch)
+#
+# PR-gating is handled by skill-validation.yml, automation-pr-gate.yml,
+# and pin-validation.yml. This workflow adds periodic + on-demand coverage.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "skills/**"
+      - "scripts/**"
+      - "plugin.json"
+      - ".github/plugin/**"
+      - ".github/workflows/skill-test.yml"
+  schedule:
+    - cron: "0 8 * * 1"  # Monday 08:00 UTC (after freshness at 07:00)
+  workflow_dispatch:
+    inputs:
+      include_azure:
+        description: "Run E2E Azure tests (needs OIDC secrets)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write  # OIDC for Azure login in e2e-azure job
+
+jobs:
+  # ── Job 1: Unit tests ──────────────────────────────────────────────
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: Run unit tests
+        run: python -m pytest scripts/tests/ -v --tb=short
+
+  # ── Job 2: Catalog lint (validate-skills + build-plugins) ──────────
+  catalog-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet pyyaml
+
+      - name: Validate all SKILL.md, pin files, and plugin manifest
+        run: python scripts/validate-skills.py
+
+      - name: Verify single-plugin structure
+        run: python scripts/build-plugins.py --check
+
+  # ── Job 3: Pin smoke (all auto-tier, no Azure) ────────────────────
+  pin-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runner deps
+        run: pip install --quiet pyyaml
+
+      - name: Run all auto-tier pin validations
+        run: python scripts/run-pin-validation.py --all
+
+  # ── Job 4: E2E Azure (all pins including Azure-dependent) ──────────
+  e2e-azure:
+    if: >-
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && inputs.include_azure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: azure-ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runner deps
+        run: pip install --quiet pyyaml
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run all pin validations (including Azure E2E)
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: python scripts/run-pin-validation.py --all --include-azure

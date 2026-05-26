@@ -561,7 +561,7 @@ This policy is enforced both by the cap-aware
 [`pin-validation.yml`](.github/workflows/pin-validation.yml) gate (which
 re-runs the script on the runner) and by reviewer eyeball.
 
-### 9.6 · Four CI gates that protect the catalog
+### 9.6 · Five CI gates that protect the catalog
 
 | Gate | When | What it checks |
 |------|------|---------------|
@@ -569,12 +569,18 @@ re-runs the script on the runner) and by reviewer eyeball.
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/*/references/upstream-pin.md` | **Re-runs `validation.script` on the runner** for auto-tier pin files; asserts every `expected_output` substring. No "trust me, I tested" path. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
+| [`skill-test.yml`](.github/workflows/skill-test.yml) | Push to main + weekly cron + on-demand | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `rg-awesome-gbb-ci`) |
 
-The first three run on every PR. The fourth runs autonomously.
+The first three run on every PR. The fourth detects drift autonomously.
+The fifth runs on push to main and weekly, with E2E Azure tests on
+schedule and manual dispatch.
 
-### 9.7 · Azure CI credentials
+### 9.7 · Azure CI credentials and E2E infrastructure
 
-The repo has OIDC-federated Azure credentials for CI use:
+The repo has OIDC-federated Azure credentials and dedicated E2E
+infrastructure for CI use in `rg-awesome-gbb-ci` (Sweden Central):
+
+**OIDC identity:**
 
 | Secret | Purpose |
 |--------|---------|
@@ -582,14 +588,47 @@ The repo has OIDC-federated Azure credentials for CI use:
 | `AZURE_TENANT_ID` | `fruocco` tenant |
 | `AZURE_SUBSCRIPTION_ID` | `ME-MngEnvMCAP979166-fruocco-2` |
 
+**E2E infrastructure:**
+
+| Resource | Name | Purpose |
+|----------|------|---------|
+| AI Services | `aif-awesome-gbb-ci` | Foundry host for agent/eval/memory tests |
+| Model deployment | `gpt-5.4-mini` | Cheapest model for smoke tests |
+| Container Registry | `acrawesomegbbci` | Container image builds |
+| Container App Environment | `cae-awesome-gbb-ci` | ACA deploy tests |
+
+**Endpoint secrets:**
+
+| Secret | Value |
+|--------|-------|
+| `AZURE_AI_ENDPOINT` | `https://aif-awesome-gbb-ci.cognitiveservices.azure.com/` |
+| `ACR_LOGIN_SERVER` | `acrawesomegbbci.azurecr.io` |
+
+**RBAC on UAMI:**
+- Contributor on `rg-awesome-gbb-ci`
+- AcrPush on `acrawesomegbbci`
+- Cognitive Services OpenAI User on `aif-awesome-gbb-ci`
+- Foundry User on `aif-awesome-gbb-ci`
+
 Federated credentials cover both `pull_request` and `ref:refs/heads/main`
 triggers. Workflows use `azure/login@v2` with OIDC — no stored secrets
 or service principal passwords.
 
-Current RBAC: **Reader** on subscription (sufficient for T0–T2). When T3
-deploy-test workflows are added, grant `Contributor` + `AcrPush` +
-`Cognitive Services OpenAI User` on the CI resource group / Foundry
-project.
+### 9.8 · Skill testing tiers
+
+| Tier | Name | What | When required | Enforced by |
+|------|------|------|---------------|-------------|
+| **T0** | Lint | Frontmatter, desc ≤ 1024, forbidden strings, deprecated API scan | Every PR | `skill-validation.yml` |
+| **T1** | Pin validation | `validation.script` runs, expected_output present | Pin file changes | `pin-validation.yml` |
+| **T2** | Import smoke | `pip install` + `python -c "from X import Y"` for all auto-tier pins | Weekly + dispatch | `skill-test.yml` (pin-smoke job) |
+| **T3** | E2E Azure | Deploy agent/container, call Azure APIs, verify real responses | Weekly + dispatch | `skill-test.yml` (e2e-azure job) |
+
+**Excluded from CI** (too complex, manually validated only):
+`citadel-hub-deploy`, `citadel-spoke-onboarding`, `foundry-vnet-deploy`.
+
+The `--include-azure` flag on `run-pin-validation.py` unlocks T3 pins
+(those with `azure_subscription` or `foundry_project` in
+`validation.requires`) when the runner has Azure credentials via env vars.
 
 ---
 

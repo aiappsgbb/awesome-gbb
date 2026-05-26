@@ -32,8 +32,15 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 REPO = Path(__file__).resolve().parent.parent
 PIN_GLOB = "skills/*/references/upstream-pin.md"
 SAFE_REQUIRES = {"github_only", "pypi"}
+AZURE_REQUIRES = {"azure_subscription", "foundry_project"}
 SCRIPT_TIMEOUT_SECONDS = 600
 EXPECTED_TIMEOUT_PER_PIN_MIN = 10
+
+# Env vars that must be set for --include-azure pins
+AZURE_ENV_MAP = {
+    "azure_subscription": "AZURE_SUBSCRIPTION_ID",
+    "foundry_project": "AZURE_AI_ENDPOINT",
+}
 
 
 def parse_pin(path: Path) -> dict | None:
@@ -75,25 +82,48 @@ def all_pin_files() -> list[Path]:
     return sorted(REPO.glob(PIN_GLOB))
 
 
-def should_run(pin: dict, path: Path) -> tuple[bool, str]:
+def should_run(pin: dict, path: Path, *, include_azure: bool = False) -> tuple[bool, str]:
     """
     Decide whether this pin's validation.script is safe + intended to run
     in CI. Returns (should_run, reason).
+
+    With include_azure=True, also run pins that need Azure/Foundry creds
+    (azure_subscription, foundry_project) when the required env vars are set.
     """
-    automation_tier = pin.get("automation_tier", "issue_only")
     validation = pin.get("validation") or {}
     requires = validation.get("requires") or []
     runnable = validation.get("runnable", False)
     script = validation.get("script", "").strip()
+    automation_tier = pin.get("automation_tier", "issue_only")
 
     if not script:
         return False, "no validation.script"
+    if not isinstance(requires, list):
+        return False, f"validation.requires is not a list ({type(requires).__name__})"
+
+    has_azure_needs = bool(AZURE_REQUIRES & set(requires))
+
+    if include_azure and has_azure_needs:
+        # Azure E2E mode: bypass runnable/automation_tier checks for pins
+        # that need Azure creds, but verify the env vars are actually set.
+        missing_env = []
+        for req in requires:
+            env_var = AZURE_ENV_MAP.get(req)
+            if env_var and not os.environ.get(env_var):
+                missing_env.append(f"{env_var} (for {req})")
+        if missing_env:
+            return False, f"--include-azure but missing env vars: {missing_env}"
+        # Non-Azure requires must still be in the safe set
+        non_azure = [r for r in requires if r not in AZURE_REQUIRES and r not in SAFE_REQUIRES]
+        if non_azure:
+            return False, f"validation.requires has unsafe non-Azure entries: {non_azure}"
+        return True, ""
+
+    # Standard logic for non-Azure pins
     if not runnable:
         return False, "validation.runnable is false"
     if automation_tier != "auto":
         return False, f"automation_tier={automation_tier} (not auto)"
-    if not isinstance(requires, list):
-        return False, f"validation.requires is not a list ({type(requires).__name__})"
     extra = [r for r in requires if r not in SAFE_REQUIRES]
     if extra:
         return False, f"validation.requires has unsafe entries: {extra}"
@@ -178,6 +208,18 @@ def run_one(path: Path, pin: dict) -> tuple[bool, str]:
         env = os.environ.copy()
         env.setdefault("PYTHONUTF8", "1")
 
+        # Forward Azure CI env vars so validation scripts can authenticate
+        for env_var in AZURE_ENV_MAP.values():
+            val = os.environ.get(env_var)
+            if val:
+                env[env_var] = val
+        # Also forward AZURE_CLIENT_ID + AZURE_TENANT_ID for OIDC/DefaultAzureCredential
+        for extra_var in ("AZURE_CLIENT_ID", "AZURE_TENANT_ID",
+                          "AZURE_SUBSCRIPTION_ID", "AZURE_AI_ENDPOINT"):
+            val = os.environ.get(extra_var)
+            if val:
+                env[extra_var] = val
+
         # Cross-platform python/pip shims so pin scripts that use bare
         # `python`/`pip` work on macOS (where only python3 exists) without
         # changing the script itself.
@@ -237,6 +279,7 @@ def main(argv: list[str]) -> int:
             for a in argv[1:]}
     base = args.get("--base", "origin/main")
     all_files_mode = "--all" in argv
+    include_azure = "--include-azure" in argv
     skip_install_check = "--skip-install" in argv
 
     if all_files_mode:
@@ -245,6 +288,10 @@ def main(argv: list[str]) -> int:
     else:
         pins = changed_pin_files(base)
         print(f"Mode: changed-only against base={base} ({len(pins)} pin files)")
+
+    if include_azure:
+        present = {k: bool(os.environ.get(v)) for k, v in AZURE_ENV_MAP.items()}
+        print(f"Azure E2E mode: --include-azure (env: {present})")
 
     if not pins:
         print("\nNo pin files to validate. ✅")
@@ -274,7 +321,7 @@ def main(argv: list[str]) -> int:
         if pin is None:
             failures.append((path, "parse failed"))
             continue
-        ok, reason = should_run(pin, path)
+        ok, reason = should_run(pin, path, include_azure=include_azure)
         if not ok:
             print(f"\n[SKIP] {rel}: {reason}")
             skipped.append((path, reason))
