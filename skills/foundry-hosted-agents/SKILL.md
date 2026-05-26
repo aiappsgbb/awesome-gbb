@@ -2,11 +2,12 @@
 name: foundry-hosted-agents
 description: >
   Deploy, evaluate, and manage Foundry hosted agents on the refreshed
-  May 2026 preview (Agent + FoundryChatClient + ResponsesHostServer
-  pattern, MAF 1.6.0, Foundry User role). Covers ACR build/push,
-  hosted/prompt agent create, container start, batch eval, prompt
-  optimization, agent.yaml, dataset curation, azd ai agent extension,
-  identity, RBAC, troubleshooting. USE FOR: deploy foundry agent,
+  May 2026 preview — MAF 1.6.0, Foundry User role, azd ai agent
+  extension. The canonical reference for hosted-agent lifecycle from
+  container build through production evaluation. Read the full skill
+  body for SDK patterns, identity wiring, and troubleshooting — do
+  not deploy from this summary alone.
+  USE FOR: deploy foundry agent,
   hosted agent, prompt agent, container agent, agent.yaml,
   FoundryChatClient, ResponsesHostServer, MAF agent framework,
   OpenAIChatClient, refreshed preview April 2026, ACR push, batch
@@ -17,7 +18,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.1"
+  version: "1.7.2"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide

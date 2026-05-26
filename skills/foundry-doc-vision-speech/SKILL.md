@@ -1,10 +1,9 @@
 ---
 name: foundry-doc-vision-speech
 description: >
-  Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS)
-  into a Foundry hosted agent. Reads SPEC § 7b model selection and produces tool
-  contracts, Bicep modules, and runtime client code. Replaces all GPT-4o references
-  (legacy as of 2025) with gpt-5.4 family models.
+  Add vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech
+  (STT/TTS) capabilities to a Foundry hosted agent. Covers tool contracts,
+  Bicep modules, runtime client code, and model selection for vision workloads.
   USE FOR: vision tool, image analysis, damage photo analysis, blueprint annotation,
   document extraction, structured doc parsing, OCR, voice intake, FNOL voice claim,
   STT, TTS, gpt-5.4-mini vision, gpt-5.4 vision, Document Intelligence prebuilt,
@@ -12,7 +11,7 @@ description: >
   DO NOT USE FOR: deploying the agent itself (use threadlight-deploy), MCP server
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Foundry Doc / Vision / Speech
