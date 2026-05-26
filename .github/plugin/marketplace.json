@@ -5,15 +5,15 @@
     "url": "https://github.com/aiappsgbb"
   },
   "metadata": {
-    "description": "Microsoft GBB skills catalog for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App, VS Code agent mode, Claude Code). One plugin installs all 38 skills.",
-    "version": "2.0.0"
+    "description": "Microsoft AI Apps GBB skills catalog for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App, VS Code agent mode, Claude Code). One plugin installs all 33 skills.",
+    "version": "3.0.0"
   },
   "homepage": "https://github.com/aiappsgbb/awesome-gbb",
   "plugins": [
     {
       "name": "awesome-gbb",
-      "version": "2.0.0",
-      "description": "38 reusable GBB skills: seller enablement, Azure infra (azd, Bicep, ACA), Foundry agents (hosted agents, RAG, MCP, evals, observability), governance (Citadel, AGT), Threadlight pipeline, digital-clone orchestration, cost analysis, tenant isolation, and enterprise automation.",
+      "version": "3.0.0",
+      "description": "33 reusable GBB skills: Azure infra (azd, Bicep, ACA), Foundry agents (hosted agents, RAG, MCP, evals, observability), governance (Citadel, AGT), Threadlight pipeline, cost analysis, tenant isolation, and enterprise automation. Zava skills moved to zava-constellation.",
       "source": ".",
       "category": "azure",
       "keywords": [

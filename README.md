@@ -11,7 +11,7 @@
 
 - [What Are Skills?](#what-are-skills)
 - [Featured Pipeline: Threadlight](#-featured-pipeline-threadlight)
-- [Featured Workspace: Zava](#-featured-workspace-zava)
+- [Featured Workspace: Zava](https://github.com/aiappsgbb/zava-constellation)
 - [Demo Guide](DEMOS.md)
 - [Supported Coding Runtimes](#supported-coding-runtimes)
 - [Skills Catalog](#skills-catalog)
@@ -85,47 +85,17 @@ Do NOT mirror or vendor that repo here — link only. Source of truth stays sepa
 
 ## 🏙️ Featured Workspace: Zava
 
-> **▶ Live experience:** <https://aiappsgbb.github.io/awesome-gbb/zava/> — cinematic one-pager that explains the pipeline in three scrolls. Mirrors [`zava-experience.html`](zava-experience.html) at repo root ([htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/zava-experience.html) if you can't reach the Pages URL).
-
-> **▶ Live workspace:** <https://zava-agent-ehomtqjvw36zs.kinddesert-a2c14676.swedencentral.azurecontainerapps.io/> — the deployed control-plane dashboard with 170 API routes, real-time SSE fleet streams, and OpenTelemetry flowing to App Insights.
-
-**Zava** is the agentic substrate that powers digital-clone demos: a
-full-stack control-plane (React 19 + FastAPI) with 37 domains, 167 routes,
-45+ MCP tools, persona-driven decision orchestration, SSE fleet telemetry,
-and a knowledge graph. Instead of showing customers a slide, you show them
-a **living organisational twin** running their own processes with their
-named ELT, their industry's entity kinds, and their brand.
-
-The workspace ships as three skills that chain together:
-
-```
-research-company → compose-org → zava-workspace-deploy
-```
-
-1. **`research-company`** — profile the target company (Wikipedia, annual
-   reports, registry data) → `org-brief.yaml` with named ELT, subsidiaries,
-   strategic themes, stack overrides.
-2. **`compose-org`** — fork the [`zava-control-plane`](https://github.com/arturcrmbot/zava-control-plane)
-   substrate into a customer-branded clone: rebrand tokens, repack data
-   fabric, swap entity kinds, regenerate personas, scaffold domain stubs.
-3. **`zava-workspace-deploy`** — build the React SPA, package with
-   nginx/FastAPI, deploy to Azure Container Apps with OTel telemetry.
-
-> 📖 **The full architecture, domain registry, SSE event catalog, and deploy
-> runbook live in [ZAVA.md](ZAVA.md).**
-
-> [!TIP]
-> **Quick demo path.** Run `research-company` → `compose-org` to produce the
-> branded fork (~60–90 min), then `zava-workspace-deploy` to ship it to ACA
-> (~5 min). The customer sees their own org structure, their named executives
-> making decisions, their industry's compliance rules — running live on Azure.
-
-> [!TIP]
+> **Zava has moved to its own repo →
+> [aiappsgbb/zava-constellation](https://github.com/aiappsgbb/zava-constellation)**
+>
+> Three skills (`research-company` → `compose-org` → `zava-workspace-deploy`)
+> that take a company name and produce a deployed, branded digital-clone
+> workspace on Azure. See the
+> [live experience page](https://aiappsgbb.github.io/zava-constellation/).
+>
 > **Zava + Threadlight = full story.** Threadlight designs and deploys
 > individual business-process agents. Zava wraps them in a multi-domain
-> control plane with fleet orchestration, persona decisions, and a polished
-> dashboard. Use Threadlight for the "one process" pitch; Zava for the
-> "enterprise operating system" pitch.
+> control plane with fleet orchestration and a polished dashboard.
 
 ---
 
@@ -238,15 +208,8 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 
 ### 🧬 Org Composition & Zava Workspace
 
-The **Zava pipeline** — three skills that take a company name and produce a deployed, branded digital-clone workspace on Azure. The substrate is [`zava-control-plane`](https://github.com/arturcrmbot/zava-control-plane) (37 domains, 167 routes, React 19 SPA, persona-driven orchestration). See [ZAVA.md](ZAVA.md) for the full architecture.
-
-| Skill | Description |
-|-------|-------------|
-| [**research-company**](skills/research-company/) | Profile a target organisation against its public web footprint — Wikipedia, `/about`, the latest annual report, the national company registry, vendor case-study pages, ASN data — and emit a thin `org-brief.yaml` overlay capturing identity, ownership, ~10 subsidiaries, the publicly named ELT, 3–5 strategic themes, and any stack overrides the company has disclosed. Ships **5 industry primers** (telco, airline, banking, retail, auto-OEM) carrying the vertical-canonical function tree, regulator catalogue, entity kinds, proposed-domain library, and KPI cinematics — so the brief itself stays thin (~300–500 lines) and the breadth lives in the primer. **Confidence-discipline** (every claim is `high`/`medium`/`low`/`inferred` with `source_refs[]`); gaps go in `uncertainties[]` rather than being invented. Per-engagement output lives under `briefs/` (gitignored) — no customer names ever land in this catalog. |
-| [**compose-org**](skills/compose-org/) | Fork the substrate into a customer-flavoured digital clone using a signed-off org-brief + the matching primer. Ten phases: clone substrate (no remote), literal token rebrand under a tight extension allowlist, repack the data fabric (subsidiaries / customers / services / cadenced rituals / narrative arcs), swap the Kuzu entity-kind tables to the vertical's canonical set, regenerate the function registry + persona folders for the named ELT, extend the domain registry with 25–35 vertical workflow stubs, scaffold Node MCP mocks for any disclosed stack overrides, re-seed the data fabric snapshot, and smoke-test. Local-only fork by default; refuses dirty trees; idempotent re-runnable with `--allow-overwrite`. After hand-off, individual stubs graduate to live workflows via `compose-domain` inside the new fork. |
-| [**zava-workspace-deploy**](skills/zava-workspace-deploy/) | Deploy custom React/Vite SPAs to Azure Container Apps — builds the SPA bundle, packages with nginx or FastAPI static-serve, generates Bicep + `azure.yaml` service entry, configures API proxy + SSE passthrough. Handles the **SPA → ACA deploy pattern** for control-plane dashboards, candidate portals, blueprint microsites, or any custom web UI beyond `threadlight-workspace-ui`'s generated reference UIs. |
-
-> **Quickstart:** From an empty directory in a `copilot` session, ask the agent to _"profile `<customer>.com` with `research-company`, then fork the substrate with `compose-org`, then deploy with `zava-workspace-deploy`"_. The pipeline (~60–90 min research + compose, ~5 min deploy) clones the substrate, brands it, and ships a live ACA workspace. Output: `briefs/<slug>-org-brief.yaml` + `zava-control-plane-<slug>/` deployed to `https://<app>.azurecontainerapps.io/`.
+> **Moved to [aiappsgbb/zava-constellation](https://github.com/aiappsgbb/zava-constellation)** —
+> `research-company`, `compose-org`, and `zava-workspace-deploy`.
 
 ### 🔍 Discovery
 
@@ -304,7 +267,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 ```
 
 > [!TIP]
-> **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `research-company`, `compose-org`, `zava-workspace-deploy`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. Other skills can stay at project scope.
+> **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. For Zava skills, see [zava-constellation](https://github.com/aiappsgbb/zava-constellation). Other skills can stay at project scope.
 
 ---
 

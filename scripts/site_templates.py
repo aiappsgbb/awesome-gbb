@@ -502,7 +502,7 @@ _LAYOUT = '''<!doctype html>
       <a href="{base}/"{a_home}>Home</a>
       <a href="{base}/skills/"{a_skills}>Skills</a>
       <a href="{base}/threadlight/"{a_threadlight}>Threadlight</a>
-      <a href="{base}/zava/"{a_zava}>Zava</a>
+      <a href="https://aiappsgbb.github.io/zava-constellation/"{a_zava}>Zava</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
     </div>
   </div>
@@ -672,7 +672,7 @@ def render_home(
             count='live preview',
         ),
         _browse_card(
-            f'{SITE_BASE}/zava/', _ICON_ZAVA, 'Zava',
+            'https://aiappsgbb.github.io/zava-constellation/', _ICON_ZAVA, 'Zava',
             'Digital-clone workspaces — name a company, the coding agent '
             'profiles the org, forks a branded substrate, and deploys a '
             'control-plane dashboard to Azure.',

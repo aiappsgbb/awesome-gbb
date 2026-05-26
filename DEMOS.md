@@ -15,14 +15,14 @@ copilot plugin list
 | Verify | What to look for |
 |---|---|
 | `copilot plugin list` | `awesome-gbb@awesome-gbb` appears in the installed plugin list |
-| Skill availability | The agent can activate [threadlight-design](skills/threadlight-design/), [threadlight-deploy](skills/threadlight-deploy/), [zava-workspace-deploy](skills/zava-workspace-deploy/), and the supporting Foundry skills |
+| Skill availability | The agent can activate [threadlight-design](skills/threadlight-design/), [threadlight-deploy](skills/threadlight-deploy/), and the supporting Foundry skills. For Zava skills, install [zava-constellation](https://github.com/aiappsgbb/zava-constellation). |
 
 ## Demo menu
 
 | Demo | Best for | Core story | Primary skills |
 |---|---|---|---|
 | **Threadlight** | Technical leads, developers, solution sellers | One business process from SPEC to live Azure workflow | [threadlight-design](skills/threadlight-design/), [threadlight-demo-data-factory](skills/threadlight-demo-data-factory/), [threadlight-local-test](skills/threadlight-local-test/), [threadlight-deploy](skills/threadlight-deploy/) |
-| **Zava** | C-suite, transformation leaders, enterprise architects | Full agentic operating model across an enterprise control plane | [zava-workspace-deploy](skills/zava-workspace-deploy/) |
+| **Zava** | C-suite, transformation leaders, enterprise architects | Full agentic operating model across an enterprise control plane | [zava-constellation](https://github.com/aiappsgbb/zava-constellation) |
 | **Foundry stack** | Architects, platform owners, developers | Hosted agents with tools, governance, and full traceability | [foundry-hosted-agents](skills/foundry-hosted-agents/), [foundry-mcp-aca](skills/foundry-mcp-aca/), [foundry-agt](skills/foundry-agt/), [foundry-observability](skills/foundry-observability/) |
 
 ## Threadlight Demo
@@ -68,61 +68,8 @@ copilot plugin list
 
 ## Zava Demo
 
-### What it shows
-
-- **38 concurrent workflow domains**
-- **79 persona roles**
-- Entity graph and fleet manager
-- Real-time SSE activity feed
-- Operator UI, candidate portal, and blueprint/constellation views
-
-### Live URL pattern
-
-| Surface | URL pattern | Use |
-|---|---|---|
-| Operator UI | `https://<FQDN>/` | Main control plane and simulator |
-| Candidate Portal | `https://<FQDN>/portal/` | External candidate journey |
-| Constellation / Blueprint | `https://<FQDN>/blueprint/` | Enterprise-wide composition view |
-
-### 5-minute exec pitch
-
-1. Open the Operator UI at `https://<FQDN>/`.
-2. Trigger **constellation** and let all domains start processing in real time.
-3. Watch the SSE feed update live.
-4. Open the entity graph / blueprint view.
-5. Land the message: **“This is what enterprise-scale AI orchestration looks like when many business domains run together.”**
-
-### 15-minute technical walkthrough
-
-| Time | Move | Point |
-|---|---|---|
-| 0–2 min | Open Operator UI and pick a role | One control plane, many personas |
-| 2–4 min | Trigger constellation | 38 domains can execute concurrently |
-| 4–7 min | Inspect `expense-claim` | 4-phase workflow with policy and approval logic |
-| 7–9 min | Show a HITL gate | Senior decisions remain explicitly human-controlled |
-| 9–11 min | Open `https://<FQDN>/portal/` | Same platform, different persona surface |
-| 11–13 min | Show entity graph / relationships | The org runs on shared entities, not isolated demos |
-| 13–15 min | Open `https://<FQDN>/blueprint/` | Constellation view makes orchestration visible |
-
-### Domain talking points
-
-| Domain | What to say |
-|---|---|
-| `expense-claim` | Policy enforcement: threshold checks, approvals, and payment sequencing |
-| `hiring` | 10-phase pipeline: long-running orchestration across candidate lifecycle |
-| `vendor-kyc` | Compliance as code: verification and governance embedded into the workflow |
-| `creative-campaign` | Multi-modal agents: content generation and visual steps in one process |
-
-### Known limitations
-
-- **HITL auto-resolve in fake mode:** gates clear automatically for fast demos.
-- **No real LLM calls with `LLM_RUNTIME=fake`:** responses are template-driven.
-- **Mem0 disabled:** memory falls back to the non-Mem0 demo path.
-
-### Key skill
-
-- Primary: [zava-workspace-deploy](skills/zava-workspace-deploy/)
-- Optional pre-demo setup: [research-company](skills/research-company/), [compose-org](skills/compose-org/)
+> **Zava demo content has moved to
+> [aiappsgbb/zava-constellation](https://github.com/aiappsgbb/zava-constellation).**
 
 ## Foundry Stack Demo
 
@@ -179,7 +126,7 @@ copilot plugin list
 
 | Audience | Duration | Show | Core message | Skills |
 |---|---|---|---|---|
-| **C-suite** | 5 min | Zava constellation → live feed → entity graph | **“This is what AI orchestration looks like at enterprise scale.”** | [zava-workspace-deploy](skills/zava-workspace-deploy/) |
+| **C-suite** | 5 min | Zava constellation → live feed → entity graph | **"This is what AI orchestration looks like at enterprise scale."** | [zava-constellation](https://github.com/aiappsgbb/zava-constellation) |
 | **Technical leads** | 15 min | Threadlight end-to-end: design → data → local test → deploy → telemetry | **“The process is designed, testable, deployable, and observable.”** | [threadlight-design](skills/threadlight-design/), [threadlight-local-test](skills/threadlight-local-test/), [threadlight-deploy](skills/threadlight-deploy/), [foundry-observability](skills/foundry-observability/) |
 | **Architects** | 30 min | Citadel hub + spoke governance, VNet isolation, RBAC model | **“This platform is governable, segmentable, and enterprise-ready by design.”** | [citadel-hub-deploy](skills/citadel-hub-deploy/), [citadel-spoke-onboarding](skills/citadel-spoke-onboarding/), [foundry-vnet-deploy](skills/foundry-vnet-deploy/), [azure-tenant-isolation](skills/azure-tenant-isolation/), [foundry-agt](skills/foundry-agt/) |
 | **Developers** | 30 min | Live build: design a new process, run it locally, then deploy it | **“You can go from idea to runnable agent workflow in one working session.”** | [threadlight-design](skills/threadlight-design/), [threadlight-local-test](skills/threadlight-local-test/), [threadlight-deploy](skills/threadlight-deploy/) |

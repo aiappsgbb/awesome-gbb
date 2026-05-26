@@ -410,5 +410,5 @@ focused on business-relevant memory only.
   the hosted agent runtime that can consume memory tools
 - [`foundry-iq`](../foundry-iq/) — use for document grounding / enterprise RAG,
   not conversational long-term memory
-- [`zava-workspace-deploy`](../zava-workspace-deploy/) — older Zava notes refer
+- [`zava-workspace-deploy`](https://github.com/aiappsgbb/zava-constellation/tree/main/skills/zava-workspace-deploy) — older Zava notes refer
   to Mem0-style memory; prefer Foundry Memory as the native Foundry replacement

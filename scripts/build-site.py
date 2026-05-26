@@ -70,14 +70,8 @@ CATEGORIES: dict[str, list[str]] = {
     '📊 Content Generation': [
         'gbb-pptx', 'auto-demo-producer',
     ],
-    '🧬 Org Composition': [
-        'research-company', 'compose-org',
-    ],
     '🔍 Discovery': [
         'ip-catalog',
-    ],
-    '🏢 Workspace': [
-        'zava-workspace-deploy',
     ],
 }
 
@@ -342,26 +336,27 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     else:
         print(f'WARN: {threadlight_src} not found — skipping /threadlight/', file=sys.stderr)
 
-    # Zava experience — verbatim copy
-    zava_src = REPO_ROOT / 'zava-experience.html'
-    if zava_src.exists():
-        zava_dst = out_dir / 'zava' / 'index.html'
-        zava_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(zava_src, zava_dst)
-        total_bytes += zava_dst.stat().st_size
-        html_count += 1
-        # Backward-compat redirect for /zava-experience.html
-        zava_compat = out_dir / 'zava-experience.html'
-        zava_compat.write_text(
-            '<!doctype html>\n<html><head>\n'
-            '<meta http-equiv="refresh" content="0;url=/awesome-gbb/zava/">\n'
-            '</head><body><a href="/awesome-gbb/zava/">Redirecting…</a></body></html>\n',
-            encoding='utf-8',
-        )
-        total_bytes += zava_compat.stat().st_size
-        html_count += 1
-    else:
-        print(f'WARN: {zava_src} not found — skipping /zava/', file=sys.stderr)
+    # Zava — redirect to zava-constellation repo Pages
+    zava_dst = out_dir / 'zava' / 'index.html'
+    zava_dst.parent.mkdir(parents=True, exist_ok=True)
+    zava_dst.write_text(
+        '<!doctype html>\n<html><head>\n'
+        '<meta http-equiv="refresh" content="0;url=https://aiappsgbb.github.io/zava-constellation/">\n'
+        '</head><body><a href="https://aiappsgbb.github.io/zava-constellation/">Redirecting to zava-constellation…</a></body></html>\n',
+        encoding='utf-8',
+    )
+    total_bytes += zava_dst.stat().st_size
+    html_count += 1
+    # Backward-compat redirect for /zava-experience.html
+    zava_compat = out_dir / 'zava-experience.html'
+    zava_compat.write_text(
+        '<!doctype html>\n<html><head>\n'
+        '<meta http-equiv="refresh" content="0;url=https://aiappsgbb.github.io/zava-constellation/">\n'
+        '</head><body><a href="https://aiappsgbb.github.io/zava-constellation/">Redirecting to zava-constellation…</a></body></html>\n',
+        encoding='utf-8',
+    )
+    total_bytes += zava_compat.stat().st_size
+    html_count += 1
 
     # Backward-compat for the legacy /threadlight-experience.html URL.
     # Pre-flip, Pages served the file at the repo root with the WHOLE site

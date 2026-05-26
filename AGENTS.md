@@ -625,7 +625,7 @@ copilot plugin install awesome-gbb@awesome-gbb
 - [README.md](README.md) — public catalog and install instructions
 - [DEMOS.md](DEMOS.md) — demo guide for Threadlight, Zava, and Foundry walkthroughs
 - [THREADLIGHT.md](THREADLIGHT.md) — end-to-end pipeline narrative
-- [ZAVA.md](ZAVA.md) — digital-clone workspace technical briefing
+- [ZAVA.md](https://github.com/aiappsgbb/zava-constellation/blob/main/ZAVA.md) — digital-clone workspace technical briefing (in zava-constellation repo)
 - Each `skills/<skill>/SKILL.md` — the canonical contract for that skill
 - Each `skills/<skill>/README.md` (if present) — extended docs / changelog
 - Each `skills/<skill>/references/upstream-pin.md` (wrapper skills) — machine-readable freshness contract

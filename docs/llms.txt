@@ -51,19 +51,10 @@
 - [gbb-pptx](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-pptx/SKILL.md): Generate professional PowerPoint (PPTX) presentations using python-pptx (the AI Apps GBB dark/light pitch-deck generator).
 - [auto-demo-producer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/auto-demo-producer/SKILL.md): Produce narrated video demos of web applications automatically.
 
-### 🧬 Org Composition
-
-- [research-company](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/research-company/SKILL.md): Emit a thin org-brief YAML profiling a target organisation — the company-specific overlay that pairs with an industry primer to drive a digital-clone-grade substrate fork.
-- [compose-org](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/compose-org/SKILL.md): Fork an agentic substrate into a customer-flavoured digital clone using an org-brief YAML (from research-company) + the matching industry primer.
-
 ### 🔍 Discovery
 
 - [ip-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ip-catalog/SKILL.md): Discover AI Apps GBB IP catalog via MCP server.
 
-### 🏢 Workspace
-
-- [zava-workspace-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/zava-workspace-deploy/SKILL.md): Deploy the Zava agentic-org control plane to Azure Container Apps via azd (Azure Developer CLI).
-
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft GBB skills catalog — 38 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 33 reusable building blocks for Copilot-assisted engagements.
