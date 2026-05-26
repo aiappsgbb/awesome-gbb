@@ -157,6 +157,40 @@ module conventions. If your skill needs a new module shape (e.g., a new
 Azure resource type), extend the library in `azd-patterns` — don't fork
 it in your skill.
 
+### 2.7 Skills must be tested
+
+Every skill change requires testing proportional to the change's risk.
+The catalog defines four tiers — each subsumes the tiers below it.
+
+| Tier | Name | What it proves | When required | Enforced by |
+|------|------|----------------|---------------|-------------|
+| **T0** | Lint | Frontmatter parses, description ≤ 1024, no forbidden strings, deprecated API scan passes | Every PR | `skill-validation.yml` (CI) |
+| **T1** | Pin validation | `validation.script` runs, every `expected_output` substring present | Pin file changes | `pin-validation.yml` (CI) |
+| **T2** | Import smoke | `python -c "from X import Y"` for every import in SKILL.md code samples | Pin refresh PRs (MINOR/MAJOR) | Auto-tier: CI runner. Issue-only: human. |
+| **T3** | Deploy & invoke | Deploy a real agent/resource per SKILL.md instructions, invoke it, verify response | New skills, code sample rewrites, breaking SDK changes | Human-only (`issue_only` tier) |
+
+Rules:
+- **T0 is always required.** CI enforces it; your PR will not merge without it.
+- **T1 is required when the pin file changes.** CI re-runs the validation
+  script on the runner — there is no "trust me, I tested" path.
+- **T2 is required for MINOR/MAJOR upstream bumps.** The freshness system
+  classifies impact and the issue body specifies which imports to verify.
+  For `automation_tier: auto` skills, the coding agent runs T2 on the CI
+  runner. For `issue_only` skills, a human must run T2 locally.
+- **T3 is required when code samples change.** If you rewrite a code block
+  in SKILL.md (e.g., replacing `AzureOpenAIChatClient` with
+  `OpenAIChatClient`), you must deploy an agent using that code and verify
+  it works. Document the test in the PR description.
+
+> **Why T3 can't be automated.** T3 requires Azure credentials, a Foundry
+> project, and sometimes specific model deployments. The CI runner has none
+> of these. The `issue_only` automation tier exists precisely for skills
+> where T3 is the minimum bar.
+
+PRs that touch SKILL.md code blocks without declaring T2/T3 results in the
+PR description will be rejected by reviewers. The PR template (see
+`.github/PULL_REQUEST_TEMPLATE.md`) includes the testing checklist.
+
 ---
 
 ## 3 · Editing checklist (run before every commit)

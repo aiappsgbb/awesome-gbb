@@ -35,7 +35,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          ARGS="--upsert-issues --assign-copilot-on-auto-tier --labels freshness,automation --output report.md --print-report"
+          ARGS="--upsert-issues --consolidated --assign-copilot-on-auto-tier --labels freshness,automation --output report.md --print-report"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS="$ARGS --dry-run"
           fi

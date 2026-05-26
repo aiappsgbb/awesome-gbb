@@ -14,7 +14,8 @@ report. Five drift signals are detected:
 
 For each drift event the script can:
   - Print a Markdown report (`--print-report`)
-  - Upsert ONE GitHub issue per skill+signal (`--upsert-issues`)
+  - Upsert ONE consolidated GitHub issue per skill (`--upsert-issues`, default)
+    or use legacy per-signal issues via `--legacy`
   - Auto-assign to `Copilot` if the skill's `automation_tier: auto`
     (`--assign-copilot-on-auto-tier`)
 
@@ -163,11 +164,101 @@ def assign_copilot_to_issue(issue_node_id: str, bot_id: str, gh_token: str) -> b
 @dataclasses.dataclass
 class Signal:
     skill: str
-    signal_type: str      # sha_drift | pkg_drift | issue_closed | link_rot | stale_validation
-    severity: str         # info | warn | error
+    signal_type: str      # sha_drift | pkg_drift | issue_closed | link_rot | stale_validation | consolidated
+    severity: str         # info | warn | error | critical | high | medium | low
     title: str            # used as issue title
     body: str             # Markdown body
     automation_tier: str  # auto | issue_only — copied from the pin file
+    impact: str = "medium"
+
+
+IMPACT_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+IMPACT_HEADINGS = {
+    "critical": "## 🔴 CRITICAL",
+    "high": "## 🟠 HIGH",
+    "medium": "## 🟡 MEDIUM",
+    "low": "## 🟢 LOW",
+}
+
+
+def parse_semver(v: str) -> tuple[int, int, int] | None:
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", v)
+    if not m:
+        return None
+    major, minor, patch = m.groups()
+    return int(major), int(minor), int(patch)
+
+
+def classify_impact(signal: Signal) -> str:
+    if signal.signal_type == "pkg_drift":
+        m = re.search(r"([^\s`]+)\s*→\s*([^\s`]+)", signal.title)
+        if m:
+            old_v = parse_semver(m.group(1))
+            new_v = parse_semver(m.group(2))
+            if old_v and new_v:
+                if old_v[0] != new_v[0]:
+                    return "critical"
+                if old_v[1] != new_v[1]:
+                    return "high"
+                if old_v[2] != new_v[2]:
+                    return "low"
+        return "medium"
+    if signal.signal_type == "issue_closed":
+        return "high"
+    if signal.signal_type in ("sha_drift", "stale_validation"):
+        return "medium"
+    if signal.signal_type == "link_rot":
+        return "low"
+    return "medium"
+
+
+def consolidate_signals(signals: list[Signal]) -> list[Signal]:
+    by_skill: dict[str, list[Signal]] = {}
+    for signal in signals:
+        by_skill.setdefault(signal.skill, []).append(signal)
+
+    consolidated: list[Signal] = []
+    for skill in sorted(by_skill):
+        bucket = by_skill[skill]
+        enriched = [dataclasses.replace(signal, impact=classify_impact(signal)) for signal in bucket]
+        ordered = sorted(
+            enumerate(enriched),
+            key=lambda item: (IMPACT_ORDER[item[1].impact], item[0]),
+        )
+        ordered_signals = [signal for _, signal in ordered]
+        highest_impact = min((signal.impact for signal in ordered_signals), key=lambda impact: IMPACT_ORDER[impact])
+        summary = "\n".join(
+            [
+                f"## 🔄 Refresh `{skill}` — consolidated freshness report",
+                "",
+                f"- **Signals**: {len(ordered_signals)}",
+                f"- **Highest impact**: `{highest_impact}`",
+                f"- **Automation tier**: `{bucket[0].automation_tier}`",
+            ]
+        )
+        sections = [summary]
+        for signal in ordered_signals:
+            sections.append(
+                "\n".join(
+                    [
+                        f"### {signal.impact.upper()} — {signal.title}",
+                        "",
+                        signal.body,
+                    ]
+                )
+            )
+        consolidated.append(
+            Signal(
+                skill=skill,
+                signal_type="consolidated",
+                severity=highest_impact,
+                title=f"🔄 Refresh `{skill}` — {len(ordered_signals)} signal(s), impact: {highest_impact}",
+                body="\n\n---\n\n".join(sections),
+                automation_tier=bucket[0].automation_tier,
+                impact=highest_impact,
+            )
+        )
+    return consolidated
 
 
 @dataclasses.dataclass
@@ -622,7 +713,7 @@ def collect_signals(pins: list[PinFile], gh_token: str | None) -> list[Signal]:
     return signals
 
 
-def render_report(signals: list[Signal], pin_count: int) -> str:
+def render_report(signals: list[Signal], pin_count: int, consolidated: bool = True) -> str:
     today = dt.date.today().isoformat()
     if not signals:
         return (
@@ -632,26 +723,48 @@ def render_report(signals: list[Signal], pin_count: int) -> str:
             "validation-age signals."
         )
 
-    by_signal: dict[str, list[Signal]] = {}
-    for s in signals:
-        by_signal.setdefault(s.signal_type, []).append(s)
-
     lines = [f"# 🪴 Skill freshness — {today}", ""]
     lines.append(
         f"Detected {len(signals)} drift event(s) across {pin_count} pinned skills.\n"
     )
 
-    for sig_type in (
-        "sha_drift",
-        "pkg_drift",
-        "issue_closed",
-        "link_rot",
-        "stale_validation",
-    ):
-        bucket = by_signal.get(sig_type) or []
+    if not consolidated:
+        by_signal: dict[str, list[Signal]] = {}
+        for s in signals:
+            by_signal.setdefault(s.signal_type, []).append(s)
+
+        for sig_type in (
+            "sha_drift",
+            "pkg_drift",
+            "issue_closed",
+            "link_rot",
+            "stale_validation",
+        ):
+            bucket = by_signal.get(sig_type) or []
+            if not bucket:
+                continue
+            lines.append(f"## {sig_type} ({len(bucket)})")
+            lines.append("")
+            for s in bucket:
+                assignee_note = (
+                    " — assigned to @Copilot"
+                    if s.automation_tier == "auto"
+                    else " — human action required"
+                )
+                lines.append(f"- **{s.skill}** — {s.title}{assignee_note}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    by_impact: dict[str, list[Signal]] = {}
+    for s in signals:
+        by_impact.setdefault(s.impact, []).append(s)
+
+    for impact in ("critical", "high", "medium", "low"):
+        bucket = by_impact.get(impact) or []
         if not bucket:
             continue
-        lines.append(f"## {sig_type} ({len(bucket)})")
+        lines.append(f"{IMPACT_HEADINGS[impact]} ({len(bucket)})")
         lines.append("")
         for s in bucket:
             assignee_note = (
@@ -678,6 +791,10 @@ def upsert_issue(
 ) -> None:
     body = signal.body
     title = signal.title
+    issue_labels = list(labels)
+    if signal.signal_type == "consolidated":
+        issue_labels.append(f"impact:{signal.impact}")
+    issue_labels = list(dict.fromkeys(issue_labels))
 
     # Find an existing open issue with this title (idempotent upsert).
     headers = {
@@ -701,8 +818,8 @@ def upsert_issue(
         print(f"WARN: search API returned {search.status_code}", file=sys.stderr)
 
     payload: dict[str, Any] = {"body": body}
-    if labels:
-        payload["labels"] = labels
+    if issue_labels:
+        payload["labels"] = issue_labels
 
     want_copilot_assign = assign_copilot and signal.automation_tier == "auto"
 
@@ -764,6 +881,19 @@ def main() -> int:
     ap.add_argument("--output", type=pathlib.Path, help="write report to FILE")
     ap.add_argument("--upsert-issues", action="store_true", help="upsert GitHub issues")
     ap.add_argument(
+        "--consolidated",
+        dest="consolidated",
+        action="store_true",
+        help="open one consolidated issue per skill (default)",
+    )
+    ap.add_argument(
+        "--legacy",
+        dest="consolidated",
+        action="store_false",
+        help="use legacy per-signal issue mode",
+    )
+    ap.set_defaults(consolidated=True)
+    ap.add_argument(
         "--assign-copilot-on-auto-tier",
         action="store_true",
         help="auto-assign issues to @Copilot for skills with automation_tier=auto",
@@ -794,13 +924,17 @@ def main() -> int:
     print(f"Discovered {len(pins)} pin files", file=sys.stderr)
 
     signals = collect_signals(pins, gh_token)
+    issue_signals = consolidate_signals(signals) if args.consolidated else signals
 
     iso_week = dt.date.today().isocalendar()
     iso_week_str = f"{iso_week.year}-W{iso_week.week:02d}"
-    print(f"::set-output name=iso_week::{iso_week_str}")  # for old-style GH Actions
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+    if gh_output:
+        with open(gh_output, "a", encoding="utf-8") as f:
+            f.write(f"iso_week={iso_week_str}\n")
     print(f"iso_week={iso_week_str}")
 
-    report = render_report(signals, len(pins))
+    report = render_report(issue_signals, len(pins), consolidated=args.consolidated)
 
     if args.print_report:
         print(report)
@@ -810,7 +944,7 @@ def main() -> int:
 
     if args.upsert_issues:
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
-        for signal in signals:
+        for signal in issue_signals:
             upsert_issue(
                 signal,
                 repo=args.repo,
@@ -821,7 +955,7 @@ def main() -> int:
             )
 
     print(
-        f"Done — {len(signals)} drift signal(s) across {len(pins)} pins",
+        f"Done — {len(signals)} drift signal(s), {len(issue_signals)} issue candidate(s) across {len(pins)} pins",
         file=sys.stderr,
     )
     return 0
