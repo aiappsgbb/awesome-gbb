@@ -7,13 +7,16 @@ starts work on an issue assigned to `@Copilot` in this repo.
 
 Issues labeled `freshness` + `automation` are produced by the weekly
 `Skill freshness` workflow. Each one targets exactly one skill and
-embeds the machine-runnable Verification Checklist.
+consolidates ALL drift signals with impact classification
+(🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM, 🟢 LOW). The highest-impact signal
+determines the issue label (`impact:critical`, `impact:high`, etc.).
 
 ### What to do
 
 1. **Read the issue body completely.** It contains:
-   - The drift signal (SHA / package / closed upstream issue / link rot / age)
-   - The exact value to write to the pin file front-matter
+   - All drift signals for this skill, ordered by impact (highest first)
+   - Each signal's classification (CRITICAL / HIGH / MEDIUM / LOW)
+   - The exact fields to update in the pin file front-matter
    - The Verification Checklist (a bash script)
    - The Acceptance Criteria
 
@@ -52,6 +55,22 @@ embeds the machine-runnable Verification Checklist.
 
 7. **On failure**: comment on the issue with the failure output and
    STOP. Do NOT open a PR. A human will triage.
+
+### Impact-aware validation
+
+The issue title contains the impact level. Adjust your approach accordingly:
+
+| Impact | What to do |
+|--------|-----------|
+| 🟢 LOW | Patch bump — auto-covered by `~=` cap. Bump pin, validate, PR. |
+| 🟡 MEDIUM | SHA drift or validation age. Bump pin, validate, PR. |
+| 🟠 HIGH | MINOR bump or upstream KI closed. After bumping pin, run `python scripts/validate-skills.py` to check for deprecated API patterns in SKILL.md code blocks. If deprecated APIs found → include `[skill-rewrite]` in commit message and fix the code samples. |
+| 🔴 CRITICAL | MAJOR bump. Same as HIGH, but expect breaking changes. If `validate-skills.py` reports deprecated APIs and you can't fix them confidently → comment on the issue with findings and STOP. Do NOT open a broken PR. |
+
+For HIGH and CRITICAL issues, the `validate-skills.py` script scans
+SKILL.md code blocks for `DEPRECATED_API_PATTERNS`. If it flags any
+stale imports or function calls, those code samples need updating —
+which requires `[skill-rewrite]` opt-in in the commit message.
 
 ## Hard rules (per AGENTS.md § 4)
 
@@ -109,6 +128,8 @@ If the issue does NOT mention these tags, **do not use them**.
    safety), § 5 (versioning), § 9 (freshness lifecycle).
 2. The pin file you're about to update — read it end-to-end.
 3. The SKILL.md frontmatter (not the body unless `[skill-rewrite]`).
+4. [`AGENTS.md` § 2.7](../AGENTS.md) — testing tiers (T0–T3). Know which
+   tier your change requires.
 
 ## Tools available in your sandbox
 
