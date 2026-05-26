@@ -1,12 +1,12 @@
 # `awesome-gbb` plugins
 
-Three Copilot CLI plugins that bundle subsets of the 36-skill catalog so
+Three Copilot CLI plugins that bundle subsets of the 38-skill catalog so
 sellers and customers can install whole domains with one command instead
 of one skill at a time.
 
 | Plugin | Skills | One-command install |
 |---|---|---|
-| [`awesome-gbb-basic`](./awesome-gbb-basic/) | 7 — cross-cutting (research, humanizer, pptx, demo, ip-catalog, copilot-cli-bootstrap) | `copilot plugin install awesome-gbb-basic@awesome-gbb` |
+| [`awesome-gbb-basic`](./awesome-gbb-basic/) | 9 — cross-cutting (research, humanizer, pptx, demo, lean safe-check, ip-catalog, copilot-cli-bootstrap) | `copilot plugin install awesome-gbb-basic@awesome-gbb` |
 | [`awesome-gbb-azure`](./awesome-gbb-azure/) | 21 — Foundry, memory, governance, azd, cost, tenant isolation | `copilot plugin install awesome-gbb-azure@awesome-gbb` |
 | [`awesome-gbb-threadlight`](./awesome-gbb-threadlight/) | 25 — 8 threadlight-* + the Foundry/Azure/basic skills it depends on | `copilot plugin install awesome-gbb-threadlight@awesome-gbb` |
 

@@ -4,13 +4,13 @@
     "name": "aiappsgbb",
     "url": "https://github.com/aiappsgbb"
   },
-  "description": "Microsoft GBB community skill bundles for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App tech preview, VS Code agent mode preview, Claude Code). Three domain bundles install the right subset of the 37-skill catalog in one command.",
+  "description": "Microsoft GBB community skill bundles for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App tech preview, VS Code agent mode preview, Claude Code). Three domain bundles install the right subset of the 38-skill catalog in one command.",
   "homepage": "https://github.com/aiappsgbb/awesome-gbb",
   "plugins": [
     {
       "name": "awesome-gbb-basic",
-      "version": "1.1.0",
-      "description": "Cross-cutting GBB skills usable in any pre-sales or pilot engagement: research a customer, compose a digital-clone org brief, polish prose with the GBB voice, render Office-quality decks, auto-record narrated demos, generate demo decks + seller guides from lean toolkit solutions, manage shared IP catalog, bootstrap the Copilot CLI.",
+      "version": "1.2.0",
+      "description": "Cross-cutting GBB skills usable in any pre-sales or pilot engagement: research a customer, compose a digital-clone org brief, polish prose with the GBB voice, render Office-quality decks, auto-record narrated demos, generate demo decks + seller guides from lean toolkit solutions, run the lean-safe-check Spec2Cloud completeness gate, manage shared IP catalog, and bootstrap the Copilot CLI.",
       "source": "./plugins/awesome-gbb-basic",
       "category": "productivity",
       "keywords": [
@@ -21,7 +21,10 @@
         "humanizer",
         "pptx",
         "ip-catalog",
-        "copilot-cli-bootstrap"
+        "copilot-cli-bootstrap",
+        "lean-safe-check",
+        "safe-check",
+        "completeness-gate"
       ]
     },
     {

@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-35-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-38-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -196,6 +196,7 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 | Skill | Description |
 |-------|-------------|
 | [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (`azd`) — hooks, postdeploy/postprovision, ACA Job deployment, **silent-failure debug playbook** (6-rung diagnostic ladder). |
+| [**lean-safe-check**](skills/lean-safe-check/) | Lightweight completeness gate for lean toolkit (Spec2Cloud) solutions — validates `docs/spec.md → docs/plan.md → src/ → infra/ → docs/verify.md → docs/deploy.md` across spec, pre-deploy, and post-deploy; catches missing resources, orphan code, placeholder ACA images, and dead endpoints before the demo. |
 | [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
 | [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
 | [**ghcp-cli-config**](skills/ghcp-cli-config/) | Bootstrap GitHub Copilot CLI for GBB workflows — 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), `settings.json` baseline (model, `sessionSync`, `allowedUrls`, `trustedFolders`), work-iq plugin family for Microsoft staff, `autoApprove` safe-default matrix, and a **fresh-machine bootstrap procedure** the agent can execute step-by-step. Distilled from a live GBB engineer's `~/.copilot/`. |
@@ -233,7 +234,7 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 |-------|-------------|
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
-| [**lean-seller-guide**](skills/lean-seller-guide/) | Generate a cinematic demo deck and seller prep guide from a lean toolkit (Spec2Cloud) solution — reads `spec.md`, `plan.md`, `deploy.md` and the deployed endpoint. Dual-mode toggle (🎤 Seller / 🔧 SE), no tech jargon in seller view. Run after `/lean:deploy` completes. |
+| [**lean-seller-guide**](skills/lean-seller-guide/) | Full seller enablement kit for lean toolkit (Spec2Cloud) solutions — cinematic demo deck, threadlight-grade seller guide, demo rehearsal run-of-show, and ranked killer prompts. Reads `spec.md`, `plan.md`, `verify.md`, `deploy.md`, and optional `safe-check-post-deploy.json`. Run after `/lean:deploy` completes. |
 
 ### 🧬 Org Composition & Zava Workspace
 
@@ -268,9 +269,9 @@ The **Zava pipeline** — three skills that take a company name and produce a de
 > copilot plugin marketplace add aiappsgbb/awesome-gbb
 >
 > # Then install whichever domain you need:
-> copilot plugin install awesome-gbb-basic@awesome-gbb         #  7 skills — pre-sales / cross-cutting
-> copilot plugin install awesome-gbb-azure@awesome-gbb         # 20 skills — Foundry / governance / azd / Zava
-> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 24 skills — full Threadlight + Zava pipeline (self-contained)
+> copilot plugin install awesome-gbb-basic@awesome-gbb         #  9 skills — pre-sales / cross-cutting
+> copilot plugin install awesome-gbb-azure@awesome-gbb         # 21 skills — Foundry / governance / azd / Zava
+> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 25 skills — full Threadlight + Zava pipeline (self-contained)
 > ```
 >
 > Plugins also work in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect. See [`plugins/README.md`](plugins/) for details.
@@ -344,9 +345,9 @@ skills/
     SKILL.md              # Skill definition (frontmatter + instructions)
     README.md             # Optional: extended docs, examples, changelog
 plugins/
-  awesome-gbb-basic/      # 7 skills — pre-sales / cross-cutting
-  awesome-gbb-azure/      # 20 skills — Foundry / governance / Zava
-  awesome-gbb-threadlight/ # 24 skills — full pipeline (self-contained)
+  awesome-gbb-basic/      # 9 skills — pre-sales / cross-cutting
+  awesome-gbb-azure/      # 21 skills — Foundry / governance / Zava
+  awesome-gbb-threadlight/ # 25 skills — full pipeline (self-contained)
 ```
 
 ---
