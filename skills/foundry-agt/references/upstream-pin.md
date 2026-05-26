@@ -307,7 +307,7 @@ alarmed; the OWASP ASI 2026 coverage check still passes 10/10.
 - <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/quickstart.md>
 - <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/deployment/azure-foundry-agent-service.md>
 - <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/deployment/azure-container-apps.md>
-- <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md>
+- <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/compliance/owasp-agentic-top10-architecture.md>
 - <https://github.com/microsoft/agent-governance-toolkit/tree/main/agent-governance-python/agent-os/src/agent_os/integrations>
 - <https://github.com/microsoft/agent-governance-toolkit/tree/main/examples/quickstart>
 - <https://pypi.org/project/agent-governance-toolkit/>
