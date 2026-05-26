@@ -342,6 +342,27 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     else:
         print(f'WARN: {threadlight_src} not found — skipping /threadlight/', file=sys.stderr)
 
+    # Zava experience — verbatim copy
+    zava_src = REPO_ROOT / 'zava-experience.html'
+    if zava_src.exists():
+        zava_dst = out_dir / 'zava' / 'index.html'
+        zava_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(zava_src, zava_dst)
+        total_bytes += zava_dst.stat().st_size
+        html_count += 1
+        # Backward-compat redirect for /zava-experience.html
+        zava_compat = out_dir / 'zava-experience.html'
+        zava_compat.write_text(
+            '<!doctype html>\n<html><head>\n'
+            '<meta http-equiv="refresh" content="0;url=/awesome-gbb/zava/">\n'
+            '</head><body><a href="/awesome-gbb/zava/">Redirecting…</a></body></html>\n',
+            encoding='utf-8',
+        )
+        total_bytes += zava_compat.stat().st_size
+        html_count += 1
+    else:
+        print(f'WARN: {zava_src} not found — skipping /zava/', file=sys.stderr)
+
     # Backward-compat for the legacy /threadlight-experience.html URL.
     # Pre-flip, Pages served the file at the repo root with the WHOLE site
     # being TL. Post-flip, the home is the catalog hub and TL lives under

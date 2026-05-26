@@ -187,6 +187,10 @@ Mechanical checks. None of these are CI-enforced yet (see § 8).
       bumped per § 5 if the change is user-facing
 - [ ] **Cross-skill links resolve** — if you renamed a section header, grep
       the rest of the repo for stale `#section-name` anchors
+- [ ] **Rebuild the docs site** — `python3 scripts/build-site.py --out docs/`
+      and commit the generated files. GitHub Pages serves `docs/` as static
+      files — there is **no server-side build**. If you skip this step, the
+      live site at `aiappsgbb.github.io/awesome-gbb` will be stale.
 - [ ] **Sync to user scope mirror** if you test locally (see § 6)
 - [ ] **azd is the deploy model** for any skill with infra — no hand-rolled
       `az` CLI deploy scripts (see § 2.6)
@@ -408,10 +412,13 @@ for p in pathlib.Path('skills').rglob('SKILL.md'):
 sys.exit(0 if ok else 1)
 "
 
-# 2. Forced-text diff inspection of every modified file
+# 2. Rebuild the docs site (GitHub Pages has NO server-side build)
+python3 scripts/build-site.py --out docs/
+
+# 3. Forced-text diff inspection of every modified file
 git --no-pager diff -a HEAD~1
 
-# 3. Smell-check for forbidden strings
+# 4. Smell-check for forbidden strings
 git --no-pager diff HEAD~1 | Select-String -Pattern "kyc-poc|card-dispute-investigation|threadlight-v[123]|ricchi"
 ```
 
