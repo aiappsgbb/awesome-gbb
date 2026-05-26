@@ -17,13 +17,13 @@ packages:
       SKILL.md verifies client.beta.skills with allow_preview=True on azure-ai-projects 2.1.0.
   - name: agent-framework
     source: pypi
-    version: "1.3.0"
+    version: "1.6.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Provides SkillsProvider, SkillsSource, and InlineSkill for runtime catalog consumption.
   - name: azure-identity
     source: pypi
-    version: "1.26.0b2"
+    version: "1.25.3"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     notes: |
       Version recorded by the live verification notes in SKILL.md.
@@ -53,19 +53,18 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects~=2.1.0" "agent-framework~=1.3.0" "azure-identity==1.26.0b2"
+    pip install --quiet "azure-ai-projects~=2.1.0" "agent-framework~=1.6.0" "azure-identity~=1.25.3"
     python - <<'PY'
     from azure.ai.projects import AIProjectClient
     from azure.identity import DefaultAzureCredential
-    from agent_framework import SkillsProvider
-    from agent_framework.skills import InlineSkill, SkillsSource
+    from agent_framework import InlineSkill, SkillsProvider, SkillsSource
     print("ok foundry-skill-catalog imports")
     PY
   expected_output:
     - "ok foundry-skill-catalog imports"
 
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 1
 ---
 
