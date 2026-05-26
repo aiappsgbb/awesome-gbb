@@ -501,7 +501,6 @@ _LAYOUT = '''<!doctype html>
     <div class="links">
       <a href="{base}/"{a_home}>Home</a>
       <a href="{base}/skills/"{a_skills}>Skills</a>
-      <a href="{base}/plugins/"{a_plugins}>Plugins</a>
       <a href="{base}/threadlight/"{a_threadlight}>Threadlight</a>
       <a href="{base}/zava/"{a_zava}>Zava</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
@@ -666,12 +665,6 @@ def render_home(
             count=len(skills),
         ),
         _browse_card(
-            f'{SITE_BASE}/plugins/', _ICON_PLUGINS, 'Plugins',
-            'One-command bundles of related skills. Work in Copilot CLI, '
-            'Desktop, VS Code agent mode, and Claude Code.',
-            count=len(plugins),
-        ),
-        _browse_card(
             f'{SITE_BASE}/threadlight/', _ICON_THREAD, 'Threadlight',
             'Cinematic walkthrough of the end-to-end agentic pipeline that '
             'bundles eight skills into a single working session. '
@@ -713,9 +706,6 @@ def render_home(
         f'<div class="stat"><span class="stat-num">{len(skills)}</span>'
         '<span class="stat-label">skills</span>'
         '<span class="stat-foot">production-tested</span></div>'
-        f'<div class="stat"><span class="stat-num">{len(plugins)}</span>'
-        '<span class="stat-label">plugin</span>'
-        '<span class="stat-foot">one-command install</span></div>'
         f'<div class="stat"><span class="stat-num">{industry_count}</span>'
         '<span class="stat-label">industries</span>'
         '<span class="stat-foot">FSI · MFG · Retail · Telco · Airline</span></div>'
