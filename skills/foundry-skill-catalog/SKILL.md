@@ -17,7 +17,7 @@ description: >
   tools (use foundry-toolbox), file-system SkillsProvider wiring (use
   foundry-hosted-agents § Skill Loading), generic hosted-agent runtime.
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # Foundry Skills Catalog — Reference Guide
@@ -60,7 +60,7 @@ This skill covers:
        └───────┬────────┘                    └────────┬──────────┘
                │                                      │
                ↓                                      ↓
-   azd deploy → /app/skills/* → SkillsProvider(skill_paths=…)
+   azd deploy → /app/skills/* → SkillsProvider.from_paths(…)
                                   agent_framework.SkillsProvider(source=FoundrySkillsSource(…))
 ```
 
@@ -106,7 +106,7 @@ workarounds are:
 | Situation | Use |
 |---|---|
 | You want one team to own canonical "how to handle X" instructions and many Hosted agents to inherit them | **This skill** (Foundry Skills + `FoundrySkillsSource`) |
-| Every agent has its own instructions and they never need to be shared | Just put `SKILL.md` files in the agent's `skills/` dir → standard `SkillsProvider(skill_paths=…)` (see `foundry-hosted-agents` § Skill Loading) |
+| Every agent has its own instructions and they never need to be shared | Just put `SKILL.md` files in the agent's `skills/` dir → standard `SkillsProvider.from_paths(…)` (see `foundry-hosted-agents` § Skill Loading) |
 | You need progressive-disclosure tools, but the **bodies** live elsewhere (DB, env, code) | `agent_framework.InlineSkill` directly + `InMemorySkillsSource` (see MAF docs) |
 | You need to share executable scripts / multi-file resources, not just an instruction body | Foundry Skills ZIP-mode (this skill) — the ZIP can contain `scripts/`, `references/`, `assets/` |
 
@@ -337,7 +337,7 @@ pagination.
 
 Match the MS Learn sample: at `azd deploy` time, download every Foundry
 skill and bake the resulting `SKILL.md` files into the container image.
-Standard `SkillsProvider(skill_paths=…)` then loads them at session start.
+Standard `SkillsProvider.from_paths(…)` then loads them at session start.
 
 ```python
 # scripts/sync_skills.py — run as an azd predeploy hook
@@ -371,7 +371,7 @@ In the agent code:
 
 ```python
 from agent_framework import SkillsProvider
-provider = SkillsProvider(skill_paths=Path(__file__).parent / "skills")
+provider = SkillsProvider.from_paths(Path(__file__).parent / "skills")
 ```
 
 | Pros | Cons |
