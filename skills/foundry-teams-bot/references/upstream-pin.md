@@ -11,31 +11,31 @@ upstream:
 packages:
   - name: microsoft-agents-activity
     source: pypi
-    version: "0.9.0"
+    version: "1.0.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-activity/#history
     notes: |
       Microsoft Agents SDK package floor from the template requirements; 0.9.x is required for streaming_response.
   - name: microsoft-agents-authentication-msal
     source: pypi
-    version: "0.9.0"
+    version: "1.0.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-authentication-msal/#history
     notes: |
       MsalConnectionManager UAMI auth package floor from the template requirements.
   - name: microsoft-agents-hosting-aiohttp
     source: pypi
-    version: "0.9.0"
+    version: "1.0.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-hosting-aiohttp/#history
     notes: |
       aiohttp host integration package floor from the template requirements.
   - name: microsoft-agents-hosting-core
     source: pypi
-    version: "0.9.0"
+    version: "1.0.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-hosting-core/#history
     notes: |
       Provides context.streaming_response used by the recommended Teams streaming template.
   - name: microsoft-agents-hosting-teams
     source: pypi
-    version: "0.9.0"
+    version: "1.0.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-hosting-teams/#history
     notes: |
       Teams-specific hosting helpers from the template requirements.
@@ -47,19 +47,19 @@ packages:
       Foundry project SDK floor used by the bot-to-agent invocation patterns.
   - name: azure-identity
     source: pypi
-    version: "1.19.0"
+    version: "1.25.3"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     notes: |
       Keyless identity floor from the template requirements.
   - name: aiohttp
     source: pypi
-    version: "3.9.0"
+    version: "3.13.5"
     upstream_changelog: https://pypi.org/project/aiohttp/#history
     notes: |
       Bot web server dependency.
   - name: python-dotenv
     source: pypi
-    version: "1.0.0"
+    version: "1.2.2"
     upstream_changelog: https://pypi.org/project/python-dotenv/#history
     notes: |
       Local configuration helper from the template requirements.
@@ -67,7 +67,6 @@ packages:
 docs_to_revalidate:
   - https://learn.microsoft.com/microsoftteams/platform/bots/how-to/conversations/prompt-suggestions
   - https://learn.microsoft.com/microsoftteams/platform/resources/schema/manifest-schema
-  - https://learn.microsoft.com/azure/bot-service/bot-service-resource-create-registration
   - https://pypi.org/project/microsoft-agents-hosting-core/
   - https://pypi.org/project/microsoft-agents-hosting-aiohttp/
   - https://pypi.org/project/microsoft-agents-hosting-teams/
@@ -91,15 +90,15 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "microsoft-agents-activity~=0.9.0" \
-      "microsoft-agents-authentication-msal~=0.9.0" \
-      "microsoft-agents-hosting-aiohttp~=0.9.0" \
-      "microsoft-agents-hosting-core~=0.9.0" \
-      "microsoft-agents-hosting-teams~=0.9.0" \
+      "microsoft-agents-activity~=1.0.0" \
+      "microsoft-agents-authentication-msal~=1.0.0" \
+      "microsoft-agents-hosting-aiohttp~=1.0.0" \
+      "microsoft-agents-hosting-core~=1.0.0" \
+      "microsoft-agents-hosting-teams~=1.0.0" \
       "azure-ai-projects~=2.1.0" \
-      "azure-identity~=1.19.0" \
-      "aiohttp~=3.9.0" \
-      "python-dotenv~=1.0.0"
+      "azure-identity~=1.25.3" \
+      "aiohttp~=3.13.5" \
+      "python-dotenv~=1.2.2"
     python - <<'PY'
     import json
     import aiohttp
@@ -119,8 +118,8 @@ validation:
   expected_output:
     - "ok foundry-teams-bot imports and manifest parse"
 
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 1
 ---
 
@@ -132,15 +131,15 @@ This Tier-B pin captures the microsoft-agents SDK stack and Teams manifest v1.21
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `microsoft-agents-activity` | PyPI | **0.9.0** | Agents SDK floor |
-| `microsoft-agents-authentication-msal` | PyPI | **0.9.0** | UAMI auth helper |
-| `microsoft-agents-hosting-aiohttp` | PyPI | **0.9.0** | aiohttp host integration |
-| `microsoft-agents-hosting-core` | PyPI | **0.9.0** | StreamingResponse support |
-| `microsoft-agents-hosting-teams` | PyPI | **0.9.0** | Teams host integration |
+| `microsoft-agents-activity` | PyPI | **1.0.0** | Agents SDK floor |
+| `microsoft-agents-authentication-msal` | PyPI | **1.0.0** | UAMI auth helper |
+| `microsoft-agents-hosting-aiohttp` | PyPI | **1.0.0** | aiohttp host integration |
+| `microsoft-agents-hosting-core` | PyPI | **1.0.0** | StreamingResponse support |
+| `microsoft-agents-hosting-teams` | PyPI | **1.0.0** | Teams host integration |
 | `azure-ai-projects` | PyPI | **2.1.0** | Foundry project SDK |
-| `azure-identity` | PyPI | **1.19.0** | Keyless identity floor |
-| `aiohttp` | PyPI | **3.9.0** | Web server |
-| `python-dotenv` | PyPI | **1.0.0** | Local config helper |
+| `azure-identity` | PyPI | **1.25.3** | Keyless identity floor |
+| `aiohttp` | PyPI | **3.13.5** | Web server |
+| `python-dotenv` | PyPI | **1.2.2** | Local config helper |
 
 ## Verification checklist
 
