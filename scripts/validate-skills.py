@@ -58,6 +58,23 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("personal repo name `ricchi`", re.compile(r"\bricchi/[A-Za-z0-9_.-]+\b")),
 ]
 
+# Deprecated API patterns — checked only inside fenced code blocks.
+# These catch stale code samples that reference APIs removed from upstream SDKs.
+# Prose mentions (deprecation notices, troubleshooting tables) are fine and excluded.
+DEPRECATED_API_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("MAF removed API `client.get_toolbox()` (removed 1.3.0)",
+     re.compile(r"client\.get_toolbox\s*\(")),
+    ("MAF removed API `select_toolbox_tools` (removed 1.3.0)",
+     re.compile(r"\bselect_toolbox_tools\s*\(")),
+    ("MAF removed API `fetch_toolbox` (removed 1.3.0)",
+     re.compile(r"\bfetch_toolbox\s*\(")),
+    ("MAF removed constructor `SkillsProvider(skill_paths=...)` (removed 1.4.0)",
+     re.compile(r"SkillsProvider\s*\(\s*skill_paths\s*=")),
+]
+
+# Regex to extract fenced code blocks from markdown
+_CODE_BLOCK_RE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+
 
 class ValidationError(Exception):
     pass
@@ -132,6 +149,17 @@ def validate_skill_md(path: pathlib.Path) -> list[str]:
                 f"{path}: forbidden string detected ({label}): "
                 f"`{match.group(0)}` at offset {match.start()}"
             )
+
+    # Check for deprecated APIs inside fenced code blocks only.
+    # Prose mentions (deprecation notices, troubleshooting) are fine.
+    code_blocks = "\n".join(_CODE_BLOCK_RE.findall(body))
+    if code_blocks:
+        for label, pattern in DEPRECATED_API_PATTERNS:
+            for match in pattern.finditer(code_blocks):
+                errors.append(
+                    f"{path}: deprecated API in code block ({label}): "
+                    f"`{match.group(0).strip()}`"
+                )
 
     return errors
 
