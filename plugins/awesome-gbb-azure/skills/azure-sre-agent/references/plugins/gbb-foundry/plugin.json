@@ -1,9 +1,0 @@
-{
-  "name": "gbb-foundry",
-  "description": "Microsoft Foundry hosted-agent expertise for Azure SRE Agent — BYOK 401 debug, deploy failure triage, and AOAI quota/throttle diagnosis. Designed for engagements built on awesome-gbb Foundry skills.",
-  "license": "MIT",
-  "skills": [
-    "skills/"
-  ],
-  "mcpServers": null
-}

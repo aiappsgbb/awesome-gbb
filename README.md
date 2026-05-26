@@ -262,19 +262,17 @@ The **Zava pipeline** — three skills that take a company name and produce a de
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install whole domains in one command via plugins.** The catalog ships 3 [Copilot CLI plugins](plugins/) so you don't have to install skills one-by-one:
+> **Install all 38 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
 >
 > ```bash
 > # Register the marketplace once:
 > copilot plugin marketplace add aiappsgbb/awesome-gbb
 >
-> # Then install whichever domain you need:
-> copilot plugin install awesome-gbb-basic@awesome-gbb         #  9 skills — pre-sales / cross-cutting
-> copilot plugin install awesome-gbb-azure@awesome-gbb         # 21 skills — Foundry / governance / azd / Zava
-> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 25 skills — full Threadlight + Zava pipeline (self-contained)
+> # Install all skills:
+> copilot plugin install awesome-gbb@awesome-gbb
 > ```
 >
-> Plugins also work in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect. See [`plugins/README.md`](plugins/) for details.
+> The plugin also works in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect.
 
 **Or install one skill at a time with `gh` CLI:**
 
@@ -340,14 +338,11 @@ DEMOS.md                  # Demo guide for Threadlight, Zava, and Foundry walkth
 THREADLIGHT.md            # Threadlight pipeline technical briefing
 ZAVA.md                   # Zava workspace technical briefing
 AGENTS.md                 # Contributor & sub-agent safety guide
+plugin.json               # Single plugin manifest (all 38 skills via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)
     README.md             # Optional: extended docs, examples, changelog
-plugins/
-  awesome-gbb-basic/      # 9 skills — pre-sales / cross-cutting
-  awesome-gbb-azure/      # 21 skills — Foundry / governance / Zava
-  awesome-gbb-threadlight/ # 25 skills — full pipeline (self-contained)
 ```
 
 ---

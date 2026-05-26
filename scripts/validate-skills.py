@@ -44,7 +44,7 @@ except ImportError:
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
-PLUGINS_DIR = REPO_ROOT / "plugins"
+PLUGIN_JSON = REPO_ROOT / "plugin.json"
 MARKETPLACE_PATH = REPO_ROOT / ".github" / "plugin" / "marketplace.json"
 
 MAX_DESCRIPTION_CHARS = 1024
@@ -195,7 +195,7 @@ def validate_pin_file(path: pathlib.Path) -> list[str]:
 
 
 def validate_plugin_json(path: pathlib.Path) -> list[str]:
-    """Validate a plugins/<name>/plugin.json manifest."""
+    """Validate root plugin.json manifest (single-plugin model)."""
     errors: list[str] = []
     try:
         import json as _json
@@ -210,8 +210,6 @@ def validate_plugin_json(path: pathlib.Path) -> list[str]:
         errors.append(f"{path}: missing `name`")
     elif not KEBAB_NAME_RE.match(name):
         errors.append(f"{path}: `name: {name}` must be kebab-case ([a-z][a-z0-9-]*)")
-    elif name != path.parent.name:
-        errors.append(f"{path}: `name: {name}` does not match directory `{path.parent.name}`")
     elif len(name) > 64:
         errors.append(f"{path}: `name` exceeds 64 chars ({len(name)})")
 
@@ -228,43 +226,19 @@ def validate_plugin_json(path: pathlib.Path) -> list[str]:
         errors.append(f"{path}: `version: {version}` is not valid SemVer")
 
     skills = data.get("skills")
-    if skills is None:
-        return errors
-    if isinstance(skills, str):
-        skills = [skills]
-    if not isinstance(skills, list):
-        errors.append(f"{path}: `skills` must be a string or list")
-        return errors
-
-    seen: set[str] = set()
-    for entry in skills:
-        if not isinstance(entry, str):
-            errors.append(f"{path}: skills entry not a string: {entry!r}")
-            continue
-        if entry in seen:
-            errors.append(f"{path}: duplicate skill entry `{entry}`")
-        seen.add(entry)
-        target = (path.parent / entry).resolve()
-        try:
-            target.relative_to(path.parent.resolve())
-        except ValueError:
-            errors.append(f"{path}: skill path `{entry}` escapes plugin directory (`..` rejected by CLI)")
-            continue
-        skill_md = target / "SKILL.md"
-        if not skill_md.exists():
-            errors.append(f"{path}: skill `{entry}` has no SKILL.md at {target}")
-
-        parts = pathlib.PurePosixPath(entry).parts
-        if len(parts) >= 2 and parts[0] == "skills":
-            source_skill = SKILLS_DIR / parts[1]
-            if not (source_skill / "SKILL.md").exists():
-                errors.append(f"{path}: skill `{entry}` does not exist in source-of-truth skills/")
+    if skills == "skills/":
+        skill_dirs = sorted(d for d in SKILLS_DIR.iterdir() if d.is_dir())
+        for sd in skill_dirs:
+            if not (sd / "SKILL.md").exists():
+                errors.append(f"{path}: skills/{sd.name}/ has no SKILL.md")
+    elif skills is not None:
+        errors.append(f"{path}: `skills` should be 'skills/' in single-plugin model (got {skills!r})")
 
     return errors
 
 
 def validate_marketplace(path: pathlib.Path) -> list[str]:
-    """Validate .github/plugin/marketplace.json."""
+    """Validate .github/plugin/marketplace.json (single-plugin model)."""
     errors: list[str] = []
     try:
         import json as _json
@@ -278,15 +252,12 @@ def validate_marketplace(path: pathlib.Path) -> list[str]:
         errors.append(f"{path}: missing `name`")
     if not data.get("owner") or not isinstance(data.get("owner"), dict):
         errors.append(f"{path}: missing or non-object `owner` (must be {{name, url}})")
-    if not data.get("description"):
-        errors.append(f"{path}: missing `description`")
 
     plugins = data.get("plugins")
     if not isinstance(plugins, list) or not plugins:
         errors.append(f"{path}: `plugins` must be a non-empty list")
         return errors
 
-    listed_names: set[str] = set()
     for p in plugins:
         if not isinstance(p, dict):
             errors.append(f"{path}: plugin entry not an object")
@@ -295,9 +266,6 @@ def validate_marketplace(path: pathlib.Path) -> list[str]:
         if not pname:
             errors.append(f"{path}: plugin entry missing `name`")
             continue
-        if pname in listed_names:
-            errors.append(f"{path}: duplicate plugin `{pname}`")
-        listed_names.add(pname)
         if not p.get("version"):
             errors.append(f"{path}: plugin `{pname}` missing `version`")
         elif not SEMVER_RE.match(str(p["version"])):
@@ -309,50 +277,25 @@ def validate_marketplace(path: pathlib.Path) -> list[str]:
         source = p.get("source")
         if not source:
             errors.append(f"{path}: plugin `{pname}` missing `source`")
+        elif source == ".":
+            if not PLUGIN_JSON.exists():
+                errors.append(f"{path}: plugin `{pname}` source is '.' but no plugin.json at repo root")
         elif source.startswith("./"):
             target = (REPO_ROOT / source[2:] / "plugin.json")
             if not target.exists():
                 errors.append(f"{path}: plugin `{pname}` source path `{source}` has no plugin.json")
 
-    if PLUGINS_DIR.is_dir():
-        manifests_on_disk = {
-            d.name for d in PLUGINS_DIR.iterdir()
-            if d.is_dir() and (d / "plugin.json").exists()
-        }
-        listed_minus_disk = listed_names - manifests_on_disk
-        disk_minus_listed = manifests_on_disk - listed_names
-        for n in sorted(listed_minus_disk):
-            errors.append(f"{path}: plugin `{n}` listed in marketplace but not under plugins/")
-        for n in sorted(disk_minus_listed):
-            errors.append(f"{path}: plugin `{n}` found under plugins/ but not listed in marketplace")
+        # Version consistency: marketplace version must match plugin.json version
+        if PLUGIN_JSON.exists():
+            try:
+                root_plugin = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
+                mp_ver = p.get("version", "")
+                pj_ver = root_plugin.get("version", "")
+                if mp_ver and pj_ver and mp_ver != pj_ver:
+                    errors.append(f"{path}: plugin `{pname}` version {mp_ver} ≠ plugin.json version {pj_ver}")
+            except Exception:
+                pass
 
-    return errors
-
-
-def validate_no_orphan_skills() -> list[str]:
-    """Every skills/<name>/ must appear in at least one plugin manifest."""
-    errors: list[str] = []
-    if not PLUGINS_DIR.is_dir():
-        return errors
-    referenced: set[str] = set()
-    import json as _json
-    for plugin_json in sorted(PLUGINS_DIR.glob("*/plugin.json")):
-        try:
-            data = _json.loads(plugin_json.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        skills = data.get("skills") or []
-        if isinstance(skills, str):
-            skills = [skills]
-        for s in skills:
-            parts = pathlib.PurePosixPath(s).parts
-            if len(parts) >= 2 and parts[0] == "skills":
-                referenced.add(parts[1])
-
-    on_disk = {p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md")}
-    orphans = on_disk - referenced
-    for o in sorted(orphans):
-        errors.append(f"skill `{o}` is not referenced by any plugin under plugins/")
     return errors
 
 
@@ -434,74 +377,33 @@ def _merge_base_main() -> str | None:
     return None
 
 
-def validate_threadlight_dep_closure() -> list[str]:
-    """Ensure the threadlight plugin bundles every skill threadlight-* skills mention."""
-    errors: list[str] = []
-    plugin_path = PLUGINS_DIR / "awesome-gbb-threadlight" / "plugin.json"
-    if not plugin_path.exists():
-        return errors
-
-    try:
-        plugin_data = json.loads(plugin_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        return [f"{plugin_path}: JSON parse error: {e}"]
-    if not isinstance(plugin_data, dict):
-        return [f"{plugin_path}: not a JSON object"]
-
-    known_skills = sorted(
-        p.name for p in SKILLS_DIR.iterdir()
-        if p.is_dir() and (p / "SKILL.md").exists()
-    )
-    bundled_skills = {
-        skill_name
-        for spec in _plugin_skill_specs(plugin_data)
-        if (skill_name := _plugin_skill_name(spec))
-    }
-
-    for skill_md in sorted(SKILLS_DIR.glob("threadlight-*/SKILL.md")):
-        body = _body_after_frontmatter(skill_md.read_text(encoding="utf-8"))
-        referenced: set[str] = set()
-        for name in known_skills:
-            if re.search(rf"(?<![A-Za-z0-9-]){re.escape(name)}(?![A-Za-z0-9-])", body):
-                referenced.add(name)
-
-        rel = skill_md.relative_to(REPO_ROOT).as_posix()
-        for name in sorted(referenced - bundled_skills):
-            errors.append(
-                f"awesome-gbb-threadlight is missing dep '{name}' "
-                f"(referenced by {rel})"
-            )
-
-    return errors
-
-
 def validate_skill_plugin_version_consistency() -> list[str]:
-    """Warn when MAJOR/MINOR skill bumps leave containing plugin versions unchanged."""
+    """Warn when MAJOR/MINOR skill bumps leave root plugin version unchanged."""
     warnings: list[str] = []
     merge_base = _merge_base_main()
-    if not merge_base or not PLUGINS_DIR.is_dir():
+    if not merge_base or not PLUGIN_JSON.exists():
         return warnings
 
-    plugins: list[tuple[str, pathlib.Path, str, set[str]]] = []
-    for plugin_json in sorted(PLUGINS_DIR.glob("*/plugin.json")):
-        try:
-            plugin_data = json.loads(plugin_json.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(plugin_data, dict):
-            continue
+    try:
+        plugin_data = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return warnings
+    if not isinstance(plugin_data, dict):
+        return warnings
+    plugin_version = plugin_data.get("version")
+    if not isinstance(plugin_version, str):
+        return warnings
 
-        plugin_name = str(plugin_data.get("name") or plugin_json.parent.name)
-        plugin_version = plugin_data.get("version")
-        if not isinstance(plugin_version, str):
-            continue
-
-        bundled_skills = {
-            skill_name
-            for spec in _plugin_skill_specs(plugin_data)
-            if (skill_name := _plugin_skill_name(spec))
-        }
-        plugins.append((plugin_name, plugin_json, plugin_version, bundled_skills))
+    old_plugin_text = _git_stdout("show", f"{merge_base}:plugin.json")
+    if old_plugin_text is None:
+        return warnings
+    try:
+        old_plugin_data = json.loads(old_plugin_text)
+    except Exception:
+        return warnings
+    old_plugin_version = old_plugin_data.get("version")
+    if not isinstance(old_plugin_version, str):
+        return warnings
 
     for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
         try:
@@ -533,27 +435,11 @@ def validate_skill_plugin_version_consistency() -> list[str]:
             continue
 
         skill_name = skill_md.parent.name
-        for plugin_name, plugin_json, plugin_version, bundled_skills in plugins:
-            if skill_name not in bundled_skills:
-                continue
-
-            plugin_rel = plugin_json.relative_to(REPO_ROOT).as_posix()
-            old_plugin_text = _git_stdout("show", f"{merge_base}:{plugin_rel}")
-            if old_plugin_text is None:
-                continue
-            try:
-                old_plugin_data = json.loads(old_plugin_text)
-            except Exception:
-                continue
-            if not isinstance(old_plugin_data, dict):
-                continue
-
-            old_plugin_version = old_plugin_data.get("version")
-            if old_plugin_version == plugin_version:
-                warnings.append(
-                    f"WARN: skill '{skill_name}' bumped {old_version}→{current_version} "
-                    f"({bump_kind}), but plugin '{plugin_name}' version unchanged at {plugin_version}"
-                )
+        if old_plugin_version == plugin_version:
+            warnings.append(
+                f"WARN: skill '{skill_name}' bumped {old_version}→{current_version} "
+                f"({bump_kind}), but plugin version unchanged at {plugin_version}"
+            )
 
     return warnings
 
@@ -566,7 +452,6 @@ def main() -> int:
     all_errors: list[str] = []
     skill_md_count = 0
     pin_count = 0
-    plugin_count = 0
 
     for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
         skill_md_count += 1
@@ -578,25 +463,18 @@ def main() -> int:
         errs = validate_pin_file(pin_file)
         all_errors.extend(errs)
 
-    for plugin_json in sorted(PLUGINS_DIR.glob("*/plugin.json")) if PLUGINS_DIR.is_dir() else []:
-        plugin_count += 1
-        errs = validate_plugin_json(plugin_json)
-        all_errors.extend(errs)
+    if PLUGIN_JSON.exists():
+        all_errors.extend(validate_plugin_json(PLUGIN_JSON))
 
     if MARKETPLACE_PATH.exists():
         all_errors.extend(validate_marketplace(MARKETPLACE_PATH))
 
-    if plugin_count:
-        all_errors.extend(validate_no_orphan_skills())
-
-    all_errors.extend(validate_threadlight_dep_closure())
     warnings = validate_skill_plugin_version_consistency()
 
     print(
-        f"Validated {skill_md_count} SKILL.md files + {pin_count} pin files + "
-        f"{plugin_count} plugin manifests" + (
-            f" + marketplace.json" if MARKETPLACE_PATH.exists() else ""
-        ),
+        f"Validated {skill_md_count} SKILL.md files + {pin_count} pin files"
+        + (f" + plugin.json" if PLUGIN_JSON.exists() else "")
+        + (f" + marketplace.json" if MARKETPLACE_PATH.exists() else ""),
         file=sys.stderr,
     )
     for w in warnings:

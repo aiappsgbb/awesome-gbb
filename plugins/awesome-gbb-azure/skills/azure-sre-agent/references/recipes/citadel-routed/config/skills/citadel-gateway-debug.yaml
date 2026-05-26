@@ -1,9 +1,0 @@
-metadata:
-  name: citadel-gateway-debug
-  description: "Investigate non-2xx responses from the AI Citadel APIM gateway — correlate APIM diagnostic logs, JWT token validation failures, product-key issues, and backend pool health."
-  spec:
-    tools:
-    - RunAzCliReadCommands
-    - QueryLogAnalyticsByWorkspaceId
-skillContent: skills/citadel-gateway-debug.md
-additionalFiles: []
