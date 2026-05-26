@@ -697,7 +697,7 @@ def render_home(
         '<span class="stat-label">skills</span>'
         '<span class="stat-foot">production-tested</span></div>'
         f'<div class="stat"><span class="stat-num">{len(plugins)}</span>'
-        '<span class="stat-label">plugin bundles</span>'
+        '<span class="stat-label">plugin</span>'
         '<span class="stat-foot">one-command install</span></div>'
         f'<div class="stat"><span class="stat-num">{industry_count}</span>'
         '<span class="stat-label">industries</span>'
@@ -910,8 +910,8 @@ def render_plugins_index(plugins: list[dict[str, Any]]) -> str:
     cards.append('</div>')
     body = (
         '<h1>Plugins</h1>'
-        '<p>Three Copilot CLI plugin bundles that install whole engagement '
-        'domains in one command. Skills also remain installable individually '
+        '<p>One Copilot CLI plugin that installs the entire catalog '
+        'in one command. Skills also remain installable individually '
         'via <code>gh skill install</code>.</p>'
         '<h2>Register the marketplace</h2>'
         '<pre><code>copilot plugin marketplace add aiappsgbb/awesome-gbb</code></pre>'
