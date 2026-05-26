@@ -51,7 +51,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-mcp-aca', 'foundry-evals', 'foundry-iq',
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
-        'foundry-toolbox', 'foundry-skill-catalog',
+        'foundry-toolbox', 'foundry-skill-catalog', 'foundry-memory',
     ],
     '🧵 Threadlight Pipeline': [
         'threadlight-design', 'threadlight-local-test', 'threadlight-deploy',
@@ -75,6 +75,9 @@ CATEGORIES: dict[str, list[str]] = {
     ],
     '🔍 Discovery': [
         'ip-catalog',
+    ],
+    '🏢 Workspace': [
+        'zava-workspace-deploy',
     ],
 }
 
@@ -123,19 +126,18 @@ def load_skills(repo_root: pathlib.Path) -> list[dict[str, Any]]:
 
 
 def load_plugins(repo_root: pathlib.Path) -> list[dict[str, Any]]:
-    """Walk plugins/*/plugin.json and return a list of plugin dicts."""
+    """Load the single root plugin.json and return a list with one plugin dict."""
     plugins: list[dict[str, Any]] = []
-    for manifest in sorted(repo_root.glob('plugins/*/plugin.json')):
+    manifest = repo_root / 'plugin.json'
+    if manifest.exists():
         data = json.loads(manifest.read_text(encoding='utf-8'))
-        skill_names = [
-            entry.split('/')[-1] if isinstance(entry, str) else entry.get('source', '').split('/')[-1]
-            for entry in data.get('skills', [])
-        ]
+        # Single plugin auto-discovers all skills via "skills": "skills/"
+        all_skills = [s['name'] for s in load_skills(repo_root)]
         plugins.append({
             'name': data['name'],
             'description': data.get('description', ''),
             'version': str(data.get('version', '1.0.0')),
-            'skills': [s for s in skill_names if s],
+            'skills': all_skills,
         })
     return plugins
 

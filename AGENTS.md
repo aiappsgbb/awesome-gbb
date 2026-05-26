@@ -18,6 +18,7 @@ awesome-gbb/
 ├── README.md                 # Public catalog (skills index, install instructions)
 ├── THREADLIGHT.md            # End-to-end pipeline + customer-workshop runbook
 ├── AGENTS.md                 # ← you are here
+├── plugin.json               # Single plugin manifest ("skills": "skills/")
 ├── skills/                   # SOURCE OF TRUTH for every skill
 │   └── <skill-name>/
 │       ├── SKILL.md          # Skill definition (frontmatter + instructions)
@@ -25,13 +26,8 @@ awesome-gbb/
 │       ├── references/       # Optional: scaffolds, templates, canon data
 │       │   └── …             # SemVer-stable; consumed by the SKILL at runtime
 │       └── templates/        # Optional: copy-paste templates (Bicep, Dockerfile, …)
-├── plugins/                  # GENERATED bundles of skills (see § 10)
-│   └── <plugin-name>/
-│       ├── plugin.json       # Plugin manifest (name, version, description, skills list)
-│       ├── README.md         # Plugin overview
-│       └── skills/           # ← regenerated copies of skills/<name>/ by build-plugins.py
 └── .github/plugin/
-    └── marketplace.json      # Lists all plugins for `copilot plugin marketplace add`
+    └── marketplace.json      # Lists the plugin for `copilot plugin marketplace add`
 ```
 
 There is **no monorepo build step for individual skills** — each
@@ -39,9 +35,9 @@ There is **no monorepo build step for individual skills** — each
 directly by the runtime (Copilot CLI, Copilot Desktop App, VS Code agent
 mode, Claude Code, etc.).
 
-Plugins ARE built — `scripts/build-plugins.py` keeps every
-`plugins/<plugin>/skills/<skill>/` tree in lock-step with the source
-`skills/<skill>/` tree (CI gate enforces parity). See § 10.
+The repo IS the plugin — `plugin.json` at the repo root declares
+`"skills": "skills/"`, so the CLI auto-discovers all skills. No copies,
+no sync step, no `plugins/` directory.
 
 ---
 
@@ -280,21 +276,21 @@ Bump rules:
 - One PR can bump multiple skills, but the **commit message** must list each
   bumped skill and the bump category
 
-### 5.1 Plugin versioning (`plugins/<plugin>/plugin.json` `version`)
+### 5.1 Plugin versioning (`plugin.json` `version`)
 
-Plugins follow SemVer at the **bundle** level. The plugin's version is
-not tied to its component skill versions one-to-one (a plugin can ship a
-PATCH bump even when no skill changed — e.g. tightened description).
+The root `plugin.json` follows SemVer. Since the plugin auto-discovers
+all skills via `"skills": "skills/"`, version bumps track **catalog-level**
+changes — adding/removing skills, changing the plugin description or
+keywords.
 
 | Bump | When |
 |---|---|
-| **MAJOR** | Renamed plugin, removed a skill from the bundle, removed a documented capability, broke install path |
-| **MINOR** | Added a skill to the bundle, new keyword/category, expanded the description with new triggers |
-| **PATCH** | Tightened wording in the description, fixed a typo, bumped a contained skill's PATCH version |
+| **MAJOR** | Renamed plugin, restructured the repo (e.g. 3→1 plugin collapse), broke install path |
+| **MINOR** | Added a new skill to `skills/`, new keyword/category, expanded the description |
+| **PATCH** | Tightened wording in the description, fixed a typo |
 
-Marketplace.json **must** be updated whenever any plugin's version
-bumps. The marketplace.json itself has no version field — its `plugins`
-array is the source of truth for what the marketplace advertises.
+Marketplace.json **must** be updated whenever the plugin's version
+bumps — both `version` fields must match.
 
 There is no automation that enforces plugin version bumps (same as
 skills). Reviewers catch missing bumps.
@@ -330,54 +326,33 @@ the reverse direction, then commit.
 > **Don't let drift accumulate.** Two-way drift is hard to reconcile —
 > always sync in one direction at a time, then verify with SHA256.
 
-### Plugin mirror (when contributing to plugins)
+### Plugin testing (local marketplace)
 
-For plugin work there are two delivery paths:
-
-| Path | When to use |
-|---|---|
-| **Direct robocopy/rsync** to `C:\Users\<u>\.copilot\plugins\<plugin>\` (`~/.copilot/plugins/<plugin>/` on Unix) | One-off iteration on a single plugin |
-| **Register the repo as a local marketplace** | Default for active contributors — installs feel identical to the production GitHub marketplace |
-
-Register the repo itself as a local marketplace:
+Register the repo as a local marketplace to test the plugin:
 
 ```bash
 # Unix
 copilot plugin marketplace add /absolute/path/to/awesome-gbb
-copilot plugin install awesome-gbb-basic@awesome-gbb
-copilot plugin install awesome-gbb-azure@awesome-gbb
-copilot plugin install awesome-gbb-threadlight@awesome-gbb
+copilot plugin install awesome-gbb@awesome-gbb
 ```
 
 ```powershell
 # Windows
 copilot plugin marketplace add 'C:\Users\<u>\Repos\awesome-gbb'
-copilot plugin install awesome-gbb-basic@awesome-gbb
+copilot plugin install awesome-gbb@awesome-gbb
 ```
 
-This consumes the actual `plugins/<plugin>/plugin.json` in the repo. If
-you edit a manifest, run `copilot plugin update <plugin>@awesome-gbb` to
-pick it up — **not** a fresh install. If you edit source content under
-`skills/<name>/`, run `python scripts/build-plugins.py --write` first so
-the plugin-tree copies reflect your change.
+This consumes the actual `plugin.json` at the repo root. If you edit
+a skill under `skills/<name>/`, run `copilot plugin update awesome-gbb@awesome-gbb`
+to pick up the change.
 
-After your PR lands and you want to drop the local hack:
+After your PR lands and you want to switch to the canonical remote:
 
 ```bash
 copilot plugin marketplace remove awesome-gbb       # the local one
 copilot plugin marketplace add aiappsgbb/awesome-gbb # the canonical one
-copilot plugin update awesome-gbb-basic@awesome-gbb
-copilot plugin update awesome-gbb-azure@awesome-gbb
-copilot plugin update awesome-gbb-threadlight@awesome-gbb
+copilot plugin update awesome-gbb@awesome-gbb
 ```
-
-> **Don't let plugin drift accumulate.** `plugin.json` and the synced
-> `skills/` subtree under `plugins/` MUST stay byte-identical to the
-> source — `build-plugins.py --check` enforces that in CI. NEVER
-> hand-edit anything under `plugins/<plugin>/skills/<name>/` in either
-> location (repo or user-scope mirror). All skill edits go in
-> `skills/<name>/` at the repo root, then `build-plugins.py --write`
-> syncs them into the plugin tree.
 
 ---
 
@@ -560,7 +535,7 @@ re-runs the script on the runner) and by reviewer eyeball.
 
 | Gate | When | What it checks |
 |------|------|---------------|
-| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**`, `plugins/**`, or `.github/plugin/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **every plugin.json + marketplace.json conforms to plugin spec**, **plugin skill copies are in sync with skills/ source (via `build-plugins.py --check`)**, no orphan skills (every skill referenced by at least one plugin) |
+| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**`, `plugin.json`, or `.github/plugin/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/*/references/upstream-pin.md` | **Re-runs `validation.script` on the runner** for auto-tier pin files; asserts every `expected_output` substring. No "trust me, I tested" path. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
@@ -569,95 +544,72 @@ The first three run on every PR. The fourth runs autonomously.
 
 ---
 
-## 10 · Plugin bundles (`plugins/` + marketplace.json)
+## 10 · Single plugin (`plugin.json` + marketplace.json)
 
-The catalog ships **three Copilot CLI plugins** that bundle the 34 skills
-into installable domains: `awesome-gbb-basic` (7 skills),
-`awesome-gbb-azure` (19 skills), and `awesome-gbb-threadlight` (23 skills,
-self-contained — bundles its Foundry/Azure deps via the spec's
-skill-dedup-by-name mechanism). Customers run:
+The catalog ships a **single Copilot CLI plugin** (`awesome-gbb`) that
+auto-discovers all skills under `skills/`. Install:
 
 ```bash
 copilot plugin marketplace add aiappsgbb/awesome-gbb
-copilot plugin install awesome-gbb-<domain>@awesome-gbb
+copilot plugin install awesome-gbb@awesome-gbb
 ```
 
-### 10.1 Why this exists
+### 10.1 Why a single plugin
 
-Skills are still installable a-la-carte via
-`gh skill install aiappsgbb/awesome-gbb <skill>` — nothing about that
-flow changed. Plugins are the **one-command** alternative for whole
-engagement domains. Plugins also work in the [Copilot Desktop App
-(preview)](https://github.com/github/app), [VS Code Copilot Chat agent
-mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode),
+The catalog previously shipped three plugins (`awesome-gbb-basic`,
+`awesome-gbb-azure`, `awesome-gbb-threadlight`) that physically copied
+skills into each plugin directory — 17 duplicated skill trees, 336 files,
+3.8 MB of waste. The Copilot CLI installs plugins by copying the plugin
+directory to `~/.copilot/installed-plugins/`; relative `..` path-escape
+doesn't work at install time, and symlinks break under `cp -R`. The only
+zero-duplication solution is a single `plugin.json` at the repo root with
+`"skills": "skills/"` — the repo IS the plugin.
+
+Skills are still installable à la carte via
+`gh skill install aiappsgbb/awesome-gbb <skill>`. The plugin is the
+**one-command** alternative. Plugins also work in the
+[Copilot Desktop App (preview)](https://github.com/github/app),
+[VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode),
 and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins)
-via the same cross-runtime [plugin spec](https://docs.github.com/en/copilot/reference/cli-plugin-reference).
+via the same cross-runtime
+[plugin spec](https://docs.github.com/en/copilot/reference/cli-plugin-reference).
 
-### 10.2 Source-of-truth + build model
+### 10.2 Source-of-truth model
 
 - `skills/<name>/` is the **source of truth** for every skill. Edit here.
-- `plugins/<plugin>/plugin.json` lists which skills the plugin bundles
-  (via local paths like `skills/foundry-iq`, NOT cross-repo paths — the
-  CLI rejects `..` path-escape).
-- `plugins/<plugin>/skills/<name>/` holds a **generated copy** of
-  `skills/<name>/`. Maintained by `scripts/build-plugins.py`.
+- `plugin.json` at the repo root declares `"skills": "skills/"` — the CLI
+  scans for subdirectories containing `SKILL.md`.
+- `.github/plugin/marketplace.json` has one entry with `"source": "."`.
+- `scripts/build-plugins.py --check` validates structural integrity (no
+  `plugins/` directory needed, no copy step).
 - CI gate `.github/workflows/skill-validation.yml` runs
-  `python scripts/build-plugins.py --check` and fails if any plugin
-  copy drifts from the source.
+  `python scripts/build-plugins.py --check` and fails on structural issues.
 
-### 10.3 Dependency model
+### 10.3 Adding a new skill
 
-`plugin.json` has **no `dependencies` field** per the official spec. The
-spec deduplicates skills by their SKILL.md `name` (first-loaded-wins),
-so the same skill can safely appear in multiple plugins. This is how
-`awesome-gbb-threadlight` declares its dependencies — it bundles the
-Foundry/Azure skills its 8 threadlight-* skills cross-reference at
-runtime. Installing the threadlight plugin alone gives a fully working
-pipeline; installing threadlight + azure together → dedup resolves the
-overlap at runtime.
+1. Author the skill under `skills/<name>/` as usual
+2. Verify with `python scripts/validate-skills.py` — the plugin
+   auto-discovers it (no manifest edit needed)
+3. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
+4. Bump `marketplace.json` version to match
+5. Commit in one PR
 
-### 10.4 Adding a new skill to a plugin
+### 10.4 Renaming a skill
 
-1. Author / edit the skill under `skills/<name>/` as usual
-2. Decide which plugin(s) it belongs to:
-   - `basic` — usable in any engagement, no Azure/Foundry dependency
-   - `azure` — needs Azure, Foundry, governance, or azd
-   - `threadlight` — ANY skill any `threadlight-*` SKILL.md
-     cross-references (the dep closure)
-3. Add `"skills/<name>"` to the plugin's `plugin.json` `skills` array
-   (preserve alphabetical order — diffs are easier to review)
-4. Run `python scripts/build-plugins.py --write` to copy the skill into
-   the plugin tree
-5. Bump the plugin's `version` per § 5.1 (MINOR for an added skill)
-6. Bump `marketplace.json` plugins entry's version to match
-7. Commit source + plugin manifest + regenerated plugin copy + marketplace
-   bump in one PR
+Renaming a skill changes its SKILL.md `name` field — which is the
+dedup key runtimes use. Bump `plugin.json` to MAJOR. Avoid unless
+strictly necessary.
 
-The CI gate will reject the PR if you forget step 4 (drift detected) or
-step 5/6 (the human reviewer catches that — no enforcement).
+### 10.5 Migration from old 3-plugin model (v2.0.0)
 
-### 10.5 Adding a new plugin
+Users who had the old plugins installed must uninstall and reinstall:
 
-Rare. Don't add a fourth bundle unless there's a real domain (e.g.,
-"awesome-gbb-data" for future data-engineering skills) — adding plugins
-fragments the install UX. Discuss in a GitHub issue first.
-
-If you must:
-1. `mkdir plugins/<new-name>/` and write `plugin.json` (copy shape from
-   `awesome-gbb-basic/plugin.json`)
-2. Add the new plugin entry to `.github/plugin/marketplace.json`
-3. Run `python scripts/build-plugins.py --write` to populate
-   `plugins/<new-name>/skills/`
-4. Add a `plugins/<new-name>/README.md`
-5. Update [README.md](README.md) "How to Use" install commands
-
-### 10.6 Renaming a skill or plugin
-
-Renaming a skill MUST update every plugin manifest that references it,
-re-run `build-plugins.py --write` (the old plugin-copy directory needs
-manual `rm -rf` first), and bump the plugin's version to MAJOR. Renaming
-a plugin is even worse — every customer who installed it has to manually
-uninstall and reinstall. Avoid both.
+```bash
+copilot plugin uninstall awesome-gbb-basic@awesome-gbb
+copilot plugin uninstall awesome-gbb-azure@awesome-gbb
+copilot plugin uninstall awesome-gbb-threadlight@awesome-gbb
+copilot plugin install awesome-gbb@awesome-gbb
+```
 
 ---
 
@@ -670,9 +622,9 @@ uninstall and reinstall. Avoid both.
 - Each `skills/<skill>/SKILL.md` — the canonical contract for that skill
 - Each `skills/<skill>/README.md` (if present) — extended docs / changelog
 - Each `skills/<skill>/references/upstream-pin.md` (wrapper skills) — machine-readable freshness contract
-- [`plugins/README.md`](plugins/README.md) — plugin bundle overview
+- [`plugin.json`](plugin.json) — single plugin manifest
 - [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json) — plugin marketplace index
-- [`scripts/build-plugins.py`](scripts/build-plugins.py) — keeps plugin skill copies in sync with source
+- [`scripts/build-plugins.py`](scripts/build-plugins.py) — structural validator for the single-plugin model
 - [`scripts/templates/upstream-pin.template.md`](scripts/templates/upstream-pin.template.md) — canonical pin template (schema v2)
 - [`scripts/run-pin-validation.py`](scripts/run-pin-validation.py) — CI-side validation.script runner (the gate that proves tests ran)
 - [`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) — GHCP coding agent contract for autonomous refresh

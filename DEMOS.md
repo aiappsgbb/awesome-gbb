@@ -4,17 +4,17 @@ Single reference guide for demoing the **awesome-gbb** skill catalog.
 
 ## Quick start
 
-**Default demo install:** use the Threadlight plugin. It gives you the best single bundle for live demos because it brings the main pipeline plus the supporting Azure / Foundry skills most meetings need.
+**Default demo install:** use the awesome-gbb plugin. It gives you all 38 skills including the Threadlight pipeline and supporting Azure / Foundry skills.
 
 ```bash
 copilot plugin marketplace add aiappsgbb/awesome-gbb
-copilot plugin install awesome-gbb-threadlight@awesome-gbb
+copilot plugin install awesome-gbb@awesome-gbb
 copilot plugin list
 ```
 
 | Verify | What to look for |
 |---|---|
-| `copilot plugin list` | `awesome-gbb-threadlight@awesome-gbb` appears in the installed plugin list |
+| `copilot plugin list` | `awesome-gbb@awesome-gbb` appears in the installed plugin list |
 | Skill availability | The agent can activate [threadlight-design](skills/threadlight-design/), [threadlight-deploy](skills/threadlight-deploy/), [zava-workspace-deploy](skills/zava-workspace-deploy/), and the supporting Foundry skills |
 
 ## Demo menu

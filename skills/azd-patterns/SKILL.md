@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # AZD Tips & Patterns
@@ -221,6 +221,30 @@ services:
 - Build the Dockerfile into ACR (tag = `azd-deploy-{timestamp}`)
 - Set env var `SERVICE_MCP_IMAGE_NAME` = full ACR image ref
 - Patch the Container App to use the new image
+
+### `azure.yaml` field traps
+
+> ⚠️ **`language: html` and `language: static` are NOT valid `azure.yaml`
+> values.** They look plausible for static or front-end services but silently
+> break `azd` build detection. For custom-Dockerfile services, omit
+> `language` entirely and declare only `project` + `docker`.
+
+When the Dockerfile is not in the service root, set `docker.context` to the
+actual build-context directory:
+
+```yaml
+services:
+  web:
+    host: containerapp
+    project: .
+    docker:
+      path: ./src/Dockerfile
+      context: ./src
+```
+
+Without `docker.context`, `azd deploy` builds from the service root and the
+Dockerfile's `COPY` lines fail because the expected files are outside the
+build context.
 
 ### Pattern B — `postdeploy` hook with `SERVICE_*_IMAGE_NAME`
 
@@ -576,6 +600,15 @@ resource aiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 ```
+
+### CI/CD trap — `PrincipalTypeNotSupported`
+
+When the deploy runs from GitHub Actions or Azure DevOps, Bicep role
+assignments that emit `principalType: 'User'` often fail with
+`PrincipalTypeNotSupported`. For MI-based deploys, set
+`allowUserIdentityPrincipal: false` in the shared `roleAssignment` Bicep
+module or force `principalType: 'ServicePrincipal'`. Use `User` only when
+binding a real human principal.
 
 ### Exception: Hosted agent containers
 
@@ -1062,6 +1095,37 @@ output AZURE_CONTAINER_REGISTRY_ENDPOINT string = acr.properties.loginServer
 
 Without all three pieces, `azd deploy` pushes to ACR successfully but the
 ACA fails to pull the image (401 unauthorized).
+
+### AcrPull propagation retry loops (post-`azd provision`, pre-`azd deploy`)
+
+If `azd provision` grants `AcrPull` to the ACA environment or shared UAMI,
+do **not** immediately run `azd deploy`. RBAC propagation can lag by a few
+minutes, so the first deploy fails with `ImagePullError` even though the
+assignment exists. Poll the role assignment before proceeding:
+
+```bash
+# Wait for AcrPull RBAC propagation before deploying
+MAX_RETRIES=5; SLEEP=60
+for i in $(seq 1 $MAX_RETRIES); do
+  ROLE=$(az role assignment list --assignee "$IDENTITY_PRINCIPAL_ID" --role "AcrPull" --scope "$ACR_ID" --query "[0].roleDefinitionName" -o tsv 2>/dev/null)
+  [ "$ROLE" = "AcrPull" ] && echo "✅ AcrPull propagated" && break
+  echo "⏳ AcrPull not yet visible (attempt $i/$MAX_RETRIES), waiting ${SLEEP}s..."
+  sleep $SLEEP
+done
+[ "$ROLE" != "AcrPull" ] && echo "❌ AcrPull not propagated after $((MAX_RETRIES * SLEEP))s" && exit 1
+```
+
+```powershell
+# Wait for AcrPull RBAC propagation before deploying
+$maxRetries = 5; $sleep = 60
+for ($i = 1; $i -le $maxRetries; $i++) {
+    $role = az role assignment list --assignee $identityPrincipalId --role "AcrPull" --scope $acrId --query "[0].roleDefinitionName" -o tsv 2>$null
+    if ($role -eq 'AcrPull') { Write-Host "✅ AcrPull propagated"; break }
+    Write-Host "⏳ AcrPull not yet visible (attempt $i/$maxRetries), waiting ${sleep}s..."
+    Start-Sleep -Seconds $sleep
+}
+if ($role -ne 'AcrPull') { Write-Error "❌ AcrPull not propagated after $($maxRetries * $sleep)s"; exit 1 }
+```
 
 ---
 

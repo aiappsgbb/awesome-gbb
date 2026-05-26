@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-35-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-38-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -171,11 +171,12 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 
 ### 🏗️ Foundry Building Blocks
 
-Reference patterns for Microsoft Foundry hosted agents, MCP servers, evals, RAG, vision/speech, and observability.
+Reference patterns for Microsoft Foundry hosted agents, memory, MCP servers, evals, RAG, vision/speech, and observability.
 
 | Skill | Description |
 |-------|-------------|
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Refreshed hosted-agents preview — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, MCP wiring, **`SkillsProvider` progressive skill loading** vs. legacy concat, troubleshooting |
+| [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |
@@ -195,6 +196,7 @@ Multi-skill scaffolding and operational discipline used by the Threadlight pipel
 | Skill | Description |
 |-------|-------------|
 | [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (`azd`) — hooks, postdeploy/postprovision, ACA Job deployment, **silent-failure debug playbook** (6-rung diagnostic ladder). |
+| [**lean-safe-check**](skills/lean-safe-check/) | Lightweight completeness gate for lean toolkit (Spec2Cloud) solutions — validates `docs/spec.md → docs/plan.md → src/ → infra/ → docs/verify.md → docs/deploy.md` across spec, pre-deploy, and post-deploy; catches missing resources, orphan code, placeholder ACA images, and dead endpoints before the demo. |
 | [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
 | [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
 | [**ghcp-cli-config**](skills/ghcp-cli-config/) | Bootstrap GitHub Copilot CLI for GBB workflows — 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), `settings.json` baseline (model, `sessionSync`, `allowedUrls`, `trustedFolders`), work-iq plugin family for Microsoft staff, `autoApprove` safe-default matrix, and a **fresh-machine bootstrap procedure** the agent can execute step-by-step. Distilled from a live GBB engineer's `~/.copilot/`. |
@@ -232,6 +234,7 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 |-------|-------------|
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
+| [**lean-seller-guide**](skills/lean-seller-guide/) | Full seller enablement kit for lean toolkit (Spec2Cloud) solutions — cinematic demo deck, threadlight-grade seller guide, demo rehearsal run-of-show, and ranked killer prompts. Reads `spec.md`, `plan.md`, `verify.md`, `deploy.md`, and optional `safe-check-post-deploy.json`. Run after `/lean:deploy` completes. |
 
 ### 🧬 Org Composition & Zava Workspace
 
@@ -259,19 +262,17 @@ The **Zava pipeline** — three skills that take a company name and produce a de
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install whole domains in one command via plugins.** The catalog ships 3 [Copilot CLI plugins](plugins/) so you don't have to install skills one-by-one:
+> **Install all 38 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
 >
 > ```bash
 > # Register the marketplace once:
 > copilot plugin marketplace add aiappsgbb/awesome-gbb
 >
-> # Then install whichever domain you need:
-> copilot plugin install awesome-gbb-basic@awesome-gbb         #  7 skills — pre-sales / cross-cutting
-> copilot plugin install awesome-gbb-azure@awesome-gbb         # 20 skills — Foundry / governance / azd / Zava
-> copilot plugin install awesome-gbb-threadlight@awesome-gbb   # 24 skills — full Threadlight + Zava pipeline (self-contained)
+> # Install all skills:
+> copilot plugin install awesome-gbb@awesome-gbb
 > ```
 >
-> Plugins also work in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect. See [`plugins/README.md`](plugins/) for details.
+> The plugin also works in the [Copilot Desktop App (preview)](https://github.com/github/app), [VS Code Copilot Chat agent mode (preview)](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/plugins) — same `plugin.json` spec, cross-runtime auto-detect.
 
 **Or install one skill at a time with `gh` CLI:**
 
@@ -307,6 +308,28 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 
 ---
 
+## Agentic Loop — The BUILD → RUN → SCALE Pipeline
+
+The [`agentic-loop`](https://github.com/aiappsgbb/agentic-loop) initiative provides the **orchestration layer** that drives awesome-gbb skills through a 5-stage development loop: **Specify → Plan → Implement → Verify → Deploy**. It uses the [Lean Toolkit (Spec2Cloud)](https://github.com/Azure-Samples/Spec2Cloud) plugin and an `agentic-loop` skill that applies GBB defaults (Foundry hosted agents, model selection, region picker) and recommends which awesome-gbb skills to install for each spec.
+
+**Quick setup:**
+
+```bash
+# 1. Install the lean toolkit plugin (5-stage loop)
+copilot plugin marketplace add Azure-Samples/Spec2Cloud
+copilot plugin install lean@Spec2Cloud
+
+# 2. Install the agentic-loop skill (GBB defaults + skill recommender)
+gh skills install aiappsgbb/agentic-loop agentic-loop --dir .github/skills --agent github-copilot
+
+# 3. Run the loop
+copilot -p "/lean:specify <your idea here>"
+```
+
+The agentic-loop skill will recommend awesome-gbb skills based on your spec's content — foundational skills for every build, plus specialized skills when the spec mentions evals, governance, MCP, VNet isolation, or production gateway patterns. See the [getting-started playbook](https://github.com/aiappsgbb/agentic-loop/tree/main/playbooks/getting-started) for a step-by-step walkthrough.
+
+---
+
 ## Repository Structure
 
 ```
@@ -315,14 +338,11 @@ DEMOS.md                  # Demo guide for Threadlight, Zava, and Foundry walkth
 THREADLIGHT.md            # Threadlight pipeline technical briefing
 ZAVA.md                   # Zava workspace technical briefing
 AGENTS.md                 # Contributor & sub-agent safety guide
+plugin.json               # Single plugin manifest (all 38 skills via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)
     README.md             # Optional: extended docs, examples, changelog
-plugins/
-  awesome-gbb-basic/      # 7 skills — pre-sales / cross-cutting
-  awesome-gbb-azure/      # 20 skills — Foundry / governance / Zava
-  awesome-gbb-threadlight/ # 24 skills — full pipeline (self-contained)
 ```
 
 ---

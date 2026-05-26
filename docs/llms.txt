@@ -6,7 +6,7 @@
 
 ### 🏗️ Foundry Building Blocks
 
-- [foundry-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-hosted-agents/SKILL.md): Deploy, evaluate, and manage Foundry hosted agents on the refreshed April 2026 preview (Agent + FoundryChatClient + ResponsesHostServer pattern, MAF 1.4.0, Foundry User role).
+- [foundry-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-hosted-agents/SKILL.md): Deploy, evaluate, and manage Foundry hosted agents on the refreshed May 2026 preview (Agent + FoundryChatClient + ResponsesHostServer pattern, MAF 1.6.0, Foundry User role).
 - [foundry-teams-bot](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-teams-bot/SKILL.md): Connect a Microsoft Foundry Hosted Agent to Microsoft Teams — generate the bot code, Bicep infrastructure, Teams manifest, and ACA deployment.
 - [ghcp-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-hosted-agents/SKILL.md): Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK authentication and Invocations protocol.
 - [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.
@@ -18,6 +18,7 @@
 - [foundry-vnet-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-vnet-deploy/SKILL.md): Deploys Azure AI Foundry with **Agent Setup inside a private VNet** via Bicep (`15-private-network-standard-agent-setup` reference).
 - [foundry-toolbox](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-toolbox/SKILL.md): Wire the Microsoft Foundry Toolbox into hosted agents — a managed multi-tool bundle (mcp, web_search, azure_ai_search, code_interpreter, file_search, openapi, a2a_preview) behind…
 - [foundry-skill-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-skill-catalog/SKILL.md): Centrally store and distribute instruction-only `SKILL.md` files via the Foundry **Skills** REST API (`{project}/skills`) — and consume them at runtime from MAF agents through a custom `SkillsSource` adapter.
+- [foundry-memory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-memory/SKILL.md): Use Azure AI Foundry Memory Store for persistent agent memory across sessions: user profiles, chat summaries, semantic memory retrieval, hosted-agent memory tool wiring, scope…
 
 ### 🧵 Threadlight Pipeline
 
@@ -54,14 +55,15 @@
 
 - [research-company](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/research-company/SKILL.md): Emit a thin org-brief YAML profiling a target organisation — the company-specific overlay that pairs with an industry primer to drive a digital-clone-grade substrate fork.
 - [compose-org](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/compose-org/SKILL.md): Fork an agentic substrate into a customer-flavoured digital clone using an org-brief YAML (from research-company) + the matching industry primer.
-- [zava-workspace-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/zava-workspace-deploy/SKILL.md): Deploy custom React/Vite SPAs to Azure Container Apps as static-serve containers. Builds the SPA, packages with nginx, generates Bicep + azure.yaml service entry.
 
 ### 🔍 Discovery
 
 - [ip-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ip-catalog/SKILL.md): Discover AI Apps GBB IP catalog via MCP server.
 
+### 🏢 Workspace
+
+- [zava-workspace-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/zava-workspace-deploy/SKILL.md): Deploy the Zava agentic-org control plane to Azure Container Apps via azd (Azure Developer CLI).
+
 ## Plugins
 
-- [awesome-gbb-azure](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb-azure/plugin.json): Microsoft GBB skills for Azure + Microsoft Foundry pilots.
-- [awesome-gbb-basic](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb-basic/plugin.json): Cross-cutting Microsoft GBB skills usable in any pre-sales or pilot engagement, regardless of cloud or stack.
-- [awesome-gbb-threadlight](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb-threadlight/plugin.json): End-to-end Threadlight engagement pipeline as a single self-contained plugin.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft GBB skills catalog — 38 reusable building blocks for Copilot-assisted engagements.

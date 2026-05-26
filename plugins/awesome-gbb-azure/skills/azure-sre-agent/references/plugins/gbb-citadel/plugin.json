@@ -1,9 +1,0 @@
-{
-  "name": "gbb-citadel",
-  "description": "AI Citadel APIM gateway expertise for Azure SRE Agent — JWT 403 debug, throttle diagnosis, and Access Contract scope troubleshooting. Designed for engagements built on the awesome-gbb Citadel skills.",
-  "license": "MIT",
-  "skills": [
-    "skills/"
-  ],
-  "mcpServers": null
-}
