@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-38-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-25-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -10,7 +10,7 @@
 ## Contents
 
 - [What Are Skills?](#what-are-skills)
-- [Featured Pipeline: Threadlight](#-featured-pipeline-threadlight)
+- [Featured Pipeline: Threadlight](#-featured-pipeline-threadlight) _(moved to [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills))_
 - [Featured Workspace: Zava](https://github.com/aiappsgbb/zava-constellation)
 - [Demo Guide](DEMOS.md)
 - [Supported Coding Runtimes](#supported-coding-runtimes)
@@ -37,49 +37,18 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 ## 🧵 Featured Pipeline: Threadlight
 
-> **▶ Live experience (org members only):** <https://fluffy-carnival-6qny72q.pages.github.io/threadlight/> — cinematic one-pager that explains the pipeline in five scrolls. Mirrors [`threadlight-experience.html`](threadlight-experience.html) at repo root (open the source via [htmlpreview.github.io](https://htmlpreview.github.io/?https://github.com/aiappsgbb/awesome-gbb/blob/main/threadlight-experience.html) if you can't reach the Pages URL).
-
-**Threadlight** is the flagship end-to-end pipeline in this catalog: a chain
-of eight `threadlight-*` skills that take a customer from a one-paragraph
-brief through spec → local test → deploy → safe-check gate → demo. It's
-opinionated about the order skills run in, the cross-skill contracts they
-share (SPEC.md sections, kebab-case selectors, the three-lifecycle gate),
-and the persona split — `threadlight-design` is the seller / Cowork entry
-point; the rest run in a real shell (Copilot CLI, Coding Agent, Cursor, …)
-during workshops.
-
-> 📖 **The full pipeline narrative, per-skill summary, selector vocabulary
-> and customer-workshop runbook live in [THREADLIGHT.md](THREADLIGHT.md).**
-> The individual skills are also listed under `skills/threadlight-*/` and
-> install the same way as everything else in this repo.
-
-> [!TIP]
-> **First time on Threadlight?** After running `threadlight-design`, reach for
-> [**threadlight-local-test**](skills/threadlight-local-test/) **Pattern 0 —
-> Quickstart** to see a screen-shareable demo in minutes — `python -m
-> threadlight_quickstart` boots a MAF Agent + Streamlit UI on `localhost:8501`
-> backed by JSON stub tools, with one Azure dep (Foundry project OR Azure
-> OpenAI deployment). Closes the design → demo loop to **&lt; 30 min** with
-> no Docker, no Cosmos emulator, no MCP server boot.
-
-> 🚧 **Upcoming — Industry Process Library.** A companion repo (peer track,
-> currently in development) ships pre-authored Threadlight processes by
-> vertical — FSI, MFG, Retail, Telco — with curated selectors, eval
-> datasets, LOB-exec pitch decks, and a Citadel-spoke deploy blueprint per
-> industry. When ready it will plug into the same `threadlight-design` /
-> `threadlight-deploy` skills below, no skill rewrite required. Watch this
-> section for the link.
-
-<!--
-INTEGRATION SLOT — threadlight-library (sibling repo, asevillano/threadlight-library or similar).
-When ready, uncomment and link:
-  - Industry Process Library: <repo URL>
-  - One process catalog per industry (13 processes × 4 industries, ~78 skill recipes, 593 evals)
-  - PITCH-REVIEW.md (LOB-exec resonance scoring per industry)
-  - WORKSHOP-RUNBOOK.md (workshop-day script)
-  - DEPLOY-ROADMAP.md (Citadel-spoke deploy steps)
-Do NOT mirror or vendor that repo here — link only. Source of truth stays separate.
--->
+> **Threadlight has moved to its own repo →
+> [aiappsgbb/threadlight-skills](https://github.com/aiappsgbb/threadlight-skills)**
+>
+> Eight `threadlight-*` skills that take a customer from a one-paragraph brief
+> through spec → local test → deploy → safe-check gate → demo. See the
+> [live experience page](https://aiappsgbb.github.io/threadlight-skills/).
+>
+> Install alongside awesome-gbb for the full pipeline:
+> ```bash
+> copilot plugin marketplace add aiappsgbb/threadlight-skills
+> copilot plugin install threadlight-skills@threadlight-skills
+> ```
 
 ---
 
@@ -93,9 +62,10 @@ Do NOT mirror or vendor that repo here — link only. Source of truth stays sepa
 > workspace on Azure. See the
 > [live experience page](https://aiappsgbb.github.io/zava-constellation/).
 >
-> **Zava + Threadlight = full story.** Threadlight designs and deploys
-> individual business-process agents. Zava wraps them in a multi-domain
-> control plane with fleet orchestration and a polished dashboard.
+> **Zava + Threadlight = full story.** Threadlight (in
+> [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills))
+> designs and deploys individual business-process agents. Zava wraps them in a
+> multi-domain control plane with fleet orchestration and a polished dashboard.
 
 ---
 
@@ -161,12 +131,11 @@ Reference patterns for Microsoft Foundry hosted agents, memory, MCP servers, eva
 
 ### 🛠️ Cross-Cutting Helpers
 
-Multi-skill scaffolding and operational discipline used by the Threadlight pipeline and standalone Foundry deployments.
+Multi-skill scaffolding and operational discipline used by the [Threadlight pipeline](https://github.com/aiappsgbb/threadlight-skills) and standalone Foundry deployments.
 
 | Skill | Description |
 |-------|-------------|
 | [**azd-patterns**](skills/azd-patterns/) | Tips and patterns for Azure Developer CLI (`azd`) — hooks, postdeploy/postprovision, ACA Job deployment, **silent-failure debug playbook** (6-rung diagnostic ladder). |
-| [**lean-safe-check**](skills/lean-safe-check/) | Lightweight completeness gate for lean toolkit (Spec2Cloud) solutions — validates `docs/spec.md → docs/plan.md → src/ → infra/ → docs/verify.md → docs/deploy.md` across spec, pre-deploy, and post-deploy; catches missing resources, orphan code, placeholder ACA images, and dead endpoints before the demo. |
 | [**azure-tenant-isolation**](skills/azure-tenant-isolation/) | Multi-tenant Azure CLI / AZD isolation for concurrent terminal sessions — index-file driven, per-tenant `AZURE_CONFIG_DIR` + `az account show` two-layer guard. |
 | [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
 | [**ghcp-cli-config**](skills/ghcp-cli-config/) | Bootstrap GitHub Copilot CLI for GBB workflows — 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), `settings.json` baseline (model, `sessionSync`, `allowedUrls`, `trustedFolders`), work-iq plugin family for Microsoft staff, `autoApprove` safe-default matrix, and a **fresh-machine bootstrap procedure** the agent can execute step-by-step. Distilled from a live GBB engineer's `~/.copilot/`. |
@@ -187,7 +156,7 @@ defence-in-depth for production agent platforms:
    hash-chained audit, OWASP ASI 2026 coverage). The 26.67% (prompt-only)
    vs 0.00% (deterministic AGT) red-team gap is why both layers matter.
 
-Compose with `foundry-hosted-agents` / `threadlight-deploy` (in-process
+Compose with `foundry-hosted-agents` / [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills) (in-process
 middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 `azd-patterns` (sidecar pattern).
 
@@ -204,7 +173,6 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 |-------|-------------|
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
-| [**lean-seller-guide**](skills/lean-seller-guide/) | Full seller enablement kit for lean toolkit (Spec2Cloud) solutions — cinematic demo deck, threadlight-grade seller guide, demo rehearsal run-of-show, and ranked killer prompts. Reads `spec.md`, `plan.md`, `verify.md`, `deploy.md`, and optional `safe-check-post-deploy.json`. Run after `/lean:deploy` completes. |
 
 ### 🧬 Org Composition & Zava Workspace
 
@@ -225,7 +193,7 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install all 38 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
+> **Install all 25 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
 >
 > ```bash
 > # Register the marketplace once:
@@ -267,7 +235,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 ```
 
 > [!TIP]
-> **Recommended global install for sellers + SEs:** `threadlight-design`, `threadlight-deploy`, `threadlight-local-test`, `threadlight-safe-check`, `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation`. For Zava skills, see [zava-constellation](https://github.com/aiappsgbb/zava-constellation). Other skills can stay at project scope.
+> **Recommended global install for sellers + SEs:** `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation` (from awesome-gbb) plus the full [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills) plugin. For Zava skills, see [zava-constellation](https://github.com/aiappsgbb/zava-constellation). Other skills can stay at project scope.
 
 ---
 
@@ -297,11 +265,9 @@ The agentic-loop skill will recommend awesome-gbb skills based on your spec's co
 
 ```
 README.md                 # This file — catalog index + install instructions
-DEMOS.md                  # Demo guide for Threadlight, Zava, and Foundry walkthroughs
-THREADLIGHT.md            # Threadlight pipeline technical briefing
-ZAVA.md                   # Zava workspace technical briefing
+DEMOS.md                  # Demo guide for Foundry walkthroughs
 AGENTS.md                 # Contributor & sub-agent safety guide
-plugin.json               # Single plugin manifest (all 38 skills via "skills/")
+plugin.json               # Single plugin manifest (all 25 skills via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)

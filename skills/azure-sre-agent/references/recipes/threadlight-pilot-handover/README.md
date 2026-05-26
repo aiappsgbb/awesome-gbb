@@ -2,7 +2,7 @@
 
 Azure SRE Agent pre-wired for the **Threadlight pilot handover** moment —
 when a customer just took delivery of a Threadlight ACA-hosted pipeline (a
-themed process designed by [`threadlight-design`](https://github.com/aiappsgbb/awesome-gbb/tree/main/skills/threadlight-design), deployed by [`threadlight-deploy`](https://github.com/aiappsgbb/awesome-gbb/tree/main/skills/threadlight-deploy)) and needs an
+themed process designed by [`threadlight-design`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design), deployed by [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy)) and needs an
 operator agent watching it from day one.
 
 This recipe wires the SRE Agent's HTTP-trigger webhook into the Threadlight
@@ -12,7 +12,7 @@ human-step automatically posts an incident to the SRE Agent.
 ## Prerequisites
 
 - Azure subscription with `Microsoft.App` RP registered (`bash scripts/preflight.sh`)
-- A Threadlight pilot deployed (use [`threadlight-deploy`](https://github.com/aiappsgbb/awesome-gbb/tree/main/skills/threadlight-deploy))
+- A Threadlight pilot deployed (use [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy))
 - The pilot's resource group name + the ACA environment name
 - The pilot's App Insights resource ID (created automatically by `foundry-observability`)
 

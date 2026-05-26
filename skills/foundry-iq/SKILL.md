@@ -974,8 +974,8 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 
 | Skill | Use When |
 |-------|----------|
-| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 7 Knowledge Sources — the input contract for this skill |
-| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 (Module Composer) wires `foundry-iq-index.bicep` when SPEC § 7 declares `Backing service: foundry-iq` |
+| [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 7 Knowledge Sources — the input contract for this skill |
+| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 (Module Composer) wires `foundry-iq-index.bicep` when SPEC § 7 declares `Backing service: foundry-iq` |
 | [**azd-patterns**](../azd-patterns/) | Owns the `foundry-iq-index.bicep` module shape |
 | [**foundry-doc-vision-speech**](../foundry-doc-vision-speech/) | Pairs with this skill: extract structured text from raw docs (foundry-doc-vision-speech) → index it for retrieval (foundry-iq) |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Alternative knowledge backing (`mcp-search`) when foundry-iq is genuinely overkill — prefer foundry-iq by default |

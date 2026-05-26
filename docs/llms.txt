@@ -20,17 +20,6 @@
 - [foundry-skill-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-skill-catalog/SKILL.md): Centrally store and distribute instruction-only `SKILL.md` files via the Foundry **Skills** REST API (`{project}/skills`) — and consume them at runtime from MAF agents through a custom `SkillsSource` adapter.
 - [foundry-memory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-memory/SKILL.md): Use Azure AI Foundry Memory Store for persistent agent memory across sessions: user profiles, chat summaries, semantic memory retrieval, hosted-agent memory tool wiring, scope…
 
-### 🧵 Threadlight Pipeline
-
-- [threadlight-design](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-design/SKILL.md): Spec out a business process or customer use case for an enterprise pilot, then generate agent architecture (AGENTS.md + Skills) — a durable SpecKit specification first (process…
-- [threadlight-local-test](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-local-test/SKILL.md): Run a threadlight-designed PoC locally without `azd up`.
-- [threadlight-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-deploy/SKILL.md): Take a designed agent project (from threadlight-design or manually crafted) and generate all deployment artifacts for Microsoft Foundry Hosted Agents.
-- [threadlight-safe-check](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-safe-check/SKILL.md): Three-lifecycle completeness gate for threadlight pilots (design / pre-deploy / post-deploy).
-- [threadlight-event-triggers](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-event-triggers/SKILL.md): Scaffold non-interactive trigger receivers for a threadlight process — ACA-first (jobs, app HTTP receivers, KEDA-scaled consumers) with Azure Functions only when narrow constraints demand it.
-- [threadlight-hitl-patterns](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-hitl-patterns/SKILL.md): Generate Teams Adaptive Card flows + bot UX components for the seven canonical action gates (approve, edit-and-approve, reject, escalate, signoff, audit-view, request-info) declared in spec § 8 Human Interaction Points.
-- [threadlight-workspace-ui](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-workspace-ui/SKILL.md): Generate a curated, framework-agnostic workspace UI reference for a threadlight process — case-list / inbox / dashboard / console / kanban / map shape with detail pane, action toolbar, audit viewer.
-- [threadlight-demo-data-factory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/threadlight-demo-data-factory/SKILL.md): Generate per-domain Faker-style synthetic data + Cosmos seed/reset scripts for a threadlight process.
-
 ### 🛠️ Cross-Cutting Helpers
 
 - [azd-patterns](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azd-patterns/SKILL.md): Tips and patterns for Azure Developer CLI (azd) workflows, ACA job deployment, and infrastructure scripting conventions.
@@ -57,4 +46,4 @@
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 33 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 25 reusable building blocks for Copilot-assisted engagements.

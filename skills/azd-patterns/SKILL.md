@@ -1189,12 +1189,12 @@ scale: {
 
 | Skill | Use When |
 |-------|----------|
-| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 (Module Composer) is the consumer of this Bicep library |
-| [**threadlight-design**](../threadlight-design/) | Defines SPEC § 11c selectors that drive module inclusion |
+| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 (Module Composer) is the consumer of this Bicep library |
+| [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Defines SPEC § 11c selectors that drive module inclusion |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Owns the `aca-mcp.bicep` shape |
 | [**foundry-teams-bot**](../foundry-teams-bot/) | Owns the `aca-bot.bicep` shape |
 | [**foundry-iq**](../foundry-iq/) | Owns the `foundry-iq-index.bicep` shape |
-| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Owns the `aca-job.bicep` shape (cron + manual triggers) |
+| [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the `aca-job.bicep` shape (cron + manual triggers) |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | Owns the `foundry-account.bicep` shape |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Adds Citadel hub wiring AFTER the base Bicep is provisioned (opt-in via SPEC § 11b `citadel.required: yes`) |
 | [**azure-tenant-isolation**](../azure-tenant-isolation/) | Per-tenant `AZURE_CONFIG_DIR` so `azd up` lands in the right tenant |

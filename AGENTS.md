@@ -16,7 +16,6 @@ safely change them**.
 ```
 awesome-gbb/
 ├── README.md                 # Public catalog (skills index, install instructions)
-├── THREADLIGHT.md            # End-to-end pipeline + customer-workshop runbook
 ├── AGENTS.md                 # ← you are here
 ├── plugin.json               # Single plugin manifest ("skills": "skills/")
 ├── skills/                   # SOURCE OF TRUTH for every skill
@@ -118,29 +117,15 @@ Rules:
 - No other top-level frontmatter keys are recognized — if you add one, no
   loader will read it
 
-### 2.5 Threadlight skills reinforce each other — don't break the chain
+### 2.5 Threadlight skills live in a separate repo
 
-Skills under `threadlight-*` (and `foundry-*` consumed by them) form a
-**pipeline** documented in [THREADLIGHT.md](THREADLIGHT.md):
-
-```
-threadlight-design → threadlight-local-test → threadlight-deploy →
-threadlight-safe-check (gate) → foundry-evals + foundry-observability
-```
-
-Cross-skill contracts to preserve:
-- `threadlight-design` writes SPEC.md § 11c (kebab-case selectors); `threadlight-deploy`
-  reads them; `threadlight-safe-check` re-validates them. **Selector vocabulary is
-  the contract** — if you add a selector to one, add it to all three.
-- `azd-patterns` owns the Bicep module library; `threadlight-deploy` Phase 6
-  is the composer. **Don't fork the module shapes** in deploy — extend
-  `azd-patterns`.
-- `foundry-observability` owns the 3-layer telemetry pattern (Bicep → AppIn
-  account connection → `configure_azure_monitor()`). **Every** ACA workload
-  in every other skill must pass through this — don't write parallel
-  telemetry init.
-
-If your edit changes a contract, update **all** consumers in the same PR.
+The eight `threadlight-*` skills have moved to
+[`aiappsgbb/threadlight-skills`](https://github.com/aiappsgbb/threadlight-skills).
+They cross-reference `foundry-*`, `azd-patterns`, and `citadel-*` skills in
+this repo via absolute URLs. If you change a cross-referenced contract here
+(e.g., Bicep module shapes in `azd-patterns`, telemetry init in
+`foundry-observability`), check whether the threadlight-skills repo needs
+a corresponding update.
 
 ### 2.6 `azd` is the default for any skill that deploys infrastructure
 
@@ -362,23 +347,17 @@ copilot plugin update awesome-gbb@awesome-gbb
 
 ## 7 · References & shared data
 
-### Canonical reference data lives in two skills
+### Canonical reference data
 
-- **`threadlight-design/references/data-realism/`** — industry shorthand
-  for ID formats, units, currencies, regional norms (FSI, MFG, Retail,
-  Telco). Used by the design skill to keep generated SPEC § 5 sample data
-  realistic to the SME reviewer.
-- **`threadlight-demo-data-factory/references/generators/`** — synthetic
-  data generation patterns (per-domain seeds, Cosmos reset scripts).
-
-Both are **canon** (see § 2.2). Edits require citing the original spec
-(IRS publication, ISO standard, regulator URL).
+The threadlight-design and threadlight-demo-data-factory reference data
+(industry shorthand, synthetic data generators) now live in
+[`aiappsgbb/threadlight-skills`](https://github.com/aiappsgbb/threadlight-skills).
+The § 2.2 "do NOT normalize" rule still applies there.
 
 ### Bicep modules
 
-Live in **`azd-patterns/`** (the composable module library). `threadlight-deploy`
-Phase 6 is the only composer that includes them. Do not fork module shapes
-in other skills — extend the library.
+Live in **`azd-patterns/`** (the composable module library). Do not fork
+module shapes in other skills — extend the library.
 
 ### Templates
 
@@ -623,9 +602,9 @@ copilot plugin install awesome-gbb@awesome-gbb
 ## 11 · See also
 
 - [README.md](README.md) — public catalog and install instructions
-- [DEMOS.md](DEMOS.md) — demo guide for Threadlight, Zava, and Foundry walkthroughs
-- [THREADLIGHT.md](THREADLIGHT.md) — end-to-end pipeline narrative
-- [ZAVA.md](https://github.com/aiappsgbb/zava-constellation/blob/main/ZAVA.md) — digital-clone workspace technical briefing (in zava-constellation repo)
+- [DEMOS.md](DEMOS.md) — demo guide for Foundry walkthroughs
+- [Threadlight skills](https://github.com/aiappsgbb/threadlight-skills) — end-to-end pilot pipeline (8 skills, separate repo)
+- [Zava constellation](https://github.com/aiappsgbb/zava-constellation) — digital-clone workspace (3 skills, separate repo)
 - Each `skills/<skill>/SKILL.md` — the canonical contract for that skill
 - Each `skills/<skill>/README.md` (if present) — extended docs / changelog
 - Each `skills/<skill>/references/upstream-pin.md` (wrapper skills) — machine-readable freshness contract

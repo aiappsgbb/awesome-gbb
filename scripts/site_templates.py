@@ -501,7 +501,7 @@ _LAYOUT = '''<!doctype html>
     <div class="links">
       <a href="{base}/"{a_home}>Home</a>
       <a href="{base}/skills/"{a_skills}>Skills</a>
-      <a href="{base}/threadlight/"{a_threadlight}>Threadlight</a>
+      <a href="https://aiappsgbb.github.io/threadlight-skills/"{a_threadlight}>Threadlight</a>
       <a href="https://aiappsgbb.github.io/zava-constellation/"{a_zava}>Zava</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
     </div>
@@ -661,15 +661,15 @@ def render_home(
         _browse_card(
             f'{SITE_BASE}/skills/', _ICON_SKILLS, 'Skills',
             'Self-contained Copilot skills for Azure AI, Microsoft Foundry, '
-            'threadlight, and agent governance.',
+            'governance, and cross-cutting helpers.',
             count=len(skills),
         ),
         _browse_card(
-            f'{SITE_BASE}/threadlight/', _ICON_THREAD, 'Threadlight',
-            'Cinematic walkthrough of the end-to-end agentic pipeline that '
-            'bundles eight skills into a single working session. '
-            'Live preview now online — preconfigured demos coming soon.',
-            count='live preview',
+            'https://aiappsgbb.github.io/threadlight-skills/', _ICON_THREAD, 'Threadlight',
+            'End-to-end agentic pilot pipeline — eight skills that take a '
+            'customer engagement from brief to deployed Foundry agent '
+            'in a single working session.',
+            count='8 skills',
         ),
         _browse_card(
             'https://aiappsgbb.github.io/zava-constellation/', _ICON_ZAVA, 'Zava',
@@ -700,7 +700,7 @@ def render_home(
     )
 
     # Stats stripe — derived live from catalog so numbers can't drift.
-    industry_count = 5  # FSI · MFG · Retail · Telco · Airline (per research-company primers + threadlight-design data-realism)
+    industry_count = 5  # FSI · MFG · Retail · Telco · Airline
     stats_stripe = (
         '<section class="stats-stripe" aria-label="Catalog at a glance">'
         f'<div class="stat"><span class="stat-num">{len(skills)}</span>'

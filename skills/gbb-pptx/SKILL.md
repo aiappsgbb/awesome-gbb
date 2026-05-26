@@ -250,4 +250,4 @@ prs.save("output.pptx")
 | Skill | Use When |
 |-------|----------|
 | [**gbb-humanizer**](../gbb-humanizer/) | **Polish pass** for speaker notes after the deck is generated. Section-aware mode skips slide bullets and titles (which need to stay punchy and parallel) and only rewrites the prose inside `notes_slide.notes_text_frame.text`. Use the pre-canned `gbb-seller-pitch.md` voice sample. |
-| [**threadlight-design**](../threadlight-design/) | Generates the SpecKit + `overview.html` that this deck's slides typically narrate — the deck is often a re-projection of the same content for an audience that prefers slides to long-form HTML. |
+| [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates the SpecKit + `overview.html` that this deck's slides typically narrate — the deck is often a re-projection of the same content for an audience that prefers slides to long-form HTML. |

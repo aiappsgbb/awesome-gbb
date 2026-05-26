@@ -935,9 +935,9 @@ ONLY in dev/demo environments. Gate behind `DEV_BYPASS_AUTH=true`.
 
 | Skill | Use When |
 |-------|----------|
-| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 5 / § 5b / § 6 — the input contract |
-| [**threadlight-demo-data-factory**](../threadlight-demo-data-factory/) | Generates the JSON files this MCP server reads |
-| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Pairs with this skill for webhook-fed MCP servers (event source → receiver → backing store → MCP read) |
-| [**threadlight-deploy**](../threadlight-deploy/) | Composes the MCP ACA into the overall agent project (Phase 6 module composer) |
+| [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 5 / § 5b / § 6 — the input contract |
+| [**threadlight-demo-data-factory**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-demo-data-factory/) | Generates the JSON files this MCP server reads |
+| [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Pairs with this skill for webhook-fed MCP servers (event source → receiver → backing store → MCP read) |
+| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Composes the MCP ACA into the overall agent project (Phase 6 module composer) |
 | [**azd-patterns**](../azd-patterns/) | Bicep module library — `aca-mcp.bicep` is one of the composable modules |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | The hosted agent that consumes the MCP server's tools |

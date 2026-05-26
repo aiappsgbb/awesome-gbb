@@ -53,12 +53,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-cross-resource', 'foundry-vnet-deploy',
         'foundry-toolbox', 'foundry-skill-catalog', 'foundry-memory',
     ],
-    '🧵 Threadlight Pipeline': [
-        'threadlight-design', 'threadlight-local-test', 'threadlight-deploy',
-        'threadlight-safe-check', 'threadlight-event-triggers',
-        'threadlight-hitl-patterns', 'threadlight-workspace-ui',
-        'threadlight-demo-data-factory',
-    ],
+    # Threadlight Pipeline skills moved to aiappsgbb/threadlight-skills
     '🛠️ Cross-Cutting Helpers': [
         'azd-patterns', 'azure-tenant-isolation', 'gbb-humanizer',
         'ghcp-cli-config', 'paygo-ptu-cost-analyzer',
@@ -325,16 +320,17 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     # llms.txt
     total_bytes += _write(out_dir / 'llms.txt', tpl.render_llms_txt(CATEGORIES, skills, plugins))
 
-    # Threadlight experience — verbatim copy
-    threadlight_src = REPO_ROOT / 'threadlight-experience.html'
-    if threadlight_src.exists():
-        threadlight_dst = out_dir / 'threadlight' / 'index.html'
-        threadlight_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(threadlight_src, threadlight_dst)
-        total_bytes += threadlight_dst.stat().st_size
-        html_count += 1
-    else:
-        print(f'WARN: {threadlight_src} not found — skipping /threadlight/', file=sys.stderr)
+    # Threadlight — redirect to threadlight-skills repo Pages
+    threadlight_dst = out_dir / 'threadlight' / 'index.html'
+    threadlight_dst.parent.mkdir(parents=True, exist_ok=True)
+    threadlight_dst.write_text(
+        '<!doctype html>\n<html><head>\n'
+        '<meta http-equiv="refresh" content="0;url=https://aiappsgbb.github.io/threadlight-skills/">\n'
+        '</head><body><a href="https://aiappsgbb.github.io/threadlight-skills/">Redirecting to threadlight-skills…</a></body></html>\n',
+        encoding='utf-8',
+    )
+    total_bytes += threadlight_dst.stat().st_size
+    html_count += 1
 
     # Zava — redirect to zava-constellation repo Pages
     zava_dst = out_dir / 'zava' / 'index.html'
@@ -358,52 +354,13 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     total_bytes += zava_compat.stat().st_size
     html_count += 1
 
-    # Backward-compat for the legacy /threadlight-experience.html URL.
-    # Pre-flip, Pages served the file at the repo root with the WHOLE site
-    # being TL. Post-flip, the home is the catalog hub and TL lives under
-    # /threadlight/. We deliberately serve a CHOOSER page here instead of a
-    # silent auto-redirect: when a browser has cached the old root
-    # `<meta refresh>` (which sends /  →  /threadlight-experience.html),
-    # a silent redirect to /threadlight/ would never surface the new hub.
-    # The chooser breaks the cached redirect chain visibly and lets the
-    # user pick either destination.
-    chooser_html = (
-        '<!doctype html>\n'
-        '<html lang="en">\n'
-        '<head>\n'
-        '<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        '<title>awesome-gbb — this URL has moved</title>\n'
-        f'<link rel="stylesheet" href="{SITE_BASE}/_styles.css">\n'
-        '</head>\n'
-        '<body>\n'
-        '<main>\n'
-        '<section class="hero" style="text-align:center;">\n'
-        '<p class="eyebrow"><span class="dot"></span>This URL has moved</p>\n'
-        '<h1>awesome-gbb</h1>\n'
-        '<p class="lede" style="margin:0 auto 28px;">'
-        'The catalog now has a proper landing page. '
-        '<code>/threadlight-experience.html</code> is no longer the whole site '
-        '— Threadlight is one of four resources in the hub.'
-        '</p>\n'
-        '<div class="browse-grid" style="max-width:680px;margin:0 auto;">\n'
-        f'<a class="browse-card" href="{SITE_BASE}/">'
-        '<span class="browse-icon" aria-hidden="true">→</span>'
-        '<span class="browse-body"><h3>awesome-gbb hub</h3>'
-        '<p>Skills · Plugins · Threadlight · Contributing</p></span>'
-        '</a>\n'
-        f'<a class="browse-card" href="{SITE_BASE}/threadlight/">'
-        '<span class="browse-icon" aria-hidden="true">🧵</span>'
-        '<span class="browse-body"><h3>Threadlight experience</h3>'
-        '<p>Cinematic walkthrough (the page you used to land on).</p></span>'
-        '</a>\n'
-        '</div>\n'
-        '</section>\n'
-        '</main>\n'
-        '</body>\n'
-        '</html>\n'
+    # Backward-compat redirect for /threadlight-experience.html → threadlight-skills
+    threadlight_compat_html = (
+        '<!doctype html>\n<html><head>\n'
+        '<meta http-equiv="refresh" content="0;url=https://aiappsgbb.github.io/threadlight-skills/">\n'
+        '</head><body><a href="https://aiappsgbb.github.io/threadlight-skills/">Redirecting to threadlight-skills…</a></body></html>\n'
     )
-    total_bytes += _write(out_dir / 'threadlight-experience.html', chooser_html)
+    total_bytes += _write(out_dir / 'threadlight-experience.html', threadlight_compat_html)
     html_count += 1
 
     print(

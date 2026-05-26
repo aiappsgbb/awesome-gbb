@@ -4,67 +4,35 @@ Single reference guide for demoing the **awesome-gbb** skill catalog.
 
 ## Quick start
 
-**Default demo install:** use the awesome-gbb plugin. It gives you all 38 skills including the Threadlight pipeline and supporting Azure / Foundry skills.
+**Default demo install:** use the awesome-gbb plugin plus [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills) for the full pipeline.
 
 ```bash
 copilot plugin marketplace add aiappsgbb/awesome-gbb
 copilot plugin install awesome-gbb@awesome-gbb
+
+copilot plugin marketplace add aiappsgbb/threadlight-skills
+copilot plugin install threadlight-skills@threadlight-skills
 copilot plugin list
 ```
 
 | Verify | What to look for |
 |---|---|
-| `copilot plugin list` | `awesome-gbb@awesome-gbb` appears in the installed plugin list |
-| Skill availability | The agent can activate [threadlight-design](skills/threadlight-design/), [threadlight-deploy](skills/threadlight-deploy/), and the supporting Foundry skills. For Zava skills, install [zava-constellation](https://github.com/aiappsgbb/zava-constellation). |
+| `copilot plugin list` | `awesome-gbb@awesome-gbb` and `threadlight-skills@threadlight-skills` appear |
+| Skill availability | The agent can activate `threadlight-design`, `threadlight-deploy`, and the supporting Foundry skills. For Zava skills, install [zava-constellation](https://github.com/aiappsgbb/zava-constellation). |
 
 ## Demo menu
 
 | Demo | Best for | Core story | Primary skills |
 |---|---|---|---|
-| **Threadlight** | Technical leads, developers, solution sellers | One business process from SPEC to live Azure workflow | [threadlight-design](skills/threadlight-design/), [threadlight-demo-data-factory](skills/threadlight-demo-data-factory/), [threadlight-local-test](skills/threadlight-local-test/), [threadlight-deploy](skills/threadlight-deploy/) |
+| **Threadlight** | Technical leads, developers, solution sellers | One business process from SPEC to live Azure workflow | See [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills) |
 | **Zava** | C-suite, transformation leaders, enterprise architects | Full agentic operating model across an enterprise control plane | [zava-constellation](https://github.com/aiappsgbb/zava-constellation) |
 | **Foundry stack** | Architects, platform owners, developers | Hosted agents with tools, governance, and full traceability | [foundry-hosted-agents](skills/foundry-hosted-agents/), [foundry-mcp-aca](skills/foundry-mcp-aca/), [foundry-agt](skills/foundry-agt/), [foundry-observability](skills/foundry-observability/) |
 
 ## Threadlight Demo
 
-### What it shows
-
-| Stage | Skill | What to show |
-|---|---|---|
-| 1 | [threadlight-design](skills/threadlight-design/) | Turn a vague process brief into `specs/SPEC.md` |
-| 2 | [threadlight-demo-data-factory](skills/threadlight-demo-data-factory/) | Generate realistic demo data and seed/reset assets |
-| 3 | [threadlight-local-test](skills/threadlight-local-test/) | Run the workflow locally before cloud deployment |
-| 4 | [threadlight-deploy](skills/threadlight-deploy/) | Ship the process to Azure Container Apps |
-| 5 | [threadlight-safe-check](skills/threadlight-safe-check/) | Prove the deployed system is safe, wired, and policy-aligned |
-| 6 | [foundry-evals](skills/foundry-evals/) + [foundry-observability](skills/foundry-observability/) | Show eval results, traces, and telemetry in App Insights |
-
-### 5-minute exec pitch
-
-**Talk track:** **“Here’s what AI agents look like when they run a real business process.”**
-
-1. Open [threadlight-design](skills/threadlight-design/) output and show the generated SPEC.
-2. Point out that the process is explicit: steps, tools, business rules, HITL gates, and eval scenarios.
-3. Show the deployed workflow running in Azure, not just a mock slide.
-4. Land on the business value: repeatable process design, observable execution, and governed deployment.
-
-### 15-minute technical walkthrough
-
-| Time | Move | Point |
-|---|---|---|
-| 0–3 min | Generate or open a SPEC from [threadlight-design](skills/threadlight-design/) | Design is codified as a reusable process contract |
-| 3–5 min | Show seeded records from [threadlight-demo-data-factory](skills/threadlight-demo-data-factory/) | Demo data, reset scripts, and realism are first-class |
-| 5–7 min | Run the flow locally with [threadlight-local-test](skills/threadlight-local-test/) | Inner-loop iteration happens before Azure spend |
-| 7–10 min | Deploy with [threadlight-deploy](skills/threadlight-deploy/) | Same process moves cleanly into ACA |
-| 10–12 min | Show HITL gates and validation from [threadlight-safe-check](skills/threadlight-safe-check/) | Human approval points are part of the design, not bolted on |
-| 12–15 min | Open App Insights / trace view via [foundry-observability](skills/foundry-observability/) and review [foundry-evals](skills/foundry-evals/) | You get observability and quality scoring, not a black box |
-
-### Key skills involved
-
-- [threadlight-design](skills/threadlight-design/)
-- [threadlight-local-test](skills/threadlight-local-test/)
-- [threadlight-deploy](skills/threadlight-deploy/)
-- [foundry-observability](skills/foundry-observability/)
-- Supporting: [threadlight-demo-data-factory](skills/threadlight-demo-data-factory/), [threadlight-safe-check](skills/threadlight-safe-check/), [foundry-evals](skills/foundry-evals/)
+> **Threadlight skills have moved to
+> [aiappsgbb/threadlight-skills](https://github.com/aiappsgbb/threadlight-skills).**
+> See that repo for the full demo guide, pipeline walkthrough, and experience page.
 
 ## Zava Demo
 
@@ -127,12 +95,12 @@ copilot plugin list
 | Audience | Duration | Show | Core message | Skills |
 |---|---|---|---|---|
 | **C-suite** | 5 min | Zava constellation → live feed → entity graph | **"This is what AI orchestration looks like at enterprise scale."** | [zava-constellation](https://github.com/aiappsgbb/zava-constellation) |
-| **Technical leads** | 15 min | Threadlight end-to-end: design → data → local test → deploy → telemetry | **“The process is designed, testable, deployable, and observable.”** | [threadlight-design](skills/threadlight-design/), [threadlight-local-test](skills/threadlight-local-test/), [threadlight-deploy](skills/threadlight-deploy/), [foundry-observability](skills/foundry-observability/) |
+| **Technical leads** | 15 min | Threadlight end-to-end: design → data → local test → deploy → telemetry | **"The process is designed, testable, deployable, and observable."** | [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills), [foundry-observability](skills/foundry-observability/) |
 | **Architects** | 30 min | Citadel hub + spoke governance, VNet isolation, RBAC model | **“This platform is governable, segmentable, and enterprise-ready by design.”** | [citadel-hub-deploy](skills/citadel-hub-deploy/), [citadel-spoke-onboarding](skills/citadel-spoke-onboarding/), [foundry-vnet-deploy](skills/foundry-vnet-deploy/), [azure-tenant-isolation](skills/azure-tenant-isolation/), [foundry-agt](skills/foundry-agt/) |
-| **Developers** | 30 min | Live build: design a new process, run it locally, then deploy it | **“You can go from idea to runnable agent workflow in one working session.”** | [threadlight-design](skills/threadlight-design/), [threadlight-local-test](skills/threadlight-local-test/), [threadlight-deploy](skills/threadlight-deploy/) |
+| **Developers** | 30 min | Live build: design a new process, run it locally, then deploy it | **"You can go from idea to runnable agent workflow in one working session."** | [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills) |
 
 ## See also
 
 - [README.md](README.md)
-- [THREADLIGHT.md](THREADLIGHT.md)
+- [Threadlight skills](https://github.com/aiappsgbb/threadlight-skills)
 - [AGENTS.md](AGENTS.md)

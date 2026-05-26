@@ -336,7 +336,7 @@ server.run()  # Serves on port 8088
 > constructor — orthogonal to `tools=[...]`.
 
 > **Cross-link.** The exact same `SkillsProvider.from_paths(skills_dir)`
-> wiring shape is what [`threadlight-local-test` **Pattern 0 — Quickstart**](../threadlight-local-test/SKILL.md)
+> wiring shape is what [`threadlight-local-test` **Pattern 0 — Quickstart**](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-local-test/SKILL.md)
 > runs locally against a designed PoC — so the prompt context the local
 > demo agent sees is identical to what ships to Foundry.
 

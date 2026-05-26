@@ -906,12 +906,12 @@ Tool naming: verb_noun snake_case, prefixed by modality
 
 | Skill | Use When |
 |-------|----------|
-| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 7b — the input contract |
-| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 (Module Composer) wires the Bicep modules this skill selects |
+| [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 7b — the input contract |
+| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 (Module Composer) wires the Bicep modules this skill selects |
 | [**azd-patterns**](../azd-patterns/) | Owns the Bicep module shapes (`vision.bicep`, `doc-intel.bicep`, `speech.bicep`) |
 | [**foundry-iq**](../foundry-iq/) | Pairs with this skill: extract structured text from docs (this skill) → index it for retrieval (foundry-iq) |
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | If the vision / doc / speech tool needs to wrap a mocked external system |
-| [**threadlight-demo-data-factory**](../threadlight-demo-data-factory/) | Generates the sample images / docs / audio for the demo |
+| [**threadlight-demo-data-factory**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-demo-data-factory/) | Generates the sample images / docs / audio for the demo |
 | [**foundry-evals**](../foundry-evals/) | Evaluates per-tool accuracy (extraction precision, vision-score correlation, transcription WER) |
 
 ---

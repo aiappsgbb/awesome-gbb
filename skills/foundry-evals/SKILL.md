@@ -493,7 +493,7 @@ Capture the agent's tool transcript during Phase 1 invoke and emit it
 on every row:
 
 > **Tip — bootstrap your eval set from local-test transcripts.**
-> [`threadlight-local-test` **Pattern 0**](../threadlight-local-test/SKILL.md)
+> [`threadlight-local-test` **Pattern 0**](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-local-test/SKILL.md)
 > can append every Quickstart chat turn to `tests/quickstart.jsonl` —
 > exactly the schema this skill consumes. Run a few local demos, then
 > promote the JSONL into your Foundry eval dataset without reshaping.
@@ -1252,8 +1252,8 @@ code change.
 
 | Skill | Use When |
 |-------|----------|
-| [**threadlight-design**](../threadlight-design/) | Generates SPEC.md § 9 KPI table — the input contract for the continuous loop |
-| [**threadlight-deploy**](../threadlight-deploy/) | Phase 6 wires the Plan-A `EvaluationRule` and (when needed) Plan-B `kpi-workbook.bicep` + `alerts.bicep` if SPEC § 9 has KPIs |
-| [**threadlight-event-triggers**](../threadlight-event-triggers/) | Owns the `aca-job-cron` scaffold the **Plan B** loop runs on |
-| [**threadlight-hitl-patterns**](../threadlight-hitl-patterns/) | Writes the `case_audit` records the **Plan B** loop reads for custom KPI computation |
+| [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 9 KPI table — the input contract for the continuous loop |
+| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 wires the Plan-A `EvaluationRule` and (when needed) Plan-B `kpi-workbook.bicep` + `alerts.bicep` if SPEC § 9 has KPIs |
+| [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the `aca-job-cron` scaffold the **Plan B** loop runs on |
+| [**threadlight-hitl-patterns**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns/) | Writes the `case_audit` records the **Plan B** loop reads for custom KPI computation |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | App Insights connection on Foundry account is prerequisite for both plans |

@@ -120,7 +120,7 @@ you've mistaken the problem for an AGT one:
 | Network isolation (private endpoints, VNet, capability host) | [`foundry-vnet-deploy`](../foundry-vnet-deploy/SKILL.md) | Different layer entirely — network plane, not policy plane. |
 | Eval scoring (task adherence, intent resolution, custom judges) | [`foundry-evals`](../foundry-evals/SKILL.md) | AGT's PromptDefense covers **adversarial** regression; `foundry-evals` covers **quality** regression. Run both. |
 | Telemetry plumbing (App Insights, OTel exporters) | [`foundry-observability`](../foundry-observability/SKILL.md) | AGT **emits** CloudEvents; the observability skill **owns** the pipe they flow through. |
-| Authoring or deploying the Foundry agent itself | [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md), [`threadlight-deploy`](../threadlight-deploy/SKILL.md) | AGT plugs **into** the agent runtime. It does not provision, deploy, or version your agent. |
+| Authoring or deploying the Foundry agent itself | [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md), [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-deploy/SKILL.md) | AGT plugs **into** the agent runtime. It does not provision, deploy, or version your agent. |
 | Vector store / RAG / retrieval | [`foundry-iq`](../foundry-iq/SKILL.md) | AGT has no embeddings story — that's not its layer. |
 
 ---
@@ -164,7 +164,7 @@ add tools or graduate from pilot.
 | **Solution architect** sizing a customer pilot | "Where does this sit; what does it own; how does it compose with APIM/VNet/Content Safety?" | "Why this matters" + "What AGT isn't" tables above; `Capability ↔ GBB scenario map` below |
 | **Compliance / SME** doing a risk review | "What does it certify, and is the evidence machine-checkable?" | `agt verify --evidence ... --strict` (CI-gateable) + the [OWASP-COMPLIANCE.md](https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md) coverage matrix; pair with this skill's "CI gating" section |
 | **Seller** building a demo | "Give me one slide and one demo step" | "Why this matters" 26.67 % vs 0.00 % stat (one slide); `python examples/quickstart/govern_in_60_seconds.py` (one demo step — 5 actions, 3 deny / 2 allow, 0.002 ms avg); follow with `agt verify` showing 10/10 OWASP ASI 2026 PASSED |
-| **Pilot lead** on a threadlight engagement | "Where in the pipeline does this hook?" | Path A wires into [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) (deploy time, via [`threadlight-deploy`](../threadlight-deploy/SKILL.md)); `agt verify --strict` becomes a [`threadlight-safe-check`](../threadlight-safe-check/SKILL.md) gate before the demo |
+| **Pilot lead** on a threadlight engagement | "Where in the pipeline does this hook?" | Path A wires into [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) (deploy time, via [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-deploy/SKILL.md)); `agt verify --strict` becomes a [`threadlight-safe-check`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-safe-check/SKILL.md) gate before the demo |
 
 ---
 
@@ -385,7 +385,7 @@ if OWASP ASI 2026 coverage drops below 10/10:
 Pair with `agt red-team scan ...` for prompt-injection regression — see
 upstream `docs/red-team.md`.
 
-Cross-link [`threadlight-safe-check`](../threadlight-safe-check/SKILL.md)
+Cross-link [`threadlight-safe-check`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-safe-check/SKILL.md)
 in your safe-check stage docs (NOT in this PR; deferred to follow-up
 cross-skill bumps).
 
@@ -481,7 +481,7 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
 
 - [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) — primary
   consumer of Path A
-- [`threadlight-deploy`](../threadlight-deploy/SKILL.md) — deploy stage
+- [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-deploy/SKILL.md) — deploy stage
   that wires AGT middleware into hosted agents
 - [`citadel-spoke-onboarding`](../citadel-spoke-onboarding/SKILL.md) —
   pairs with Path C
@@ -493,7 +493,7 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
   the App Insights connection that `AuditLog.export_cloudevents()` exports to
 - [`azd-patterns`](../azd-patterns/SKILL.md) — owner of the Bicep module
   library Path B composes with
-- [`threadlight-safe-check`](../threadlight-safe-check/SKILL.md) — owner
+- [`threadlight-safe-check`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-safe-check/SKILL.md) — owner
   of the pre-deploy CI gate
 
 > Cross-skill `See Also` pointers from those skills back to `foundry-agt`

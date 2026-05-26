@@ -55,7 +55,7 @@ when a contribution should be considered.
 | [`microsoft-foundry`](../microsoft-foundry/) | Foundry project's AppIn + LAW are wired as connectors; SRE Agent investigates hosted-agent issues |
 | [`foundry-hosted-agents`](../foundry-hosted-agents/) | `gbb-foundry` plugin encodes KIs from the hosted-agents skill |
 | [`ghcp-hosted-agents`](../ghcp-hosted-agents/) | Same — `byok_401_debug_expert` is the canonical fix for KI-001 |
-| [`threadlight-deploy`](../threadlight-deploy/) | Threadlight pilots set `SRE_AGENT_WEBHOOK_URL` on every ACA app; exceptions POST to the SRE Agent's HTTP trigger |
+| [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Threadlight pilots set `SRE_AGENT_WEBHOOK_URL` on every ACA app; exceptions POST to the SRE Agent's HTTP trigger |
 | [`foundry-observability`](../foundry-observability/) | SRE Agent's AppIn connector points at the same AppIn that `foundry-observability` Bicep produces |
 
 ## Cost notes
