@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide
@@ -354,8 +354,8 @@ token fresh on every transport-level request (avoiding the static-headers
 import os
 import httpx
 from agent_framework import MCPStreamableHTTPTool
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.hosted import ResponsesHostServer
+from agent_framework.openai import OpenAIChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 # --- httpx.Auth subclass that mints a fresh AAD bearer per request ---
@@ -394,9 +394,9 @@ mcp_tool = ToolboxMCPTool(
     request_timeout=120,
 )
 
-chat_client = AzureOpenAIChatClient(
-    endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-    deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+chat_client = OpenAIChatClient(
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
     credential=credential,
 )
 

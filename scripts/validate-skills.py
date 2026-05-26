@@ -70,6 +70,10 @@ DEPRECATED_API_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
      re.compile(r"\bfetch_toolbox\s*\(")),
     ("MAF removed constructor `SkillsProvider(skill_paths=...)` (removed 1.4.0)",
      re.compile(r"SkillsProvider\s*\(\s*skill_paths\s*=")),
+    ("MAF removed `AzureOpenAIChatClient` from `agent_framework.azure` (removed 1.4.0)",
+     re.compile(r"from\s+agent_framework\.azure\s+import\s+AzureOpenAIChatClient")),
+    ("MAF removed `agent_framework.hosted` module — use `agent_framework_foundry_hosting` (removed 1.4.0)",
+     re.compile(r"from\s+agent_framework\.hosted\s+import")),
 ]
 
 # Regex to extract fenced code blocks from markdown
@@ -152,10 +156,17 @@ def validate_skill_md(path: pathlib.Path) -> list[str]:
 
     # Check for deprecated APIs inside fenced code blocks only.
     # Prose mentions (deprecation notices, troubleshooting) are fine.
-    code_blocks = "\n".join(_CODE_BLOCK_RE.findall(body))
-    if code_blocks:
+    # Skip code blocks that contain '# OLD' or 'REMOVED' comments —
+    # these are migration guides showing what NOT to do.
+    code_blocks_raw = _CODE_BLOCK_RE.findall(body)
+    active_blocks = [
+        cb for cb in code_blocks_raw
+        if not re.search(r"#\s*OLD|REMOVED|deprecated", cb, re.IGNORECASE)
+    ]
+    active_code = "\n".join(active_blocks)
+    if active_code:
         for label, pattern in DEPRECATED_API_PATTERNS:
-            for match in pattern.finditer(code_blocks):
+            for match in pattern.finditer(active_code):
                 errors.append(
                     f"{path}: deprecated API in code block ({label}): "
                     f"`{match.group(0).strip()}`"
