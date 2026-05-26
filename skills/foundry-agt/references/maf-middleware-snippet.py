@@ -29,7 +29,7 @@ def build_governed_agent(
     *,
     name: str,
     instructions: str,
-    chat_client,                                  # your AzureOpenAIChatClient / FoundryChatClient / ...
+    chat_client,                                  # your OpenAIChatClient / FoundryChatClient / ...
     policy_dir: str | Path = "policies",
     allowed_tools: list[str] | None = None,
     denied_tools: list[str] | None = None,
@@ -93,8 +93,8 @@ def build_governed_agent(
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     # Replace with your project's Foundry chat client, e.g.:
-    #   from agent_framework.azure import AzureOpenAIChatClient
-    #   chat_client = AzureOpenAIChatClient(...)
+    #   from agent_framework.openai import OpenAIChatClient
+    #   chat_client = OpenAIChatClient(azure_endpoint=..., model=..., credential=...)
     raise SystemExit(
         "This file is a snippet, not a runnable demo. "
         "Drop build_governed_agent into your hosted-agent module "

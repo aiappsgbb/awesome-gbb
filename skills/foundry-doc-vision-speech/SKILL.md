@@ -11,7 +11,7 @@ description: >
   DO NOT USE FOR: deploying the agent itself (use threadlight-deploy), MCP server
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq).
 metadata:
-  version: "1.1.2"
+  version: "1.2.0"
 ---
 
 # Foundry Doc / Vision / Speech
@@ -216,31 +216,31 @@ May 2026 — these WILL bite if ignored):
 | Tool name not found / GHCP error | Foundry returns `{server_label}.{tool_name}`; GHCP rejects dots | GHCP: use the bridge that swaps `.` → `_`. MAF: use the dotted name as-is |
 | Custom env var silently overwritten | Platform reserves `FOUNDRY_*` prefix | Rename your env vars (e.g. `TOOLBOX_MCP_ENDPOINT`, NOT `FOUNDRY_TOOLBOX_ENDPOINT`) |
 
-### Pattern 0b — Native (MAF-only, **EXPERIMENTAL — verify before shipping**)
+### Pattern 0b — Native MAF (`MCPStreamableHTTPTool`)
 
-Pass the toolbox object directly as `tools=` to a MAF `FoundryChatClient`
-or attach it server-side to a `FoundryAgent` in the Foundry portal. This
-path is cleaner code-wise but:
+Use `MCPStreamableHTTPTool` to connect a MAF agent directly to the
+toolbox MCP endpoint. This replaces the removed `client.get_toolbox()`
+convenience helper (removed in MAF 1.3.0).
 
 - **GHCP SDK does NOT support this** — use Pattern 0a with the bridge instead
-- **MAF support is preview** — `agent-framework-foundry` Toolbox APIs are
-  flagged experimental; surface may change between releases
-- **Behaviour drift between native and MCP** has been observed in preview
-  builds — always smoke-test the agent before declaring the pilot ready
-
-If you're on MAF and want to try it:
+- The `allowed_tools` parameter filters to specific tools from the toolbox
 
 ```python
-# MAF only — preview, verify in your env before committing
-from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, select_toolbox_tools
+# MAF 1.3.0+ — MCPStreamableHTTPTool replaces the removed get_toolbox()
+import os
+from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 async with AzureCliCredential() as credential:
     client = FoundryChatClient(credential=credential)
-    toolbox = await client.get_toolbox("vision_doc_speech_toolbox", version="v3")
-    tools = select_toolbox_tools(toolbox, include_names=["azure_speech", "document_intelligence"])
-    async with Agent(client=client, name="ClaimsIntake", tools=tools) as agent:
+    toolbox_tool = MCPStreamableHTTPTool(
+        url=os.environ["TOOLBOX_MCP_ENDPOINT"],
+        load_prompts=False,
+        headers={"Foundry-Features": "Toolboxes=V1Preview"},
+        allowed_tools=["azure_speech", "document_intelligence"],
+    )
+    async with Agent(client=client, name="ClaimsIntake", tools=[toolbox_tool]) as agent:
         result = await agent.run("Transcribe and extract claim details.")
 ```
 

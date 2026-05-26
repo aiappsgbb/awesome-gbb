@@ -58,6 +58,27 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("personal repo name `ricchi`", re.compile(r"\bricchi/[A-Za-z0-9_.-]+\b")),
 ]
 
+# Deprecated API patterns — checked only inside fenced code blocks.
+# These catch stale code samples that reference APIs removed from upstream SDKs.
+# Prose mentions (deprecation notices, troubleshooting tables) are fine and excluded.
+DEPRECATED_API_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("MAF removed API `client.get_toolbox()` (removed 1.3.0)",
+     re.compile(r"client\.get_toolbox\s*\(")),
+    ("MAF removed API `select_toolbox_tools` (removed 1.3.0)",
+     re.compile(r"\bselect_toolbox_tools\s*\(")),
+    ("MAF removed API `fetch_toolbox` (removed 1.3.0)",
+     re.compile(r"\bfetch_toolbox\s*\(")),
+    ("MAF removed constructor `SkillsProvider(skill_paths=...)` (removed 1.4.0)",
+     re.compile(r"SkillsProvider\s*\(\s*skill_paths\s*=")),
+    ("MAF removed `AzureOpenAIChatClient` from `agent_framework.azure` (removed 1.4.0)",
+     re.compile(r"from\s+agent_framework\.azure\s+import\s+AzureOpenAIChatClient")),
+    ("MAF removed `agent_framework.hosted` module — use `agent_framework_foundry_hosting` (removed 1.4.0)",
+     re.compile(r"from\s+agent_framework\.hosted\s+import")),
+]
+
+# Regex to extract fenced code blocks from markdown
+_CODE_BLOCK_RE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+
 
 class ValidationError(Exception):
     pass
@@ -132,6 +153,24 @@ def validate_skill_md(path: pathlib.Path) -> list[str]:
                 f"{path}: forbidden string detected ({label}): "
                 f"`{match.group(0)}` at offset {match.start()}"
             )
+
+    # Check for deprecated APIs inside fenced code blocks only.
+    # Prose mentions (deprecation notices, troubleshooting) are fine.
+    # Skip code blocks that contain '# OLD' or 'REMOVED' comments —
+    # these are migration guides showing what NOT to do.
+    code_blocks_raw = _CODE_BLOCK_RE.findall(body)
+    active_blocks = [
+        cb for cb in code_blocks_raw
+        if not re.search(r"#\s*OLD|REMOVED|deprecated", cb, re.IGNORECASE)
+    ]
+    active_code = "\n".join(active_blocks)
+    if active_code:
+        for label, pattern in DEPRECATED_API_PATTERNS:
+            for match in pattern.finditer(active_code):
+                errors.append(
+                    f"{path}: deprecated API in code block ({label}): "
+                    f"`{match.group(0).strip()}`"
+                )
 
     return errors
 

@@ -12,14 +12,14 @@ description: >
   `{{ param }}` secrets.
   USE FOR: foundry toolbox, toolbox MCP endpoint, Foundry-Features
   Toolboxes V1Preview, kind toolbox agent.yaml, project_connection_id,
-  toolbox version promote, multi-tool MCP endpoint, client.get_toolbox,
+  toolbox version promote, multi-tool MCP endpoint, MCPStreamableHTTPTool,
   AzureAIProjectToolbox.
   DO NOT USE FOR: building MCP servers (use foundry-mcp-aca), KB-only
   RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.2.1"
+  version: "1.4.0"
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide
@@ -354,8 +354,8 @@ token fresh on every transport-level request (avoiding the static-headers
 import os
 import httpx
 from agent_framework import MCPStreamableHTTPTool
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.hosted import ResponsesHostServer
+from agent_framework.openai import OpenAIChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 # --- httpx.Auth subclass that mints a fresh AAD bearer per request ---
@@ -394,9 +394,9 @@ mcp_tool = ToolboxMCPTool(
     request_timeout=120,
 )
 
-chat_client = AzureOpenAIChatClient(
-    endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-    deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+chat_client = OpenAIChatClient(
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+    model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
     credential=credential,
 )
 
@@ -408,21 +408,21 @@ agent = chat_client.as_agent(
 ResponsesHostServer(agent).run()
 ```
 
-### Pattern B — MAF convenience helper (`client.get_toolbox()`)
+### Pattern B — ~~MAF convenience helper~~ **REMOVED in MAF 1.3.0**
 
-When the hosted-agents-vnext-private-preview helper API is available
-(`agent-framework-hosted` 1.3.0+), there's a one-line convenience that
-wraps the four traps for you:
-
-```python
-toolbox = await client.get_toolbox(os.environ["TOOLBOX_NAME"])
-agent = Agent(client=client, tools=[toolbox], ...)
-```
-
-Internally it does the same `MCPStreamableHTTPTool` + ping-skip +
-`load_prompts=False` + `Foundry-Features` header dance, but you don't
-have to maintain the boilerplate. Use Pattern A when you need explicit
-control (custom timeouts, additional headers, tool subset filtering).
+> **`client.get_toolbox()` and `select_toolbox_tools` were removed in
+> `agent-framework-foundry` 1.3.0** ([PR #5671](https://github.com/microsoft/agent-framework/pull/5671)).
+> The MAF team standardized on MCP for all toolbox consumption.
+> **Use Pattern A (`MCPStreamableHTTPTool`) instead.**
+>
+> If you find old code using `client.get_toolbox()`, migrate it to
+> Pattern A — the MCP endpoint is the same one `get_toolbox()` was
+> calling under the hood.
+>
+> MAF 1.6.0 added per-tool factory methods (`get_azure_ai_search_tool`,
+> `get_sharepoint_tool`, etc.) on `FoundryChatClient` for specific
+> hosted tools — but there is no whole-toolbox convenience replacement.
+> Use `MCPStreamableHTTPTool` with `allowed_tools` for tool filtering.
 
 ### Pattern C — LangGraph
 

@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -32,7 +32,7 @@ Deploy Foundry hosted agents using the **GitHub Copilot SDK** with BYOK
 | **Per-query overhead** | Low (1-3 internal turns) | High (20-34 internal tool calls per query) |
 | **Skill discovery** | `SkillsProvider.from_paths()` (recommended) **OR** inline concat (legacy) | `SkillsProvider` (default) |
 | **Custom tools** | `@tool` decorator | Not supported (use MCP servers instead) |
-| **Toolbox** | `client.get_toolbox()` | Not directly available |
+| **Toolbox** | `MCPStreamableHTTPTool` (was `client.get_toolbox()`, removed 1.3.0) | Not directly available |
 | **Maturity** | Production-proven | Validated (identical eval scores) |
 
 **Use GHCP SDK when:**
@@ -530,7 +530,7 @@ GHCP SDK (Invocations Protocol):
 |--------|-----------|----------------|
 | Tool loop duration | <120s | >120s |
 | Custom `@tool` functions | ✅ Required | ❌ Not supported |
-| Foundry Toolbox | ✅ `client.get_toolbox()` | ❌ Not available |
+| Foundry Toolbox | ✅ `MCPStreamableHTTPTool` (was `get_toolbox()`, removed 1.3.0) | ❌ Not available |
 | Streaming output | ❌ Response only | ✅ Event stream |
 | Progressive skills | ✅ `SkillsProvider.from_paths()` (or legacy concat) | ✅ `SkillsProvider` |
 | MCP tools | `client.get_mcp_tool()` | `mcp_servers` parameter |
