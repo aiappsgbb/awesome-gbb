@@ -20,7 +20,7 @@ packages:
     upstream_changelog: https://pypi.org/project/github-copilot-sdk/#history
   - name: azure-ai-agentserver-invocations
     source: pypi
-    version: "1.0.0b3"
+    version: "1.0.0b4"
     upstream_changelog: https://pypi.org/project/azure-ai-agentserver-invocations/#history
   - name: azure-identity
     source: pypi
@@ -28,11 +28,11 @@ packages:
     upstream_changelog: https://pypi.org/project/azure-identity/#history
   - name: python-dotenv
     source: pypi
-    version: "1.0.0"
+    version: "1.2.2"
     upstream_changelog: https://pypi.org/project/python-dotenv/#history
 
 docs_to_revalidate:
-  - https://learn.microsoft.com/azure/foundry/agents/how-to/develop/copilot-agent
+  - https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/publish-copilot
   - https://pypi.org/project/github-copilot-sdk/
   - https://pypi.org/project/azure-ai-agentserver-invocations/
   - https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/bring-your-own/invocations/github-copilot
@@ -108,9 +108,9 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "github-copilot-sdk~=0.3.0" \
-      "azure-ai-agentserver-invocations==1.0.0b3" \
+      "azure-ai-agentserver-invocations~=1.0.0b4" \
       "azure-identity~=1.25.3" \
-      "python-dotenv~=1.0.0"
+      "python-dotenv~=1.2.2"
     python -c "
     from copilot import CopilotClient, SubprocessConfig
     from copilot.session import PermissionHandler, ProviderConfig
@@ -137,8 +137,8 @@ validation:
     - "ok ProviderConfig type=azure accepted"
     - "ok CopilotClient(auto_start=False)"
 
-last_validated: 2026-05-17
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 5
 ---
 
