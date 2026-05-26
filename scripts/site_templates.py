@@ -503,6 +503,7 @@ _LAYOUT = '''<!doctype html>
       <a href="{base}/skills/"{a_skills}>Skills</a>
       <a href="{base}/plugins/"{a_plugins}>Plugins</a>
       <a href="{base}/threadlight/"{a_threadlight}>Threadlight</a>
+      <a href="{base}/zava/"{a_zava}>Zava</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
     </div>
   </div>
@@ -530,7 +531,7 @@ def render_layout(
     stats: str = '',
 ) -> str:
     """Render the full HTML document with nav, body, and footer."""
-    active = {'home': '', 'skills': '', 'plugins': '', 'threadlight': ''}
+    active = {'home': '', 'skills': '', 'plugins': '', 'threadlight': '', 'zava': ''}
     if active_nav in active:
         active[active_nav] = ' class="active"'
     return _LAYOUT.format(
@@ -542,6 +543,7 @@ def render_layout(
         a_skills=active['skills'],
         a_plugins=active['plugins'],
         a_threadlight=active['threadlight'],
+        a_zava=active['zava'],
         sha=html.escape(sha or 'dev'),
         date=html.escape(date or ''),
         stats=html.escape(stats or ''),
@@ -601,6 +603,14 @@ _ICON_THREAD = (
     'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     '<path d="M3 12c4-6 14-6 18 0-4 6-14 6-18 0Z"/>'
     '<circle cx="12" cy="12" r="2.5"/>'
+    '</svg>'
+)
+_ICON_ZAVA = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="3" y="3" width="18" height="18" rx="3"/>'
+    '<path d="M8 8h8M8 12h8M8 16h4"/>'
+    '<circle cx="17" cy="16" r="2"/>'
     '</svg>'
 )
 _ICON_DOCS = (
@@ -667,6 +677,13 @@ def render_home(
             'bundles eight skills into a single working session. '
             'Live preview now online — preconfigured demos coming soon.',
             count='live preview',
+        ),
+        _browse_card(
+            f'{SITE_BASE}/zava/', _ICON_ZAVA, 'Zava',
+            'Digital-clone workspaces — name a company, the coding agent '
+            'profiles the org, forks a branded substrate, and deploys a '
+            'control-plane dashboard to Azure.',
+            count='experience',
         ),
     ]
 
