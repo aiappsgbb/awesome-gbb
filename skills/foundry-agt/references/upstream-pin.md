@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-governance-toolkit
   ref: main
-  pinned_sha: 8c4692cf0000000000000000000000000000000a
+  pinned_sha: 279db99f1909ae78b69851f6893a6a6b3b631461
   pinned_commit_message: |
     AGT 3.6.0 release — meta-package + 6 sub-packages
   license: MIT
@@ -20,13 +20,13 @@ upstream:
 packages:
   - name: agent-governance-toolkit
     source: pypi
-    version: "3.6.0"
+    version: "3.7.0"
     upstream_changelog: https://github.com/microsoft/agent-governance-toolkit/releases
     notes: |
       Meta-package; install with `[full]` extra to pull all 6 sub-packages.
   - name: agent-framework
     source: pypi
-    version: "1.3.0"
+    version: "1.6.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Required for the in-process middleware integration path.
@@ -37,7 +37,7 @@ docs_to_revalidate:
   - https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/quickstart.md
   - https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/deployment/azure-foundry-agent-service.md
   - https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/deployment/azure-container-apps.md
-  - https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md
+  - https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/compliance/owasp-agentic-top10-architecture.md
   - https://pypi.org/project/agent-governance-toolkit/
   - https://pypi.org/project/agent-framework/
 
@@ -50,13 +50,13 @@ known_issues:
   - id: KI-002
     description: Upstream Foundry deployment doc shows stale middleware kwargs
     upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/2
-    status: open
-    workaround_location: SKILL.md § "Known Issues" item 2
+    status: closed_upstream_fixed
+    workaround_location: removed from SKILL.md in v1.0.4
   - id: KI-003
     description: agent_framework.Agent ctor takes `client`, not `chat_client`
     upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/3
-    status: open
-    workaround_location: SKILL.md § "Known Issues" item 3
+    status: closed_upstream_fixed
+    workaround_location: removed from SKILL.md in v1.0.4
 
 validation:
   requires:
@@ -68,7 +68,7 @@ validation:
     export PYTHONUTF8=1
     python -m venv .venv-agt
     . .venv-agt/bin/activate
-    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-3.6.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.3.0}"
+    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-3.7.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.6.0}"
     agt --version
     agt doctor
     agt verify
@@ -77,8 +77,8 @@ validation:
     - "OWASP ASI 2026"
     - "factory ok"
 
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 3
 ---
 

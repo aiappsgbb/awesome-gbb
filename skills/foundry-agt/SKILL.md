@@ -8,8 +8,7 @@ description: >
   Windows + Py 3.13 + AGT 3.6.0) or ACA sidecar. Ships 3 starter policies
   (default / HITL gate / PII deny), working create_governance_middleware
   snippet, ACA sidecar Bicep, and field-tested Known Issues (Windows UTF-8
-  CLI trap, stale upstream Foundry-doc kwargs, Agent ctor rename, rogue
-  detection setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
+  CLI trap, rogue detection setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
   policy enforcement, capability guard, audit trail, OWASP ASI 2026, MAF
   middleware, MCP scanner, PromptDefense, Citadel adapter, agt verify, agt
   doctor, agt red-team. DO NOT USE FOR: Foundry agent deployment (use
@@ -17,7 +16,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.0.3"
+  version: "1.0.4"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -162,7 +161,7 @@ add tools or graduate from pilot.
 |---|---|---|
 | **Engineer** wiring a Foundry hosted agent | "Show me the working snippet" | [`references/maf-middleware-snippet.py`](references/maf-middleware-snippet.py) — 90-line factory you drop into your agent module |
 | **Solution architect** sizing a customer pilot | "Where does this sit; what does it own; how does it compose with APIM/VNet/Content Safety?" | "Why this matters" + "What AGT isn't" tables above; `Capability ↔ GBB scenario map` below |
-| **Compliance / SME** doing a risk review | "What does it certify, and is the evidence machine-checkable?" | `agt verify --evidence ... --strict` (CI-gateable) + the [OWASP-COMPLIANCE.md](https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md) coverage matrix; pair with this skill's "CI gating" section |
+| **Compliance / SME** doing a risk review | "What does it certify, and is the evidence machine-checkable?" | `agt verify --evidence ... --strict` (CI-gateable) + the [OWASP-COMPLIANCE.md](https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/compliance/owasp-agentic-top10-architecture.md) coverage matrix; pair with this skill's "CI gating" section |
 | **Seller** building a demo | "Give me one slide and one demo step" | "Why this matters" 26.67 % vs 0.00 % stat (one slide); `python examples/quickstart/govern_in_60_seconds.py` (one demo step — 5 actions, 3 deny / 2 allow, 0.002 ms avg); follow with `agt verify` showing 10/10 OWASP ASI 2026 PASSED |
 | **Pilot lead** on a threadlight engagement | "Where in the pipeline does this hook?" | Path A wires into [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) (deploy time, via [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-deploy/SKILL.md)); `agt verify --strict` becomes a [`threadlight-safe-check`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-safe-check/SKILL.md) gate before the demo |
 
@@ -176,7 +175,7 @@ add tools or graduate from pilot.
 - Docs site: <https://microsoft.github.io/agent-governance-toolkit>
 - Quickstart: <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/quickstart.md>
 - MAF adapter source: <https://github.com/microsoft/agent-governance-toolkit/tree/main/agent-governance-python/agent-os/src/agent_os/integrations>
-- OWASP coverage: <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md>
+- OWASP coverage: <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/compliance/owasp-agentic-top10-architecture.md>
 - Benchmarks (the 26.67 % vs 0.00 % numbers): <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/BENCHMARKS.md>
 
 This skill is a **thin wrapper** — it adds the GBB-specific scenario map,
@@ -276,7 +275,7 @@ This is the path for every Foundry hosted agent. Latency overhead is
 1. **AuditTrailMiddleware** — every action → hash-chained audit log
 2. **GovernancePolicyMiddleware** — YAML policies → ALLOW / DENY decisions
 3. **CapabilityGuardMiddleware** — explicit allow/deny lists for tool calls
-4. **RogueDetectionMiddleware** — capability-profile drift detection (off by default — see Known Issue #4)
+4. **RogueDetectionMiddleware** — capability-profile drift detection (off by default — see Known Issue #2)
 
 ### Wiring snippet
 
@@ -285,14 +284,10 @@ The **working** snippet — verified end-to-end against AGT 3.6.0 + MAF 1.3.0
 Drop the `build_governed_agent(...)` helper into your hosted-agent module
 and pass it the `FoundryChatClient` your azd-deployed project provides.
 
-> **Why a snippet, not just a docs link?** Upstream's
-> `docs/deployment/azure-foundry-agent-service.md` page documents
-> manual middleware construction with kwargs that **no longer exist**
-> in 3.6.0 (`AuditTrailMiddleware(log_directory=…)`,
-> `GovernancePolicyMiddleware(policy_directory=…, max_tokens_per_turn=…)`,
-> `RogueDetectionMiddleware(risk_threshold=…)`). Use the
-> `create_governance_middleware(...)` factory; the snippet here does
-> exactly that. See Known Issue #2.
+> **Why a snippet, not just a docs link?** The
+> `create_governance_middleware(...)` factory is the shortest working
+> Foundry-hosted integration path; the local snippet shows the exact
+> pattern to drop into a hosted-agent module.
 
 ### Policy YAML
 
@@ -452,25 +447,12 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
    host. Set `PYTHONUTF8=1` (and `[Console]::OutputEncoding`) per shell;
    bake into CI runners. Will hit ~every Windows GBB user.
 
-2. **Upstream Foundry deployment doc has stale middleware kwargs** —
-   `docs/deployment/azure-foundry-agent-service.md` shows
-   `AuditTrailMiddleware(log_directory=…)`,
-   `GovernancePolicyMiddleware(policy_directory=…, max_tokens_per_turn=…)`,
-   `RogueDetectionMiddleware(risk_threshold=…)` — **none of these kwargs
-   exist in 3.6.0**. Use `create_governance_middleware(...)`; the skill's
-   snippet does the right thing.
-
-3. **`agent_framework.Agent` ctor takes `client`, not `chat_client`** —
-   first positional. Some upstream snippets still show the old name and
-   raise `TypeError: Agent.__init__() got an unexpected keyword argument
-   'chat_client'`.
-
-4. **`RogueDetectionMiddleware` requires a capability profile** — the
+2. **`RogueDetectionMiddleware` requires a capability profile** — the
    factory's `enable_rogue_detection=True` will raise unless you also
    supply a `RogueAgentDetector` and a `capability_profile`. Default to
    `False` for first-pass; revisit after baselining.
 
-5. **Verifier version skew is cosmetic** — `agt verify` reports
+3. **Verifier version skew is cosmetic** — `agt verify` reports
    `Toolkit: 3.2.2` while the meta-package is `3.6.0`. Verifier carries
    its own compliance schema version; OWASP ASI coverage check still
    passes 10/10.
@@ -507,7 +489,7 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
 - Repo (canonical): <https://github.com/microsoft/agent-governance-toolkit>
 - Docs site: <https://microsoft.github.io/agent-governance-toolkit>
 - Quickstart: <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/quickstart.md>
-- Foundry deployment guide (read with Known Issue #2 in mind):
+- Foundry deployment guide:
   <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/deployment/azure-foundry-agent-service.md>
 - ACA deployment guide:
   <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/deployment/azure-container-apps.md>
@@ -518,7 +500,7 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
 - Quickstart examples:
   <https://github.com/microsoft/agent-governance-toolkit/tree/main/examples/quickstart>
 - OWASP compliance evidence:
-  <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/OWASP-COMPLIANCE.md>
+  <https://github.com/microsoft/agent-governance-toolkit/blob/main/docs/compliance/owasp-agentic-top10-architecture.md>
 - PyPI: <https://pypi.org/project/agent-governance-toolkit/>
 - agent-framework PyPI: <https://pypi.org/project/agent-framework/>
 - Benchmarks (the 26.67 % vs 0.00 % red-team numbers):
