@@ -62,7 +62,6 @@ CATEGORIES: dict[str, list[str]] = {
     '🛠️ Cross-Cutting Helpers': [
         'azd-patterns', 'azure-tenant-isolation', 'gbb-humanizer',
         'ghcp-cli-config', 'paygo-ptu-cost-analyzer',
-        'lean-seller-guide', 'lean-safe-check',
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',

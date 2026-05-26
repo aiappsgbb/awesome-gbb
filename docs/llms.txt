@@ -38,8 +38,6 @@
 - [gbb-humanizer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-humanizer/SKILL.md): Remove signs of AI-generated writing from prose.
 - [ghcp-cli-config](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-cli-config/SKILL.md): Bootstrap GitHub Copilot CLI for GBB workflows: 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), settings.json baseline (model, sessionSync,…
 - [paygo-ptu-cost-analyzer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/paygo-ptu-cost-analyzer/SKILL.md): Headless Azure OpenAI PAYGO-vs-PTU cost analysis and sizing report.
-- [lean-seller-guide](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/lean-seller-guide/SKILL.md): Full seller enablement kit for lean toolkit (Spec2Cloud) solutions — cinematic HTML demo deck (10+ slides, keyboard-paced, speaker notes), threadlight-grade seller prep guide…
-- [lean-safe-check](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/lean-safe-check/SKILL.md): Three-phase completeness gate for lean toolkit (Spec2Cloud) solutions.
 
 ### 🛡️ Governance
 
