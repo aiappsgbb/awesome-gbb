@@ -691,6 +691,63 @@ hooks:
 
 ---
 
+## `azd env set` + JSON arrays/objects: use `.bicepparam`, not JSON parameters
+
+**Don't put JSON arrays or objects through `azd env set`.** The CLI
+re-escapes the value on every read/write of `.azure/<env>/.env`, so a
+clean PUT like:
+
+```bash
+azd env set AI_PROJECT_DEPLOYMENTS '[{"name":"gpt-5.4-mini","model":{"name":"gpt-5.4-mini","format":"OpenAI","version":"2026-03-17"},"sku":{"name":"GlobalStandard","capacity":100}}]'
+```
+
+lands in `.env` as triple-escaped JSON (`[{\\\"name\\\":\\\"gpt-5.4-mini\\\",…}]`)
+and fails to round-trip through `azd env get-value`, through
+`main.parameters.json` `${VAR}` substitution, and through Bicep's
+`json()` function. Provisioning fails with
+`invalid character '\\' looking for beginning of object key string`
+or `invalid character '$' looking for beginning of value`. Verified on
+`azd 1.25.0` (May 2026 fruocco pilot).
+
+**Workaround: use a `.bicepparam` file** (`infra/main.bicepparam`) and
+either (a) hard-code the array literal in Bicep syntax when the value is
+a spec-level decision, or (b) read structured env vars via
+`readEnvironmentVariable(…)` paired with `json(…)` for things that must
+be runtime-configurable.
+
+```bicep
+// infra/main.bicepparam — Bicep parameters file (preferred over JSON for arrays/objects)
+using './main.bicep'
+
+param environmentName = readEnvironmentVariable('AZURE_ENV_NAME', 'dev')
+param location = readEnvironmentVariable('AZURE_LOCATION', 'eastus2')
+
+// Option A: hard-code (recommended for spec-level decisions like model choice).
+// Avoids the round-trip entirely.
+param aiProjectDeployments = [
+  {
+    name: 'gpt-5.4-mini'
+    model: { name: 'gpt-5.4-mini', format: 'OpenAI', version: '2026-03-17' }
+    sku: { name: 'GlobalStandard', capacity: 100 }
+  }
+]
+
+// Option B: structured env (use ONLY for genuinely runtime-configurable values).
+// Set as a single-quoted JSON string in `.azure/<env>/.env` by HAND-EDITING
+// the file once (not via `azd env set`) — azd will preserve it on subsequent
+// reads, but every `azd env set` of any value re-mangles it.
+// param secondaryDeployments = json(readEnvironmentVariable('SECONDARY_DEPLOYMENTS', '[]'))
+```
+
+In `azure.yaml`'s `infra:` section, point to the `.bicepparam` file
+**instead** of the `.json` parameters file (azd accepts either when
+present at the standard location).
+
+**Plain string/bool/number env vars are fine to use with `azd env set`** —
+the bug is array/object-typed values only.
+
+---
+
 ## Composable Bicep Module Library
 
 `threadlight-deploy` Phase 6 (Module Composer) reads SPEC § 11c and includes

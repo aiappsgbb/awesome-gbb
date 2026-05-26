@@ -952,8 +952,13 @@ version conflicts.
 - **Drop** any explicit `azure-ai-agentserver-responses` line — `agent-framework-foundry-hosting`
   pins the right transitive itself; declaring it explicitly causes uv to resolve a stack that
   passes install but crashes at first invocation with opaque `server_error/model:""`.
-- **Add** explicit `mcp>=1.10.0` whenever using `MCPStreamableHTTPTool`. `agent-framework-core 1.4.0`
-  does NOT auto-pull it.
+- **Add** explicit `mcp>=1.10.0` — **mandatory**, not conditional. `agent_framework_foundry_hosting._responses`
+  imports `from mcp import McpError` unconditionally (module-level), so the container crashes
+  at startup with `ModuleNotFoundError: No module named 'mcp'` even when the agent uses no MCP
+  tools. The platform surfaces this as `session_not_ready` after a ~60 s timeout (not as an
+  import error), so the diagnosis cost is high — pin `mcp>=1.10.0` in **every** hosted-agent
+  `pyproject.toml`. Verified on `agent-framework-foundry-hosting==1.0.0a260521`
+  (May 2026, fruocco pilot).
 - **Include** `[tool.setuptools] packages = []` for clean uv resolution.
 
 **`prerelease = "if-necessary-or-explicit"` is correct** — packages with explicit
@@ -967,7 +972,7 @@ stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 | `agent-framework-core` | 1.6.0 | ✅ Stable | pydantic, opentelemetry-api (instrumentation enabled by default) |
 | `agent-framework-foundry` | 1.6.0 | ✅ Stable | core, openai, azure-ai-projects |
 | `agent-framework-foundry-hosting` | 1.0.0a260521 | ⚠️ Alpha | agentserver-core==2.0.0b4, agentserver-responses==1.0.0b6. **agentserver-core** pulls **microsoft-opentelemetry>=1.0.0** (resolves to 1.1.0, bundles all OTel instrumentors + exporters) |
-| `mcp` | ≥1.10.0 | ✅ Stable | Required by MCPStreamableHTTPTool — NOT auto-pulled by core 1.6.0 |
+| `mcp` | ≥1.10.0 | ✅ Stable | **Required by every hosted agent** — `agent_framework_foundry_hosting._responses` imports `from mcp import McpError` unconditionally, even when no MCP tools are used. Not auto-pulled by core 1.6.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
 No `override-dependencies` needed — the hosting package pins its own transitive deps.
@@ -1090,6 +1095,31 @@ Verify with: `az cognitiveservices account list-models --resource-group <rg> --n
 | `ENABLE_CAPABILITY_HOST` | **`false`** ⚠️ | **MUST be false.** Capability hosts were removed in refreshed preview |
 | `ENABLE_MONITORING` | `true` | Application Insights + Log Analytics |
 
+## Required `azd env` variables for the `azure.ai.agents` extension
+
+The `azd ai agent` extension reads a small set of `azd env` values before
+it will deploy a hosted agent. Wire them as `output`s from your
+`main.bicep` so `azd` populates them automatically after `azd provision`:
+
+| Env var | Source | Format | Why it's required |
+|---------|--------|--------|-------------------|
+| `AZURE_AI_PROJECT_ID` | Bicep output of the Foundry project resource ID | `/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>` | `azd deploy <hosted-agent-service>` fails with **"Microsoft Foundry project ID is required: AZURE_AI_PROJECT_ID is not set"** without it |
+| `AZURE_TENANT_ID` | constant, set with `azd env set` before provision | GUID | Required for the postdeploy hook's auto-RBAC assignment to the per-agent identities |
+| `AZURE_RESOURCE_GROUP` | Bicep output | string | Used to scope agent CLI ops |
+| `AZURE_AI_PROJECT_ENDPOINT` | Bicep output | `https://<acct>.cognitiveservices.azure.com/api/projects/<proj>` | Used by `azd ai agent invoke` and the data-plane Responses calls |
+
+Bicep `output` example:
+
+```bicep
+// main.bicep
+output AZURE_AI_PROJECT_ID string = '${foundryAccount.id}/projects/${foundryProject.name}'
+output AZURE_AI_PROJECT_ENDPOINT string = '${foundryAccount.properties.endpoint}api/projects/${foundryProject.name}'
+```
+
+`azd provision` writes these into `.azure/<env>/.env`; the extension picks
+them up on the next `azd deploy <hosted-agent-service>`. Verified gap on
+`azure.ai.agents@0.1.31-preview` (May 2026 fruocco pilot).
+
 ---
 
 ## Identity & RBAC
@@ -1157,12 +1187,40 @@ View them with `azd ai agent show`.
 | `Foundry User` (GUID `53ca6127-…`) | Foundry account | Model inference |
 | `Foundry User` (GUID `53ca6127-…`) | Foundry project | Storage, history, project-scoped APIs |
 
-**Project managed identity (system-assigned on the Foundry account):**
+**Foundry account system MI (system-assigned on `Microsoft.CognitiveServices/accounts/<name>`):**
 
 | Role | Scope | Why |
 |------|-------|-----|
 | `Foundry User` (GUID `53ca6127-…`) | Foundry account | Model inference via project endpoint |
-| `Container Registry Repository Reader` | ACR | Pull container images |
+
+**Foundry project system MI (system-assigned on `…/accounts/<name>/projects/<name>`):**
+
+| Role | Scope | Why |
+|------|-------|-----|
+| `Container Registry Repository Reader` (GUID `b93aa761-3e63-49ed-ac28-beffa264f7ac`) | ACR | **Pull the hosted-agent container image at runtime.** |
+| `AcrPull` (GUID `7f951dda-4ed3-4680-a7ca-43fe172d538d`) | ACR | Belt-and-braces — some Foundry runtimes/regions resolve via the older role |
+
+> **⚠️ Account MI ≠ Project MI.** Both the account and each project under
+> it get **separate** system-assigned managed identities. The **project**
+> MI is what pulls the agent container from ACR; granting AcrPull to the
+> account MI alone causes `[ImageError] Failed to pull container image`
+> at first invoke (`session_not_ready` after agent registration appears
+> to succeed). Verified on `eastus2` + `aif-weather-dev` + `proj-weather-dev`,
+> May 2026 fruocco pilot.
+>
+> **Look up the project MI principal id:**
+>
+> ```bash
+> az resource show \
+>   --ids "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>" \
+>   --api-version 2025-04-01-preview \
+>   --query identity.principalId -o tsv
+> ```
+>
+> (Older API versions don't include `identity` on the project child resource — `2025-04-01-preview` is the minimum.)
+>
+> **Bicep equivalent** (the project module must declare `identity: { type: 'SystemAssigned' }`,
+> then expose `principalId` as an output for the `acr.bicep` role-assignment loop to consume.)
 
 **Workload UAMI (user-assigned identity attached to companion services — agents service, ACA jobs, bot, MCP servers):**
 
@@ -1412,10 +1470,60 @@ Also: `azd ai agent monitor --session-id $SID`
 ### Useful Commands
 
 ```bash
-azd ai agent show                    # Agent status, identities, version
-azd ai agent monitor                 # Stream container logs
-azd ai agent invoke "Hello!"         # Quick test
-azd deploy <service> --no-prompt     # Redeploy without reprovisioning
+azd ai agent show                    # Agent status, identities, version, endpoints (JSON)
+azd ai agent monitor --session-id $S # Stream container logs for one session (--session-id REQUIRED)
+azd ai agent invoke "Hello!"         # Quick test (creates a new session each time unless --session-id passed)
+azd ai agent sessions                # List recent sessions
+azd deploy <service> --no-prompt     # Redeploy a service without reprovisioning
+```
+
+> **CLI shape gotchas (verified `azure.ai.agents@0.1.31-preview`, May 2026):**
+>
+> - **No `--service` flag** on `azd ai agent show / invoke / monitor` — the
+>   extension assumes one hosted-agent service per repo. If you have more
+>   than one `host: azure.ai.agent` entry in `azure.yaml`, you must `cd`
+>   into that service's directory or specify `--cwd`.
+> - **`azd ai agent monitor` requires `--session-id`** — there is no
+>   "tail-all-sessions" mode. Run `azd ai agent invoke` first (it prints
+>   the session id), then pipe it into `monitor`.
+> - **`azd ai agent invoke` only works from the azd project root** (where
+>   `azure.yaml` is). Otherwise it errors with "no project exists".
+
+#### `azd ai agent show` output shape (for postdeploy hooks)
+
+The JSON shape an automated `postdeploy` hook (e.g. one that persists the
+agent id into `azd env`) needs to parse:
+
+```json
+{
+  "object": "agent.version",
+  "id": "<service-name>:<version>",
+  "name": "<service-name>",
+  "version": "1",
+  "agent_guid": "<guid>",
+  "agent_endpoints": {
+    "responses": "https://<acct>.cognitiveservices.azure.com/api/projects/<proj>/agents/<service-name>/endpoint/protocols/openai/responses?api-version=2025-11-15-preview"
+  },
+  "instance_identity": { "principal_id": "<guid>", "client_id": "<guid>" },
+  "blueprint":        { "principal_id": "<guid>", "client_id": "<guid>" },
+  "blueprint_reference": { "type": "ManagedAgentIdentityBlueprint", "blueprint_id": "<name>-<hash>" },
+  "definition": {
+    "container_protocol_versions": [ { "protocol": "responses", "version": "1.0.0" } ],
+    "cpu": "1", "memory": "2Gi",
+    "image": "<acr>.azurecr.io/<service>/<service>-<env>:azd-deploy-<unix-ts>",
+    "kind": "hosted",
+    "environment_variables": { … }
+  },
+  "playground_url": "https://ai.azure.com/nextgen/r/…/build/agents/<service-name>/build?version=1",
+  "status": "active" | "creating" | "failed"
+}
+```
+
+Typical postdeploy snippet (persist agent id for downstream services to read):
+
+```bash
+AGENT_ID=$(azd ai agent show -o json | jq -r '.id')
+azd env set WEATHER_AGENT_ID "$AGENT_ID"
 ```
 
 ---

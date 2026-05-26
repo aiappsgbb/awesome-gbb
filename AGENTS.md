@@ -572,6 +572,25 @@ re-runs the script on the runner) and by reviewer eyeball.
 
 The first three run on every PR. The fourth runs autonomously.
 
+### 9.7 · Azure CI credentials
+
+The repo has OIDC-federated Azure credentials for CI use:
+
+| Secret | Purpose |
+|--------|---------|
+| `AZURE_CLIENT_ID` | UAMI `uami-awesome-gbb-ci` in `rg-awesome-gbb-ci` |
+| `AZURE_TENANT_ID` | `fruocco` tenant |
+| `AZURE_SUBSCRIPTION_ID` | `ME-MngEnvMCAP979166-fruocco-2` |
+
+Federated credentials cover both `pull_request` and `ref:refs/heads/main`
+triggers. Workflows use `azure/login@v2` with OIDC — no stored secrets
+or service principal passwords.
+
+Current RBAC: **Reader** on subscription (sufficient for T0–T2). When T3
+deploy-test workflows are added, grant `Contributor` + `AcrPush` +
+`Cognitive Services OpenAI User` on the CI resource group / Foundry
+project.
+
 ---
 
 ## 10 · Single plugin (`plugin.json` + marketplace.json)
