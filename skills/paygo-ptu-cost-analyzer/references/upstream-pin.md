@@ -31,27 +31,27 @@ upstream:
 packages:
   - name: pandas
     source: pypi
-    version: "~=2.2.3"
+    version: "~=3.0.3"
     upstream_changelog: https://pandas.pydata.org/docs/whatsnew/index.html
     notes: |
       Core dataframe + datetime parsing. `normalize_usage_dataframe`
       depends on `pd.to_datetime` + `pd.to_numeric` shape.
   - name: numpy
     source: pypi
-    version: "~=2.1.0"
+    version: "~=2.4.6"
     upstream_changelog: https://numpy.org/doc/stable/release.html
     notes: |
       `np.percentile`, `np.ceil`, vectorized math in run_analysis.
   - name: matplotlib
     source: pypi
-    version: "~=3.9.0"
+    version: "~=3.10.9"
     upstream_changelog: https://matplotlib.org/stable/users/release_notes.html
     notes: |
       Headless `Agg` backend (set explicitly in render_report.py before
       pyplot import — required when no DISPLAY).
   - name: azure-identity
     source: pypi
-    version: "~=1.22.0"
+    version: "~=1.25.3"
     upstream_changelog: https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/identity/azure-identity/CHANGELOG.md
     notes: |
       Only used by the `--workspace` (Log Analytics) path via
@@ -104,10 +104,10 @@ validation:
     . .venv/bin/activate
     pip install --quiet --upgrade pip
     pip install --quiet \
-      "pandas~=2.2.3" \
-      "numpy~=2.1.0" \
-      "matplotlib~=3.9.0" \
-      "azure-identity~=1.22.0" \
+      "pandas~=3.0.3" \
+      "numpy~=2.4.6" \
+      "matplotlib~=3.10.9" \
+      "azure-identity~=1.25.3" \
       "azure-monitor-query~=2.0.0"
     python - <<'PY'
     import pandas as pd
@@ -158,8 +158,8 @@ validation:
     - "AttributeError"
     - "AssertionError"
 
-last_validated: "2026-05-18"
-validated_by: ricchi
+last_validated: "2026-05-26"
+validated_by: copilot-bot
 known_issues_count: 3
 re_pin_log:
   - "2026-05-18: initial pin v1.0.0 (ricchi)"
