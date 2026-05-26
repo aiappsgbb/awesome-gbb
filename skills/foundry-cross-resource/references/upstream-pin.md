@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft-foundry/foundry-samples
   ref: main
-  pinned_sha: 72a65ff0a41f597c1fd53e9125cbc344db566617
+  pinned_sha: 6ef684d31806d22f30163aa78536f2b50af05d7c
   pinned_commit_message: |
     feat: add azure-search-rag hosted agent sample (#283)
   license: MIT
@@ -27,7 +27,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-72a65ff0a41f597c1fd53e9125cbc344db566617}"
+    PINNED_SHA="${PINNED_SHA:-6ef684d31806d22f30163aa78536f2b50af05d7c}"
     REPO_URL="https://github.com/microsoft-foundry/foundry-samples"
     REF="main"
     WORK=".upstream-pin-smoke/foundry-cross-resource"
@@ -56,8 +56,8 @@ validation:
     - "apim module contract ok"
     - "docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 0
 ---
 
