@@ -11,7 +11,7 @@ upstream:
 packages:
   - name: azure-monitor-opentelemetry
     source: pypi
-    version: "1.6.0"
+    version: "1.8.8"
     upstream_changelog: https://pypi.org/project/azure-monitor-opentelemetry/#history
     notes: |
       Single dependency recorded in SKILL.md; it transitively pins compatible opentelemetry-* packages and Azure Monitor exporters.
@@ -48,7 +48,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-monitor-opentelemetry~=1.6.0"
+    pip install --quiet "azure-monitor-opentelemetry~=1.8.8"
     python - <<'PY'
     from azure.monitor.opentelemetry import configure_azure_monitor
     print("ok foundry-observability imports")
@@ -56,8 +56,8 @@ validation:
   expected_output:
     - "ok foundry-observability imports"
 
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-26
+validated_by: copilot-bot
 known_issues_count: 1
 ---
 
