@@ -16,6 +16,11 @@ on:
       - "skills/*/references/upstream-pin.md"
       - "scripts/run-pin-validation.py"
       - ".github/workflows/pin-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "skills/*/references/upstream-pin.md"
+      - "scripts/run-pin-validation.py"
 
 permissions:
   contents: read

@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -437,6 +438,93 @@ class TestShouldRun(unittest.TestCase):
         finally:
             if old is not None:
                 os.environ["AZURE_SUBSCRIPTION_ID"] = old
+
+
+# ── Integration: run-pin-validation as subprocess ────────────────────
+
+class TestRunPinCLI(unittest.TestCase):
+    """Integration tests that invoke run-pin-validation.py as a subprocess."""
+
+    def test_help_flag(self):
+        result = subprocess.run(
+            [sys.executable, str(HERE.parent / "run-pin-validation.py"), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--all", result.stdout)
+        self.assertIn("--include-azure", result.stdout)
+        self.assertIn("--base", result.stdout)
+
+    def test_changed_only_no_changes(self):
+        """changed-only mode with HEAD as base → 0 files → fast exit."""
+        result = subprocess.run(
+            [sys.executable, str(HERE.parent / "run-pin-validation.py"),
+             "--base", "HEAD", "--skip-install"],
+            capture_output=True, text=True, timeout=15,
+            cwd=str(HERE.parent.parent),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("pin files", result.stdout)
+
+
+# ── Regex matching in expected_output ────────────────────────────────
+
+class TestRegexMatching(unittest.TestCase):
+    """Test that run_one supports regex patterns in expected_output."""
+
+    @classmethod
+    def setUpClass(cls):
+        rpv_path = HERE.parent / "run-pin-validation.py"
+        rpv_spec = importlib.util.spec_from_file_location("rpv2", rpv_path)
+        cls.rpv = importlib.util.module_from_spec(rpv_spec)
+        assert rpv_spec.loader is not None
+        rpv_spec.loader.exec_module(cls.rpv)
+
+    def test_substring_match(self):
+        pin = {
+            "validation": {
+                "script": "echo 'version 1.2.3 installed'",
+                "expected_output": ["version 1.2.3"],
+                "failure_signatures": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "skills" / "test" / "references" / "upstream-pin.md"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            ok, msg = self.rpv.run_one(path, pin)
+            self.assertTrue(ok, msg)
+
+    def test_regex_match(self):
+        pin = {
+            "validation": {
+                "script": "echo 'version 1.2.3 installed'",
+                "expected_output": [r"version \d+\.\d+\.\d+"],
+                "failure_signatures": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "skills" / "test" / "references" / "upstream-pin.md"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            ok, msg = self.rpv.run_one(path, pin)
+            self.assertTrue(ok, msg)
+
+    def test_failure_signature_regex(self):
+        pin = {
+            "validation": {
+                "script": "echo 'ERROR: connection failed with code 500'",
+                "expected_output": [],
+                "failure_signatures": [r"ERROR:.*code \d{3}"],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "skills" / "test" / "references" / "upstream-pin.md"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            ok, msg = self.rpv.run_one(path, pin)
+            self.assertFalse(ok)
+            self.assertIn("failure_signature", msg)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+# Freshness tier C — internal IP, no upstream to track.
+# Manual validation only: verify the skill's code samples and workflow
+# still produce a working narrated video demo.
+last_validated: "2026-05-27"
+validated_by: ricchi
+validation_notes: |
+  Skill authored in-house. Key dependencies: playwright, edge-tts, ffmpeg.
+  Validated by running a demo recording session and verifying video output.
+  Next validation due: 180 days from last_validated.

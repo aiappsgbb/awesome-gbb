@@ -1,0 +1,10 @@
+# Freshness tier C — internal IP, no upstream to track.
+# Manual validation only: verify az/azd isolation patterns work with
+# current CLI versions and index schema.
+last_validated: "2026-05-27"
+validated_by: ricchi
+validation_notes: |
+  Skill authored in-house. Key dependencies: az CLI, azd CLI.
+  Validated by testing multi-tenant isolation flow (AZURE_CONFIG_DIR,
+  az account show assertion, azd auth login).
+  Next validation due: 180 days from last_validated.

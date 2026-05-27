@@ -4,11 +4,23 @@ Run validation.script for every changed pin file, assert expected_output
 substrings appear in stdout. This is the CI gate that proves a freshness
 PR actually validates against the new pin — no more "trust me, I tested".
 
-Used by: .github/workflows/pin-validation.yml
+Used by:
+  - .github/workflows/pin-validation.yml  (PR gate, changed pins only)
+  - .github/workflows/skill-test.yml      (weekly smoke + E2E Azure)
+
+Security posture:
+  - Pin scripts run in a fresh temp dir (not the repo tree)
+  - Clean env (INHERIT_ENV_KEYS whitelist, no full os.environ)
+  - 600s timeout per script (SCRIPT_TIMEOUT_SECONDS)
+  - Scripts can install PyPI packages and make HTTP calls (required for
+    import-smoke and E2E Azure tests). The GitHub Actions runner itself
+    is the sandbox boundary — pin scripts have no more access than any
+    other CI step.
 """
 
 from __future__ import annotations
 
+import argparse
 import io
 import os
 import re
@@ -17,7 +29,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Iterable
 
 import yaml
 
@@ -34,13 +45,29 @@ PIN_GLOB = "skills/*/references/upstream-pin.md"
 SAFE_REQUIRES = {"github_only", "pypi"}
 AZURE_REQUIRES = {"azure_subscription", "foundry_project"}
 SCRIPT_TIMEOUT_SECONDS = 600
-EXPECTED_TIMEOUT_PER_PIN_MIN = 10
 
-# Env vars that must be set for --include-azure pins
+# Consolidated map: pin requires → env var the runner must have set.
+# ALL Azure env vars live here — no ad-hoc forwarding elsewhere.
 AZURE_ENV_MAP = {
     "azure_subscription": "AZURE_SUBSCRIPTION_ID",
     "foundry_project": "AZURE_AI_ENDPOINT",
 }
+# Additional env vars forwarded to every pin script when present (OIDC, etc.)
+AZURE_EXTRA_ENV = (
+    "AZURE_CLIENT_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID",
+    "AZURE_AI_ENDPOINT",
+    "ACR_LOGIN_SERVER",
+)
+
+# Minimal set of env vars inherited by pin scripts (security: no full env leak)
+INHERIT_ENV_KEYS = (
+    "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL",
+    "TMPDIR", "TMP", "TEMP",
+    "PYTHONUTF8",
+    "GITHUB_ACTIONS", "CI", "RUNNER_OS",
+)
 
 
 def parse_pin(path: Path) -> dict | None:
@@ -180,11 +207,37 @@ def _ensure_python_pip_shims(tmp: Path) -> Path:
     return bin_dir
 
 
+def _build_clean_env(shim_dir: Path) -> dict[str, str]:
+    """
+    Build a minimal environment for pin script execution.
+    Only inherits essential vars + Azure CI vars — no full os.environ leak.
+    """
+    env: dict[str, str] = {}
+    for key in INHERIT_ENV_KEYS:
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    env["PYTHONUTF8"] = "1"
+    # Prepend shim dir so bare `python`/`pip` resolve correctly
+    env["PATH"] = f"{shim_dir}{os.pathsep}{env.get('PATH', '')}"
+    # Forward all Azure env vars from the consolidated lists
+    for env_var in AZURE_EXTRA_ENV:
+        val = os.environ.get(env_var)
+        if val:
+            env[env_var] = val
+    for env_var in AZURE_ENV_MAP.values():
+        val = os.environ.get(env_var)
+        if val:
+            env[env_var] = val
+    return env
+
+
 def run_one(path: Path, pin: dict) -> tuple[bool, str]:
     """
-    Execute the pin's validation.script in a fresh temp dir. Capture
-    combined stdout+stderr. Verify every string in expected_output is
-    a substring of the captured output. Return (ok, message).
+    Execute the pin's validation.script in a fresh temp dir with a clean
+    environment. Capture combined stdout+stderr. Verify every string in
+    expected_output is a substring (or regex match) of the captured output.
+    Return (ok, message).
     """
     validation = pin["validation"]
     script = validation["script"]
@@ -205,27 +258,9 @@ def run_one(path: Path, pin: dict) -> tuple[bool, str]:
         script_path.write_text(script, encoding="utf-8")
         script_path.chmod(0o755)
 
-        env = os.environ.copy()
-        env.setdefault("PYTHONUTF8", "1")
-
-        # Forward Azure CI env vars so validation scripts can authenticate
-        for env_var in AZURE_ENV_MAP.values():
-            val = os.environ.get(env_var)
-            if val:
-                env[env_var] = val
-        # Also forward AZURE_CLIENT_ID + AZURE_TENANT_ID for OIDC/DefaultAzureCredential
-        for extra_var in ("AZURE_CLIENT_ID", "AZURE_TENANT_ID",
-                          "AZURE_SUBSCRIPTION_ID", "AZURE_AI_ENDPOINT"):
-            val = os.environ.get(extra_var)
-            if val:
-                env[extra_var] = val
-
-        # Cross-platform python/pip shims so pin scripts that use bare
-        # `python`/`pip` work on macOS (where only python3 exists) without
-        # changing the script itself.
         try:
             shim_dir = _ensure_python_pip_shims(tmp_path)
-            env["PATH"] = f"{shim_dir}{os.pathsep}{env.get('PATH', '')}"
+            env = _build_clean_env(shim_dir)
         except RuntimeError as e:
             print("::endgroup::")
             return False, str(e)
@@ -258,38 +293,78 @@ def run_one(path: Path, pin: dict) -> tuple[bool, str]:
                 "See script output above."
             )
 
-        missing = [s for s in expected if s not in combined]
+        # Check expected_output: try substring first, then regex
+        missing = []
+        for s in expected:
+            if s in combined:
+                continue
+            try:
+                if re.search(s, combined):
+                    continue
+            except re.error:
+                pass
+            missing.append(s)
         if missing:
             print("::endgroup::")
             return False, (
-                f"expected_output substrings not found in script output: {missing}"
+                f"expected_output not found in script output: {missing}"
             )
 
         for sig in failure_sigs:
             if sig in combined:
                 print("::endgroup::")
                 return False, f"failure_signature detected in output: {sig!r}"
+            try:
+                if re.search(sig, combined):
+                    print("::endgroup::")
+                    return False, f"failure_signature regex matched in output: {sig!r}"
+            except re.error:
+                pass
 
         print("::endgroup::")
         return True, "OK"
 
 
-def main(argv: list[str]) -> int:
-    args = {a.split("=", 1)[0]: (a.split("=", 1)[1] if "=" in a else "")
-            for a in argv[1:]}
-    base = args.get("--base", "origin/main")
-    all_files_mode = "--all" in argv
-    include_azure = "--include-azure" in argv
-    skip_install_check = "--skip-install" in argv
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run validation.script for pin files and assert expected_output.",
+        epilog="Examples:\n"
+               "  %(prog)s --base=origin/main          # changed pins vs base\n"
+               "  %(prog)s --all                        # all auto-tier pins\n"
+               "  %(prog)s --all --include-azure        # all pins incl. Azure E2E\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--base", default="origin/main",
+        help="Git ref to diff against (default: origin/main)",
+    )
+    parser.add_argument(
+        "--all", action="store_true", dest="all_files",
+        help="Validate ALL pin files, not just changed ones",
+    )
+    parser.add_argument(
+        "--include-azure", action="store_true", dest="include_azure",
+        help="Also run Azure-dependent pins (needs OIDC env vars)",
+    )
+    parser.add_argument(
+        "--skip-install", action="store_true", dest="skip_install",
+        help="Skip pre-flight check for bash/python on PATH",
+    )
+    return parser
 
-    if all_files_mode:
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv[1:] if argv else None)
+
+    if args.all_files:
         pins = all_pin_files()
         print(f"Mode: --all ({len(pins)} pin files)")
     else:
-        pins = changed_pin_files(base)
-        print(f"Mode: changed-only against base={base} ({len(pins)} pin files)")
+        pins = changed_pin_files(args.base)
+        print(f"Mode: changed-only against base={args.base} ({len(pins)} pin files)")
 
-    if include_azure:
+    if args.include_azure:
         present = {k: bool(os.environ.get(v)) for k, v in AZURE_ENV_MAP.items()}
         print(f"Azure E2E mode: --include-azure (env: {present})")
 
@@ -297,11 +372,7 @@ def main(argv: list[str]) -> int:
         print("\nNo pin files to validate. ✅")
         return 0
 
-    # Sanity check that bash exists and at least one python3 is on PATH.
-    # `pip` is invoked via `python3 -m pip` through the shim, so we don't
-    # require a standalone `pip` binary. We use _find_best_python to allow
-    # python3.13/3.12/etc fallback for SDKs that need >=3.10.
-    if not skip_install_check:
+    if not args.skip_install:
         if shutil.which("bash") is None:
             print("::error::required tool 'bash' not on PATH")
             return 2
@@ -321,7 +392,7 @@ def main(argv: list[str]) -> int:
         if pin is None:
             failures.append((path, "parse failed"))
             continue
-        ok, reason = should_run(pin, path, include_azure=include_azure)
+        ok, reason = should_run(pin, path, include_azure=args.include_azure)
         if not ok:
             print(f"\n[SKIP] {rel}: {reason}")
             skipped.append((path, reason))
