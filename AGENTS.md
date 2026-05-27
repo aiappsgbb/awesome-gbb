@@ -733,9 +733,9 @@ credibility instantly. Consequences:
 - **Every skill is a contract.** Code samples in SKILL.md are not
   suggestions — they are the exact code a consumer will copy. If it
   doesn't run, the skill is broken.
-- **Testing tiers are mandatory.** § 2.7 defines T0–T3. PRs that skip
+- **Testing tiers are mandatory.** § 9.8 defines T0–T3. PRs that skip
   the appropriate tier are rejected, no exceptions.
-- **CI gates are real gates.** The four workflows in § 9.6 are not
+- **CI gates are real gates.** The five workflows in § 9.6 are not
   advisory — they block merge. If CI can't prove a change is safe, the
   change doesn't land.
 
@@ -764,7 +764,42 @@ human review as the quality gate, not the bottleneck. Key design choices:
   bump pin files and frontmatter. It CANNOT rewrite SKILL.md body
   without `[skill-rewrite]` tag. This prevents accidental prose damage.
 
-### 12.3 The repo IS the product
+### 12.3 Defense in depth — five CI gates, four testing tiers
+
+No single gate catches everything. The catalog uses **five workflows**
+(§ 9.6) and **four testing tiers** (§ 9.8) layered so that a regression
+must slip through multiple independent checks to reach main.
+
+```
+PR opened
+ ├─ skill-validation.yml      T0: lint (frontmatter, SemVer, forbidden strings)
+ ├─ automation-pr-gate.yml    mass-edit invariants + unit tests
+ └─ pin-validation.yml        T1: re-runs validation.script for changed pins
+                                   (pip install + import; asserts expected_output)
+
+Push to main / weekly cron
+ ├─ skill-test.yml            T2: all-pin smoke (pip install + import for ALL auto-tier pins)
+ └─ skill-test.yml            T3: E2E Azure (deploy, API calls, model inference against
+                                   real resources in rg-awesome-gbb-ci — § 9.7)
+
+Weekly cron (detection only)
+ └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
+```
+
+**Current coverage (26 skills, 21 with upstream pins):**
+
+| Category | Count | Coverage |
+|----------|-------|----------|
+| Auto-tier (`runnable: true`) | 14 pins | T0 + T1 + T2 in CI |
+| Issue-only (Azure-dependent) | 7 pins | T0 in CI; T1–T3 via `--include-azure` on dispatch |
+| Internal IP (no pin) | 5 skills | T0 only (manual validation) |
+
+The `--include-azure` flag on `run-pin-validation.py` unlocks
+issue-only pins when the runner has Azure credentials. The infra is
+provisioned (§ 9.7); individual pin scripts are being upgraded from
+pip+import to actual Azure API calls incrementally.
+
+### 12.4 The repo IS the product
 
 This is not a docs-only repository. The repo is a **Copilot CLI plugin**
 (§ 10) — `plugin.json` at the root, `skills/` auto-discovered. Consumers
@@ -784,6 +819,20 @@ Consequences:
 - **Pin files are machine-readable.** `upstream-pin.md` frontmatter is
   YAML, consumed by CI scripts. The prose below is human audit trail.
   Both must stay in sync.
+
+### 12.5 Catalog at a glance
+
+| Metric | Value |
+|--------|-------|
+| Total skills | 26 |
+| Skills with upstream pins | 21 |
+| Auto-tier (CI can refresh autonomously) | 14 |
+| Issue-only (human / Azure creds needed) | 7 |
+| Internal IP (no upstream) | 5 |
+| CI workflows | 5 |
+| Unit tests | 51 (18 PR gate + 33 skill validation) |
+| Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
+| Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
 ---
 
