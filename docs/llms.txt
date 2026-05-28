@@ -20,6 +20,7 @@
 - [foundry-toolbox](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-toolbox/SKILL.md): Wire the Microsoft Foundry Toolbox into hosted agents — a managed multi-tool bundle (mcp, web_search, azure_ai_search, code_interpreter, file_search, openapi, a2a_preview) behind…
 - [foundry-skill-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-skill-catalog/SKILL.md): Centrally store and distribute instruction-only `SKILL.md` files via the Foundry **Skills** REST API (`{project}/skills`) — and consume them at runtime from MAF agents through a custom `SkillsSource` adapter.
 - [foundry-memory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-memory/SKILL.md): Use Azure AI Foundry Memory Store for persistent agent memory across sessions: user profiles, chat summaries, semantic memory retrieval, hosted-agent memory tool wiring, scope…
+- [foundry-voice-live](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-voice-live/SKILL.md): Build real-time voice agents with Azure AI Foundry Voice Live (GA 2025-10-01).
 
 ### 🛠️ Cross-Cutting Helpers
 
@@ -47,4 +48,4 @@
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 26 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 28 reusable building blocks for Copilot-assisted engagements.

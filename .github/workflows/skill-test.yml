@@ -132,3 +132,10 @@ jobs:
         run: |
           pip install --quiet "azure-ai-projects~=2.1.0" "azure-identity~=1.23.0"
           python -m pytest scripts/tests/test_e2e_prompt_agents.py -v
+
+      - name: Run E2E voice-live test
+        env:
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+        run: |
+          pip install --quiet "openai~=2.0.0" "azure-identity~=1.23.0"
+          python -m pytest scripts/tests/test_e2e_voice_live.py -v

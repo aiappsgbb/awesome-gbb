@@ -53,6 +53,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
         'foundry-toolbox', 'foundry-skill-catalog', 'foundry-memory',
+        'foundry-voice-live',
     ],
     # Threadlight Pipeline skills moved to aiappsgbb/threadlight-skills
     '🛠️ Cross-Cutting Helpers': [
