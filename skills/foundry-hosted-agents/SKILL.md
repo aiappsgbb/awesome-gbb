@@ -8,17 +8,18 @@ description: >
   body for SDK patterns, identity wiring, and troubleshooting — do
   not deploy from this summary alone.
   USE FOR: deploy foundry agent,
-  hosted agent, prompt agent, container agent, agent.yaml,
+  hosted agent, container agent, agent.yaml,
   FoundryChatClient, ResponsesHostServer, MAF agent framework,
   OpenAIChatClient, refreshed preview April 2026, ACR push, batch
   eval, dataset curation, agent identity, Foundry User role, prompt
-  optimization, azd ai agent extension, entra-agent-id. DO NOT USE FOR: ACA MCP
-  server deployment (use foundry-mcp-aca), GHCP coding agent (use
-  ghcp-hosted-agents), Citadel hub/spoke (use citadel-hub-deploy or
+  optimization, azd ai agent extension, entra-agent-id. DO NOT USE
+  FOR: prompt agents (use foundry-prompt-agents), ACA MCP server deployment (use
+  foundry-mcp-aca), GHCP coding agent (use ghcp-hosted-agents),
+  Citadel hub/spoke (use citadel-hub-deploy or
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.3"
+  version: "1.7.4"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide

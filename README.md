@@ -111,10 +111,11 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 
 ### 🏗️ Foundry Building Blocks
 
-Reference patterns for Microsoft Foundry hosted agents, memory, MCP servers, evals, RAG, vision/speech, and observability.
+Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP servers, evals, RAG, vision/speech, and observability.
 
 | Skill | Description |
 |-------|-------------|
+| [**foundry-prompt-agents**](skills/foundry-prompt-agents/) | Create declarative Foundry agents — model + instructions + tools, no containers, no custom code. `PromptAgentDefinition`, tool wiring (web search, code interpreter, file search, MCP, OpenAPI), versioning, structured inputs, agent applications |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | Refreshed hosted-agents preview — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, identity model, RBAC, MCP wiring, **`SkillsProvider` progressive skill loading** vs. legacy concat, troubleshooting |
 | [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
@@ -193,7 +194,7 @@ middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install all 25 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
+> **Install all 26 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
 >
 > ```bash
 > # Register the marketplace once:
@@ -267,7 +268,7 @@ The agentic-loop skill will recommend awesome-gbb skills based on your spec's co
 README.md                 # This file — catalog index + install instructions
 DEMOS.md                  # Demo guide for Foundry walkthroughs
 AGENTS.md                 # Contributor & sub-agent safety guide
-plugin.json               # Single plugin manifest (all 25 skills via "skills/")
+plugin.json               # Single plugin manifest (all 26 skills via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)
