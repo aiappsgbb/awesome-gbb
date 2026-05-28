@@ -9,9 +9,10 @@ description: >
   STT, TTS, gpt-5.4-mini vision, gpt-5.4 vision, Document Intelligence prebuilt,
   custom doc model, Azure Speech, transcription.
   DO NOT USE FOR: deploying the agent itself (use threadlight-deploy), MCP server
-  deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq).
+  deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq),
+  real-time voice / Voice Live (use foundry-voice-live).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Foundry Doc / Vision / Speech
