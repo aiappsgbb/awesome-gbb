@@ -8,11 +8,13 @@ description: >
   deployment scripts, uv run, azd env, azd conventions, infra scripts,
   MCAPS subscription, SecurityControl Ignore tag, resource group tagging,
   Defender for Cloud noise, Azure Policy auto-remediation, AZURE_TAGS,
-  pilot posture, demo subscription tagging.
+  pilot posture, demo subscription tagging, AcrPull, ImagePullError, JSON array param,
+  BCP186, FetchingKeyVaultSecretFailed, dependsOn rbac, image-pull credential,
+  ACA placeholder image, azd env set triple-escape.
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.2.1"
+  version: "1.2.2"
 ---
 
 # AZD Tips & Patterns
@@ -671,6 +673,14 @@ Hosted agent containers get a **platform-managed dedicated identity** (instance 
 at deploy time — you don't assign a UAMI to them. The shared UAMI is for everything
 else: bot ACA, MCP ACA, jobs, hooks, etc.
 
+### Cross-skill ownership: UAMI & AcrPull
+
+**Ownership split:** UAMI and AcrPull guidance is split across two SKILLs:
+- **Foundry project system MI** (the identity used by Foundry to pull agent container images) → owned by [`foundry-hosted-agents`](../foundry-hosted-agents/) § Identity & RBAC
+- **ACA workload UAMIs** (backend, frontend, job containers, hooks) → owned by this SKILL
+
+When in doubt: project MI RBAC → `foundry-hosted-agents`; workload UAMI RBAC → `azd-patterns`.
+
 ---
 
 ## `uv` for Hook Scripts
@@ -692,6 +702,16 @@ hooks:
 ---
 
 ## `azd env set` + JSON arrays/objects: use `.bicepparam`, not JSON parameters
+
+> 🛑 **DO NOT** push array- or object-typed values through `azd env set`. The CLI re-escapes
+> the value on every `.env` read/write, producing triple-escaped JSON that fails to round-trip.
+> **DO** hard-code the literal in `infra/main.bicepparam` instead — that is the only safe
+> place for array/object Bicep parameters.
+>
+> Even worse: the `azd ai agent` extension auto-runs `azd env set AI_PROJECT_DEPLOYMENTS '[...]'`
+> on EVERY `azd provision` (silently). So even if you set `AI_PROJECT_DEPLOYMENTS` cleanly
+> by hand once, the next provision will re-mangle it. Using `readEnvironmentVariable(...) + json(...)`
+> for this specific param is therefore guaranteed to fail eventually — **hardcode the literal**.
 
 **Don't put JSON arrays or objects through `azd env set`.** The CLI
 re-escapes the value on every read/write of `.azure/<env>/.env`, so a
@@ -771,7 +791,7 @@ modules) so they can be vendored independently.
 | **service-bus** | `infra/modules/service-bus.bicep` | `service-bus: yes` (params: `tier: 'standard' \| 'premium'`, `queues: [...]`, `topics: [...]`) | `namespace`, `queueNames[]`, `topicNames[]` | Async work queues (PIM enrichment batch, Card Dispute case routing) |
 | **storage-blob** | `infra/modules/storage-blob.bicep` | `storage-blob: yes` (params: `containers: [...]`) | `accountName`, `containerNames[]`, `endpoint` | Document/image/audio storage for vision / doc-intel / speech |
 | **key-vault** | `infra/modules/key-vault.bicep` | `key-vault: yes` (params: `enabled: bool`) | `vaultName`, `vaultUri` | Required ONLY when external API keys must be secured (e.g., third-party data sources). NOT in always-include — threadlight pilots are keyless-by-mandate. |
-| **app-insights** | `infra/modules/app-insights.bicep` | (always — non-optional) | `connectionString`, `instrumentationKey`, `appId` | Always — required for `foundry-evals` continuous loop |
+| **app-insights** | `infra/modules/app-insights.bicep` | (always — non-optional) | `connectionString`, `instrumentationKey`, `appId` | Always — required for `foundry-evals` continuous loop. **Telemetry wiring** (AppInsights connection string env injection, client-side instrumentation, retry on transient drops) is owned by [`foundry-observability`](../foundry-observability/) § Layer 2. This SKILL focuses on deploy mechanics; for telemetry configuration, see foundry-observability. |
 | **aca-job** | `infra/modules/aca-job.bicep` | `aca-job: yes` (params: `[{ name, trigger: 'cron' \| 'manual', ... }]`) | `jobName`, `jobResourceId` per entry | Wired by `threadlight-event-triggers` for receivers |
 | **aca-mcp** | `infra/modules/aca-mcp.bicep` | `aca-mcp: yes` (params: `[{ name, image, ... }]`) | `mcpEndpoints{}`, `mcpFqdns{}` | Wired by `foundry-mcp-aca` for each mocked or custom MCP server |
 | **aca-bot** | `infra/modules/aca-bot.bicep` | `aca-bot: yes` (params: `manifest: ...`) | `botFqdn`, `botResourceId`, `botAppId` | Wired by `foundry-teams-bot` when SPEC § 8 includes Teams |
@@ -1157,6 +1177,15 @@ resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' =
 
 ## ACR + ACA Registry Binding (complete example)
 
+> 🛑 **MUST rule.** In a multi-service pilot, **every ACA app's UAMI** independently
+> needs `AcrPull` on the ACR — not just a "shared env UAMI" or the Foundry **project** MI
+> (which only covers the agent container). Granting `AcrPull` to ONE identity and assuming
+> it covers the others leaves frontend / backend revisions stuck on the placeholder
+> `mcr.microsoft.com/k8se/quickstart:latest` image, with `FetchingKeyVaultSecretFailed: 401`
+> in `ContainerAppSystemLogs_CL` (yes, that's the wrong category — the ACA system component
+> mis-categorises image-pull credential failure as a Key Vault error). Verified live in
+> the 2026-05-28 learn-assistant pilot.
+
 When `azd deploy` pushes an image to ACR, the ACA must be configured to
 pull from that ACR. This requires three things in Bicep:
 
@@ -1209,6 +1238,13 @@ Without all three pieces, `azd deploy` pushes to ACR successfully but the
 ACA fails to pull the image (401 unauthorized).
 
 ### AcrPull propagation retry loops (post-`azd provision`, pre-`azd deploy`)
+
+> 💡 **Preferred fix first.** If your `main.bicep` invokes a separate `rbac` module +
+> ACA-app modules in the same deployment, use Bicep `dependsOn: [rbac]` on every
+> ACA-app module to **pre-empt** the race at provision time. See § Prefer Bicep
+> `dependsOn: [rbac]` below for the canonical pattern. The retry loop here is the
+> fallback for cross-deployment scenarios (e.g. role granted between provision and
+> deploy, or RBAC propagation lags ARM completion).
 
 If `azd provision` grants `AcrPull` to the ACA environment or shared UAMI,
 do **not** immediately run `azd deploy`. RBAC propagation can lag by a few
@@ -1305,6 +1341,8 @@ belt-and-braces.
 > and OOM kills are all visible in system logs. Retrying without reading
 > logs wastes time.
 
+**Canonical owner of container-debugging diagnostics:** This section (§ ACA Container Debugging) is the authoritative reference for container-failure diagnosis. Sibling SKILLs (`foundry-hosted-agents`, `foundry-observability`, etc.) should link here rather than duplicate.
+
 ```bash
 # System logs — infrastructure events (port mismatch, probe fail, OOM)
 az containerapp logs show -g <rg> -n <app> --type system --tail 20
@@ -1321,6 +1359,10 @@ az containerapp logs show -g <rg> -n <app> --type console --tail 20
 | `Container failed startup probe, will be restarted` | App crashes or takes too long to start | Check console logs for the crash reason |
 | `Failed to pull image ... 401 Unauthorized` | ACA can't auth to ACR | Add registry binding + secret (see ACR section above) |
 | `Persistent Failure to start container` / `ContainerBackOff` | Container exits immediately | Check console logs — likely a Python crash or missing entrypoint |
+| `azd postdeploy` / `azd postprovision` hook exits with non-zero code | Missing or incorrect `AZURE_AI_PROJECT_ENDPOINT` or other azd env value in hook script | DO NOT: hardcode env var lookups. DO: use `azd env get-value VAR_NAME` with explicit error handling. Fix: re-run hook manually via `cd infra/scripts && uv run <hook>.py` after checking all required env vars are set. |
+| `FetchingKeyVaultSecretFailed: 401` in `ContainerAppSystemLogs_CL` | ACA UAMI lacks `AcrPull` on the private ACR (NOT a Key Vault issue — ACA mis-categorises image-pull credential failure) | DO NOT: trust the "Key Vault" label literally. DO: first check `az role assignment list --assignee <aca-uami-principal-id> --scope <acr-resource-id>` to confirm `AcrPull` exists. Ensure all ACA UAMIs (backend, frontend, job) have independent `AcrPull` assignments (see § ACR + ACA Registry Binding). |
+| ACA revision status shows `secret-resolution` error | Revision references a Key Vault secret that the ACA UAMI cannot read (actual Key Vault permission issue) | Grant `Key Vault Secrets User` role on the vault to the ACA UAMI, then redeploy or trigger a new revision. |
+| First revision after `azd provision` fails image pull; retry within minutes succeeds | RBAC propagation lag (30–60 seconds) — the role assignment was created but hasn't propagated to the image-pull auth path | DO NOT: rely on retry loops alone. DO: add Bicep `dependsOn: [rbac]` on every ACA-app module to pre-empt the race (see § Prefer Bicep `dependsOn: [rbac]` below). The retry loop is fallback for cross-deployment scenarios. |
 
 ---
 
@@ -1367,3 +1409,5 @@ scale: {
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | Owns the `foundry-account.bicep` shape |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Adds Citadel hub wiring AFTER the base Bicep is provisioned (opt-in via SPEC § 11b `citadel.required: yes`) |
 | [**azure-tenant-isolation**](../azure-tenant-isolation/) | Per-tenant `AZURE_CONFIG_DIR` so `azd up` lands in the right tenant |
+
+**Note:** External threadlight-skills links (threadlight-deploy, threadlight-design, threadlight-event-triggers) point to a separate repository. For offline or agent-context use, abbreviated summaries of those skills are often included in local `threadlight-skills/SKILL.md` installations.

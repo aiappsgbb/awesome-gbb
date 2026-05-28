@@ -15,7 +15,7 @@ description: >
   deploying Foundry agents (use foundry-hosted-agents), deploying
   Citadel gateway (use citadel-hub-deploy).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation
@@ -134,18 +134,40 @@ that touches Azure must follow them.
     tenant covers multiple subscriptions (e.g., `acme-prod-east` and
     `acme-prod-west`), `az login --tenant <id>` populates the token cache
     with all of them and silently leaves the active subscription on
-    whatever was set last in the global cache. The `default_subscription`
-    field in the index file is a **hint to your assertion logic**, not
-    a default `az` honors. You MUST run `az account set --subscription
-    "$DEFAULT_SUB"` after every `az login` per shell. Mass effect: a
-    "deploy to acme-prod-east" can land in acme-prod-west if you forget.
+    whatever was set last in the global cache.
+
+    **🛑 DO NOT auto-switch to `default_subscription` blindly.** The
+    `default_subscription` field in the index file is a **hint**, not a
+    rule the tooling should silently enforce — a real SE may have run
+    `az account set --subscription <other-allowed-sub>` immediately
+    before launching the agent, and your bootstrap script should respect
+    that intent. Doing otherwise overrides the user's explicit choice
+    and re-creates the exact bug this skill exists to prevent
+    (verified live in the 2026-05-28 agentic-loop bootstrap.sh
+    retrospective).
+
+    **DO assert membership in `allowed_subscriptions`** instead. The
+    correct flow is:
+
+    1. After `az login --tenant <id>`, read `ACTUAL_SUB = az account
+       show --query name -o tsv`.
+    2. If `ACTUAL_SUB` ∈ `allowed_subscriptions`, accept it. Done.
+    3. If `ACTUAL_SUB` ∉ `allowed_subscriptions`, **fail loud** with a
+       message listing the allowed values; do NOT silently switch.
+
+    Only set `default_subscription` explicitly when `ACTUAL_SUB` is
+    empty (first login) or unknown.
 
     Fast check after login:
 
     ```bash
     az account show --query "{tenant:tenantId, sub:name}" -o table
-    # Verify sub is the one you wanted; if not, az account set --subscription "$DEFAULT_SUB"
+    # Verify sub is one of `allowed_subscriptions` for this alias;
+    # if not, decide explicitly with: az account set --subscription <one-of-allowed>
     ```
+
+    See § Assertion variants — strict vs whitelist for the canonical
+    membership-check snippet.
 
 5. **The index file is personal.** It lists your tenant ids. Gitignore
    `~/.azure-tenants/` and `~/.azd-tenants/` globally. Never commit them.
@@ -515,12 +537,20 @@ azd up
 | "It worked last time without this" | Azure state is mutable. The fact that the right subscription was active 10 minutes ago doesn't mean it still is. |
 | "I'll just be quick" | Cross-tenant deployments cost real money ($200-1000+/mo for a Citadel hub). The 5 seconds this check takes prevents a $1000 mistake. |
 
-### Assertion variants — strict vs whitelist
+### Assertion variants — whitelist (default) vs strict
 
-The simple snippet above checks against a **single expected subscription**
-(typically the alias's `default_subscription`). When an alias legitimately
-covers more than one subscription (`allowed_subscriptions` has multiple
-entries), use the membership variant instead:
+**Default to the whitelist variant.** It is the production-safe default: it
+respects the user's explicit subscription choice as long as it's in the
+alias's `allowed_subscriptions` list. The single-value strict form is only
+appropriate when the alias has exactly one subscription AND you want to
+reject any other (rare — usually you want the whitelist).
+
+#### Whitelist variant (recommended — primary pattern)
+
+When an alias covers one or more subscriptions (`allowed_subscriptions` in
+the index file), assert that the active sub is a member. **Do NOT
+auto-switch** — fail loud if outside the whitelist so the user can make an
+explicit choice:
 
 Unix:
 
@@ -533,7 +563,7 @@ ACTUAL_SUB=$(az account show --query name -o tsv)
 
 [ "$ACTUAL_TENANT" = "$EXPECTED_TENANT" ] || { echo "❌ Tenant mismatch"; exit 1; }
 printf '%s\n' "${ALLOWED_SUBS[@]}" | grep -qx "$ACTUAL_SUB" \
-  || { echo "❌ Sub '$ACTUAL_SUB' not in allowed list: ${ALLOWED_SUBS[*]}"; exit 1; }
+  || { echo "❌ Sub '$ACTUAL_SUB' not in allowed list: ${ALLOWED_SUBS[*]} — run \`az account set --subscription <one-of-allowed>\`"; exit 1; }
 ```
 
 Windows:
@@ -546,12 +576,20 @@ $actualTenant = az account show --query tenantId -o tsv
 $actualSub    = az account show --query name     -o tsv
 
 if ($actualTenant -ne $expectedTenant) { Write-Error "Tenant mismatch"; exit 1 }
-if ($allowedSubs -notcontains $actualSub) { Write-Error "Sub '$actualSub' not in allowed list: $($allowedSubs -join ', ')"; exit 1 }
+if ($allowedSubs -notcontains $actualSub) { Write-Error "Sub '$actualSub' not in allowed list: $($allowedSubs -join ', '). Run: az account set --subscription <one-of-allowed>"; exit 1 }
 ```
 
-Pick the strict (single-value) form for production and the whitelist form
-when an alias spans multiple subs (e.g. `dev` covers both `acme-dev` and
-`acme-test`).
+#### Strict (single-value) variant
+
+Use ONLY when the alias has exactly one subscription AND you want to reject
+any other active sub. The simple snippet earlier in this section checks
+against `default_subscription` from the index — that's the strict form.
+
+> 🛑 **`default_subscription` is a hint, not a default `az` honors.** If you
+> use the strict variant, you must combine it with a `az account set` BEFORE
+> the assertion runs — otherwise a multi-sub tenant will fail the strict
+> check with `Sub '<other-allowed-sub>' != '<default>'` even though the user
+> picked an explicitly-allowed sub.
 
 ---
 
@@ -619,9 +657,25 @@ az deployment group create `
 
 When **application code** (Python, TypeScript, .NET) needs to call Azure,
 prefer `ChainedTokenCredential` so local dev and production both work
-without code changes. Crucially, `AzureCliCredential` (and
-`AzureDeveloperCliCredential`) honour `AZURE_CONFIG_DIR`, which is what
-makes per-tenant isolation work end-to-end.
+without code changes. Crucially, the two CLI-backed credentials honour
+different environment variables — this is the key to per-tenant isolation.
+
+### `AzureCliCredential` vs. `AzureDeveloperCliCredential`
+
+| Credential | Env Var | Bridge to | Use case |
+|---|---|---|---|
+| `AzureCliCredential` | `AZURE_CONFIG_DIR` | `az` CLI state (tokens, active sub) | Direct `az` operations |
+| `AzureDeveloperCliCredential` | `AZD_CONFIG_DIR` | `azd auth` state (separate cache) | `azd` project workflows |
+
+Both are safe to use in `ChainedTokenCredential` — each respects its own env var. If you set both env vars before starting your application, tokens will be isolated by tenant.
+
+> **Chain both credentials, in order.** When using `ChainedTokenCredential`, list
+> `AzureDeveloperCliCredential` first (local dev), then `ManagedIdentityCredential`
+> (production). The order matters: the chain tries each credential in sequence until
+> one succeeds. This way, local dev uses the isolated CLI state, and production uses
+> the UAMI—and neither one breaks the isolation because each honors its own env var.
+
+**Python:**
 
 ```python
 from azure.identity import (
@@ -631,11 +685,15 @@ from azure.identity import (
 )
 
 def get_azure_credential() -> ChainedTokenCredential:
+    # Chain: local dev (azd auth state) → production (UAMI)
+    # Each credential honors its own env var (AZD_CONFIG_DIR / managed identity)
     return ChainedTokenCredential(
-        AzureDeveloperCliCredential(),   # local dev — reads AZURE_CONFIG_DIR
-        ManagedIdentityCredential(),     # production
+        AzureDeveloperCliCredential(),   # local dev — reads AZD_CONFIG_DIR
+        ManagedIdentityCredential(),     # production — no env var needed
     )
 ```
+
+**TypeScript:**
 
 ```typescript
 import {
@@ -645,6 +703,8 @@ import {
 } from "@azure/identity";
 
 export function getAzureCredential(): ChainedTokenCredential {
+  // Chain: local dev (azd auth state) → production (UAMI)
+  // Each credential honors its own env var (AZD_CONFIG_DIR / managed identity)
   return new ChainedTokenCredential(
     new AzureDeveloperCliCredential(),
     new ManagedIdentityCredential(),
@@ -759,6 +819,31 @@ Call site sets the alias once: `AZURE_TENANT_ALIAS=dev ./deploy.sh`
 or `$env:AZURE_TENANT_ALIAS='dev'; .\deploy.ps1`. The script is
 otherwise alias-agnostic.
 
+### Tooling compatibility: `azd version --output json`
+
+**azd 1.20+ changed the JSON shape returned by `azd version --output json`.** Bootstrap scripts that parse this output must handle both shapes:
+
+| azd version | JSON shape | Example |
+|---|---|---|
+| < 1.20 | `{"azd-version": "1.x.x"}` | `{"azd-version": "1.11.0"}` |
+| ≥ 1.20 | `{"azd": {"version": "1.x.x"}}` | `{"azd": {"version": "1.20.0"}}` |
+
+If your bootstrap parses `azd version --output json`, use the robust pattern:
+
+**Bash:**
+```bash
+# Try new shape first, fall back to old shape
+VERSION=$(azd version --output json | python -c "import sys, json; d=json.load(sys.stdin); print(d['azd']['version'] if 'azd' in d else d['azd-version'])" 2>/dev/null || echo "unknown")
+```
+
+**PowerShell:**
+```powershell
+$versionJson = azd version --output json | ConvertFrom-Json
+$version = if ($versionJson.azd.version) { $versionJson.azd.version } else { $versionJson.'azd-version' }
+```
+
+Do **not** hard-code the old shape or assume a particular version of `azd` is installed — let the version detection handle both paths gracefully.
+
 ---
 
 ## Troubleshooting
@@ -771,6 +856,7 @@ otherwise alias-agnostic.
 | `az login` opens browser unexpectedly | n/a | Always pass `--tenant <id>` so `az` skips the picker |
 | Subscription not found | `az account list --query "[].{name:name,tenantId:tenantId}" -o table` | You're logged into the wrong tenant — `az login --tenant <id>` after setting `AZURE_CONFIG_DIR` |
 | Active sub silently wrong after `az login --tenant <id>` (multi-sub tenant) | `az account show --query name -o tsv` after login (returns last-touched sub, not your alias's `default_subscription`) | `az login --tenant <id>` does not honor the index file's `default_subscription` — it just populates the cache. You MUST follow it with `az account set --subscription "$DEFAULT_SUB"`. Bake both into your shell startup script. |
+| Script auto-switched to a valid-but-unexpected sub; later assertion passes (sub IS in `allowed_subscriptions`) | `az account show --query name -o tsv` mid-script shows wrong sub, yet matches one of the allowed values | Bootstrap script auto-set `default_subscription` before the assertion ran. See § Mandatory rules rule 4a: never auto-switch. Use the **whitelist variant** of the assertion (membership check, not equality check) and **fail loud** if outside whitelist. Let the user make explicit sub choices with `az account set --subscription <one-of-allowed>`. |
 | `azd ai agent show` returns "not logged in" even though `az account show` works | `azd auth login --check-status` (returns "not logged in to Azure") | `azd` uses `AzureDeveloperCliCredential` with its own token cache under `$AZD_CONFIG_DIR/auth/`. Run `azd auth login --tenant-id <id>` separately — `az login` does NOT populate it, even with both env vars set. |
 | `azd` extension "did not start" / "extension path not found" after setting `AZD_CONFIG_DIR` | `ls "$AZD_CONFIG_DIR/extensions/"` — empty or missing the extension binary | Extensions are installed per `AZD_CONFIG_DIR`. When you first set up a new alias's isolated config dir, run `azd ext install azure.ai.agents` (or whichever extension) **with `AZD_CONFIG_DIR` already set**. The extension installed in the default `~/.azd/extensions/` is not visible from the isolated dir. |
 | Multiple terminals interfering | `echo $AZURE_CONFIG_DIR` in each | Every terminal must set its own `AZURE_CONFIG_DIR` before any `az` command |
