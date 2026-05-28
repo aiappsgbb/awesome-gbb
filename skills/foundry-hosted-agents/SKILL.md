@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.4"
+  version: "1.7.5"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -985,6 +985,15 @@ version conflicts.
   import error), so the diagnosis cost is high — pin `mcp>=1.10.0` in **every** hosted-agent
   `pyproject.toml`. Verified on `agent-framework-foundry-hosting==1.0.0a260521`
   (May 2026, fruocco pilot).
+- **Do NOT write `agent-framework-core[mcp]`.** The `[mcp]` extra does NOT exist in
+  `agent-framework-core` 1.6.0 (PEP 503 / `setup.cfg` of the published wheel has no
+  `[project.optional-dependencies] mcp = […]` entry). `MCPStreamableHTTPTool` /
+  `MCPSseTool` / `MCPStdioTool` are **top-level exports** of `agent_framework` — pin
+  `agent-framework-core~=1.6.0` (plain, no extras) and import them with
+  `from agent_framework import MCPStreamableHTTPTool`. Writing the non-existent extra
+  produces a uv warning but does **not** fail resolution, so a pyproject can ship looking
+  "MCP-ready" while actually missing nothing (the transports are already there) — but the
+  warning suggests something's wrong and operators chase the wrong thing.
 - **Include** `[tool.setuptools] packages = []` for clean uv resolution.
 
 **`prerelease = "if-necessary-or-explicit"` is correct** — packages with explicit

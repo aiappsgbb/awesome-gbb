@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # AZD Tips & Patterns
@@ -454,7 +454,7 @@ works, surfaces structured root-cause diagnostics (e.g.
 
 | Symptom in logs | Likely cause | Fix |
 |---|---|---|
-| ConsoleLogs empty + SystemLogs `Type=Pull`, `Reason=ImagePullError` | ACR pull RBAC missing on env's UAMI, or image tag doesn't exist in ACR | Verify `az acr repository show-tags`; grant `AcrPull` to env UAMI |
+| ConsoleLogs empty + SystemLogs `Type=Pull`, `Reason=ImagePullError` | ACR pull RBAC missing on the UAMI **bound to that specific ACA app** (`identity.userAssignedIdentities`), or image tag doesn't exist in ACR. **Common trap:** in a multi-service pilot every ACA app has its own UAMI (frontend UAMI, backend UAMI, …) and **each one independently needs AcrPull** — granting it only to a "shared env UAMI" or to the Foundry project MI (which covers the agent container) leaves frontend / backend revisions stuck. **2nd common trap:** `FetchingKeyVaultSecretFailed: 401` in SystemLogs is also this — the ACA system component mis-categorises image-pull credential failure as a Key Vault error | Verify `az acr repository show-tags`; grant `AcrPull` (`7f951dda-…`) on the ACR to every ACA-app UAMI in `rbac.bicep` |
 | ConsoleLogs empty + SystemLogs `Reason=ContainerStartedExited` ExitCode 1 within 5s | Import-time crash before logger setup | Apply Rung 3 first-line stderr breadcrumbs |
 | ConsoleLogs empty + activity log `Forbidden` | Cosmos / Search data-plane RBAC not granted to job's UAMI (note: a Foundry hosted-agent's runtime UAMI is `ServiceIdentity` and **cannot** receive Cosmos data-plane RBAC — see `foundry-hosted-agents` § "Agent Identities · ServiceIdentity Cosmos limitation") | Use a separate User-Assigned MI for the job; grant role `00000000-0000-0000-0000-000000000002` (Cosmos DB Built-in Data Contributor) at the account scope |
 | ConsoleLogs empty + everything looks healthy + execution Failed | LAW diagnostic settings missing for the ACA env (apps emit logs because they were created with diag wiring; jobs created later inherit the env but not always the diag setting on the job resource itself) | Add diagnostic setting on the job resource: `az monitor diagnostic-settings create --resource $JOB_ID --name to-law --workspace $WS --logs '[{"category":"ContainerAppConsoleLogs","enabled":true},{"category":"ContainerAppSystemLogs","enabled":true}]'` |
@@ -1238,6 +1238,63 @@ for ($i = 1; $i -le $maxRetries; $i++) {
 }
 if ($role -ne 'AcrPull') { Write-Error "❌ AcrPull not propagated after $($maxRetries * $sleep)s"; exit 1 }
 ```
+
+### Prefer Bicep `dependsOn: [rbac]` over the retry loop when both modules live in the same deployment
+
+The retry loop above patches the **symptom** at deploy time. The cleaner fix
+is to **pre-empt** the race at provision time: when `main.bicep` invokes a
+separate `rbac` module (the canonical pattern when role assignments are
+batched) and ACA-app modules in parallel, Bicep does **not** infer a
+dependency between them unless one references the other's outputs.
+
+Add an explicit `dependsOn: [rbac]` to every ACA-app module invocation so the
+ARM engine waits for role assignment PUTs to return before starting the
+container app provision:
+
+```bicep
+// infra/main.bicep
+module rbac './modules/rbac.bicep' = {
+  name: 'rbac'
+  scope: rg
+  params: {
+    foundryProjectPrincipalId: foundry.outputs.projectMiPrincipalId
+    backendUamiPrincipalId:    backendUami.outputs.principalId
+    frontendUamiPrincipalId:   frontendUami.outputs.principalId
+    acrName:                   acr.outputs.name
+    foundryAccountName:        foundry.outputs.accountName
+  }
+}
+
+module backendApp './modules/aca-app.bicep' = {
+  name: 'backend'
+  scope: rg
+  dependsOn: [ rbac ]   // ← waits for AcrPull to be assigned before first revision
+  params: { /* ... */ }
+}
+
+module frontendApp './modules/aca-app.bicep' = {
+  name: 'frontend'
+  scope: rg
+  dependsOn: [ rbac ]   // ← same
+  params: { /* ... */ }
+}
+```
+
+The retry loop is still the right fallback for **deploy-time** scenarios
+(e.g. the user grants a new role between `azd provision` and `azd deploy`,
+or RBAC propagation lags ARM completion as it occasionally does in
+`swedencentral` / `eastus2`). Use `dependsOn` first; keep the retry loop as
+belt-and-braces.
+
+**Two failure surfaces this prevents (both verified on real pilots, May 2026):**
+
+- Frontend / backend ACA app stuck at `mcr.microsoft.com/k8se/quickstart:latest`
+  placeholder after `azd deploy`: the first revision tried to pull the real
+  image before AcrPull existed, fell back to the placeholder, and `azd` reported
+  Success.
+- Cryptic `FetchingKeyVaultSecretFailed: 401` in `ContainerAppSystemLogs_CL`
+  after the first revision (it's actually the image-pull credential failing —
+  the error is mis-categorised by the ACA system component).
 
 ---
 
