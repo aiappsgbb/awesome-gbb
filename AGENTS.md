@@ -786,13 +786,13 @@ Weekly cron (detection only)
  └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
 ```
 
-**Current coverage (26 skills, 21 with upstream pins):**
+**Current coverage (26 skills, 22 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (`runnable: true`) | 14 pins | T0 + T1 + T2 in CI |
+| Auto-tier (`runnable: true`) | 15 pins | T0 + T1 + T2 in CI |
 | Issue-only (Azure-dependent) | 7 pins | T0 in CI; T1–T3 via `--include-azure` on dispatch |
-| Internal IP (no pin) | 5 skills | T0 only (manual validation) |
+| Internal IP (no pin) | 4 skills | T0 only (manual validation) |
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks
 issue-only pins when the runner has Azure credentials. The infra is
@@ -825,12 +825,12 @@ Consequences:
 | Metric | Value |
 |--------|-------|
 | Total skills | 26 |
-| Skills with upstream pins | 21 |
-| Auto-tier (CI can refresh autonomously) | 14 |
+| Skills with upstream pins | 22 |
+| Auto-tier (CI can refresh autonomously) | 15 |
 | Issue-only (human / Azure creds needed) | 7 |
-| Internal IP (no upstream) | 5 |
+| Internal IP (no upstream) | 4 |
 | CI workflows | 5 |
-| Unit tests | 51 (18 PR gate + 33 skill validation) |
+| Unit tests | 56 (18 PR gate + 38 skill validation) |
 | Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
