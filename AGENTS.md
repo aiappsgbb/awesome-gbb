@@ -211,6 +211,48 @@ authenticate.
 See `test_e2e_prompt_agents.py` and `test_e2e_voice_live.py` for
 patterns.
 
+### 2.9 Nothing lands on main unless tested on Azure
+
+This is the single most important rule in the catalog.
+
+**Every PR that touches a skill MUST be tested live against Azure before
+merging.** No exceptions, no "I'll test after merge", no "CI lint passed
+so it's fine". Lint (T0) proves YAML parses. Pin validation (T1) proves
+imports resolve. Neither proves the skill **actually works** when a
+consumer follows its instructions against real Azure resources.
+
+What "tested on Azure" means, by change type:
+
+| Change type | Minimum live test |
+|-------------|-------------------|
+| New skill that touches Azure | Deploy or connect per the skill's instructions; verify the happy path end-to-end |
+| Code sample change (SDK call, Bicep, CLI command) | Run the changed sample against a real Azure resource and verify the response |
+| Guidance change (new warning, anti-pattern, workaround) | Reproduce the scenario the guidance describes; confirm the fix works |
+| Description / trigger-phrase only | T0 lint is sufficient — no Azure test needed |
+| Pin file refresh (version bump) | Run `validation.script`; if the script calls Azure, that counts |
+
+**Who tests:**
+- **Human contributors** test locally or in a dev subscription before
+  opening the PR. Document what you tested in the PR description.
+- **AI agents (Copilot, sub-agents)** MUST run the skill's E2E test
+  (`scripts/tests/test_e2e_<name>.py`) or equivalent live validation
+  before committing. If no E2E test exists and the change touches Azure
+  paths, the agent MUST either write one or **stop and ask the human to
+  test** — it cannot self-approve.
+- **Reviewers** verify the PR description includes evidence of live
+  testing. No evidence → no merge.
+
+**The cost of skipping this rule** is a broken skill that a customer or
+peer copies verbatim and gets a 401, a wrong-subscription deploy, or a
+silent failure. That destroys the catalog's credibility — the one thing
+§ 12.1 says we cannot afford.
+
+> **Rationalisation prevention:** "I reviewed the diff carefully" is not
+> testing. "The other terminal already tested it" is not testing unless
+> the PR description links to evidence. "It's just a clarification" — if
+> it changes what a consumer would type into a terminal, it must be
+> tested. When in doubt, test.
+
 ---
 
 ## 3 · Editing checklist (run before every commit)
@@ -218,6 +260,12 @@ patterns.
 Mechanical checks. Most are now CI-enforced (§ 9.6), but running them
 locally before push catches issues faster than waiting for CI.
 
+- [ ] **🔴 TESTED ON AZURE** — if any touched skill involves Azure (SDK
+      calls, Bicep, CLI commands, credential chains, API endpoints), you
+      have run the changed code/commands against a real Azure resource and
+      verified the result. Description-only changes are exempt. See § 2.9.
+      **This is the first check, not the last. Nothing else matters if
+      the skill doesn't work.**
 - [ ] **YAML parses** — `python -c "import yaml,pathlib; [yaml.safe_load(p.read_text().split('---')[1]) for p in pathlib.Path('skills').rglob('SKILL.md')]"`
 - [ ] **Description ≤ 1024 chars** on every touched SKILL.md
 - [ ] **No customer / PoC / private-repo names** introduced (grep your diff
@@ -459,6 +507,11 @@ git --no-pager diff HEAD~1 | Select-String -Pattern "kyc-poc|card-dispute-invest
 These checks are also enforced by CI (§ 9.6) — `skill-validation.yml`
 covers YAML parsing, description length, forbidden strings, and SemVer.
 Running them locally before push catches failures faster.
+
+> **🔴 Before you push: did you test on Azure?** Steps 1–4 above are
+> lint. They do NOT prove the skill works. If your changes touch Azure
+> paths (SDK calls, Bicep, CLI commands, credential chains), you MUST
+> have tested live before pushing. See § 2.9.
 
 ---
 
