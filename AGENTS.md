@@ -680,19 +680,27 @@ via the same cross-runtime
    `scripts/templates/upstream-pin.template.md` to
    `skills/<name>/references/upstream-pin.md` and fill every placeholder
    (see § 9.5)
-3. **Cross-skill refs:** add `DO NOT USE FOR` entries in related skills
+3. **E2E test (skills that touch Azure):** add a pytest file under
+   `scripts/tests/test_e2e_<name>.py` that verifies real Azure
+   connectivity (credential chain, endpoint reachability, API surface).
+   Wire it into `skill-test.yml` → `e2e-azure` job. Skills that only
+   wrap PyPI packages without Azure calls may skip this, but the bar is:
+   **if the skill tells consumers to connect to Azure, CI must prove
+   that connection works.** See `test_e2e_prompt_agents.py` and
+   `test_e2e_voice_live.py` for patterns.
+4. **Cross-skill refs:** add `DO NOT USE FOR` entries in related skills
    (e.g., if your skill covers voice, add a cross-ref in
    `foundry-doc-vision-speech`). Bump those skills' version PATCH.
-4. Add the skill to `CATEGORIES` in `scripts/build-site.py`
-5. Verify with `python scripts/validate-skills.py`
-6. Rebuild docs: `python3 scripts/build-site.py --out docs/`
-7. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
-8. Bump `marketplace.json` version to match
-9. Update `AGENTS.md` § 12.5 skill counts
-10. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
+5. Add the skill to `CATEGORIES` in `scripts/build-site.py`
+6. Verify with `python scripts/validate-skills.py`
+7. Rebuild docs: `python3 scripts/build-site.py --out docs/`
+8. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
+9. Bump `marketplace.json` version to match
+10. Update `AGENTS.md` § 12.5 skill counts
+11. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
     commit message. If cross-refs touch other skills, also add
     `[multi-skill]`. Both are required by `automation-pr-gate.yml`.
-11. After merge, sync to user scope:
+12. After merge, sync to user scope:
     `cp -R skills/<name>/ ~/.copilot/skills/<name>/`
 
 ### 10.4 Renaming a skill
