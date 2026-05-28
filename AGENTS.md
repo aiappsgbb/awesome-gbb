@@ -166,8 +166,8 @@ The catalog defines four tiers — each subsumes the tiers below it.
 |------|------|----------------|---------------|-------------|
 | **T0** | Lint | Frontmatter parses, description ≤ 1024, no forbidden strings, deprecated API scan passes | Every PR | `skill-validation.yml` (CI) |
 | **T1** | Pin validation | `validation.script` runs, every `expected_output` substring present | Pin file changes | `pin-validation.yml` (CI) |
-| **T2** | Import smoke | `python -c "from X import Y"` for every import in SKILL.md code samples | Pin refresh PRs (MINOR/MAJOR) | Auto-tier: CI runner. Issue-only: human. |
-| **T3** | Deploy & invoke | Deploy a real agent/resource per SKILL.md instructions, invoke it, verify response | New skills, code sample rewrites, breaking SDK changes | Human-only (`issue_only` tier) |
+| **T2** | Import smoke | `python -c "from X import Y"` for every import in SKILL.md code samples | Pin refresh PRs (MINOR/MAJOR) | `skill-test.yml` (pin-smoke job) |
+| **T3** | E2E Azure | Deploy a real agent/resource, call Azure APIs, verify real responses | New skills that touch Azure, code sample rewrites, breaking SDK changes | `skill-test.yml` (e2e-azure job) + human validation for excluded skills |
 
 Rules:
 - **T0 is always required.** CI enforces it; your PR will not merge without it.
@@ -177,25 +177,46 @@ Rules:
   classifies impact and the issue body specifies which imports to verify.
   For `automation_tier: auto` skills, the coding agent runs T2 on the CI
   runner. For `issue_only` skills, a human must run T2 locally.
-- **T3 is required when code samples change.** If you rewrite a code block
-  in SKILL.md (e.g., replacing `AzureOpenAIChatClient` with
-  `OpenAIChatClient`), you must deploy an agent using that code and verify
-  it works. Document the test in the PR description.
+- **T3 is required when a skill tells consumers to connect to Azure.**
+  The CI runner has OIDC-federated Azure credentials and dedicated E2E
+  infrastructure (§ 9.7). Add a pytest file under `scripts/tests/` and
+  wire it into the `e2e-azure` job in `skill-test.yml`.
 
-> **Why T3 can't be automated.** T3 requires Azure credentials, a Foundry
-> project, and sometimes specific model deployments. The CI runner has none
-> of these. The `issue_only` automation tier exists precisely for skills
-> where T3 is the minimum bar.
+### 2.8 Skills that connect to Azure MUST have E2E tests
 
-PRs that touch SKILL.md code blocks without declaring T2/T3 results in the
-PR description will be rejected by reviewers. The PR template (see
-`.github/PULL_REQUEST_TEMPLATE.md`) includes the testing checklist.
+This is a hard rule, not a suggestion. If SKILL.md tells consumers to
+call an Azure endpoint, provision a resource, or authenticate with
+`DefaultAzureCredential`, the catalog MUST prove that path works:
+
+- ✅ Add `scripts/tests/test_e2e_<name>.py` with pytest tests that
+  exercise real Azure connectivity (credential chain, endpoint
+  reachability, API surface existence)
+- ✅ Wire the test into `skill-test.yml` → `e2e-azure` job
+- ✅ Tests run with OIDC credentials against `rg-awesome-gbb-ci` (§ 9.7)
+- ❌ **"pip install + import" is NOT sufficient** for Azure skills — it
+  proves the SDK exists, not that the Azure connection works
+- ❌ **"I tested locally" is NOT sufficient** — CI must reproduce it
+
+**Exceptions** (too complex for CI, manually validated only):
+`citadel-hub-deploy`, `citadel-spoke-onboarding`, `foundry-vnet-deploy`.
+These require multi-resource deployments that exceed CI budget. Document
+manual validation in the PR description.
+
+**For skills that don't deploy but connect remotely** (e.g.,
+`foundry-voice-live` connecting to Azure Voice Live WSS): prove the
+credential chain and API surface work. You don't need to deploy
+infrastructure, but you MUST prove the client can construct and
+authenticate.
+
+See `test_e2e_prompt_agents.py` and `test_e2e_voice_live.py` for
+patterns.
 
 ---
 
 ## 3 · Editing checklist (run before every commit)
 
-Mechanical checks. None of these are CI-enforced yet (see § 8).
+Mechanical checks. Most are now CI-enforced (§ 9.6), but running them
+locally before push catches issues faster than waiting for CI.
 
 - [ ] **YAML parses** — `python -c "import yaml,pathlib; [yaml.safe_load(p.read_text().split('---')[1]) for p in pathlib.Path('skills').rglob('SKILL.md')]"`
 - [ ] **Description ≤ 1024 chars** on every touched SKILL.md
@@ -435,9 +456,9 @@ git --no-pager diff -a HEAD~1
 git --no-pager diff HEAD~1 | Select-String -Pattern "kyc-poc|card-dispute-investigation|threadlight-v[123]|ricchi"
 ```
 
-There is no CI yet — these checks run on the contributor's machine. We
-will add a GitHub Action when the catalog stabilizes; until then,
-discipline is the gate.
+These checks are also enforced by CI (§ 9.6) — `skill-validation.yml`
+covers YAML parsing, description length, forbidden strings, and SemVer.
+Running them locally before push catches failures faster.
 
 ---
 
@@ -621,7 +642,12 @@ or service principal passwords.
 | **T0** | Lint | Frontmatter, desc ≤ 1024, forbidden strings, deprecated API scan | Every PR | `skill-validation.yml` |
 | **T1** | Pin validation | `validation.script` runs, expected_output present | Pin file changes | `pin-validation.yml` |
 | **T2** | Import smoke | `pip install` + `python -c "from X import Y"` for all auto-tier pins | Weekly + dispatch | `skill-test.yml` (pin-smoke job) |
-| **T3** | E2E Azure | Deploy agent/container, call Azure APIs, verify real responses | Weekly + dispatch | `skill-test.yml` (e2e-azure job) |
+| **T3** | E2E Azure | Call Azure APIs, verify credential chains + API surfaces work against real resources | Weekly + dispatch + new Azure-touching skills | `skill-test.yml` (e2e-azure job) |
+
+**T3 is CI-automated** for skills with E2E test files under
+`scripts/tests/test_e2e_*.py`. The CI runner has OIDC credentials and
+real Azure infrastructure (§ 9.7). New skills that connect to Azure
+MUST add an E2E test (§ 2.8).
 
 **Excluded from CI** (too complex, manually validated only):
 `citadel-hub-deploy`, `citadel-spoke-onboarding`, `foundry-vnet-deploy`.
@@ -693,14 +719,19 @@ via the same cross-runtime
    `foundry-doc-vision-speech`). Bump those skills' version PATCH.
 5. Add the skill to `CATEGORIES` in `scripts/build-site.py`
 6. Verify with `python scripts/validate-skills.py`
-7. Rebuild docs: `python3 scripts/build-site.py --out docs/`
-8. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
-9. Bump `marketplace.json` version to match
-10. Update `AGENTS.md` § 12.5 skill counts
-11. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
+7. **Adversarial review (wrapper skills):** diff SKILL.md against every
+   upstream source file. Check config field names, function signatures,
+   dependency lists, default values, and environment variables match the
+   actual code. This catches bugs that CI cannot — wrong field names,
+   incomplete catalogs, missing dependencies. Do it before opening the PR.
+8. Rebuild docs: `python3 scripts/build-site.py --out docs/`
+9. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
+10. Bump `marketplace.json` version to match
+11. Update `AGENTS.md` § 12.5 skill counts
+12. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
     commit message. If cross-refs touch other skills, also add
     `[multi-skill]`. Both are required by `automation-pr-gate.yml`.
-12. After merge, sync to user scope:
+13. After merge, sync to user scope:
     `cp -R skills/<name>/ ~/.copilot/skills/<name>/`
 
 ### 10.4 Renaming a skill
@@ -800,20 +831,21 @@ PR opened
 
 Push to main / weekly cron
  ├─ skill-test.yml            T2: all-pin smoke (pip install + import for ALL auto-tier pins)
- └─ skill-test.yml            T3: E2E Azure (deploy, API calls, model inference against
-                                   real resources in rg-awesome-gbb-ci — § 9.7)
+ └─ skill-test.yml            T3: E2E Azure (credential chains, API surfaces, model
+                                   inference against real resources in rg-awesome-gbb-ci)
 
 Weekly cron (detection only)
  └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
 ```
 
-**Current coverage (28 skills, 23 with upstream pins):**
+**Current coverage (27 skills, 23 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (`runnable: true`) | 16 pins | T0 + T1 + T2 in CI |
+| Auto-tier (`runnable: true`) | 18 pins | T0 + T1 + T2 in CI |
 | Issue-only (Azure-dependent) | 7 pins | T0 in CI; T1–T3 via `--include-azure` on dispatch |
-| Internal IP (no pin) | 5 skills | T0 only (manual validation) |
+| Internal IP (no pin) | 4 skills | T0 only (manual validation) |
+| E2E Azure tests | 2 skills | T3 in CI (`foundry-prompt-agents`, `foundry-voice-live`) |
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks
 issue-only pins when the runner has Azure credentials. The infra is
@@ -845,13 +877,13 @@ Consequences:
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 28 |
+| Total skills | 27 |
 | Skills with upstream pins | 23 |
-| Auto-tier (CI can refresh autonomously) | 16 |
+| Auto-tier (CI can refresh autonomously) | 18 |
 | Issue-only (human / Azure creds needed) | 7 |
-| Internal IP (no upstream) | 5 |
+| Internal IP (no upstream) | 4 |
 | CI workflows | 5 |
-| Unit tests | 56 (18 PR gate + 38 skill validation) |
+| Unit tests | 63 (18 PR gate + 38 skill validation + 7 E2E Azure) |
 | Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
