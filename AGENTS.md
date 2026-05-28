@@ -675,12 +675,25 @@ via the same cross-runtime
 
 ### 10.3 Adding a new skill
 
-1. Author the skill under `skills/<name>/` as usual
-2. Verify with `python scripts/validate-skills.py` — the plugin
-   auto-discovers it (no manifest edit needed)
-3. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
-4. Bump `marketplace.json` version to match
-5. Commit in one PR
+1. Author `skills/<name>/SKILL.md` following § 2.4 frontmatter shape
+2. **Pin file (wrapper skills):** copy
+   `scripts/templates/upstream-pin.template.md` to
+   `skills/<name>/references/upstream-pin.md` and fill every placeholder
+   (see § 9.5)
+3. **Cross-skill refs:** add `DO NOT USE FOR` entries in related skills
+   (e.g., if your skill covers voice, add a cross-ref in
+   `foundry-doc-vision-speech`). Bump those skills' version PATCH.
+4. Add the skill to `CATEGORIES` in `scripts/build-site.py`
+5. Verify with `python scripts/validate-skills.py`
+6. Rebuild docs: `python3 scripts/build-site.py --out docs/`
+7. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
+8. Bump `marketplace.json` version to match
+9. Update `AGENTS.md` § 12.5 skill counts
+10. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
+    commit message. If cross-refs touch other skills, also add
+    `[multi-skill]`. Both are required by `automation-pr-gate.yml`.
+11. After merge, sync to user scope:
+    `cp -R skills/<name>/ ~/.copilot/skills/<name>/`
 
 ### 10.4 Renaming a skill
 
