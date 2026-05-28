@@ -33,7 +33,32 @@ docs_to_revalidate:
   - https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/quickstart/chat-with-agent
   - https://pypi.org/project/azure-ai-projects/
 
-known_issues: []
+known_issues:
+  - id: KI-001
+    title: "Project endpoint uses services.ai.azure.com (not ai.azure.com)"
+    description: |
+      The Foundry API endpoint format is https://<resource>.services.ai.azure.com/api/projects/<project>,
+      NOT https://<resource>.ai.azure.com/... Some docs reference the shorter domain but it 404s.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § 1 and § 9 troubleshooting.
+  - id: KI-002
+    title: "list() returns AgentDetails with .versions dict, not .version"
+    description: |
+      project.agents.list() yields AgentDetails objects with a .versions dict
+      (keyed by "latest", "1", etc.), not a .version attribute. The
+      create_version() return type (AgentVersionResponse) does have .version.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § 4.
+  - id: KI-003
+    title: "delete_version() uses positional arg agent_version, not version="
+    description: |
+      The method signature is delete_version(agent_name, agent_version).
+      Using keyword arg version= raises TypeError.
+    upstream_url: null
+    status: documented
+    notes: Documented in SKILL.md § 4 and § 9.
 
 validation:
   requires:
@@ -67,6 +92,18 @@ validated_by: ricchi
 ---
 
 ## Audit trail
+
+### 2026-06-11 — T3 E2E validation + pin fixes (v1.0.1)
+
+- **T3 E2E test passed** against `ai-account-juhp3jaizf6j2` (fruocco-1,
+  rg-hosted-agent-demo) with gpt-4.1 model:
+  - Created prompt agent `ci-e2e-prompt-test` via `create_version`
+  - Chatted via conversations API, got exact expected response (`pong-ci-ok`)
+  - Listed agents, confirmed agent appeared with correct `.versions` dict
+  - Deleted agent via `delete_version("ci-e2e-prompt-test", "1")`
+- **Endpoint format fix**: `services.ai.azure.com` not `ai.azure.com`
+- **API surface corrections**: `.versions` dict on list, positional args on delete
+- 3 known issues documented (KI-001 through KI-003)
 
 ### 2026-06-11 — Initial pin (v1.0.0)
 

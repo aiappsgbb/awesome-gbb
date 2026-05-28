@@ -17,7 +17,7 @@ description: >
   foundry-hosted-agents), MCP server deployment (use
   foundry-mcp-aca), agent evaluation (use foundry-evals).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -71,7 +71,7 @@ from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
 
 PROJECT_ENDPOINT = "<your-project-endpoint>"
-# Format: https://<resource>.ai.azure.com/api/projects/<project>
+# Format: https://<resource>.services.ai.azure.com/api/projects/<project>
 
 project = AIProjectClient(
     endpoint=PROJECT_ENDPOINT,
@@ -91,7 +91,7 @@ print(f"Agent created: {agent.name} v{agent.version} (id: {agent.id})")
 ### REST equivalent
 
 ```bash
-curl -X POST "https://<resource>.ai.azure.com/api/projects/<project>/agents/my-assistant/versions?api-version=v1" \
+curl -X POST "https://<resource>.services.ai.azure.com/api/projects/<project>/agents/my-assistant/versions?api-version=v1" \
   -H "Authorization: Bearer $(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)" \
   -H "Content-Type: application/json" \
   -d '{
@@ -267,6 +267,23 @@ setup, chat output, and YAML definitions between versions.
 > **Agent names are permanent.** Once created, an agent's name cannot be
 > changed. Use descriptive, stable names from the start.
 
+### List and delete agents
+
+```python
+# List all agents in the project
+for agent in project.agents.list():
+    latest = agent.versions.get("latest", {})
+    print(f"{agent.name}  v{latest.get('version', '?')}  {latest.get('status', '?')}")
+
+# Delete a specific version (positional args: agent_name, agent_version)
+project.agents.delete_version("my-assistant", "1")
+```
+
+> **`list()` returns `AgentDetails`, not `AgentVersionResponse`.** The list
+> objects have a `.versions` dict (keyed by `"latest"`, `"1"`, etc.), not a
+> single `.version` attribute. Use `.versions["latest"]["version"]` for the
+> current version number.
+
 ---
 
 ## 5 · Structured inputs (runtime tool customization)
@@ -383,9 +400,12 @@ See the `foundry-evals` skill for the complete evaluation workflow.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `PromptAgentDefinition` not found on import | `azure-ai-projects` < 2.0.0 installed | `pip install "azure-ai-projects~=2.1.0"` |
+| "The project does not exist" | Wrong endpoint format or project not provisioned | Endpoint must be `https://<resource>.services.ai.azure.com/api/projects/<project>` (note `services.ai.azure.com`, not `ai.azure.com`) |
 | "Model not found" on create | Model not deployed in the Foundry project | Deploy the model in the portal or via `az` CLI |
 | Agent created but chat returns empty | No conversation created, or wrong `agent_reference` | Use `openai.conversations.create()` + correct name in `extra_body` |
 | 401 on `create_version` | Missing Foundry User role | Assign `53ca6127-db72-4b80-b1b0-d745d6d5456d` at AI Services account scope |
+| `AttributeError: 'AgentDetails' has no attribute 'version'` | Using `.version` on list results instead of `.versions` | `list()` returns `AgentDetails` with `.versions` dict — use `.versions["latest"]["version"]` |
+| `delete_version()` missing arg | Using keyword arg `version=` | Use positional: `delete_version("my-agent", "1")` (param name is `agent_version`) |
 | Tools not invoked | Instructions don't mention tool usage | Add explicit instructions: "Use web search to find current information" |
 | Published agent loses tool access | Agent app identity missing RBAC | Reassign roles to the published identity (not project identity) |
 | `extra_body` ignored or errors | OpenAI client version mismatch | Use `project.get_openai_client()` (not standalone `openai` package) |
