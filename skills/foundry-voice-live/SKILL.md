@@ -17,7 +17,7 @@ description: >
   voice (use foundry-hosted-agents), prompt agents without voice (use
   foundry-prompt-agents).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Foundry Voice Live
@@ -79,13 +79,13 @@ from openai import AsyncAzureOpenAI
 @asynccontextmanager
 async def connect_realtime(*, settings, token_provider):
     client = AsyncAzureOpenAI(
-        azure_endpoint=settings.azure_endpoint,       # https://<resource>.openai.azure.com
-        api_version="2025-04-01-preview",              # Realtime preview
+        azure_endpoint=settings.azure_endpoint,              # https://<resource>.openai.azure.com
+        api_version="2025-04-01-preview",                    # Realtime preview
         azure_ad_token_provider=token_provider,
     )
     try:
         async with client.realtime.connect(
-            model=settings.deployment_name,
+            model=settings.azure_deployment_name,
         ) as conn:
             yield conn
     finally:
@@ -97,16 +97,17 @@ async def connect_realtime(*, settings, token_provider):
 ```python
 @asynccontextmanager
 async def connect_voicelive(*, settings, token_provider):
+    actual_model = settings.azure_deployment_name
     client = AsyncAzureOpenAI(
         azure_endpoint=settings.azure_endpoint,
-        api_version="2025-10-01",                                    # ← GA
+        api_version="2025-10-01",                                       # ← GA
         azure_ad_token_provider=token_provider,
-        websocket_base_url=settings.voice_live_endpoint,             # ← wss://.../voice-live
+        websocket_base_url=settings.azure_voice_live_endpoint,          # ← wss://.../voice-live
     )
     try:
         async with client.realtime.connect(
-            model=settings.deployment_name,
-            extra_query={"model": settings.deployment_name},         # ← &model= not &deployment=
+            model=actual_model,
+            extra_query={"model": actual_model},                        # ← &model= not &deployment=
         ) as conn:
             yield conn
     finally:
@@ -122,11 +123,11 @@ async def connect_agent(*, settings, token_provider, agent_token_provider):
         azure_endpoint=settings.azure_endpoint,
         api_version="2025-10-01",
         azure_ad_token_provider=token_provider,
-        websocket_base_url=settings.voice_live_endpoint,
+        websocket_base_url=settings.azure_voice_live_endpoint,
     )
     try:
         async with client.realtime.connect(
-            model=settings.deployment_name,
+            model=settings.azure_deployment_name,
             extra_query={
                 "agent-id":           settings.agent_id,
                 "agent-project-name": settings.agent_project_name,
@@ -174,7 +175,7 @@ Send these in `conn.session.update(session={...})` after connection.
 }
 ```
 
-### Voice Live session (Rung 2 + 3)
+### Voice Live session (Rung 2)
 
 ```python
 {
@@ -193,6 +194,27 @@ Send these in `conn.session.update(session={...})` after connection.
 }
 ```
 
+### Voice Live + Agent session (Rung 3)
+
+The agent owns instructions and tools — omit `instructions` from the
+session config:
+
+```python
+{
+    "turn_detection": {"type": "azure_semantic_vad", "remove_filler_words": False},
+    "input_audio_format": "pcm16",
+    "output_audio_format": "pcm16",
+    "voice": {"name": "en-US-Ava:DragonHDLatestNeural", "type": "azure-standard"},
+    "modalities": ["text", "audio"],
+    "input_audio_echo_cancellation": {"type": "server_echo_cancellation"},
+    "input_audio_noise_reduction": {"type": "azure_deep_noise_suppression"},
+    "input_audio_transcription": {
+        "model": "azure-fast-transcription",
+        "language": "en",
+    },
+}
+```
+
 ### Feature comparison
 
 | Feature | Realtime | Voice Live |
@@ -205,22 +227,22 @@ Send these in `conn.session.update(session={...})` after connection.
 | Voice format | bare string `"alloy"` | `{"name": "...", "type": "azure-standard"}` |
 | Filler word removal | ❌ | Optional (`remove_filler_words: true`) |
 
-> **Agent rung (3) note:** When routing to a Foundry Agent, the agent
-> owns the instructions and tools — omit `instructions` from the session
-> config and let the agent's definition drive the behavior.
-
 ---
 
 ## 4 · Voice Catalog
 
-### OpenAI voices (Realtime only)
+### OpenAI voices (all rungs)
 
 All 10 are locale-independent: `alloy`, `ash`, `ballad`, `coral`,
 `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`.
 
-### Azure Neural HD voices (Voice Live)
+On **Realtime** (Rung 1), send as a bare string: `"voice": "alloy"`.
+On **Voice Live** (Rung 2–3), wrap with type:
+`"voice": {"name": "alloy", "type": "azure-standard"}`.
 
-Per-locale catalog. The `voice_type` field is always `"azure-standard"`.
+### Azure Neural HD voices (Voice Live only)
+
+Per-locale catalog. The `type` field is always `"azure-standard"`.
 
 **English:**
 
@@ -232,7 +254,7 @@ Per-locale catalog. The `voice_type` field is always `"azure-standard"`.
 | Guy | `en-US-GuyNeural` |
 | Brian | `en-US-BrianNeural` |
 
-**Italian (example — other locales follow the same pattern):**
+**Italian:**
 
 | Voice | Name string |
 |-------|-------------|
@@ -240,9 +262,19 @@ Per-locale catalog. The `voice_type` field is always `"azure-standard"`.
 | Giuseppe | `it-IT-GiuseppeMultilingualNeural` |
 | Alessio | `it-IT-AlessioMultilingualNeural` |
 | Marta | `it-IT-MartaNeural` |
+| Diego | `it-IT-DiegoNeural` |
+| Elsa | `it-IT-ElsaNeural` |
 
-> OpenAI voices (`alloy`, `nova`, `shimmer`, etc.) also work in Voice
-> Live — set `voice_type: "azure-standard"` and use the bare name.
+> **Localization note:** The upstream demo ships English (en) and Italian
+> (it) locale packs. Other locales follow the same pattern — one entry
+> per dict in `i18n.py`.
+
+### Voice fallback on rung switch
+
+When switching from Voice Live → Realtime at runtime, HD voice names
+are **not** valid for the Realtime API. The handler falls back to
+`alloy` if the current voice isn't in the OpenAI set — the UI also
+snaps the picker to a valid value (belt-and-braces).
 
 ---
 
@@ -299,6 +331,11 @@ the same resource.
 All configuration is environment-driven. Use a `.env` file:
 
 ```bash
+# ── Mode selector ─────────────────────────────────────────────────────
+# realtime  → Rung 1    voicelive → Rung 2    agent → Rung 3
+# demo      → unified switcher — all rungs in one UI (default)
+MODE=demo
+
 # ── Endpoints (same Foundry resource, different subdomains) ──────────
 AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
 AZURE_VOICELIVE_ENDPOINT="wss://<resource>.services.ai.azure.com/voice-live"
@@ -317,6 +354,10 @@ AGENT_ID=""
 # ── Sovereign clouds (override for non-public) ───────────────────────
 # AZURE_COGNITIVE_SERVICES_SCOPE="https://cognitiveservices.azure.com/.default"
 # AZURE_AI_SCOPE="https://ai.azure.com/.default"
+
+# ── Server bind (uncomment to override) ───────────────────────────────
+# HOST="127.0.0.1"      # default: 0.0.0.0
+# PORT="7860"            # default: 7860
 ```
 
 ### Endpoints explained
@@ -352,12 +393,32 @@ Measure real latency across rungs using a **scenario matrix**:
 # Default 5-scenario matrix, 3 iterations × 4 turns
 uv run python -m benchmark.run
 
-# Tighter noise absorption
+# More iterations for tighter noise absorption
 uv run python -m benchmark.run --iterations 5
 
-# Specific scenarios
-uv run python -m benchmark.run --scenarios voicelive:gpt-5-mini voicelive:gpt-4o-mini
+# Specific scenarios (including agent rung)
+uv run python -m benchmark.run --scenarios voicelive:gpt-5-mini agent:gpt-5-mini
+
+# Custom prompts, 6 turns, output to specific dir
+uv run python -m benchmark.run --prompts prompts.txt --turns 6 --out results/
+
+# Metrics only (skip WAV recordings)
+uv run python -m benchmark.run --no-wav
 ```
+
+> **Important:** The benchmark sends **text-only** prompts via the
+> Realtime API. It measures TTFA/TTFT/total latency from the model's
+> perspective but does **NOT** measure VAD, STT, or AEC latency
+> (there's no real microphone input). For end-to-end voice latency,
+> use the live UI.
+
+### Output files
+
+| File | Content |
+|------|---------|
+| `metrics.json` | Raw per-turn + per-iteration metrics for all scenarios |
+| `comparison.md` | Markdown report with aggregated stats per scenario |
+| `*.wav` | Per-turn audio recordings (omit with `--no-wav`) |
 
 ### Metrics collected per turn
 
@@ -421,10 +482,18 @@ swap at runtime from a segmented control — no restart needed:
 from voicelive_demo.rungs import REGISTRY
 from voicelive_demo.config import Mode
 
-# Switch rung at runtime
-handler.connect_factory = REGISTRY[Mode.VOICELIVE].connect_factory
-handler.make_session = REGISTRY[Mode.VOICELIVE].make_session
-# Next mic click connects to Voice Live
+target = REGISTRY[Mode.VOICELIVE]
+
+# Mutate the live handler — next mic click dials the new destination
+handler.connect_factory = target.connect_factory
+handler.make_session    = target.make_session
+handler.name            = target.mode.value
+shared.mode             = target.mode
+
+# Snap voice to the new catalog if the current voice is invalid
+valid = {name for (_, name, _) in voices_for_mode(target.mode, shared.locale)}
+if shared.voice not in valid:
+    shared.voice, shared.voice_type = default_voice_for(target.mode, shared.locale)
 ```
 
 ### Localization
@@ -474,6 +543,10 @@ async def handle_event(event):
         # Assistant transcript complete
         pass
 
+    elif etype in ("response.done", "response.audio.done", "response.output_audio.done"):
+        # Turn complete → idle (handler clears status)
+        pass
+
     elif etype == "error":
         # Server error
         pass
@@ -520,6 +593,9 @@ dependencies = [
     "gradio>=5.42.0",
     "av>=16.0.0,<17.0.0",
     "pydantic-settings>=2.10.1",
+    "aiohttp>=3.12.15",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
 ]
 ```
 
