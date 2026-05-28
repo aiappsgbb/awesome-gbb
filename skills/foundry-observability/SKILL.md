@@ -13,11 +13,12 @@ description: >
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
   Monitoring Metrics Publisher RBAC, AppInsights connection foundry,
-  account-level appin.
+  account-level appin, AppIn PUT 400, credentials null,
+  silent injection, server_error telemetry.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Foundry Observability
@@ -230,6 +231,32 @@ module acaEnv 'modules/aca-env-monitoring.bicep' = {
 
 ## Layer 2 — Foundry hosted agent (the runtime)
 
+> 🚨 **START HERE if your AppInsights connection PUT fails or your agent
+> reports `server_error` after a fresh `azd provision`.**
+>
+> The "normal" Layer 2 path below assumes the platform auto-injects
+> `APPLICATIONINSIGHTS_CONNECTION_STRING` after you create an account-level
+> connection. **On O-012-affected accounts (recurring in 2026-05-28), the
+> auto-injection silently drops** — the connection looks fine but the env
+> var never lands in the container, so traces never reach AppInsights.
+>
+> **Decision tree:**
+> 1. Try the Step 2.1 PUT below (`authType: ApiKey + credentials.key`).
+> 2. **If PUT returns HTTP 400 `ValidationError "AuthType for AppInsights
+>    Connection can only be ApiKey"`** → you sent `authType: AAD`; switch
+>    to `ApiKey` and retry. See O-012 row in § Common silent-failure modes.
+> 3. **If PUT returns HTTP 200 but GET returns `credentials: null`** → you
+>    hit the silent-drop variant of O-012; use the underscored env-var
+>    passthrough workaround (`APPLICATION_INSIGHTS_CONNECTION_STRING`, with
+>    underscore — NOT the reserved no-underscore name) from
+>    `HostedAgentDefinition.environment_variables` via `create_version()`,
+>    and call `configure_azure_monitor(connection_string=...)` explicitly
+>    in `container.py`. See O-012 row for the full forensic.
+> 4. **If you see no traces in AppInsights despite a healthy connection
+>    record** → check `agent.yaml` did NOT set
+>    `APPLICATIONINSIGHTS_CONNECTION_STRING` (it's a reserved name; setting
+>    it blocks auto-injection). Remove and redeploy.
+
 The hosted agent runtime emits traces automatically — but ONLY if the
 account has an AppInsights connection registered. **Without that
 connection, the runtime silently drops every span.**
@@ -250,6 +277,21 @@ connection, the runtime silently drops every span.**
 > See `foundry-hosted-agents` § MAF 1.6.0 update.
 
 ### Step 2.1 — Create the account-level connection (postprovision)
+
+> 🛣️ **Path A (recommended — try this first):** PUT with `authType: ApiKey`
+> + `credentials.key` from your AppInsights instrumentation key. Succeeds
+> on most accounts; data lands within 1-2 min after first invocation.
+>
+> 🛣️ **Path B (O-012 fallback — only if Path A returns 400/AAD or GET
+> returns `credentials: null`):** skip the PUT entirely, pass
+> `APPLICATION_INSIGHTS_CONNECTION_STRING` (with underscore between
+> APPLICATION and INSIGHTS) directly in the agent's
+> `HostedAgentDefinition.environment_variables`, and call
+> `configure_azure_monitor(connection_string=...)` explicitly in
+> `container.py`. The reserved no-underscore name is platform-managed; the
+> underscored variant is accepted as a user override. Verified: 88 traces +
+> gen_ai dependency spans landed in AppInsights from a hosted agent on
+> `northcentralus`. See O-012 row for full forensic.
 
 ```bash
 # infra/scripts/connect_foundry_appinsights.py — see references/postprovision/
@@ -295,6 +337,11 @@ environment_variables:
 Add it to `agent.yaml` and the agent runtime errors with
 `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved`.
 
+> **🔑 Env-var naming distinction (O-012 workaround):**
+> - **Reserved (platform-managed, NO underscore):** `APPLICATIONINSIGHTS_CONNECTION_STRING` — set by platform from account-level connection; CANNOT be set in `agent.yaml` or via normal env vars.
+> - **Override name (user-settable, WITH underscore):** `APPLICATION_INSIGHTS_CONNECTION_STRING` — passed ONLY via `HostedAgentDefinition.environment_variables` in `create_version()` when using O-012 workaround; platform reserves the no-underscore name but accepts this underscored variant.
+> Make this distinction explicit when configuring O-012 fallback — use the underscored name only in HostedAgentDefinition, never in agent.yaml.
+
 > **⚠️ Layer 2 caveat — hosted-agent containers MUST guard the init too.**
 > The "platform auto-injects `APPLICATIONINSIGHTS_CONNECTION_STRING`"
 > promise is **best-effort, not contractual** — we have field evidence
@@ -308,6 +355,8 @@ Add it to `agent.yaml` and the agent runtime errors with
 > bound. Foundry returned `server_error`/`model:""` on every smoke —
 > with ZERO telemetry to debug it (telemetry init was what crashed).
 > **The agent itself was fine.**
+>
+> **🚨 CRITICAL.** If PUT returns 400/AAD or GET returns `credentials:null`, you HAVE hit O-012 — use the underscored env var passthrough (`APPLICATION_INSIGHTS_CONNECTION_STRING`, with underscore between APPLICATION and INSIGHTS) + explicit `configure_azure_monitor(connection_string=...)`. DO NOT silently fall through to assuming auto-injection works.
 >
 > **Discipline.** Hosted-agent `container.py` MUST use the same
 > guarded-init pattern as ACA workloads (Layer 3 helper below), NOT
@@ -330,6 +379,9 @@ workload, just defensively guarded so a missing env var doesn't crash
 startup.
 
 ### Step 3.1 — Python init (one line of init code per workload)
+
+> **🔗 Version compatibility note (azure-monitor-opentelemetry >= 1.6.0):**
+> `configure_azure_monitor()` from `azure-monitor-opentelemetry>=1.6.0` is NOT compatible with the hosted-agent platform's TracerProvider setup unless guarded. The hosted-agent path differs from ACA-workload path starting MAF 1.6.0. For hosted agents on `FoundryChatClient` + MAF >= 1.6.0, reference `foundry-hosted-agents` § MAF 1.6.0 update for the guarded init pattern. For ACA workloads, the pattern below applies directly.
 
 ```python
 # src/mcp/server.py (or src/bot/app.py, or src/jobs/deadline-watcher/main.py)
@@ -551,6 +603,8 @@ are silent. This is the single most useful query when an ACA Job is
 | O-011 | **Hosted agent returns `server_error` / `model: ""` on every smoke; AppIn 0 rows; container looks healthy in `azd ai agent show`** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform's `APPLICATIONINSIGHTS_CONNECTION_STRING` auto-injection fails (e.g. account-level AppIn connection persisted with `credentials: null` — see O-012), the SDK raises `ValueError`. Container exits before `ResponsesHostServer` binds; Foundry runtime sees no agent. **The agent itself is fine — only telemetry init crashed it.** | **Hosted-agent `container.py` MUST use guarded init** — `init_telemetry()` from `references/python/otel_init.py` OR inline an 8-line equivalent that no-ops on (a) missing env var, (b) SDK ImportError, (c) any SDK exception. Never call `configure_azure_monitor()` raw at module/main scope. The agent works fine without telemetry — don't let telemetry init kill it |
 | O-012 | AppInsights connection PUT returns HTTP 400 ValidationError on `authType: AAD`; ApiKey fallback returns 200 but `credentials: null` on subsequent GET (silent server-side drop) | Platform gap on account-RP scope — confirmed on `2025-04-01-preview`, `2025-06-01`, `2025-10-01-preview`, `2026-03-01`, `2026-03-15-preview` across `northcentralus` and `eastus2`. The data-plane `getConnectionWithCredentials` API also returns `credentials: {}`. `FoundryChatClient.configure_azure_monitor()` (SDK path) calls `telemetry.get_application_insights_connection_string()` → `_get_with_credentials` → empty credentials → `ValueError`. **Neither the platform env var injection NOR the SDK telemetry path work on O-012 affected accounts.** | **WORKAROUND FOUND (May 2026).** Pass `APPLICATION_INSIGHTS_CONNECTION_STRING` (note: underscore between APPLICATION and INSIGHTS) directly in `HostedAgentDefinition.environment_variables` via `create_version()`. The platform reserves `APPLICATIONINSIGHTS_CONNECTION_STRING` (no underscore) but accepts the underscored variant. In `container.py`, read both names with priority to the underscored variant, validate with `startswith("InstrumentationKey=")`, and call `configure_azure_monitor(connection_string=...)` explicitly. Verified: 88 traces + gen\_ai dependency spans landed in App Insights from a hosted agent on `northcentralus`. See `threadlight-deploy` § deploy.py env var passthrough for the exact wiring. |
 | O-013 | `FoundryChatClient.configure_azure_monitor()` fails with `ValueError("Application Insights connection does not have a connection string.")` even after account-level connection created | SDK calls `telemetry.get_application_insights_connection_string()` → lists connections → `_get_with_credentials(name)` → data-plane returns `credentials: {}` (empty dict, not the key stored via management API PUT). Same root cause as O-012 — management and data plane don't share the credential. | Use the O-012 workaround (env var passthrough). The SDK path (`FoundryChatClient.configure_azure_monitor()`) is a clean fallback for accounts where O-012 is NOT present — keep it as Path 2 after the env var Path 1. |
+| O-014 | **Platform auto-injection silently missing.** Symptom: `APPLICATIONINSIGHTS_CONNECTION_STRING` env var not visible in container (verify via `azd ai agent invoke "import os; print(os.environ.get('APPLICATIONINSIGHTS_CONNECTION_STRING', 'MISSING'))"`); AppIn has 0 traces. | Account-level connection persisted with `credentials: null` (subset of O-012 — the silent-drop variant). Platform auto-injection fails silently; env var never injected into container. Container OTel init either skipped (guarded pattern) or crashed (raw init). Either way, zero telemetry. | Same workaround as O-012: pass `APPLICATION_INSIGHTS_CONNECTION_STRING` (WITH underscore) in `HostedAgentDefinition.environment_variables`. Verify injection: `azd ai agent invoke "import os; print(os.environ.get('APPLICATION_INSIGHTS_CONNECTION_STRING', 'MISSING'))"`. In `container.py`, use guarded init that reads BOTH names (priority to underscored variant) and calls `configure_azure_monitor(connection_string=...)` explicitly. |
+| O-015 | **Agent init crash from raw configure_azure_monitor().** Symptom: container exits 1 within 5s of startup; `azd ai agent show` shows `status: error`; logstream shows `ValueError: connection_string is required` or `ValueError: Application Insights connection does not have a connection string`. | `container.py` calls `configure_azure_monitor()` raw at module or main scope with no try/except. Platform auto-injection failed (O-014 / O-012 variant), env var is missing or empty. SDK raises `ValueError`. Container exits before `ResponsesHostServer` binds; Foundry returns `server_error` on any invoke. **The agent code itself is fine — only telemetry init crashed the startup.** | **MUST wrap in `_init_telemetry()` per gap O-011's pattern.** Never call `configure_azure_monitor()` raw at module or main scope. Use guarded init from `references/python/otel_init.py` or inline equivalent: check (a) env var present, (b) SDK ImportError, (c) any SDK exception — all three must no-op gracefully. Agent runs fine without telemetry; don't let telemetry init kill the startup. |
 
 ### Auth-type platform forensic (some regions)
 

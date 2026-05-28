@@ -4,13 +4,13 @@ description: >
   Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry
   built-in evaluators. Covers sequential invocation, cold-start handling, dataset
   creation, evaluator configuration, RBAC for eval judges, and result interpretation.
-  USE FOR: evaluate agent, run evals, test agent, benchmark agent, Foundry evaluators,
-  task adherence, intent resolution, eval scores, agent quality, create eval dataset,
-  score agent responses, eval RBAC, judge model.
+  USE FOR: evaluate agent post-deploy, score grounding quality, measure tool_selection,
+  detect dataset drift, write custom grader, check URL citations, validate eval RBAC,
+  day-1 smoke test, continuous eval loop, pre-merge eval gate, Foundry Evals SDK setup.
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
 metadata:
-  version: "1.0.3"
+  version: "1.0.4"
 ---
 
 # Foundry Agent Evaluations
@@ -36,6 +36,9 @@ Phase 1: Invoke agent → collect responses
 Phase 2: Score responses → Foundry evaluators
 ```
 
+**Critical requirement:** MUST complete both phases sequentially. Skipping either phase will
+result in incomplete evaluations.
+
 ---
 
 ## Phase 1: Invoke the Agent
@@ -59,7 +62,7 @@ oai = project.get_openai_client(agent_name="my-agent")
 print("Warming up...")
 oai.responses.create(input="Hello", stream=False)
 
-# Invoke each query SEQUENTIALLY
+# MUST invoke each query SEQUENTIALLY (never concurrent)
 # Concurrent requests overwhelm cold-start containers → empty responses
 results = []
 for query in test_queries:
@@ -73,15 +76,21 @@ for query in test_queries:
 
 ### Critical Rules
 
-- **Sequential, not concurrent** — concurrent eval requests overwhelm cold-start containers
-  and produce empty responses
-- **Warm up first** — send a throwaway "Hello" before the real queries
-- **Use `stream=False`** — simpler for eval; streaming works but adds complexity
-- **agent-bound client** — `get_openai_client(agent_name=...)` routes to the dedicated endpoint
-- **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch
-- **Pace invocations** — add a **5s** `time.sleep()` between calls. Rapid-fire requests produce empty responses even after warm-up
-- **Warmup retry loop, not single-shot** — a single warmup ping is NOT enough for hosted agents that scale to zero. First call to a cold container returns `server_error` in 5-10s before the platform has even brought a replica up. **Pattern (validated across recent hosted-agent evals):**
-- **Skip container status API on refreshed preview** — do NOT poll `.../versions/{v}/containers/default` to check readiness. This endpoint returns **HTTP 404** on refreshed-preview hosted agents (the platform auto-provisions containers and does not expose the legacy container management API). Polling it wastes 3+ minutes. Go straight to the warmup chat loop below instead.
+- **DO NOT invoke concurrently** — concurrent eval requests overwhelm cold-start containers
+  and produce empty responses. Sequential invocation is mandatory.
+- **MUST warm up first** — send a throwaway "Hello" before the real queries using the retry
+  loop pattern below (not a single ping). Cold containers return `server_error` in 5-10s
+  before the platform has brought a replica up.
+- **DO use `stream=False`** — simpler for eval and required for batch scoring.
+- **MUST bind to agent endpoint** — use `get_openai_client(agent_name=...)` to route to
+  the dedicated endpoint, not the project endpoint.
+- **Token refresh for long runs** — `DefaultAzureCredential` tokens expire after ~1h. For 30+ scenarios, refresh the token every 10 items or create a fresh client per batch.
+- **MUST pace invocations with 5s delay** — add `time.sleep(5)` between calls. Rapid-fire
+  requests produce empty responses even after warm-up.
+- **DO NOT poll container status API** — do NOT call `.../versions/{v}/containers/default`
+  to check readiness on refreshed Foundry. This endpoint returns **HTTP 404** on modern hosted
+  agents (the platform auto-provisions containers). Polling wastes 3+ minutes. Use the warmup
+  chat loop below instead.
 
 ```python
 # Warmup with retry loop — handles scale-from-zero hosted agents
@@ -101,11 +110,19 @@ for attempt in range(1, WARMUP_ATTEMPTS + 1):
     if attempt < WARMUP_ATTEMPTS:
         time.sleep(WARMUP_BACKOFF_S)
 else:
-    raise RuntimeError("Hosted agent failed to warm up after 4 attempts (4 minutes). Check the deployment.")
+     raise RuntimeError("Hosted agent failed to warm up after 4 attempts (4 minutes). Check the deployment.")
 ```
-- **ASCII-only logging on Windows** — see `Eval scripts on Windows: cp1252 trap` below. The default Windows console encoding is **cp1252**, not UTF-8. Any `print('→')`, `print('×')`, or `print('·')` in `run_evals.py` blows up with `UnicodeEncodeError` mid-run, killing partial results. Use `->`, `x`, `::` (or set `PYTHONUTF8=1` in the venv bootstrap; see fix below).
-- **Tolerate gateway flake on Phase 1** — Foundry's gateway can enter 5-10 minute sticky `internal_server_error` windows under burst load (especially mid-cold-start). 30-60s exponential backoff is **not** enough on bad days. See `Gateway flakiness during Phase 1` below for the resume-after-cooldown pattern.
-- **Retry on empty** — `output_text` can return empty when the agent does tool calls but the response structure varies. Retry once after a 3s pause. Also scan `response.output` items for message text as a fallback:
+
+- **DO use ASCII-only logging on Windows** — see `Eval scripts on Windows: cp1252 trap` below.
+  The default Windows console encoding is **cp1252**, not UTF-8. Any `print('→')`, `print('×')`,
+  or `print('·')` in `run_evals.py` fails with `UnicodeEncodeError` mid-run, killing partial
+  results. Use `->`, `x`, `::` instead (or set `PYTHONUTF8=1` in the venv bootstrap).
+- **MUST tolerate gateway flake on Phase 1** — Foundry's gateway can enter 5-10 minute sticky
+  `internal_server_error` windows under burst load (especially mid-cold-start). 30-60s exponential
+  backoff is **not** enough. See `Gateway flakiness during Phase 1` below for the resume-after-cooldown pattern.
+- **DO retry on empty response** — `output_text` can return empty when the agent does tool calls
+  but the response structure varies. Retry once after a 3s pause. Also scan `response.output`
+  items for message text as a fallback:
 
 ```python
 text = response.output_text or ""
@@ -424,8 +441,8 @@ else:
 
 ```python
 # Create a new run against the existing definition.
-# `name=` is REQUIRED as of the late-2026 Foundry preview ` omitting it returns
-# `400 UserError: Evaluation display name is required is invalid`.
+# `name=` is REQUIRED as of Azure AI Projects SDK 1.0.x (May 2026).
+# Omitting it returns: `400 UserError: Evaluation display name is required`.
 import time
 
 run = client.evals.runs.create(
@@ -440,13 +457,15 @@ run = client.evals.runs.create(
     },
 )
 
-print(f"Eval run: {run.id} ` status: {run.status}")
+print(f"Eval run: {run.id} · status: {run.status}")
 ```
 
-> **`name=` field is mandatory.** The skill's earlier examples didn't
-> include it because the API used to accept `name=None`. Current preview
-> rejects the run. Always pass a unique display name (timestamped is
-> simplest) so the run appears in the Foundry portal eval list.
+> **`name=` field is mandatory (verified May 2026).** The API requires a unique display name
+> to track runs in the Foundry portal. See
+> [Foundry Agent Evaluations](https://learn.microsoft.com/en-us/azure/foundry/concepts/evaluations)
+> for current documentation. **Note:** if running a later SDK version, check the
+> [Foundry release notes](https://github.com/Azure/azure-sdk-for-python/releases)
+> for any API changes.
 
 > **Do NOT call `client.evals.create()` every run.** The definition is reusable —
 > only the dataset changes between runs. Creating a new definition per run clutters
@@ -603,6 +622,14 @@ For most agents, run at least:
 
 Add `tool_selection` and `tool_output_utilization` if the agent uses tools.
 
+### Evaluator Troubleshooting
+
+| Symptom | Root Cause | DO NOT Do | DO Instead | Check |
+|---------|-----------|-----------|-----------|-------|
+| Eval suite ran but no metric updated in the Foundry Evals UI | Eval write blocked by RBAC. Eval runner lacks `Foundry User` role on the project. | Do not assume the eval ran successfully just because the run completed. | Check runner service principal / user has `Foundry User` role on the project (required for both read and write). Re-run the eval suite after assigning the role. | Run logs: `az cli ai projects role assignment list` |
+| Grader returns 0 or 1 randomly across identical inputs | Grader is stateful (e.g., fetches live data, uses non-seeded randomness, or depends on current time). Evals require pure, deterministic functions. | Do not use non-deterministic graders in pre-merge gates or continuous eval. | Make the grader pure: seed any random source, snapshot live data into the dataset, avoid `datetime.now()` or mock it. Mark stateful graders as smoke-test-only in the eval description. | Grader source code — check for `random.random()`, `requests.get()`, or time-based logic without mocking. |
+| Dataset rotation drift — eval scores trend down silently over weeks | Dataset items now reference URLs / data that has changed since baseline. No version tracking or content validation. | Do not assume stable datasets over time. Do not run evals without monitoring for drift. | Snapshot dataset version + content hash (SHA256 of JSONL) on every baseline run. Alert ops if drift > 5% week-over-week. Store hashes in run metadata. | Dataset file: `sha256sum dataset.jsonl` · Store in eval run description. |
+
 ---
 
 ## Evaluator RBAC
@@ -660,6 +687,92 @@ dataset = [
     if t.status == "completed"
 ]
 ```
+
+---
+
+## Custom grader recipe: URL-citation quality (for grounded-answer pilots)
+
+For agents whose value-add is "grounded answers backed by citations" (e.g. a
+Microsoft Learn assistant, an internal docs Q&A, a code-grounded coding
+assistant), an `agent-output-only` grader misses the most important quality
+signal: **did the agent actually cite real, reachable sources?**
+
+Wire two complementary graders into your eval suite:
+
+### Grader A — citation_present (cheap, runs on every answer)
+
+```python
+import re
+
+LEARN_URL_PATTERN = re.compile(r"\[([^\]]+)\]\(https://learn\.microsoft\.com/[^\)]+\)")
+
+def grade_citation_present(item):
+    """Pass if the agent's answer contains >= 2 inline markdown links
+    to learn.microsoft.com. Substitute the domain for your corpus."""
+    answer = item["agent_output"]
+    citations = LEARN_URL_PATTERN.findall(answer)
+    return {
+        "pass": len(citations) >= 2,
+        "score": min(1.0, len(citations) / 2.0),
+        "citation_count": len(citations),
+    }
+```
+
+Use as a `FunctionEvaluator` in Foundry Evals. Latency: negligible
+(string regex). Run on EVERY eval item.
+
+### Grader B — citation_resolves (sampled, runs against live deploy)
+
+```python
+import asyncio
+import httpx
+
+async def grade_citation_resolves(item, timeout=10):
+    """Pass if every cited URL returns HTTP 200 OK (sampled).
+    Run against the live deploy in a post-deploy smoke gate."""
+    urls = LEARN_URL_PATTERN.findall(item["agent_output"])
+    if not urls:
+        return {"pass": False, "score": 0.0, "reason": "no citations to verify"}
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
+        results = await asyncio.gather(
+            *(c.head(u) for u in urls), return_exceptions=True
+        )
+    ok = sum(1 for r in results if isinstance(r, httpx.Response) and r.status_code == 200)
+    return {
+        "pass": ok == len(urls),
+        "score": ok / len(urls),
+        "ok_count": ok,
+        "url_count": len(urls),
+    }
+```
+
+Latency: 1-5 s per item (depends on network + number of URLs). Run in a
+post-deploy smoke gate or scheduled nightly drift run, not on every PR.
+
+### Wire-up
+
+In your eval config, declare both:
+
+```yaml
+evaluators:
+  citation_present:
+    type: function
+    function: graders.citation_present.grade_citation_present
+  citation_resolves:
+    type: function
+    function: graders.citation_resolves.grade_citation_resolves
+gates:
+  pre_merge:
+    - citation_present (>= 0.8)
+  post_deploy:
+    - citation_present (>= 0.8)
+    - citation_resolves (>= 0.95)
+```
+
+If your domain isn't `learn.microsoft.com`, swap the regex (and put the
+domain in a config rather than hardcoded). Verified pattern from the
+2026-05-28 learn-assistant pilot — 4/4 in-scope demo scenarios returned
+≥2 citations, every URL resolved.
 
 ---
 
@@ -894,12 +1007,94 @@ Re-run evals after each agent version update to ensure quality doesn't regress.
 
 ---
 
+## Day-1 Smoke Test Recipe (hosted-agent + MCP-tool pilots)
+
+Before running continuous evals or merging to production, validate your hosted agent with a
+representative test case using this recipe:
+
+**Step 1: Pick 1 representative prompt from demo scenarios**
+
+Use your agent's demo scenarios (e.g., from `spec.md` § Demo Scenarios) to select ONE query
+that exercises the core tool loop (not trivial warmup, not edge cases yet).
+
+**Step 2: Invoke and capture**
+
+```bash
+# Invoke with a single query and capture the run_id
+run_id=$(azd ai agent invoke --new-conversation "<your-representative-prompt>" | grep -oP 'run_id: \K\S+')
+echo "Run ID: $run_id"
+```
+
+**Step 3: Score with built-in `tool_selection` evaluator**
+
+```python
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+client = AIProjectClient(
+    endpoint="<project_endpoint>",
+    credential=DefaultAzureCredential(),
+)
+
+# Create a simple eval run with just tool_selection
+eval_def = client.evals.create(
+    name="smoke-test-tool-selection",
+    description="Day-1 smoke test — validate tool selection on real scenario",
+    evaluators=[{"evaluator_id": "builtin.tool_selection"}],
+)
+
+# Score the response
+result = client.evals.runs.create(
+    eval_id=eval_def.id,
+    name=f"smoke-{run_id}",
+    data_source={
+        "type": "jsonl",
+        "source": {
+            "type": "file_content",
+            "content": [{"item": {"prompt": "<your-representative-prompt>"}}],
+        },
+    },
+)
+
+print(f"Tool selection score: {result.metrics}")
+```
+
+**Step 4: Interpret and decide**
+
+- If `tool_selection` score ≥ 0.7 → proceed to full eval suite
+- If `tool_selection` score < 0.7 → agent is picking wrong tools; debug before merging
+
+**Step 5: Fallback to function_eval if agent has custom post-processing**
+
+If your agent has non-standard response post-processing or custom event streams (not standard Foundry
+responses API), use the explicit `function_eval` path (see § Custom Graders below) instead of
+invocations-protocol. The smoke test is the same; only the eval execution path changes.
+
+**Decision Tree:**
+
+```
+┌─ Does agent emit standard Foundry responses API events?
+│  ├─ YES → Use invocations-protocol (above recipe)
+│  └─ NO  → Use function_eval (custom grader path)
+```
+
+---
+
 ## Continuous Evaluation Loop (production telemetry → KPIs)
 
 One-shot pre-deploy evaluation tells you "the agent shipped working".
 **Continuous evaluation** tells you "the agent is *still* working in production
 six weeks later". Wire this for every threadlight pilot — it's how the customer
 proves the agent earned its budget at the next steering committee.
+
+> **Cross-skill ownership note:** This section owns **scoring patterns, dataset schema,
+> and evaluator wiring**. Related concerns are owned by peer skills:
+> - **Identity & RBAC for eval runners** → see `foundry-hosted-agents` § Identity & RBAC
+> - **Hosted-agent lifecycle & deployment** → see `foundry-hosted-agents` § Troubleshooting
+> - **Knowledge base / VectorDB orchestration & continuous indexing** → see `foundry-iq` § Continuous indexing
+>
+> If your eval runner has permission errors or your agent fails to start during continuous eval,
+> check those upstream SKILLs first. This SKILL focuses on the eval definition and score extraction.
 
 ### Plan A (default): Foundry built-in continuous evaluation
 

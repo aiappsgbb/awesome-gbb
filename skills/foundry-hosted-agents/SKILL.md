@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.5"
+  version: "1.7.6"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -326,6 +326,10 @@ server.run()  # Serves on port 8088
 - `DefaultAzureCredential` resolves to the container's App Service managed identity
 - Custom tools use `@tool(approval_mode="never_require")` with `Annotated` type hints
 
+> **⚠️ Deprecation: `ChatAgent` is gone in MAF 1.6.0**
+>
+> Any older examples showing `from agent_framework import ChatAgent` followed by `ChatAgent(chat_client=...)` are **stale — no migration alias is exported**. The class was renamed to `Agent` and the kwarg changed from `chat_client=` to `client=`. If you're copying code from pre-May-2026 prose or SKILLs, replace `ChatAgent(chat_client=client, ...)` with `Agent(client=client, ...)`.
+
 ### Skill Loading — `SkillsProvider` (recommended) vs. inline `_load_skills()` (legacy)
 
 > **Authoritative source.** [Microsoft Agent Framework — Agent Skills (Python)](https://learn.microsoft.com/en-us/agent-framework/agents/skills?pivots=programming-language-python).
@@ -354,6 +358,13 @@ demand. Concatenating both **double-counts** every skill body, blows
 out the static prompt, and silently defeats progressive disclosure.
 
 #### Recommended — `SkillsProvider` context provider
+
+> **⚠️ DO and DO NOT — API change in MAF 1.4.0 / 1.6.0:**
+>
+> - **DO** use `SkillsProvider.from_paths(skills_dir)` (MAF 1.6.0 recommended, works on 1.4.0+)
+> - **DO NOT** use the legacy `SkillsProvider(skill_paths=skills_dir)` constructor — it was **removed in MAF 1.4.0** with no alias
+>
+> If you see `TypeError: SkillsProvider.__init__() got an unexpected keyword argument 'skill_paths'` at container startup, replace `SkillsProvider(skill_paths=...)` with `SkillsProvider.from_paths(...)` immediately.
 
 Defensive-init helper. The agent stays runnable with `context_providers=[]`
 even if the skills directory is missing or a `SKILL.md` is malformed —
@@ -568,6 +579,11 @@ ResponsesHostServer(orchestrator).run()
 > Use the client-swap pattern above instead.
 
 ### MCP Tools via FoundryChatClient
+
+> **🚫 DO NOT and DO — URL and Environment Variable Requirements:**
+>
+> - **DO NOT** ship `${ENV_VAR}` placeholders in `url` parameters unless they are **validated upstream** to expand to a non-empty value. Empty expansion produces `invalid_payload` errors at runtime.
+> - **DO** reject any URL that is not `http://` or `https://` before calling `get_mcp_tool(url=...)`. Guard with `if not url or not url.startswith(("http://", "https://"))` to skip gracefully when the MCP server is unreachable or unconfigured.
 
 > **🟡 Status: bug-009/014 FIXED in `agent-framework-core` 1.3.0
 > (released 2026-05-07 via [PR #5581](https://github.com/microsoft/agent-framework/pull/5581),
@@ -935,6 +951,12 @@ You have a `save_report` tool for generating downloadable files:
 ---
 
 ## Dependencies (pyproject.toml)
+
+> 🚨 **READ FIRST.** Three pyproject mistakes silently break this stack:
+>
+> 1. **`agent-framework>=1.6.0` meta-package** — non-deterministic transitive resolution; resolves differently across uv versions. **DO** pin `agent-framework-core` and `agent-framework-foundry` individually.
+> 2. **`agent-framework-core[mcp]` extra** — that extra **does NOT exist** in 1.6.0. `MCPStreamableHTTPTool` / `MCPSseTool` / `MCPStdioTool` are top-level exports of `agent_framework`; the bare `agent-framework-core~=1.6.0` pin already includes them. Writing `[mcp]` produces a uv warning but does NOT fail resolution, so the pyproject can ship looking "MCP-ready" while operators chase phantom problems.
+> 3. **Missing `mcp>=1.10.0`** — `agent_framework_foundry_hosting._responses` imports `from mcp import McpError` at module-load time, so the container crashes at startup with `ModuleNotFoundError: No module named 'mcp'` even when no MCP tool is wired. The platform surfaces this as `session_not_ready` after a ~60 s timeout, so diagnosis cost is high. Pin `mcp>=1.10.0` in **every** hosted-agent `pyproject.toml`.
 
 ```toml
 [project]
@@ -1469,6 +1491,9 @@ flying blind.
 | `PermissionDenied: Principal does not have access` | Agent identity missing `Foundry User` (GUID `53ca6127-…`, formerly "Azure AI User") on account AND project | Assign on both scopes; `_assign_agent_identity_roles()` does this automatically. If your role-assignment script still passes `--role "Azure AI User"`, replace with the GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d` to survive the May 2026 display-name rename |
 | **`401 Unauthorized` on every Responses call after `azd deploy`; RBAC visibly correct (`Foundry User` on both scopes)** | Orchestrator image still on `agent-framework-core` ≤ 1.3.x — requests the OLD `cognitiveservices.azure.com` token scope, which the post-rename Foundry data plane rejects. Most commonly happens to agent versions pinned by `sha256@…` digest (digest is frozen at the 1.3.x build) while a sibling agent on the same project that uses `:latest` works fine because ACR re-resolved it to a fresh 1.4.0 layer | Upgrade orchestrator `pyproject.toml` to `agent-framework-core~=1.4.0` + `agent-framework-foundry~=1.4.0` + `agent-framework-foundry-hosting==1.0.0a260514`, regenerate `uv.lock`, `az acr build` with BOTH `:latest` AND a date-pinned tag (`maf14-YYYYMMDDHHMM`), `azd deploy agents`, then re-import every agent version. See [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026) for the full recipe |
 | **`ImportError: cannot import name 'AzureOpenAIChatClient' from 'agent_framework.azure'`** after `pip install -U agent-framework-*` | `AzureOpenAIChatClient` was removed in `agent-framework-core` 1.4.0 (2026-05-14). Hits sidecars, agents service, eval judges — anywhere that talked directly to Azure OpenAI without going through `FoundryChatClient` | Swap to `from agent_framework.openai import OpenAIChatClient` and use `OpenAIChatClient(azure_endpoint=…, model=…, credential=DefaultAzureCredential())`. Drop the explicit `get_bearer_token_provider` / `ad_token_provider` — the SDK derives the right scope itself. See snippet in [§ MAF 1.4.0 breaking changes](#maf-140-breaking-changes-may-2026) |
+| **`ImportError: cannot import name 'ChatAgent' from 'agent_framework'`** | `ChatAgent` was renamed to `Agent` in `agent-framework-core` 1.6.0. No alias is exported. Any prose / older SKILL examples showing `ChatAgent(chat_client=...)` are stale | **DO** `from agent_framework import Agent` and call `Agent(client=chat_client, tools=[...], instructions=...)`. Note: the kwarg also renamed from `chat_client=` to `client=` |
+| **`AttributeError: module 'agent_framework' has no attribute 'tools'`** or `ImportError: cannot import name 'MCPStreamableHTTPTool' from 'agent_framework.tools.mcp'` | The `agent_framework.tools.mcp` submodule was promoted to top-level in 1.6.0. `MCPStreamableHTTPTool`, `MCPSseTool`, `MCPStdioTool` are now top-level exports of `agent_framework` | **DO** `from agent_framework import MCPStreamableHTTPTool`. No `[mcp]` extra is needed (and none exists in 1.6.0 — see § Dependencies) |
+| **`uv` warning `unknown extra 'mcp' for agent-framework-core`** during install; pyproject ships looking MCP-ready but operators chase phantom issues | `[mcp]` extra does NOT exist in `agent-framework-core` 1.6.0. uv emits a warning but does NOT fail resolution, so the pyproject ships and the package is installed without the extra. MCP transport adapters are top-level exports already — no extra is needed | Remove `[mcp]` from the dep line: `agent-framework-core~=1.6.0` (NOT `agent-framework-core[mcp]~=1.6.0`). See § Dependencies callout at top |
 | **Workload UAMI hits `Foundry User` 403 even with `Foundry Account Owner`** | Post-rename, **`Foundry Account Owner` no longer implies `Foundry User` data-plane access**. The owner role covers control-plane operations only; data-plane (model inference, agents endpoint) now requires `Foundry User` on the account explicitly | Add a Bicep `roleAssignments` block granting `Foundry User` (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) to the UAMI on the CognitiveServices account scope. See § Identity & RBAC "Workload UAMI" row |
 | `Experience not available for this subscription` | Region doesn't support hosted agents, or `ENABLE_CAPABILITY_HOST=true` | Set `ENABLE_CAPABILITY_HOST=false`, try `northcentralus` |
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
@@ -1491,6 +1516,16 @@ flying blind.
 | **Scary RED `404 NotFound` block at the tail of `azd deploy <any-service>` (`agents/<key>/versions/<n>` not found); the actual deploy succeeded** | The `azure.ai.agents` azd extension's postdeploy hook fires after **every** `azd deploy` invocation (including unrelated services like `bot`, `workspace`, `mcp`) and looks up `agents/<service-key>/versions/<n>` — using the SERVICE KEY from `azure.yaml` verbatim, not the actual agent name. If your azure.yaml has e.g. `services.agent.host: azure.ai.agent` but the real agent is named `orchestrator`, the postdeploy hook 404s on `agents/agent/versions/<n>` every single time. Benign-but-loud false alarm; pollutes CI logs and CX in pilots | **Preferred**: rename the service key in `azure.yaml` to match the agent name (`services.orchestrator.host: azure.ai.agent`). **If you can't rename** (downstream scripts reference the key): error is cosmetic — verify with `azd ai agent show <agent-name>`. Track as `azure.ai.agents` extension bug; consider proposing an extension-level config like `agentName:` override |
 | **Agent returns `server_error` on every call; RBAC looks correct from deployer's perspective; `az role assignment list --assignee <principal_id> --all` returns ZERO rows** | Deploy script calls ARM `PUT roleAssignments/` for the per-agent identity, but the deployer MI only has `Contributor` — which **excludes** `Microsoft.Authorization/roleAssignments/write`. The ARM PUT returns 403, deploy script logs a warning and continues. Agent boots with zero roles → inference calls fail, especially APIM gateway model routes (`remote-gw/…`) that require `Cognitive Services OpenAI User` | Grant `User Access Administrator` (GUID `18d7d88d-d35e-4fb5-a5c3-7773c20a72d9`) to the deployer MI, scoped to the Foundry account (`Microsoft.CognitiveServices/accounts/<name>`). **NOT** the whole subscription — least-privilege scope to the account. Verify: `az role assignment list --assignee <deployer_mi> --scope <account_id> --query "[].roleDefinitionName"`. See § Identity & RBAC "Automated deployer MI" row |
 | **Deploy script polls `.../versions/{v}/containers/default` and gets 404 for minutes; agent is actually working** | Refreshed-preview hosted agents auto-provision containers — the legacy `/containers/default` status endpoint and `:start` action are not exposed. Polling this endpoint wastes 3+ min and blocks downstream steps (RBAC assignment, eval warmup) | Skip the container status/start API entirely. Go straight to a warmup chat (`responses.create("ping")`) with retry/backoff. If the warmup succeeds, the agent is ready — no container API needed. See § Compute Lifecycle note on refreshed preview |
+
+### Cross-skill ownership
+
+> This SKILL describes runtime patterns for hosted agents on Foundry (container build, SDK wiring, debugging). Some concerns belong to sibling SKILLs:
+>
+> - **Telemetry initialization** (`configure_azure_monitor()` guard, `_init_telemetry()` pattern): owned by `foundry-observability` § Layer 2. See gap O-011 / O-012 for AppInsights connection failures.
+> - **Deploy hooks** (`azd postdeploy` scripts, role assignment automation): owned by `azd-patterns` § azd hooks. See section on environment injection and dependency ordering.
+> - **Model selection** (region availability, task/modality tables, tier maps): owned by `agentic-loop` § Foundry Model Selector — that table is the single source of truth across all awesome-gbb skills.
+>
+> Link back to these SKILLs when diagnosing deploy-stage failures.
 
 ### Container Logs (Logstream API)
 

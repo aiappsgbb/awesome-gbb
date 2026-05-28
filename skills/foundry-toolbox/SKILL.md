@@ -19,7 +19,8 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
+  validated: 2026-05-28
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide
@@ -153,6 +154,13 @@ each. Always add a `description` so the model picks the right tool.
 | `file_search` | `vector_store_ids[]` | (none) | ❌ **Not supported in VNet** | **User isolation NOT supported in hosted agents**. Vector stores created via `{project}/openai/v1/vector_stores` |
 | `openapi` | `spec`, `auth.type` | `anonymous` / `connection` / `managed_identity` (Foundry project MI) | ✅ depends on target | MI auth requires RBAC on target. Spec must be OpenAPI 3.0 / 3.1 with `paths` + `operationId` |
 | `a2a_preview` | `base_url`, `project_connection_id` | Connection-driven (e.g. `RemoteA2A`) | ✅ private endpoint | Calls another agent as a tool |
+
+### Per-tool anti-patterns
+
+- **`azure_ai_search` tool:** DO NOT use when you need vector + keyword hybrid search in a VNet-injected agent (file_search VNet support is broken as of May 2026). DO use a custom MCP-wrapped AI Search in those cases, wired via the `mcp` tool type.
+- **`file_search` tool:** DO NOT use in VNet-isolated Foundry projects (the file_search backend doesn't yet support PMI in VNet). DO use Cosmos MCP or custom AI Search MCP via `foundry-mcp-aca` or wire directly with `mcp` tool type.
+- **`code_interpreter` tool:** DO NOT use for long-running computations (>5 min wall-clock) — the container will timeout and fail silently. DO use ACA Jobs via `azd-patterns` for batch work.
+- **`web_search` tool:** DO NOT enable in regulated-data contexts without explicit allow-listing of source domains. DO use the `allowed_domains` parameter when you need to scope results to a restricted set of trusted sources.
 
 ---
 
@@ -290,6 +298,20 @@ Read these in `main.py` / `container.py` instead of hard-coding URLs.
 
 ---
 
+## Tool-authoring failure modes
+
+When integrating tools into a toolbox or wiring them to an agent, watch for these common authoring mistakes. This table documents how they manifest, root causes, and defensive patterns.
+
+| Symptom | Root cause | DO NOT do | DO instead |
+|---|---|---|---|
+| Tool not invoked when expected | Tool description too vague or contradicts agent instructions | Write generic tool descriptions like "search for things" | Write specific descriptions naming inputs/outputs/preconditions — e.g. "Search product catalog by name or SKU; returns title + price + stock" |
+| Tool invoked too aggressively | Tool description too tempting OR no scoping in agent system prompt | Rely solely on description to control invocation | Add explicit tool-use scope rules in the agent's `instructions=` parameter; e.g. "Only call product_search after confirming the user requested a search" |
+| Malformed JSON returned by tool | Tool returns Python object via plain `print()` or `return` | Return non-JSON-serializable objects (dicts, tuples, custom classes without serialization) | Use Pydantic models with `.model_dump()` or explicit `json.dumps()` serialization before returning |
+| Tool exception bubbles up as `session_not_ready` (424) | Tool raises unhandled exception → container crashes → no error trace surfaced | Let tool exceptions propagate to the framework | Wrap tool body in `try/except` and return a structured error dict the model can reason about — e.g. `{"error": "...reason...", "retry_in_seconds": 30}` |
+| Tool description doesn't match agent intent | Spec says "summarize PDFs" but tool description says "extract text" | Let tool descriptions drift from the agent's stated capabilities | Sync tool descriptions against spec.md § Agent Tools during every spec review — re-check before each promotion |
+
+---
+
 ## Step 1 — Create a toolbox version
 
 Python SDK (azure-ai-projects):
@@ -330,6 +352,18 @@ print(f"Created {toolbox_version.name} v{toolbox_version.version}")
 > that's an older name kept in some samples. The SDK exposes
 > `create_version`, `get`, `list`, `delete`, `update`, `get_version`,
 > `list_versions`, and `delete_version` on `client.beta.toolboxes`.
+
+> **Current API matrix (validated 2026-05-28):**
+>
+> | Package | Validated version | Notes |
+> |---|---|---|
+> | agent-framework-core | 1.6.0 | MAF core runtime |
+> | agent-framework-foundry | 1.6.0 | Foundry integration; 1.3.0+ removed `get_toolbox()` |
+> | agent-framework-foundry-hosting | 1.0.0a260521 | Alpha; ResponsesHostServer (contains May-2026 fixes) |
+> | azure-ai-projects | latest GA | SDK toolbox CRUD methods |
+> | mcp | 1.10+ | Streamable HTTP transport |
+> | httpx | latest | HTTP client for auth flow |
+> | Pre-1.6 agent-framework versions | **legacy — not validated for current pilots** | Migrate to 1.6.0+ for production |
 
 The first call creates the toolbox AND its `v1`, auto-promoted to
 default. Subsequent calls create new versions that stay un-promoted
@@ -408,10 +442,53 @@ agent = chat_client.as_agent(
 ResponsesHostServer(agent).run()
 ```
 
+#### Cross-skill ownership
+
+> **MAF runtime wiring (Agent, ChatClient, ResponsesHostServer, ping handling, load_prompts=False) is OWNED by `foundry-hosted-agents` SKILL.** THIS SKILL owns toolbox resource semantics + authentication patterns + multi-tool composition. When in doubt: runtime → `foundry-hosted-agents`; toolbox resource → this SKILL.
+
+#### Canonical MCP result parser (recommended for non-toolbox MCPs too)
+
+When you wire a remote MCP via `MCPStreamableHTTPTool` (toolbox endpoint OR a
+public MCP like Microsoft Learn / GitHub MCP), the raw `tools/call` response
+contains an array of `content` items with `{"type": "text", "text": "..."}`
+shape. MAF 1.6 doesn't unwrap this for you — without a `parse_tool_results`
+extractor, the model sees the wire-level JSON envelope instead of just the
+text. Models will sometimes parse through it, sometimes not, leading to
+"the agent found the docs but didn't cite them" type bugs.
+
+Pass an extractor to the tool constructor:
+
+```python
+def _mcp_text_extractor(raw):
+    """Pull plain text from MCP tool-call envelopes.
+    Handles both {'content': [{'type': 'text', 'text': '...'}, ...]} and
+    fallback string responses. Use on any MCPStreamableHTTPTool to surface
+    grounding cleanly to the model.
+    """
+    if isinstance(raw, dict) and "content" in raw:
+        parts = []
+        for item in raw["content"]:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        return "\n\n".join(parts) if parts else str(raw)
+    return str(raw)
+
+mcp_tool = MCPStreamableHTTPTool(
+    name="microsoft-learn",
+    url="https://learn.microsoft.com/api/mcp",
+    parse_tool_results=_mcp_text_extractor,   # ← key line
+)
+```
+
+Verified on the 2026-05-28 learn-assistant pilot: without `parse_tool_results`,
+the agent answered "I found articles" but didn't quote them; with the
+extractor, every answer cited 4+ `learn.microsoft.com` URLs. Same helper
+works for any remote streamable-http MCP.
+
 ### Pattern B — ~~MAF convenience helper~~ **REMOVED in MAF 1.3.0**
 
 > **`client.get_toolbox()` and `select_toolbox_tools` were removed in
-> `agent-framework-foundry` 1.3.0** ([PR #5671](https://github.com/microsoft/agent-framework/pull/5671)).
+> `agent-framework-foundry` 1.3.0** ([PR #5671](https://github.com/microsoft/agent-framework/pull/5671) — external repo link; for offline / agent context, key claims summarised in `foundry-hosted-agents` § MAF 1.6.0 update if relevant).
 > The MAF team standardized on MCP for all toolbox consumption.
 > **Use Pattern A (`MCPStreamableHTTPTool`) instead.**
 >
@@ -823,7 +900,11 @@ multi-hop, answer synthesis with citations).
 
 If you need KB-grade retrieval through a toolbox, use the `mcp` tool
 type pointing at the KB MCP endpoint with a connection that authenticates
-PMI to `https://search.azure.com/.default`:
+PMI to `https://search.azure.com/.default`.
+
+> **Cross-skill ownership note:** For producing a KB-MCP server on ACA, see `foundry-mcp-aca`. For consuming a KB via the IQ-style pattern, see `foundry-iq`. **THIS SKILL covers the toolbox WRAPPER pattern for a KB-MCP** — i.e. exposing it as a managed multi-tool through the toolbox endpoint.
+
+**Declarative example (azd ai agent init):**
 
 ```yaml
 - kind: connection
@@ -840,18 +921,11 @@ PMI to `https://search.azure.com/.default`:
       project_connection_id: kb-mcp
 ```
 
-> **ARM REST equivalent**: the `connection` block above maps to
-> `authType: ProjectManagedIdentity` + `metadata.audience: "https://search.azure.com"`.
-> See § ARM REST equivalents above for the full PUT body and the
-> SDK split-ownership trap.
-
 The trade-off: extra hop through Toolbox, inherits the `ping` trap, but
 the Toolbox handles centralized token refresh. See `foundry-iq` SKILL §
-Common Errors (the `/knowledgebases/<n>/mcp` rows) and § "KB access from
-a hosted MAF agent — three routes" for the direct-wire alternative
-(Route B) and the matching `_ensure_connected` workaround.
+"KB access from a hosted MAF agent — three routes" for the direct-wire alternative.
 
-**Imperative provisioning (ARM REST + SDK).** When `azd ai agent init`'s
+**Imperative provisioning (ARM REST + SDK):** When `azd ai agent init`'s
 declarative pipeline is not available (Bicep-only / IaC-only pilots),
 provision the connection via ARM REST and the toolbox via the SDK:
 

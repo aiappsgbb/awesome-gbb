@@ -10,10 +10,24 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.5"
+  version: "1.0.6"
 ---
 
 # Foundry MCP ACA Deployment
+
+> 🎯 **Scope: PRODUCER-side only.** This skill is for **hosting** MCP servers on
+> Azure Container Apps or Azure Functions, NOT for **consuming** a remote MCP from
+> a Foundry hosted agent (e.g. calling `https://learn.microsoft.com/api/mcp` or
+> `https://api.github.com/mcp` from your agent's `container.py`).
+>
+> - **Producer (this skill):** you're WRITING + DEPLOYING an MCP server.
+>   Cosmos MCP, Playwright MCP, custom MCP for an internal API, etc.
+> - **Consumer (different skill):** you're WRITING a Foundry hosted agent that
+>   CALLS a remote MCP server. Use [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md)
+>   § MCP Tools via FoundryChatClient + § MCP Tools — recommended pattern.
+>
+> Confusing the two costs hours. The consumer-side pattern is `MCPStreamableHTTPTool`
+> wired into `Agent(tools=[…])`; the producer-side is everything below.
 
 > ⚠️ **Azure Tenant Isolation (mandatory).** Before any `azd` or `az`
 > operation, verify tenant isolation per
@@ -144,6 +158,8 @@ prefer managed identity over Cosmos keys.
 > Always upper-bound: `fastmcp>=2.0.0,<3.0.0`. Same rule applies to **any
 > client** that imports `fastmcp` (e.g. an ACA Job that drives the MCP) — pin
 > client + server to the same major.
+>
+> **🛑 DO NOT bump `fastmcp` major version without re-running the demo scenarios** — the streamable-http mount path changed between 2.x and 3.x. Every Cosmos tool call will fail silently if the path moves. **DO test locally first:** `pip install 'fastmcp>=3' && python -m pytest tests/ -k cosmos_mcp`.
 
 > **⚠️ `enable_cross_partition_query` was DROPPED in `azure-cosmos>=4.15` async.**
 > If your `query_items` tool implementation passes `enable_cross_partition_query=True`,
@@ -174,6 +190,8 @@ prefer managed identity over Cosmos keys.
 > kwarg used to be valid, and the runtime error message blames the tool name
 > not the SDK call. Catches every Cosmos MCP that pinned `azure-cosmos>=4.7`
 > instead of `>=4.15`.
+>
+> **🛑 DO NOT rely on cross-partition queries for MCP tool calls without explicit user consent** — partition-scoped queries are cheaper and more predictable. **DO scope per-partition or accept the cost & latency impact.** If you must cross-partition, document it as a tool contract in SPEC § 6 so the agent knows to prefer partition-scoped alternatives when available.
 
 > **⚠️ `azd deploy <mcp-service>` poisons every running agent's MCP session — must redeploy the agent too.**
 > FastMCP's streamable-http maintains per-client session state in-memory on the MCP
@@ -220,6 +238,8 @@ prefer managed identity over Cosmos keys.
 > catch JSON-RPC error code `-32600 Session not found` and re-initialize. Until
 > the platform handles this, treat MCP and agent as a **coupled deploy pair** —
 > you cannot redeploy one without the other on a running pilot.
+>
+> **🛑 DO NOT redeploy MCP server without re-importing the consuming agent version** — the cached session ID will become stale and every tool call will 404. **DO bump the agent version pin** (or call `azd ai agent show` to refresh) **immediately after each MCP redeploy.** This is the most common production outage pattern on Foundry hosted agents.
 
 ### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh PoC)
 
@@ -659,11 +679,21 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 | MCP connection timeout | ACA not started (cold start) | Runtime retries automatically; set `minReplicas: 1` for always-on |
 | `invalid_payload` error | `${ENV_VAR}` in mcp-config.json not resolved → empty URL | Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. |
 | Tools listed but calls fail | Tool call timeout (>100s) | Optimize tool implementation or increase ACA resources |
-| **`FastMCP` server starts but returns 000/timeout on port** | `MCP.run()` with no args defaults to `stdio` transport (reads stdin, never binds HTTP port). ACA health probe fails, container marked unhealthy. | **Always use `MCP.run(transport="http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))`. Never bare `MCP.run()` for ACA-deployed MCP servers.** |
+| **`FastMCP` server starts but returns 000/timeout on port** | `MCP.run()` with no args defaults to `stdio` transport (reads stdin, never binds HTTP port). ACA health probe fails, container marked unhealthy. | **🛑 DO NOT use bare `MCP.run()` on ACA — it defaults to stdio.** **DO use** `MCP.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))`. Note: `transport="streamable-http"` (with the dash), matching the canonical examples elsewhere in this SKILL — not `transport="http"`. |
 | **`TypeError: 'FunctionTool' object is not callable` inside a tool** | `@MCP.tool` wraps the function in a `FunctionTool` object. Calling it from Python (e.g., tool A calls tool B internally) raises `TypeError`. | **Extract shared logic into a plain `_helper()` function. Both `@MCP.tool` functions call the helper. Never call one `@MCP.tool`-decorated function from inside another.** |
 | **MCP ACA deployed but Foundry agent can't reach it (connection timeout)** | `az containerapp create --ingress internal` — only resources in the same VNET can reach it. Foundry hosted agents run in **Foundry's own infrastructure**, not your VNET. | **Use `--ingress external` for MCP ACA containers that Foundry agents call. Internal ingress only works for VNET-injected agents (private topology) where the agent subnet is peered/injected into the same VNET. See `foundry-vnet-deploy`.** |
 | `prompts/list` not implemented | Server doesn't handle this method | Return `{"prompts": []}` — agent-framework requires it |
 | MCP container `404` log noise after demo | MAF client occasionally fires 1-3 stray POSTs to `/mcp` after `DELETE` of the session — the server is gone, so they 404. Cosmos calls succeeded; this is post-mortem chatter, not a runtime problem. | Either accept the noise (no functional impact) or suppress in the FastMCP server with a no-op handler that returns 204 for any POST hitting an unknown session id. Document for whoever reads `az containerapp logs show` so they don't chase it as a real bug. |
+
+---
+
+## Failure Modes & Recovery (Consumer Config / Deployment Coupling)
+
+| Symptom | Root cause | DO NOT do | DO instead |
+|---------|-----------|-----------|-----------|
+| Consumer config points to wrong URL (env var not resolved at deploy time) | `${MCP_SERVER_URL}` expands to empty at agent-startup time, not deployment time | **DO NOT use unguarded `${VAR}` substitution in mcp-config.json** — if the var is undefined, the agent skips the server silently | **DO guard with validation:** `if not url or not url.startswith("http"): raise ValueError(f"Invalid MCP URL: {url}")` in agent startup. Fail fast + audit-log. |
+| Session ID stale after MCP redeploy | Foundry hosted agent caches the `mcp-session-id` token from the MCP server's `initialize` response. When MCP redeploys (new container), the session is wiped. Agent keeps sending stale session ID and gets 404. | **DO NOT redeploy MCP server without re-importing + pinning the agent version** — the in-memory client cache persists across requests even after MCP dies | **DO bump the agent version pin** (e.g., `version: "1.2.3"` → `"1.2.4"` in `agent-config.json`) or run `azd ai agent show <agent-id>` to force version refresh. See § Mandatory recovery sequence. |
+| Wrong mount path (404 on MCP calls) | FastMCP 3.x serves on `/mcp/` with trailing slash; consumer config or curl tests use `/` without slash | **DO NOT assume FastMCP mount path** — it changed between 2.x and 3.x; don't infer from version. Test explicitly. | **DO test with `curl https://<aca-fqdn>/mcp/ -H "Accept: application/json, text/event-stream"` (note trailing slash).** Returns `200 OK` if path is correct. For local: `curl http://localhost:8080/mcp/`. |
 
 ---
 
