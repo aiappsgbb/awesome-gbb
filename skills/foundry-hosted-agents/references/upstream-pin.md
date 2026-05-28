@@ -115,7 +115,8 @@ validation:
     except ImportError:
         print('ok AzureOpenAIChatClient correctly removed in 1.4.0+')
     # Assert microsoft-opentelemetry bundled via agentserver-core (transitive: hosting → agentserver-core → microsoft-opentelemetry)
-    from microsoft.opentelemetry import configure_azure_monitor as _cam
+    # API renamed in microsoft-opentelemetry 1.3.0: configure_azure_monitor → use_microsoft_opentelemetry
+    from microsoft.opentelemetry import use_microsoft_opentelemetry as _umo
     print('ok microsoft-opentelemetry bundled via agentserver-core')
     from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
     print('ok opentelemetry-instrumentation-openai-v2 bundled')
@@ -126,7 +127,7 @@ validation:
     - "ok microsoft-opentelemetry bundled via agentserver-core"
     - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
-last_validated: 2026-05-23
+last_validated: 2026-05-28
 validated_by: ricchi
 known_issues_count: 7
 ---

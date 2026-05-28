@@ -40,6 +40,13 @@ validation:
     set -euo pipefail
     echo "=== foundry-voice-live pin validation ==="
 
+    WORK=".upstream-pin-smoke/foundry-voice-live"
+    rm -rf "$WORK"
+    mkdir -p "$WORK"
+    python -m venv "$WORK/.venv"
+    . "$WORK/.venv/bin/activate"
+    python -m pip install --quiet --upgrade pip
+
     echo "=== Installing packages ==="
     pip install --quiet \
       "openai~=2.0.0" \

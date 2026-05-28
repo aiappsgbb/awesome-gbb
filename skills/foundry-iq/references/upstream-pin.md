@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: 08697f8037491cf21cc5cdf64fdbd9728f15a558
+  pinned_sha: 8ed2159c4b0b6663dc92b3469c24648a37e8e289
   pinned_commit_message: |
     .NET: Add Hosted-MemoryAgent sample with isolation key plumbing (#5692) (#5702)
   license: MIT
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-08697f8037491cf21cc5cdf64fdbd9728f15a558}"
+    PINNED_SHA="${PINNED_SHA:-8ed2159c4b0b6663dc92b3469c24648a37e8e289}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -65,7 +65,7 @@ validation:
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-26
+last_validated: 2026-05-28
 validated_by: copilot-bot
 known_issues_count: 0
 ---
@@ -84,11 +84,11 @@ weekly; the prose below is the human audit trail. Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/agent-framework` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `ad95f2f2fa7c75f8ff7df5d6531e19d505b53783` |
+| **Pinned SHA** | `8ed2159c4b0b6663dc92b3469c24648a37e8e289` |
 | **Pinned commit subject** | `.NET: Add Hosted-MemoryAgent sample with isolation key plumbing (#5692) (#5702)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-05-28` |
 
 Refresh procedure:
 ```bash
@@ -116,7 +116,7 @@ git ls-remote https://github.com/microsoft/agent-framework main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-ad95f2f2fa7c75f8ff7df5d6531e19d505b53783}"
+PINNED_SHA="${PINNED_SHA:-8ed2159c4b0b6663dc92b3469c24648a37e8e289}"
 PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
 WORK=".upstream-pin-smoke/foundry-iq"
 

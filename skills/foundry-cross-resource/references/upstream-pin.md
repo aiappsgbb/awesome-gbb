@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft-foundry/foundry-samples
   ref: main
-  pinned_sha: 6ef684d31806d22f30163aa78536f2b50af05d7c
+  pinned_sha: 7088f6e5b980e1769c5824e957bcefb370b24ba0
   pinned_commit_message: |
     feat: add azure-search-rag hosted agent sample (#283)
   license: MIT
@@ -27,7 +27,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-6ef684d31806d22f30163aa78536f2b50af05d7c}"
+    PINNED_SHA="${PINNED_SHA:-7088f6e5b980e1769c5824e957bcefb370b24ba0}"
     REPO_URL="https://github.com/microsoft-foundry/foundry-samples"
     REF="main"
     WORK=".upstream-pin-smoke/foundry-cross-resource"
@@ -56,7 +56,7 @@ validation:
     - "apim module contract ok"
     - "docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-26
+last_validated: 2026-05-28
 validated_by: copilot-bot
 known_issues_count: 0
 ---
@@ -76,11 +76,11 @@ Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft-foundry/foundry-samples` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `72a65ff0a41f597c1fd53e9125cbc344db566617` |
+| **Pinned SHA** | `7088f6e5b980e1769c5824e957bcefb370b24ba0` |
 | **Pinned commit subject** | `feat: add azure-search-rag hosted agent sample (#283)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-05-28` |
 
 Refresh procedure:
 ```bash
@@ -107,7 +107,7 @@ GitHub source, Learn URLs, and Python standard-library syntax checks.
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-72a65ff0a41f597c1fd53e9125cbc344db566617}"
+PINNED_SHA="${PINNED_SHA:-7088f6e5b980e1769c5824e957bcefb370b24ba0}"
 REPO_URL="https://github.com/microsoft-foundry/foundry-samples"
 REF="main"
 WORK=".upstream-pin-smoke/foundry-cross-resource"

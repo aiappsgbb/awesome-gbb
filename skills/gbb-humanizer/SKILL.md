@@ -16,7 +16,7 @@ description: >
   SKILL.md frontmatter, tables / KPI cards / code blocks, SME verbatim quotes,
   structured data.
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # GBB Humanizer — remove AI tells from prose

@@ -17,10 +17,10 @@ packages:
       SKILL.md mandates fastmcp>=2.0.0,<3.0.0 and records 2.14.7 as the known-good 2.x line before a 3.x path break.
   - name: mcp
     source: pypi
-    version: "1.10.0"
+    version: "1.27.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
     notes: |
-      MCP protocol package required for Streamable HTTP clients and server protocol compatibility.
+      MCP protocol package; version pulled transitively by fastmcp (fastmcp~=2.14.7 requires mcp>=1.24.0,<2.0).
   - name: azure-mgmt-appcontainers
     source: pypi
     version: "4.0.0"
@@ -73,7 +73,6 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "fastmcp~=2.14.7" \
-      "mcp~=1.10.0" \
       "azure-mgmt-appcontainers~=4.0.0" \
       "azure-cosmos~=4.15.0" \
       "azure-identity~=1.19.0" \
@@ -90,7 +89,7 @@ validation:
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-05-15
+last_validated: 2026-05-28
 validated_by: ricchi
 known_issues_count: 1
 ---
@@ -104,7 +103,7 @@ This Tier-B pin captures the MCP and Azure Container Apps package stack for impo
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
 | `fastmcp` | PyPI | **2.14.7** | Known-good 2.x line; keep `<3.0.0` |
-| `mcp` | PyPI | **1.10.0** | MCP protocol package |
+| `mcp` | PyPI | **1.27.1** | Transitive via fastmcp (>=1.24.0,<2.0) |
 | `azure-mgmt-appcontainers` | PyPI | **4.0.0** | ACA management SDK |
 | `azure-cosmos` | PyPI | **4.15.0** | Cosmos MCP async SDK floor |
 | `azure-identity` | PyPI | **1.19.0** | Keyless auth floor |

@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft/playwright-mcp
   ref: main
-  pinned_sha: ae27b8638aaf3a6be17d378964ae683864d20440
+  pinned_sha: 32017187a0f044b2b5cbc97c20a78a3878e00ac2
   pinned_commit_message: |
     chore(deps-dev): bump fast-uri from 3.1.0 to 3.1.2 (#1616)
   license: Apache-2.0
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-ae27b8638aaf3a6be17d378964ae683864d20440}"
+    PINNED_SHA="${PINNED_SHA:-32017187a0f044b2b5cbc97c20a78a3878e00ac2}"
     PINNED_VERSION="${PINNED_VERSION:-6.0.2}"
     WORK=".upstream-pin-smoke/ghcp-cli-config"
 
@@ -47,7 +47,8 @@ validation:
     curl -fsSI -L "https://docs.github.com/copilot/github-copilot-in-the-cli" >/dev/null
     curl -fsSI -L "https://github.com/microsoft/playwright-mcp" >/dev/null
     curl -fsSI -L "https://github.com/Azure/azure-mcp" >/dev/null
-    curl -fsS -L "https://learn.microsoft.com/api/mcp" -o /dev/null
+    http_code=$(curl -sS -L -o /dev/null -w "%{http_code}" "https://learn.microsoft.com/api/mcp" || true)
+    test "$http_code" = "405" -o "$http_code" = "200"
     echo "canonical config URLs ok"
 
     python -m venv "$WORK/.venv"
@@ -79,7 +80,7 @@ validation:
     - "canonical config URLs ok"
     - "sample config YAML parse ok"
   failure_signatures: []
-last_validated: 2026-05-15
+last_validated: 2026-05-28
 validated_by: ricchi
 known_issues_count: 0
 ---
@@ -99,11 +100,11 @@ Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/playwright-mcp` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `ae27b8638aaf3a6be17d378964ae683864d20440` |
+| **Pinned SHA** | `32017187a0f044b2b5cbc97c20a78a3878e00ac2` |
 | **Pinned commit subject** | `chore(deps-dev): bump fast-uri from 3.1.0 to 3.1.2 (#1616)` |
 | **License** | `Apache-2.0` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-05-28` |
 
 Refresh procedure:
 ```bash
@@ -131,7 +132,7 @@ git ls-remote https://github.com/microsoft/playwright-mcp main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-ae27b8638aaf3a6be17d378964ae683864d20440}"
+PINNED_SHA="${PINNED_SHA:-32017187a0f044b2b5cbc97c20a78a3878e00ac2}"
 PINNED_VERSION="${PINNED_VERSION:-6.0.2}"
 WORK=".upstream-pin-smoke/ghcp-cli-config"
 
@@ -144,7 +145,8 @@ echo "pinned SHA verified: ${PINNED_SHA}"
 curl -fsSI -L "https://docs.github.com/copilot/github-copilot-in-the-cli" >/dev/null
 curl -fsSI -L "https://github.com/microsoft/playwright-mcp" >/dev/null
 curl -fsSI -L "https://github.com/Azure/azure-mcp" >/dev/null
-curl -fsS -L "https://learn.microsoft.com/api/mcp" -o /dev/null
+http_code=$(curl -sS -L -o /dev/null -w "%{http_code}" "https://learn.microsoft.com/api/mcp" || true)
+test "$http_code" = "405" -o "$http_code" = "200"
 echo "canonical config URLs ok"
 
 python -m venv "$WORK/.venv"

@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: blader/humanizer
   ref: main
-  pinned_sha: 8b3a17889fbf12bedae20974a3c9f9de746ed754
+  pinned_sha: a2ace14a88a6746f64f1f53ed8272d6788828038
   pinned_commit_message: |
     Add passive voice rule to humanizer (#80)
   license: MIT
@@ -26,7 +26,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-8b3a17889fbf12bedae20974a3c9f9de746ed754}"
+    PINNED_SHA="${PINNED_SHA:-a2ace14a88a6746f64f1f53ed8272d6788828038}"
     REPO_URL="https://github.com/blader/humanizer"
     REF="main"
     WORK=".upstream-pin-smoke/gbb-humanizer"
@@ -54,7 +54,7 @@ validation:
     - "humanizer pattern catalog ok"
     - "reference URL check ok"
   failure_signatures: []
-last_validated: 2026-05-15
+last_validated: 2026-05-28
 validated_by: ricchi
 known_issues_count: 0
 ---
@@ -74,11 +74,11 @@ Keep them in sync.
 |-------|-------|
 | **Upstream** | `blader/humanizer` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `8b3a17889fbf12bedae20974a3c9f9de746ed754` |
+| **Pinned SHA** | `a2ace14a88a6746f64f1f53ed8272d6788828038` |
 | **Pinned commit subject** | `Add passive voice rule to humanizer (#80)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-05-28` |
 
 Refresh procedure:
 ```bash
@@ -105,7 +105,7 @@ GitHub source, `curl`, and shell checks.
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-8b3a17889fbf12bedae20974a3c9f9de746ed754}"
+PINNED_SHA="${PINNED_SHA:-a2ace14a88a6746f64f1f53ed8272d6788828038}"
 REPO_URL="https://github.com/blader/humanizer"
 REF="main"
 WORK=".upstream-pin-smoke/gbb-humanizer"
