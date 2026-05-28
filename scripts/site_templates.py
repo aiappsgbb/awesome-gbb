@@ -660,22 +660,29 @@ def render_home(
     cards = [
         _browse_card(
             f'{SITE_BASE}/skills/', _ICON_SKILLS, 'Skills',
-            'Self-contained Copilot skills for Azure AI, Microsoft Foundry, '
-            'governance, and cross-cutting helpers.',
+            'Twenty-five self-contained recipes covering Azure AI '
+            'provisioning, Microsoft Foundry agents, governance, content '
+            'generation, refactoring, and cross-cutting helpers. Pick one '
+            'off the shelf and the coding agent in your editor follows it.',
             count=len(skills),
         ),
         _browse_card(
             'https://aiappsgbb.github.io/threadlight-skills/', _ICON_THREAD, 'Threadlight',
-            'End-to-end agentic pilot pipeline — eight skills that take a '
-            'customer engagement from brief to deployed Foundry agent '
-            'in a single working session.',
+            'The recipe for taking a single customer business process from '
+            'a brief to a deployed Foundry hosted agent. Eight skills, run '
+            'as a chain, with you reviewing the output between each step. '
+            'Best when the customer already knows which process they want '
+            'to automate.',
             count='8 skills',
         ),
         _browse_card(
             'https://aiappsgbb.github.io/zava-constellation/', _ICON_ZAVA, 'Zava',
-            'Digital-clone workspaces — name a company, the coding agent '
-            'profiles the org, forks a branded substrate, and deploys a '
-            'control-plane dashboard to Azure.',
+            'The recipe for standing up a working clone of a customer\'s '
+            'entire organisation — a control plane on their Azure '
+            'subscription where the day-to-day business processes are run '
+            'by agents instead of people. Three skills, run as a chain. '
+            'Best when the customer wants to see the whole picture first '
+            'and pick the hero processes after.',
             count='experience',
         ),
     ]
@@ -688,8 +695,8 @@ def render_home(
     install_cta = (
         '<section class="install-cta" aria-labelledby="install-h">'
         '<h2 id="install-h">Get started in one command</h2>'
-        '<p class="lede">Add the marketplace, install the plugin — '
-        'all skills, zero auth gymnastics.</p>'
+        '<p class="lede">Install the whole plugin in one go, or pick '
+        'individual skills if you only need one or two.</p>'
         '<pre><code>'
         'copilot plugin marketplace add aiappsgbb/awesome-gbb\n'
         'copilot plugin install awesome-gbb@awesome-gbb'
@@ -705,7 +712,7 @@ def render_home(
         '<section class="stats-stripe" aria-label="Catalog at a glance">'
         f'<div class="stat"><span class="stat-num">{len(skills)}</span>'
         '<span class="stat-label">skills</span>'
-        '<span class="stat-foot">production-tested</span></div>'
+        '<span class="stat-foot">in the catalog</span></div>'
         f'<div class="stat"><span class="stat-num">{industry_count}</span>'
         '<span class="stat-label">industries</span>'
         '<span class="stat-foot">FSI · MFG · Retail · Telco · Airline</span></div>'
@@ -719,9 +726,16 @@ def render_home(
         '<section class="hero">'
         '<p class="eyebrow"><span class="dot"></span>Microsoft AI Apps GBB · Copilot skill catalog</p>'
         '<h1><strong>awesome-gbb</strong></h1>'
-        '<p class="lede">Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, '
-        'Microsoft Foundry, and governance. Production-tested. Versioned. '
-        'Installable individually or as one-command plugin bundles.</p>'
+        '<p class="lede">awesome-gbb is the catalog of Copilot skills and '
+        'plugins the Microsoft AI Apps Global Black Belts use day-to-day to '
+        'build agentic systems for customers. A skill is a Markdown file '
+        'that any coding agent (Copilot CLI, VS Code agent mode, Copilot '
+        'Desktop, Claude Code) reads and follows to do one specific job — '
+        'provisioning Azure AI, hardening a Foundry deployment, generating '
+        'a demo dataset, designing an agentic process end to end. A plugin '
+        'is a curated bundle of those skills you install in one command. '
+        'Everything here is what we actually use in the field; nothing in '
+        'this catalog is theoretical.</p>'
         '<div class="runtimes-row" aria-label="Supported runtimes">'
         '<span class="runtimes-label">Runs in</span>'
         + runtime_pills +
