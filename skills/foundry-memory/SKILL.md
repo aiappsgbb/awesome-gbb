@@ -11,7 +11,7 @@ description: >
   replace Mem0. DO NOT USE FOR: RAG/knowledge retrieval (use foundry-iq),
   document grounding, vector search over documents.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Foundry Memory
