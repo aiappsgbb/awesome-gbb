@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/azure-skills
   ref: main
-  pinned_sha: d02fd24f151f5133650eaa78e7da3cac2cedd72f
+  pinned_sha: 7cb89c221ecc9eccb71580aaff3695408cdeef2b
   license: MIT
   notes: |
     azd-patterns is mostly internal IP (tier C), but v1.1.3 borrowed three
@@ -40,7 +40,7 @@ secondary_upstream:
 docs_to_revalidate:
   - https://github.com/microsoft/azure-skills/tree/main/skills/azure-deploy
   - https://github.com/microsoft/azure-skills/tree/main/skills/azure-prepare
-  - https://github.com/microsoft/skills/tree/main/skills/entra-agent-id
+  - https://github.com/microsoft/azure-skills/tree/main/skills/entra-agent-id
 
 known_issues:
   - id: KI-001
@@ -65,10 +65,10 @@ validation:
       [ "$STATUS" = "200" ] || { echo "FAIL: $skill not found"; exit 1; }
     done
 
-    # Check entra-agent-id still exists in microsoft/skills
+    # Check entra-agent-id still exists in microsoft/azure-skills
     STATUS=$(curl -sL -o /dev/null -w '%{http_code}' \
-      "https://github.com/microsoft/skills/tree/main/skills/entra-agent-id")
-    echo "skills/entra-agent-id: HTTP $STATUS"
+      "https://github.com/microsoft/azure-skills/tree/main/skills/entra-agent-id")
+    echo "azure-skills/entra-agent-id: HTTP $STATUS"
     [ "$STATUS" = "200" ] || { echo "FAIL: entra-agent-id not found"; exit 1; }
 
     # Check for SHA drift
@@ -81,11 +81,11 @@ validation:
   expected_output:
     - "azure-skills/azure-deploy: HTTP 200"
     - "azure-skills/azure-prepare: HTTP 200"
-    - "skills/entra-agent-id: HTTP 200"
+    - "azure-skills/entra-agent-id: HTTP 200"
     - "VALIDATION_PASSED"
 
-last_validated: 2026-05-25
-validated_by: ricchi
+last_validated: 2026-05-29
+validated_by: copilot-bot
 ---
 
 ## Audit trail
