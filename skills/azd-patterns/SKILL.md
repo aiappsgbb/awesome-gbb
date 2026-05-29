@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.3.2"
+  version: "1.3.3"
 ---
 
 # AZD Tips & Patterns
@@ -750,10 +750,22 @@ param aiProjectDeployments = [
   {
     name: 'gpt-5.4-mini'
     model: { name: 'gpt-5.4-mini', format: 'OpenAI', version: '2026-03-17' }
-    sku: { name: 'GlobalStandard', capacity: 100 }
+    sku: { name: 'GlobalStandard', capacity: 30 }
   }
 ]
+```
 
+> **🔴 DO NOT** default model `capacity` to 100 K TPM in a shared subscription.
+> Shared subs often run at 900+/1000 K TPM aggregate quota; a fresh
+> `azd provision` with `capacity: 100` fails with `InsufficientQuota`
+> mid-deploy and the only fix is to lower the capacity and re-provision (~4 min wasted).
+> Default to `capacity: 30` for pilot deployments; preflight with
+> `az cognitiveservices usage list --location <region>` and raise only
+> after confirming free quota. The 30 K TPM ceiling also forces realistic
+> demo pacing (~80 s between scenario calls) — useful for catching
+> retry-handling bugs early.
+
+```bicep
 // Option B: structured env (use ONLY for genuinely runtime-configurable values).
 // Set as a single-quoted JSON string in `.azure/<env>/.env` by HAND-EDITING
 // the file once (not via `azd env set`) — azd will preserve it on subsequent
