@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.2.2"
+  version: "1.3.0"
 ---
 
 # AZD Tips & Patterns
@@ -1331,6 +1331,55 @@ belt-and-braces.
 - Cryptic `FetchingKeyVaultSecretFailed: 401` in `ContainerAppSystemLogs_CL`
   after the first revision (it's actually the image-pull credential failing —
   the error is mis-categorised by the ACA system component).
+
+---
+
+## `az deployment sub validate` with `.bicepparam` — pass the `.bicep` directly, NOT the compiled `.json`
+
+> 🛑 **DO NOT** pre-compile your Bicep to ARM JSON and then validate with
+> `--template-file infra/main.json --parameters infra/main.bicepparam`. Recent
+> `az` (verified on 2.86 / azd 1.25, May 2026) **rejects this combination**
+> with: *"Only a .bicep template is allowed with a .bicepparam file"*.
+>
+> **DO** pass `infra/main.bicep` directly:
+>
+> ```bash
+> az deployment sub validate \
+>   --location <region> \
+>   --template-file infra/main.bicep \
+>   --parameters infra/main.bicepparam
+> ```
+>
+> `az` compiles the Bicep itself as part of the validation pipeline; one fewer
+> step and the only shape `.bicepparam` validates cleanly against.
+
+This shows up as a noisy red error during automated Verify pipelines (any CI
+workflow that does plan-coherence checks before provisioning). The fix is one
+CLI argument; no Bicep / parameter rewrites needed.
+
+---
+
+## `azd` reformats `azure.yaml` to 4-space indent after first deploy
+
+azd 1.25 silently rewrites `azure.yaml` from your authored indent (typically
+2-space) to 4-space after the first successful `azd deploy <service>`.
+The file content is semantically identical but any tool that parses
+`azure.yaml` with a hand-rolled 2-space-only YAML regex (e.g. ad-hoc
+shell/Python scripts that grep for `^  <name>:` or `^    host:`) will break
+on the second invocation.
+
+**Fix in any tool that parses `azure.yaml`:** make the indent detection
+dynamic. Read the first non-blank indented line under `services:`, take its
+indent as the service-name indent, then anything deeper is a property.
+
+Verified live on 2026-05-28 (azd 1.25, hosted-agent pilot):
+first `azd deploy` left azure.yaml at the authored 2-space indent; the
+second `azd deploy` (same project, same env) rewrote it to 4-space. azd
+reports no diff in `azd env get-values`.
+
+> 💡 If your tool MUST stay 2-space-strict, lock azure.yaml after first
+> deploy with `chattr +i` (Linux) / file system attributes (macOS/Win),
+> but that's a workaround for poor parsers; fix the parser instead.
 
 ---
 

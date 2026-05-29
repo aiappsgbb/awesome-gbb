@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.4.1"
+  version: "1.5.0"
   validated: 2026-05-28
 ---
 
@@ -484,6 +484,57 @@ Verified on the 2026-05-28 learn-assistant pilot: without `parse_tool_results`,
 the agent answered "I found articles" but didn't quote them; with the
 extractor, every answer cited 4+ `learn.microsoft.com` URLs. Same helper
 works for any remote streamable-http MCP.
+
+#### Validated remote-MCP recipe — Microsoft Learn MCP (no-auth, public)
+
+The simplest possible remote-MCP wiring: a public, free, no-auth MCP server.
+Verified end-to-end on a hosted-agent pilot (MAF 1.6.0, May 2026) — the
+agent ran 4 demo scenarios with 5–6 `learn.microsoft.com` citations per
+grounded answer.
+
+```python
+from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
+
+def _mcp_text_extractor(raw):
+    if isinstance(raw, dict) and "content" in raw:
+        parts = [item.get("text", "") for item in raw["content"]
+                 if isinstance(item, dict) and item.get("type") == "text"]
+        return "\n\n".join(parts) if parts else str(raw)
+    return str(raw)
+
+learn_mcp = MCPStreamableHTTPTool(
+    name="microsoft-learn",
+    url="https://learn.microsoft.com/api/mcp",   # public, no-auth, free
+    parse_tool_results=_mcp_text_extractor,
+)
+
+agent = Agent(
+    client=FoundryChatClient(),                  # MAF 1.6 API
+    tools=[learn_mcp],
+    instructions=(
+        "You are a Microsoft Learn assistant. For every Azure / .NET / "
+        "Microsoft 365 question, call the microsoft-learn tool and cite "
+        "the article URLs in your answer using inline markdown links."
+    ),
+)
+ResponsesHostServer(agent).run()
+```
+
+Why this works without extra plumbing:
+- **No auth headers needed** — Learn MCP is public per [Microsoft Learn
+  Terms of Use](https://learn.microsoft.com/en-us/legal/termsofuse). No
+  bearer token, no API key, no rate-limit ceiling for casual usage.
+- **ACA egress is open by default** — no `egressPolicies` required for
+  `*.microsoft.com` in standard ACA environments.
+- **`parse_tool_results=_mcp_text_extractor` is mandatory** to surface the
+  Learn knowledge service's text payloads cleanly — without it, the model
+  sees the raw `{"content": [...]}` envelope and citation quality collapses.
+
+This is the canonical no-auth remote-MCP shape; any other public MCP
+(GitHub MCP for unauthenticated requests, generic knowledge MCPs) drops
+into the same pattern by swapping the `url`.
 
 ### Pattern B — ~~MAF convenience helper~~ **REMOVED in MAF 1.3.0**
 
