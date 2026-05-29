@@ -158,7 +158,7 @@ validation:
     - "AttributeError"
     - "AssertionError"
 
-last_validated: "2026-05-26"
+last_validated: "2026-05-29"
 validated_by: copilot-bot
 known_issues_count: 3
 re_pin_log:
