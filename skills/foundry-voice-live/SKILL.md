@@ -17,7 +17,7 @@ description: >
   voice (use foundry-hosted-agents), prompt agents without voice (use
   foundry-prompt-agents).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry Voice Live
@@ -623,7 +623,7 @@ dependencies = [
 - [Voice Live overview](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live)
 - [Voice Live how-to](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to)
 - [Voice Live API reference (2025-10-01)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2025-10-01)
-- [Azure OpenAI Realtime — concepts](https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio) · [how-to](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio)
+- [Azure OpenAI Realtime — concepts](https://learn.microsoft.com/azure/foundry/openai/how-to/realtime-audio) · [how-to](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio)
 - [Voice Live quickstart (models)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-quickstart?pivots=programming-language-python)
 - [Voice Live quickstart (agents)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-agents-quickstart?pivots=programming-language-python)
 - [Regional availability](https://learn.microsoft.com/azure/ai-services/speech-service/regions?tabs=voice-live#regions)

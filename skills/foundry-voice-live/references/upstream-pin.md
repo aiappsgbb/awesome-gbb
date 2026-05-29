@@ -9,27 +9,27 @@ upstream:
   pinned_sha: "ad612a644a60b041c37a3c98407e48f51a9e43cb"
 packages:
   - name: openai
-    version: "2.0.0"
-    specifier: "~=2.0.0"
+    version: "2.38.0"
+    specifier: "~=2.38.0"
     source: pypi
   - name: azure-identity
-    version: "1.24.0"
-    specifier: "~=1.24.0"
+    version: "1.25.3"
+    specifier: "~=1.25.3"
     source: pypi
   - name: fastrtc
     version: "0.0.34"
     specifier: "~=0.0.34"
     source: pypi
   - name: gradio
-    version: "5.42.0"
-    specifier: "~=5.42.0"
+    version: "6.15.2"
+    specifier: "~=6.15.2"
     source: pypi
 known_issues: []
 docs_to_revalidate:
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live"
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to"
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2025-10-01"
-  - "https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio"
+  - "https://learn.microsoft.com/azure/foundry/openai/how-to/realtime-audio"
 validation:
   requires:
     - github_only
@@ -49,10 +49,10 @@ validation:
 
     echo "=== Installing packages ==="
     pip install --quiet \
-      "openai~=2.0.0" \
-      "azure-identity~=1.24.0" \
-      "fastrtc~=0.0.34" \
-      "gradio~=5.42.0"
+      "openai~=2.38.0" \
+      "azure-identity~=1.25.3" \
+      "fastrtc~=0.0.34"
+    pip install --quiet --upgrade "gradio~=6.15.2"
 
     echo "=== Import smoke tests ==="
     python -c "from openai import AsyncAzureOpenAI; print('openai.AsyncAzureOpenAI OK')"
@@ -80,8 +80,8 @@ validation:
     - "gradio OK"
     - "AsyncAzureOpenAI.realtime + websocket_base_url OK"
     - "VALIDATION_PASSED"
-last_validated: "2026-05-28"
-validated_by: "ricchi"
+last_validated: "2026-05-29"
+validated_by: "copilot-bot"
 ---
 
 # Upstream Pin — foundry-voice-live
