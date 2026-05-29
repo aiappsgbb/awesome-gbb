@@ -372,28 +372,6 @@ pre code { background: transparent; border: 0; padding: 0; }
 
 /* ---------- install CTA (home) ---------- */
 
-/* ---------- how it works (home) ---------- */
-.how-it-works { margin: 36px 0 0; }
-.how-it-works h2 { font-size: 22px; margin: 0 0 16px; }
-.how-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-}
-.how-step {
-  background: var(--bg-1); border: 1px solid var(--line);
-  border-radius: 12px; padding: 18px 18px 16px; position: relative;
-}
-.how-num {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 50%;
-  background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
-  margin-bottom: 8px;
-}
-.how-step h3 { font-size: 16px; margin: 0 0 6px; }
-.how-step p { font-size: 14px; color: var(--ink-1); margin: 0; line-height: 1.5; }
-.how-step a { color: var(--accent); text-decoration: none; }
-.how-step a:hover { text-decoration: underline; }
-
 .install-cta {
   background:
     linear-gradient(160deg, var(--accent-soft) 0%, transparent 55%),
