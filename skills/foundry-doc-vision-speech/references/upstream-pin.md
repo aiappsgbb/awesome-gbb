@@ -17,13 +17,13 @@ packages:
       Toolbox preview floor is recorded as >=2.1.0; direct Foundry client patterns require >=2.0.0.
   - name: agent-framework
     source: pypi
-    version: "1.3.0"
+    version: "1.7.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       MAF package family used by the FoundryChatClient vision path.
   - name: agent-framework-foundry
     source: pypi
-    version: "1.3.0"
+    version: "1.7.0"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
     notes: |
       FoundryChatClient import surface for standalone vision agents.
@@ -35,7 +35,7 @@ packages:
       SDK floor recorded for the Document Intelligence v4 GA REST surface `2024-11-30`.
   - name: azure-cognitiveservices-speech
     source: pypi
-    version: "1.40.0"
+    version: "1.50.0"
     upstream_changelog: https://pypi.org/project/azure-cognitiveservices-speech/#history
     notes: |
       SDK floor recorded for SpeechConfig token_credential support.
@@ -67,10 +67,10 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "azure-ai-projects~=2.1.0" \
-      "agent-framework~=1.3.0" \
-      "agent-framework-foundry~=1.3.0" \
+      "agent-framework~=1.7.0" \
+      "agent-framework-foundry~=1.7.0" \
       "azure-ai-documentintelligence~=1.0.2" \
-      "azure-cognitiveservices-speech~=1.40.0"
+      "azure-cognitiveservices-speech~=1.50.0"
     python - <<'PY'
     from azure.ai.projects.aio import AIProjectClient
     from agent_framework.foundry import FoundryChatClient
@@ -82,8 +82,8 @@ validation:
     - "manual validation required"
     - "ok foundry-doc-vision-speech imports"
 
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-05-29
+validated_by: copilot-bot
 known_issues_count: 1
 ---
 
