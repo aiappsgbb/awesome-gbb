@@ -7,8 +7,8 @@ description: >
   2026 coverage via in-process MAF middleware (8-12 µs/eval verified on
   Windows + Py 3.13 + AGT 3.6.0) or ACA sidecar. Ships 3 starter policies
   (default / HITL gate / PII deny), working create_governance_middleware
-  snippet, ACA sidecar Bicep, and field-tested Known Issues (Windows UTF-8
-  CLI trap, rogue detection setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
+  snippet, ACA sidecar Bicep, and field-tested Known Issues (rogue detection
+  setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
   policy enforcement, capability guard, audit trail, OWASP ASI 2026, MAF
   middleware, MCP scanner, PromptDefense, Citadel adapter, agt verify, agt
   doctor, agt red-team. DO NOT USE FOR: Foundry agent deployment (use
@@ -16,7 +16,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.0.4"
+  version: "1.0.5"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -424,7 +424,7 @@ agt eval prompt-defense --agent ./agent.yaml --report ./pd-report.json
 | Recipe | Status | Last verified |
 |--------|--------|---------------|
 | `pip install agent-governance-toolkit[full]` | ✅ | AGT 3.6.0, Win11, Py 3.13.13 |
-| `agt doctor` (with `PYTHONUTF8=1`) | ✅ | same |
+| `agt doctor` | ✅ | same |
 | `agt verify` → 10/10 OWASP ASI 2026 | ✅ | same |
 | `examples/quickstart/govern_in_60_seconds.py` | ✅ | same |
 | Path A — `create_governance_middleware(...)` factory | ✅ | same |
@@ -442,17 +442,12 @@ agt eval prompt-defense --agent ./agent.yaml --report ./pd-report.json
 
 Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md).
 
-1. **Windows CLI breaks without UTF-8 mode** — every `agt …` command
-   crashes with `UnicodeEncodeError: 'charmap'` on a default PowerShell
-   host. Set `PYTHONUTF8=1` (and `[Console]::OutputEncoding`) per shell;
-   bake into CI runners. Will hit ~every Windows GBB user.
-
-2. **`RogueDetectionMiddleware` requires a capability profile** — the
+1. **`RogueDetectionMiddleware` requires a capability profile** — the
    factory's `enable_rogue_detection=True` will raise unless you also
    supply a `RogueAgentDetector` and a `capability_profile`. Default to
    `False` for first-pass; revisit after baselining.
 
-3. **Verifier version skew is cosmetic** — `agt verify` reports
+2. **Verifier version skew is cosmetic** — `agt verify` reports
    `Toolkit: 3.2.2` while the meta-package is `3.6.0`. Verifier carries
    its own compliance schema version; OWASP ASI coverage check still
    passes 10/10.
