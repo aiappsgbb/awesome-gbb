@@ -15,7 +15,7 @@ description: >
   deploying Foundry agents (use foundry-hosted-agents), deploying
   Citadel gateway (use citadel-hub-deploy).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation
@@ -165,6 +165,8 @@ that touches Azure must follow them.
     # Verify sub is one of `allowed_subscriptions` for this alias;
     # if not, decide explicitly with: az account set --subscription <one-of-allowed>
     ```
+
+    > **🔴 DO NOT** let `az account set` auto-switch to a subscription outside `allowed_subscriptions`. The default behavior after `az login --tenant` is to activate whichever sub was last touched — verify with `az account show` and reject if not in the whitelist.
 
     See § Assertion variants — strict vs whitelist for the canonical
     membership-check snippet.

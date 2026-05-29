@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # AZD Tips & Patterns
@@ -703,6 +703,8 @@ hooks:
 
 ## `azd env set` + JSON arrays/objects: use `.bicepparam`, not JSON parameters
 
+> **🔴 DO NOT** pass JSON arrays via `azd env set`. The value gets triple-escaped through shell → azd → Bicep → ARM. Use `.bicepparam` files or `--parameters` instead.
+
 > 🛑 **DO NOT** push array- or object-typed values through `azd env set`. The CLI re-escapes
 > the value on every `.env` read/write, producing triple-escaped JSON that fails to round-trip.
 > **DO** hard-code the literal in `infra/main.bicepparam` instead — that is the only safe
@@ -1177,6 +1179,8 @@ resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' =
 
 ## ACR + ACA Registry Binding (complete example)
 
+> **MUST:** Every UAMI assigned to an ACA container app needs `AcrPull` on the container registry. This applies to EVERY service — not just the first one. Missing `AcrPull` causes `ImagePullError` with a misleading "Key Vault 401" message.
+
 > 🛑 **MUST rule.** In a multi-service pilot, **every ACA app's UAMI** independently
 > needs `AcrPull` on the ACR — not just a "shared env UAMI" or the Foundry **project** MI
 > (which only covers the agent container). Granting `AcrPull` to ONE identity and assuming
@@ -1276,6 +1280,8 @@ if ($role -ne 'AcrPull') { Write-Error "❌ AcrPull not propagated after $($maxR
 ```
 
 ### Prefer Bicep `dependsOn: [rbac]` over the retry loop when both modules live in the same deployment
+
+> **MUST:** Add `dependsOn: [rbac]` to every ACA module that references a UAMI. Without it, `azd up` races RBAC propagation and the first deploy fails with 401.
 
 The retry loop above patches the **symptom** at deploy time. The cleaner fix
 is to **pre-empt** the race at provision time: when `main.bicep` invokes a

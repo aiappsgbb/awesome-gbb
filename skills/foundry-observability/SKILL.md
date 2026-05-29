@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # Foundry Observability
@@ -230,6 +230,9 @@ module acaEnv 'modules/aca-env-monitoring.bicep' = {
 ---
 
 ## Layer 2 — Foundry hosted agent (the runtime)
+
+> **⚡ START HERE if `az rest --method PUT` returns 400/AAD or `GET` returns `credentials: null`:**
+> Jump directly to the O-012 workaround below. The auto-injection path does NOT work for all account types — if PUT fails, skip to O-012 immediately.
 
 > 🚨 **START HERE if your AppInsights connection PUT fails or your agent
 > reports `server_error` after a fresh `azd provision`.**

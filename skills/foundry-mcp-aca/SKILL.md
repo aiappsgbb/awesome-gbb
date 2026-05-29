@@ -10,8 +10,9 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.8"
+  version: "1.0.9"
 ---
+> **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP.
 
 # Foundry MCP ACA Deployment
 
@@ -672,6 +673,8 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 
 ## Gotchas
 
+> **🔴 DO NOT** use bare `MCP.run()` (defaults to stdio transport). On ACA, you MUST use `transport="streamable-http"` and bind to `0.0.0.0:8080`.
+
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | MCP tools not appearing in agent | Server returns 400/404 on protocol methods | All 6 JSON-RPC methods must return HTTP 200 |
@@ -679,7 +682,7 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 | MCP connection timeout | ACA not started (cold start) | Runtime retries automatically; set `minReplicas: 1` for always-on |
 | `invalid_payload` error | `${ENV_VAR}` in mcp-config.json not resolved → empty URL | Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. |
 | Tools listed but calls fail | Tool call timeout (>100s) | Optimize tool implementation or increase ACA resources |
-| **`FastMCP` server starts but returns 000/timeout on port** | `MCP.run()` with no args defaults to `stdio` transport (reads stdin, never binds HTTP port). ACA health probe fails, container marked unhealthy. | **🛑 DO NOT use bare `MCP.run()` on ACA — it defaults to stdio.** **DO use** `MCP.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))`. Note: `transport="streamable-http"` (with the dash), matching the canonical examples elsewhere in this SKILL — not `transport="http"`. |
+| **`FastMCP` server starts but returns 000/timeout on port** | `MCP.run()` with no args defaults to `stdio` transport (reads stdin, never binds HTTP port). ACA health probe fails, container marked unhealthy. | **🛑 DO NOT use bare `MCP.run()` on ACA — it defaults to stdio.** **DO use** `MCP.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))`. Note: `transport="streamable-http"` (with the dash) matches the canonical examples elsewhere in this SKILL; the legacy bare `http` transport name is stale. |
 | **`TypeError: 'FunctionTool' object is not callable` inside a tool** | `@MCP.tool` wraps the function in a `FunctionTool` object. Calling it from Python (e.g., tool A calls tool B internally) raises `TypeError`. | **Extract shared logic into a plain `_helper()` function. Both `@MCP.tool` functions call the helper. Never call one `@MCP.tool`-decorated function from inside another.** |
 | **MCP ACA deployed but Foundry agent can't reach it (connection timeout)** | `az containerapp create --ingress internal` — only resources in the same VNET can reach it. Foundry hosted agents run in **Foundry's own infrastructure**, not your VNET. | **Use `--ingress external` for MCP ACA containers that Foundry agents call. Internal ingress only works for VNET-injected agents (private topology) where the agent subnet is peered/injected into the same VNET. See `foundry-vnet-deploy`.** |
 | `prompts/list` not implemented | Server doesn't handle this method | Return `{"prompts": []}` — agent-framework requires it |

@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.8"
+  version: "1.7.9"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -951,6 +951,14 @@ You have a `save_report` tool for generating downloadable files:
 ---
 
 ## Dependencies (pyproject.toml)
+
+> **🔴 DO NOT** install the `agent-framework` meta-package with `>=`. Pin individual sub-packages:
+> ```
+> agent-framework-core~=1.6.0
+> agent-framework-foundry~=1.6.0
+> agent-framework-foundry-hosting==1.0.0a260521
+> ```
+> The meta-package pulls transitive deps that may conflict. Pin what you need.
 
 > 🚨 **READ FIRST.** Three pyproject mistakes silently break this stack:
 >
