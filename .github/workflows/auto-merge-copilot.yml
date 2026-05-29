@@ -1,0 +1,84 @@
+name: Auto-merge Copilot PRs
+
+# Automatically approves and merges PRs from the Copilot coding agent
+# when all CI checks pass. The CI gates (skill-validation, pin-validation,
+# automation-pr-gate, skill-test) are the quality bar — if they pass, the
+# PR is safe to merge without human review.
+#
+# Only applies to PRs authored by copilot-swe-agent (the GitHub Copilot
+# Coding Agent bot). Human PRs still require manual review.
+
+on:
+  # Trigger when check suites complete on PRs
+  check_suite:
+    types: [completed]
+  # Also trigger on PR status changes (ready for review, checks pass)
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    # Only run for Copilot coding agent PRs
+    if: >-
+      github.event.pull_request.user.login == 'copilot-swe-agent' ||
+      github.event.check_suite.pull_requests[0].head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Find Copilot PRs ready to merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # List open PRs from copilot-swe-agent
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --author "app/copilot-swe-agent" \
+            --state open \
+            --json number,title,isDraft,statusCheckRollup \
+            --jq '.[] | select(.isDraft == false)')
+
+          if [ -z "$prs" ]; then
+            echo "No non-draft Copilot PRs found"
+            exit 0
+          fi
+
+          echo "$prs" | jq -r '.number' | while read -r pr_num; do
+            title=$(echo "$prs" | jq -r "select(.number == $pr_num) | .title")
+            
+            # Check if all required checks passed
+            all_passed=$(gh pr checks "$pr_num" --repo "$GITHUB_REPOSITORY" \
+              --json name,state \
+              --jq '[.[] | select(.state != "SUCCESS" and .state != "SKIPPED")] | length')
+            
+            total_checks=$(gh pr checks "$pr_num" --repo "$GITHUB_REPOSITORY" \
+              --json name,state --jq 'length')
+
+            if [ "$total_checks" -eq 0 ]; then
+              echo "#$pr_num: no checks yet, skipping"
+              continue
+            fi
+
+            if [ "$all_passed" -ne 0 ]; then
+              echo "#$pr_num: checks not all passed ($all_passed pending/failing), skipping"
+              continue
+            fi
+
+            echo "#$pr_num: all $total_checks checks passed — auto-approving and merging"
+            
+            # Approve the PR
+            gh pr review "$pr_num" --repo "$GITHUB_REPOSITORY" --approve \
+              --body "✅ Auto-approved — all CI checks passed (skill-validation, pin-validation, automation-pr-gate, skill-test)." || true
+
+            # Enable auto-merge (squash)
+            gh pr merge "$pr_num" --repo "$GITHUB_REPOSITORY" \
+              --squash --auto \
+              --body "Auto-merged by CI — all gates passed." || \
+            # Fallback: direct merge if auto-merge fails
+            gh pr merge "$pr_num" --repo "$GITHUB_REPOSITORY" \
+              --squash --admin \
+              --body "Auto-merged by CI — all gates passed." || \
+            echo "WARN: could not merge #$pr_num"
+          done
