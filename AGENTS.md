@@ -654,11 +654,13 @@ re-runs the script on the runner) and by reviewer eyeball.
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/*/references/upstream-pin.md` | **Re-runs `validation.script` on the runner** for auto-tier pin files; asserts every `expected_output` substring. No "trust me, I tested" path. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
-| [`skill-test.yml`](.github/workflows/skill-test.yml) | Push to main + weekly cron + on-demand | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `rg-awesome-gbb-ci`) |
+| [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `rg-awesome-gbb-ci`) |
+| [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
 
 The first three run on every PR. The fourth detects drift autonomously.
-The fifth runs on push to main and weekly, with E2E Azure tests on
-schedule and manual dispatch.
+The fifth runs on every PR (including Copilot's) and on push/schedule.
+The sixth closes the loop: when all checks pass on a Copilot PR, it
+auto-approves and squash-merges without waiting for human review.
 
 ### 9.7 · Azure CI credentials and E2E infrastructure
 
@@ -950,7 +952,7 @@ Consequences:
 | Auto-tier (CI can refresh autonomously) | 21 |
 | Issue-only (human / complex deploy) | 2 |
 | Internal IP (no upstream) | 4 |
-| CI workflows | 5 |
+| CI workflows | 6 |
 | Unit tests | 71 (18 PR gate + 43 skill validation + 10 E2E Azure) |
 | Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
