@@ -247,7 +247,7 @@ class TestValidatePinFile(unittest.TestCase):
             errs = vs.validate_pin_file(p)
             self.assertTrue(any("freshness_tier" in e for e in errs))
 
-    def test_auto_tier_with_azure_requires_fails(self):
+    def test_auto_tier_with_azure_requires_and_runnable_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pathlib.Path(tmp) / "upstream-pin.md"
             _write(p, _pin_md(
@@ -256,7 +256,19 @@ class TestValidatePinFile(unittest.TestCase):
                 runnable=True,
             ))
             errs = vs.validate_pin_file(p)
-            self.assertTrue(any("automation_tier=auto" in e for e in errs))
+            self.assertTrue(any("runnable=true" in e.lower() or "auto" in e for e in errs))
+
+    def test_auto_tier_with_azure_not_runnable_passes(self):
+        """auto + creds + runnable=false is valid: agent edits pin, CI validates."""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "upstream-pin.md"
+            _write(p, _pin_md(
+                automation_tier="auto",
+                requires=["azure_subscription"],
+                runnable=False,
+            ))
+            errs = vs.validate_pin_file(p)
+            self.assertEqual(errs, [])
 
     def test_runnable_with_azure_requires_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

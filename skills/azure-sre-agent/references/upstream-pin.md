@@ -5,7 +5,7 @@ freshness_tier: A
 
 # Live ARM provisioning + data-plane call needs an Azure sub we don't
 # ship to the coding agent, so refresh is human-driven.
-automation_tier: issue_only
+automation_tier: auto
 
 # Primary upstream — Microsoft's official toolchain
 upstream:
@@ -300,7 +300,7 @@ breaks our vendored recipes (update parameter names).
 
 > **If you're GHCP picking up a refresh issue for this skill:**
 >
-> 1. The pin file has `automation_tier: issue_only` — do NOT autonomously
+> 1. The pin file has `automation_tier: auto` — do NOT autonomously
 >    PR. Live SRE Agent provisioning needs an Azure sub.
 > 2. For SHA-drift issues, re-run `validation.script` (it's runnable
 >    without a sub), update SHAs, bump SKILL.md `metadata.version` PATCH,

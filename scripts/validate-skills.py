@@ -281,12 +281,16 @@ def validate_pin_file(path: pathlib.Path) -> list[str]:
             needs_creds = bool(
                 {"azure_subscription", "foundry_project"} & set(requires or [])
             )
-            if needs_creds and automation_tier == "auto":
+            # auto + creds is allowed when runnable=false: the coding agent
+            # does the pin edit, CI validates with OIDC Azure creds.
+            # Only block auto + creds + runnable=true (agent can't run it).
+            if needs_creds and automation_tier == "auto" and runnable:
                 errors.append(
-                    f"{path}: automation_tier=auto but validation.requires includes "
-                    f"creds we don't ship to GHCP ({requires!r}); must be issue_only"
+                    f"{path}: automation_tier=auto + runnable=true but "
+                    f"validation.requires includes creds ({requires!r}); "
+                    f"set runnable=false (CI validates via --include-azure)"
                 )
-            if needs_creds and runnable:
+            if needs_creds and runnable and automation_tier != "auto":
                 errors.append(
                     f"{path}: validation.runnable=true but requires creds "
                     f"({requires!r}); must be false"

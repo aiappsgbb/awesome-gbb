@@ -1,7 +1,7 @@
 ---
 schema_version: 2
 freshness_tier: B
-automation_tier: issue_only
+automation_tier: auto
 
 upstream:
   type: pypi

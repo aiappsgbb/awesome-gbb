@@ -1,7 +1,7 @@
 ---
 schema_version: 2
 freshness_tier: A
-automation_tier: issue_only
+automation_tier: auto
 
 upstream:
   type: github_repo
