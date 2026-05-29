@@ -9,6 +9,11 @@ name: Skill tests
 # and pin-validation.yml. This workflow adds periodic + on-demand coverage.
 
 on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - "scripts/tests/test_e2e_*.py"
+      - ".github/workflows/skill-test.yml"
   push:
     branches: [main]
     paths:
@@ -71,7 +76,6 @@ jobs:
 
   # ── Job 3: Pin smoke (all auto-tier, no Azure) ────────────────────
   pin-smoke:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -92,6 +96,8 @@ jobs:
   # ── Job 4: E2E Azure (all pins including Azure-dependent) ──────────
   e2e-azure:
     if: >-
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'push') ||
       (github.event_name == 'schedule') ||
       (github.event_name == 'workflow_dispatch' && inputs.include_azure)
     runs-on: ubuntu-latest
