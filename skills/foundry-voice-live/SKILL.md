@@ -17,7 +17,7 @@ description: >
   voice (use foundry-hosted-agents), prompt agents without voice (use
   foundry-prompt-agents).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry Voice Live
