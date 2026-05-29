@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.3.1"
+  version: "1.3.3"
 ---
 
 # AZD Tips & Patterns
@@ -703,6 +703,8 @@ hooks:
 
 ## `azd env set` + JSON arrays/objects: use `.bicepparam`, not JSON parameters
 
+> **🔴 DO NOT** pass JSON arrays via `azd env set`. The value gets triple-escaped through shell → azd → Bicep → ARM. Use `.bicepparam` files or `--parameters` instead.
+
 > 🛑 **DO NOT** push array- or object-typed values through `azd env set`. The CLI re-escapes
 > the value on every `.env` read/write, producing triple-escaped JSON that fails to round-trip.
 > **DO** hard-code the literal in `infra/main.bicepparam` instead — that is the only safe
@@ -748,10 +750,22 @@ param aiProjectDeployments = [
   {
     name: 'gpt-5.4-mini'
     model: { name: 'gpt-5.4-mini', format: 'OpenAI', version: '2026-03-17' }
-    sku: { name: 'GlobalStandard', capacity: 100 }
+    sku: { name: 'GlobalStandard', capacity: 30 }
   }
 ]
+```
 
+> **🔴 DO NOT** default model `capacity` to 100 K TPM in a shared subscription.
+> Shared subs often run at 900+/1000 K TPM aggregate quota; a fresh
+> `azd provision` with `capacity: 100` fails with `InsufficientQuota`
+> mid-deploy and the only fix is to lower the capacity and re-provision (~4 min wasted).
+> Default to `capacity: 30` for pilot deployments; preflight with
+> `az cognitiveservices usage list --location <region>` and raise only
+> after confirming free quota. The 30 K TPM ceiling also forces realistic
+> demo pacing (~80 s between scenario calls) — useful for catching
+> retry-handling bugs early.
+
+```bicep
 // Option B: structured env (use ONLY for genuinely runtime-configurable values).
 // Set as a single-quoted JSON string in `.azure/<env>/.env` by HAND-EDITING
 // the file once (not via `azd env set`) — azd will preserve it on subsequent
@@ -1177,6 +1191,8 @@ resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' =
 
 ## ACR + ACA Registry Binding (complete example)
 
+> **MUST:** Every UAMI assigned to an ACA container app needs `AcrPull` on the container registry. This applies to EVERY service — not just the first one. Missing `AcrPull` causes `ImagePullError` with a misleading "Key Vault 401" message.
+
 > 🛑 **MUST rule.** In a multi-service pilot, **every ACA app's UAMI** independently
 > needs `AcrPull` on the ACR — not just a "shared env UAMI" or the Foundry **project** MI
 > (which only covers the agent container). Granting `AcrPull` to ONE identity and assuming
@@ -1276,6 +1292,8 @@ if ($role -ne 'AcrPull') { Write-Error "❌ AcrPull not propagated after $($maxR
 ```
 
 ### Prefer Bicep `dependsOn: [rbac]` over the retry loop when both modules live in the same deployment
+
+> **MUST:** Add `dependsOn: [rbac]` to every ACA module that references a UAMI. Without it, `azd up` races RBAC propagation and the first deploy fails with 401.
 
 The retry loop above patches the **symptom** at deploy time. The cleaner fix
 is to **pre-empt** the race at provision time: when `main.bicep` invokes a

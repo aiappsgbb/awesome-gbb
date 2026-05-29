@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.5.1"
+  version: "1.5.2"
   validated: 2026-05-28
 ---
 
@@ -440,6 +440,24 @@ agent = chat_client.as_agent(
     tools=[mcp_tool],
 )
 ResponsesHostServer(agent).run()
+```
+
+> **MUST:** Always pass `parse_tool_results=` when using `MCPStreamableHTTPTool`. Without it, the agent sees raw MCP JSON instead of text content, causing confabulated responses.
+
+```python
+def _mcp_text_extractor(raw):
+    """Canonical parser for MCPStreamableHTTPTool results."""
+    if isinstance(raw, dict) and "content" in raw:
+        parts = [item.get("text", "") for item in raw["content"]
+                 if isinstance(item, dict) and item.get("type") == "text"]
+        return "\n\n".join(parts) if parts else str(raw)
+    return str(raw)
+
+learn_mcp = MCPStreamableHTTPTool(
+    name="microsoft-learn",
+    url="https://learn.microsoft.com/api/mcp",
+    parse_tool_results=_mcp_text_extractor,  # ← MUST include this
+)
 ```
 
 #### Cross-skill ownership

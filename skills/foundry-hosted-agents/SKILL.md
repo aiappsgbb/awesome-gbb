@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.8"
+  version: "1.7.10"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -952,6 +952,14 @@ You have a `save_report` tool for generating downloadable files:
 
 ## Dependencies (pyproject.toml)
 
+> **🔴 DO NOT** install the `agent-framework` meta-package with `>=`. Pin individual sub-packages:
+> ```
+> agent-framework-core~=1.6.0
+> agent-framework-foundry~=1.6.0
+> agent-framework-foundry-hosting==1.0.0a260521
+> ```
+> The meta-package pulls transitive deps that may conflict. Pin what you need.
+
 > 🚨 **READ FIRST.** Three pyproject mistakes silently break this stack:
 >
 > 1. **`agent-framework>=1.6.0` meta-package** — non-deterministic transitive resolution; resolves differently across uv versions. **DO** pin `agent-framework-core` and `agent-framework-foundry` individually.
@@ -1593,8 +1601,17 @@ agent id into `azd env`) needs to parse:
 Typical postdeploy snippet (persist agent id for downstream services to read):
 
 ```bash
-AGENT_ID=$(azd ai agent show -o json | jq -r '.id')
-azd env set WEATHER_AGENT_ID "$AGENT_ID"
+# Use .name (not .id) — .id returns "<service-name>:<version>", but downstream
+# services need the bare agent name to construct /agents/<name>/endpoint/... URLs.
+# Verified on azd ai agent extension v0.1.34-preview.
+AGENT_NAME=$(azd ai agent show -o json | jq -r '.name')
+azd env set WEATHER_AGENT_ID "$AGENT_NAME"
+
+# To grant Cognitive Services OpenAI User to the agent's instance MI:
+AGENT_MI=$(azd ai agent show -o json | jq -r '.instance_identity.principal_id')
+az role assignment create --assignee "$AGENT_MI" \
+  --role "Cognitive Services OpenAI User" \
+  --scope "$FOUNDRY_ACCOUNT_ID"
 ```
 
 ---
