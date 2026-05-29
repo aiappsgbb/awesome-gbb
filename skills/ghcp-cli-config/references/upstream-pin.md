@@ -15,7 +15,7 @@ upstream:
 packages:
   - name: PyYAML
     source: pypi
-    version: "6.0.2"
+    version: "6.0.3"
     upstream_changelog: https://pypi.org/project/PyYAML/
     notes: |
       Validation helper only, used to parse an inline sample MCP config YAML. Not a runtime dependency of the skill.
@@ -35,7 +35,7 @@ validation:
     set -euo pipefail
 
     PINNED_SHA="${PINNED_SHA:-32017187a0f044b2b5cbc97c20a78a3878e00ac2}"
-    PINNED_VERSION="${PINNED_VERSION:-6.0.2}"
+    PINNED_VERSION="${PINNED_VERSION:-6.0.3}"
     WORK=".upstream-pin-smoke/ghcp-cli-config"
 
     rm -rf "$WORK"
@@ -80,8 +80,8 @@ validation:
     - "canonical config URLs ok"
     - "sample config YAML parse ok"
   failure_signatures: []
-last_validated: 2026-05-28
-validated_by: ricchi
+last_validated: 2026-05-29
+validated_by: copilot-bot
 known_issues_count: 0
 ---
 
