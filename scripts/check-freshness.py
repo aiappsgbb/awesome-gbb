@@ -252,8 +252,9 @@ def consolidate_signals(signals: list[Signal]) -> list[Signal]:
                 skill=skill,
                 signal_type="consolidated",
                 severity=highest_impact,
-                title=f"🔄 Refresh `{skill}` — {len(ordered_signals)} signal(s), impact: {highest_impact}",
-                body="\n\n---\n\n".join(sections),
+                title=f"🔄 Refresh `{skill}`",
+                body=f"**{len(ordered_signals)} signal(s), impact: {highest_impact}**\n\n"
+                     + "\n\n---\n\n".join(sections),
                 automation_tier=bucket[0].automation_tier,
                 impact=highest_impact,
             )
@@ -796,23 +797,30 @@ def upsert_issue(
         issue_labels.append(f"impact:{signal.impact}")
     issue_labels = list(dict.fromkeys(issue_labels))
 
-    # Find an existing open issue with this title (idempotent upsert).
+    # Find an existing open issue for this skill (idempotent upsert).
+    # Key by skill-name prefix so signal count/impact changes don't create
+    # duplicates (AGENTS.md § 9.3 consolidated issue contract).
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {gh_token}",
         "User-Agent": USER_AGENT,
     }
+    # Extract skill name for prefix matching: "🔄 Refresh `<skill>`"
+    skill_prefix = title.split("—")[0].rstrip(" ").rstrip("—").rstrip() if "—" in title else title
     search = requests.get(
         "https://api.github.com/search/issues",
         params={
-            "q": f'repo:{repo} is:issue is:open in:title "{title}"',
+            "q": f'repo:{repo} is:issue is:open in:title "{skill_prefix}"',
         },
         headers=headers,
         timeout=HTTP_TIMEOUT,
     )
     if search.status_code == 200:
         items = search.json().get("items", [])
-        matched = next((it for it in items if it.get("title") == title), None)
+        matched = next(
+            (it for it in items if it.get("title", "").startswith(skill_prefix)),
+            None,
+        )
     else:
         matched = None
         print(f"WARN: search API returned {search.status_code}", file=sys.stderr)
@@ -872,6 +880,65 @@ def upsert_issue(
                 print(f"  ↳ assigned @{COPILOT_BOT_LOGIN} via GraphQL", file=sys.stderr)
 
 
+def close_resolved_issues(
+    skills_with_signals: set[str],
+    repo: str,
+    gh_token: str,
+    labels: list[str],
+    dry_run: bool,
+) -> None:
+    """Close freshness issues for skills with zero remaining drift signals.
+
+    Searches for open issues with the freshness label and the 🔄 Refresh
+    title pattern, then closes any whose skill has no active signals.
+    """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {gh_token}",
+        "User-Agent": USER_AGENT,
+    }
+    # Find all open freshness issues
+    label_filter = labels[0] if labels else "freshness"
+    search = requests.get(
+        "https://api.github.com/search/issues",
+        params={
+            "q": f'repo:{repo} is:issue is:open label:{label_filter} "🔄 Refresh"',
+        },
+        headers=headers,
+        timeout=HTTP_TIMEOUT,
+    )
+    if search.status_code != 200:
+        print(f"WARN: auto-close search returned {search.status_code}", file=sys.stderr)
+        return
+
+    for issue in search.json().get("items", []):
+        title = issue.get("title", "")
+        # Extract skill name from "🔄 Refresh `<skill>`"
+        m = re.search(r"Refresh `([^`]+)`", title)
+        if not m:
+            continue
+        skill = m.group(1)
+        if skill in skills_with_signals:
+            continue
+
+        # This skill has zero signals — close the issue
+        issue_url = issue["url"]
+        close_payload = {
+            "state": "closed",
+            "state_reason": "completed",
+            "body": issue.get("body", "") + "\n\n---\n\n✅ All drift signals resolved. Closing automatically.",
+        }
+        if dry_run:
+            print(f"[DRY-RUN] would close resolved issue: {title}")
+            continue
+
+        r = requests.patch(issue_url, json=close_payload, headers=headers, timeout=HTTP_TIMEOUT)
+        if r.status_code < 300:
+            print(f"✓ closed resolved issue: {title}", file=sys.stderr)
+        else:
+            print(f"WARN: close for {title} returned {r.status_code}", file=sys.stderr)
+
+
 # ──────────────────────────── main ──────────────────────────────────
 
 
@@ -923,6 +990,17 @@ def main() -> int:
     pins = discover_pin_files()
     print(f"Discovered {len(pins)} pin files", file=sys.stderr)
 
+    # Warn about skills without pin files (Tier C / internal IP)
+    pinned_skills = {p.skill for p in pins}
+    for skill_dir in sorted(SKILLS_DIR.iterdir()):
+        if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+            if skill_dir.name not in pinned_skills:
+                print(
+                    f"INFO: skill '{skill_dir.name}' has no upstream-pin.md "
+                    f"(internal IP / Tier C — no automated freshness tracking)",
+                    file=sys.stderr,
+                )
+
     signals = collect_signals(pins, gh_token)
     issue_signals = consolidate_signals(signals) if args.consolidated else signals
 
@@ -953,6 +1031,15 @@ def main() -> int:
                 labels=labels,
                 dry_run=args.dry_run,
             )
+        # Auto-close issues for skills with zero remaining signals
+        skills_with_signals = {s.skill for s in issue_signals}
+        close_resolved_issues(
+            skills_with_signals,
+            repo=args.repo,
+            gh_token=gh_token or "",
+            labels=labels,
+            dry_run=args.dry_run,
+        )
 
     print(
         f"Done — {len(signals)} drift signal(s), {len(issue_signals)} issue candidate(s) across {len(pins)} pins",

@@ -17,19 +17,19 @@ determines the issue label (`impact:critical`, `impact:high`, etc.).
    - All drift signals for this skill, ordered by impact (highest first)
    - Each signal's classification (CRITICAL / HIGH / MEDIUM / LOW)
    - The exact fields to update in the pin file front-matter
-   - The Verification Checklist (a bash script)
-   - The Acceptance Criteria
 
 2. **Open the pin file** at `skills/<skill>/references/upstream-pin.md`.
    Its YAML front-matter is the source of truth. The `validation.script`
-   field has the same script as the issue body — they're kept in sync.
+   field contains the runnable bash script you'll execute to verify the
+   refresh.
 
 3. **Run the validation script.** Use the sandbox's `bash`, `python`,
    and `pip` — those are all you need. **Never** use `az` or other
-   cloud CLIs; `automation_tier: auto` skills are designed not to
-   require them. If validation requires credentials, the issue would
-   have been opened as `issue_only` (no automation_tier=auto label) and
-   you should NOT have picked it up.
+   cloud CLIs; `automation_tier: auto` skills are designed to validate
+   with pip + Python only (no Azure credentials). If the pin file's
+   `validation.requires` includes `azure_subscription` or
+   `foundry_project`, the issue would have been opened as `issue_only`
+   and you should NOT have picked it up.
 
    ⚠️ The `pin-validation.yml` CI job will **re-run your
    validation.script** on the PR runner and assert every

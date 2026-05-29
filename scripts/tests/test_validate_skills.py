@@ -57,9 +57,15 @@ def _pin_md(
     requires: list[str] | None = None,
     runnable: bool = True,
     last_validated: str = "2026-05-26",
+    script: str = "echo ok",
 ) -> str:
     req = requires or ["github_only"]
     req_str = ", ".join(req)
+    # Use YAML block scalar for multi-line scripts
+    if "\n" in script:
+        script_yaml = f"  script: |\n" + "\n".join(f"    {line}" for line in script.split("\n"))
+    else:
+        script_yaml = f"  script: {script}"
     return (
         f"---\n"
         f"schema_version: {schema_version}\n"
@@ -68,7 +74,7 @@ def _pin_md(
         f"validation:\n"
         f"  requires: [{req_str}]\n"
         f"  runnable: {str(runnable).lower()}\n"
-        f"  script: echo ok\n"
+        f"{script_yaml}\n"
         f"  expected_output:\n"
         f"    - ok\n"
         f"last_validated: {last_validated}\n"
@@ -291,6 +297,41 @@ class TestValidatePinFile(unittest.TestCase):
             _write(p, pin)
             errs = vs.validate_pin_file(p)
             self.assertTrue(any("last_validated" in e for e in errs))
+
+    def test_pip_compat_release_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "upstream-pin.md"
+            _write(p, _pin_md(script='pip install --quiet "some-pkg~=1.2.3"'))
+            errs = vs.validate_pin_file(p)
+            self.assertEqual(errs, [])
+
+    def test_pip_prerelease_exact_pin_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "upstream-pin.md"
+            _write(p, _pin_md(script='pip install --quiet "agent-hosting==1.0.0a260521"'))
+            errs = vs.validate_pin_file(p)
+            self.assertEqual(errs, [])
+
+    def test_pip_bare_stable_eq_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "upstream-pin.md"
+            _write(p, _pin_md(script='pip install --quiet "some-pkg==1.2.3"'))
+            errs = vs.validate_pin_file(p)
+            self.assertTrue(any("pip cap policy" in e and "bare `==`" in e for e in errs))
+
+    def test_pip_unbounded_gte_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "upstream-pin.md"
+            _write(p, _pin_md(script='pip install --quiet "some-pkg>=1.2.3"'))
+            errs = vs.validate_pin_file(p)
+            self.assertTrue(any("pip cap policy" in e and "unbounded" in e for e in errs))
+
+    def test_pip_shell_var_with_default_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "upstream-pin.md"
+            _write(p, _pin_md(script='pip install --quiet "some-pkg~=${PINNED:-1.2.3}"'))
+            errs = vs.validate_pin_file(p)
+            self.assertEqual(errs, [])
 
 
 # ── Plugin & marketplace validation ──────────────────────────────────

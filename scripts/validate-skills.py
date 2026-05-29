@@ -51,6 +51,15 @@ MAX_DESCRIPTION_CHARS = 1024
 KEBAB_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
+# PEP 440 pre-release suffixes — used by pip cap policy (AGENTS.md § 9.5)
+_PRERELEASE_RE = re.compile(r"\d+\.\d+\.\d+(?:a|b|rc|dev)\d*")
+# Matches pip specifier patterns inside quoted strings in pip install lines
+_PIP_SPEC_RE = re.compile(
+    r'"([A-Za-z0-9_][A-Za-z0-9_.~\[\]-]*?)'   # package name (possibly with extras)
+    r'(~=|==|>=|<=|!=|>|<)'                     # operator
+    r'([^"]*)"'                                 # version
+)
+
 FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("PoC name `kyc-poc`", re.compile(r"\bkyc-poc\b", re.I)),
     ("PoC name `card-dispute-investigation`", re.compile(r"\bcard-dispute-investigation\b", re.I)),
@@ -175,6 +184,63 @@ def validate_skill_md(path: pathlib.Path) -> list[str]:
     return errors
 
 
+def validate_pin_pip_caps(path: pathlib.Path, fm: dict[str, Any]) -> list[str]:
+    """Enforce AGENTS.md § 9.5 pin/cap policy on validation.script pip installs.
+
+    Allowed:
+      ~=X.Y.Z  (compatible release — default for stable)
+      ==X.Y.ZaN / ==X.Y.ZbN / ==X.Y.ZrcN / ==X.Y.ZdevN  (pre-release exact pin)
+      ~=X.Y    (broad compat — only with author justification, accepted here)
+
+    Forbidden:
+      ==X.Y.Z  for stable releases (no cap math)
+      >=X.Y.Z  (unbounded — next major can break)
+      Bare package name without specifier (unpinned)
+    """
+    errors: list[str] = []
+    validation = fm.get("validation") or {}
+    script = validation.get("script")
+    if not isinstance(script, str):
+        return errors
+
+    for line in script.split("\n"):
+        stripped = line.strip()
+        # Skip comments and non-pip lines
+        if stripped.startswith("#") or "pip install" not in stripped:
+            continue
+        # Skip lines that are just `pip install --upgrade pip`
+        if re.search(r"pip install\s+--\S*\s*pip\s*$", stripped):
+            continue
+
+        for match in _PIP_SPEC_RE.finditer(stripped):
+            pkg_name, operator, version_str = match.groups()
+            # Resolve shell variable defaults like ${PINNED_VERSION:-3.7.0}
+            resolved = re.sub(r"\$\{[^:}]+:-([^}]+)\}", r"\1", version_str)
+            # Skip if still contains unresolvable shell vars
+            if "$" in resolved:
+                continue
+
+            if operator == "~=":
+                # Always allowed
+                continue
+            elif operator == "==":
+                # Allowed only for pre-releases
+                if _PRERELEASE_RE.search(resolved):
+                    continue
+                errors.append(
+                    f"{path}: pip cap policy violation — `{pkg_name}{operator}{version_str}` "
+                    f"uses bare `==` for a stable release. Use `~=` instead (AGENTS.md § 9.5)"
+                )
+            elif operator == ">=":
+                errors.append(
+                    f"{path}: pip cap policy violation — `{pkg_name}{operator}{version_str}` "
+                    f"is unbounded (`>=`). Use `~=` to cap at the next minor (AGENTS.md § 9.5)"
+                )
+            # <=, !=, <, > are unusual but not explicitly forbidden — skip
+
+    return errors
+
+
 def validate_pin_file(path: pathlib.Path) -> list[str]:
     errors: list[str] = []
     try:
@@ -229,6 +295,9 @@ def validate_pin_file(path: pathlib.Path) -> list[str]:
     last_validated = fm.get("last_validated")
     if not last_validated:
         errors.append(f"{path}: missing `last_validated`")
+
+    # Enforce pip cap/pin policy (AGENTS.md § 9.5)
+    errors.extend(validate_pin_pip_caps(path, fm))
 
     return errors
 
@@ -417,32 +486,32 @@ def _merge_base_main() -> str | None:
 
 
 def validate_skill_plugin_version_consistency() -> list[str]:
-    """Warn when MAJOR/MINOR skill bumps leave root plugin version unchanged."""
-    warnings: list[str] = []
+    """Error when MAJOR/MINOR skill bumps or new skills leave root plugin version unchanged."""
+    errors: list[str] = []
     merge_base = _merge_base_main()
     if not merge_base or not PLUGIN_JSON.exists():
-        return warnings
+        return errors
 
     try:
         plugin_data = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))
     except Exception:
-        return warnings
+        return errors
     if not isinstance(plugin_data, dict):
-        return warnings
+        return errors
     plugin_version = plugin_data.get("version")
     if not isinstance(plugin_version, str):
-        return warnings
+        return errors
 
     old_plugin_text = _git_stdout("show", f"{merge_base}:plugin.json")
     if old_plugin_text is None:
-        return warnings
+        return errors
     try:
         old_plugin_data = json.loads(old_plugin_text)
     except Exception:
-        return warnings
+        return errors
     old_plugin_version = old_plugin_data.get("version")
     if not isinstance(old_plugin_version, str):
-        return warnings
+        return errors
 
     for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
         try:
@@ -457,8 +526,17 @@ def validate_skill_plugin_version_consistency() -> list[str]:
 
         rel = skill_md.relative_to(REPO_ROOT).as_posix()
         old_text = _git_stdout("show", f"{merge_base}:{rel}")
+        skill_name = skill_md.parent.name
+
         if old_text is None:
+            # New skill — requires at least MINOR plugin bump
+            if old_plugin_version == plugin_version:
+                errors.append(
+                    f"New skill '{skill_name}' added but plugin.json version "
+                    f"unchanged at {plugin_version} — bump MINOR per AGENTS.md § 5.1"
+                )
             continue
+
         try:
             old_fm = parse_frontmatter_text(old_text, f"{merge_base}:{rel}")
         except ValidationError:
@@ -473,14 +551,14 @@ def validate_skill_plugin_version_consistency() -> list[str]:
         if bump_kind not in ("MAJOR", "MINOR"):
             continue
 
-        skill_name = skill_md.parent.name
         if old_plugin_version == plugin_version:
-            warnings.append(
-                f"WARN: skill '{skill_name}' bumped {old_version}→{current_version} "
-                f"({bump_kind}), but plugin version unchanged at {plugin_version}"
+            errors.append(
+                f"Skill '{skill_name}' bumped {old_version}→{current_version} "
+                f"({bump_kind}), but plugin.json version unchanged at {plugin_version} "
+                f"— bump per AGENTS.md § 5.1"
             )
 
-    return warnings
+    return errors
 
 
 def main() -> int:
@@ -508,7 +586,8 @@ def main() -> int:
     if MARKETPLACE_PATH.exists():
         all_errors.extend(validate_marketplace(MARKETPLACE_PATH))
 
-    warnings = validate_skill_plugin_version_consistency()
+    plugin_version_errors = validate_skill_plugin_version_consistency()
+    all_errors.extend(plugin_version_errors)
 
     print(
         f"Validated {skill_md_count} SKILL.md files + {pin_count} pin files"
@@ -516,8 +595,6 @@ def main() -> int:
         + (f" + marketplace.json" if MARKETPLACE_PATH.exists() else ""),
         file=sys.stderr,
     )
-    for w in warnings:
-        print(f"⚠️  {w}", file=sys.stderr)
 
     if all_errors:
         print(f"\n❌ {len(all_errors)} validation error(s):\n", file=sys.stderr)
