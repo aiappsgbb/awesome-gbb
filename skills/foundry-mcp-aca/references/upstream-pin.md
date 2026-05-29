@@ -11,7 +11,7 @@ upstream:
 packages:
   - name: fastmcp
     source: pypi
-    version: "2.14.7"
+    version: "3.3.1"
     upstream_changelog: https://pypi.org/project/fastmcp/#history
     notes: |
       SKILL.md mandates fastmcp>=2.0.0,<3.0.0 and records 2.14.7 as the known-good 2.x line before a 3.x path break.
@@ -35,13 +35,13 @@ packages:
       Async Cosmos MCP path requires the >=4.15 query_items signature discipline documented in SKILL.md.
   - name: azure-identity
     source: pypi
-    version: "1.19.0"
+    version: "1.25.3"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     notes: |
       Keyless Azure SDK authentication floor from the reference requirements.
   - name: aiohttp
     source: pypi
-    version: "3.9.0"
+    version: "3.13.5"
     upstream_changelog: https://pypi.org/project/aiohttp/#history
     notes: |
       Required async HTTP transport for azure-cosmos in the Python Cosmos MCP server.
@@ -72,11 +72,11 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "fastmcp~=2.14.7" \
+      "fastmcp~=3.3.1" \
       "azure-mgmt-appcontainers~=4.0.0" \
       "azure-cosmos~=4.15.0" \
-      "azure-identity~=1.19.0" \
-      "aiohttp~=3.9.0"
+      "azure-identity~=1.25.3" \
+      "aiohttp~=3.13.5"
     python - <<'PY'
     from fastmcp import FastMCP
     import mcp
@@ -89,8 +89,8 @@ validation:
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-05-28
-validated_by: ricchi
+last_validated: 2026-05-29
+validated_by: copilot-bot
 known_issues_count: 1
 ---
 

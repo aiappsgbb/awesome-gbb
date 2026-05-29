@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.7"
+  version: "1.0.8"
 ---
 
 # Foundry MCP ACA Deployment
