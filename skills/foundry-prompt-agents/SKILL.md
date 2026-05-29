@@ -17,7 +17,7 @@ description: >
   foundry-hosted-agents), MCP server deployment (use
   foundry-mcp-aca), agent evaluation (use foundry-evals).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
