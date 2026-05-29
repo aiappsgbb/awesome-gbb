@@ -11,15 +11,15 @@ upstream:
 packages:
   - name: agent-framework-core
     source: pypi
-    version: "1.6.0"
+    version: "1.7.0"
     upstream_changelog: https://pypi.org/project/agent-framework-core/#history
   - name: agent-framework-foundry
     source: pypi
-    version: "1.6.0"
+    version: "1.7.0"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0a260521"
+    version: "1.0.0a260528"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
   - name: azure-ai-projects
     source: pypi
@@ -31,11 +31,11 @@ packages:
     upstream_changelog: https://pypi.org/project/azure-identity/#history
   - name: mcp
     source: pypi
-    version: "1.10.0"
+    version: "1.27.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
   - name: python-dotenv
     source: pypi
-    version: "1.0.0"
+    version: "1.2.2"
     upstream_changelog: https://pypi.org/project/python-dotenv/#history
 
 docs_to_revalidate:
@@ -100,7 +100,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "agent-framework-core~=1.6.0" "agent-framework-foundry~=1.6.0" "agent-framework-foundry-hosting==1.0.0a260521" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.10.0" "python-dotenv~=1.0.0"
+    pip install --quiet "agent-framework-core~=1.7.0" "agent-framework-foundry~=1.7.0" "agent-framework-foundry-hosting~=1.0.0a260528" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.27.1" "python-dotenv~=1.2.2"
     python -c "
     from agent_framework import Agent, SkillsProvider, tool, MCPStreamableHTTPTool
     from agent_framework.foundry import FoundryChatClient
@@ -127,8 +127,8 @@ validation:
     - "ok microsoft-opentelemetry bundled via agentserver-core"
     - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
-last_validated: 2026-05-28
-validated_by: ricchi
+last_validated: 2026-05-29
+validated_by: copilot-bot
 known_issues_count: 7
 ---
 
