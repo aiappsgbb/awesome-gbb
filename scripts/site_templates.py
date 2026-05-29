@@ -410,28 +410,6 @@ pre code { background: transparent; border: 0; padding: 0; }
 
 /* ---------- install CTA (home) ---------- */
 
-/* ---------- how it works (home) ---------- */
-.how-it-works { margin: 36px 0 0; }
-.how-it-works h2 { font-size: 22px; margin: 0 0 16px; }
-.how-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-}
-.how-step {
-  background: var(--bg-1); border: 1px solid var(--line);
-  border-radius: 12px; padding: 18px 18px 16px; position: relative;
-}
-.how-num {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 50%;
-  background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
-  margin-bottom: 8px;
-}
-.how-step h3 { font-size: 16px; margin: 0 0 6px; }
-.how-step p { font-size: 14px; color: var(--ink-1); margin: 0; line-height: 1.5; }
-.how-step a { color: var(--accent); text-decoration: none; }
-.how-step a:hover { text-decoration: underline; }
-
 .install-cta {
   background:
     linear-gradient(160deg, var(--accent-soft) 0%, transparent 55%),
@@ -709,37 +687,6 @@ def render_home(
         for r in ('Copilot CLI', 'Copilot Desktop', 'VS Code agent mode', 'Claude Code')
     )
 
-    # "How it works" explainer — addresses peer confusion about the ecosystem
-    how_it_works = (
-        '<section class="how-it-works" aria-labelledby="how-h">'
-        '<h2 id="how-h">How the ecosystem works</h2>'
-        '<div class="how-grid">'
-        '<div class="how-step">'
-        '<span class="how-num">1</span>'
-        '<h3>Install the skills</h3>'
-        '<p><strong>awesome-gbb</strong> (this repo) ships 27 building-block skills — '
-        'Foundry agents, MCP servers, governance, observability, deployment patterns. '
-        'Install as a plugin or pick individual skills.</p>'
-        '</div>'
-        '<div class="how-step">'
-        '<span class="how-num">2</span>'
-        '<h3>Run a customer pilot</h3>'
-        '<p><a href="https://aiappsgbb.github.io/threadlight-skills/"><strong>threadlight-skills</strong></a> '
-        '(separate repo) orchestrates the building blocks into an end-to-end '
-        'pilot pipeline — from brief → design → deploy → demo. It cross-references '
-        'foundry-*, azd-patterns, and citadel-* skills from this repo.</p>'
-        '</div>'
-        '<div class="how-step">'
-        '<span class="how-num">3</span>'
-        '<h3>Everything auto-updates</h3>'
-        '<p>CI detects upstream SDK drift twice a week, Copilot opens PRs, '
-        'tests validate against real Azure resources, and passing PRs auto-merge. '
-        'Zero maintenance.</p>'
-        '</div>'
-        '</div>'
-        '</section>'
-    )
-
     install_cta = (
         '<section class="install-cta" aria-labelledby="install-h">'
         '<h2 id="install-h">Get started in one command</h2>'
@@ -788,7 +735,6 @@ def render_home(
         + ''.join(cards)
         + '</div>'
         '</section>'
-        + how_it_works
         + install_cta
         + stats_stripe
     )
