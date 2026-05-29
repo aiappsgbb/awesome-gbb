@@ -90,8 +90,15 @@ jobs:
       - name: Install runner deps
         run: pip install --quiet pyyaml
 
-      - name: Run all auto-tier pin validations
-        run: python scripts/run-pin-validation.py --all
+      - name: Run pin validations
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # On PRs: only validate changed pins (don't let unrelated failures block)
+            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }}
+          else
+            # On push/schedule: validate ALL pins
+            python scripts/run-pin-validation.py --all
+          fi
 
   # ── Job 4: E2E Azure (all pins including Azure-dependent) ──────────
   e2e-azure:
@@ -123,14 +130,21 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run all pin validations (including Azure E2E)
+      - name: Run pin validations (including Azure E2E)
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        run: python scripts/run-pin-validation.py --all --include-azure
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # On PRs: only validate changed pins
+            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }} --include-azure
+          else
+            # On push/schedule: validate ALL pins
+            python scripts/run-pin-validation.py --all --include-azure
+          fi
 
       - name: Run E2E prompt agent test
         env:
