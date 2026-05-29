@@ -158,12 +158,13 @@ validation:
     - "AttributeError"
     - "AssertionError"
 
-last_validated: "2026-05-26"
+last_validated: "2026-05-29"
 validated_by: copilot-bot
 known_issues_count: 3
 re_pin_log:
   - "2026-05-18: initial pin v1.0.0 (ricchi)"
   - "2026-05-18: v1.0.1 — also vendor active_tokens_backup.kql as queries/active_tokens.kql alternative (ricchi)"
+  - "2026-05-29: v1.0.4 — re-validate pandas~=3.0.3, numpy~=2.4.6, matplotlib~=3.10.9, azure-identity~=1.25.3, azure-monitor-query~=2.0.0 (copilot-bot)"
 ---
 
 # Upstream pin — `paygo-ptu-cost-analyzer` skill
