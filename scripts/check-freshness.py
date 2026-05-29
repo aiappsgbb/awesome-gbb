@@ -151,9 +151,8 @@ def classify_impact(signal: Signal) -> str:
                 if old_v[0] != new_v[0]:
                     return "critical"  # MAJOR — breaking changes expected
                 if old_v[1] != new_v[1]:
-                    return "medium"    # MINOR — new features, pin still valid via ~=
-                if old_v[2] != new_v[2]:
-                    return "low"       # PATCH — auto-covered by ~= cap
+                    return "high"      # MINOR on critical SDK — may break
+                return "medium"        # PATCH on critical SDK — likely fine but verify
         return "medium"
     if signal.signal_type == "issue_closed":
         return "high"  # Upstream fix may allow removing a workaround
@@ -415,6 +414,22 @@ def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
 
 
 def detect_pkg_drift(pin: PinFile) -> list[Signal]:
+    """Detect meaningful PyPI package drift.
+
+    Only flags drifts that actually need action:
+    - MAJOR bumps on ANY package (breaking change by definition)
+    - ANY bump on Azure/Microsoft SDKs (azure-*, agent-framework*,
+      microsoft-*, mcp) — these can break in patch versions
+
+    Skips everything else — gradio, pandas, python-dotenv, PyYAML, etc.
+    are utility deps where ~= cap handles upgrades automatically.
+    """
+    # Packages where even MINOR/PATCH bumps can break skill recipes
+    CRITICAL_PREFIXES = (
+        "azure-", "agent-framework", "agent-governance",
+        "microsoft-", "mcp", "openai",
+    )
+
     out: list[Signal] = []
     for pkg in pin.packages:
         if pkg.get("source") != "pypi":
@@ -445,7 +460,17 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
             continue
 
         latest = (data.get("info") or {}).get("version")
-        if latest and latest != pinned:
+        if not latest or latest == pinned:
+            continue
+
+        old_v = parse_semver(pinned)
+        new_v = parse_semver(latest)
+        is_major = old_v and new_v and old_v[0] != new_v[0]
+        is_critical_pkg = any(name.lower().startswith(p) for p in CRITICAL_PREFIXES)
+
+        # Skip non-critical packages unless it's a MAJOR bump
+        if not is_major and not is_critical_pkg:
+            continue
             body = "\n".join(
                 [
                     f"## 🔄 Refresh `{pin.skill}` — PyPI package `{name}` drift",
