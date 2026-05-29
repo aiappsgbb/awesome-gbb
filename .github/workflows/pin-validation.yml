@@ -43,4 +43,9 @@ jobs:
 
       - name: Run validation.script for changed pins
         run: |
-          python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }}
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # On push, base_ref is empty — compare against the previous commit
+            python scripts/run-pin-validation.py --base=HEAD~1
+          else
+            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }}
+          fi

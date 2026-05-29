@@ -87,7 +87,7 @@ validation:
     - "import ok: MCPTool"
     - "import ok: DefaultAzureCredential"
 
-last_validated: 2026-06-11
+last_validated: 2026-05-28
 validated_by: ricchi
 ---
 

@@ -38,3 +38,6 @@ jobs:
 
       - name: Verify single-plugin structure
         run: python scripts/build-plugins.py --check
+
+      - name: Validate docs site (link integrity)
+        run: python scripts/build-site.py --validate

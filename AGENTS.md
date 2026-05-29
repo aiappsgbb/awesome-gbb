@@ -909,10 +909,10 @@ Weekly cron (detection only)
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (`runnable: true`) | 18 pins | T0 + T1 + T2 in CI |
+| Auto-tier (`runnable: true`) | 16 pins | T0 + T1 + T2 in CI |
 | Issue-only (Azure-dependent) | 7 pins | T0 in CI; T1–T3 via `--include-azure` on dispatch |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| E2E Azure tests | 2 skills | T3 in CI (`foundry-prompt-agents`, `foundry-voice-live`) |
+| E2E Azure tests | 3 skills | T3 in CI (`foundry-prompt-agents`, `foundry-voice-live`, `foundry-toolbox`) |
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks
 issue-only pins when the runner has Azure credentials. The infra is
@@ -946,11 +946,11 @@ Consequences:
 |--------|-------|
 | Total skills | 27 |
 | Skills with upstream pins | 23 |
-| Auto-tier (CI can refresh autonomously) | 18 |
+| Auto-tier (CI can refresh autonomously) | 16 |
 | Issue-only (human / Azure creds needed) | 7 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 5 |
-| Unit tests | 63 (18 PR gate + 38 skill validation + 7 E2E Azure) |
+| Unit tests | 71 (18 PR gate + 43 skill validation + 10 E2E Azure) |
 | Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
