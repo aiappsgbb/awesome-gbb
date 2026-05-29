@@ -197,14 +197,14 @@ def classify_impact(signal: Signal) -> str:
             new_v = parse_semver(m.group(2))
             if old_v and new_v:
                 if old_v[0] != new_v[0]:
-                    return "critical"
+                    return "critical"  # MAJOR — breaking changes expected
                 if old_v[1] != new_v[1]:
-                    return "high"
+                    return "medium"    # MINOR — new features, pin still valid via ~=
                 if old_v[2] != new_v[2]:
-                    return "low"
+                    return "low"       # PATCH — auto-covered by ~= cap
         return "medium"
     if signal.signal_type == "issue_closed":
-        return "high"
+        return "high"  # Upstream fix may allow removing a workaround
     if signal.signal_type in ("sha_drift", "stale_validation"):
         return "medium"
     if signal.signal_type == "link_rot":

@@ -567,8 +567,8 @@ drift signals with an impact classification:
 | Impact | Label | Typical signals |
 |--------|-------|-----------------|
 | 🔴 CRITICAL | `impact:critical` | Package MAJOR bump, deprecated API in code |
-| 🟠 HIGH | `impact:high` | Package MINOR bump, upstream KI closed |
-| 🟡 MEDIUM | `impact:medium` | SHA drift, validation age > 180 days |
+| 🟠 HIGH | `impact:high` | Upstream KI closed (workaround removal opportunity) |
+| 🟡 MEDIUM | `impact:medium` | Package MINOR bump, SHA drift, validation age > 180 days |
 | 🟢 LOW | `impact:low` | Link rot, package PATCH bump (auto-covered by `~=`) |
 
 Issue title format: `🔄 Refresh \`<skill>\` — <N> signal(s), impact: <level>`.
