@@ -20,7 +20,7 @@ packages:
       PromptAgentDefinition is the key class. GA since 2.0.0.
   - name: azure-identity
     source: pypi
-    version: "1.23.0"
+    version: "1.25.3"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     notes: |
       DefaultAzureCredential for authentication. Stable, low churn.
@@ -69,7 +69,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-prompt-agents
     . .venv-prompt-agents/bin/activate
-    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.1.0}" "azure-identity~=1.23.0"
+    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.1.0}" "azure-identity~=1.25.3"
     python -c "
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import PromptAgentDefinition
@@ -87,8 +87,8 @@ validation:
     - "import ok: MCPTool"
     - "import ok: DefaultAzureCredential"
 
-last_validated: 2026-05-28
-validated_by: ricchi
+last_validated: 2026-05-29
+validated_by: copilot-bot
 ---
 
 ## Audit trail
