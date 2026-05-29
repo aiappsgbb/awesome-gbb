@@ -432,33 +432,6 @@ pre code { background: transparent; border: 0; padding: 0; }
 .how-step a { color: var(--accent); text-decoration: none; }
 .how-step a:hover { text-decoration: underline; }
 
-/* ---------- threadlight quick-start (home) ---------- */
-.threadlight-qs { margin: 32px 0 0; }
-.threadlight-qs h2 { font-size: 22px; margin: 0 0 4px; }
-.threadlight-qs > .lede {
-  font-family: var(--serif); font-size: 16px;
-  color: var(--ink-1); margin: 0 0 16px;
-}
-.threadlight-qs a { color: var(--accent); text-decoration: none; }
-.threadlight-qs a:hover { text-decoration: underline; }
-.tl-steps {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-}
-.tl-step {
-  background: var(--bg-1); border: 1px solid var(--line);
-  border-radius: 12px; padding: 18px 18px 16px;
-}
-.tl-step h3 { font-size: 15px; margin: 0 0 8px; }
-.tl-step p { font-size: 14px; color: var(--ink-1); margin: 0; line-height: 1.5; }
-.tl-step pre {
-  margin: 8px 0 0; font-size: 12px;
-  background: var(--bg-2); border-radius: 8px; padding: 12px;
-  overflow-x: auto;
-}
-.tl-step code { font-size: 12.5px; }
-.tl-more { margin: 12px 0 0; font-size: 14px; font-weight: 600; }
-
 .install-cta {
   background:
     linear-gradient(160deg, var(--accent-soft) 0%, transparent 55%),
@@ -767,43 +740,6 @@ def render_home(
         '</section>'
     )
 
-    # Threadlight quick-start for peers who need the pilot pipeline
-    threadlight_qs = (
-        '<section class="threadlight-qs" aria-labelledby="tl-h">'
-        '<h2 id="tl-h">Getting started with Threadlight</h2>'
-        '<p class="lede">The pilot pipeline lives in '
-        '<a href="https://github.com/aiappsgbb/threadlight-skills">aiappsgbb/threadlight-skills</a>. '
-        'It depends on building-block skills from this repo.</p>'
-        '<div class="tl-steps">'
-        '<div class="tl-step">'
-        '<h3>1. Install both repos</h3>'
-        '<pre><code>'
-        '# Building blocks (this repo)\n'
-        'copilot plugin marketplace add aiappsgbb/awesome-gbb\n'
-        'copilot plugin install awesome-gbb@awesome-gbb\n'
-        '\n'
-        '# Pilot pipeline\n'
-        'copilot plugin marketplace add aiappsgbb/threadlight-skills\n'
-        'copilot plugin install threadlight@threadlight-skills'
-        '</code></pre>'
-        '</div>'
-        '<div class="tl-step">'
-        '<h3>2. Start with <code>threadlight-design</code></h3>'
-        '<p>Tell the agent about your customer engagement. It produces '
-        'a process spec, data model, and prep guide — pulling from '
-        'foundry-hosted-agents, foundry-iq, azd-patterns automatically.</p>'
-        '</div>'
-        '<div class="tl-step">'
-        '<h3>3. Deploy with <code>threadlight-deploy</code></h3>'
-        '<p>The deploy skill reads the spec, provisions Azure resources '
-        'via azd, deploys Foundry agents, wires MCP servers, and generates '
-        'a live demo script with real endpoints.</p>'
-        '</div>'
-        '</div>'
-        '<p class="tl-more">→ <a href="https://aiappsgbb.github.io/threadlight-skills/">Full Threadlight documentation</a></p>'
-        '</section>'
-    )
-
     install_cta = (
         '<section class="install-cta" aria-labelledby="install-h">'
         '<h2 id="install-h">Get started in one command</h2>'
@@ -853,7 +789,6 @@ def render_home(
         + '</div>'
         '</section>'
         + how_it_works
-        + threadlight_qs
         + install_cta
         + stats_stripe
     )

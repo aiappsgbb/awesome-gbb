@@ -394,33 +394,6 @@ pre code { background: transparent; border: 0; padding: 0; }
 .how-step a { color: var(--accent); text-decoration: none; }
 .how-step a:hover { text-decoration: underline; }
 
-/* ---------- threadlight quick-start (home) ---------- */
-.threadlight-qs { margin: 32px 0 0; }
-.threadlight-qs h2 { font-size: 22px; margin: 0 0 4px; }
-.threadlight-qs > .lede {
-  font-family: var(--serif); font-size: 16px;
-  color: var(--ink-1); margin: 0 0 16px;
-}
-.threadlight-qs a { color: var(--accent); text-decoration: none; }
-.threadlight-qs a:hover { text-decoration: underline; }
-.tl-steps {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-}
-.tl-step {
-  background: var(--bg-1); border: 1px solid var(--line);
-  border-radius: 12px; padding: 18px 18px 16px;
-}
-.tl-step h3 { font-size: 15px; margin: 0 0 8px; }
-.tl-step p { font-size: 14px; color: var(--ink-1); margin: 0; line-height: 1.5; }
-.tl-step pre {
-  margin: 8px 0 0; font-size: 12px;
-  background: var(--bg-2); border-radius: 8px; padding: 12px;
-  overflow-x: auto;
-}
-.tl-step code { font-size: 12.5px; }
-.tl-more { margin: 12px 0 0; font-size: 14px; font-weight: 600; }
-
 .install-cta {
   background:
     linear-gradient(160deg, var(--accent-soft) 0%, transparent 55%),
