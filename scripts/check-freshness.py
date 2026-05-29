@@ -83,79 +83,31 @@ USER_AGENT = "awesome-gbb-freshness-bot/1.0"
 HTTP_TIMEOUT = 10
 
 
-_copilot_bot_id_cache: dict[str, str | None] = {}
+def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool:
+    """Assign the Copilot Coding Agent bot to an issue via REST API.
 
-
-def get_copilot_bot_id(repo: str, gh_token: str) -> str | None:
-    """Return the GraphQL node ID of the Copilot Coding Agent bot for `repo`,
-    or None if the bot is not enabled there. Cached per-repo."""
-    if repo in _copilot_bot_id_cache:
-        return _copilot_bot_id_cache[repo]
-
-    owner, name = repo.split("/", 1)
-    query = """
-    query($owner: String!, $name: String!) {
-      repository(owner: $owner, name: $name) {
-        suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
-          nodes {
-            __typename
-            ... on Bot { id login }
-            ... on User { id login }
-          }
-        }
-      }
-    }
+    Uses POST /repos/{owner}/{repo}/issues/{issue_number}/assignees which
+    works with GITHUB_TOKEN (unlike the GraphQL suggestedActors approach
+    which requires elevated permissions to see Bot accounts).
     """
     r = requests.post(
-        "https://api.github.com/graphql",
-        json={"query": query, "variables": {"owner": owner, "name": name}},
+        f"https://api.github.com/repos/{repo}/issues/{issue_number}/assignees",
+        json={"assignees": [COPILOT_BOT_LOGIN]},
         headers={
+            "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {gh_token}",
             "User-Agent": USER_AGENT,
         },
         timeout=HTTP_TIMEOUT,
     )
-    bot_id: str | None = None
-    if r.status_code == 200:
-        data = r.json().get("data") or {}
-        nodes = (data.get("repository") or {}).get("suggestedActors", {}).get("nodes", []) or []
-        for n in nodes:
-            if n.get("__typename") == "Bot" and n.get("login") == COPILOT_BOT_LOGIN:
-                bot_id = n["id"]
-                break
-    else:
-        print(f"WARN: suggestedActors GraphQL returned {r.status_code}: {r.text[:200]}", file=sys.stderr)
-    _copilot_bot_id_cache[repo] = bot_id
-    return bot_id
-
-
-def assign_copilot_to_issue(issue_node_id: str, bot_id: str, gh_token: str) -> bool:
-    """Use GraphQL `replaceActorsForAssignable` to assign the Coding Agent
-    bot to an issue. Returns True on success."""
-    mutation = """
-    mutation($issueId: ID!, $botId: ID!) {
-      replaceActorsForAssignable(input: { assignableId: $issueId, actorIds: [$botId] }) {
-        assignable { ... on Issue { number } }
-      }
-    }
-    """
-    r = requests.post(
-        "https://api.github.com/graphql",
-        json={"query": mutation, "variables": {"issueId": issue_node_id, "botId": bot_id}},
-        headers={
-            "Authorization": f"Bearer {gh_token}",
-            "User-Agent": USER_AGENT,
-        },
-        timeout=HTTP_TIMEOUT,
+    if r.status_code < 300:
+        return True
+    print(
+        f"WARN: assign @{COPILOT_BOT_LOGIN} to issue #{issue_number} failed: "
+        f"{r.status_code} {r.text[:200]}",
+        file=sys.stderr,
     )
-    if r.status_code != 200 or (r.json().get("errors")):
-        print(
-            f"WARN: GraphQL assign for issue {issue_node_id} failed: "
-            f"{r.status_code} {r.text[:300]}",
-            file=sys.stderr,
-        )
-        return False
-    return True
+    return False
 
 
 # ──────────────────────────── data model ────────────────────────────
@@ -846,7 +798,7 @@ def upsert_issue(
     if dry_run:
         print(f"[DRY-RUN] would {action} issue: {title}")
         if want_copilot_assign:
-            print(f"[DRY-RUN] would assign @{COPILOT_BOT_LOGIN} via GraphQL")
+            print(f"[DRY-RUN] would assign @{COPILOT_BOT_LOGIN}")
         return
 
     r = method(url, json=payload, headers=headers, timeout=HTTP_TIMEOUT)
@@ -861,23 +813,13 @@ def upsert_issue(
 
     print(f"✓ {action} issue: {title}", file=sys.stderr)
 
-    # Now assign the Coding Agent bot via GraphQL (REST `assignees` doesn't
-    # accept Bot accounts — this is the supported path).
+    # Assign the Coding Agent bot via REST API
     if want_copilot_assign:
-        if not issue_node_id:
-            issue_node_id = r.json().get("node_id")
-        bot_id = get_copilot_bot_id(repo, gh_token)
-        if not bot_id:
-            print(
-                f"WARN: Copilot Coding Agent ({COPILOT_BOT_LOGIN}) not in "
-                f"suggestedActors for {repo} — leaving issue unassigned. "
-                "Enable the Coding Agent feature on the repo/org to assign.",
-                file=sys.stderr,
-            )
-        elif issue_node_id:
-            ok = assign_copilot_to_issue(issue_node_id, bot_id, gh_token)
+        issue_number = r.json().get("number")
+        if issue_number:
+            ok = assign_copilot_to_issue(repo, issue_number, gh_token)
             if ok:
-                print(f"  ↳ assigned @{COPILOT_BOT_LOGIN} via GraphQL", file=sys.stderr)
+                print(f"  ↳ assigned @{COPILOT_BOT_LOGIN}", file=sys.stderr)
 
 
 def close_resolved_issues(
