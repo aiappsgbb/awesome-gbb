@@ -25,11 +25,12 @@ determines the issue label (`impact:critical`, `impact:high`, etc.).
 
 3. **Run the validation script.** Use the sandbox's `bash`, `python`,
    and `pip` — those are all you need. **Never** use `az` or other
-   cloud CLIs; `automation_tier: auto` skills are designed to validate
-   with pip + Python only (no Azure credentials). If the pin file's
-   `validation.requires` includes `azure_subscription` or
-   `foundry_project`, the issue would have been opened as `issue_only`
-   and you should NOT have picked it up.
+   cloud CLIs; `automation_tier: auto` skills with `runnable: true`
+   validate with pip + Python only. Some auto-tier skills have
+   `runnable: false` (they need Azure credentials you don't have) —
+   for those, just edit the pin file fields and bump the version.
+   **CI will validate them** with Azure OIDC credentials via the
+   `--include-azure` flag on the PR runner.
 
    ⚠️ The `pin-validation.yml` CI job will **re-run your
    validation.script** on the PR runner and assert every

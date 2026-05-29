@@ -910,7 +910,8 @@ Weekly cron (detection only)
 | Category | Count | Coverage |
 |----------|-------|----------|
 | Auto-tier (`runnable: true`) | 16 pins | T0 + T1 + T2 in CI |
-| Issue-only (Azure-dependent) | 7 pins | T0 in CI; T1–T3 via `--include-azure` on dispatch |
+| Auto-tier (`runnable: false`, CI-validated) | 5 pins | T0 in CI; T1–T3 via `--include-azure` on PR/schedule |
+| Issue-only (complex multi-resource deploy) | 2 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
 | E2E Azure tests | 3 skills | T3 in CI (`foundry-prompt-agents`, `foundry-voice-live`, `foundry-toolbox`) |
 
@@ -946,8 +947,8 @@ Consequences:
 |--------|-------|
 | Total skills | 27 |
 | Skills with upstream pins | 23 |
-| Auto-tier (CI can refresh autonomously) | 16 |
-| Issue-only (human / Azure creds needed) | 7 |
+| Auto-tier (CI can refresh autonomously) | 21 |
+| Issue-only (human / complex deploy) | 2 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 5 |
 | Unit tests | 71 (18 PR gate + 43 skill validation + 10 E2E Azure) |
