@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-governance-toolkit
   ref: main
-  pinned_sha: 279db99f1909ae78b69851f6893a6a6b3b631461
+  pinned_sha: 6572fd0803b87f0d53489bc3ecff5fa4a3d6a047
   pinned_commit_message: |
     AGT 3.6.0 release — meta-package + 6 sub-packages
   license: MIT
@@ -26,7 +26,7 @@ packages:
       Meta-package; install with `[full]` extra to pull all 6 sub-packages.
   - name: agent-framework
     source: pypi
-    version: "1.6.0"
+    version: "1.7.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Required for the in-process middleware integration path.
@@ -45,8 +45,8 @@ known_issues:
   - id: KI-001
     description: PYTHONUTF8=1 mandatory on Windows for agt CLI Rich glyphs
     upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/1
-    status: open
-    workaround_location: SKILL.md § "Known Issues" item 1
+    status: closed_upstream_fixed
+    workaround_location: removed from SKILL.md in v1.0.5
   - id: KI-002
     description: Upstream Foundry deployment doc shows stale middleware kwargs
     upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/2
@@ -65,10 +65,9 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
-    export PYTHONUTF8=1
     python -m venv .venv-agt
     . .venv-agt/bin/activate
-    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-3.7.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.6.0}"
+    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-3.7.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.7.0}"
     agt --version
     agt doctor
     agt verify
@@ -77,7 +76,7 @@ validation:
     - "OWASP ASI 2026"
     - "factory ok"
 
-last_validated: 2026-05-26
+last_validated: 2026-05-29
 validated_by: copilot-bot
 known_issues_count: 3
 ---
