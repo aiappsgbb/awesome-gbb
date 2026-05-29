@@ -131,6 +131,20 @@ If the issue does NOT mention these tags, **do not use them**.
 4. [`AGENTS.md` § 2.7](../AGENTS.md) — testing tiers (T0–T3). Know which
    tier your change requires.
 
+## 🔴 Reminder for human reviewers merging coding-agent PRs
+
+The coding agent runs `validation.script` (pip + import). This is T1.
+**It is NOT a live Azure test (T3).** Per AGENTS.md § 2.9, if the
+refreshed skill connects to Azure (model calls, credential chains,
+Realtime WebSocket, ACA deploys), a human MUST verify with real Azure
+API calls before merging. The coding agent cannot do this — its sandbox
+has no Azure credentials.
+
+**Do not merge a pin-refresh PR for an Azure-connected skill unless the
+PR description or a review comment includes evidence of live Azure
+testing.** "CI lint passed" and "validation.script passed" are necessary
+but NOT sufficient.
+
 ## Tools available in your sandbox
 
 - `git` — to read history, capture commit subjects

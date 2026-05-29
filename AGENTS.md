@@ -586,16 +586,27 @@ When upstream advances:
    - `known_issues[*].status` → `closed_upstream_fixed` (for closure)
 2. **Run `validation.script`** with the new pin value. Each
    `expected_output[*]` substring must appear in stdout.
-3. **Update audit trail**:
+3. **🔴 If the skill touches Azure → TEST LIVE (§ 2.9).** The
+   validation script (step 2) proves imports resolve. It does NOT prove
+   the skill works against real Azure resources. Before proceeding, run
+   the skill's E2E test (`scripts/tests/test_e2e_<name>.py`) or
+   manually verify with real Azure API calls (credential chain, endpoint
+   reachability, model inference). **pip + import is necessary but NOT
+   sufficient.** Skip this step only for skills that never connect to
+   Azure (e.g., `gbb-humanizer`, `ghcp-cli-config`).
+4. **Update audit trail**:
    - `last_validated: <today>`
    - `validated_by: <handle>` (or `copilot-bot`)
-4. **Bump SKILL.md `metadata.version` PATCH** (X.Y.Z → X.Y.(Z+1)).
+5. **Bump SKILL.md `metadata.version` PATCH** (X.Y.Z → X.Y.(Z+1)).
    Per § 5, pin refresh is PATCH — not MINOR.
-5. **Open PR** touching ONLY `references/upstream-pin.md` and
+6. **Open PR** touching ONLY `references/upstream-pin.md` and
    `SKILL.md` frontmatter. The
    [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml)
    workflow rejects anything else (unless the appropriate opt-in tag is
    in the commit message).
+7. **PR description MUST include evidence of live testing** — link to
+   CI run, paste of test output, or screenshot. Reviewers reject PRs
+   without evidence (§ 2.9).
 
 ### 9.5 · Authoring a pin file from scratch
 
@@ -777,14 +788,17 @@ via the same cross-runtime
    dependency lists, default values, and environment variables match the
    actual code. This catches bugs that CI cannot — wrong field names,
    incomplete catalogs, missing dependencies. Do it before opening the PR.
-8. Rebuild docs: `python3 scripts/build-site.py --out docs/`
-9. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
-10. Bump `marketplace.json` version to match
-11. Update `AGENTS.md` § 12.5 skill counts
-12. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
+8. **🔴 TEST LIVE ON AZURE (§ 2.9).** If the skill touches Azure, run
+   the E2E test or manually verify with real Azure API calls. This is
+   not optional. Include evidence in the PR description.
+9. Rebuild docs: `python3 scripts/build-site.py --out docs/`
+10. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
+11. Bump `marketplace.json` version to match
+12. Update `AGENTS.md` § 12.5 skill counts
+13. **Commit tags:** a new SKILL.md body requires `[skill-rewrite]` in a
     commit message. If cross-refs touch other skills, also add
     `[multi-skill]`. Both are required by `automation-pr-gate.yml`.
-13. After merge, sync to user scope:
+14. After merge, sync to user scope:
     `cp -R skills/<name>/ ~/.copilot/skills/<name>/`
 
 ### 10.4 Renaming a skill
