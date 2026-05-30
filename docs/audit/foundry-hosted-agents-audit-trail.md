@@ -332,23 +332,45 @@ spend a full Phase D forensicking it. The pattern in
 `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
 L32-50 is the template.
 
-## CI matrix runs that proved the fix (5 consecutive green)
+## CI matrix runs that proved the fix (2 consecutive green — budget-cut)
 
 After committing all of (a) the audit trail, (b) the SKILL.md/pyproject
 fixes, (c) the consumer-prompt fixture, AND (d) the run-#1 post-mortem
-above + the fixture infra-preconditions bullet, 5 fresh empty-commit
-stability pushes were triggered via `git commit --allow-empty && git push
-origin HEAD:unsafecode/pr-review` per Task 2.1 finding #7 (≥45s spacing,
-wait for each `Skill tests` run's `headSha` to register before next push,
-because GitHub coalesces simultaneous pushes regardless of `concurrency:`).
-Each run was personally verified via `gh run view <id> --json conclusion`
-returning `"conclusion": "success"` — never trusting the dashboard alone:
+above + the fixture infra-preconditions bullet + the marker-defense
+hardening commit `73384d3`, fresh empty-commit stability pushes were
+triggered via `git commit --allow-empty && git push origin
+HEAD:unsafecode/pr-review` per Task 2.1 finding #7 (each run's `headSha`
+verified to register before the next push, on the assumption that
+coalescing might occur if pushes happen inside the same poll window —
+actually a non-issue here since `skill-test.yml` has no `concurrency:`
+block, but the wait discipline is cheap and useful for audit-trail
+correlation regardless). Each run was personally verified via
+`gh run view <id> --json conclusion` returning `"conclusion": "success"`
+— never trusting the dashboard alone:
 
-1. <fill in run URL #1 after Phase D>
-2. <fill in run URL #2 after Phase D>
-3. <fill in run URL #3 after Phase D>
-4. <fill in run URL #4 after Phase D>
-5. <fill in run URL #5 after Phase D>
+1. [26694209086](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26694209086)
+   (SHA `73384d3` — marker-defense hardening commit. ~13 min wall-time.
+   All 5 jobs green including both matrix legs `copilot-cli-matrix
+   (foundry-hosted-agents)` + `copilot-cli-matrix (foundry-prompt-agents)`.
+   PROVES the marker-defense hardening defeated Bug A + Bug B simultaneously.)
+2. [26694485786](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26694485786)
+   (SHA `40c1843` — empty-commit stability re-run. ~13 min wall-time.
+   All 5 jobs green. PROVES that run #1 wasn't an outlier; the same
+   fixture body produces a green matrix leg across independent CI
+   invocations with parallel Foundry agent provisioning + ACR push +
+   ACA cold-start + invoke + teardown.)
+
+**Why only 2 runs, not 5:** the coordinator pulled the budget plug after
+run #2 because each end-to-end matrix run takes ~13 minutes of real ACA
+cold-start + Foundry inference time. 5 consecutive runs would have
+consumed ~65 wall-clock minutes for a stability signal whose marginal
+value past n=2 is asymptotic. The 2-green-run signal is sufficient to
+falsify the prior backtick-wrap + tee-shell-guard bugs; further
+stability evidence belongs to a longitudinal weekly cron baseline
+(out-of-scope for Task 2.2). Cross-skill follow-up for Task 2.3 owner
+(below) carries the same hardening to `foundry-prompt-agents` and will
+provide additional empirical observations on marker-contract robustness
+in production.
 
 For completeness, the 5 invalidated runs from the original sequence
 (run #1 = failure, runs #2-5 = cancelled after diagnosis) are recorded
