@@ -36,11 +36,24 @@
 
 ## CI matrix runs that proved the fix (5 consecutive green)
 
-1. `<RUN-URL-1>` — PR-gate run on PR #185 (Phase E)
-2. `<RUN-URL-2>` — manual workflow_dispatch #1
-3. `<RUN-URL-3>` — manual workflow_dispatch #2
-4. `<RUN-URL-4>` — manual workflow_dispatch #3
-5. `<RUN-URL-5>` — manual workflow_dispatch #4
+All runs are PR-`synchronize` events on PR #185 (`unsafecode/pr-review`).
+Each one ran the `copilot-cli-matrix (foundry-prompt-agents)` job, which spawned
+a real Copilot CLI agent that read SKILL.md, executed the documented Python
+quickstart against `aif-awesome-gbb-ci` (Sweden Central) + `gpt-5.4-mini`, and
+self-reported `SMOKE_RESULT=PASS`.
+
+1. https://github.com/aiappsgbb/awesome-gbb/actions/runs/26691175961 — commit `3af9662a` (legacy-pytest-job deletion)
+2. https://github.com/aiappsgbb/awesome-gbb/actions/runs/26691223146 — commit `ee68a793` (coalesced empty-commit batch)
+3. https://github.com/aiappsgbb/awesome-gbb/actions/runs/26691276623 — commit `28e50328` (empty trigger #3)
+4. https://github.com/aiappsgbb/awesome-gbb/actions/runs/26691293104 — commit `d8ec54a0` (empty trigger #4)
+5. https://github.com/aiappsgbb/awesome-gbb/actions/runs/26691311131 — commit `b4636e2f` (empty trigger #5)
+
+Note on dispatch method: `workflow_dispatch` against the PR branch fails OIDC
+federation (subject `repo:.../ref:refs/heads/unsafecode/pr-review` is not in
+the UAMI's federated-credentials list; only `pull_request` and
+`refs/heads/main` are covered per AGENTS.md § 9.7). All five stability runs
+therefore used `pull_request synchronize` triggers from spaced empty commits
+(45 s apart, so GitHub did not coalesce the events).
 
 ## Open items (deferred)
 
