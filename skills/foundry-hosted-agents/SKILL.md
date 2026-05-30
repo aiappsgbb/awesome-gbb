@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.10"
+  version: "1.7.11"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1091,10 +1091,17 @@ resources:
 | NO `FOUNDRY_PROJECT_ENDPOINT` | Reserved — platform injects it. All `FOUNDRY_*` and `AGENT_*` prefixed vars are reserved |
 | NO `APPLICATIONINSIGHTS_CONNECTION_STRING` | Also reserved. Platform attempts to auto-inject from the account-level `AppInsights` connection — but auto-injection is **best-effort**, can silently fail (see Troubleshooting), and you CANNOT escape-hatch via `agent.yaml`. Use guarded `_init_telemetry()` in `container.py` so the agent survives the failure (see `foundry-observability` gap rows O-011 / O-012) |
 | Model deployment in `azure.yaml` | NOT in agent.yaml — declared in `config.deployments` |
+| Model name MUST be a literal in `agent.yaml` `environment_variables.value` | The `azd ai agent` scaffold ships `agent.manifest.yaml` with `value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"` — that mustache is substituted at scaffold-time when `azd ai agent init` reads the manifest. If you hand-edit `agent.yaml` directly (not `agent.manifest.yaml`), the mustache is treated as a literal string and the agent container starts with `model="{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"` → 404 `DeploymentNotFound`. Always edit `agent.manifest.yaml` (mustache-templated) AND keep `agent.yaml` with literal values. Verified in 2026-05-29 hybrid-mcp-agent live run (MID-3, ~25 min of debug). |
 
 > **Two schemas exist — don't confuse them:**
-> - `agent.yaml` → **ContainerAgent** schema (what `azd ai agent` extension reads)
-> - `agent.manifest.yaml` → foundry-samples format (for sample repos, NOT azd)
+> - `agent.yaml` → **ContainerAgent** schema (what `azd ai agent` extension reads at deploy time). Values are taken LITERALLY — no template substitution happens here. Hand-edit with literal values only.
+> - `agent.manifest.yaml` → foundry-samples format (read by `azd ai agent init` at scaffold time). Supports `{{VAR}}` mustaches that get substituted into `agent.yaml` when the scaffold runs.
+
+> **Endpoint env-var naming (2 names, 2 sources, don't mix):**
+> - **`FOUNDRY_PROJECT_ENDPOINT`** — **platform-injected** into the agent container at runtime by the hosted-agent runtime. Format: `https://<acct>.services.ai.azure.com/api/projects/<proj>`. **Use this in `container.py` / agent code.** Required by `azd ai agent` extension v0.1.34+. Reserved name — never declare in `agent.yaml`.
+> - **`AZURE_AI_PROJECT_ENDPOINT`** — **azd env / Bicep output**, set at provision time, read by `azd ai agent invoke` (CLI side) and the FastAPI proxy when wiring its backend `httpx` calls. Format: `https://<acct>.services.ai.azure.com/api/projects/<proj>`. **NOT auto-injected into the agent container** — passes through azd's normal env-var flow.
+>
+> Both endpoints should resolve to the SAME URL but they live in different layers. The trap: when smb-credit-memo pilot wrote `os.environ["AZURE_AI_PROJECT_ENDPOINT"]` inside the agent container, it got `None` because the platform doesn't inject that name; switching to `FOUNDRY_PROJECT_ENDPOINT` fixed it (2026-05-29 smb run, MID-12). For Bicep outputs, write `endpoints['AI Foundry API']` not `endpoint` (the default returns the legacy `*.cognitiveservices.azure.com`).
 
 ---
 
