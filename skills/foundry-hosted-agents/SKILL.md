@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.8.0"
+  version: "1.9.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -451,7 +451,7 @@ Use the **client-swap pattern** to connect to existing prompt/hosted agents in t
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient  # MUST be .aio (async)!
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential  # MUST be .aio — see Critical rules below (MID-I)
 
 project_client = AIProjectClient(
     endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
@@ -481,6 +481,7 @@ ResponsesHostServer(orchestrator).run()
 
 **Critical rules:**
 - `AIProjectClient` MUST be from `azure.ai.projects.aio` (async) — the sync version returns a sync `OpenAI` client that **silently fails** inside `FoundryChatClient`
+- `DefaultAzureCredential` MUST be from `azure.identity.aio` (async) whenever it is passed to `FoundryChatClient` — `FoundryChatClient` is async-only and its first Responses call **hangs until `session_not_ready` fires after 60 s** if it receives the sync credential. Verified live on the 2026-05-30 Contoso claim-triage pilot (MID-I — see agentic-loop SKILL § Deploy-time failure-mode index F-21). The canonical `references/python/main.py` + `references/python/container.py` were updated in PR #184 to reflect this. **The same rule applies in every prose example below that constructs `FoundryChatClient`** — `from azure.identity.aio import DefaultAzureCredential`, never the sync variant. (Sync `DefaultAzureCredential` is fine for `OpenAIChatClient`, `AIProjectClient` (when explicitly the sync flavour for control-plane operations), and standalone `az` SDK calls — but not for any client that exposes async-only token-acquisition.)
 - `allow_preview=True` is REQUIRED for `agent_name` to work
 - `FoundryChatClient` does NOT accept `agent_name`/`agent_version` — use the client-swap pattern
 
@@ -556,7 +557,7 @@ import json
 from agent_framework import Agent, MCPStreamableHTTPTool, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential  # MUST be .aio — see § Multi-Agent Critical rules (MID-I)
 
 
 def _mcp_text_extractor(result):

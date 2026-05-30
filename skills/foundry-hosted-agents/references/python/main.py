@@ -9,7 +9,14 @@
 #   FOUNDRY_PROJECT_ENDPOINT       (platform-injected at container start; NEVER declare in agent.yaml)
 #   MODEL_DEPLOYMENT_NAME          (declared in agent.yaml as a LITERAL — see ../yaml/agent.yaml)
 #
-# Why each line matters (validated against 2026-05-29 smb-credit-memo run, MID-16 + MID-17):
+# Why each line matters (validated against 2026-05-29 smb-credit-memo run, MID-16 + MID-17,
+# AND 2026-05-30 Contoso claim-triage run MID-I):
+#   - `from azure.identity.aio import DefaultAzureCredential` — ASYNC variant.
+#     `FoundryChatClient` is async-only; if you pass the sync `azure.identity`
+#     credential, the SDK's `get_token_async` call hangs and every Responses
+#     request times out as `session_not_ready` after 60s. Verified live on
+#     2026-05-30 Contoso claim-triage Validation row #9: sync import cost
+#     3 deploy cycles + ~25 min of log-spelunking before MID-I was identified.
 #   - `model=` MUST be passed explicitly to FoundryChatClient. The runtime
 #     injects AZURE_CLIENT_ID into the container but the SDK does NOT auto-pick
 #     it up unless `model=` is supplied — agent boot fails at import otherwise.
@@ -26,7 +33,7 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential
 from pydantic import Field
 
 client = FoundryChatClient(
