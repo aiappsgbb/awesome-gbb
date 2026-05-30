@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
 metadata:
-  version: "1.0.4"
+  version: "1.1.0"
 ---
 
 # Foundry Agent Evaluations
@@ -696,6 +696,11 @@ For agents whose value-add is "grounded answers backed by citations" (e.g. a
 Microsoft Learn assistant, an internal docs Q&A, a code-grounded coding
 assistant), an `agent-output-only` grader misses the most important quality
 signal: **did the agent actually cite real, reachable sources?**
+
+> 📁 **Canonical reference files:**
+> - [`references/python/url_citation_grader.py`](references/python/url_citation_grader.py) — both graders below as importable functions (`grade_citation_present` + `grade_citation_resolves`)
+> - [`references/python/eval_runner.py`](references/python/eval_runner.py) — Day-1 smoke recipe runner (`tool_selection >= 0.7` pass gate)
+> - [`references/data/sample_eval_dataset.jsonl`](references/data/sample_eval_dataset.jsonl) — 8 representative items from the weather-agent + learn-assistant pilots showing the standard item shape
 
 Wire two complementary graders into your eval suite:
 

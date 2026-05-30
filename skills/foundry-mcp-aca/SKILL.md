@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.0.9"
+  version: "1.1.0"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP.
 
@@ -375,6 +375,10 @@ CMD ["npx", "@playwright/mcp", "--port", "8080"]
 Deploy as ACA with external ingress on port 8080.
 
 ### Example: Custom Python MCP Server
+
+> 📁 **Canonical reference files:**
+> - [`references/python/server.py`](references/python/server.py) — runnable FastMCP server with the `transport="streamable-http"` + `host="0.0.0.0"` + `port=os.environ["PORT"]` trio (closes M2 + M3) plus the `_helper()` pattern for sharing logic between two `@mcp.tool()` decorated functions
+> - [`references/bicep/mcp-aca.bicep`](references/bicep/mcp-aca.bicep) — ACA module for hosting the server with external ingress + UAMI + ACR pull + liveness/startup probes on `/health`
 
 ```python
 from fastmcp import FastMCP

@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.7.11"
+  version: "1.8.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -325,6 +325,13 @@ server.run()  # Serves on port 8088
 - `ResponsesHostServer` handles liveness/readiness probes natively
 - `DefaultAzureCredential` resolves to the container's App Service managed identity
 - Custom tools use `@tool(approval_mode="never_require")` with `Annotated` type hints
+
+> 📁 **Canonical reference files:**
+> - [`references/python/main.py`](references/python/main.py) — single-purpose-agent template (the code block above as a runnable file)
+> - [`references/python/container.py`](references/python/container.py) — multi-SKILL composition template (includes `_init_telemetry()` guarded init + `_build_skills_provider()` for the threadlight-style multi-business-SKILL pattern)
+> - [`references/python/pyproject.toml`](references/python/pyproject.toml) — pinned hosted-agent dependencies (no meta-package, mcp pinned, alpha hosting at exact version)
+> - [`references/yaml/agent.yaml`](references/yaml/agent.yaml) + [`references/yaml/agent.manifest.yaml`](references/yaml/agent.manifest.yaml) — both schemas with the literal-vs-mustache distinction documented inline (per MID-3 from 2026-05-29 hybrid-mcp-agent run)
+> - [`references/bash/postdeploy-agent.sh`](references/bash/postdeploy-agent.sh) — canonical postdeploy hook using `.name` + `instance_identity.principal_id` (per MID-13)
 
 > **⚠️ Deprecation: `ChatAgent` is gone in MAF 1.6.0**
 >

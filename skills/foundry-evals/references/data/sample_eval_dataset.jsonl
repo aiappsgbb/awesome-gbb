@@ -1,0 +1,8 @@
+{"item": {"case_id": "weather-D1", "prompt": "What's the weather in Tokyo?", "expected_tool": "get_weather", "expected_substring_in_response": "Tokyo"}}
+{"item": {"case_id": "weather-D2", "prompt": "Compare weather in Tokyo, Paris, and New York.", "expected_tool": "get_weather", "expected_substring_in_response": "Paris"}}
+{"item": {"case_id": "weather-D3", "prompt": "What's the meaning of life?", "expected_tool": null, "expected_substring_in_response": "weather"}}
+{"item": {"case_id": "weather-D4", "prompt": "Should I deploy my code today?", "expected_tool": null, "expected_substring_in_response": "weather"}}
+{"item": {"case_id": "learn-D1", "prompt": "What is the difference between Azure Container Apps and Azure Kubernetes Service?", "expected_tool": "microsoft_learn", "expected_substring_in_response": "learn.microsoft.com"}}
+{"item": {"case_id": "learn-D2", "prompt": "How do I deploy a Foundry hosted agent with managed identity?", "expected_tool": "microsoft_learn", "expected_substring_in_response": "learn.microsoft.com"}}
+{"item": {"case_id": "learn-D3", "prompt": "What is the capital of France?", "expected_tool": null, "expected_substring_in_response": "Microsoft"}}
+{"item": {"case_id": "learn-D4", "prompt": "Summarize this PDF I uploaded", "expected_tool": null, "expected_substring_in_response": "cannot"}}

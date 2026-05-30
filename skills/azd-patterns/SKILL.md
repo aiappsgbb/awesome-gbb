@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.3.3"
+  version: "1.4.0"
 ---
 
 # AZD Tips & Patterns
@@ -787,6 +787,12 @@ the bug is array/object-typed values only.
 `threadlight-deploy` Phase 6 (Module Composer) reads SPEC § 11c and includes
 exactly the right Bicep modules. This section catalogs the modules and what
 SPEC inputs select them.
+
+> 📁 **Canonical reference Bicep modules** (vendored from the 2026-05-29 smb-credit-memo pilot, live-deployed in `swedencentral` — agentic-loop SKILL Validation history row 8):
+> - [`references/bicep/foundry-account.bicep`](references/bicep/foundry-account.bicep) — Foundry account + project + capabilityHost (account-level FIRST per MID-10) + model deployment + AppIn connection with explicit `metadata.ConnectionString` (per MID-8) + `endpoints['AI Foundry API']` output (per MID-2)
+> - [`references/bicep/aca-app.bicep`](references/bicep/aca-app.bicep) — canonical 3-service-shape ACA container app with user-assigned identity + ACR registry binding (closes A2)
+> - [`references/bicep/rbac.bicep`](references/bicep/rbac.bicep) — all role assignments pinned by GUID; the `dependsOn:[rbac]` pattern (A3 / Crib row 8) is enforced by callers
+> - [`references/bicep/main.bicepparam`](references/bicep/main.bicepparam) — literal-array example for `aiProjectDeployments` (closes A1) with `capacity: 30` default (closes MID-9)
 
 ### Module catalog
 

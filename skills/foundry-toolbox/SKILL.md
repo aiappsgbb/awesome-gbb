@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.5.2"
+  version: "1.6.0"
   validated: 2026-05-28
 ---
 
@@ -443,6 +443,10 @@ ResponsesHostServer(agent).run()
 ```
 
 > **MUST:** Always pass `parse_tool_results=` when using `MCPStreamableHTTPTool`. Without it, the agent sees raw MCP JSON instead of text content, causing confabulated responses.
+
+> 📁 **Canonical reference files:**
+> - [`references/python/mcp_text_extractor.py`](references/python/mcp_text_extractor.py) — the `extract_mcp_text` parser (also aliased as `_mcp_text_extractor` for backward-compat). Drop-in `parse_tool_results=` value.
+> - [`references/python/toolbox_wiring.py`](references/python/toolbox_wiring.py) — 3 wiring patterns (toolbox tools + direct MCP + local function tools composed into one agent)
 
 ```python
 def _mcp_text_extractor(raw):

@@ -15,7 +15,7 @@ description: >
   deploying Foundry agents (use foundry-hosted-agents), deploying
   Citadel gateway (use citadel-hub-deploy).
 metadata:
-  version: "1.1.2"
+  version: "1.2.0"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation
@@ -758,6 +758,10 @@ Drop this header at the top of every shell script that touches Azure.
 It's the canonical "load alias from index → export both env vars →
 verify" sequence in copy-pasteable form. Set `ALIAS=` to the alias the
 script targets.
+
+> 📁 **Canonical reference scripts:**
+> - [`references/bash/bootstrap.sh`](references/bash/bootstrap.sh) — full loader: alias arg → index file → env-var exports → tenant + sub assertion (the bash block below as a sourceable script)
+> - [`references/bash/assertion-preamble.sh`](references/bash/assertion-preamble.sh) — 8-line standalone gate when env vars are already exported (e.g. from a CI runner)
 
 Bash (`# ── Azure Tenant Isolation (REQUIRED) ──`):
 
