@@ -90,18 +90,43 @@ def parse_pin(path: Path) -> dict | None:
 
 
 def changed_pin_files(base: str) -> list[Path]:
-    """git diff --name-only base...HEAD -- skills/*/references/upstream-pin.md"""
+    """Return upstream-pin.md for every skill whose folder has *any* change vs base.
+
+    Rationale: a refactor that moves canonical code into `references/` or
+    edits SKILL.md prose still changes how the skill behaves — re-running
+    that skill's pin validation is the only proof the change didn't break
+    its live-Azure contract. Diffing only `skills/*/references/upstream-pin.md`
+    (the previous behavior) silently skipped this class of edits.
+
+    Skills without an upstream-pin.md (e.g. auto-demo-producer,
+    azure-tenant-isolation, gbb-pptx, ip-catalog) are silently skipped.
+    """
     try:
         out = subprocess.check_output(
-            ["git", "diff", "--name-only", f"{base}...HEAD", "--", PIN_GLOB],
+            ["git", "diff", "--name-only", f"{base}...HEAD", "--", "skills/"],
             cwd=REPO,
             text=True,
         )
     except subprocess.CalledProcessError as e:
         print(f"::error::git diff failed: {e}")
         sys.exit(1)
-    files = [REPO / line.strip() for line in out.splitlines() if line.strip()]
-    files = [f for f in files if f.exists()]
+
+    changed_skills: set[str] = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("skills/"):
+            continue
+        parts = line.split("/")
+        if len(parts) < 3:
+            # e.g. `skills/README.md` — not under a skill folder
+            continue
+        changed_skills.add(parts[1])
+
+    files: list[Path] = []
+    for skill in sorted(changed_skills):
+        pin = REPO / "skills" / skill / "references" / "upstream-pin.md"
+        if pin.exists():
+            files.append(pin)
     return files
 
 

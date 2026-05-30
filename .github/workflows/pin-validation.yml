@@ -13,13 +13,18 @@ name: Pin validation
 on:
   pull_request:
     paths:
-      - "skills/*/references/upstream-pin.md"
+      # Any file under a skill folder may invalidate that skill's pin
+      # contract (SKILL.md prose change, references/* extraction, etc).
+      # run-pin-validation.py groups changes by skill folder and runs
+      # each skill's pin script once. Skills without a pin file are
+      # silently skipped.
+      - "skills/**"
       - "scripts/run-pin-validation.py"
       - ".github/workflows/pin-validation.yml"
   push:
     branches: [main]
     paths:
-      - "skills/*/references/upstream-pin.md"
+      - "skills/**"
       - "scripts/run-pin-validation.py"
 
 permissions:
