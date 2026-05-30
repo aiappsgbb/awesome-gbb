@@ -507,6 +507,12 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 
 This is the **single load-bearing assumption** of the whole design: that the Copilot CLI can authenticate against a Foundry-hosted model in GitHub Actions using the same OIDC identity the rest of the workflows use. If this fails, the whole plan halts and we rethink.
 
+> **Empirical findings recorded mid-execution (2026-05-30):**
+>
+> - **Auth-smoke shipped at commit `8209f68`** uses the verified Task-1.0 env-var stack (`COPILOT_PROVIDER_TYPE=azure`, `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_BEARER_TOKEN`, `COPILOT_PROVIDER_MODEL_ID`, `COPILOT_PROVIDER_WIRE_MODEL`, `COPILOT_PROVIDER_WIRE_API=responses`, `COPILOT_ALLOW_ALL=true`). The legacy `COPILOT_MODEL_*` placeholders in §5.3 of the spec **do not exist** in the released CLI 1.0.57-2 and would be silently ignored. Task 2.1 Step 4 above has been corrected to use the verified stack.
+> - **`AZURE_AI_ENDPOINT` secret is account-host shape** (`https://aif-awesome-gbb-ci.cognitiveservices.azure.com/`) — confirmed by querying the CI resource directly with `az cognitiveservices account show -n aif-awesome-gbb-ci -g rg-awesome-gbb-ci`. This matches AGENTS.md §9.7 documentation; that section is **correct**, not stale. Workflows that need the **project endpoint** (`https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test`) for `AIProjectClient` must derive it from the account host inside the workflow rather than introducing a new secret.
+> - **The legacy `scripts/tests/test_e2e_*.py` files have never actually executed in CI.** The `unit-tests` job skips them (`@unittest.skipUnless(AZURE_AI_ENDPOINT, ...)` — the secret is not exposed there); the `e2e-azure` job invokes `scripts/run-pin-validation.py --include-azure`, not `pytest scripts/tests/`. Their pass/fail status has never been observed empirically. Phase 4's deletion step is therefore lower-risk than originally feared — but if any consumer-fixture rewrites cross-reference patterns from those files, **verify the pattern works** rather than trusting "it was green on main" (it wasn't observed).
+
 ### Task 1.0 · Verify exact Copilot CLI Foundry-routing env-var names
 
 **Files:** (research, no commits yet)
@@ -753,40 +759,94 @@ Edit `.github/workflows/skill-test.yml`. Add a new job alongside (not replacing 
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Copilot CLI
+        # npm install is the documented install path (proven by the auth-smoke
+        # workflow at .github/workflows/copilot-cli-foundry-auth-smoke.yml).
+        # Node 22 is pre-installed on ubuntu-latest. Do NOT use a `curl …
+        # install.sh | bash` pattern — no such canonical URL is published.
         run: |
-          curl -fsSL https://github.com/github/copilot-cli/releases/latest/download/install.sh | bash
-          echo "$HOME/.copilot/bin" >> "$GITHUB_PATH"
+          npm install -g @github/copilot
+          copilot --version
 
       - name: Install awesome-gbb plugin from this checkout
         run: |
           copilot plugin marketplace add "$GITHUB_WORKSPACE"
           copilot plugin install awesome-gbb@awesome-gbb
 
+      - name: Get Foundry bearer token
+        # Mirrors the auth-smoke pattern. `tr -d '\r\n'` is load-bearing:
+        # without it, the trailing newline from `-o tsv` produces a 401
+        # masquerading as a token-format error.
+        run: |
+          set -euo pipefail
+          TOKEN=$(az account get-access-token \
+            --resource https://cognitiveservices.azure.com/.default \
+            --query accessToken -o tsv | tr -d '\r\n')
+          echo "::add-mask::$TOKEN"
+          echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
         env:
-          COPILOT_MODEL_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-          COPILOT_MODEL_DEPLOYMENT: gpt-5.4-mini
+          # BYOK routing → Foundry, identical to the auth-smoke workflow.
+          # Env-var names verified against released CLI 1.0.57-2 via
+          # `copilot help providers` / `copilot help environment` (Task 1.0
+          # notes in the session-state files dir). The legacy
+          # `COPILOT_MODEL_*` names DO NOT EXIST and would be silently
+          # ignored — leading to a confusing "Copilot didn't authenticate"
+          # failure that's actually a misconfigured provider stack.
+          #
+          # AZURE_AI_ENDPOINT secret is verified account-host shape per
+          # AGENTS.md §9.7 (`https://aif-awesome-gbb-ci.cognitiveservices.azure.com/`).
+          # If a consumer fixture also needs the Foundry project endpoint
+          # (`…services.ai.azure.com/api/projects/<name>`), derive it from
+          # the account host inside the fixture's prompt or add a derive
+          # step — do NOT add a separate secret.
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
         run: |
           set -euo pipefail
           PROMPT="skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"
           test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
-          copilot run --prompt-file "$PROMPT" 2>&1 | tee "/tmp/${{ matrix.skill }}-transcript.log"
+          # `-p` is the released CLI's one-shot prompt form. `copilot run`
+          # does not exist; `--prompt-file` does not exist. Read the fixture
+          # via `$(cat …)` and inline it. `--disable-builtin-mcps` drops the
+          # GitHub MCP server so the run doesn't depend on github.com
+          # reachability — the consumer fixture is allowed to opt back in
+          # to specific MCP servers via `--allow-tool=mcp__…` flags.
+          copilot -p "$(cat "$PROMPT")" \
+                  --allow-all-tools \
+                  --disable-builtin-mcps \
+                  -C "$GITHUB_WORKSPACE" \
+                  2>&1 | tee "/tmp/${{ matrix.skill }}-transcript.log"
 
       - name: Retry once on classified-transient failure
         if: failure() && steps.run.outcome == 'failure'
         env:
-          COPILOT_MODEL_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-          COPILOT_MODEL_DEPLOYMENT: gpt-5.4-mini
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
         run: |
           set -euo pipefail
+          PROMPT="skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"
           if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found" "/tmp/${{ matrix.skill }}-transcript.log"; then
             echo "classified-transient — retrying once"
-            copilot run --prompt-file "skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"
+            copilot -p "$(cat "$PROMPT")" \
+                    --allow-all-tools \
+                    --disable-builtin-mcps \
+                    -C "$GITHUB_WORKSPACE"
           else
             echo "non-transient failure — not retrying"
             exit 1
