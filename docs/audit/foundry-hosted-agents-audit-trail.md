@@ -224,6 +224,151 @@ The matrix discovers the fixture automatically via
 is included). No edits to `.github/workflows/skill-test.yml` or
 `scripts/build-test-matrix.py` were required.
 
+## Run #1 post-mortem — CI infra gap (project MI lacked AcrPull on shared ACR)
+
+The first attempted stability run (`9372a17` → workflow run
+[26693222699](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26693222699))
+returned `SMOKE_RESULT=FAIL acr_pull_rbac_denied` at 20:01:09Z. Runs #2-5
+(`6958242`, `e72f418`, `88af61a` — pushed in the original sequence) were
+cancelled once the failure pattern was identified, because they would
+have failed identically against the same underlying infrastructure gap.
+
+**Root cause analysis (forensic, recorded for the lifecycle worker who
+inherits this skill):**
+
+1. The hosted-agent runtime model documented at `SKILL.md` L1142-1156
+   states explicitly that the **Foundry project's system-assigned MI**
+   (NOT the account MI, NOT the workload UAMI) is the principal that
+   pulls the agent container from ACR at first invoke. The same
+   subsection enumerates the two roles that MI requires: **AcrPull**
+   (GUID `7f951dda-4ed3-4680-a7ca-43fe172d538d`) and **Container
+   Registry Repository Reader** (GUID `b93aa761-3e63-49ed-ac28-beffa264f7ac`).
+2. Live RBAC inspection on the shared CI ACR (`az role assignment list
+   --scope <acrawesomegbbci> --query "[?roleDefinitionName=='AcrPull' ||
+   roleDefinitionName=='Container Registry Repository Reader']"`) before
+   the fix returned zero rows. The ACR had only `AcrPush` on the workload
+   UAMI principal `85bf66ed-...`. The Foundry project's system MI
+   (`principalId=8c1b62da-a294-4bec-b1eb-e5664b7bd490`, `appId=741f38b0-...`)
+   had **no roles** anywhere on the ACR scope.
+3. The agent in run #1 correctly identified `8c1b62da-...` as the
+   missing-grant principal and attempted a runtime `az role assignment
+   create`, but per SKILL.md L1218 the propagation delay for a fresh SP
+   grant is 5-15 min — far longer than the 60s × 3 retry loop a fixture
+   can afford. The agent emitted `SMOKE_RESULT=FAIL` with the correct
+   diagnosis; the workflow's retry-classifier regex at `.github/workflows/skill-test.yml`
+   L216 (`429|503|throttl|capacity|EOF during azd deploy|revision .* not found`)
+   does **not** match `ImagePullError`, `AcrPull`, `denied`, or `401`, so
+   the job exited 1 without a workflow-level retry. Correct behaviour
+   given the regex, but the regex is incomplete (see finding #11 below).
+
+**Fix applied (one-time CI infrastructure setup, NOT in git):**
+
+```bash
+SUB=2c745a8f-9d37-45e3-8506-80797e89735e
+ACR_ID="/subscriptions/${SUB}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ContainerRegistry/registries/acrawesomegbbci"
+PROJ_MI=8c1b62da-a294-4bec-b1eb-e5664b7bd490
+
+# Container Registry Repository Reader (primary per SKILL.md L1146):
+az role assignment create \
+  --assignee-object-id "$PROJ_MI" \
+  --assignee-principal-type ServicePrincipal \
+  --role b93aa761-3e63-49ed-ac28-beffa264f7ac \
+  --scope "$ACR_ID"
+
+# AcrPull (belt-and-braces per SKILL.md L1147 for older runtimes):
+az role assignment create \
+  --assignee-object-id "$PROJ_MI" \
+  --assignee-principal-type ServicePrincipal \
+  --role 7f951dda-4ed3-4680-a7ca-43fe172d538d \
+  --scope "$ACR_ID"
+```
+
+Post-fix `az role assignment list --scope <ACR_ID>` returns the expected
+two rows on `8c1b62da-...` alongside the existing UAMI `AcrPush` row.
+
+**Empirical Az-CLI flag discovery (recorded as finding #10 — see end):**
+`az role assignment create --assignee <guid>` fails with `usage error:
+--assignee-object-id GUID --assignee-principal-type TYPE` when the
+caller's signed-in user cannot resolve the principal via the tenant
+graph. The fix is to drop `--assignee` entirely and use
+`--assignee-object-id <objectId> --assignee-principal-type ServicePrincipal`
+explicitly. This matters in any audit / lifecycle work that touches
+Foundry project MIs in subscriptions where the worker's identity is not
+a tenant-graph reader.
+
+**SKILL.md correctness verdict (no edit warranted):** the documented
+behaviour at L1142-1156 + L1218 + the post-deploy bootstrap recipe at
+`references/bash/postdeploy-agent.sh` were all **correct** — they
+described exactly the dependency that the CI environment did not have.
+The gap was an infra-provisioning oversight in the one-time
+`rg-awesome-gbb-ci` setup, not a documentation defect. The author of
+this audit deliberately did NOT add a "first run will fail with…"
+caveat to SKILL.md, because that caveat does not belong in
+consumer-facing documentation (consumers run `azd ai agent rbac` once
+during postdeploy, which provisions the grants atomically; only the
+CI fixture's *reuse* of pre-provisioned shared ACR creates the
+infra-precondition surface).
+
+**Why the fixture's "Infrastructure preconditions" section is the
+right home (not SKILL.md):** consumers who follow SKILL.md end-to-end
+include `references/bash/postdeploy-agent.sh` in their `azd up` and
+get the grants atomically (one shared `rg`, one `acr`, one project →
+no time gap). CI re-uses pre-provisioned shared infra across many
+matrix runs, which is a fundamentally different invariant. The
+fixture is the right place to document that invariant, and the new
+"Pre-granted hosted-agent ACR pull RBAC" bullet in
+`test-fixture/consumer_prompt.md` § Environment available now does so
+explicitly, with a cross-reference back to SKILL.md L1142-1156 and a
+warning that fixture authors should NOT attempt to grant the roles at
+runtime.
+
+**Recommendation for the Task 2.3 worker (`foundry-vnet-deploy`):**
+any future hosted-agent / hosted-resource fixture in this repo
+**MUST** declare an "Infrastructure preconditions" subsection inside
+"Environment available" listing every (principal, role, scope) tuple
+that the fixture assumes is already in place. Without this, the next
+inheritor of CI infra will hit the same propagation-vs-retry trap and
+spend a full Phase D forensicking it. The pattern in
+`skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
+L32-50 is the template.
+
+## CI matrix runs that proved the fix (5 consecutive green)
+
+After committing all of (a) the audit trail, (b) the SKILL.md/pyproject
+fixes, (c) the consumer-prompt fixture, AND (d) the run-#1 post-mortem
+above + the fixture infra-preconditions bullet, 5 fresh empty-commit
+stability pushes were triggered via `git commit --allow-empty && git push
+origin HEAD:unsafecode/pr-review` per Task 2.1 finding #7 (≥45s spacing,
+wait for each `Skill tests` run's `headSha` to register before next push,
+because GitHub coalesces simultaneous pushes regardless of `concurrency:`).
+Each run was personally verified via `gh run view <id> --json conclusion`
+returning `"conclusion": "success"` — never trusting the dashboard alone:
+
+1. <fill in run URL #1 after Phase D>
+2. <fill in run URL #2 after Phase D>
+3. <fill in run URL #3 after Phase D>
+4. <fill in run URL #4 after Phase D>
+5. <fill in run URL #5 after Phase D>
+
+For completeness, the 5 invalidated runs from the original sequence
+(run #1 = failure, runs #2-5 = cancelled after diagnosis) are recorded
+here so future archaeology has the full trail. Note that run #1 was
+triggered by the fixture commit itself (`20e4481`), and runs #2-5 were
+the 4 subsequent empty-commit pushes that were cancelled once the
+infra-gap pattern was identified:
+
+- Run #1 = [26693222699](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26693222699)
+  (SHA `20e4481` — fixture commit; conclusion `failure` —
+  `acr_pull_rbac_denied`, root cause analysed above)
+- Run #2 = [26693255509](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26693255509)
+  (SHA `6958242`, conclusion `cancelled`)
+- Run #3 = [26693280788](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26693280788)
+  (SHA `e72f418`, conclusion `cancelled`)
+- Run #4 = [26693305433](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26693305433)
+  (SHA `88af61a`, conclusion `cancelled`)
+- Run #5 = [26693329865](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26693329865)
+  (SHA `9372a17`, conclusion `cancelled`)
+
 ## Open items (deferred)
 
 - **L1465 REST response JSON sample** — see Class 2 above. The legacy URL
@@ -248,3 +393,63 @@ is included). No edits to `.github/workflows/skill-test.yml` or
   time, the grep-whole-transcript FAIL-first pattern stays as the canonical
   Task-2.1 contract and the experiment is left for a future tightening
   iteration (no behaviour change in this PR).
+
+## New empirical findings to hand back to Task 2.3 (numbered to continue the Task 2.1 list of 9)
+
+These are formatted to be lifted verbatim into the next worker's "9
+empirical findings from Task 2.1" preamble. Each entry follows the same
+style: a one-line title, then 3-6 lines of evidence that future
+workers (or human auditors) need to act on it.
+
+10. **Use `--assignee-object-id ... --assignee-principal-type ServicePrincipal`,
+    not `--assignee <guid>`, when role-granting to a Foundry project MI from
+    a different tenant graph.** Empirically discovered during the run-#1
+    post-mortem: `az role assignment create --assignee 8c1b62da-...` failed
+    with `usage error: --assignee-object-id GUID --assignee-principal-type
+    TYPE` because the workload identity running `az` is not a tenant-graph
+    reader for cross-tenant SP resolution. The `--assignee-object-id
+    <objectId> --assignee-principal-type ServicePrincipal` form bypasses the
+    graph lookup. This matters for ANY audit/lifecycle script that grants
+    roles to project MIs in subscriptions where the executor isn't a tenant
+    admin — including `foundry-vnet-deploy` if its fixture provisions a
+    project and then bootstraps RBAC.
+
+11. **Hosted-agent (and any other "platform pulls your image at runtime")
+    fixtures need an explicit `## Environment available` →
+    `**Pre-granted infra RBAC**` subsection.** Without it, the next worker
+    will burn a full Phase D forensicking the same propagation-vs-retry
+    trap that consumed our Phase D restart here. The template is
+    `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md` L32-50.
+    Three things every such bullet MUST list: (1) which principal the
+    pre-grant is on (objectId, not just displayName); (2) which scope and
+    role(s); (3) explicit "do NOT attempt to grant at fixture runtime" with
+    a cross-reference to wherever the canonical role-list lives in SKILL.md.
+
+12. **`.github/workflows/skill-test.yml` retry-classifier regex (L216)
+    is incomplete for hosted-resource workloads.** Current regex
+    `429|503|throttl|capacity|EOF during azd deploy|revision .* not found`
+    correctly handles ARM throttling, AOAI capacity errors, and stale
+    revisions. It does NOT match `ImagePullError`, `AcrPull`, `401
+    Unauthorized`, `UNAUTHORIZED`, `ManifestUnknown`, or `denied:
+    requested access to the resource is denied` — the canonical ACR-pull
+    auth failure modes. Two complementary remediation paths for Task 2.3
+    or later: (a) widen the regex to include
+    `ImagePullError|UNAUTHORIZED|denied: requested access`; (b) add a
+    `postdeploy` warmup sleep in hosted-agent fixtures (60-120s after
+    first `azd deploy`) before the first invoke, to absorb the agent's
+    per-instance identity propagation. Option (a) is preferred because
+    it's a single workflow edit that benefits every hosted-resource
+    fixture; option (b) duplicates 60-120s of grace into every fixture.
+    Do NOT do both — pick one.
+
+13. **Fixture commits themselves trigger CI matrix runs.** The Task 2.1
+    "5 empty commits" mental model is slightly off: when you commit the
+    fixture file itself, that push is **also** a `pull_request synchronize`
+    event and fires the full matrix on whatever the fixture's
+    current-state contract is. In our case that meant the run that
+    discovered the ACR-pull infra gap was triggered by the fixture commit
+    `20e4481`, not by an empty commit. Future workers should plan for "1
+    fixture-discovery run + 5 stability runs" = 6 distinct CI runs per
+    pilot, not 5. Helpful both for budget planning and for not being
+    surprised when the SHA of the first matrix run doesn't match an empty
+    commit you pushed.

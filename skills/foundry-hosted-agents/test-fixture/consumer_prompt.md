@@ -34,6 +34,20 @@ image held for ≤2 min (~$0.001), ACA cold-start of 1 vCPU × ~30 s
   AcrPush on `acrawesomegbbci`, and Cognitive Services OpenAI User
   + Foundry User on the Foundry account. `DefaultAzureCredential()`
   resolves without extra setup.
+- **Pre-granted hosted-agent ACR pull RBAC** (one-time CI infra
+  setup, **not** something you provision per run): the **Foundry
+  project's system-assigned managed identity** (the principal that
+  pulls the hosted-agent container at runtime — see SKILL.md
+  § Identity & RBAC L1142-1156) holds **AcrPull** AND **Container
+  Registry Repository Reader** on `acrawesomegbbci`. Do NOT attempt
+  to grant these roles yourself — RBAC propagation is 5-15 min
+  (SKILL.md L1218) and the workflow's retry classifier does not
+  catch `ImagePullError|401 Unauthorized`, so a fresh grant inside
+  the fixture would `SMOKE_RESULT=FAIL` on first-deploy image pull.
+  If your `azd deploy` returns success but the agent invoke 401s
+  for >2 min, that's the *agent's own* per-instance identity
+  propagation (different concern) — handle it with the step-5 retry
+  loop, not by re-granting RBAC.
 - `azd` CLI is installed. The `azure.ai.agents` preview extension is
   NOT pre-installed — you must `azd extension install -s
   azure.ai.agents --allow-prerelease` before `azd deploy`.
