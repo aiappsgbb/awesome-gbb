@@ -1,19 +1,23 @@
 name: Skill tests
 
 # Consolidated test suite for the awesome-gbb catalog.
-# - unit-tests + catalog-lint: run on push to main + schedule + dispatch
-# - pin-smoke: run ALL auto-tier pin scripts (weekly + dispatch)
-# - e2e-azure: run ALL pin scripts including Azure-dependent ones (weekly + dispatch)
+# - unit-tests: runner-side infra tests (build-matrix, validate-skills, gate)
+# - catalog-lint: validate-skills.py + build-plugins.py --check
+# - build-matrix + copilot-cli-matrix: real Copilot CLI agent runs the
+#   fixture against live Foundry, one runner per skill. THIS is the test.
 #
-# PR-gating is handled by skill-validation.yml, automation-pr-gate.yml,
-# and pin-validation.yml. This workflow adds periodic + on-demand coverage.
+# We deliberately do NOT run pytest-based e2e tests or pin-import smoke
+# tests — those were the legacy approach. The mandate is: a Copilot CLI
+# agent reads the skill, executes its instructions against real Azure,
+# and either succeeds or fails. PR-gating for the catalog is handled by
+# skill-validation.yml, automation-pr-gate.yml, and pin-validation.yml.
 
 on:
   pull_request:
     paths:
       - "skills/**"
-      - "scripts/tests/test_e2e_*.py"
       - ".github/workflows/skill-test.yml"
+      - "scripts/build-test-matrix.py"
   push:
     branches: [main]
     paths:
@@ -26,15 +30,9 @@ on:
     - cron: "0 8 * * 1"  # Monday 08:00 UTC (after freshness at 07:00)
     - cron: "0 8 * * 4"  # Thursday 08:00 UTC (redundancy)
   workflow_dispatch:
-    inputs:
-      include_azure:
-        description: "Run E2E Azure tests (needs OIDC secrets)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
-  id-token: write  # OIDC for Azure login in e2e-azure job
 
 jobs:
   # ── Job 1: Unit tests ──────────────────────────────────────────────
@@ -74,114 +72,7 @@ jobs:
       - name: Verify single-plugin structure
         run: python scripts/build-plugins.py --check
 
-  # ── Job 3: Pin smoke (all auto-tier, no Azure) ────────────────────
-  pin-smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install runner deps
-        run: pip install --quiet pyyaml
-
-      - name: Run pin validations
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # On PRs: only validate changed pins (don't let unrelated failures block)
-            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }}
-          else
-            # On push/schedule: validate ALL pins
-            python scripts/run-pin-validation.py --all
-          fi
-
-  # ── Job 4: E2E Azure (all pins including Azure-dependent) ──────────
-  e2e-azure:
-    if: >-
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'push') ||
-      (github.event_name == 'schedule') ||
-      (github.event_name == 'workflow_dispatch' && inputs.include_azure)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # Note: secrets are at repo level. OIDC federated credentials on the
-    # UAMI cover three subjects (string-match only — Entra does NOT support
-    # wildcards or claimsMatchingExpression for the GitHub Actions issuer):
-    #   - repo:aiappsgbb/awesome-gbb:pull_request       (PR events)
-    #   - repo:aiappsgbb/awesome-gbb:ref:refs/heads/main (push to main)
-    #   - repo:aiappsgbb/awesome-gbb:ref:refs/tags/*    (release tags)
-    # workflow_dispatch on non-main branches will FAIL with AADSTS700213
-    # unless a branch-specific FIC is created on the UAMI first.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install runner deps
-        run: pip install --quiet pyyaml pytest
-
-      - name: Azure OIDC login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Run pin validations (including Azure E2E)
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # On PRs: only validate changed pins
-            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }} --include-azure
-          else
-            # On push/schedule: validate ALL pins
-            python scripts/run-pin-validation.py --all --include-azure
-          fi
-
-      # Note: `always() &&` decouples each pytest from the preceding
-      # pin-validation step so a single pin failure doesn't skip live E2E
-      # coverage. These run on PRs too because the `pull_request` OIDC
-      # subject is covered by the `github-pr` federated credential and
-      # the repo policy is "every skill must be field-tested on Azure".
-      - name: Run E2E prompt agent test
-        if: always()
-        env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-        run: |
-          pip install --quiet "azure-ai-projects~=2.1.0" "azure-identity~=1.23.0"
-          python -m pytest scripts/tests/test_e2e_prompt_agents.py -v
-
-      - name: Run E2E voice-live test
-        if: always()
-        env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-        run: |
-          pip install --quiet "openai~=2.0.0" "azure-identity~=1.23.0"
-          python -m pytest scripts/tests/test_e2e_voice_live.py -v
-
-      - name: Run E2E foundry-toolbox test
-        if: always()
-        env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-        run: |
-          pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0" "tenacity~=8.5.0"
-          python -m pytest scripts/tests/test_e2e_foundry_toolbox.py -v
-
-  # ── Job 5: Build skill-matrix (PR + push + dispatch + schedule) ────
+  # ── Job 3: Build skill-matrix (PR + push + dispatch + schedule) ────
   # Reads scripts/build-test-matrix.py and emits a JSON list of skills
   # that have a test-fixture/consumer_prompt.md AND are NOT quarantined.
   # The downstream copilot-cli-matrix job fans out one runner per skill.
@@ -198,7 +89,7 @@ jobs:
       - id: build
         run: echo "matrix=$(python scripts/build-test-matrix.py --repo-root .)" >> "$GITHUB_OUTPUT"
 
-  # ── Job 6: Copilot-CLI consumer matrix (new — Task 2.1 pilot) ──────
+  # ── Job 4: Copilot-CLI consumer matrix (the real validation gate) ──
   # Spawns ONE runner per discovered skill. Each runner installs the
   # Copilot CLI, points it at Foundry (gpt-5.4-mini in aif-awesome-gbb-ci)
   # via BYOK env vars, and runs the skill's consumer_prompt.md fixture.
