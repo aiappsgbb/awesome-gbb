@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.5.2"
+  version: "1.6.0"
   validated: 2026-05-28
 ---
 
@@ -444,19 +444,17 @@ ResponsesHostServer(agent).run()
 
 > **MUST:** Always pass `parse_tool_results=` when using `MCPStreamableHTTPTool`. Without it, the agent sees raw MCP JSON instead of text content, causing confabulated responses.
 
+> **MUST:** Use [`references/python/mcp_text_extractor.py`](references/python/mcp_text_extractor.py) as the canonical extractor (exports `extract_mcp_text` and the backward-compat alias `_mcp_text_extractor`). Do NOT redefine inline — the validator enforces single-source-of-truth.
+>
+> **MUST:** For the full 3-pattern wiring example (toolbox + direct MCP + local function tools composed into one agent), copy verbatim from [`references/python/toolbox_wiring.py`](references/python/toolbox_wiring.py). It is the canonical SDK-level wiring (high-level `AzureAIToolbox`), complementing the trap-aware low-level pattern shown above (`ToolboxMCPTool` subclass).
+
 ```python
-def _mcp_text_extractor(raw):
-    """Canonical parser for MCPStreamableHTTPTool results."""
-    if isinstance(raw, dict) and "content" in raw:
-        parts = [item.get("text", "") for item in raw["content"]
-                 if isinstance(item, dict) and item.get("type") == "text"]
-        return "\n\n".join(parts) if parts else str(raw)
-    return str(raw)
+from references.python.mcp_text_extractor import extract_mcp_text
 
 learn_mcp = MCPStreamableHTTPTool(
     name="microsoft-learn",
     url="https://learn.microsoft.com/api/mcp",
-    parse_tool_results=_mcp_text_extractor,  # ← MUST include this
+    parse_tool_results=extract_mcp_text,  # ← MUST include this
 )
 ```
 
@@ -476,25 +474,15 @@ text. Models will sometimes parse through it, sometimes not, leading to
 
 Pass an extractor to the tool constructor:
 
+> **MUST:** Import the canonical extractor from [`references/python/mcp_text_extractor.py`](references/python/mcp_text_extractor.py) (function `extract_mcp_text`). Do NOT redefine inline — the validator enforces single-source-of-truth.
+
 ```python
-def _mcp_text_extractor(raw):
-    """Pull plain text from MCP tool-call envelopes.
-    Handles both {'content': [{'type': 'text', 'text': '...'}, ...]} and
-    fallback string responses. Use on any MCPStreamableHTTPTool to surface
-    grounding cleanly to the model.
-    """
-    if isinstance(raw, dict) and "content" in raw:
-        parts = []
-        for item in raw["content"]:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-        return "\n\n".join(parts) if parts else str(raw)
-    return str(raw)
+from references.python.mcp_text_extractor import extract_mcp_text
 
 mcp_tool = MCPStreamableHTTPTool(
     name="microsoft-learn",
     url="https://learn.microsoft.com/api/mcp",
-    parse_tool_results=_mcp_text_extractor,   # ← key line
+    parse_tool_results=extract_mcp_text,   # ← key line
 )
 ```
 
@@ -515,17 +503,12 @@ from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 
-def _mcp_text_extractor(raw):
-    if isinstance(raw, dict) and "content" in raw:
-        parts = [item.get("text", "") for item in raw["content"]
-                 if isinstance(item, dict) and item.get("type") == "text"]
-        return "\n\n".join(parts) if parts else str(raw)
-    return str(raw)
+from references.python.mcp_text_extractor import extract_mcp_text
 
 learn_mcp = MCPStreamableHTTPTool(
     name="microsoft-learn",
     url="https://learn.microsoft.com/api/mcp",   # public, no-auth, free
-    parse_tool_results=_mcp_text_extractor,
+    parse_tool_results=extract_mcp_text,
 )
 
 agent = Agent(

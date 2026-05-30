@@ -565,6 +565,258 @@ def validate_skill_plugin_version_consistency() -> list[str]:
     return errors
 
 
+# ────────────────────────────────────────────────────────────────────────
+# Reference-files validation (AGENTS.md § 7 — references/ as SSOT)
+# ────────────────────────────────────────────────────────────────────────
+
+# Skipped on syntax-check: data fixtures, prose, format-less files
+_SKIP_SYNTAX_SUFFIXES = {
+    ".csv",
+    ".md",
+    ".kql",
+    ".env",
+    ".bicepparam",  # cannot `az bicep build` standalone — needs the .bicep it params
+    ".toml",  # parsed implicitly by `python3 -m py_compile` when imported; pyproject.toml is data
+}
+
+# § <Section Title> in a reference-file header — anchor convention from AGENTS.md § 7.
+# The most common shape wraps the whole anchor in backticks:
+#     `../../SKILL.md § Some Title`
+# We match through to the closing backtick (DOTALL — handles wrap), and as a
+# fallback also match unquoted occurrences ending at a period or end of line.
+# Post-capture, _clean_anchor_capture collapses comment-line continuations.
+_REF_ANCHOR_RE_QUOTED = re.compile(
+    r"\.\./\.\./SKILL\.md\s*§\s*([^`]+?)`",
+    re.DOTALL,
+)
+_REF_ANCHOR_RE_UNQUOTED = re.compile(
+    r"\.\./\.\./SKILL\.md\s*§\s*(.+?)(?:\.\s|\.$|$)",
+    re.MULTILINE,
+)
+# `##`, `###`, `####` section header in SKILL.md
+_SKILL_SECTION_RE = re.compile(r"^#{2,4}\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _clean_anchor_capture(raw: str) -> str:
+    """Collapse comment-line continuations and surrounding whitespace.
+
+    `Custom\n# grader recipe: URL-citation quality`
+        → `Custom grader recipe: URL-citation quality`
+
+    Handles bash `#`, py `#`, yaml `#`, c-style `//` and `*`, and bare
+    indentation continuations (Python docstrings).
+    """
+    # Replace any newline + optional comment marker + optional space with one space
+    collapsed = re.sub(r"\s*\n[ \t]*(?:#|//|\*)?[ \t]?", " ", raw)
+    return collapsed.strip().rstrip(".,;:`")
+
+
+def _normalize_anchor(s: str) -> str:
+    """Lowercase, collapse whitespace, drop emoji/punct decoration for fuzzy match."""
+    s = s.lower().strip()
+    # Strip leading/trailing emoji + symbols frequently used as section decoration
+    s = re.sub(r"[`*_~\"']", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def validate_reference_files() -> list[str]:
+    """Per-file syntax lint on every `skills/<name>/references/**`.
+
+    Catches the silent failure mode where SKILL.md prose says "copy verbatim
+    from references/..." but the canonical file has a typo, import error, or
+    invalid YAML. Without this gate, the CI signal regresses to "the inline
+    code was right at commit time" — exactly the duplication this skill
+    catalog was supposed to eliminate.
+
+    Coverage:
+      - `.py`      → `python3 -m py_compile`
+      - `.sh`      → `bash -n`
+      - `.yaml`    → `yaml.safe_load`
+      - `.json`    → `json.loads`
+      - `.bicep`   → `az bicep build` (skipped if `az` not on PATH)
+      - `.jsonl`   → line-by-line `json.loads`
+      - others     → see `_SKIP_SYNTAX_SUFFIXES`
+    """
+    errors: list[str] = []
+    az_available = _which("az") is not None
+    az_warned = False
+
+    for ref_path in sorted(SKILLS_DIR.glob("*/references/**/*")):
+        if not ref_path.is_file():
+            continue
+        # Ignore generated artefacts that may exist locally but shouldn't be linted
+        if "__pycache__" in ref_path.parts or ref_path.suffix == ".pyc":
+            continue
+
+        suffix = ref_path.suffix.lower()
+        if suffix in _SKIP_SYNTAX_SUFFIXES:
+            continue
+
+        rel = ref_path.relative_to(REPO_ROOT)
+
+        try:
+            if suffix == ".py":
+                _lint_python(ref_path, rel, errors)
+            elif suffix == ".sh":
+                _lint_bash(ref_path, rel, errors)
+            elif suffix in (".yaml", ".yml"):
+                _lint_yaml(ref_path, rel, errors)
+            elif suffix == ".json":
+                _lint_json(ref_path, rel, errors)
+            elif suffix == ".jsonl":
+                _lint_jsonl(ref_path, rel, errors)
+            elif suffix == ".bicep":
+                if az_available:
+                    _lint_bicep(ref_path, rel, errors)
+                elif not az_warned:
+                    print(
+                        f"  (skipping .bicep lint — `az` not on PATH; install azure-cli to enable)",
+                        file=sys.stderr,
+                    )
+                    az_warned = True
+        except Exception as exc:  # noqa: BLE001 — never let a linter crash the gate
+            errors.append(f"{rel}: linter crashed unexpectedly: {exc}")
+
+    return errors
+
+
+def _which(cmd: str) -> str | None:
+    import shutil
+    return shutil.which(cmd)
+
+
+def _lint_python(path: pathlib.Path, rel: pathlib.Path, errors: list[str]) -> None:
+    proc = subprocess.run(
+        [sys.executable, "-m", "py_compile", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        errors.append(f"{rel}: py_compile failed:\n{(proc.stderr or proc.stdout).strip()}")
+
+
+def _lint_bash(path: pathlib.Path, rel: pathlib.Path, errors: list[str]) -> None:
+    bash = _which("bash") or "/bin/bash"
+    proc = subprocess.run([bash, "-n", str(path)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        errors.append(f"{rel}: bash -n failed:\n{(proc.stderr or proc.stdout).strip()}")
+
+
+def _lint_yaml(path: pathlib.Path, rel: pathlib.Path, errors: list[str]) -> None:
+    try:
+        # safe_load_all so multi-doc YAMLs (--- separated) don't false-fail
+        docs = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+        if not docs:
+            errors.append(f"{rel}: YAML file is empty")
+    except yaml.YAMLError as exc:
+        errors.append(f"{rel}: invalid YAML: {exc}")
+
+
+def _lint_json(path: pathlib.Path, rel: pathlib.Path, errors: list[str]) -> None:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        errors.append(f"{rel}: invalid JSON: {exc}")
+
+
+def _lint_jsonl(path: pathlib.Path, rel: pathlib.Path, errors: list[str]) -> None:
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{rel}:{lineno}: invalid JSONL: {exc}")
+            return  # one error per file is enough — don't drown the report
+
+
+def _lint_bicep(path: pathlib.Path, rel: pathlib.Path, errors: list[str]) -> None:
+    # `az bicep build --stdout` writes ARM JSON on success, errors to stderr.
+    # Use a real temp file because some bicep features rejoin via relative paths.
+    proc = subprocess.run(
+        ["az", "bicep", "build", "--file", str(path), "--stdout"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        errors.append(f"{rel}: az bicep build failed:\n{(proc.stderr or proc.stdout).strip()}")
+
+
+def validate_reference_section_anchors() -> list[str]:
+    """Section-anchor sanity: every `../../SKILL.md § <title>` reference in a
+    `references/**/*` file header MUST resolve to a real `##` or `###`
+    section in that skill's SKILL.md.
+
+    Stops the "rename SKILL.md section but forget to update the canonical
+    file header" silent drift. Fuzzy match: case-insensitive + whitespace
+    normalized + emoji/punct decoration stripped.
+    """
+    errors: list[str] = []
+    for skill_dir in sorted(SKILLS_DIR.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        refs_dir = skill_dir / "references"
+        skill_md = skill_dir / "SKILL.md"
+        if not refs_dir.exists() or not skill_md.exists():
+            continue
+
+        sections = {
+            _normalize_anchor(m.group(1))
+            for m in _SKILL_SECTION_RE.finditer(skill_md.read_text(encoding="utf-8"))
+        }
+
+        for ref_path in sorted(refs_dir.rglob("*")):
+            if not ref_path.is_file() or "__pycache__" in ref_path.parts:
+                continue
+            if ref_path.suffix.lower() == ".pyc":
+                continue
+            # Header lives in the first ~80 lines for every convention we use
+            try:
+                head = "\n".join(ref_path.read_text(encoding="utf-8").splitlines()[:80])
+            except (UnicodeDecodeError, OSError):
+                continue
+
+            rel = ref_path.relative_to(REPO_ROOT)
+            seen: set[str] = set()
+            # Prefer backtick-quoted anchors when present; fall back to bare
+            # `../../SKILL.md § ...` references for older headers.
+            matches = list(_REF_ANCHOR_RE_QUOTED.finditer(head))
+            if not matches:
+                matches = list(_REF_ANCHOR_RE_UNQUOTED.finditer(head))
+
+            for match in matches:
+                anchor = _clean_anchor_capture(match.group(1))
+                if not anchor or anchor in seen:
+                    continue
+                seen.add(anchor)
+                # Nested anchor like "Critical Rules § agent.yaml" — accept if
+                # ANY segment matches a real section (the deepest level usually
+                # does, but skill authors occasionally cite a parent header).
+                pieces = [p.strip() for p in anchor.split("§") if p.strip()]
+                if any(_anchor_resolves(p, sections) for p in pieces):
+                    continue
+                errors.append(
+                    f"{rel}: header references SKILL.md § \"{anchor}\" "
+                    f"but no matching ## or ### section in {skill_md.relative_to(REPO_ROOT)}"
+                )
+
+    return errors
+
+
+def _anchor_resolves(anchor: str, sections: set[str]) -> bool:
+    norm = _normalize_anchor(anchor)
+    if not norm:
+        return False
+    if norm in sections:
+        return True
+    # Allow substring match for verbose titles, but only when the anchor is
+    # long enough that the match is meaningful (avoid "the" matching anything).
+    if len(norm) >= 8:
+        return any(norm in s or s in norm for s in sections)
+    return False
+
+
 def main() -> int:
     if not SKILLS_DIR.is_dir():
         print(f"ERROR: {SKILLS_DIR} does not exist", file=sys.stderr)
@@ -593,8 +845,23 @@ def main() -> int:
     plugin_version_errors = validate_skill_plugin_version_consistency()
     all_errors.extend(plugin_version_errors)
 
+    reference_errors = validate_reference_files()
+    all_errors.extend(reference_errors)
+
+    anchor_errors = validate_reference_section_anchors()
+    all_errors.extend(anchor_errors)
+
+    reference_file_count = sum(
+        1
+        for p in SKILLS_DIR.glob("*/references/**/*")
+        if p.is_file()
+        and "__pycache__" not in p.parts
+        and p.suffix.lower() != ".pyc"
+    )
+
     print(
-        f"Validated {skill_md_count} SKILL.md files + {pin_count} pin files"
+        f"Validated {skill_md_count} SKILL.md files + {pin_count} pin files "
+        f"+ {reference_file_count} reference files"
         + (f" + plugin.json" if PLUGIN_JSON.exists() else "")
         + (f" + marketplace.json" if MARKETPLACE_PATH.exists() else ""),
         file=sys.stderr,

@@ -6,9 +6,9 @@ upstream:
   type: github_repo
   repo: microsoft-foundry/foundry-samples
   ref: main
-  pinned_sha: 048e05d97951f0551e35c7ba482e4c9a50459f6d
+  pinned_sha: 34881107721a3bb34875df1ca0d936fb8e09cb9f
   pinned_commit_message: |
-    feat: add azure-search-rag hosted agent sample (#283)
+    Add C# observability hosted-agent sample (#390)
   license: MIT
   notes: |
     This skill depends on the Foundry APIM connection Bicep/sample docs. Validation is doc-and-source only; it does not call APIM, Foundry, or Azure.
@@ -27,7 +27,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-048e05d97951f0551e35c7ba482e4c9a50459f6d}"
+    PINNED_SHA="${PINNED_SHA:-34881107721a3bb34875df1ca0d936fb8e09cb9f}"
     REPO_URL="https://github.com/microsoft-foundry/foundry-samples"
     REF="main"
     WORK=".upstream-pin-smoke/foundry-cross-resource"
@@ -56,8 +56,9 @@ validation:
     - "apim module contract ok"
     - "docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-29
+last_validated: 2026-05-30
 validated_by: copilot-bot
+field_test_scope: github_pypi_docs
 known_issues_count: 0
 ---
 
@@ -76,11 +77,11 @@ Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft-foundry/foundry-samples` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `7088f6e5b980e1769c5824e957bcefb370b24ba0` |
-| **Pinned commit subject** | `feat: add azure-search-rag hosted agent sample (#283)` |
+| **Pinned SHA** | `34881107721a3bb34875df1ca0d936fb8e09cb9f` |
+| **Pinned commit subject** | `Add C# observability hosted-agent sample (#390)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-28` |
+| **Last re-validated** | `2026-05-30` |
 
 Refresh procedure:
 ```bash
@@ -107,7 +108,7 @@ GitHub source, Learn URLs, and Python standard-library syntax checks.
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-7088f6e5b980e1769c5824e957bcefb370b24ba0}"
+PINNED_SHA="${PINNED_SHA:-34881107721a3bb34875df1ca0d936fb8e09cb9f}"
 REPO_URL="https://github.com/microsoft-foundry/foundry-samples"
 REF="main"
 WORK=".upstream-pin-smoke/foundry-cross-resource"
@@ -153,7 +154,7 @@ echo "docs link check ok"
 | APIM source contract | ✅ | `apim module contract ok` |
 | Learn docs | ✅ | `docs link check ok` |
 
-Captured at `last_validated: 2026-05-15` by `ricchi`.
+Captured at `last_validated: 2026-05-30` by `copilot-bot` via OIDC `e2e-azure` job on PR #182.
 
 ---
 

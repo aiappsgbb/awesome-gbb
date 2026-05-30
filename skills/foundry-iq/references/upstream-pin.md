@@ -6,9 +6,9 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: dd9a4b6321f8922cb4505f84ed5c3e206dfbddb7
+  pinned_sha: edcc786651ca3741ba005d7e5aef971ad24602cc
   pinned_commit_message: |
-    .NET: Add Hosted-MemoryAgent sample with isolation key plumbing (#5692) (#5702)
+    .NET: Preserve and propagate CreatedAt through workflows (#3930)
   license: MIT
   notes: |
     foundry-iq primarily wraps Azure AI Search Knowledge Base / agentic retrieval docs. The only GitHub upstream referenced by SKILL.md is microsoft/agent-framework for hosted-MCP behavior; validation also pins the Azure AI Search Python SDK.
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-dd9a4b6321f8922cb4505f84ed5c3e206dfbddb7}"
+    PINNED_SHA="${PINNED_SHA:-edcc786651ca3741ba005d7e5aef971ad24602cc}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -65,8 +65,9 @@ validation:
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-29
+last_validated: 2026-05-30
 validated_by: copilot-bot
+field_test_scope: github_pypi_docs
 known_issues_count: 0
 ---
 
@@ -84,11 +85,11 @@ weekly; the prose below is the human audit trail. Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/agent-framework` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `8ed2159c4b0b6663dc92b3469c24648a37e8e289` |
-| **Pinned commit subject** | `.NET: Add Hosted-MemoryAgent sample with isolation key plumbing (#5692) (#5702)` |
+| **Pinned SHA** | `edcc786651ca3741ba005d7e5aef971ad24602cc` |
+| **Pinned commit subject** | `.NET: Preserve and propagate CreatedAt through workflows (#3930)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-28` |
+| **Last re-validated** | `2026-05-30` |
 
 Refresh procedure:
 ```bash
@@ -116,7 +117,7 @@ git ls-remote https://github.com/microsoft/agent-framework main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-8ed2159c4b0b6663dc92b3469c24648a37e8e289}"
+PINNED_SHA="${PINNED_SHA:-edcc786651ca3741ba005d7e5aef971ad24602cc}"
 PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
 WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -164,7 +165,7 @@ echo "Foundry IQ docs link check ok"
 | SDK import smoke | ✅ | `azure-search-documents import smoke ok` |
 | Learn docs | ✅ | `Foundry IQ docs link check ok` |
 
-Captured at `last_validated: 2026-05-15` by `ricchi`.
+Captured at `last_validated: 2026-05-30` by `copilot-bot` via OIDC `e2e-azure` job on PR #182.
 
 ---
 

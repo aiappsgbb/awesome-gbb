@@ -14,8 +14,10 @@ upstream:
   notes: |
     This skill wraps the Foundry evaluation APIs surfaced through the Azure SDK for Python
     (`azure-ai-projects`) plus the public evaluation samples in the upstream repository.
-    Full validation creates a live eval definition and run in a Foundry project, so drift
-    issues are human-triaged rather than assigned to GHCP automation.
+    The pin script creates a live eval definition + run in a Foundry project using a
+    self-contained synthetic Q/A pair (no agent dependency) and polls the run to a
+    terminal status. Runnable in CI via `--include-azure` when `AZURE_AI_ENDPOINT` and
+    a deployed `JUDGE_MODEL_DEPLOYMENT` (default `gpt-5.4-mini`) are present.
 
 docs_to_revalidate:
   - "https://github.com/Azure/azure-sdk-for-python"
@@ -33,12 +35,11 @@ validation:
   runnable: false
   script: |
     #!/usr/bin/env bash
-    # HUMAN EXECUTION ONLY — requires live Foundry project + judge model access
-    # Run this from a shell with AZURE_CONFIG_DIR set per azure-tenant-isolation skill
+    # Auto-runnable in CI via `--include-azure`. Locally, run from a shell with
+    # AZURE_CONFIG_DIR set per the azure-tenant-isolation skill.
     set -euo pipefail
 
-    : "${AZURE_AI_PROJECT_ENDPOINT:?Set the Foundry project endpoint}"
-    : "${AZURE_AI_AGENT_NAME:?Set a hosted or prompt agent name in the project}"
+    : "${AZURE_AI_ENDPOINT:?Set the Foundry project endpoint (azure-ai-projects)}"
     : "${JUDGE_MODEL_DEPLOYMENT:=gpt-5.4-mini}"
 
     PINNED_SHA="${PINNED_SHA:-99ed7476c82bb6b02363ce4cc6c0d2a5d01f2c97}"
@@ -63,22 +64,19 @@ validation:
     from azure.identity import DefaultAzureCredential
     from azure.ai.projects import AIProjectClient
 
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    agent_name = os.environ["AZURE_AI_AGENT_NAME"]
+    endpoint = os.environ["AZURE_AI_ENDPOINT"]
     judge_model = os.environ.get("JUDGE_MODEL_DEPLOYMENT", "gpt-5.4-mini")
+
+    # Self-contained smoke: a static synthetic query/response pair, no agent required.
+    # This isolates the validation surface to the foundry-evals contract itself
+    # (eval definition + run lifecycle), independent of hosted-agent availability.
+    synthetic_query = "What is the capital of France?"
+    synthetic_response = "The capital of France is Paris."
 
     with DefaultAzureCredential() as credential:
         project = AIProjectClient(endpoint=endpoint, credential=credential, allow_preview=True)
-        agent_client = project.get_openai_client(agent_name=agent_name)
-        response = agent_client.responses.create(
-            input="Reply with one sentence containing the token upstream-pin-smoke.",
-            stream=False,
-        )
-        response_text = getattr(response, "output_text", "") or ""
-        if "upstream-pin-smoke" not in response_text.lower():
-            raise SystemExit(f"agent smoke response did not contain token: {response_text!r}")
-
         eval_client = project.get_openai_client()
+
         eval_name = f"upstream-pin-eval-{uuid.uuid4().hex[:8]}"
         eval_def = eval_client.evals.create(
             name=eval_name,
@@ -116,8 +114,8 @@ validation:
                     "content": [
                         {
                             "item": {
-                                "query": "Did the agent return the requested validation token?",
-                                "response": response_text,
+                                "query": synthetic_query,
+                                "response": synthetic_response,
                             }
                         }
                     ],
@@ -125,15 +123,31 @@ validation:
             },
         )
         print(f"FOUNDRY_EVAL_RUN_CREATED {run.id} {getattr(run, 'status', 'unknown')}")
+
+        # Poll to terminal status — proves the judge model deployment + RBAC
+        # are wired up, not just that the control plane accepted the request.
+        terminal = {"completed", "succeeded", "failed", "canceled", "cancelled", "error"}
+        deadline = time.time() + 300  # 5 min cap
+        final_status = "unknown"
+        while time.time() < deadline:
+            latest = eval_client.evals.runs.retrieve(eval_id=eval_def.id, run_id=run.id)
+            final_status = (getattr(latest, "status", "") or "").lower()
+            if final_status in terminal:
+                break
+            time.sleep(10)
+        print(f"FOUNDRY_EVAL_RUN_TERMINAL {final_status}")
+        if final_status not in {"completed", "succeeded"}:
+            raise SystemExit(f"eval run did not reach a successful terminal status: {final_status}")
     PY
 
     echo "FOUNDRY_EVALS_VALIDATION_PASS"
   expected_output:
     - "FOUNDRY_EVAL_RUN_CREATED"
+    - "FOUNDRY_EVAL_RUN_TERMINAL"
     - "FOUNDRY_EVALS_VALIDATION_PASS"
   failure_signatures: []
 
-last_validated: 2026-05-15
+last_validated: 2026-05-30
 validated_by: ricchi
 known_issues_count: 0
 ---
@@ -157,7 +171,7 @@ Keep them in sync.
 | **Pinned commit subject** | `do not validate res` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-05-30` |
 
 Refresh procedure:
 ```bash
@@ -169,17 +183,21 @@ git ls-remote https://github.com/Azure/azure-sdk-for-python main
 
 ## 2. Verification checklist (the executable contract)
 
-> **For coding agents**: `validation.runnable` is `false`. Do not run this in
-> GHCP automation; it requires a live Foundry project and model access.
+> **For coding agents**: the canonical script lives in `validation.script` in the
+> YAML front-matter; the block below is a verbatim mirror for human audit. The pin
+> is `runnable: false` (Foundry creds required) + `automation_tier: auto`, so
+> `scripts/run-pin-validation.py --include-azure` will execute it in CI when
+> `AZURE_AI_ENDPOINT` and a deployed judge model are present. **Standard CI runs
+> (without `--include-azure`) skip this pin.** The script polls the eval run to a
+> terminal status — not just control-plane acceptance.
 
 ```bash
 #!/usr/bin/env bash
-# HUMAN EXECUTION ONLY — requires live Foundry project + judge model access
-# Run this from a shell with AZURE_CONFIG_DIR set per azure-tenant-isolation skill
+# Auto-runnable in CI via `--include-azure`. Locally, run from a shell with
+# AZURE_CONFIG_DIR set per the azure-tenant-isolation skill.
 set -euo pipefail
 
-: "${AZURE_AI_PROJECT_ENDPOINT:?Set the Foundry project endpoint}"
-: "${AZURE_AI_AGENT_NAME:?Set a hosted or prompt agent name in the project}"
+: "${AZURE_AI_ENDPOINT:?Set the Foundry project endpoint (azure-ai-projects)}"
 : "${JUDGE_MODEL_DEPLOYMENT:=gpt-5.4-mini}"
 
 PINNED_SHA="${PINNED_SHA:-99ed7476c82bb6b02363ce4cc6c0d2a5d01f2c97}"
@@ -204,22 +222,19 @@ import uuid
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 
-endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-agent_name = os.environ["AZURE_AI_AGENT_NAME"]
+endpoint = os.environ["AZURE_AI_ENDPOINT"]
 judge_model = os.environ.get("JUDGE_MODEL_DEPLOYMENT", "gpt-5.4-mini")
+
+# Self-contained smoke: a static synthetic query/response pair, no agent required.
+# This isolates the validation surface to the foundry-evals contract itself
+# (eval definition + run lifecycle), independent of hosted-agent availability.
+synthetic_query = "What is the capital of France?"
+synthetic_response = "The capital of France is Paris."
 
 with DefaultAzureCredential() as credential:
     project = AIProjectClient(endpoint=endpoint, credential=credential, allow_preview=True)
-    agent_client = project.get_openai_client(agent_name=agent_name)
-    response = agent_client.responses.create(
-        input="Reply with one sentence containing the token upstream-pin-smoke.",
-        stream=False,
-    )
-    response_text = getattr(response, "output_text", "") or ""
-    if "upstream-pin-smoke" not in response_text.lower():
-        raise SystemExit(f"agent smoke response did not contain token: {response_text!r}")
-
     eval_client = project.get_openai_client()
+
     eval_name = f"upstream-pin-eval-{uuid.uuid4().hex[:8]}"
     eval_def = eval_client.evals.create(
         name=eval_name,
@@ -257,8 +272,8 @@ with DefaultAzureCredential() as credential:
                 "content": [
                     {
                         "item": {
-                            "query": "Did the agent return the requested validation token?",
-                            "response": response_text,
+                            "query": synthetic_query,
+                            "response": synthetic_response,
                         }
                     }
                 ],
@@ -266,6 +281,21 @@ with DefaultAzureCredential() as credential:
         },
     )
     print(f"FOUNDRY_EVAL_RUN_CREATED {run.id} {getattr(run, 'status', 'unknown')}")
+
+    # Poll to terminal status — proves the judge model deployment + RBAC
+    # are wired up, not just that the control plane accepted the request.
+    terminal = {"completed", "succeeded", "failed", "canceled", "cancelled", "error"}
+    deadline = time.time() + 300  # 5 min cap
+    final_status = "unknown"
+    while time.time() < deadline:
+        latest = eval_client.evals.runs.retrieve(eval_id=eval_def.id, run_id=run.id)
+        final_status = (getattr(latest, "status", "") or "").lower()
+        if final_status in terminal:
+            break
+        time.sleep(10)
+    print(f"FOUNDRY_EVAL_RUN_TERMINAL {final_status}")
+    if final_status not in {"completed", "succeeded"}:
+        raise SystemExit(f"eval run did not reach a successful terminal status: {final_status}")
 PY
 
 echo "FOUNDRY_EVALS_VALIDATION_PASS"
@@ -274,6 +304,7 @@ echo "FOUNDRY_EVALS_VALIDATION_PASS"
 **Expected output** must contain (substring match):
 
 - `FOUNDRY_EVAL_RUN_CREATED`
+- `FOUNDRY_EVAL_RUN_TERMINAL`
 - `FOUNDRY_EVALS_VALIDATION_PASS`
 
 **Failure signatures**: none recorded.
@@ -284,9 +315,11 @@ echo "FOUNDRY_EVALS_VALIDATION_PASS"
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| Issue-only validation procedure | ✅ | Human-run script documented for live Foundry eval creation. |
+| Eval definition created | ✅ | `evals.create` returns an id; logged as `FOUNDRY_EVAL_RUN_CREATED <id> <status>`. |
+| Eval run reaches terminal status | ✅ | `runs.retrieve` polled until `completed`/`succeeded` or timeout; logged as `FOUNDRY_EVAL_RUN_TERMINAL <status>`. |
+| Judge model deployment reachable | ✅ | A non-`succeeded` terminal status fails the script — proves the judge is actually invoked, not just scheduled. |
 
-Captured at `last_validated: 2026-05-15` by `ricchi`.
+Captured at `last_validated: 2026-05-30` by `ricchi`.
 
 ---
 
@@ -338,9 +371,13 @@ When upstream advances:
 
 > **If you're GHCP picking up a refresh issue for this skill:**
 >
-> 1. `automation_tier` is `issue_only` and `validation.runnable` is `false`.
->    Do not run the live validation script without explicit credentials from a human.
-> 2. Open or update the drift issue with the new SHA and ask a human maintainer to
->    run § 2.
-> 3. If the human posts passing evidence, update this pin file and bump only the
->    SKILL.md `metadata.version` PATCH line.
+> 1. `automation_tier` is `auto` and `validation.runnable` is `false`. CI executes
+>    the pin via `scripts/run-pin-validation.py --include-azure` whenever
+>    `AZURE_AI_ENDPOINT` is set (and a deployed `JUDGE_MODEL_DEPLOYMENT` exists,
+>    default `gpt-5.4-mini`). Standard CI (no flag) skips it.
+> 2. **You do not need a hosted agent in the project.** The smoke uses a static
+>    synthetic query/response pair so the pin validates only the foundry-evals
+>    contract surface (eval definition + run lifecycle).
+> 3. After a green refresh, update `upstream.pinned_sha`,
+>    `upstream.pinned_commit_message`, `last_validated`, and bump the SKILL.md
+>    `metadata.version` PATCH per AGENTS.md § 5.

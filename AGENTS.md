@@ -468,6 +468,59 @@ Per-skill `templates/` directories hold copy-paste artifacts (Dockerfiles,
 pyproject.toml, container.py, etc.). When updating a template, also update
 the prose in `SKILL.md` that explains it — the two must stay in sync.
 
+### Per-skill `references/` directories — SSOT for non-trivial code
+
+When a SKILL has a `references/<lang>/` directory, each file there is the
+**single source of truth** for the snippet it represents. SKILL.md MUST NOT
+duplicate that code body inline. Use a one-line cross-link instead:
+
+```markdown
+> **MUST:** Copy verbatim from [`references/python/main.py`](references/python/main.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+> That file is the canonical FoundryChatClient bootstrap for hosted agents.
+```
+
+Keep inline ONLY:
+- Configuration *fragments* that show a single key/value in context
+  (e.g. `dependsOn: [rbac]` wiring snippets, hardcoded-UUID demos that
+  intentionally differ in shape from the env-var-driven reference)
+- Subset / shape-variant examples that are **short (≤ 20 lines), explicitly
+  incomplete, and prose-annotated to call out how they differ from the
+  canonical reference.** A truncated example without an explicit "this is
+  a structural excerpt — full version in …" callout is a duplication
+  violation, not a variant.
+
+Forbidden:
+- Re-pasting a function/class body that exists in `references/`
+- "Canonical reference files: see also..." callouts that list 6 files
+  by hand. Use an imperative table mapping each file to the SKILL.md
+  § it documents (see `foundry-hosted-agents/SKILL.md` for the pattern).
+- Truncating the canonical block (removing imports / a few cases) and
+  dropping it inline as an "excerpt". That is the duplication anti-pattern
+  the validator was added to catch — the excerpt drifts, then ships wrong.
+
+Header convention inside each reference file (validator-enforced):
+
+```python
+"""Canonical <one-line description>.
+
+Source of truth for the prose example in `../../SKILL.md § <Section Title>`.
+...
+"""
+```
+
+The validator (`scripts/validate-skills.py`) checks:
+1. Every `.py`/`.sh`/`.yaml`/`.json`/`.bicep` under `references/` parses /
+   compiles cleanly (catches drift from the inline snippet that used to
+   ship in SKILL.md).
+2. Every `§ <Section Title>` in a reference-file header resolves to a
+   matching `##` / `###` heading in the sibling SKILL.md (catches the
+   "renamed the section but forgot the header" silent drift).
+
+E2E tests in `scripts/tests/` MUST import canonical helpers from
+`references/` via `sys.path` injection — never redefine the helper inline.
+See `test_e2e_foundry_toolbox.py` for the import pattern.
+
 ---
 
 ## 8 · Pre-push validation
@@ -545,9 +598,21 @@ Each pin file declares an `automation_tier`:
   credentials (Azure subscription, Foundry project) that we don't ship
   to the coding agent. A human authors the refresh.
 
-Rule: if `validation.requires` includes anything beyond `github_only`
-or `pypi`, `automation_tier` MUST be `issue_only`. Enforced by
-[`scripts/validate-skills.py`](scripts/validate-skills.py).
+**Rules** (enforced by [`scripts/validate-skills.py`](scripts/validate-skills.py)):
+
+- If `validation.requires` is restricted to safe categories (`github_only`,
+  `pypi`) and `validation.runnable: true`, the pin runs in **every** CI run
+  (standard pin-smoke + e2e-azure modes).
+- If `validation.requires` includes credentialed resources (`azure_subscription`,
+  `foundry_project`):
+  - `automation_tier: auto` + `validation.runnable: false` → pin runs **only**
+    under `run-pin-validation.py --include-azure` (e2e-azure CI mode). The
+    coding agent edits the pin; CI validates it live against Azure.
+  - `automation_tier: issue_only` + `validation.runnable: false` → pin is
+    **never** auto-executed; refresh is human-driven via an issue.
+  - `validation.runnable: true` with credentialed requires is **rejected** —
+    the agent has no way to actually run it. Set `runnable: false` and pick
+    one of the two tiers above.
 
 ### 9.3 · The weekly loop
 
@@ -652,7 +717,7 @@ re-runs the script on the runner) and by reviewer eyeball.
 |------|------|---------------|
 | [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**`, `plugin.json`, or `.github/plugin/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
-| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/*/references/upstream-pin.md` | **Re-runs `validation.script` on the runner** for auto-tier pin files; asserts every `expected_output` substring. No "trust me, I tested" path. |
+| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching anything under `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `rg-awesome-gbb-ci`) |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
@@ -715,12 +780,14 @@ or service principal passwords.
 real Azure infrastructure (§ 9.7). New skills that connect to Azure
 MUST add an E2E test (§ 2.8).
 
-**Excluded from CI** (too complex, manually validated only):
-`citadel-hub-deploy`, `citadel-spoke-onboarding`, `foundry-vnet-deploy`.
+**Excluded from CI** (multi-resource greenfield deploys; pin runs human-only):
+`citadel-hub-deploy`, `foundry-vnet-deploy`. Both are
+`automation_tier: issue_only` + `validation.runnable: false`.
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks T3 pins
-(those with `azure_subscription` or `foundry_project` in
-`validation.requires`) when the runner has Azure credentials via env vars.
+(`automation_tier: auto` + `validation.runnable: false` +
+`azure_subscription`/`foundry_project` in `validation.requires`) when the
+runner has Azure credentials via env vars.
 
 ---
 

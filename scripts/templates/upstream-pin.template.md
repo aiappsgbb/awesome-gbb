@@ -91,13 +91,19 @@ validation:
   #   pypi                  — pip install from public PyPI, no auth
   #   azure_subscription    — `az` CLI with a logged-in tenant
   #   foundry_project       — live Foundry project + agent runtime
-  # If ANYTHING but github_only/pypi → automation_tier MUST be issue_only.
+  #
+  # Tier matrix (enforced by scripts/validate-skills.py):
+  #   safe only + runnable=true                      → runs in every CI run
+  #   {az_sub|foundry} + auto + runnable=false       → runs only with --include-azure
+  #   {az_sub|foundry} + issue_only + runnable=false → human-only refresh
+  #   {az_sub|foundry} + runnable=true               → REJECTED (agent can't run it)
   requires:
     - github_only
     - pypi
 
   # Whether validation.script can run without human intervention.
-  # If false, automation_tier MUST be issue_only.
+  # Set false for any pin that needs Azure/Foundry creds — CI will execute
+  # it via `run-pin-validation.py --include-azure` when automation_tier=auto.
   runnable: true
 
   # Copy-paste shell — what the coding agent executes.

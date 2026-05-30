@@ -90,18 +90,43 @@ def parse_pin(path: Path) -> dict | None:
 
 
 def changed_pin_files(base: str) -> list[Path]:
-    """git diff --name-only base...HEAD -- skills/*/references/upstream-pin.md"""
+    """Return upstream-pin.md for every skill whose folder has *any* change vs base.
+
+    Rationale: a refactor that moves canonical code into `references/` or
+    edits SKILL.md prose still changes how the skill behaves — re-running
+    that skill's pin validation is the only proof the change didn't break
+    its live-Azure contract. Diffing only `skills/*/references/upstream-pin.md`
+    (the previous behavior) silently skipped this class of edits.
+
+    Skills without an upstream-pin.md (e.g. auto-demo-producer,
+    azure-tenant-isolation, gbb-pptx, ip-catalog) are silently skipped.
+    """
     try:
         out = subprocess.check_output(
-            ["git", "diff", "--name-only", f"{base}...HEAD", "--", PIN_GLOB],
+            ["git", "diff", "--name-only", f"{base}...HEAD", "--", "skills/"],
             cwd=REPO,
             text=True,
         )
     except subprocess.CalledProcessError as e:
         print(f"::error::git diff failed: {e}")
         sys.exit(1)
-    files = [REPO / line.strip() for line in out.splitlines() if line.strip()]
-    files = [f for f in files if f.exists()]
+
+    changed_skills: set[str] = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("skills/"):
+            continue
+        parts = line.split("/")
+        if len(parts) < 3:
+            # e.g. `skills/README.md` — not under a skill folder
+            continue
+        changed_skills.add(parts[1])
+
+    files: list[Path] = []
+    for skill in sorted(changed_skills):
+        pin = REPO / "skills" / skill / "references" / "upstream-pin.md"
+        if pin.exists():
+            files.append(pin)
     return files
 
 
@@ -114,8 +139,17 @@ def should_run(pin: dict, path: Path, *, include_azure: bool = False) -> tuple[b
     Decide whether this pin's validation.script is safe + intended to run
     in CI. Returns (should_run, reason).
 
-    With include_azure=True, also run pins that need Azure/Foundry creds
-    (azure_subscription, foundry_project) when the required env vars are set.
+    Authoritative contract: AGENTS.md § 12.3.
+
+    Tier semantics:
+      - automation_tier == "auto"        → eligible for CI
+      - automation_tier == "issue_only"  → human-only, NEVER auto-run
+        (applies to both standard and `--include-azure` modes)
+
+    Mode semantics (only relevant when automation_tier == "auto"):
+      - standard       → runnable:true AND requires ⊆ SAFE_REQUIRES
+      - include_azure  → adds runnable:false + Azure/Foundry requires,
+                          provided the matching env vars are set on the runner.
     """
     validation = pin.get("validation") or {}
     requires = validation.get("requires") or []
@@ -130,9 +164,18 @@ def should_run(pin: dict, path: Path, *, include_azure: bool = False) -> tuple[b
 
     has_azure_needs = bool(AZURE_REQUIRES & set(requires))
 
+    # `automation_tier: issue_only` is the canonical "never auto-run in CI"
+    # signal (AGENTS.md § 12.3). It applies in BOTH standard and
+    # `--include-azure` modes — pins that need human-driven multi-resource
+    # deploys (e.g. citadel-hub-deploy, foundry-vnet-deploy) opt out here.
+    if automation_tier != "auto":
+        return False, f"automation_tier={automation_tier} (excluded from CI per AGENTS.md § 12.3)"
+
     if include_azure and has_azure_needs:
-        # Azure E2E mode: bypass runnable/automation_tier checks for pins
-        # that need Azure creds, but verify the env vars are actually set.
+        # Azure E2E mode: `--include-azure` unlocks pins with
+        # `runnable: false` AND `requires: [azure_subscription|foundry_project]`,
+        # provided their automation_tier is `auto` (checked above) and the
+        # required env vars are actually set on the runner.
         missing_env = []
         for req in requires:
             env_var = AZURE_ENV_MAP.get(req)
@@ -146,11 +189,9 @@ def should_run(pin: dict, path: Path, *, include_azure: bool = False) -> tuple[b
             return False, f"validation.requires has unsafe non-Azure entries: {non_azure}"
         return True, ""
 
-    # Standard logic for non-Azure pins
+    # Standard CI logic (no Azure creds): runnable pins with safe requires only
     if not runnable:
         return False, "validation.runnable is false"
-    if automation_tier != "auto":
-        return False, f"automation_tier={automation_tier} (not auto)"
     extra = [r for r in requires if r not in SAFE_REQUIRES]
     if extra:
         return False, f"validation.requires has unsafe entries: {extra}"

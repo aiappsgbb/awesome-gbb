@@ -17,6 +17,14 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLBOX_REFS = REPO_ROOT / "skills" / "foundry-toolbox" / "references" / "python"
+if str(TOOLBOX_REFS) not in sys.path:
+    sys.path.insert(0, str(TOOLBOX_REFS))
+
+from mcp_text_extractor import extract_mcp_text as _mcp_text_extractor  # noqa: E402
 
 AZURE_AI_ENDPOINT = os.environ.get("AZURE_AI_ENDPOINT", "")
 SKIP_REASON = "AZURE_AI_ENDPOINT not set — skipping Azure E2E tests"
@@ -73,38 +81,75 @@ class TestFoundryToolboxE2E(unittest.TestCase):
         print("\n  ✅ MCPStreamableHTTPTool constructed OK")
 
     def test_03_agent_with_mcp_tool(self):
-        """Agent + FoundryChatClient + MCPStreamableHTTPTool end-to-end."""
+        """Agent + FoundryChatClient + MCPStreamableHTTPTool end-to-end.
+
+        Imports the canonical `_mcp_text_extractor` from
+        `skills/foundry-toolbox/references/python/mcp_text_extractor.py`
+        so this test stays in sync with the SKILL.md prose example
+        (SSOT — see AGENTS.md § 7).
+
+        Wraps `agent.run()` in tenacity exponential backoff so transient
+        429s — either from the public Learn MCP endpoint or from the
+        Foundry model deployment per-minute rate limit (observed on
+        weekly sweeps) — don't fail the live-Azure gate.
+
+        The `MCPStreamableHTTPTool` is entered with `async with` so its
+        underlying streamable_http_client connection is cleanly torn
+        down per attempt (otherwise a failed attempt leaks an open
+        anyio task group, and the next attempt's cleanup tries to exit
+        a cancel scope from a different task → RuntimeError).
+
+        If the model deployment is persistently rate-limited across
+        all retry attempts (≈4 min total), the test SKIPS rather than
+        FAILS — this is an Azure quota signal, not a skill defect, and
+        we don't want to block PR merges over capacity issues.
+        """
         import asyncio
         from agent_framework import Agent, MCPStreamableHTTPTool, Message
-
-        def _mcp_text_extractor(raw):
-            if isinstance(raw, dict) and "content" in raw:
-                parts = [
-                    item.get("text", "")
-                    for item in raw["content"]
-                    if isinstance(item, dict) and item.get("type") == "text"
-                ]
-                return "\n\n".join(parts) if parts else str(raw)
-            return str(raw)
-
-        learn_mcp = MCPStreamableHTTPTool(
-            name="microsoft-learn",
-            url="https://learn.microsoft.com/api/mcp",
-            parse_tool_results=_mcp_text_extractor,
+        from agent_framework.exceptions import ChatClientException
+        from tenacity import (
+            retry,
+            retry_if_exception,
+            stop_after_attempt,
+            wait_exponential,
         )
 
-        agent = Agent(
-            client=self.client,
-            tools=[learn_mcp],
-            instructions="Answer Azure questions using the microsoft-learn tool.",
+        def _is_transient(exc: BaseException) -> bool:
+            if isinstance(exc, AssertionError):
+                return False
+            return True
+
+        @retry(
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=4, min=15, max=120),
+            reraise=True,
+            retry=retry_if_exception(_is_transient),
         )
+        async def _run_once():
+            async with MCPStreamableHTTPTool(
+                name="microsoft-learn",
+                url="https://learn.microsoft.com/api/mcp",
+                parse_tool_results=_mcp_text_extractor,
+            ) as learn_mcp:
+                agent = Agent(
+                    client=self.client,
+                    tools=[learn_mcp],
+                    instructions="Answer Azure questions using the microsoft-learn tool.",
+                )
+                msg = Message(role="user", contents=["What is Azure Container Apps?"])
+                return await agent.run(messages=[msg])
 
-        msg = Message(role="user", contents=["What is Azure Container Apps?"])
+        try:
+            response = asyncio.run(_run_once())
+        except ChatClientException as exc:
+            msg_lower = str(exc).lower()
+            if "429" in msg_lower or "rate_limit_exceeded" in msg_lower:
+                self.skipTest(
+                    f"Foundry model deployment persistently rate-limited "
+                    f"after retries — Azure quota issue, not a skill defect: {exc}"
+                )
+            raise
 
-        async def _run():
-            return await agent.run(messages=[msg])
-
-        response = asyncio.run(_run())
         text = response.text if hasattr(response, "text") else str(response)
         self.assertGreater(len(text), 50, "Response too short")
         has_azure_content = "azure" in text.lower() or "container" in text.lower()

@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
 metadata:
-  version: "1.0.4"
+  version: "1.1.0"
 ---
 
 # Foundry Agent Evaluations
@@ -697,25 +697,20 @@ Microsoft Learn assistant, an internal docs Q&A, a code-grounded coding
 assistant), an `agent-output-only` grader misses the most important quality
 signal: **did the agent actually cite real, reachable sources?**
 
+> **MUST:** Use the canonical reference graders. Do NOT redefine inline — the validator enforces single-source-of-truth.
+>
+> - [`references/python/url_citation_grader.py`](references/python/url_citation_grader.py) — both graders (`grade_citation_present` + `grade_citation_resolves`) plus the `LEARN_URL_PATTERN` regex (swap the domain for your corpus).
+> - [`references/python/eval_runner.py`](references/python/eval_runner.py) — Day-1 smoke recipe runner (`tool_selection >= 0.7` pass gate); see § Day-1 Smoke Test Recipe.
+> - [`references/data/sample_eval_dataset.jsonl`](references/data/sample_eval_dataset.jsonl) — 8 representative items from the weather-agent + learn-assistant pilots showing the standard simple item shape (`{"item": {"prompt", "expected_tool", ...}}`).
+
 Wire two complementary graders into your eval suite:
 
 ### Grader A — citation_present (cheap, runs on every answer)
 
+Import from `references/python/url_citation_grader.py`:
+
 ```python
-import re
-
-LEARN_URL_PATTERN = re.compile(r"\[([^\]]+)\]\(https://learn\.microsoft\.com/[^\)]+\)")
-
-def grade_citation_present(item):
-    """Pass if the agent's answer contains >= 2 inline markdown links
-    to learn.microsoft.com. Substitute the domain for your corpus."""
-    answer = item["agent_output"]
-    citations = LEARN_URL_PATTERN.findall(answer)
-    return {
-        "pass": len(citations) >= 2,
-        "score": min(1.0, len(citations) / 2.0),
-        "citation_count": len(citations),
-    }
+from references.python.url_citation_grader import grade_citation_present
 ```
 
 Use as a `FunctionEvaluator` in Foundry Evals. Latency: negligible
@@ -723,27 +718,10 @@ Use as a `FunctionEvaluator` in Foundry Evals. Latency: negligible
 
 ### Grader B — citation_resolves (sampled, runs against live deploy)
 
-```python
-import asyncio
-import httpx
+Import from `references/python/url_citation_grader.py`:
 
-async def grade_citation_resolves(item, timeout=10):
-    """Pass if every cited URL returns HTTP 200 OK (sampled).
-    Run against the live deploy in a post-deploy smoke gate."""
-    urls = LEARN_URL_PATTERN.findall(item["agent_output"])
-    if not urls:
-        return {"pass": False, "score": 0.0, "reason": "no citations to verify"}
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-        results = await asyncio.gather(
-            *(c.head(u) for u in urls), return_exceptions=True
-        )
-    ok = sum(1 for r in results if isinstance(r, httpx.Response) and r.status_code == 200)
-    return {
-        "pass": ok == len(urls),
-        "score": ok / len(urls),
-        "ok_count": ok,
-        "url_count": len(urls),
-    }
+```python
+from references.python.url_citation_grader import grade_citation_resolves
 ```
 
 Latency: 1-5 s per item (depends on network + number of URLs). Run in a
@@ -1027,37 +1005,14 @@ echo "Run ID: $run_id"
 
 **Step 3: Score with built-in `tool_selection` evaluator**
 
-```python
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+> **MUST:** Use [`references/python/eval_runner.py`](references/python/eval_runner.py) as the canonical runner. Do NOT redefine inline — the validator enforces single-source-of-truth. The file wraps Steps 2-4 (`invoke_and_capture` → `smoke_score` → `decide`) and exits 0 / 1 on the `tool_selection >= 0.7` gate.
 
-client = AIProjectClient(
-    endpoint="<project_endpoint>",
-    credential=DefaultAzureCredential(),
-)
-
-# Create a simple eval run with just tool_selection
-eval_def = client.evals.create(
-    name="smoke-test-tool-selection",
-    description="Day-1 smoke test — validate tool selection on real scenario",
-    evaluators=[{"evaluator_id": "builtin.tool_selection"}],
-)
-
-# Score the response
-result = client.evals.runs.create(
-    eval_id=eval_def.id,
-    name=f"smoke-{run_id}",
-    data_source={
-        "type": "jsonl",
-        "source": {
-            "type": "file_content",
-            "content": [{"item": {"prompt": "<your-representative-prompt>"}}],
-        },
-    },
-)
-
-print(f"Tool selection score: {result.metrics}")
+```bash
+# References the canonical runner — run from your pilot repo root
+python skills/foundry-evals/references/python/eval_runner.py "<your-representative-prompt>"
 ```
+
+The runner reads the prompt from `argv`, invokes `azd ai agent invoke --new-conversation`, then creates a 1-item Foundry eval with `builtin.tool_selection` and prints the score.
 
 **Step 4: Interpret and decide**
 

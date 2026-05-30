@@ -109,8 +109,14 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.include_azure)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Note: secrets are at repo level, OIDC federated creds use
-    # pull_request + ref:refs/heads/main subjects (not environment)
+    # Note: secrets are at repo level. OIDC federated credentials on the
+    # UAMI cover three subjects (string-match only — Entra does NOT support
+    # wildcards or claimsMatchingExpression for the GitHub Actions issuer):
+    #   - repo:aiappsgbb/awesome-gbb:pull_request       (PR events)
+    #   - repo:aiappsgbb/awesome-gbb:ref:refs/heads/main (push to main)
+    #   - repo:aiappsgbb/awesome-gbb:ref:refs/tags/*    (release tags)
+    # workflow_dispatch on non-main branches will FAIL with AADSTS700213
+    # unless a branch-specific FIC is created on the UAMI first.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,8 +152,13 @@ jobs:
             python scripts/run-pin-validation.py --all --include-azure
           fi
 
+      # Note: `always() &&` decouples each pytest from the preceding
+      # pin-validation step so a single pin failure doesn't skip live E2E
+      # coverage. These run on PRs too because the `pull_request` OIDC
+      # subject is covered by the `github-pr` federated credential and
+      # the repo policy is "every skill must be field-tested on Azure".
       - name: Run E2E prompt agent test
-        if: github.event_name != 'pull_request'
+        if: always()
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
@@ -155,7 +166,7 @@ jobs:
           python -m pytest scripts/tests/test_e2e_prompt_agents.py -v
 
       - name: Run E2E voice-live test
-        if: github.event_name != 'pull_request'
+        if: always()
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
@@ -163,9 +174,9 @@ jobs:
           python -m pytest scripts/tests/test_e2e_voice_live.py -v
 
       - name: Run E2E foundry-toolbox test
-        if: github.event_name != 'pull_request'
+        if: always()
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
-          pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0"
+          pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0" "tenacity~=8.5.0"
           python -m pytest scripts/tests/test_e2e_foundry_toolbox.py -v
