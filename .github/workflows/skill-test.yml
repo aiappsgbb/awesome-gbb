@@ -293,9 +293,17 @@ jobs:
                   --disable-builtin-mcps \
                   -C "$GITHUB_WORKSPACE" \
                   2>&1 | tee "/tmp/${{ matrix.skill }}-transcript.log"
-          # Last-line contract: SMOKE_RESULT=PASS = success.
-          tail -n 1 "/tmp/${{ matrix.skill }}-transcript.log" | grep -q "^SMOKE_RESULT=PASS$" \
-            || { echo "fixture did not end with SMOKE_RESULT=PASS"; exit 1; }
+          # Marker contract: the fixture must emit `SMOKE_RESULT=PASS` on a
+          # line by itself somewhere in the transcript. We cannot use
+          # `tail -n 1` because the Copilot CLI itself appends a footer
+          # (`Changes / Duration / Tokens`) to stdout that the agent has
+          # no way to suppress. An explicit `SMOKE_RESULT=FAIL` from the
+          # agent still wins over PASS — check FAIL first.
+          if grep -qE "^SMOKE_RESULT=FAIL" "/tmp/${{ matrix.skill }}-transcript.log"; then
+            echo "fixture explicitly reported failure"; exit 1
+          fi
+          grep -q "^SMOKE_RESULT=PASS$" "/tmp/${{ matrix.skill }}-transcript.log" \
+            || { echo "fixture did not print SMOKE_RESULT=PASS marker"; exit 1; }
 
       - name: Retry once on classified-transient failure
         if: failure() && steps.run.outcome == 'failure'
@@ -321,8 +329,11 @@ jobs:
                     --disable-builtin-mcps \
                     -C "$GITHUB_WORKSPACE" \
                     2>&1 | tee "/tmp/${{ matrix.skill }}-retry.log"
-            tail -n 1 "/tmp/${{ matrix.skill }}-retry.log" | grep -q "^SMOKE_RESULT=PASS$" \
-              || { echo "retry also did not end with SMOKE_RESULT=PASS"; exit 1; }
+            if grep -qE "^SMOKE_RESULT=FAIL" "/tmp/${{ matrix.skill }}-retry.log"; then
+              echo "retry explicitly reported failure"; exit 1
+            fi
+            grep -q "^SMOKE_RESULT=PASS$" "/tmp/${{ matrix.skill }}-retry.log" \
+              || { echo "retry did not print SMOKE_RESULT=PASS marker"; exit 1; }
           else
             echo "non-transient failure — not retrying"
             exit 1

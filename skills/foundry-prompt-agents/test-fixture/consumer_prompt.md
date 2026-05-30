@@ -49,14 +49,13 @@ following:
 
 ## Result contract
 
-If every step succeeds, your **final chat reply** must be exactly the
-single line `SMOKE_RESULT=PASS` — no markdown, no bold, no leading or
-trailing prose, no follow-up summary. The Python script can print
-whatever it wants while it runs, but your last line of output to the
-CI runner is the marker only. On any failure, your final chat reply
-must be `SMOKE_RESULT=FAIL <short reason>` (one line, same rules).
-The CI job uses `tail -n 1 | grep -q '^SMOKE_RESULT=(PASS|FAIL)'`, so
-any commentary after the marker breaks the check.
+If every step succeeds, emit the exact line `SMOKE_RESULT=PASS` (on a
+line by itself, no markdown, no bold) somewhere in your reply — once
+is enough. The Copilot CLI appends its own footer (`Changes /
+Duration / Tokens`) after your reply, so we can't rely on it being the
+literal last stdout line; CI greps the transcript for the marker.
+On any failure emit `SMOKE_RESULT=FAIL <short reason>` (one line) —
+CI checks for FAIL before PASS, so an explicit FAIL always wins.
 
 Please don't modify any file under `skills/` — this is verification
 only.
