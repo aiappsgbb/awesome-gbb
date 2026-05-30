@@ -403,3 +403,37 @@ transient-classifier helper in the fixture template.
 `JobExecutionNotFound` ~10s race in AGENTS.md § 9.7 alongside the
 existing `AcrPull` race callout, so future fixture authors know to
 budget a retry loop for it.
+
+---
+
+## Appendix — Known failure modes (post-pilot hardening)
+
+### F1 — No regressions observed in 5/5 stability runs
+
+This fixture's 5/5 green count (Task 2.3) was a direct consequence
+of Pattern 6 (explicit `azd auth login` Step 0) being in the
+fixture from day one. When the workflow env contract was broken
+(Run #1 cross-task failure on Tasks 2.1 + 2.2 legs at SHA
+`dc5b418`), the `azd auth login` command in this fixture's Step 0
+would have FAIL'd loudly if it had run — but the workflow env block
+was actually populated for the azd-patterns leg in some runs (the
+3 OIDC vars are tied to job execution context). Pattern 6 was
+defense-enough; Pattern 11 made it defense-in-depth.
+
+### F2 — Light retrofit applied for cross-skill consistency
+
+**Change applied (this PR):**
+- Step 0 now inventories the three Azure OIDC env vars BEFORE
+  calling `azd auth login` (same shape as the hardened
+  prompt-agents and hosted-agents fixtures). This costs ~0.5 s and
+  emits a `SMOKE_RESULT=FAIL` line up-front if the workflow env
+  contract regresses in future PRs — no waiting for `azd auth
+  login` to surface the bug 1-2 s deeper.
+- See AGENTS.md § 9.7 Patterns 10 (marker-omission, already in
+  place via Step 6 in this fixture) + 11 (env contract, retrofitted).
+
+### F3 — Marker-omission risk (low, defense already in place)
+
+The fixture's existing "Step 6 — Emit the result marker" is
+Pattern-10 compliant: numbered final step, explicit imperative,
+`_MOKE_RESULT` placeholder. No backfill needed.

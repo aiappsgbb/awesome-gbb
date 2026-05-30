@@ -93,7 +93,11 @@ jobs:
   # Spawns ONE runner per discovered skill. Each runner installs the
   # Copilot CLI, points it at Foundry (gpt-5.4-mini in aif-awesome-gbb-ci)
   # via BYOK env vars, and runs the skill's consumer_prompt.md fixture.
-  # Success contract: last line of stdout is `SMOKE_RESULT=PASS`.
+  # Success contract: somewhere in the whole transcript a line matches
+  # the anchored regex `^SMOKE_RESULT=PASS$`. An explicit
+  # `^SMOKE_RESULT=FAIL` line beats PASS (checked first). The Copilot
+  # CLI appends a `Changes / Duration / Tokens` footer that cannot be
+  # suppressed, so `tail -n 1` form CANNOT be used here.
   copilot-cli-matrix:
     needs: build-matrix
     if: fromJSON(needs.build-matrix.outputs.matrix).skill[0] != null
@@ -161,6 +165,17 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          # Explicit OIDC identity vars for the consumer fixture's
+          # subshells. `azure/login@v2` (above) authenticates the Azure
+          # CLI cache, but bash subprocesses spawned by Copilot CLI tool
+          # calls only inherit env-block vars, not the CLI cache. Without
+          # these, fixtures that reference `$AZURE_CLIENT_ID` / `_TENANT_ID`
+          # / `_SUBSCRIPTION_ID` (e.g. `azd auth login`, `azd env set`)
+          # get empty strings → silent auth failures or paranoid
+          # printenv-and-bail (see AGENTS.md § 9.7 Pattern 11).
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           # Foundry project endpoint + model deployment exposed to the
           # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
           # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
@@ -208,6 +223,13 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          # See "Run consumer prompt" step above for the rationale on
+          # the explicit AZURE_CLIENT_ID/_TENANT_ID/_SUBSCRIPTION_ID
+          # exports; the retry step must mirror it or the second attempt
+          # runs with a different env contract than the first.
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
         run: |

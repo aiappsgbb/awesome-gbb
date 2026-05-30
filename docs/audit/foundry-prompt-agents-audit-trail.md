@@ -60,3 +60,46 @@ therefore used `pull_request synchronize` triggers from spaced empty commits
 - **Class 11 cross-skill drift** — Three sibling skills (`foundry-iq` L212, `foundry-doc-vision-speech` L356, `azd-patterns` L643) still surface the pre-May-2026 display name "Azure AI User" alongside the correct GUID. The GUID is unchanged so functionally these still resolve, but the display name is stale and risks confusing readers who try `--role "Azure AI User"` and hit `RoleDefinitionNotFound`. **Deferred** because each sibling skill must own its own deep-audit pass under this same plan (Tasks 2.2+ / Phase 3 wave). Filing inline fixes in this PR would violate AGENTS.md § 2.6 (one skill per PR) and the audit-trail gate's per-skill bounds.
 - **KI-002 / KI-003 self-verification rigor** — The Phase C consumer fixture *exercises* these signatures end-to-end (list → check `.versions` dict; delete via positional args), but does not currently A/B-test the wrong forms to prove they fail loudly. Strengthening to A/B-tests is a Phase 3 follow-up — out of scope for the pilot.
 - **L95 audience parity** — Phase B will align L95 to `https://cognitiveservices.azure.com`. The pre-fix audience `https://ai.azure.com` empirically issues a valid token, but we have NOT verified whether the Foundry data plane accepts that audience for the `services.ai.azure.com/api/projects/.../agents/.../versions` REST surface. Documented as a fix, not a regression.
+
+---
+
+## Appendix — Known failure modes (post-pilot hardening)
+
+### F1 — Marker omission (Run #1 `26695861103`, foundry-prompt-agents leg)
+
+**Symptom:** Copilot CLI replied with a polite prose summary ("I ran
+the create_version, conversations, and responses calls — everything
+worked.") but never emitted `SMOKE_RESULT=PASS`. CI grep failed.
+Transcript was 1153 bytes of pure prose, no marker line.
+
+**Root cause:** The original fixture's "Result contract" section
+*described* the marker as the desired outcome but did not list it as
+a numbered step. The agent treated the imperative as documentation,
+not as work. Pure agent stochasticity — no Azure or workflow bug.
+
+**Defense applied (this PR):**
+- New numbered "Step 7 — Emit the result marker" with explicit
+  imperative + Run #1 citation + "if you have declared success in
+  prose, you are NOT done" rule.
+- Marker MUST emit in the SAME assistant reply as the final work
+  step (not split into a summary turn).
+- See AGENTS.md § 9.7 Pattern 10 (marker-omission defense).
+
+### F2 — Workflow env contract gap (cross-skill)
+
+**Symptom:** No symptom on prompt-agents specifically (this fixture
+uses `DefaultAzureCredential()` which transparently picks up
+`AZURE_FEDERATED_TOKEN_FILE` from `azure/login@v2`), but the same
+underlying bug bit the hosted-agents leg of Run #1 hard.
+
+**Root cause:** `skill-test.yml` `env:` blocks did not export
+`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID` to the
+Copilot CLI subprocess. Vars were only passed as `with:` inputs to
+`azure/login@v2`.
+
+**Defense applied (this PR):**
+- `skill-test.yml` initial-run + retry env blocks now explicitly
+  export the three Azure OIDC vars.
+- New fixture Step 0 inventories the env vars and runs
+  `az account show --output table` BEFORE any work, FAIL-fast.
+- See AGENTS.md § 9.7 Pattern 11 (workflow env contract).

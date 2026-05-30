@@ -28,6 +28,40 @@ SKILL.md for the documented Python patterns. Then run a Python script
 (an inline `python3 - <<'PY' ... PY` heredoc is fine) that does the
 following:
 
+0. **Step 0 — Verify the CI auth contract BEFORE any work.** Run these
+   two commands first. Both MUST succeed before you proceed. If either
+   fails, **stop immediately** and emit a single `SMOKE_RESULT=FAIL`
+   line with the precise failure mode (see Result contract). Do NOT
+   invent additional credential checks (no `az ad sp show`, no
+   `az role assignment list`, no `az login --service-principal`) —
+   those are workflow-bug indicators, not skill bugs.
+
+   - First, prove the three OIDC env vars are exported into THIS
+     shell (Copilot CLI subprocesses only inherit the workflow step's
+     env block — see AGENTS.md § 9.7 Pattern 11):
+
+     ```bash
+     echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+     echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+     echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+     ```
+
+     Every line MUST print `…=set`. If any is empty, the workflow env
+     contract is broken — FAIL with `workflow env contract: <var> empty`.
+
+   - Then prove `az` is actually authenticated:
+
+     ```bash
+     az account show --output table
+     ```
+
+     MUST return a row whose `SubscriptionId` column matches
+     `$AZURE_SUBSCRIPTION_ID`. If it errors with "Please run
+     'az login'", `azure/login@v2` failed upstream — FAIL with
+     `az account show: not logged in`.
+
+   Only if both checks pass, proceed to step 1.
+
 1. Build an `AIProjectClient(endpoint=FOUNDRY_PROJECT_ENDPOINT,
    credential=DefaultAzureCredential())`.
 2. Generate `agent_name = f"ci-smoke-pa-{uuid.uuid4().hex[:8]}"` and call
@@ -46,6 +80,24 @@ following:
 5. Remove it with `project.agents.delete_version(agent_name,
    str(agent.version))` — note the positional `(name, version)` form.
 6. Confirm the agent is gone from `project.agents.list()`.
+7. **Step 7 — Emit the result marker. This is mandatory work, not a
+   postscript.** A previous run of this fixture
+   ([`actions/runs/26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)
+   — `foundry-prompt-agents` leg) completed all of steps 1-6
+   successfully, the agent replied to the ping, the list/delete cycle
+   verified, the model emitted a prose summary saying "lifecycle
+   complete, all assertions held" — and then it stopped without
+   emitting the marker line. The CI grep failed and the matrix leg
+   went red on what was a successful skill execution. **Do not let
+   that happen here.** If you have declared success in prose, you are
+   NOT done. The run is not complete until the final assistant reply
+   contains exactly one line matching `^SMOKE_RESULT=PASS$` per the
+   contract below. The marker MUST be emitted in the SAME assistant
+   reply that performs steps 5-6 — do NOT split it into a separate
+   "summary" turn. The LAST thing you do in this fixture is print
+   that line. Read the "Result contract" section below carefully
+   BEFORE you start step 1, and re-read it before you emit your final
+   reply.
 
 ## Result contract
 

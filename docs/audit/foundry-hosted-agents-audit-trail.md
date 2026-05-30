@@ -542,3 +542,66 @@ workers (or human auditors) need to act on it.
     final line of stdout". This experiment was time-boxed away in this
     audit; recommend Task 2.3 spend 5 minutes on it and document the
     finding either way.
+
+---
+
+## Appendix — Known failure modes (post-pilot hardening)
+
+### F1 — Workflow env contract gap (Run #1 `26695861103`, foundry-hosted-agents leg)
+
+**Symptom:** Fixture printed an env-inventory line showing
+`AZURE_SUBSCRIPTION_ID=` (empty), then FAIL'd at the first
+`azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID"` step.
+Transcript = 2366 bytes, FAIL marker emitted cleanly per the
+hardened contract.
+
+**Root cause (REVISED — combined bug):**
+1. `skill-test.yml` `env:` blocks did not export
+   `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID` to
+   the Copilot CLI subprocess. The three vars were ONLY available as
+   `with:` inputs to `azure/login@v2` — they never reached the
+   Copilot step's environment.
+2. The fixture's Step 3 (`azd env set …`) silently referenced
+   `${AZURE_SUBSCRIPTION_ID}` / `${AZURE_TENANT_ID}` without a prior
+   explicit `azd auth login` (Pattern 6 not yet applied at the
+   time). Empty expansion produced a confusing failure 8 lines into
+   `azd init` instead of failing loudly up-front.
+
+**Why the original Task 2.2 stability runs passed:** Those 2 runs
+used `DefaultAzureCredential()`-style implicit pickup that DID find
+`AZURE_FEDERATED_TOKEN_FILE` (which `azure/login@v2` writes to disk
+and exports via `GITHUB_ENV` automatically). The `azd env set`
+references happened to coincide with cached `azd config` values from
+prior workflow runs sharing the same runner image, masking the gap.
+
+**Why azd-patterns 5/5 were green:** That fixture had explicit
+`azd auth login --client-id "$AZURE_CLIENT_ID" --tenant-id
+"$AZURE_TENANT_ID"` as Step 0. When the vars were missing, that
+command FAILed loudly and immediately. Pattern 6 was already in
+place — Pattern 11 only applies if Pattern 6 isn't.
+
+**Defense applied (this PR):**
+- `skill-test.yml` initial-run + retry env blocks now explicitly
+  export the three Azure OIDC vars to the Copilot step subprocess.
+- New fixture Step 0 with full Pattern 11 inventory
+  (`echo "AZURE_*=${AZURE_*:+set}"` × 3 + `az account show
+  --output table`) + Pattern 6 explicit `azd auth login`. Both layers
+  enforced — defense in depth.
+- "Do NOT invent additional credential checks" rule (no
+  `az ad sp show`, no `az role assignment list`).
+- See AGENTS.md § 9.7 Patterns 10 (marker-omission) + 11 (env
+  contract).
+
+### F2 — Marker emission (Pattern 10 backfill)
+
+**Symptom:** None observed for hosted-agents specifically, but the
+parallel prompt-agents leg of Run #1 hit pure marker-omission. The
+same risk surface exists on hosted-agents: after a 13-minute happy
+path (ACR push + ACA cold-start + Foundry agent invoke + teardown),
+an agent might emit a polite prose summary and forget the marker.
+
+**Defense applied (this PR):**
+- New numbered "Step 7 — Emit the result marker" with explicit Run
+  #1 citation + "if you have declared success in prose, you are NOT
+  done" rule.
+- See AGENTS.md § 9.7 Pattern 10.

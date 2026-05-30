@@ -54,23 +54,56 @@ Then run these steps. Use a shell heredoc or python heredoc as you
 prefer — the goal is the result marker, not a particular ergonomics
 choice.
 
-1. **Step 0 — Explicit azd auth login.** Run this BEFORE any other
-   `azd` or `az` command. Implicit OIDC pickup via
-   `AZURE_FEDERATED_TOKEN_FILE` has two silent failure modes (a) azd
-   < 1.5.0 doesn't auto-detect the file; (b) sub-shell env reset
-   blanks the credential mid-run. Explicit Step 0 surfaces credential
-   failures up-front (~2 s overhead) and mirrors what a customer
-   following SKILL.md verbatim would type:
+1. **Step 0 — Verify the CI auth contract + explicit azd auth login.**
+   Run these checks BEFORE any other `azd` or `az` command. If any
+   fails, **stop immediately** and emit a single `SMOKE_RESULT=FAIL`
+   line per the Result contract. Do NOT invent additional credential
+   checks (no `az ad sp show`, no `az role assignment list`) — those
+   are workflow-bug indicators, not skill bugs.
 
-   ```bash
-   azd auth login \
-     --federated-credential-provider github \
-     --client-id "$AZURE_CLIENT_ID" \
-     --tenant-id "$AZURE_TENANT_ID"
-   ```
+   - **Inventory the three OIDC env vars** in THIS shell. Copilot CLI
+     subprocesses only inherit the workflow step's `env:` block — not
+     the Azure CLI credential cache (per AGENTS.md § 9.7 Pattern 11):
+
+     ```bash
+     echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+     echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+     echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+     ```
+
+     Every line MUST print `…=set`. If any is empty, FAIL with
+     `workflow env contract: <var> empty`.
+
+   - **Prove `az` is actually authenticated** with the right subscription:
+
+     ```bash
+     az account show --output table
+     ```
+
+     MUST return a row whose `SubscriptionId` matches
+     `$AZURE_SUBSCRIPTION_ID`. If it errors with "Please run
+     'az login'", FAIL with `az account show: not logged in`.
+
+   - **Explicit `azd auth login`** (AGENTS.md § 9.7 Pattern 6).
+     Implicit OIDC pickup via `AZURE_FEDERATED_TOKEN_FILE` has two
+     silent failure modes: (a) azd < 1.5.0 doesn't auto-detect the
+     file; (b) sub-shell env reset blanks the credential mid-run.
+     Explicit login surfaces credential failures up-front (~2 s
+     overhead) and mirrors what a customer following SKILL.md verbatim
+     would type:
+
+     ```bash
+     azd auth login \
+       --federated-credential-provider github \
+       --client-id "$AZURE_CLIENT_ID" \
+       --tenant-id "$AZURE_TENANT_ID"
+     ```
+
+     If this errors, FAIL with `azd auth login: <one-line reason>`.
 
    `az` CLI is already logged in via the workflow's `azure/login@v2`
-   step — don't re-run `az login`.
+   step — don't re-run `az login`. Only if all three checks pass,
+   proceed to step 2.
 
 2. **Step 1 — Generate per-run UUID suffix and scaffold Bicep.**
    Use 8 hex chars from `uuid.uuid4().hex`. Naming pattern (mandatory

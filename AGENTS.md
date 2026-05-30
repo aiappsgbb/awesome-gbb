@@ -973,6 +973,146 @@ Three patterns proved load-bearing during Task 2.1 of the
    list, add it here and document the retry budget. Do not assume a
    single shared retry helper — the back-off math is per-API.
 
+10. **Marker-omission bug class — make marker emission a NUMBERED FINAL
+    STEP, not a postscript** (Task 2.4 finding; root cause of `foundry-prompt-agents`
+    leg in run [`26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)).
+
+    Even with `_MOKE_RESULT` placeholder defense (Pattern 4) and an
+    explicit "Result contract" section, an agent CAN declare success in
+    prose and then stop without ever emitting the anchored
+    `^SMOKE_RESULT=PASS$` line. The CI grep then fails on a fixture leg
+    that did all the real work correctly — pure marker-omission, not
+    skill failure.
+
+    **Forensic signature** (run 1, PA leg): transcript contains
+    "lifecycle complete", "all assertions held", explicit per-step
+    confirmations — but NO marker line of any form (bare, backticked,
+    placeholder). Agent emitted its prose summary, hit the CLI footer
+    boundary, and exited. The result contract was treated as descriptive
+    background instead of an executable terminal step.
+
+    **Defense — copy the `azd-patterns` fixture's "Step 6 — Emit the
+    result marker" pattern across every Copilot-CLI fixture:**
+
+    1. The result contract MUST be the LAST major numbered step
+       (e.g. "Step N — Emit the result marker"). Not a sidebar, not a
+       trailing "Result contract" section, not a header above
+       authoring notes. **It is work the agent has to perform.**
+    2. Spell out the imperative: "Print exactly one line to stdout that
+       matches `^SMOKE_RESULT=PASS$` (no backticks, no leading spaces,
+       no prose after)."
+    3. Add an explicit rule: "If you have already declared success in
+       prose, you are not done. The run is not complete until you emit
+       the marker line."
+    4. The FINAL line of the fixture body should be that imperative —
+       so the autoregressive continuation has marker-emission as the
+       most recent priming context.
+    5. Continue using `_MOKE_RESULT` placeholder in any explanatory
+       prose ABOVE the final-step block (Pattern 4 still applies).
+
+    **Don't relax the workflow grep** (`grep -q '^SMOKE_RESULT=PASS$'`
+    against the whole transcript, FAIL-first). The grep is doing its
+    job — it's the fixture that has to make marker emission
+    non-skippable. A looser grep (e.g. `grep PASS`) buys flake in
+    exchange for false positives on any prose mention of the word.
+
+11. **Workflow env contract — explicit `AZURE_*` exports are mandatory,
+    NOT defensive paranoia** (Task 2.4 finding; root cause of
+    `foundry-hosted-agents` leg in run
+    [`26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)).
+
+    `azure/login@v2` (passed `client-id` / `tenant-id` / `subscription-id`
+    as `with:` inputs) authenticates the Azure CLI's TOKEN CACHE. It
+    does **NOT** automatically export `AZURE_CLIENT_ID`,
+    `AZURE_TENANT_ID`, or `AZURE_SUBSCRIPTION_ID` into the workflow
+    step env. Bash subprocesses that Copilot CLI spawns inherit the
+    workflow step's env block — not the CLI cache. If a fixture
+    references `$AZURE_CLIENT_ID` (for `azd auth login`,
+    `azd env set AZURE_TENANT_ID`, or any explicit credential
+    inventory), those variables are empty strings unless the workflow
+    explicitly puts them in the env block.
+
+    **Forensic signature** (run 1, HA leg): transcript contains a
+    `printenv | grep AZURE` step that returns ~1 line
+    (`AZURE_HTTP_USER_AGENT=…`), agent concludes "missing CI env vars
+    in shell", emits `SMOKE_RESULT=FAIL`. This is NOT agent paranoia —
+    the agent is correct. The env vars genuinely were missing.
+
+    **Defense — TWO mandatory edits, both required:**
+
+    - **Workflow side** (`.github/workflows/skill-test.yml` →
+      `copilot-cli-matrix` job):
+
+      Every step that runs a fixture (initial run AND retry step) MUST
+      include `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and
+      `AZURE_SUBSCRIPTION_ID` in its `env:` block, sourced from the
+      same secrets that the `azure/login@v2` step uses:
+
+      ```yaml
+      env:
+        # … existing COPILOT_*, AZURE_AI_ENDPOINT, ACR_LOGIN_SERVER …
+        AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ```
+
+      The initial-run and retry env blocks must be byte-identical for
+      the auth contract — otherwise a transient retry runs under a
+      different env than the original attempt.
+
+    - **Fixture side** — every Copilot-CLI fixture that calls Azure
+      MUST open with a **non-secret inventory + auth-proof** Step 0
+      before any work:
+
+      ```
+      ### Step 0 — verify CI auth contract
+
+      Run these two commands first. Both MUST succeed before you
+      proceed to any other step. If either fails, emit
+      `SMOKE_RESULT=FAIL` immediately with the precise failure mode
+      and stop.
+
+      1. echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+         echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+         echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+
+         Every line MUST print `…=set`. If any is empty, the workflow
+         env contract is broken (see AGENTS.md § 9.7 Pattern 11) —
+         that is a workflow bug, not a skill bug.
+
+      2. az account show --output table
+
+         MUST return a row whose `SubscriptionId` column matches
+         `$AZURE_SUBSCRIPTION_ID`. If `az account show` errors with
+         "Please run 'az login'", the `azure/login@v2` step failed —
+         workflow bug.
+
+      If both pass, you have a valid auth context. Do NOT invent
+      additional credential checks (no `az ad sp show`, no
+      `az role assignment list`, no `az login --service-principal`).
+      Proceed to Step 1.
+      ```
+
+      For `azd`-based fixtures, Step 0 ALSO runs Pattern 6's explicit
+      `azd auth login --federated-credential-provider github
+      --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID"`.
+      The non-secret inventory above is what makes Pattern 6's
+      failure mode (silent token-file pickup) visible BEFORE the
+      `azd deploy` step buries it.
+
+    **Don't make the agent re-discover this.** Without the inventory
+    Step 0, an agent that hits a missing env var has two equally bad
+    options: (a) panic on `printenv` and bail with vague language
+    (the run-1 HA failure mode), or (b) silently fall through to
+    DefaultAzureCredential and produce a misleading downstream error.
+    Step 0 makes the auth contract explicit and the failure precise.
+
+    **Cross-skill carry:** the existing `azd-patterns` fixture has
+    Pattern 6 (explicit `azd auth login`) but not the Step 0 inventory
+    — it passes 5/5 in CI today because `azd auth login` fails loudly
+    if the vars are missing. Retrofit the inventory anyway for
+    consistency; the cost is two `echo` lines and one `az account show`.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |

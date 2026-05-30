@@ -74,6 +74,58 @@ Then run these steps. Use a shell heredoc or python heredoc as you
 prefer — the goal is the result marker, not a particular ergonomics
 choice.
 
+0. **Step 0 — Verify the CI auth contract BEFORE any work.** Run
+   three checks. **All three** MUST succeed before you proceed. If any
+   fails, **stop immediately** and emit a single `SMOKE_RESULT=FAIL`
+   line with the precise failure mode (see Result contract). Do NOT
+   invent additional credential checks (no `az ad sp show`, no
+   `az role assignment list`, no `az login --service-principal`) —
+   those are workflow-bug indicators, not skill bugs.
+
+   - **Inventory the three OIDC env vars** in THIS shell. Copilot CLI
+     subprocesses only inherit the workflow step's `env:` block — not
+     the Azure CLI credential cache — so this matters even though
+     `azure/login@v2` ran earlier (per AGENTS.md § 9.7 Pattern 11):
+
+     ```bash
+     echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+     echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+     echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+     ```
+
+     Every line MUST print `…=set`. If any is empty, the workflow env
+     contract is broken — FAIL with `workflow env contract: <var> empty`.
+
+   - **Prove `az` is actually authenticated** with the right subscription:
+
+     ```bash
+     az account show --output table
+     ```
+
+     MUST return a row whose `SubscriptionId` matches
+     `$AZURE_SUBSCRIPTION_ID`. If it errors with "Please run
+     'az login'", `azure/login@v2` failed upstream — FAIL with
+     `az account show: not logged in`.
+
+   - **Explicit `azd auth login` via OIDC federated credential**
+     (AGENTS.md § 9.7 Pattern 6). Implicit env-var pickup by `azd`
+     has hidden failure modes (azd < 1.5.0 doesn't auto-detect
+     `AZURE_FEDERATED_TOKEN_FILE`; sub-shell env strip blanks the
+     credential mid-run). Authenticate explicitly so failure is loud
+     and immediate — not buried inside an `azd deploy` ACR push or
+     Bicep evaluation phase 5 minutes from now:
+
+     ```bash
+     azd auth login \
+       --federated-credential-provider github \
+       --client-id "$AZURE_CLIENT_ID" \
+       --tenant-id "$AZURE_TENANT_ID"
+     ```
+
+     If this errors, FAIL with `azd auth login: <one-line reason>`.
+
+   Only if all three checks pass, proceed to step 1.
+
 1. **Generate a per-run UUID suffix** and export reusable names. Use
    8 hex chars from `uuid.uuid4().hex`. Naming pattern (mandatory —
    parallel matrix runs collide on fixed names):
@@ -155,6 +207,21 @@ choice.
      `${AGENT_NAME}`. A 404 here means the agent was already gone —
      treat as success.
 
+7. **Step 7 — Emit the result marker. This is mandatory work, not a
+   postscript.** A previous run of this fixture
+   ([`actions/runs/26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)
+   — `foundry-hosted-agents` leg) failed at Step 0 because the
+   workflow env contract was broken (now fixed — see AGENTS.md § 9.7
+   Pattern 11), but the underlying failure pattern matters here too:
+   if you have completed steps 0-6 successfully and the agent replied
+   to ping, you are still NOT done. The CI grep does not care about
+   your prose summary; it cares about exactly one line matching
+   `^SMOKE_RESULT=PASS$`. **Do not stop after teardown without
+   emitting it.** The marker MUST appear in the same assistant reply
+   that performs steps 5-6 — do NOT split it into a separate "summary"
+   turn. Re-read the "Result contract" section below BEFORE you emit
+   your final reply.
+
 ## Result contract
 
 CI greps the **whole transcript** with anchored, line-boundary patterns:
@@ -213,7 +280,7 @@ write the literal token `SMOKE_RESULT` in any decorated form
 priming from those earlier mentions is what causes the final marker
 emission to come out backtick-wrapped.
 
-On any failure in steps 1-5, emit a single line of the form
+On any failure in steps 0-5, emit a single line of the form
 `SMOKE_RESULT=FAIL` followed by a single space and a short reason
 (≤80 chars, no backticks, no newlines). Example shape (with the
 literal `S` of `SMOKE_RESULT` replaced by `_` so this prompt itself
