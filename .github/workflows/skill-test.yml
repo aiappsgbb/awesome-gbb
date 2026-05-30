@@ -178,5 +178,5 @@ jobs:
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
-          pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0"
+          pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0" "tenacity~=8.5.0"
           python -m pytest scripts/tests/test_e2e_foundry_toolbox.py -v

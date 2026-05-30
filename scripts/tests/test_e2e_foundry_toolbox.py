@@ -87,28 +87,43 @@ class TestFoundryToolboxE2E(unittest.TestCase):
         `skills/foundry-toolbox/references/python/mcp_text_extractor.py`
         so this test stays in sync with the SKILL.md prose example
         (SSOT — see AGENTS.md § 7).
+
+        Wraps `agent.run()` in tenacity exponential backoff so transient
+        429s from the public Learn MCP endpoint (observed on weekly
+        sweeps) don't fail the live-Azure gate. We rebuild the agent and
+        the MCP tool on every retry because the streamable-HTTP session
+        is not guaranteed to be reusable after a mid-call failure.
         """
         import asyncio
         from agent_framework import Agent, MCPStreamableHTTPTool, Message
-
-        learn_mcp = MCPStreamableHTTPTool(
-            name="microsoft-learn",
-            url="https://learn.microsoft.com/api/mcp",
-            parse_tool_results=_mcp_text_extractor,
+        from tenacity import (
+            retry,
+            retry_if_not_exception_type,
+            stop_after_attempt,
+            wait_exponential,
         )
 
-        agent = Agent(
-            client=self.client,
-            tools=[learn_mcp],
-            instructions="Answer Azure questions using the microsoft-learn tool.",
+        @retry(
+            stop=stop_after_attempt(4),
+            wait=wait_exponential(multiplier=2, min=4, max=30),
+            reraise=True,
+            retry=retry_if_not_exception_type(AssertionError),
         )
-
-        msg = Message(role="user", contents=["What is Azure Container Apps?"])
-
-        async def _run():
+        async def _run_once():
+            learn_mcp = MCPStreamableHTTPTool(
+                name="microsoft-learn",
+                url="https://learn.microsoft.com/api/mcp",
+                parse_tool_results=_mcp_text_extractor,
+            )
+            agent = Agent(
+                client=self.client,
+                tools=[learn_mcp],
+                instructions="Answer Azure questions using the microsoft-learn tool.",
+            )
+            msg = Message(role="user", contents=["What is Azure Container Apps?"])
             return await agent.run(messages=[msg])
 
-        response = asyncio.run(_run())
+        response = asyncio.run(_run_once())
         text = response.text if hasattr(response, "text") else str(response)
         self.assertGreater(len(text), 50, "Response too short")
         has_azure_content = "azure" in text.lower() or "container" in text.lower()
