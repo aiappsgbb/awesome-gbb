@@ -52,9 +52,13 @@ jobs:
       - name: Get Foundry bearer token
         run: |
           set -euo pipefail
+          echo "Fetching Foundry bearer token for cognitiveservices.azure.com…"
+          # `tr -d '\r\n'` defends against trailing whitespace from `-o tsv`
+          # that would otherwise produce a cryptic 401 from Foundry instead
+          # of a clear token-acquisition failure.
           TOKEN=$(az account get-access-token \
             --resource https://cognitiveservices.azure.com/.default \
-            --query accessToken -o tsv)
+            --query accessToken -o tsv | tr -d '\r\n')
           # Mask the token in logs before exporting it to subsequent steps.
           echo "::add-mask::$TOKEN"
           echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
