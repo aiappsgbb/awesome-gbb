@@ -1,0 +1,90 @@
+# .github/workflows/copilot-cli-foundry-auth-smoke.yml
+#
+# HARD GATE for the 2026-05-30 deep-audit + testing-rethink plan.
+#
+# Proves a single load-bearing assumption: the released Copilot CLI can
+# authenticate against the project's Foundry-routed model deployment using
+# the same OIDC federated UAMI we use everywhere else in this repo. If this
+# workflow is red on `main`, every "Copilot-as-test-runner" workflow that
+# Phase 2+ ships is also red — and the deep-audit plan halts until it's
+# fixed. See `docs/superpowers/plans/2026-05-30-deep-audit-and-testing-rethink.md`.
+#
+# Env-var names verified against released CLI 1.0.57-2 (cask 1.0.48) via
+# `copilot help providers` and `copilot help environment`. Reference:
+# Task 1.0 notes in the session-state files dir.
+
+name: copilot-cli-foundry-auth-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Monday 06:17 UTC — runs ~45min before skill-freshness (Monday 07:00).
+    # If this is red, the freshness loop's auto-PRs are pointless because
+    # nothing else in Phase 2+ can validate anyway.
+    - cron: "17 6 * * 1"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Copilot CLI
+        run: |
+          # Node 22 is pre-installed on ubuntu-latest. npm install is the
+          # method documented at
+          # https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli
+          npm install -g @github/copilot
+          copilot --version
+
+      - name: Get Foundry bearer token
+        run: |
+          set -euo pipefail
+          TOKEN=$(az account get-access-token \
+            --resource https://cognitiveservices.azure.com/.default \
+            --query accessToken -o tsv)
+          # Mask the token in logs before exporting it to subsequent steps.
+          echo "::add-mask::$TOKEN"
+          echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Smoke test — one-shot prompt that requires model auth
+        env:
+          # BYOK routing → Foundry. Names verified in Task 1.0.
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          # Disable auto-update in CI explicitly (already auto-disabled when
+          # `CI` is set, but cheap insurance).
+          COPILOT_AUTO_UPDATE: "false"
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # --disable-builtin-mcps drops the GitHub MCP server (we don't
+          # want this smoke test depending on github.com reachability —
+          # the whole point is to isolate the Foundry auth path).
+          OUT=$(copilot -p "Reply with the single word PONG and nothing else." \
+                        --allow-all-tools \
+                        --disable-builtin-mcps)
+          echo "----- copilot output -----"
+          echo "$OUT"
+          echo "--------------------------"
+          echo "$OUT" | grep -q "PONG" || {
+            echo "smoke FAILED: expected 'PONG' in copilot output but none found"
+            exit 1
+          }
+          echo "smoke PASSED"
