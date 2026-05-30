@@ -19,13 +19,14 @@ gate, and by every contributor before push per AGENTS.md § 8.
 
 from __future__ import annotations
 
+import ast
 import io
 import json
 import pathlib
 import re
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Iterator
 
 # Force UTF-8 stdout/stderr so the ✅/❌ markers in pass/fail messages
 # work on Windows consoles that default to cp1252. The GitHub Actions
@@ -817,6 +818,259 @@ def _anchor_resolves(anchor: str, sections: set[str]) -> bool:
     return False
 
 
+# ── MID-I lint: sync azure.identity creds must never reach FoundryChatClient ──
+#
+# Bug class: passing a SYNC `azure.identity.*Credential` to FoundryChatClient
+# (or AzureAIToolbox) results in the AsyncFoundryClient hosting an inert sync
+# token provider. Every `await agent.run(...)` then hits a 60s `session_not_ready`
+# poll followed by `network_error`. See foundry-hosted-agents § Critical rules
+# (MID-I) for the canonical explanation. PR #184 surfaced this once; this lint
+# stops the same regression from landing again.
+#
+# Scope (deliberately narrow to keep false-positive rate at zero):
+#   - Flag ONLY when the call is FoundryChatClient(credential=...)
+#   - Flag when the value is a sync azure.identity credential constructor call
+#     (direct or via single-hop variable assignment)
+#   - Carve-outs that are intentionally sync and MUST NOT be flagged:
+#       * OpenAIChatClient / AIProjectClient (control plane / Azure OpenAI direct)
+#       * get_bearer_token_provider(SyncCred(), ...) (bearer provider needs sync)
+#       * Calls without `credential=` kwarg (defer to default chain)
+
+_AZURE_IDENTITY_SYNC = "azure.identity"
+_AZURE_IDENTITY_ASYNC = "azure.identity.aio"
+_FOUNDRY_CHAT_CLIENT = "FoundryChatClient"
+
+
+def _classify_credential_imports(tree: ast.AST) -> dict[str, str]:
+    """Return {local_symbol: 'sync' | 'async'} for every azure.identity[.aio]
+    name brought into scope. Tracks `import ... as ...` aliasing. Wildcard
+    imports are recorded as the special key `*` so callers can skip.
+    """
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if mod == _AZURE_IDENTITY_ASYNC:
+                tier = "async"
+            elif mod == _AZURE_IDENTITY_SYNC:
+                tier = "sync"
+            else:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    out["*"] = tier
+                    continue
+                local = alias.asname or alias.name
+                out[local] = tier
+    return out
+
+
+def _collect_credential_assignments(
+    tree: ast.AST, credential_symbols: dict[str, str]
+) -> dict[str, str]:
+    """Walk single-target Name assignments where the RHS is `Sym(...)` with
+    Sym in `credential_symbols`. Returns {varname: 'sync' | 'async'},
+    last-write-wins so a later `cred = AsyncCred()` masks an earlier sync
+    one. Conservative — only single-target Name assignments are tracked.
+    """
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        if not isinstance(node.value, ast.Call):
+            continue
+        func = node.value.func
+        sym: str | None = None
+        if isinstance(func, ast.Name):
+            sym = func.id
+        elif isinstance(func, ast.Attribute):
+            sym = func.attr
+        if sym and sym in credential_symbols:
+            out[node.targets[0].id] = credential_symbols[sym]
+    return out
+
+
+def _iter_foundry_chat_client_calls(tree: ast.AST) -> Iterator[ast.Call]:
+    """Yield every `ast.Call` whose final callee name is `FoundryChatClient`,
+    regardless of whether it's `FoundryChatClient(...)` or
+    `agent_framework.foundry.FoundryChatClient(...)`.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == _FOUNDRY_CHAT_CLIENT:
+            yield node
+        elif isinstance(func, ast.Attribute) and func.attr == _FOUNDRY_CHAT_CLIENT:
+            yield node
+
+
+def _classify_credential_value(
+    value: ast.expr,
+    cred_imports: dict[str, str],
+    assignments: dict[str, str],
+) -> str | None:
+    """Return 'sync' | 'async' | None for the value passed to
+    FoundryChatClient(credential=...). None means unresolved (constant,
+    function call result, attribute access we don't track) — left to the
+    user, not flagged.
+    """
+    if isinstance(value, ast.Call):
+        func = value.func
+        sym: str | None = None
+        if isinstance(func, ast.Name):
+            sym = func.id
+        elif isinstance(func, ast.Attribute):
+            sym = func.attr
+        if sym and sym in cred_imports:
+            return cred_imports[sym]
+        return None
+    if isinstance(value, ast.Name):
+        return assignments.get(value.id)
+    if isinstance(value, ast.Await) and isinstance(value.value, ast.Call):
+        return _classify_credential_value(value.value, cred_imports, assignments)
+    return None
+
+
+def _scan_source_for_sync_creds(
+    source: str, location_label: str, line_offset: int = 0
+) -> list[str]:
+    """Parse `source` and return one error string per
+    `FoundryChatClient(credential=<sync-cred>)` site found. `line_offset`
+    shifts AST lineno values up to the enclosing-file coordinate (used for
+    fenced code blocks inside SKILL.md).
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # Fragments / shape-variant snippets that don't parse aren't lintable.
+        # Acceptable per AGENTS.md § 7 (per-skill references convention).
+        return []
+
+    cred_imports = _classify_credential_imports(tree)
+    if "*" in cred_imports:
+        # Wildcard import — can't tell what's in scope, skip conservatively.
+        return []
+    if not cred_imports:
+        # No azure.identity[.aio] imports in this block — nothing to classify.
+        # Conservative: don't flag bare `DefaultAzureCredential()` that may
+        # have been imported in a sibling block; the per-block-self-contained
+        # convention is what we're enforcing here.
+        return []
+
+    assignments = _collect_credential_assignments(tree, cred_imports)
+
+    errors: list[str] = []
+    for call in _iter_foundry_chat_client_calls(tree):
+        cred_kw = next((k for k in call.keywords if k.arg == "credential"), None)
+        if cred_kw is None:
+            continue
+        tier = _classify_credential_value(cred_kw.value, cred_imports, assignments)
+        if tier != "sync":
+            continue
+        # Find the actual symbol name for a precise error message
+        sym_name = _credential_symbol_name(cred_kw.value)
+        lineno = (cred_kw.value.lineno or call.lineno) + line_offset
+        errors.append(
+            f"{location_label}:{lineno}: sync `{sym_name}` passed to "
+            f"FoundryChatClient(credential=...). MID-I rule: import from "
+            f"`azure.identity.aio` instead — sync credentials produce inert "
+            f"token providers inside AsyncFoundryClient and cause 60s "
+            f"`session_not_ready` then `network_error`. See "
+            f"foundry-hosted-agents § Critical rules."
+        )
+    return errors
+
+
+def _credential_symbol_name(value: ast.expr) -> str:
+    """Best-effort symbol name for the error message."""
+    if isinstance(value, ast.Call):
+        func = value.func
+        if isinstance(func, ast.Name):
+            return func.id
+        if isinstance(func, ast.Attribute):
+            return func.attr
+    if isinstance(value, ast.Name):
+        return value.id
+    return "<credential>"
+
+
+_PYTHON_BLOCK_RE = re.compile(r"```python\n", re.MULTILINE)
+
+
+def _extract_python_blocks(text: str) -> list[tuple[int, str]]:
+    """Pull every triple-backtick `python` fenced block out of `text`.
+    Returns [(start_line, source), ...] where start_line is the 1-indexed
+    line number of the first code line (the line AFTER the opening fence).
+    """
+    blocks: list[tuple[int, str]] = []
+    lines = text.splitlines()
+    in_block = False
+    start_line = 0
+    buf: list[str] = []
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not in_block:
+            if stripped == "```python":
+                in_block = True
+                start_line = i + 1  # first code line, not the fence
+                buf = []
+        else:
+            if stripped == "```":
+                blocks.append((start_line, "\n".join(buf)))
+                in_block = False
+            else:
+                buf.append(line)
+    return blocks
+
+
+def validate_no_sync_cred_in_foundry_chat_client() -> list[str]:
+    """Stop sync `azure.identity.*Credential` symbols from being passed to
+    `FoundryChatClient(credential=...)` — anywhere in the catalog.
+
+    Covers both:
+      - `.py` files under `skills/*/references/python/**`
+      - ```python fenced code blocks inside any `SKILL.md`
+
+    Encodes the MID-I bug class from PR #184 as a permanent invariant so the
+    same regression cannot land again. Carve-outs and limitations are
+    documented inline in the helpers above.
+    """
+    errors: list[str] = []
+
+    # Reference Python files — line numbers map straight to the file.
+    for ref_path in sorted(SKILLS_DIR.glob("*/references/python/**/*.py")):
+        if not ref_path.is_file() or "__pycache__" in ref_path.parts:
+            continue
+        try:
+            source = ref_path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = ref_path.relative_to(REPO_ROOT)
+        errors.extend(_scan_source_for_sync_creds(source, str(rel), line_offset=0))
+
+    # SKILL.md inline ```python blocks — line numbers need block offset.
+    for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = skill_md.relative_to(REPO_ROOT)
+        for start_line, block_src in _extract_python_blocks(text):
+            # line_offset = start_line - 1 because ast.lineno is 1-indexed
+            # within `block_src` and start_line is the file line of block_src
+            # line 1.
+            errors.extend(
+                _scan_source_for_sync_creds(
+                    block_src, str(rel), line_offset=start_line - 1
+                )
+            )
+
+    return errors
+
+
 def main() -> int:
     if not SKILLS_DIR.is_dir():
         print(f"ERROR: {SKILLS_DIR} does not exist", file=sys.stderr)
@@ -847,6 +1101,9 @@ def main() -> int:
 
     reference_errors = validate_reference_files()
     all_errors.extend(reference_errors)
+
+    sync_cred_errors = validate_no_sync_cred_in_foundry_chat_client()
+    all_errors.extend(sync_cred_errors)
 
     anchor_errors = validate_reference_section_anchors()
     all_errors.extend(anchor_errors)

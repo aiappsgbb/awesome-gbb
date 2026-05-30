@@ -601,5 +601,209 @@ class TestRegexMatching(unittest.TestCase):
             self.assertIn("failure_signature", msg)
 
 
+# ── MID-I lint: sync azure.identity creds in FoundryChatClient ───────
+
+class TestNoSyncCredInFoundryChatClient(unittest.TestCase):
+    """Lint added after PR #184 — encodes the MID-I async-credential rule
+    so the same regression cannot land again. Covers direct calls,
+    variable-hop assignments, alias imports, wildcard imports, and the
+    documented carve-outs.
+    """
+
+    def _scan(self, src: str) -> list[str]:
+        return vs._scan_source_for_sync_creds(src, "fixture.py")
+
+    def test_direct_sync_default_credential_flags(self) -> None:
+        src = (
+            "from azure.identity import DefaultAzureCredential\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=DefaultAzureCredential(), agent_name='x')\n"
+        )
+        errors = self._scan(src)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("DefaultAzureCredential", errors[0])
+        self.assertIn("MID-I", errors[0])
+
+    def test_async_default_credential_passes(self) -> None:
+        src = (
+            "from azure.identity.aio import DefaultAzureCredential\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=DefaultAzureCredential(), agent_name='x')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_variable_hop_sync_flags(self) -> None:
+        src = (
+            "from azure.identity import DefaultAzureCredential\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "cred = DefaultAzureCredential()\n"
+            "c = FoundryChatClient(credential=cred, agent_name='x')\n"
+        )
+        errors = self._scan(src)
+        self.assertEqual(len(errors), 1, errors)
+
+    def test_variable_reassign_to_async_passes(self) -> None:
+        """Last-write-wins: if cred is reassigned to an async credential
+        before reaching FoundryChatClient, no flag. Documents the
+        last-write-wins behavior of _collect_credential_assignments.
+        """
+        src = (
+            "from azure.identity import DefaultAzureCredential as SyncDAC\n"
+            "from azure.identity.aio import DefaultAzureCredential as AsyncDAC\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "cred = SyncDAC()\n"
+            "cred = AsyncDAC()\n"
+            "c = FoundryChatClient(credential=cred, agent_name='x')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_aliased_sync_import_still_flags(self) -> None:
+        src = (
+            "from azure.identity import DefaultAzureCredential as DAC\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=DAC(), agent_name='x')\n"
+        )
+        errors = self._scan(src)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("`DAC`", errors[0])
+
+    def test_sync_azure_cli_credential_flags(self) -> None:
+        """The lint covers every credential class imported from
+        azure.identity, not just DefaultAzureCredential. Documents the
+        broadened scope beyond what PR #184 originally surfaced.
+        """
+        src = (
+            "from azure.identity import AzureCliCredential\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=AzureCliCredential(), agent_name='x')\n"
+        )
+        errors = self._scan(src)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("AzureCliCredential", errors[0])
+
+    def test_open_ai_chat_client_carve_out_passes(self) -> None:
+        """OpenAIChatClient takes sync creds per SKILL.md L484 — NOT
+        flagged. Documents the FoundryChatClient-only scope.
+        """
+        src = (
+            "from azure.identity import DefaultAzureCredential\n"
+            "from agent_framework.openai import OpenAIChatClient\n"
+            "c = OpenAIChatClient(credential=DefaultAzureCredential(), model='gpt-4o-mini')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_get_bearer_token_provider_carve_out_passes(self) -> None:
+        """get_bearer_token_provider REQUIRES sync credentials — NOT
+        flagged because it isn't a FoundryChatClient(credential=...) call.
+        """
+        src = (
+            "from azure.identity import DefaultAzureCredential, get_bearer_token_provider\n"
+            "p = get_bearer_token_provider(DefaultAzureCredential(), 'https://x/.default')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_no_credential_kwarg_passes(self) -> None:
+        """FoundryChatClient() with no `credential=` defers to the
+        default chain — NOT flagged.
+        """
+        src = (
+            "from azure.identity import DefaultAzureCredential\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(agent_name='x')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_wildcard_import_skips_silently(self) -> None:
+        """Wildcard import — can't classify symbols, skip
+        conservatively rather than false-positive.
+        """
+        src = (
+            "from azure.identity import *\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=DefaultAzureCredential(), agent_name='x')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_no_azure_identity_import_skips_silently(self) -> None:
+        """Code block with no azure.identity[.aio] import — bare
+        `DefaultAzureCredential()` may have been imported in a sibling
+        block we can't see. Skip rather than false-positive.
+        """
+        src = (
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=DefaultAzureCredential(), agent_name='x')\n"
+        )
+        self.assertEqual(self._scan(src), [])
+
+    def test_syntax_error_block_skips_silently(self) -> None:
+        """Shape-variant snippets that don't parse as full Python should
+        not crash the gate.
+        """
+        src = "credential=DefaultAzureCredential(),\n"  # fragment
+        self.assertEqual(self._scan(src), [])
+
+    def test_qualified_call_flags(self) -> None:
+        """`agent_framework.foundry.FoundryChatClient(credential=...)`
+        is matched the same as the unqualified import.
+        """
+        src = (
+            "from azure.identity import DefaultAzureCredential\n"
+            "import agent_framework.foundry as f\n"
+            "c = f.FoundryChatClient(credential=DefaultAzureCredential(), agent_name='x')\n"
+        )
+        errors = self._scan(src)
+        self.assertEqual(len(errors), 1, errors)
+
+    def test_line_offset_applied(self) -> None:
+        """For SKILL.md fenced blocks, line_offset shifts ast.lineno into
+        the enclosing-file coordinate. Documents the contract used by
+        validate_no_sync_cred_in_foundry_chat_client.
+        """
+        src = (
+            "from azure.identity import DefaultAzureCredential\n"
+            "from agent_framework.foundry import FoundryChatClient\n"
+            "c = FoundryChatClient(credential=DefaultAzureCredential())\n"
+        )
+        errors = vs._scan_source_for_sync_creds(src, "SKILL.md", line_offset=100)
+        self.assertEqual(len(errors), 1)
+        # The offending FoundryChatClient call is on src line 3, so reported
+        # line should be 3 + 100 = 103.
+        self.assertIn("SKILL.md:103", errors[0])
+
+    def test_extract_python_blocks(self) -> None:
+        """Verifies that the SKILL.md fenced-block extractor returns
+        correct (start_line, source) tuples — the offset contract that
+        keeps line numbers stable across edits.
+        """
+        text = (
+            "# Heading\n"          # line 1
+            "\n"                    # line 2
+            "Some prose.\n"         # line 3
+            "\n"                    # line 4
+            "```python\n"           # line 5 (fence)
+            "import os\n"           # line 6 (block code line 1)
+            "x = 1\n"               # line 7 (block code line 2)
+            "```\n"                 # line 8 (closing fence)
+            "\n"                    # line 9
+            "More prose.\n"         # line 10
+            "\n"                    # line 11
+            "```python\n"           # line 12
+            "y = 2\n"               # line 13
+            "```\n"                 # line 14
+        )
+        blocks = vs._extract_python_blocks(text)
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0], (6, "import os\nx = 1"))
+        self.assertEqual(blocks[1], (13, "y = 2"))
+
+    def test_no_sync_cred_lint_clean_on_live_catalog(self) -> None:
+        """Integration smoke: running the lint against the actual catalog
+        on disk must return ZERO errors. This is the regression gate — if
+        anyone adds a sync-cred-into-FoundryChatClient site, this fails.
+        """
+        errors = vs.validate_no_sync_cred_in_foundry_chat_client()
+        self.assertEqual(errors, [], f"Catalog regression: {errors}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
