@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # AZD Tips & Patterns
@@ -640,7 +640,7 @@ env: [
 
 **Why each line matters:**
 
-- **Role GUIDs are stable across tenants** — never ship `'...'` as a placeholder. Bicep compiles but `RoleDefinitionDoesNotExist` blows up at apply-time, after every other resource has provisioned. Built-ins referenced in the module: `Azure AI User` = `53ca6127-db72-4b80-b1b0-d745d6d5456d`, `Search Index Data Reader` = `1407120a-92aa-4202-b7e9-c0e197c71c8f`, `AcrPull` = `7f951dda-4ed3-4680-a7ca-43fe172d538d`.
+- **Role GUIDs are stable across tenants** — never ship `'...'` as a placeholder. Bicep compiles but `RoleDefinitionDoesNotExist` blows up at apply-time, after every other resource has provisioned. Built-ins referenced in the module: `Foundry User` (renamed from `Azure AI User` in May 2026; GUID unchanged) = `53ca6127-db72-4b80-b1b0-d745d6d5456d`, `Search Index Data Reader` = `1407120a-92aa-4202-b7e9-c0e197c71c8f`, `AcrPull` = `7f951dda-4ed3-4680-a7ca-43fe172d538d`.
 - **`principalType: 'ServicePrincipal'`** is mandatory for MI-based deploys; see § CI/CD trap below for why `'User'` breaks GHA / ADO pipelines.
 - **One module, one `dependsOn:[rbac]` from every consumer** — see § Prefer Bicep `dependsOn: [rbac]` below for the wiring pattern that pre-empts the AcrPull propagation race.
 
