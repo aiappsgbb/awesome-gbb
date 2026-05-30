@@ -598,9 +598,21 @@ Each pin file declares an `automation_tier`:
   credentials (Azure subscription, Foundry project) that we don't ship
   to the coding agent. A human authors the refresh.
 
-Rule: if `validation.requires` includes anything beyond `github_only`
-or `pypi`, `automation_tier` MUST be `issue_only`. Enforced by
-[`scripts/validate-skills.py`](scripts/validate-skills.py).
+**Rules** (enforced by [`scripts/validate-skills.py`](scripts/validate-skills.py)):
+
+- If `validation.requires` is restricted to safe categories (`github_only`,
+  `pypi`) and `validation.runnable: true`, the pin runs in **every** CI run
+  (standard pin-smoke + e2e-azure modes).
+- If `validation.requires` includes credentialed resources (`azure_subscription`,
+  `foundry_project`):
+  - `automation_tier: auto` + `validation.runnable: false` → pin runs **only**
+    under `run-pin-validation.py --include-azure` (e2e-azure CI mode). The
+    coding agent edits the pin; CI validates it live against Azure.
+  - `automation_tier: issue_only` + `validation.runnable: false` → pin is
+    **never** auto-executed; refresh is human-driven via an issue.
+  - `validation.runnable: true` with credentialed requires is **rejected** —
+    the agent has no way to actually run it. Set `runnable: false` and pick
+    one of the two tiers above.
 
 ### 9.3 · The weekly loop
 
@@ -768,12 +780,14 @@ or service principal passwords.
 real Azure infrastructure (§ 9.7). New skills that connect to Azure
 MUST add an E2E test (§ 2.8).
 
-**Excluded from CI** (too complex, manually validated only):
-`citadel-hub-deploy`, `citadel-spoke-onboarding`, `foundry-vnet-deploy`.
+**Excluded from CI** (multi-resource greenfield deploys; pin runs human-only):
+`citadel-hub-deploy`, `foundry-vnet-deploy`. Both are
+`automation_tier: issue_only` + `validation.runnable: false`.
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks T3 pins
-(those with `azure_subscription` or `foundry_project` in
-`validation.requires`) when the runner has Azure credentials via env vars.
+(`automation_tier: auto` + `validation.runnable: false` +
+`azure_subscription`/`foundry_project` in `validation.requires`) when the
+runner has Azure credentials via env vars.
 
 ---
 
