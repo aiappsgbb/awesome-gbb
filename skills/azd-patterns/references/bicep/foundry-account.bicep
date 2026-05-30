@@ -147,7 +147,7 @@ output projectName string = project.name
 output projectResourceId string = project.id
 output projectSystemMiPrincipalId string = project.identity.principalId
 
-// (MID-2 sharpened by MID-G — 2026-05-30 contoso-claim-triage live run)
+// (MID-2 sharpened by MID-G — 2026-05-30 Contoso claim-triage live run)
 // Two endpoint forms — they are NOT interchangeable:
 //   1. accountEndpoint = the bare AI Foundry API endpoint (no path).
 //      Used by `azd ai agent` extension auto-derivation and by Foundry
