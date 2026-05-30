@@ -265,13 +265,22 @@ a real Copilot CLI agent that read SKILL.md, deployed a
 (swedencentral), ran it, asserted `HELLO` in the log, cleaned up,
 and self-reported `SMOKE_RESULT=PASS`.
 
-| # | Run URL | Commit | Notes |
-|---|---------|--------|-------|
-| 1 | _[fill after run 1 completes]_ | _[sha]_ | First push (deliverables) |
-| 2 | _[fill after run 2 completes]_ | _[sha]_ | Empty-commit trigger #1 |
-| 3 | _[fill after run 3 completes]_ | _[sha]_ | Empty-commit trigger #2 |
-| 4 | _[fill after run 4 completes]_ | _[sha]_ | Empty-commit trigger #3 |
-| 5 | _[fill after run 5 completes]_ | _[sha]_ | Empty-commit trigger #4 |
+| # | Run URL | Commit | `copilot-cli-matrix (azd-patterns)` |
+|---|---------|--------|--------------------------------------|
+| 1 | https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103 | `dc5b418` | ✅ success |
+| 2 | https://github.com/aiappsgbb/awesome-gbb/actions/runs/26696218650 | `903c7f7` | ✅ success |
+| 3 | https://github.com/aiappsgbb/awesome-gbb/actions/runs/26696237578 | `381a6c4` | ✅ success |
+| 4 | https://github.com/aiappsgbb/awesome-gbb/actions/runs/26696254819 | `96504c6` | ✅ success |
+| 5 | https://github.com/aiappsgbb/awesome-gbb/actions/runs/26696271818 | `167bb65` | ✅ success |
+
+**Result: 5/5 green on the `azd-patterns` leg.** Target met (floor was 2, per
+Phase 2.2 precedent). Run #1 had `overall=failure` because parallel matrix
+legs `foundry-prompt-agents` and `foundry-hosted-agents` failed — both
+out-of-scope for Task 2.3 and flagged in the handoff to the coordinator.
+Runs #3–#5 had `overall=success` (the prior failing legs cleared by
+themselves on subsequent triggers — likely retry classifier kicking in on
+the other fixtures). All conclusions verified via
+`gh run view <id> --json jobs --jq '.jobs[] | select(.name=="copilot-cli-matrix (azd-patterns)") | .conclusion'`.
 
 Dispatch method: `pull_request synchronize` (empty commits spaced ≥ 45 s
 apart per AGENTS.md § 9.7 pattern 1 to defeat GitHub event coalescing).
