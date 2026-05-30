@@ -57,6 +57,7 @@ CANON_RE = re.compile(r"^skills/[^/]+/references/data-realism/")
 OPT_IN_MULTI_SKILL = "[multi-skill]"
 OPT_IN_SCRUB_CANON = "[scrub-canon]"
 OPT_IN_SKILL_REWRITE = "[skill-rewrite]"
+OPT_IN_AUDIT = "[audit-2026-Q2]"
 
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 MAX_DESCRIPTION_CHARS = 1024
@@ -176,7 +177,11 @@ def gate_one_skill_per_pr(
         if m:
             skills_touched.add(m.group(1))
 
-    if len(skills_touched) > 1 and OPT_IN_MULTI_SKILL not in opts:
+    if (
+        len(skills_touched) > 1
+        and OPT_IN_MULTI_SKILL not in opts
+        and OPT_IN_AUDIT not in opts
+    ):
         return [
             f"❌ Multi-skill PR ({len(skills_touched)} skills: "
             f"{sorted(skills_touched)}). Add `{OPT_IN_MULTI_SKILL}` to "
@@ -207,7 +212,11 @@ def gate_skill_md_body(
         m = SKILL_MD_RE.match(f)
         if not m:
             continue
-        if skill_md_body_changed(base, f) and OPT_IN_SKILL_REWRITE not in opts:
+        if (
+            skill_md_body_changed(base, f)
+            and OPT_IN_SKILL_REWRITE not in opts
+            and OPT_IN_AUDIT not in opts
+        ):
             errors.append(
                 f"❌ {f}: body changed outside YAML frontmatter. Add "
                 f"`{OPT_IN_SKILL_REWRITE}` to a commit message to opt in "
@@ -281,13 +290,44 @@ def gate_description_length(
     return errors
 
 
+def gate_audit_tag_requires_audit_trail(
+    files: list[str], opts: set[str]
+) -> list[str]:
+    """Per spec 2026-05-30 §9.2: the [audit-2026-Q2] tag allows
+    multi-skill body edits without [multi-skill]/[skill-rewrite],
+    but each touched skill MUST have a paired
+    docs/audit/<name>-audit-trail.md in the same diff."""
+    if OPT_IN_AUDIT not in opts:
+        return []
+
+    touched_skills: set[str] = set()
+    for f in files:
+        m = SKILLS_DIR_RE.match(f)
+        if m:
+            touched_skills.add(m.group(1))
+
+    audit_trails_present: set[str] = set()
+    for f in files:
+        if f.startswith("docs/audit/") and f.endswith("-audit-trail.md"):
+            name = f[len("docs/audit/"): -len("-audit-trail.md")]
+            audit_trails_present.add(name)
+
+    errors: list[str] = []
+    for name in sorted(touched_skills - audit_trails_present):
+        errors.append(
+            f"❌ {OPT_IN_AUDIT} tag: missing audit-trail file "
+            f"docs/audit/{name}-audit-trail.md for skill {name}"
+        )
+    return errors
+
+
 # ──────────────────────────── main ──────────────────────────────────
 
 
 def collect_opt_ins(messages: Iterable[str]) -> set[str]:
     blob = "\n".join(messages)
     opts: set[str] = set()
-    for opt in (OPT_IN_MULTI_SKILL, OPT_IN_SCRUB_CANON, OPT_IN_SKILL_REWRITE):
+    for opt in (OPT_IN_MULTI_SKILL, OPT_IN_SCRUB_CANON, OPT_IN_SKILL_REWRITE, OPT_IN_AUDIT):
         if opt in blob:
             opts.add(opt)
     return opts
@@ -337,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     errors.extend(gate_skill_md_body(files, opts, args.base))
     errors.extend(gate_patch_only_for_metadata_diff(files, opts, args.base))
     errors.extend(gate_description_length(files, args.base))
+    errors.extend(gate_audit_tag_requires_audit_trail(files, opts))
 
     if errors:
         print(f"\n❌ {len(errors)} gate violation(s):\n", file=sys.stderr)
