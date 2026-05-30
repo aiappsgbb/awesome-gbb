@@ -270,6 +270,14 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          # Foundry project endpoint + model deployment exposed to the
+          # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
+          # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
+          # the per-project URL on the services.ai.azure.com host that
+          # `AIProjectClient(endpoint=…)` requires. These are CI
+          # infrastructure URLs/names, not secrets.
+          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
+          FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
         run: |
           set -euo pipefail
           PROMPT="skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"
@@ -301,6 +309,8 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
+          FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
         run: |
           set -euo pipefail
           PROMPT="skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"

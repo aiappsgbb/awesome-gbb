@@ -1,60 +1,59 @@
-<!-- skills/foundry-prompt-agents/test-fixture/consumer_prompt.md -->
+# foundry-prompt-agents — CI verification fixture
 
-You are a Copilot CLI agent driving an end-to-end smoke test of the
-`foundry-prompt-agents` skill. The repo containing the skill is at
-your current working directory (`$GITHUB_WORKSPACE`). The skill file
-is `skills/foundry-prompt-agents/SKILL.md` — read it once, then
-execute its happy path verbatim. No mocked clients. No stubs. Real
-Azure calls only.
+Context: this prompt is fed to the `copilot-cli-matrix` job in the
+awesome-gbb repo to verify that the `foundry-prompt-agents` skill (at
+`skills/foundry-prompt-agents/SKILL.md` in the current working directory)
+still works against a live Azure Foundry test project. We're checking that
+the documented Python quickstart — create a prompt agent, chat with it,
+list it, delete it — still runs end-to-end against the real service.
 
-## Environment you can rely on
+## Environment available
 
-- `AZURE_AI_ENDPOINT` is set to the Foundry account host
-  (`https://aif-awesome-gbb-ci.cognitiveservices.azure.com/`).
-- Azure CLI is logged in via OIDC (UAMI `uami-awesome-gbb-ci` has
-  `Cognitive Services OpenAI User` + `Foundry User` on the account).
-- `gpt-5.4-mini` is deployed on the account.
-- The skill uses `DefaultAzureCredential`, which picks up the
-  workflow's `azure/login@v2` token automatically.
+- `FOUNDRY_PROJECT_ENDPOINT` — full project endpoint URL, of the form
+  `https://<account>.services.ai.azure.com/api/projects/<project>`. Pass
+  it as the `endpoint=` argument to `AIProjectClient`.
+- `FOUNDRY_MODEL_DEPLOYMENT` — name of the chat-model deployment to use.
+- Azure CLI is logged in via OIDC with a managed identity that has
+  `Cognitive Services OpenAI User` and `Foundry User` on the account, so
+  `DefaultAzureCredential()` resolves without any extra setup.
+- Python 3 is installed. `pip install --quiet azure-ai-projects==2.1.0
+  azure-identity openai` will give you the SDK versions documented in
+  the skill's pin file.
 
-## What you MUST do (in order)
+## Steps
 
-1. Read `skills/foundry-prompt-agents/SKILL.md` end-to-end. Note the
-   Python create / invoke / list / delete patterns and the KI-001,
-   KI-002, KI-003 gotchas in § 6.
-2. Derive the Foundry **project endpoint** from `AZURE_AI_ENDPOINT`
-   per KI-001 (account-host → project-host conversion is documented
-   in the skill).
-3. In a Python invocation (use `python3 -c '<inline>'` or a tempfile),
-   import the skill's canonical SDK surface
-   (`from azure.ai.projects import AIProjectClient`,
-   `from azure.identity import DefaultAzureCredential`) and:
-   1. Create a prompt agent named
-      `ci-smoke-pa-<8-char-uuid>` using deployment `gpt-5.4-mini`
-      with instructions exactly: `"Reply with the single word OK and
-      nothing else."`
-   2. Send a single user message `ping` via the Conversations API
-      pattern documented in § 3 of SKILL.md.
-   3. Print the agent's reply.
-   4. List agents (KI-002 path — exercise the pagination quirk
-      documented in the skill) and confirm the new agent is in the
-      list.
-   5. Delete the agent by name (KI-003 path — uses the
-      delete-by-name signature documented in the skill).
-   6. List agents again and confirm the agent is NOT in the list.
-4. Print exactly one of these two lines as the LAST line of output:
-   - On success: `SMOKE_RESULT=PASS`
-   - On failure: `SMOKE_RESULT=FAIL <one-line reason>`
+Skim sections 1 (create), 3 (chat via the Conversations API + agent
+reference), and the "List and delete agents" snippet in section 4 of
+SKILL.md for the documented Python patterns. Then run a Python script
+(an inline `python3 - <<'PY' ... PY` heredoc is fine) that does the
+following:
 
-## Hard constraints
+1. Build an `AIProjectClient(endpoint=FOUNDRY_PROJECT_ENDPOINT,
+   credential=DefaultAzureCredential())`.
+2. Generate `agent_name = f"ci-smoke-pa-{uuid.uuid4().hex[:8]}"` and call
+   `project.agents.create_version(agent_name=agent_name,
+   definition=PromptAgentDefinition(model=FOUNDRY_MODEL_DEPLOYMENT,
+   instructions="Reply with the single word OK and nothing else."))`.
+   Capture the returned `agent.version`.
+3. Open a conversation via `openai = project.get_openai_client()` and
+   `conv = openai.conversations.create()`, then call
+   `openai.responses.create(conversation=conv.id,
+   extra_body={"agent_reference": {"name": agent_name,
+   "type": "agent_reference"}}, input="ping")` and print
+   `response.output_text`.
+4. Confirm the agent appears in `project.agents.list()` (the iterable
+   yields `AgentDetails` objects; match by `.name`).
+5. Remove it with `project.agents.delete_version(agent_name,
+   str(agent.version))` — note the positional `(name, version)` form.
+6. Confirm the agent is gone from `project.agents.list()`.
 
-- Do NOT modify any file under `skills/foundry-prompt-agents/`.
-- Do NOT add new pip dependencies; the runner already has the
-  packages declared in the skill's pin file
-  (`references/upstream-pin.md` → `packages[]`).
-- If any step throws, print `SMOKE_RESULT=FAIL <step N>: <exception
-  type + message>` and exit non-zero.
-- If `SMOKE_RESULT=PASS` is the last line of stdout, the matrix job
-  marks the run green; any other last line is treated as failure.
+## Result contract
 
-Begin now.
+If every step succeeds, print exactly the line `SMOKE_RESULT=PASS` as
+the very last line of stdout and exit 0. On any failure, print
+`SMOKE_RESULT=FAIL <short reason>` as the last line and exit non-zero.
+The CI job greps the last stdout line; anything else is treated as a
+failure.
+
+Please don't modify any file under `skills/` — this is verification
+only.
