@@ -146,8 +146,11 @@ jobs:
             python scripts/run-pin-validation.py --all --include-azure
           fi
 
+      # Note: `always() &&` decouples each pytest from the preceding
+      # pin-validation step so a single pin failure doesn't skip live E2E
+      # coverage (the `!= pull_request` guard still keeps these off PRs).
       - name: Run E2E prompt agent test
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
@@ -155,7 +158,7 @@ jobs:
           python -m pytest scripts/tests/test_e2e_prompt_agents.py -v
 
       - name: Run E2E voice-live test
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
@@ -163,7 +166,7 @@ jobs:
           python -m pytest scripts/tests/test_e2e_voice_live.py -v
 
       - name: Run E2E foundry-toolbox test
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
