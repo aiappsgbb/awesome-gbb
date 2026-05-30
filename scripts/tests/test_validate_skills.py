@@ -453,7 +453,7 @@ class TestShouldRun(unittest.TestCase):
     def test_azure_requires_skips_without_flag(self):
         ok, reason = self.rpv.should_run(
             self._pin(requires=["azure_subscription"], runnable=False,
-                      automation_tier="issue_only"),
+                      automation_tier="auto"),
             pathlib.Path("x"),
         )
         self.assertFalse(ok)
@@ -465,7 +465,7 @@ class TestShouldRun(unittest.TestCase):
         try:
             ok, _ = self.rpv.should_run(
                 self._pin(requires=["azure_subscription"], runnable=False,
-                          automation_tier="issue_only"),
+                          automation_tier="auto"),
                 pathlib.Path("x"),
                 include_azure=True,
             )
@@ -482,7 +482,7 @@ class TestShouldRun(unittest.TestCase):
         try:
             ok, reason = self.rpv.should_run(
                 self._pin(requires=["azure_subscription"], runnable=False,
-                          automation_tier="issue_only"),
+                          automation_tier="auto"),
                 pathlib.Path("x"),
                 include_azure=True,
             )
@@ -490,6 +490,27 @@ class TestShouldRun(unittest.TestCase):
             self.assertIn("missing env vars", reason)
         finally:
             if old is not None:
+                os.environ["AZURE_SUBSCRIPTION_ID"] = old
+
+    def test_issue_only_skips_even_with_azure_flag(self):
+        """issue_only pins are human-only — never auto-run, even under
+        --include-azure with creds present (AGENTS.md § 12.3)."""
+        import os
+        old = os.environ.get("AZURE_SUBSCRIPTION_ID")
+        os.environ["AZURE_SUBSCRIPTION_ID"] = "test-sub"
+        try:
+            ok, reason = self.rpv.should_run(
+                self._pin(requires=["azure_subscription"], runnable=False,
+                          automation_tier="issue_only"),
+                pathlib.Path("x"),
+                include_azure=True,
+            )
+            self.assertFalse(ok)
+            self.assertIn("issue_only", reason)
+        finally:
+            if old is None:
+                os.environ.pop("AZURE_SUBSCRIPTION_ID", None)
+            else:
                 os.environ["AZURE_SUBSCRIPTION_ID"] = old
 
 
