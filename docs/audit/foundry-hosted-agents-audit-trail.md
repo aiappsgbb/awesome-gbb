@@ -605,3 +605,32 @@ an agent might emit a polite prose summary and forget the marker.
   #1 citation + "if you have declared success in prose, you are NOT
   done" rule.
 - See AGENTS.md § 9.7 Pattern 10.
+
+### F3 — Pattern 12 cross-skill propagation (file-based marker)
+
+**Symptom on this leg:** None directly. The hosted-agents fixture
+did not regress in the post-Pattern-10 stability cycle. However, the
+parallel `foundry-prompt-agents` leg failed at Run #2/5
+([`26697592828`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697592828),
+2026-05-30 23:20:33Z) when the agent stochastically rendered the
+marker as `` `SMOKE_RESULT=PASS` `` (backtick-wrapped) inside its
+final assistant prose reply — defeating the anchored grep.
+
+**Why this fixture changed anyway — symmetric vulnerability:** the
+hosted-agents fixture used the same Pattern 10 marker-emission
+contract as the failing prompt-agents fixture. Same LLM, same
+prose-rendering surface, same stochastic-decoration risk. The fact
+that this leg passed cleanly in runs #1–#2 is roll-of-the-dice
+evidence, not architectural immunity. Propagating Pattern 12 here
+proactively closes the bug class everywhere it could surface.
+
+**Defense applied (this PR):**
+- Step 7 rewritten to invoke the Bash tool with literal
+  `printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result`
+  (per-skill marker path for matrix-leg isolation).
+- Result Contract section collapsed: marker file is authoritative,
+  graded by `cmp -s` byte-exact; transcript grep retained as a
+  legacy fallback only (slated for retirement after 10+ greens).
+- Pattern 10's WRONG/RIGHT marker-rendering rules in fixture body
+  can be retired once the transition window closes.
+- See AGENTS.md § 9.7 Pattern 12 (file-based deterministic marker).

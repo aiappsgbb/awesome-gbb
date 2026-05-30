@@ -437,3 +437,33 @@ defense-enough; Pattern 11 made it defense-in-depth.
 The fixture's existing "Step 6 — Emit the result marker" is
 Pattern-10 compliant: numbered final step, explicit imperative,
 `_MOKE_RESULT` placeholder. No backfill needed.
+
+### F4 — Pattern 12 cross-skill propagation (file-based marker)
+
+**Symptom on this leg:** None. The azd-patterns fixture's 5/5 green
+count in Task 2.3 was clean. However, the parallel
+`foundry-prompt-agents` leg failed at Run #2/5 of the post-Pattern-10
+stability cycle ([`26697592828`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697592828),
+2026-05-30 23:20:33Z) when the agent stochastically rendered the
+marker as `` `SMOKE_RESULT=PASS` `` (backtick-wrapped) inside its
+final assistant prose reply — defeating the anchored grep.
+
+**Why this fixture changed anyway — symmetric vulnerability:** the
+azd-patterns fixture used the same Pattern 10 marker-emission
+contract as the failing prompt-agents fixture. Same LLM, same
+prose-rendering surface, same stochastic-decoration risk. Past
+green runs are roll-of-the-dice evidence, not architectural
+immunity. Propagating Pattern 12 here proactively closes the bug
+class across all 3 pilot fixtures simultaneously, avoiding a
+later "we hit the same bug on azd-patterns" cycle.
+
+**Defense applied (this PR):**
+- Step 6 rewritten to invoke the Bash tool with literal
+  `printf 'SMOKE_RESULT=PASS\n' > /tmp/azd-patterns-smoke-result`
+  (per-skill marker path for matrix-leg isolation; preserved local
+  "Step 6" numbering and the "## Out-of-scope coverage note"
+  section between Step 6 and the Result Contract).
+- Result Contract section collapsed: marker file is authoritative,
+  graded by `cmp -s` byte-exact; transcript grep retained as a
+  legacy fallback only (slated for retirement after 10+ greens).
+- See AGENTS.md § 9.7 Pattern 12 (file-based deterministic marker).

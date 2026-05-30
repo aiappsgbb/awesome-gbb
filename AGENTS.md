@@ -974,7 +974,15 @@ Three patterns proved load-bearing during Task 2.1 of the
    single shared retry helper — the back-off math is per-API.
 
 10. **Marker-omission bug class — make marker emission a NUMBERED FINAL
-    STEP, not a postscript** (Task 2.4 finding; root cause of `foundry-prompt-agents`
+    STEP, not a postscript** ⚠️ **SUPERSEDED by Pattern 12** (the
+    numbered-final-step imperative was necessary but not sufficient —
+    run [`26697592828`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697592828)
+    PA leg, 2026-05-30, emitted prose `"the smoke emitted \`SMOKE_RESULT=PASS\`"`
+    despite a numbered-final-step imperative; the LLM stochastically
+    decorated the marker in prose). **Keep this pattern's defenses in
+    fixtures as belt-and-braces, but Pattern 12 below — file-write via
+    Bash tool — is the load-bearing path.** Original Task 2.4 finding
+    (root cause of `foundry-prompt-agents`
     leg in run [`26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)).
 
     Even with `_MOKE_RESULT` placeholder defense (Pattern 4) and an
@@ -1112,6 +1120,127 @@ Three patterns proved load-bearing during Task 2.1 of the
     — it passes 5/5 in CI today because `azd auth login` fails loudly
     if the vars are missing. Retrofit the inventory anyway for
     consistency; the cost is two `echo` lines and one `az account show`.
+
+12. **Deterministic result marker via Bash tool file-write — the
+    load-bearing path** (Task 2.4 finding; root cause of
+    `foundry-prompt-agents` leg in run
+    [`26697592828`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697592828),
+    2026-05-30 23:20:33Z).
+
+    Pattern 10's numbered-final-step imperative reduces but does NOT
+    eliminate marker mis-emission. In the failing run, the agent's
+    final assistant reply was:
+
+    > Verified end-to-end: the prompt agent was created, chatted with
+    > via a conversation, listed, deleted, and the smoke emitted
+    > `` `SMOKE_RESULT=PASS` ``.
+
+    The anchored grep correctly rejected this because the marker is
+    backtick-wrapped inside prose, not a bare line. Run #1 of the
+    same fixture, same skill, different roll, **did** emit a bare line.
+    Same prompt, opposite outcomes — pure LLM autoregressive
+    stochasticity. No prose hardening can close this; only bypassing
+    prose rendering entirely can.
+
+    **Defense — file-based deterministic marker. Two coordinated edits:**
+
+    - **Fixture side** — the final step is an explicit Bash tool
+      invocation that writes the marker file. The fixture instructs
+      the agent NOT to mention the marker token in prose at all:
+
+      ```markdown
+      Step N — Write the result marker (deterministic, MANDATORY).
+      After step N-1 succeeds, your FINAL action is to invoke the Bash
+      tool to run exactly this command. The file's literal byte content
+      is what CI grades — NOT your assistant text reply.
+
+          printf 'SMOKE_RESULT=PASS\n' > /tmp/<skill>-smoke-result
+
+      If ANY prior step fails:
+
+          printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/<skill>-smoke-result
+      ```
+
+      Per-skill marker path (matrix-leg isolation): `/tmp/${SKILL}-smoke-result`.
+
+    - **Workflow side** (`.github/workflows/skill-test.yml` →
+      `copilot-cli-matrix` job, BOTH the main "Run consumer prompt"
+      step AND the "Retry once on classified-transient failure" step):
+
+      ```bash
+      set -euo pipefail
+      SKILL="${{ matrix.skill }}"
+      PROMPT="skills/${SKILL}/test-fixture/consumer_prompt.md"
+      TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+      MARKER="/tmp/${SKILL}-smoke-result"
+      test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
+      rm -f "$TRANSCRIPT" "$MARKER"
+      set +e
+      copilot -p "$(cat "$PROMPT")" --allow-all-tools --disable-builtin-mcps \
+        -C "$GITHUB_WORKSPACE" 2>&1 | tee "$TRANSCRIPT"
+      COPILOT_STATUS=${PIPESTATUS[0]}
+      set -e
+      # Marker file is authoritative
+      if [ -f "$MARKER" ]; then
+        if grep -qE "^SMOKE_RESULT=FAIL" "$MARKER"; then
+          echo "::error::Fixture reported FAIL"; cat "$MARKER"; exit 1
+        fi
+        if cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n'); then
+          exit 0
+        fi
+        echo "::error::Marker malformed"; cat "$MARKER"; exit 1
+      fi
+      # Legacy transcript fallback (retire after 10+ greens on Pattern 12)
+      if grep -qE "^SMOKE_RESULT=FAIL" "$TRANSCRIPT"; then exit 1; fi
+      if grep -q "^SMOKE_RESULT=PASS$" "$TRANSCRIPT"; then exit 0; fi
+      echo "::error::No marker (file or transcript). copilot exit=$COPILOT_STATUS"
+      tail -80 "$TRANSCRIPT"; exit 1
+      ```
+
+      Three non-obvious choices, all load-bearing:
+
+      1. **`rm -f` BEFORE invocation** — a stale marker from a previous
+         step (or, on a retry, the failed first attempt) would otherwise
+         dominate the grade. Both main and retry steps clean the same
+         path; retry uses the same fixture and same marker path.
+      2. **`set +e` around the pipeline + `PIPESTATUS[0]` capture** —
+         default GHA bash is `bash --noprofile --norc -eo pipefail`. With
+         `-e` + `pipefail`, a non-zero `copilot` exit (timeout, internal
+         error) terminates the step BEFORE marker evaluation runs. The
+         `|| true` workaround corrupts `PIPESTATUS`, so toggling `-e`
+         is the cleanest path to capturing the real copilot status
+         while still evaluating the marker.
+      3. **`cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n')`** —
+         byte-exact comparison. NOT `grep` — a marker file containing
+         `SMOKE_RESULT=PASS\nleftover-prose\n` should FAIL malformed,
+         not PASS on the first line match.
+
+    **Marker-FAIL ALWAYS beats marker-PASS** (the order of the
+    grep ladder), and the marker file is ALWAYS authoritative over
+    the transcript — the transcript fallback exists only as a
+    transition-window safety net. **Retirement schedule:** after 10
+    consecutive green runs across all 3 pilot fixtures on Pattern 12,
+    delete the transcript fallback. Until then keep it so a fixture
+    that hasn't been migrated yet still has a chance to grade
+    correctly during the rollout.
+
+    **Cross-skill carry:** Pattern 12 is mandatory for every Copilot
+    CLI fixture. Pattern 10's WRONG/RIGHT marker-emission rules in
+    fixtures can be DELETED once Pattern 12 is in place — the file
+    write bypasses the prose-rendering surface entirely, so the
+    autoregressive-priming defenses (`_MOKE_RESULT` placeholder,
+    no-backticks rule) become unnecessary noise in the fixture body.
+
+    **Why this works.** Bash tool calls produce shell output — bytes
+    on disk — not LLM continuations. The model decides to invoke the
+    tool with a specific command string; the tool runtime executes
+    that string verbatim. There is no markdown rendering layer
+    between `printf 'SMOKE_RESULT=PASS\n'` and the bytes that hit
+    `/tmp/<skill>-smoke-result`. The only remaining failure mode is
+    the model invoking the tool with a DIFFERENT command (e.g.
+    `printf 'SMOKE_RESULT=FAIL ...'` when steps actually succeeded)
+    — and that surfaces as a fixture-level logic bug, not a stochastic
+    rendering bug.
 
 ### 9.8 · Skill testing tiers
 

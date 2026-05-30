@@ -103,3 +103,40 @@ Copilot CLI subprocess. Vars were only passed as `with:` inputs to
 - New fixture Step 0 inventories the env vars and runs
   `az account show --output table` BEFORE any work, FAIL-fast.
 - See AGENTS.md § 9.7 Pattern 11 (workflow env contract).
+
+### F3 — Stochastic marker decoration in prose (Run #2 `26697592828`, foundry-prompt-agents leg)
+
+**Symptom:** Run #2/5 of the post-Pattern-10 stability series
+failed at `2026-05-30T23:20:33.0181869Z`. Copilot CLI completed all
+lifecycle work correctly and emitted, as its final assistant reply:
+
+> Verified end-to-end: the prompt agent was created, chatted with
+> via a conversation, listed, deleted, and the smoke emitted
+> `` `SMOKE_RESULT=PASS` ``.
+
+The anchored grep `^SMOKE_RESULT=PASS$` correctly rejected this
+because the marker is backtick-wrapped inside prose, not a bare
+line. Run #1 of the same SHA emitted a bare line and passed; Run #2
+emitted the backtick-wrapped variant and failed. Same prompt, same
+SKILL.md, opposite outcomes — pure LLM autoregressive stochasticity.
+
+**Root cause:** Pattern 10's numbered-final-step imperative
+constrains WHEN the marker is emitted but cannot constrain HOW the
+LLM renders it. The final assistant text reply passes through the
+model's prose-rendering surface, where decorations like backticks,
+inline-code fences, and "I emitted X" framings appear non-
+deterministically. No fixture prose hardening can close this; the
+only fix is to bypass the prose-rendering surface entirely.
+
+**Defense applied (this PR):**
+- Pattern 12 (file-based deterministic marker) — fixture's final
+  step invokes the Bash tool to write `/tmp/foundry-prompt-agents-smoke-result`
+  with literal `printf 'SMOKE_RESULT=PASS\n'`. Workflow grades the
+  file via `cmp -s` byte-exact comparison; transcript grep retained
+  as a legacy fallback only.
+- Pattern 10 marked SUPERSEDED in AGENTS.md § 9.7; its WRONG/RIGHT
+  marker-rendering rules in fixture bodies can be retired once 10+
+  consecutive greens land on Pattern 12.
+- Stability counter for Task 2.4 reset from 1/5 → 0/5; fresh series
+  starts on the Pattern 12 commit.
+- See AGENTS.md § 9.7 Pattern 12 (deterministic marker file write).

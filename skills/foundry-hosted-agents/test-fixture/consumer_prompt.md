@@ -207,103 +207,52 @@ choice.
      `${AGENT_NAME}`. A 404 here means the agent was already gone —
      treat as success.
 
-7. **Step 7 — Emit the result marker. This is mandatory work, not a
-   postscript.** A previous run of this fixture
-   ([`actions/runs/26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)
-   — `foundry-hosted-agents` leg) failed at Step 0 because the
-   workflow env contract was broken (now fixed — see AGENTS.md § 9.7
-   Pattern 11), but the underlying failure pattern matters here too:
-   if you have completed steps 0-6 successfully and the agent replied
-   to ping, you are still NOT done. The CI grep does not care about
-   your prose summary; it cares about exactly one line matching
-   `^SMOKE_RESULT=PASS$`. **Do not stop after teardown without
-   emitting it.** The marker MUST appear in the same assistant reply
-   that performs steps 5-6 — do NOT split it into a separate "summary"
-   turn. Re-read the "Result contract" section below BEFORE you emit
-   your final reply.
+7. **Step 7 — Write the result marker (deterministic, MANDATORY).**
+   After step 6 succeeds, your FINAL action is to invoke the Bash tool
+   to run exactly this command. The file's literal byte content is what
+   CI grades — **NOT** your assistant text reply. Do NOT type the marker
+   token in prose; do NOT echo it; do NOT mention it in your summary.
+
+   ```bash
+   printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result
+   ```
+
+   If ANY step 0-6 fails, instead run (substitute a real reason, ≤80
+   chars, no backticks, no newlines):
+
+   ```bash
+   printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-hosted-agents-smoke-result
+   ```
+
+   The marker path is fixed: `/tmp/foundry-hosted-agents-smoke-result`.
+   After writing the marker you may add a brief free-form prose summary
+   for the human reviewer, but it does not affect grading.
 
 ## Result contract
 
-CI greps the **whole transcript** with anchored, line-boundary patterns:
+CI clears `/tmp/foundry-hosted-agents-smoke-result` BEFORE invoking you,
+then after your turn ends grades the result in this strict order:
 
-```bash
-grep -qE '^SMOKE_RESULT=FAIL'   transcript.log   # FAIL wins if both appear
-grep -q  '^SMOKE_RESULT=PASS$'  transcript.log   # PASS pattern is fully anchored
-```
+1. If the marker file contains a line starting with `SMOKE_RESULT=FAIL`
+   → the leg FAILs (and the line's reason is surfaced in the run log).
+2. If the marker file contains exactly the bytes `SMOKE_RESULT=PASS\n`
+   (compared with `cmp -s`, byte-exact) → the leg PASSes.
+3. If the marker file is missing or malformed → the leg FAILs with a
+   diagnostic dump (legacy transcript-grep fallback exists for the
+   transition window but is scheduled for removal — do not rely on it).
 
-The `^` and `$` are **zero-tolerance** for ANY surrounding character.
-The first character of the line MUST be the literal capital `S` of
-`SMOKE_RESULT`, and the last character MUST be the literal capital
-`S` of `PASS` (no trailing period, space, backtick, or newline noise).
-The Copilot CLI appends a footer (`Changes / Duration / Tokens`)
-after your reply, but the marker need not be the final line — just
-the only line matching the grep.
+The deterministic file-write path is mandatory because an earlier run
+(`actions/runs/26697592828`, 2026-05-30) showed the LLM stochastically
+wraps the marker in markdown decoration (backticks, bold) when asked
+to emit it as prose, breaking line-boundary grep. Writing the marker
+via a Bash tool call bypasses prose rendering entirely — the bytes that
+hit disk are the bytes `printf` puts there.
 
-### Marker emission rules — read carefully
+### Runtime guardrail
 
-Empirical evidence from `actions/runs/26693703357` (the run that
-triggered this very contract tightening): in the SAME workflow run,
-the parallel `foundry-prompt-agents` matrix leg emitted the marker
-**clean** while this skill's matrix leg emitted it **wrapped in
-backticks**, breaking the start-of-line anchor. The Copilot CLI's
-underlying LLM autoregression non-deterministically formats
-identifiers in markdown — your job is to defeat that.
+- Do NOT redirect your own stdout via `exec > >(tee ...)` or any
+  process-substitution pattern. The Copilot CLI shell wrapper blocks
+  process substitution. Your stdout is already captured by CI — you do
+  not need to tee it.
 
-WRONG (every pattern below has been seen fail an anchored grep):
-
-```
-`SMOKE_RESULT=PASS`              ← backticks break ^ anchor (LITERAL bug we hit)
-**SMOKE_RESULT=PASS**            ← bold asterisks break both anchors
-`SMOKE_RESULT=PASS` (success)    ← trailing prose breaks $ anchor
-> SMOKE_RESULT=PASS              ← blockquote prefix breaks ^ anchor
-  SMOKE_RESULT=PASS              ← leading whitespace breaks ^ anchor
-SMOKE_RESULT=PASS.               ← trailing period breaks $ anchor
-SMOKE_RESULT=PASS ✓              ← trailing emoji/glyph breaks $ anchor
-```
-
-RIGHT (the ONLY accepted form for success — note that in this prompt
-the literal `S` of `SMOKE_RESULT` is rendered as `_` so this
-documentation itself doesn't trip the grep; your reply MUST substitute
-the literal capital `S`):
-
-```
-_MOKE_RESULT=PASS
-```
-
-The line MUST stand alone in its own paragraph — a blank line before
-it and a blank line after it. Do NOT embed it in a list bullet, code
-fence, or inline mention. If you want to add prose explaining what
-happened (recommended), put that prose in a **separate paragraph**
-before or after, never on the same line as the marker, and never
-write the literal token `SMOKE_RESULT` in any decorated form
-(backticks, bold, italic) anywhere else in your reply — autoregressive
-priming from those earlier mentions is what causes the final marker
-emission to come out backtick-wrapped.
-
-On any failure in steps 0-5, emit a single line of the form
-`SMOKE_RESULT=FAIL` followed by a single space and a short reason
-(≤80 chars, no backticks, no newlines). Example shape (with the
-literal `S` of `SMOKE_RESULT` replaced by `_` so this prompt itself
-doesn't trip the grep — your reply MUST use the literal `S`):
-
-```
-_MOKE_RESULT=FAIL agent invoke returned 401 after 60s RBAC grace
-```
-
-Same line-boundary rules apply (no surrounding decoration). CI checks
-FAIL before PASS, so an explicit FAIL always wins even if you also
-emit PASS elsewhere — useful if you want to FAIL with detail and ALSO
-emit a stub PASS for debugging.
-
-### Runtime guardrails (avoid known shell-block traps)
-
-- Do NOT redirect your own stdout via `exec > >(tee -a "$LOG") 2>&1`
-  or any process-substitution pattern. The Copilot CLI shell wrapper
-  blocks process substitution as "dangerous shell expansion" (seen in
-  run `26693703357` at 20:09:44Z, where the agent's heredoc using
-  `exec > >(...)` got rejected before execution). Your stdout is
-  ALREADY captured by the CI runner — you do not need to tee it
-  yourself.
-
-Please don't modify any file under `skills/` — this is verification
-only.
+Please don't modify any file under `skills/` — this is verification only.
