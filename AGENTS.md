@@ -468,6 +468,59 @@ Per-skill `templates/` directories hold copy-paste artifacts (Dockerfiles,
 pyproject.toml, container.py, etc.). When updating a template, also update
 the prose in `SKILL.md` that explains it — the two must stay in sync.
 
+### Per-skill `references/` directories — SSOT for non-trivial code
+
+When a SKILL has a `references/<lang>/` directory, each file there is the
+**single source of truth** for the snippet it represents. SKILL.md MUST NOT
+duplicate that code body inline. Use a one-line cross-link instead:
+
+```markdown
+> **MUST:** Copy verbatim from [`references/python/main.py`](references/python/main.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+> That file is the canonical FoundryChatClient bootstrap for hosted agents.
+```
+
+Keep inline ONLY:
+- Configuration *fragments* that show a single key/value in context
+  (e.g. `dependsOn: [rbac]` wiring snippets, hardcoded-UUID demos that
+  intentionally differ in shape from the env-var-driven reference)
+- Subset / shape-variant examples that are **short (≤ 20 lines), explicitly
+  incomplete, and prose-annotated to call out how they differ from the
+  canonical reference.** A truncated example without an explicit "this is
+  a structural excerpt — full version in …" callout is a duplication
+  violation, not a variant.
+
+Forbidden:
+- Re-pasting a function/class body that exists in `references/`
+- "Canonical reference files: see also..." callouts that list 6 files
+  by hand. Use an imperative table mapping each file to the SKILL.md
+  § it documents (see `foundry-hosted-agents/SKILL.md` for the pattern).
+- Truncating the canonical block (removing imports / a few cases) and
+  dropping it inline as an "excerpt". That is the duplication anti-pattern
+  the validator was added to catch — the excerpt drifts, then ships wrong.
+
+Header convention inside each reference file (validator-enforced):
+
+```python
+"""Canonical <one-line description>.
+
+Source of truth for the prose example in `../../SKILL.md § <Section Title>`.
+...
+"""
+```
+
+The validator (`scripts/validate-skills.py`) checks:
+1. Every `.py`/`.sh`/`.yaml`/`.json`/`.bicep` under `references/` parses /
+   compiles cleanly (catches drift from the inline snippet that used to
+   ship in SKILL.md).
+2. Every `§ <Section Title>` in a reference-file header resolves to a
+   matching `##` / `###` heading in the sibling SKILL.md (catches the
+   "renamed the section but forgot the header" silent drift).
+
+E2E tests in `scripts/tests/` MUST import canonical helpers from
+`references/` via `sys.path` injection — never redefine the helper inline.
+See `test_e2e_foundry_toolbox.py` for the import pattern.
+
 ---
 
 ## 8 · Pre-push validation

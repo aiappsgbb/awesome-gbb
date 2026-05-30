@@ -4,7 +4,7 @@
 # extension v0.1.34-preview+.
 #
 # Source of truth for the prose example in
-# `../../SKILL.md § Required azd Environment Variables` and
+# `../../SKILL.md § Required `azd env` variables for the `azure.ai.agents` extension` and
 # `../../SKILL.md § Critical Rules § agent.yaml`.
 #
 # Why each line matters (validated against 2026-05-29 smb-credit-memo +

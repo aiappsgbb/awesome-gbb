@@ -288,50 +288,25 @@ applied.
 > "Foundry Model Selector". That table is the single source of truth for
 > model selection across all awesome-gbb skills — we don't duplicate it here.
 
-```python
-import os
-from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
-from pydantic import Field
-from typing import Annotated
+> **MUST:** Copy verbatim from [`references/python/main.py`](references/python/main.py). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the field-validated `FoundryChatClient` + `Agent` + `ResponsesHostServer` shape for a single-purpose hosted agent (one tool, no `SkillsProvider`, MAF 1.6.0).
 
-client = FoundryChatClient(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ["MODEL_DEPLOYMENT_NAME"],
-    credential=DefaultAzureCredential(),
-)
-
-@tool(approval_mode="never_require")
-def my_tool(query: Annotated[str, Field(description="Input")]) -> str:
-    """Tool description."""
-    return "result"
-
-agent = Agent(
-    client=client,
-    instructions="You are a helpful assistant.",
-    tools=[my_tool],
-    default_options={"store": False},  # Platform manages history
-)
-
-server = ResponsesHostServer(agent)
-server.run()  # Serves on port 8088
-```
-
-**Key points:**
+**Key points (why each line in `main.py` matters):**
 - `FOUNDRY_PROJECT_ENDPOINT` is **injected by the platform** — never declare in agent.yaml
 - `default_options={"store": False}` — hosting platform manages conversation history
 - `ResponsesHostServer` handles liveness/readiness probes natively
 - `DefaultAzureCredential` resolves to the container's App Service managed identity
 - Custom tools use `@tool(approval_mode="never_require")` with `Annotated` type hints
 
-> 📁 **Canonical reference files:**
-> - [`references/python/main.py`](references/python/main.py) — single-purpose-agent template (the code block above as a runnable file)
-> - [`references/python/container.py`](references/python/container.py) — multi-SKILL composition template (includes `_init_telemetry()` guarded init + `_build_skills_provider()` for the threadlight-style multi-business-SKILL pattern)
-> - [`references/python/pyproject.toml`](references/python/pyproject.toml) — pinned hosted-agent dependencies (no meta-package, mcp pinned, alpha hosting at exact version)
-> - [`references/yaml/agent.yaml`](references/yaml/agent.yaml) + [`references/yaml/agent.manifest.yaml`](references/yaml/agent.manifest.yaml) — both schemas with the literal-vs-mustache distinction documented inline (per MID-3 from 2026-05-29 hybrid-mcp-agent run)
-> - [`references/bash/postdeploy-agent.sh`](references/bash/postdeploy-agent.sh) — canonical postdeploy hook using `.name` + `instance_identity.principal_id` (per MID-13)
+**Canonical reference files for the rest of this skill** (each one is the source of truth for its § below; SKILL.md prose never re-defines these):
+
+| Reference file | Consumed by § |
+|---|---|
+| [`references/python/main.py`](references/python/main.py) | § Runtime Pattern (MAF Variant) |
+| [`references/python/container.py`](references/python/container.py) | § Skill Loading — `SkillsProvider` (multi-SKILL composition + guarded `_init_telemetry()`) |
+| [`references/python/pyproject.toml`](references/python/pyproject.toml) | § Dependencies (pyproject.toml) |
+| [`references/yaml/agent.yaml`](references/yaml/agent.yaml) | § agent.yaml (ContainerAgent Schema) — LITERAL values |
+| [`references/yaml/agent.manifest.yaml`](references/yaml/agent.manifest.yaml) | § agent.yaml § Critical Rules — `{{mustache}}` scaffold-time companion (per MID-3) |
+| [`references/bash/postdeploy-agent.sh`](references/bash/postdeploy-agent.sh) | § Required `azd env` variables + § Auto-Assignment via postdeploy Hook (uses `.name` + `instance_identity.principal_id` per MID-13) |
 
 > **⚠️ Deprecation: `ChatAgent` is gone in MAF 1.6.0**
 >
@@ -378,80 +353,9 @@ even if the skills directory is missing or a `SKILL.md` is malformed —
 critical for ops, since a single broken skill file should not crash the
 container at startup.
 
-```python
-import os
-from pathlib import Path
-from agent_framework import Agent, MCPStreamableHTTPTool, SkillsProvider, tool
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
-
-def _build_skills_provider() -> SkillsProvider | None:
-    """Wire SKILL.md playbooks via MAF's progressive-disclosure provider.
-
-    Returns None if the skills directory is missing or empty so the
-    agent stays runnable with context_providers=[] instead of crashing
-    at startup on a corrupt or absent skill folder.
-    """
-    skills_dir = Path(__file__).parent / "skills"
-    if not skills_dir.exists():
-        log.warning("Skills directory missing at %s; SkillsProvider disabled.", skills_dir)
-        return None
-    skill_subdirs = [
-        d for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
-    ]
-    if not skill_subdirs:
-        log.warning("No SKILL.md files found under %s; SkillsProvider disabled.", skills_dir)
-        return None
-    try:
-        provider = SkillsProvider.from_paths(skills_dir)
-        log.info(
-            "SkillsProvider wired with %d skill(s): %s",
-            len(skill_subdirs),
-            ", ".join(sorted(d.name for d in skill_subdirs)),
-        )
-        return provider
-    except Exception as exc:  # never crash on a corrupt skill folder
-        log.warning("SkillsProvider init failed (%s); falling back to no-op.", exc)
-        return None
-
-
-def _load_instructions() -> str:
-    """Base prompt + SPEC-derived constants ONLY. Skills are NOT concatenated
-    here — they flow through SkillsProvider via context_providers."""
-    base = Path(__file__).parent
-    parts: list[str] = []
-    parts.append((base / "copilot-instructions.md").read_text(encoding="utf-8"))
-    config_path = base / "config" / "<process>.json"
-    if config_path.exists():
-        parts.append(
-            "\n\n---\n\n# Runtime configuration\n\n"
-            "These thresholds, lists, and templates are SPEC-derived constants. "
-            "Honour them in your behaviour:\n\n```json\n"
-            + config_path.read_text(encoding="utf-8")
-            + "\n```\n"
-        )
-    return "\n".join(parts)
-
-
-client = FoundryChatClient(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ["MODEL_DEPLOYMENT_NAME"],
-    credential=DefaultAzureCredential(),
-)
-
-skills_provider = _build_skills_provider()
-context_providers = [skills_provider] if skills_provider is not None else []
-
-agent = Agent(
-    client=client,
-    instructions=_load_instructions(),       # base + config ONLY (NOT skills)
-    tools=[my_tool, mcp_tool],
-    context_providers=context_providers,     # ← progressive skill loading
-    default_options={"store": False},
-)
-ResponsesHostServer(agent).run()
-```
+> **MUST:** Copy verbatim from [`references/python/container.py`](references/python/container.py). Do NOT redefine inline — the validator enforces single-source-of-truth. That file ships the canonical `_init_telemetry()` (guarded against O-012 AppIn injection failures) + `_build_skills_provider()` (returns `None` on missing/corrupt skills dir so the agent stays runnable) + the full `FoundryChatClient` / `Agent` / `ResponsesHostServer` wiring for a multi-SKILL hosted agent.
+>
+> **The pattern in one line:** `context_providers=[skills_provider] if skills_provider else []` on the `Agent(...)` ctor — and `instructions=_load_instructions()` returns base prompt + SPEC config ONLY (never concatenate `SKILL.md` bodies; that double-counts and defeats progressive disclosure).
 
 **Constructor variants.**
 - `SkillsProvider.from_paths(skills_dir)` — classmethod, the form used in
@@ -973,29 +877,7 @@ You have a `save_report` tool for generating downloadable files:
 > 2. **`agent-framework-core[mcp]` extra** — that extra **does NOT exist** in 1.6.0. `MCPStreamableHTTPTool` / `MCPSseTool` / `MCPStdioTool` are top-level exports of `agent_framework`; the bare `agent-framework-core~=1.6.0` pin already includes them. Writing `[mcp]` produces a uv warning but does NOT fail resolution, so the pyproject can ship looking "MCP-ready" while operators chase phantom problems.
 > 3. **Missing `mcp>=1.10.0`** — `agent_framework_foundry_hosting._responses` imports `from mcp import McpError` at module-load time, so the container crashes at startup with `ModuleNotFoundError: No module named 'mcp'` even when no MCP tool is wired. The platform surfaces this as `session_not_ready` after a ~60 s timeout, so diagnosis cost is high. Pin `mcp>=1.10.0` in **every** hosted-agent `pyproject.toml`.
 
-```toml
-[project]
-name = "my-agent"
-version = "1.0.0"
-requires-python = ">=3.12"
-dependencies = [
-    "agent-framework-core~=1.6.0",
-    "agent-framework-foundry~=1.6.0",
-    "agent-framework-foundry-hosting==1.0.0a260521",
-    "azure-identity>=1.19.0,<1.26.0a0",
-    "mcp>=1.10.0",
-    "python-dotenv>=1.0.0",
-    # OTel + gen_ai instrumentors are bundled via hosting → microsoft-opentelemetry.
-    # Do NOT add explicit azure-monitor-opentelemetry or opentelemetry-* lines.
-]
-
-[tool.uv]
-required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-prerelease = "if-necessary-or-explicit"
-
-[tool.setuptools]
-packages = []
-```
+> **MUST:** Copy verbatim from [`references/python/pyproject.toml`](references/python/pyproject.toml). Do NOT redefine inline — the validator enforces single-source-of-truth. That file pins `agent-framework-core~=1.6.0`, `agent-framework-foundry~=1.6.0`, the alpha hosting at `==1.0.0a260521`, `mcp>=1.10.0` (mandatory — see READ FIRST callout above), and `azure-identity<1.26.0a0` to avoid beta. The header comment captures the three pitfalls (meta-package, phantom `[mcp]` extra, missing `mcp`) the file prevents.
 
 **Do NOT use `agent-framework>=1.6.0` as a meta-package.** The meta-package's transitive
 resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.6.0` and
@@ -1071,22 +953,7 @@ CMD [".venv/bin/python", "container.py"]
 
 ## agent.yaml (ContainerAgent Schema)
 
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
-
-name: my-agent
-description: My agent description
-kind: hosted
-protocols:
-  - protocol: responses
-    version: 1.0.0
-environment_variables:
-  - name: MODEL_DEPLOYMENT_NAME
-    value: gpt-5.4   # default for production; use gpt-5.4-mini only for trivial 1-2-step flows
-resources:
-  cpu: "1"
-  memory: 2Gi
-```
+> **MUST:** Copy verbatim from [`references/yaml/agent.yaml`](references/yaml/agent.yaml). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the **literal-values** ContainerAgent schema read by `azd ai agent` at deploy time. The mustache-templated **scaffold-time** companion lives at [`references/yaml/agent.manifest.yaml`](references/yaml/agent.manifest.yaml) (read by `azd ai agent init`) — see § Critical Rules below for the "two schemas, don't confuse them" rule (MID-3).
 
 ### Critical Rules
 

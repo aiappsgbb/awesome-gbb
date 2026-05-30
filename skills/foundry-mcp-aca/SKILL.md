@@ -376,117 +376,17 @@ Deploy as ACA with external ingress on port 8080.
 
 ### Example: Custom Python MCP Server
 
-> 📁 **Canonical reference files:**
-> - [`references/python/server.py`](references/python/server.py) — runnable FastMCP server with the `transport="streamable-http"` + `host="0.0.0.0"` + `port=os.environ["PORT"]` trio (closes M2 + M3) plus the `_helper()` pattern for sharing logic between two `@mcp.tool()` decorated functions
-> - [`references/bicep/mcp-aca.bicep`](references/bicep/mcp-aca.bicep) — ACA module for hosting the server with external ingress + UAMI + ACR pull + liveness/startup probes on `/health`
+> **MUST:** Copy verbatim from [`references/python/server.py`](references/python/server.py). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical FastMCP server with the `transport="streamable-http"` + `host="0.0.0.0"` + `port=os.environ["PORT"]` trio (closes M2 + M3) plus the `_helper()` pattern for sharing logic between two `@mcp.tool()` decorated functions.
 
-```python
-from fastmcp import FastMCP
-
-mcp = FastMCP("my-tools")
-
-@mcp.tool()
-async def search_orders(query: str) -> str:
-    """Search orders by keyword."""
-    # Call your backend API here
-    return results
-
-if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8080)
-```
+The three lines this template prevents from going wrong: `transport="streamable-http"` (not bare `"http"`), `host="0.0.0.0"` (not stdio default), and `port=int(os.environ.get("PORT","8080"))` (ACA injects PORT). Plus: never call one `@mcp.tool()`-decorated function from inside another — extract shared logic into a plain `_helper()`.
 
 ---
 
 ## Bicep: ACA for MCP Server
 
-```bicep
-@description('Name of the MCP ACA')
-param name string
+> **MUST:** Copy verbatim from [`references/bicep/mcp-aca.bicep`](references/bicep/mcp-aca.bicep). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical ACA module with external ingress on `:8080`, UAMI for ACR pull (A2), `transport: 'http'` (not deprecated `'auto'`), and liveness + startup probes on `/health` (without them, cold-start tool calls 502 until the first scrape). `minReplicas: 1` avoids the cold-start hit on every demo.
 
-@description('Location')
-param location string = resourceGroup().location
-
-@description('Container app environment ID')
-param containerAppEnvironmentId string
-
-@description('Container image (in the ACR; pulled with the UAMI below)')
-param image string
-
-@description('Environment variables')
-param env array = []
-
-@description('User-assigned managed identity resource ID (for ACR pull + downstream RBAC)')
-param userAssignedIdentityId string
-
-@description('Container Registry name (no FQDN — just the resource name)')
-param acrName string
-
-resource mcpAca 'Microsoft.App/containerApps@2024-03-01' = {
-  name: name
-  location: location
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: { '${userAssignedIdentityId}': {} }
-  }
-  properties: {
-    managedEnvironmentId: containerAppEnvironmentId
-    configuration: {
-      ingress: {
-        external: true
-        targetPort: 8080
-        // Use 'http' (HTTP/1.1 + Streamable HTTP) explicitly. 'auto' was
-        // deprecated for new container apps in early 2026 — leaving it
-        // here makes new revisions fail at deploy time with
-        // `InvalidParameterValueInContainerTemplate`.
-        transport: 'http'
-      }
-      registries: [
-        {
-          server: '${acrName}.azurecr.io'
-          identity: userAssignedIdentityId
-        }
-      ]
-    }
-    template: {
-      containers: [
-        {
-          name: 'mcp'
-          image: image
-          env: env
-          resources: {
-            cpu: json('1.0')
-            memory: '2Gi'
-          }
-          // Liveness + startup probes — Foundry's MCP client only flips
-          // the server "healthy" if /health returns 200; missing probes
-          // mean cold-start tool calls 502 until the first scrape.
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: { path: '/health', port: 8080 }
-              initialDelaySeconds: 5
-              periodSeconds: 10
-            }
-            {
-              type: 'Startup'
-              httpGet: { path: '/health', port: 8080 }
-              initialDelaySeconds: 2
-              periodSeconds: 3
-              failureThreshold: 30
-            }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 3
-      }
-    }
-  }
-}
-
-output fqdn string = mcpAca.properties.configuration.ingress.fqdn
-```
+VNet injection is intentionally out of scope here — see `foundry-vnet-deploy` SKILL for private topology. External ingress is required when the Foundry hosted agent (which runs in Foundry's infra, not your VNet) calls the MCP.
 
 ---
 

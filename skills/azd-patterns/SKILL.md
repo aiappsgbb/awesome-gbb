@@ -636,27 +636,13 @@ env: [
 
 ### RBAC — assign once, applies to all resources
 
-```bicep
-// Role definition GUIDs are stable across tenants — the one below is
-// `Azure AI User` (`53ca6127-db72-4b80-b1b0-d745d6d5456d`). Substitute
-// other built-in role GUIDs as needed (e.g. `Search Index Data Reader`
-// = `1407120a-92aa-4202-b7e9-c0e197c71c8f`). NEVER ship `'...'` as a
-// placeholder — Bicep will compile but the deploy will fail with
-// `RoleDefinitionDoesNotExist` at apply-time, after every other
-// resource has provisioned.
-resource aiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(subscription().subscriptionId, uami.outputs.principalId, 'ai-user')
-  scope: foundryAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '53ca6127-db72-4b80-b1b0-d745d6d5456d'   // Azure AI User
-    )
-    principalId: uami.outputs.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-```
+> **MUST:** Copy verbatim from [`references/bicep/rbac.bicep`](references/bicep/rbac.bicep). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the full role-assignment module (Foundry project MI + workload UAMIs + ACR + Foundry account, all pinned by GUID).
+
+**Why each line matters:**
+
+- **Role GUIDs are stable across tenants** — never ship `'...'` as a placeholder. Bicep compiles but `RoleDefinitionDoesNotExist` blows up at apply-time, after every other resource has provisioned. Built-ins referenced in the module: `Azure AI User` = `53ca6127-db72-4b80-b1b0-d745d6d5456d`, `Search Index Data Reader` = `1407120a-92aa-4202-b7e9-c0e197c71c8f`, `AcrPull` = `7f951dda-4ed3-4680-a7ca-43fe172d538d`.
+- **`principalType: 'ServicePrincipal'`** is mandatory for MI-based deploys; see § CI/CD trap below for why `'User'` breaks GHA / ADO pipelines.
+- **One module, one `dependsOn:[rbac]` from every consumer** — see § Prefer Bicep `dependsOn: [rbac]` below for the wiring pattern that pre-empts the AcrPull propagation race.
 
 ### CI/CD trap — `PrincipalTypeNotSupported`
 
@@ -737,23 +723,7 @@ a spec-level decision, or (b) read structured env vars via
 `readEnvironmentVariable(…)` paired with `json(…)` for things that must
 be runtime-configurable.
 
-```bicep
-// infra/main.bicepparam — Bicep parameters file (preferred over JSON for arrays/objects)
-using './main.bicep'
-
-param environmentName = readEnvironmentVariable('AZURE_ENV_NAME', 'dev')
-param location = readEnvironmentVariable('AZURE_LOCATION', 'eastus2')
-
-// Option A: hard-code (recommended for spec-level decisions like model choice).
-// Avoids the round-trip entirely.
-param aiProjectDeployments = [
-  {
-    name: 'gpt-5.4-mini'
-    model: { name: 'gpt-5.4-mini', format: 'OpenAI', version: '2026-03-17' }
-    sku: { name: 'GlobalStandard', capacity: 30 }
-  }
-]
-```
+> **MUST:** Copy verbatim from [`references/bicep/main.bicepparam`](references/bicep/main.bicepparam). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical `using './main.bicep'` parameter file with the literal-array `aiProjectDeployments` (closes A1) at `capacity: 30` (closes MID-9). It is intentionally skipped by `az bicep build` in CI because `using` can't resolve in isolation.
 
 > **🔴 DO NOT** default model `capacity` to 100 K TPM in a shared subscription.
 > Shared subs often run at 900+/1000 K TPM aggregate quota; a fresh
@@ -766,7 +736,7 @@ param aiProjectDeployments = [
 > retry-handling bugs early.
 
 ```bicep
-// Option B: structured env (use ONLY for genuinely runtime-configurable values).
+// Option B (NOT in the reference file): structured env for genuinely runtime-configurable values.
 // Set as a single-quoted JSON string in `.azure/<env>/.env` by HAND-EDITING
 // the file once (not via `azd env set`) — azd will preserve it on subsequent
 // reads, but every `azd env set` of any value re-mangles it.
@@ -788,11 +758,12 @@ the bug is array/object-typed values only.
 exactly the right Bicep modules. This section catalogs the modules and what
 SPEC inputs select them.
 
-> 📁 **Canonical reference Bicep modules** (vendored from the 2026-05-29 smb-credit-memo pilot, live-deployed in `swedencentral` — agentic-loop SKILL Validation history row 8):
-> - [`references/bicep/foundry-account.bicep`](references/bicep/foundry-account.bicep) — Foundry account + project + capabilityHost (account-level FIRST per MID-10) + model deployment + AppIn connection with explicit `metadata.ConnectionString` (per MID-8) + `endpoints['AI Foundry API']` output (per MID-2)
-> - [`references/bicep/aca-app.bicep`](references/bicep/aca-app.bicep) — canonical 3-service-shape ACA container app with user-assigned identity + ACR registry binding (closes A2)
-> - [`references/bicep/rbac.bicep`](references/bicep/rbac.bicep) — all role assignments pinned by GUID; the `dependsOn:[rbac]` pattern (A3 / Crib row 8) is enforced by callers
-> - [`references/bicep/main.bicepparam`](references/bicep/main.bicepparam) — literal-array example for `aiProjectDeployments` (closes A1) with `capacity: 30` default (closes MID-9)
+> **MUST:** Use the canonical reference Bicep modules vendored from the 2026-05-29 smb-credit-memo pilot (live-deployed in `swedencentral`, agentic-loop SKILL Validation history row 8). Do NOT redefine them inline in this SKILL — each file is single-source-of-truth and is cross-linked from the section that explains it:
+>
+> - [`references/bicep/foundry-account.bicep`](references/bicep/foundry-account.bicep) — Foundry account + project + capabilityHost (account-level FIRST per MID-10) + model deployment + AppIn connection with explicit `metadata.ConnectionString` (per MID-8) + `endpoints['AI Foundry API']` output (per MID-2).
+> - [`references/bicep/aca-app.bicep`](references/bicep/aca-app.bicep) — canonical 3-service-shape ACA container app (consumed by § ACR + ACA Registry Binding and § Prefer Bicep `dependsOn: [rbac]`).
+> - [`references/bicep/rbac.bicep`](references/bicep/rbac.bicep) — all role assignments pinned by GUID (consumed by § RBAC — assign once).
+> - [`references/bicep/main.bicepparam`](references/bicep/main.bicepparam) — literal-array `aiProjectDeployments` parameter file (consumed by § `azd env set` + JSON arrays/objects).
 
 ### Module catalog
 
@@ -1209,55 +1180,13 @@ resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' =
 > the 2026-05-28 learn-assistant pilot.
 
 When `azd deploy` pushes an image to ACR, the ACA must be configured to
-pull from that ACR. This requires three things in Bicep:
+pull from that ACR. This requires three things in Bicep: (1) the ACR
+resource, (2) the ACA with `registries[]` + `secrets[]` + `azd-service-name`
+tag, and (3) the `AZURE_CONTAINER_REGISTRY_ENDPOINT` output for azd.
 
-```bicep
-// 1. ACR resource
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: 'acr${uniqueSuffix}'
-  location: location
-  sku: { name: 'Basic' }
-  properties: { adminUserEnabled: true }
-}
+> **MUST:** Copy verbatim from [`references/bicep/aca-app.bicep`](references/bicep/aca-app.bicep). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical 3-service-shape ACA module (UAMI + registry binding + placeholder image), live-deployed across the 2026-05 pilots (weather-agent, learn-assistant, smb-credit-memo, hybrid-mcp-agent).
 
-// 2. ACA with registry binding + secret
-resource app 'Microsoft.App/containerApps@2024-03-01' = {
-  name: 'myapp-${uniqueSuffix}'
-  location: location
-  tags: { 'azd-service-name': 'agent' }  // MANDATORY for azd deploy
-  properties: {
-    managedEnvironmentId: acaEnv.id
-    configuration: {
-      registries: [
-        {
-          server: acr.properties.loginServer
-          username: acr.listCredentials().username
-          passwordSecretRef: 'acr-password'
-        }
-      ]
-      secrets: [
-        { name: 'acr-password', value: acr.listCredentials().passwords[0].value }
-      ]
-      ingress: { external: true, targetPort: 8080 }
-    }
-    template: {
-      containers: [
-        {
-          name: 'agent'
-          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'  // placeholder
-          resources: { cpu: json('0.5'), memory: '1Gi' }
-        }
-      ]
-    }
-  }
-}
-
-// 3. Output for azd
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = acr.properties.loginServer
-```
-
-Without all three pieces, `azd deploy` pushes to ACR successfully but the
-ACA fails to pull the image (401 unauthorized).
+**Without all three pieces, `azd deploy` pushes to ACR successfully but the ACA fails to pull the image (401 unauthorized).** The placeholder `image:` lets the first revision land before the real image is built; `azd deploy` then patches it. The `tags: { 'azd-service-name': 'agent' }` is what binds this Bicep resource to the `services:` entry in `azure.yaml` — missing or mistyped, `azd deploy` skips this app silently.
 
 ### AcrPull propagation retry loops (post-`azd provision`, pre-`azd deploy`)
 

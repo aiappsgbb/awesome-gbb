@@ -229,7 +229,9 @@ This file is **personal data** — it lists the tenant ids you work with and
 their friendly aliases. **Gitignore it. Never commit it.** A starter copy
 lives in [`references/index.example.json`](references/index.example.json).
 
-Schema (excerpt — full example: [`references/index.example.json`](references/index.example.json)):
+Schema (**structural excerpt** — the canonical 2-tenant example with full
+field coverage lives in [`references/index.example.json`](references/index.example.json);
+copy from there, don't retype from the snippet below):
 
 ```json
 {
@@ -243,14 +245,6 @@ Schema (excerpt — full example: [`references/index.example.json`](references/i
       "azd_config_dir": null,
       "default_subscription": "acme-prod",
       "allowed_subscriptions": ["acme-prod"]
-    },
-    "dev": {
-      "tenant_id": "00000000-0000-0000-0000-000000000002",
-      "description": "Development tenant",
-      "config_dir": null,
-      "azd_config_dir": null,
-      "default_subscription": "acme-dev",
-      "allowed_subscriptions": ["acme-dev", "acme-test"]
     }
   }
 }
@@ -471,6 +465,8 @@ Before **any** destructive operation (`azd up`, `azd deploy`,
 `az deployment ... create`, `az group create`, `az resource delete`,
 container/job image updates, etc.), run the assertion below. It uses
 **only** `az` CLI — no scripts or wrappers.
+
+> For sourceable CI/runner use where env vars are already exported, use [`references/bash/assertion-preamble.sh`](references/bash/assertion-preamble.sh) (8-line env-var-driven variant; the inline below is the pedagogical hardcoded-UUID showcase).
 
 Unix:
 
@@ -754,41 +750,11 @@ vars in the parent before invoking the child.**
 
 ### Script preamble template
 
-Drop this header at the top of every shell script that touches Azure.
-It's the canonical "load alias from index → export both env vars →
-verify" sequence in copy-pasteable form. Set `ALIAS=` to the alias the
-script targets.
+Drop this at the top of every shell script that touches Azure: load alias from index → export both env vars → verify.
 
-> 📁 **Canonical reference scripts:**
-> - [`references/bash/bootstrap.sh`](references/bash/bootstrap.sh) — full loader: alias arg → index file → env-var exports → tenant + sub assertion (the bash block below as a sourceable script)
-> - [`references/bash/assertion-preamble.sh`](references/bash/assertion-preamble.sh) — 8-line standalone gate when env vars are already exported (e.g. from a CI runner)
-
-Bash (`# ── Azure Tenant Isolation (REQUIRED) ──`):
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# ── Azure Tenant Isolation (REQUIRED) ─────────────────────────────────
-ALIAS="${AZURE_TENANT_ALIAS:-prod}"   # override at the call site
-INDEX="${AZURE_TENANT_INDEX:-$HOME/.azure-tenants/index.json}"
-
-TENANT_ID=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); print(d['tenants']['$ALIAS']['tenant_id'])")
-DEFAULT_SUB=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); print(d['tenants']['$ALIAS']['default_subscription'])")
-AZ_CFG=$(python  -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); v=d['tenants']['$ALIAS'].get('config_dir');     print(os.path.expanduser(v) if v else os.path.expanduser('~/.azure-tenants/$ALIAS'))")
-AZD_CFG=$(python -c "import json,os; d=json.load(open(os.path.expanduser('$INDEX'))); v=d['tenants']['$ALIAS'].get('azd_config_dir'); print(os.path.expanduser(v) if v else os.path.expanduser('~/.azd-tenants/$ALIAS'))")
-
-export AZURE_CONFIG_DIR="$AZ_CFG"
-export AZD_CONFIG_DIR="$AZD_CFG"
-
-ACTUAL_TENANT=$(az account show --query tenantId -o tsv)
-ACTUAL_SUB=$(az account show --query name -o tsv)
-[ "$ACTUAL_TENANT" = "$TENANT_ID"   ] || { echo "❌ Tenant mismatch (got $ACTUAL_TENANT, want $TENANT_ID)"; exit 1; }
-[ "$ACTUAL_SUB"    = "$DEFAULT_SUB" ] || { echo "❌ Sub mismatch (got $ACTUAL_SUB, want $DEFAULT_SUB)";    exit 1; }
-# ─────────────────────────────────────────────────────────────────────
-
-# ... rest of the script ...
-```
+> **MUST:** Source [`references/bash/bootstrap.sh`](references/bash/bootstrap.sh) verbatim. Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical loader: alias arg → index file → env-var exports → tenant + sub assertion, hardened with empty-session detection and remediation hints.
+>
+> For PowerShell call sites (no canonical reference yet), use the inline template below.
 
 PowerShell (`# ── Azure Tenant Isolation (REQUIRED) ──`):
 

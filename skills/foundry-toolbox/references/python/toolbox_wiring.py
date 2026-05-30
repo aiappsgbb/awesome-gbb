@@ -1,7 +1,7 @@
 """Canonical toolbox wiring sample — MAF 1.6 + Foundry Toolbox.
 
 Source of truth for the prose example in `../../SKILL.md § Step 2 —
-Wire the toolbox into the agent`.
+Wire into a hosted agent`.
 
 Validates the cross-skill ownership rule: this file shows the toolbox-
 to-Agent wiring, which is owned by `foundry-toolbox` SKILL. The Agent

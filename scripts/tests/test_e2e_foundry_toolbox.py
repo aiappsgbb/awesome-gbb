@@ -17,6 +17,14 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLBOX_REFS = REPO_ROOT / "skills" / "foundry-toolbox" / "references" / "python"
+if str(TOOLBOX_REFS) not in sys.path:
+    sys.path.insert(0, str(TOOLBOX_REFS))
+
+from mcp_text_extractor import extract_mcp_text as _mcp_text_extractor  # noqa: E402
 
 AZURE_AI_ENDPOINT = os.environ.get("AZURE_AI_ENDPOINT", "")
 SKIP_REASON = "AZURE_AI_ENDPOINT not set — skipping Azure E2E tests"
@@ -73,19 +81,15 @@ class TestFoundryToolboxE2E(unittest.TestCase):
         print("\n  ✅ MCPStreamableHTTPTool constructed OK")
 
     def test_03_agent_with_mcp_tool(self):
-        """Agent + FoundryChatClient + MCPStreamableHTTPTool end-to-end."""
+        """Agent + FoundryChatClient + MCPStreamableHTTPTool end-to-end.
+
+        Imports the canonical `_mcp_text_extractor` from
+        `skills/foundry-toolbox/references/python/mcp_text_extractor.py`
+        so this test stays in sync with the SKILL.md prose example
+        (SSOT — see AGENTS.md § 7).
+        """
         import asyncio
         from agent_framework import Agent, MCPStreamableHTTPTool, Message
-
-        def _mcp_text_extractor(raw):
-            if isinstance(raw, dict) and "content" in raw:
-                parts = [
-                    item.get("text", "")
-                    for item in raw["content"]
-                    if isinstance(item, dict) and item.get("type") == "text"
-                ]
-                return "\n\n".join(parts) if parts else str(raw)
-            return str(raw)
 
         learn_mcp = MCPStreamableHTTPTool(
             name="microsoft-learn",
