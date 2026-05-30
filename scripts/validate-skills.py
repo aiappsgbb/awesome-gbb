@@ -17,6 +17,20 @@ This script is run by `.github/workflows/skill-validation.yml` as a PR
 gate, and by every contributor before push per AGENTS.md § 8.
 """
 
+# --- 2026-Q2 testing rethink note ---
+#
+# The AST lints in this file (sync-credential check, MID-I/MID-G detectors,
+# reference-vs-SKILL.md drift check) SURVIVE the testing rebuild per spec
+# 2026-05-30-deep-audit-and-testing-rethink-design.md §5.4. They function as
+# fast pre-flight filters: they catch bugs that don't require a live deploy
+# to detect, and they catch them in seconds rather than minutes. The
+# copilot-cli-matrix job (skill-test.yml) is the live-Azure layer; this
+# file is the static layer. Both are required.
+#
+# DO NOT remove a lint from this file without an explicit replacement
+# documented in AGENTS.md §9.8.
+# --- end note ---
+
 from __future__ import annotations
 
 import io

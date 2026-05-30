@@ -17,7 +17,7 @@ description: >
   foundry-hosted-agents), MCP server deployment (use
   foundry-mcp-aca), agent evaluation (use foundry-evals).
 metadata:
-  version: "1.0.2"
+  version: "1.0.4"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -92,7 +92,7 @@ print(f"Agent created: {agent.name} v{agent.version} (id: {agent.id})")
 
 ```bash
 curl -X POST "https://<resource>.services.ai.azure.com/api/projects/<project>/agents/my-assistant/versions?api-version=v1" \
-  -H "Authorization: Bearer $(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)" \
+  -H "Authorization: Bearer $(az account get-access-token --resource https://cognitiveservices.azure.com --query accessToken -o tsv)" \
   -H "Content-Type: application/json" \
   -d '{
     "definition": {
@@ -172,7 +172,6 @@ agent = project.agents.create_version(
 > with a full spec dict and auth configuration. See the
 > [Foundry OpenAPI tool docs](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/openapi)
 > for the complete schema.
-```
 
 > **MCP servers for prompt agents** are hosted remotely (not in-process).
 > Use `foundry-mcp-aca` skill to deploy MCP servers on Azure Container Apps,

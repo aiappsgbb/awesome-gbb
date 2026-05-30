@@ -243,5 +243,83 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn("chars", errs[0])
 
 
+class AuditTagTests(unittest.TestCase):
+    """Spec 2026-05-30 §9.2: [audit-2026-Q2] tag enables multi-skill +
+    body-rewrite edits in exchange for a docs/audit/<name>-audit-trail.md
+    per touched skill."""
+
+    def test_collect_opt_ins_recognizes_audit_tag(self):
+        msgs = ["audit(foo): fix MID-I credential\n\n[audit-2026-Q2]"]
+        opts = gate.collect_opt_ins(msgs)
+        self.assertIn("[audit-2026-Q2]", opts)
+
+    def test_audit_tag_requires_audit_trail_file(self):
+        files = [
+            "skills/foo/SKILL.md",
+            "skills/foo/test-fixture/consumer_prompt.md",
+        ]
+        errs = gate.gate_audit_tag_requires_audit_trail(
+            files, {"[audit-2026-Q2]"}
+        )
+        self.assertEqual(len(errs), 1)
+        self.assertIn("audit-trail", errs[0].lower())
+        self.assertIn("foo", errs[0])
+
+    def test_audit_tag_passes_when_audit_trail_present(self):
+        files = [
+            "skills/foo/SKILL.md",
+            "skills/foo/test-fixture/consumer_prompt.md",
+            "docs/audit/foo-audit-trail.md",
+        ]
+        errs = gate.gate_audit_tag_requires_audit_trail(
+            files, {"[audit-2026-Q2]"}
+        )
+        self.assertEqual(errs, [])
+
+    def test_audit_tag_passes_multi_skill_with_all_trails(self):
+        files = [
+            "skills/foo/SKILL.md",
+            "docs/audit/foo-audit-trail.md",
+            "skills/bar/SKILL.md",
+            "docs/audit/bar-audit-trail.md",
+        ]
+        errs = gate.gate_audit_tag_requires_audit_trail(
+            files, {"[audit-2026-Q2]"}
+        )
+        self.assertEqual(errs, [])
+
+    def test_audit_tag_no_op_when_tag_absent(self):
+        files = ["skills/foo/SKILL.md"]
+        errs = gate.gate_audit_tag_requires_audit_trail(files, set())
+        self.assertEqual(errs, [])
+
+    def test_audit_tag_bypasses_one_skill_per_pr(self):
+        files = [
+            "skills/foo/SKILL.md",
+            "skills/bar/SKILL.md",
+        ]
+        errs = gate.gate_one_skill_per_pr(files, {"[audit-2026-Q2]"})
+        self.assertEqual(errs, [])
+
+    def test_skill_md_body_change_with_audit_tag_passes(self):
+        old = make_skill_md()
+        new_with_body_edit = old.replace("Body content.", "Body content CHANGED.")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            skill_md = tmp_path / "skills" / "x" / "SKILL.md"
+            skill_md.parent.mkdir(parents=True)
+            skill_md.write_text(new_with_body_edit, encoding="utf-8")
+
+            with mock.patch.object(gate, "REPO_ROOT", tmp_path), \
+                mock.patch.object(gate, "file_at_revision",
+                                  side_effect=lambda rev, path: old):
+               errs = gate.gate_skill_md_body(
+                   files=["skills/x/SKILL.md"],
+                   opts={"[audit-2026-Q2]"},
+                   base="origin/main",
+               )
+            self.assertEqual(errs, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

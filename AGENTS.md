@@ -762,9 +762,216 @@ infrastructure for CI use in `rg-awesome-gbb-ci` (Sweden Central):
 - Cognitive Services OpenAI User on `aif-awesome-gbb-ci`
 - Foundry User on `aif-awesome-gbb-ci`
 
-Federated credentials cover both `pull_request` and `ref:refs/heads/main`
-triggers. Workflows use `azure/login@v2` with OIDC — no stored secrets
-or service principal passwords.
+**Federated credentials are narrow — these are the ONLY allowed subjects:**
+
+| Subject pattern | Why |
+|-----------------|-----|
+| `pull_request` | Every PR-triggered CI run |
+| `ref:refs/heads/main` | `push: main` + `schedule:` runs |
+| `ref:refs/tags/*` | Release tag pushes |
+
+`workflow_dispatch` against a non-`main` branch (e.g. a PR feature branch)
+fails with `AADSTS700213: No matching federated identity record found`,
+because the OIDC token's `sub` claim becomes `ref:refs/heads/<feature>`
+which isn't in the FIC list. Two consequences:
+
+- **Stability re-runs for CI gate verification MUST trigger via
+  `pull_request synchronize`,** not `workflow_dispatch`. Push an empty
+  commit to the PR branch: `git commit --allow-empty -m "..." && git push`.
+- **Cross-PR-branch dispatch is impossible without expanding the FIC
+  list** (intentional — keeps the credential blast radius small).
+
+Workflows use `azure/login@v2` with OIDC — no stored secrets or service
+principal passwords.
+
+#### CI fixture patterns (lessons from `foundry-prompt-agents` pilot)
+
+Three patterns proved load-bearing during Task 2.1 of the
+`2026-05-30-deep-audit-and-testing-rethink` plan. Future fixtures (Task
+2.2, 2.3, and the Phase 3 rollout) MUST follow them:
+
+1. **Empty-commit stability runs must be spaced ≥ 45 s apart, one push
+   per run.** GitHub coalesces simultaneous pushes into a single
+   `pull_request synchronize` event regardless of whether the target
+   workflow has a `concurrency:` block — coalescing happens at the
+   event-routing layer, not the workflow-scheduling layer. A 5-run
+   stability series MUST be 5 separate `git push` invocations, each
+   waiting for the previous CI run to start before the next is queued.
+
+2. **Result contract on Copilot CLI transcripts is whole-file grep,
+   FAIL beats PASS, never `tail`.** The CLI emits an unsuppressible
+   footer (`Changes`, `Duration`, `Tokens`) AFTER the agent reply, so
+   `tail -n 1 | grep 'SMOKE_RESULT=PASS'` always fails. The matrix job
+   uses:
+
+   ```bash
+   if grep -q '^SMOKE_RESULT=FAIL' transcript.log; then
+     echo "::error::Fixture reported FAIL"
+     exit 1
+   fi
+   if grep -q '^SMOKE_RESULT=PASS$' transcript.log; then
+     exit 0
+   fi
+   echo "::error::No SMOKE_RESULT marker"
+   exit 1
+   ```
+
+   `copilot -s` / `--silent` is **present in the CLI** (`copilot --help`
+   on 1.0.57-3 documents it as "Output only the agent response"). Task
+   2.3's empirical probe on **macOS Copilot CLI 1.0.57-3** confirmed the
+   footer IS suppressed — `copilot -s -p "say hi" 2>&1 | tail -30`
+   emitted only the agent reply, no `Changes` / `Duration` / `Tokens`
+   block; `-s` and `--silent` behaved identically. **Linux runner probe
+   is still outstanding** (the GitHub-hosted runner's pre-installed CLI
+   build is unverified). Until that confirmation lands, the
+   grep-whole-transcript + FAIL-beats-PASS contract above is the
+   canonical pattern. Task 2.4 owns the Linux probe + cross-fixture
+   simplification rollout (`tail -n 1 | grep -q "^SMOKE_RESULT=PASS$"`
+   shrinks each fixture's result-contract block by ~80 lines).
+
+3. **Agent / resource names in fixtures MUST carry a UUID suffix.**
+   Parallel matrix runners (and retries from the same SHA) collide on
+   fixed names. Canonical pattern:
+
+   ```python
+   import uuid
+   agent_name = f"ci-smoke-pa-{uuid.uuid4().hex[:8]}"
+   ```
+
+   ACA service names, ACR image tags, agent display names, environment
+   names — all of these need short-UUID suffixes when authored in a
+   fixture under `skills/<name>/test-fixture/`.
+
+4. **Do NOT add a `concurrency:` block to `skill-test.yml`** (lesson
+   from Task 2.2). Earlier coordinator diagnosis claimed the workflow
+   was auto-cancelling overlapping runs — that was wrong. The 5
+   apparent-cancellations on `06ea5ef..5d6b2ef` were either manual
+   `gh run cancel` or GitHub's job-matrix supersede-on-newer-commit (a
+   different mechanism, scoped per-matrix-leg, not workflow-level).
+   `skill-test.yml` deliberately has no concurrency block so two
+   overlapping PR pushes still both produce a green-or-red signal.
+   The ≥ 45 s empty-commit spacing in pattern 1 above is for
+   **audit-trail correlation hygiene** (one run = one SHA = one
+   commit message), not to avoid auto-cancel.
+
+5. **Autoregressive priming defeats anchored grep — `_MOKE_RESULT`
+   placeholder is the standard defense.** In `actions/runs/26693703357`
+   the same workflow run had the prompt-agents matrix leg emit the
+   marker clean while the parallel hosted-agents leg emitted it
+   wrapped in backticks (`` `SMOKE_RESULT=PASS` ``), defeating
+   `^SMOKE_RESULT=PASS$`. Root cause: the fixture body discussed
+   `SMOKE_RESULT` repeatedly in prose with backtick decoration, and
+   the LLM's autoregression carried that decoration into the final
+   marker emission. **Defense** (now baked into both Task 2.1 and
+   Task 2.2 fixtures; MUST be the template for every future fixture):
+
+   - In the fixture body, render the literal token as `_MOKE_RESULT`
+     (substitute `_` for the leading `S`) so the prompt itself never
+     ships an anchored-grep-matching string. The fixture explicitly
+     tells the agent to substitute back to literal `S` in its own
+     reply.
+   - Enumerate WRONG patterns (`` `…` ``, `**…**`, leading whitespace,
+     trailing punctuation, blockquote prefix, emoji) with `←` callouts
+     so the agent has explicit negative examples.
+   - Place the single RIGHT pattern LAST so it primes the continuation
+     more strongly than any WRONG example.
+   - Forbid backticks (or any decoration) around `SMOKE_RESULT`
+     anywhere else in the agent's reply — preamble, intermediate
+     status lines, summaries — because each prior decorated mention
+     primes the final emission.
+   - Forbid `exec > >(tee -a "$LOG") 2>&1` and any process-substitution
+     pattern in shell heredocs. The Copilot CLI's shell wrapper blocks
+     these as "dangerous shell expansion" (run `26693703357`,
+     20:09:44Z). The runner already captures stdout — agents do not
+     need to tee.
+
+6. **Explicit `azd auth login` Step 0, not implicit OIDC pickup**
+   (Task 2.2 finding to apply forward). When a fixture uses `azd`,
+   make the federated-credential exchange explicit:
+
+   ```bash
+   azd auth login \
+     --federated-credential-provider github \
+     --client-id "$AZURE_CLIENT_ID" \
+     --tenant-id "$AZURE_TENANT_ID"
+   ```
+
+   Current hosted-agents fixture relies on `azure/login@v2` writing
+   `AZURE_FEDERATED_TOKEN_FILE` for azd's auto-detection. That path
+   has two silent failure modes: (a) `azd` CLI < 1.5.0 doesn't
+   auto-detect the file → hangs on interactive login → 30-min
+   workflow timeout; (b) sub-shell env reset blanks the credential
+   mid-run. ~2 s overhead per fixture run; mirrors what a customer
+   reading SKILL.md verbatim would run on their own machine; surfaces
+   credential failures up-front instead of buried inside `azd
+   deploy`'s ACR push.
+
+7. **Pre-granted-RBAC preamble pattern** (Task 2.2 finding). When a
+   fixture exercises Azure resources whose RBAC is pre-provisioned in
+   `rg-awesome-gbb-ci`, the fixture preamble MUST:
+
+   - Explicitly list the pre-granted RBAC (subject + role + scope)
+   - State "do NOT re-grant these — propagation takes 5-15 min and
+     races your 30-min workflow timeout"
+   - When two identities are involved (e.g., a Foundry project MI
+     pre-granted at pull-time vs. a per-agent instance MI provisioned
+     per-deploy), distinguish them by name and explain which retry
+     loop owns each
+   - Reserve any retry-with-backoff to the identity whose MI is
+     created per-deploy (the per-agent-instance MI), not the
+     pre-granted one
+
+   The hosted-agents fixture (`skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
+   L37-50) is the canonical template. The single biggest waste in
+   the first `unsafecode/pr-review` cycle was a fixture re-granting
+   AcrPull and racing propagation against the timeout.
+
+8. **`azd deploy` does NOT cover ACA Jobs — hand-roll `az deployment
+   group create` + `az containerapp job start`** (Task 2.3 finding).
+   SKILL.md `azd-patterns` L26 documents this explicitly: there is no
+   `azd-service-name` tag for `Microsoft.App/jobs` that `azd deploy`
+   recognises. `azd up` against a job-only Bicep provisions the resource
+   group + a placeholder image but never pushes the real image. Any
+   fixture whose marquee surface is an ACA Job (the `azd-patterns`
+   fixture; future fixtures for ACA-Job-variant skills like potential
+   `foundry-mcp-aca` jobs / threadlight-skills jobs) MUST therefore
+   build two variants of the canonical fixture template:
+
+   - **Service variant** — `azd up` happy path (works for ACA Services)
+   - **Job variant** — `az deployment group create` for the Bicep +
+     `az containerapp job start` to execute, because `azd deploy`
+     cannot trigger a job execution
+
+   The `skills/azd-patterns/test-fixture/consumer_prompt.md` fixture is
+   the canonical reference for the **Job variant**;
+   `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md` is the
+   canonical reference for the **Service variant**.
+
+9. **ACA control-plane consistency races are fixture-side retries, NOT
+   workflow-level retry-classifier work** (Task 2.3 finding,
+   generalising the Task 2.2 `AcrPull` precedent). Observed races so
+   far, all 5–15 s windows:
+
+   - `AcrPull` permission propagation after Bicep deploy (Task 2.2)
+   - `JobExecutionNotFound` from `az containerapp job execution show`
+     immediately after a successful `az containerapp job start` (Task
+     2.3 — observed during fixture authoring, ~5-15 s window)
+   - `Forbidden` from any dataplane call during RBAC propagation
+   - `ResourceProvisioningInProgress` from concurrent ARM operations
+
+   **Defense:** wrap the relevant CLI call in a bounded retry loop in
+   the fixture itself (6 iterations × 5 s back-off = 30 s budget is the
+   Task 2.3 pattern). Do NOT add these tokens to the workflow's
+   transient-classifier regex — the precedent set by both Task 2.2 and
+   2.3 is that ACA-control-plane races belong inside the fixture's
+   "what success looks like" definition, not in workflow-level
+   infrastructure. The cost of a fixture retry loop is bounded (~30 s
+   per call) and visible in the transcript; a workflow-level retry
+   re-runs the entire 8–15-min matrix leg.
+
+   When you observe a NEW ACA-control-plane race that isn't in this
+   list, add it here and document the retry budget. Do not assume a
+   single shared retry helper — the back-off math is per-API.
 
 ### 9.8 · Skill testing tiers
 

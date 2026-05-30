@@ -1,0 +1,377 @@
+# azd-patterns — CI verification fixture
+
+Context: this prompt is fed to the `copilot-cli-matrix` job in the
+awesome-gbb repo to verify that the `azd-patterns` skill (at
+`skills/azd-patterns/SKILL.md` in the current working directory) still
+deploys end-to-end against the live Azure CI infrastructure. The marquee
+pattern we exercise is the **ACA Job** documented at SKILL.md
+§ "Bicep: ACA Job Pattern" (~L545) — `Microsoft.App/jobs@2024-03-01`
+provisioned via Bicep, then manually executed and verified.
+
+**Expected per-run cost: ≤ $0.005** — one ACA Job execution on an
+existing Container App Environment (no new env to provision), 1 vCPU
+× ≤ 5 s wall time (~$0.0005), no ACR push (we use a public Microsoft
+image), and ~10 management-plane API calls (~$0). Weekly stability
+cost on this fixture is negligible.
+
+## Environment available
+
+- `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` —
+  populated by OIDC login. Resource group `rg-awesome-gbb-ci` exists in
+  Sweden Central and the Container Apps environment
+  `cae-awesome-gbb-ci` is **pre-provisioned** (do NOT `azd provision`
+  or `az containerapp env create` — it's shared infrastructure).
+- Azure CLI is logged in via OIDC with the `uami-awesome-gbb-ci`
+  workload identity.
+- `azd` CLI is installed (≥ 1.5.0). Python 3 is available.
+- **Pre-granted RBAC** (one-time CI infra setup — **NOT** something
+  you provision per run): the `uami-awesome-gbb-ci` UAMI (the OIDC
+  principal you authenticate as) holds **Contributor** on
+  `rg-awesome-gbb-ci` and **AcrPush** on `acrawesomegbbci`. The
+  pre-existing Container Apps environment `cae-awesome-gbb-ci`
+  already routes logs to a Log Analytics Workspace in the same RG.
+  Do NOT attempt to grant any of these roles yourself — RBAC
+  propagation is 5-15 min (SKILL.md L1218) and the workflow's retry
+  classifier (`skill-test.yml` L216) does not catch `Forbidden` from
+  ACA control-plane operations, so a fresh grant inside the fixture
+  would emit FAIL on first `az deployment group create`. If a step
+  2 or step 3 call returns `Forbidden` for >2 min on the first run
+  after a fresh PR push, that's NOT a propagation race (the UAMI
+  was provisioned weeks ago) — treat it as a real failure and emit
+  FAIL with the error detail.
+
+## Steps
+
+Before scratching out code, skim SKILL.md sections **ACA Job
+Deployment** (L26), **Bicep: ACA Job Pattern** (L545), and the
+**ACA Job: silent-failure debug playbook** (L307). The Bicep block at
+L549-587 is the canonical job shape — your fixture's Bicep is a
+minimal variant (no UAMI, no `fetch-container-image` indirection, no
+ACR — just the smallest job that proves the pattern works against
+the pre-provisioned environment).
+
+Then run these steps. Use a shell heredoc or python heredoc as you
+prefer — the goal is the result marker, not a particular ergonomics
+choice.
+
+1. **Step 0 — Explicit azd auth login.** Run this BEFORE any other
+   `azd` or `az` command. Implicit OIDC pickup via
+   `AZURE_FEDERATED_TOKEN_FILE` has two silent failure modes (a) azd
+   < 1.5.0 doesn't auto-detect the file; (b) sub-shell env reset
+   blanks the credential mid-run. Explicit Step 0 surfaces credential
+   failures up-front (~2 s overhead) and mirrors what a customer
+   following SKILL.md verbatim would type:
+
+   ```bash
+   azd auth login \
+     --federated-credential-provider github \
+     --client-id "$AZURE_CLIENT_ID" \
+     --tenant-id "$AZURE_TENANT_ID"
+   ```
+
+   `az` CLI is already logged in via the workflow's `azure/login@v2`
+   step — don't re-run `az login`.
+
+2. **Step 1 — Generate per-run UUID suffix and scaffold Bicep.**
+   Use 8 hex chars from `uuid.uuid4().hex`. Naming pattern (mandatory
+   — parallel matrix runs and PR retries collide on fixed names):
+
+   - `SUFFIX="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"`
+   - `JOB_NAME="ci-azd-pat-${SUFFIX}"` (must be ≤ 32 chars, lowercase,
+     alphanumeric + dashes — `ci-azd-pat-` is 11 chars + 8 hex = 19,
+     well under the limit)
+   - `RG="rg-awesome-gbb-ci"`
+   - `CAE_NAME="cae-awesome-gbb-ci"`
+   - `LOCATION="swedencentral"`
+   - `SCAFFOLD_DIR="/tmp/${JOB_NAME}"`
+   - `mkdir -p "${SCAFFOLD_DIR}"`
+
+   Write `${SCAFFOLD_DIR}/main.bicep` — a minimal `Microsoft.App/jobs`
+   resource referencing the existing CAE by name lookup. Use the
+   `mcr.microsoft.com/azuredocs/containerapps-helloworld:latest`
+   image with a `command:` + `args:` override so the container prints
+   `HELLO` and exits 0 (no ACR push needed). The job MUST be
+   `triggerType: 'Manual'` and `replicaCompletionCount: 1` so we can
+   control execution timing in Step 3.
+
+   ```bicep
+   param jobName string
+   param caeName string
+   param location string = resourceGroup().location
+
+   resource cae 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
+     name: caeName
+   }
+
+   resource job 'Microsoft.App/jobs@2024-03-01' = {
+     name: jobName
+     location: location
+     properties: {
+       environmentId: cae.id
+       configuration: {
+         triggerType: 'Manual'
+         replicaTimeout: 300
+         replicaRetryLimit: 0
+         manualTriggerConfig: {
+           replicaCompletionCount: 1
+           parallelism: 1
+         }
+       }
+       template: {
+         containers: [
+           {
+             name: 'job'
+             image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+             command: ['/bin/sh', '-c']
+             args: ['echo HELLO']
+             resources: {
+               cpu: json('0.5')
+               memory: '1Gi'
+             }
+           }
+         ]
+       }
+     }
+   }
+   ```
+
+   This is a deliberate minimal variant of SKILL.md L549-587 — no
+   UAMI, no ACR, no `fetch-container-image` indirection. The fixture
+   proves the canonical `Microsoft.App/jobs@2024-03-01` resource
+   shape + the `triggerType: 'Manual'` + `replicaCompletionCount: 1`
+   pattern still deploys against an existing CAE. The fuller
+   ACR-image + UAMI + cron variant in the SKILL is audited per the
+   21-class catalog at `docs/audit/azd-patterns-audit-trail.md` but
+   not exercised here (see Out-of-scope coverage note below).
+
+3. **Step 2 — Deploy via `az deployment group create`.** SKILL.md
+   L26 explicitly notes that `azd` does NOT natively deploy Container
+   Apps Jobs — only Container Apps. A pure-Job fixture (no service)
+   cannot use `azd up` at all because the deploy phase has nothing
+   to deploy and the documented `postdeploy` hook never fires. So we
+   hand-roll the deployment directly:
+
+   ```bash
+   az deployment group create \
+     --resource-group "${RG}" \
+     --template-file "${SCAFFOLD_DIR}/main.bicep" \
+     --parameters jobName="${JOB_NAME}" caeName="${CAE_NAME}" \
+     --no-prompt --only-show-errors -o none
+   ```
+
+   Expected: ≤ 60 s. If this returns non-zero, capture stderr and
+   emit FAIL with the first 80 chars of the error message.
+
+4. **Step 3 — Trigger one manual execution.** ACA Jobs with
+   `triggerType: 'Manual'` only run when explicitly started. The
+   `az containerapp job start` call returns the execution name on
+   success:
+
+   ```bash
+   EXECUTION="$(az containerapp job start \
+     --resource-group "${RG}" \
+     --name "${JOB_NAME}" \
+     --query name -o tsv)"
+   ```
+
+   Now poll for completion. ACA Jobs surface a `JobExecutionNotFound`
+   transient (Finding #17 — ~10 s window between `start` returning
+   and the execution record being observable), so the first
+   `az containerapp job execution show` may 404 — retry the show
+   call up to 6 times with 5 s sleeps before treating as a real
+   failure. Then wait for `properties.status` to transition out of
+   `Running`. Total budget: 90 s.
+
+   ```bash
+   for i in $(seq 1 18); do
+     STATUS="$(az containerapp job execution show \
+       --resource-group "${RG}" \
+       --name "${JOB_NAME}" \
+       --job-execution-name "${EXECUTION}" \
+       --query "properties.status" -o tsv 2>/dev/null || echo 'pending')"
+     case "${STATUS}" in
+       Succeeded) break ;;
+       Failed|Degraded) break ;;
+     esac
+     sleep 5
+   done
+   ```
+
+   If `STATUS` is not `Succeeded` after the loop, emit FAIL with the
+   observed status.
+
+5. **Step 4 — Verify HELLO in the execution console logs.** SKILL.md
+   L313 documents that `az containerapp job logs show` hangs
+   indefinitely on some ACA Job runs — DO NOT use that command. Use
+   the Log Analytics Workspace query instead (SKILL.md L351-357
+   pattern). The CAE's LAW customer ID is discoverable via:
+
+   ```bash
+   WS_CUSTOMER_ID="$(az containerapp env show \
+     --resource-group "${RG}" \
+     --name "${CAE_NAME}" \
+     --query "properties.appLogsConfiguration.logAnalyticsConfiguration.customerId" \
+     -o tsv)"
+   ```
+
+   ACA Job console logs take 30-90 s to land in LAW after the
+   execution completes (documented latency, not a bug). Poll the
+   query for up to 120 s:
+
+   ```bash
+   QUERY="ContainerAppConsoleLogs_CL | where ContainerJobName_s == '${JOB_NAME}' | where Log_s contains 'HELLO' | take 1 | project Log_s"
+   FOUND=""
+   for i in $(seq 1 24); do
+     ROW="$(az monitor log-analytics query \
+       --workspace "${WS_CUSTOMER_ID}" \
+       --analytics-query "${QUERY}" \
+       --query "[0].Log_s" -o tsv 2>/dev/null || true)"
+     if [ -n "${ROW}" ] && echo "${ROW}" | grep -q "HELLO"; then
+       FOUND="yes"; break
+     fi
+     sleep 5
+   done
+   ```
+
+   If `FOUND` is empty after 120 s, emit FAIL with `LAW latency >120s
+   or HELLO not in console logs`. (Note: an empty result here usually
+   means LAW ingestion lag, NOT job failure — Step 3 already proved
+   `Succeeded`. But for the fixture's purposes, no LAW row = no
+   PASS-able evidence the documented log path works.)
+
+6. **Step 5 — Cleanup (job-scoped only).** Delete the job resource.
+   Do NOT `az group delete rg-awesome-gbb-ci` — that's shared CI
+   infrastructure that the other matrix legs (`foundry-hosted-agents`,
+   `foundry-prompt-agents`) also use.
+
+   ```bash
+   az containerapp job delete \
+     --resource-group "${RG}" \
+     --name "${JOB_NAME}" \
+     --yes -o none
+   ```
+
+   A 404 here means the job was already gone — treat as success.
+
+7. **Step 6 — Emit the result marker.** See "Result contract" below.
+   The marker MUST start with the literal capital `S` of `SMOKE_RESULT`
+   (in this prompt's prose the leading `S` is rendered as `_` to keep
+   the prompt itself from tripping the anchored grep — your reply
+   MUST substitute the literal capital `S`).
+
+## Out-of-scope coverage note
+
+This fixture exercises ONLY the ACA Job marquee pattern. Other
+`azd-patterns` documented surfaces audited per the 21-class catalog at
+`docs/audit/azd-patterns-audit-trail.md` but NOT exercised by this
+fixture:
+
+- **ACA service postdeploy hook** (SKILL.md § "Fetch-Latest-Image
+  Pattern", L164) — would require an ACR push of a real image, ~$0.005
+  added per run for storage + transfer; deferred because the
+  hosted-agents fixture already covers `azd deploy` with `remoteBuild`.
+- **Azure Functions wiring** (SKILL.md § "Composable Bicep Module
+  Library", L755 entry for the Functions module) — no separate matrix
+  leg today; deferred to a Functions-specific skill if/when one ships.
+- **Cosmos DB firewall pilot-grade defaults** (SKILL.md § "Cosmos
+  firewall", L824) — exercised end-to-end by customer-pilot E2E, not
+  CI matrix.
+- **MI wiring matrix** (SKILL.md § "Shared UAMI Pattern", L595) — the
+  CAE+UAMI shared in `rg-awesome-gbb-ci` already exercises the shared-
+  UAMI pattern statically; no per-run regression risk.
+
+Per master-plan spec § 11, single-fixture coverage is the accepted
+trade-off for library-shaped skills. Cross-pattern integration testing
+belongs in customer-pilot E2E, not the CI matrix.
+
+## Result contract
+
+CI greps the **whole transcript** with anchored, line-boundary
+patterns:
+
+```bash
+grep -qE '^SMOKE_RESULT=FAIL'   transcript.log   # FAIL wins if both appear
+grep -q  '^SMOKE_RESULT=PASS$'  transcript.log   # PASS pattern is fully anchored
+```
+
+The `^` and `$` are **zero-tolerance** for ANY surrounding character.
+The first character of the line MUST be the literal capital `S` of
+`SMOKE_RESULT`, and the last character MUST be the literal capital
+`S` of `PASS` (no trailing period, space, backtick, or newline noise).
+The Copilot CLI appends a footer (`Changes / Duration / Tokens`)
+after your reply, but the marker need not be the final line — just
+the only line matching the grep.
+
+### Marker emission rules — read carefully
+
+Empirical evidence from `actions/runs/26693703357` (the run that
+triggered this contract tightening across all Phase 2 fixtures): in
+the SAME workflow run, the parallel `foundry-prompt-agents` matrix
+leg emitted the marker **clean** while the `foundry-hosted-agents`
+leg emitted it **wrapped in backticks**, breaking the start-of-line
+anchor. The Copilot CLI's underlying LLM autoregression
+non-deterministically formats identifiers in markdown — your job is
+to defeat that.
+
+WRONG (every pattern below has been seen fail an anchored grep):
+
+```
+`SMOKE_RESULT=PASS`              ← backticks break ^ anchor (LITERAL bug we hit)
+**SMOKE_RESULT=PASS**            ← bold asterisks break both anchors
+`SMOKE_RESULT=PASS` (success)    ← trailing prose breaks $ anchor
+> SMOKE_RESULT=PASS              ← blockquote prefix breaks ^ anchor
+  SMOKE_RESULT=PASS              ← leading whitespace breaks ^ anchor
+SMOKE_RESULT=PASS.               ← trailing period breaks $ anchor
+SMOKE_RESULT=PASS ✓              ← trailing emoji/glyph breaks $ anchor
+```
+
+RIGHT (the ONLY accepted form for success — note that in this prompt
+the literal `S` of `SMOKE_RESULT` is rendered as `_` so this
+documentation itself doesn't trip the grep; your reply MUST substitute
+the literal capital `S`):
+
+```
+_MOKE_RESULT=PASS
+```
+
+The line MUST stand alone in its own paragraph — a blank line before
+it and a blank line after it. Do NOT embed it in a list bullet, code
+fence, or inline mention. If you want to add prose explaining what
+happened (recommended), put that prose in a **separate paragraph**
+before or after, never on the same line as the marker, and never
+write the literal token `_MOKE_RESULT` in any decorated form
+(backticks, bold, italic) anywhere else in your reply — autoregressive
+priming from those earlier mentions is what causes the final marker
+emission to come out backtick-wrapped.
+
+On any failure in steps 1-5, emit a single line of the form
+`_MOKE_RESULT=FAIL` followed by a single space and a short reason
+(≤80 chars, no backticks, no newlines). Example shape (with the
+literal `S` of `SMOKE_RESULT` replaced by `_` so this prompt itself
+doesn't trip the grep — your reply MUST use the literal `S`):
+
+```
+_MOKE_RESULT=FAIL az deployment group create returned 403 after 30s
+```
+
+Same line-boundary rules apply (no surrounding decoration). CI checks
+FAIL before PASS, so an explicit FAIL always wins even if you also
+emit PASS elsewhere — useful if you want to FAIL with detail and ALSO
+emit a stub PASS for debugging.
+
+### Runtime guardrails (avoid known shell-block traps)
+
+- Do NOT redirect your own stdout via `exec > >(tee -a "$LOG") 2>&1`
+  or any process-substitution pattern. The Copilot CLI shell wrapper
+  blocks process substitution as "dangerous shell expansion" (seen in
+  run `26693703357` at 20:09:44Z, where the agent's heredoc using
+  `exec > >(...)` got rejected before execution). Your stdout is
+  ALREADY captured by the CI runner — you do not need to tee it
+  yourself.
+- Do NOT call `az containerapp job logs show` — SKILL.md L313
+  documents that it hangs indefinitely. Use the LAW query in Step 4.
+- Do NOT delete the resource group (`rg-awesome-gbb-ci`) — it is
+  shared CI infrastructure. Only delete the per-run job resource.
+
+Please don't modify any file under `skills/` — this is verification
+only.
