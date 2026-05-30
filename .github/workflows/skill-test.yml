@@ -180,3 +180,148 @@ jobs:
         run: |
           pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0" "tenacity~=8.5.0"
           python -m pytest scripts/tests/test_e2e_foundry_toolbox.py -v
+
+  # ── Job 5: Build skill-matrix (PR + push + dispatch + schedule) ────
+  # Reads scripts/build-test-matrix.py and emits a JSON list of skills
+  # that have a test-fixture/consumer_prompt.md AND are NOT quarantined.
+  # The downstream copilot-cli-matrix job fans out one runner per skill.
+  build-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyyaml
+      - id: build
+        run: echo "matrix=$(python scripts/build-test-matrix.py --repo-root .)" >> "$GITHUB_OUTPUT"
+
+  # ── Job 6: Copilot-CLI consumer matrix (new — Task 2.1 pilot) ──────
+  # Spawns ONE runner per discovered skill. Each runner installs the
+  # Copilot CLI, points it at Foundry (gpt-5.4-mini in aif-awesome-gbb-ci)
+  # via BYOK env vars, and runs the skill's consumer_prompt.md fixture.
+  # Success contract: last line of stdout is `SMOKE_RESULT=PASS`.
+  copilot-cli-matrix:
+    needs: build-matrix
+    if: fromJSON(needs.build-matrix.outputs.matrix).skill[0] != null
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Copilot CLI
+        # Node 22 is pre-installed on ubuntu-latest. npm install is the
+        # documented install path; proven green by
+        # .github/workflows/copilot-cli-foundry-auth-smoke.yml.
+        # Do NOT use `curl … install.sh | bash` — no canonical URL exists.
+        run: |
+          npm install -g @github/copilot
+          copilot --version
+
+      - name: Install awesome-gbb plugin from this checkout
+        run: |
+          copilot plugin marketplace add "$GITHUB_WORKSPACE"
+          copilot plugin install awesome-gbb@awesome-gbb
+
+      - name: Get Foundry bearer token
+        # `--resource` takes the v1 AAD audience identifier (NO `/.default`
+        # suffix). Passing the v2 scope form to `--resource` produces
+        # AADSTS500011 "resource principal not found". The auth-smoke
+        # workflow (L63-75) documents this in detail and is the canonical
+        # reference. `tr -d '\r\n'` defends against trailing newline from
+        # `-o tsv` that would otherwise produce a cryptic 401 from Foundry.
+        run: |
+          set -euo pipefail
+          TOKEN=$(az account get-access-token \
+            --resource https://cognitiveservices.azure.com \
+            --query accessToken -o tsv | tr -d '\r\n')
+          echo "::add-mask::$TOKEN"
+          echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Run consumer prompt for ${{ matrix.skill }}
+        id: run
+        env:
+          # BYOK routing → Foundry, identical to the auth-smoke workflow.
+          # Env-var names verified against CLI 1.0.57-2 via `copilot help
+          # providers` / `copilot help environment` (Task 1.0). Legacy
+          # `COPILOT_MODEL_*` names DO NOT EXIST and would be silently
+          # ignored.
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          COPILOT_AUTO_UPDATE: "false"
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          PROMPT="skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"
+          test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
+          # `-p` is the released CLI's one-shot prompt form. `copilot run`
+          # does not exist; `--prompt-file` does not exist. Inline the
+          # fixture body with $(cat …). `--disable-builtin-mcps` drops the
+          # GitHub MCP server so this test doesn't depend on github.com
+          # reachability — fixtures opt back in to specific MCP servers
+          # via `--allow-tool=mcp__…` flags.
+          copilot -p "$(cat "$PROMPT")" \
+                  --allow-all-tools \
+                  --disable-builtin-mcps \
+                  -C "$GITHUB_WORKSPACE" \
+                  2>&1 | tee "/tmp/${{ matrix.skill }}-transcript.log"
+          # Last-line contract: SMOKE_RESULT=PASS = success.
+          tail -n 1 "/tmp/${{ matrix.skill }}-transcript.log" | grep -q "^SMOKE_RESULT=PASS$" \
+            || { echo "fixture did not end with SMOKE_RESULT=PASS"; exit 1; }
+
+      - name: Retry once on classified-transient failure
+        if: failure() && steps.run.outcome == 'failure'
+        env:
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          COPILOT_AUTO_UPDATE: "false"
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          PROMPT="skills/${{ matrix.skill }}/test-fixture/consumer_prompt.md"
+          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found" "/tmp/${{ matrix.skill }}-transcript.log"; then
+            echo "classified-transient — retrying once"
+            copilot -p "$(cat "$PROMPT")" \
+                    --allow-all-tools \
+                    --disable-builtin-mcps \
+                    -C "$GITHUB_WORKSPACE" \
+                    2>&1 | tee "/tmp/${{ matrix.skill }}-retry.log"
+            tail -n 1 "/tmp/${{ matrix.skill }}-retry.log" | grep -q "^SMOKE_RESULT=PASS$" \
+              || { echo "retry also did not end with SMOKE_RESULT=PASS"; exit 1; }
+          else
+            echo "non-transient failure — not retrying"
+            exit 1
+          fi
+
+      - name: Upload transcript (forensics)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-${{ matrix.skill }}
+          path: /tmp/${{ matrix.skill }}-transcript.log
+          retention-days: 7
