@@ -49,11 +49,14 @@ following:
 
 ## Result contract
 
-If every step succeeds, print exactly the line `SMOKE_RESULT=PASS` as
-the very last line of stdout and exit 0. On any failure, print
-`SMOKE_RESULT=FAIL <short reason>` as the last line and exit non-zero.
-The CI job greps the last stdout line; anything else is treated as a
-failure.
+If every step succeeds, your **final chat reply** must be exactly the
+single line `SMOKE_RESULT=PASS` — no markdown, no bold, no leading or
+trailing prose, no follow-up summary. The Python script can print
+whatever it wants while it runs, but your last line of output to the
+CI runner is the marker only. On any failure, your final chat reply
+must be `SMOKE_RESULT=FAIL <short reason>` (one line, same rules).
+The CI job uses `tail -n 1 | grep -q '^SMOKE_RESULT=(PASS|FAIL)'`, so
+any commentary after the marker breaks the check.
 
 Please don't modify any file under `skills/` — this is verification
 only.
