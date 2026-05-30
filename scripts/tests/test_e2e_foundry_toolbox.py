@@ -89,41 +89,67 @@ class TestFoundryToolboxE2E(unittest.TestCase):
         (SSOT — see AGENTS.md § 7).
 
         Wraps `agent.run()` in tenacity exponential backoff so transient
-        429s from the public Learn MCP endpoint (observed on weekly
-        sweeps) don't fail the live-Azure gate. We rebuild the agent and
-        the MCP tool on every retry because the streamable-HTTP session
-        is not guaranteed to be reusable after a mid-call failure.
+        429s — either from the public Learn MCP endpoint or from the
+        Foundry model deployment per-minute rate limit (observed on
+        weekly sweeps) — don't fail the live-Azure gate.
+
+        The `MCPStreamableHTTPTool` is entered with `async with` so its
+        underlying streamable_http_client connection is cleanly torn
+        down per attempt (otherwise a failed attempt leaks an open
+        anyio task group, and the next attempt's cleanup tries to exit
+        a cancel scope from a different task → RuntimeError).
+
+        If the model deployment is persistently rate-limited across
+        all retry attempts (≈4 min total), the test SKIPS rather than
+        FAILS — this is an Azure quota signal, not a skill defect, and
+        we don't want to block PR merges over capacity issues.
         """
         import asyncio
         from agent_framework import Agent, MCPStreamableHTTPTool, Message
+        from agent_framework.exceptions import ChatClientException
         from tenacity import (
             retry,
-            retry_if_not_exception_type,
+            retry_if_exception,
             stop_after_attempt,
             wait_exponential,
         )
 
+        def _is_transient(exc: BaseException) -> bool:
+            if isinstance(exc, AssertionError):
+                return False
+            return True
+
         @retry(
-            stop=stop_after_attempt(4),
-            wait=wait_exponential(multiplier=2, min=4, max=30),
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=4, min=15, max=120),
             reraise=True,
-            retry=retry_if_not_exception_type(AssertionError),
+            retry=retry_if_exception(_is_transient),
         )
         async def _run_once():
-            learn_mcp = MCPStreamableHTTPTool(
+            async with MCPStreamableHTTPTool(
                 name="microsoft-learn",
                 url="https://learn.microsoft.com/api/mcp",
                 parse_tool_results=_mcp_text_extractor,
-            )
-            agent = Agent(
-                client=self.client,
-                tools=[learn_mcp],
-                instructions="Answer Azure questions using the microsoft-learn tool.",
-            )
-            msg = Message(role="user", contents=["What is Azure Container Apps?"])
-            return await agent.run(messages=[msg])
+            ) as learn_mcp:
+                agent = Agent(
+                    client=self.client,
+                    tools=[learn_mcp],
+                    instructions="Answer Azure questions using the microsoft-learn tool.",
+                )
+                msg = Message(role="user", contents=["What is Azure Container Apps?"])
+                return await agent.run(messages=[msg])
 
-        response = asyncio.run(_run_once())
+        try:
+            response = asyncio.run(_run_once())
+        except ChatClientException as exc:
+            msg_lower = str(exc).lower()
+            if "429" in msg_lower or "rate_limit_exceeded" in msg_lower:
+                self.skipTest(
+                    f"Foundry model deployment persistently rate-limited "
+                    f"after retries — Azure quota issue, not a skill defect: {exc}"
+                )
+            raise
+
         text = response.text if hasattr(response, "text") else str(response)
         self.assertGreater(len(text), 50, "Response too short")
         has_azure_content = "azure" in text.lower() or "container" in text.lower()
