@@ -157,17 +157,86 @@ choice.
 
 ## Result contract
 
-If every required step (1-5; cleanup failures in 6 do NOT fail the
-run, only log) succeeds, emit the exact line `SMOKE_RESULT=PASS` (on
-a line by itself, no markdown, no bold) somewhere in your reply —
-once is enough. The Copilot CLI appends its own footer (`Changes /
-AI Credits / Tokens`) after your reply, so we can't rely on it being
-the literal last stdout line; CI greps the whole transcript for the
-marker.
+CI greps the **whole transcript** with anchored, line-boundary patterns:
 
-On any failure in steps 1-5, emit `SMOKE_RESULT=FAIL <short reason>`
-(one line, ≤80 chars) — CI checks for FAIL before PASS, so an
-explicit FAIL always wins even if you also emit PASS elsewhere.
+```bash
+grep -qE '^SMOKE_RESULT=FAIL'   transcript.log   # FAIL wins if both appear
+grep -q  '^SMOKE_RESULT=PASS$'  transcript.log   # PASS pattern is fully anchored
+```
+
+The `^` and `$` are **zero-tolerance** for ANY surrounding character.
+The first character of the line MUST be the literal capital `S` of
+`SMOKE_RESULT`, and the last character MUST be the literal capital
+`S` of `PASS` (no trailing period, space, backtick, or newline noise).
+The Copilot CLI appends a footer (`Changes / Duration / Tokens`)
+after your reply, but the marker need not be the final line — just
+the only line matching the grep.
+
+### Marker emission rules — read carefully
+
+Empirical evidence from `actions/runs/26693703357` (the run that
+triggered this very contract tightening): in the SAME workflow run,
+the parallel `foundry-prompt-agents` matrix leg emitted the marker
+**clean** while this skill's matrix leg emitted it **wrapped in
+backticks**, breaking the start-of-line anchor. The Copilot CLI's
+underlying LLM autoregression non-deterministically formats
+identifiers in markdown — your job is to defeat that.
+
+WRONG (every pattern below has been seen fail an anchored grep):
+
+```
+`SMOKE_RESULT=PASS`              ← backticks break ^ anchor (LITERAL bug we hit)
+**SMOKE_RESULT=PASS**            ← bold asterisks break both anchors
+`SMOKE_RESULT=PASS` (success)    ← trailing prose breaks $ anchor
+> SMOKE_RESULT=PASS              ← blockquote prefix breaks ^ anchor
+  SMOKE_RESULT=PASS              ← leading whitespace breaks ^ anchor
+SMOKE_RESULT=PASS.               ← trailing period breaks $ anchor
+SMOKE_RESULT=PASS ✓              ← trailing emoji/glyph breaks $ anchor
+```
+
+RIGHT (the ONLY accepted form for success — note that in this prompt
+the literal `S` of `SMOKE_RESULT` is rendered as `_` so this
+documentation itself doesn't trip the grep; your reply MUST substitute
+the literal capital `S`):
+
+```
+_MOKE_RESULT=PASS
+```
+
+The line MUST stand alone in its own paragraph — a blank line before
+it and a blank line after it. Do NOT embed it in a list bullet, code
+fence, or inline mention. If you want to add prose explaining what
+happened (recommended), put that prose in a **separate paragraph**
+before or after, never on the same line as the marker, and never
+write the literal token `SMOKE_RESULT` in any decorated form
+(backticks, bold, italic) anywhere else in your reply — autoregressive
+priming from those earlier mentions is what causes the final marker
+emission to come out backtick-wrapped.
+
+On any failure in steps 1-5, emit a single line of the form
+`SMOKE_RESULT=FAIL` followed by a single space and a short reason
+(≤80 chars, no backticks, no newlines). Example shape (with the
+literal `S` of `SMOKE_RESULT` replaced by `_` so this prompt itself
+doesn't trip the grep — your reply MUST use the literal `S`):
+
+```
+_MOKE_RESULT=FAIL agent invoke returned 401 after 60s RBAC grace
+```
+
+Same line-boundary rules apply (no surrounding decoration). CI checks
+FAIL before PASS, so an explicit FAIL always wins even if you also
+emit PASS elsewhere — useful if you want to FAIL with detail and ALSO
+emit a stub PASS for debugging.
+
+### Runtime guardrails (avoid known shell-block traps)
+
+- Do NOT redirect your own stdout via `exec > >(tee -a "$LOG") 2>&1`
+  or any process-substitution pattern. The Copilot CLI shell wrapper
+  blocks process substitution as "dangerous shell expansion" (seen in
+  run `26693703357` at 20:09:44Z, where the agent's heredoc using
+  `exec > >(...)` got rejected before execution). Your stdout is
+  ALREADY captured by the CI runner — you do not need to tee it
+  yourself.
 
 Please don't modify any file under `skills/` — this is verification
 only.

@@ -453,3 +453,71 @@ workers (or human auditors) need to act on it.
     pilot, not 5. Helpful both for budget planning and for not being
     surprised when the SHA of the first matrix run doesn't match an empty
     commit you pushed.
+
+14. **Copilot CLI agent non-deterministically backtick-wraps the
+    `SMOKE_RESULT` marker across parallel matrix legs.** Observed in
+    `actions/runs/26693703357` — a single workflow run produced two
+    transcripts emitted within 8 minutes of each other, both from
+    fixtures using identical marker-contract prose at the time:
+    - `foundry-prompt-agents` leg, 2026-05-30T20:09:28.189Z: clean bare
+      marker `SMOKE_RESULT=PASS` → workflow's anchored `grep -q
+      "^SMOKE_RESULT=PASS$"` matched → step passed.
+    - `foundry-hosted-agents` leg, 2026-05-30T20:17:32.907Z:
+      backtick-wrapped marker `` `SMOKE_RESULT=PASS` `` → anchored grep
+      did NOT match → step failed despite the full deploy+invoke
+      pipeline returning a successful `pong` response.
+
+    Root cause is LLM autoregression: when the agent's reply paragraph
+    is heavy with backtick-fenced identifier mentions (which our prompts
+    necessarily are — `${AGENT_NAME}`, `${UUID}`, `acrawesomegbbci`, …),
+    the model probabilistically formats the closing marker the same way.
+    There is **no prompt-side wording that 100% prevents this**, but you
+    can substantially reduce its frequency:
+
+    - State the contract as a literal regex (`^SMOKE_RESULT=PASS$`) and
+      enumerate ≥6 WRONG forms with `←` callouts explaining why each
+      breaks the anchors.
+    - Use a placeholder rendering in the prompt's own RIGHT/WRONG
+      examples (e.g. `_MOKE_RESULT=PASS` with prose "substitute literal
+      `S`") so that even if Copilot CLI ever starts echoing prompts to
+      stdout, the prompt body itself produces zero false-PASS / false-FAIL
+      matches under the workflow's anchored greps. This catalogue's
+      template is `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
+      L185-229 (post-fix). Validated with:
+      `grep -cE "^SMOKE_RESULT=" <fixture>` returns 0 against either
+      workflow grep pattern after placeholdering.
+    - Tell the agent NOT to write the literal token `SMOKE_RESULT` in
+      any decorated form (backticks, bold, italic) anywhere else in its
+      reply — autoregressive priming from earlier mentions is what
+      causes the final marker emission to come out backtick-wrapped.
+
+    **Bonus sub-finding from the same run**: at
+    2026-05-30T20:09:44Z the agent autonomously invented a tee/fail
+    wrapper using `exec > >(tee -a "$LOG") 2>&1` and Copilot CLI's shell
+    tool BLOCKED it as "dangerous shell expansion". This is the first
+    time the catalog has surfaced that guard. Implication: a shell-side
+    `printf 'SMOKE_RESULT=PASS\n'` fallback path is unreliable as a
+    backup — (a) shell stdout gets summarised in the transcript as
+    `└ N lines...`, not the full content, and (b) the agent may invent
+    blocked patterns trying to be clever. The marker MUST be emitted as
+    part of the agent's chat reply, not as bash output. The audit-trail
+    fixture (post-fix L231-239) explicitly forbids the
+    `exec > >(tee ...)` pattern with a cross-reference to this run.
+
+    **Cross-skill action for Task 2.3**: `foundry-prompt-agents`'s
+    fixture has the **same latent vulnerability** at L52-58. It worked
+    by luck during Task 2.1's stability runs. Either symmetrically
+    tighten it (apply the same WRONG-pattern catalogue + placeholder
+    encoding + autoregressive warning) or extract the contract into a
+    shared `docs/audit/marker-contract.md` snippet that both fixtures
+    `MUST` reference. Per AGENTS.md § 2.6 (one skill per PR), this
+    can't ship on PR #185; defer to a Task 2.3 PR that touches
+    `foundry-prompt-agents/test-fixture/consumer_prompt.md` only.
+
+    **Optional empirical experiment (not yet performed)**: try
+    `copilot -s` or `--silent` against a one-shot prompt locally to
+    see if the `Changes / Duration / Tokens` footer is suppressed. If
+    yes, the contract could simplify to "single line marker is the
+    final line of stdout". This experiment was time-boxed away in this
+    audit; recommend Task 2.3 spend 5 minutes on it and document the
+    finding either way.
