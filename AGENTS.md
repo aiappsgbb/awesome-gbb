@@ -817,13 +817,17 @@ Three patterns proved load-bearing during Task 2.1 of the
    ```
 
    `copilot -s` / `--silent` is **present in the CLI** (`copilot --help`
-   on 1.0.57-3 documents it as "Output only the agent response"), but
-   **has not yet been empirically tested against the footer** in a
-   matrix run. Task 2.3 (`azd-patterns`) is the assigned ticket to
-   run the 5-min probe (`copilot -s -p "say hi" 2>&1 | tail -30`) and
-   document whether the footer is actually suppressed. Until that probe
-   lands, the grep-whole-transcript + FAIL-beats-PASS contract above is
-   the canonical pattern.
+   on 1.0.57-3 documents it as "Output only the agent response"). Task
+   2.3's empirical probe on **macOS Copilot CLI 1.0.57-3** confirmed the
+   footer IS suppressed — `copilot -s -p "say hi" 2>&1 | tail -30`
+   emitted only the agent reply, no `Changes` / `Duration` / `Tokens`
+   block; `-s` and `--silent` behaved identically. **Linux runner probe
+   is still outstanding** (the GitHub-hosted runner's pre-installed CLI
+   build is unverified). Until that confirmation lands, the
+   grep-whole-transcript + FAIL-beats-PASS contract above is the
+   canonical pattern. Task 2.4 owns the Linux probe + cross-fixture
+   simplification rollout (`tail -n 1 | grep -q "^SMOKE_RESULT=PASS$"`
+   shrinks each fixture's result-contract block by ~80 lines).
 
 3. **Agent / resource names in fixtures MUST carry a UUID suffix.**
    Parallel matrix runners (and retries from the same SHA) collide on
@@ -921,6 +925,53 @@ Three patterns proved load-bearing during Task 2.1 of the
    L37-50) is the canonical template. The single biggest waste in
    the first `unsafecode/pr-review` cycle was a fixture re-granting
    AcrPull and racing propagation against the timeout.
+
+8. **`azd deploy` does NOT cover ACA Jobs — hand-roll `az deployment
+   group create` + `az containerapp job start`** (Task 2.3 finding).
+   SKILL.md `azd-patterns` L26 documents this explicitly: there is no
+   `azd-service-name` tag for `Microsoft.App/jobs` that `azd deploy`
+   recognises. `azd up` against a job-only Bicep provisions the resource
+   group + a placeholder image but never pushes the real image. Any
+   fixture whose marquee surface is an ACA Job (the `azd-patterns`
+   fixture; future fixtures for ACA-Job-variant skills like potential
+   `foundry-mcp-aca` jobs / threadlight-skills jobs) MUST therefore
+   build two variants of the canonical fixture template:
+
+   - **Service variant** — `azd up` happy path (works for ACA Services)
+   - **Job variant** — `az deployment group create` for the Bicep +
+     `az containerapp job start` to execute, because `azd deploy`
+     cannot trigger a job execution
+
+   The `skills/azd-patterns/test-fixture/consumer_prompt.md` fixture is
+   the canonical reference for the **Job variant**;
+   `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md` is the
+   canonical reference for the **Service variant**.
+
+9. **ACA control-plane consistency races are fixture-side retries, NOT
+   workflow-level retry-classifier work** (Task 2.3 finding,
+   generalising the Task 2.2 `AcrPull` precedent). Observed races so
+   far, all 5–15 s windows:
+
+   - `AcrPull` permission propagation after Bicep deploy (Task 2.2)
+   - `JobExecutionNotFound` from `az containerapp job execution show`
+     immediately after a successful `az containerapp job start` (Task
+     2.3 — observed during fixture authoring, ~5-15 s window)
+   - `Forbidden` from any dataplane call during RBAC propagation
+   - `ResourceProvisioningInProgress` from concurrent ARM operations
+
+   **Defense:** wrap the relevant CLI call in a bounded retry loop in
+   the fixture itself (6 iterations × 5 s back-off = 30 s budget is the
+   Task 2.3 pattern). Do NOT add these tokens to the workflow's
+   transient-classifier regex — the precedent set by both Task 2.2 and
+   2.3 is that ACA-control-plane races belong inside the fixture's
+   "what success looks like" definition, not in workflow-level
+   infrastructure. The cost of a fixture retry loop is bounded (~30 s
+   per call) and visible in the transcript; a workflow-level retry
+   re-runs the entire 8–15-min matrix leg.
+
+   When you observe a NEW ACA-control-plane race that isn't in this
+   list, add it here and document the retry budget. Do not assume a
+   single shared retry helper — the back-off math is per-API.
 
 ### 9.8 · Skill testing tiers
 

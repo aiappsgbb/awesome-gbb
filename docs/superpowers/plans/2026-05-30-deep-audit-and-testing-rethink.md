@@ -1186,6 +1186,41 @@ reset):
 - Foundry agent creation timing out (back off 30s, retry once)
 - ACR auth token race during parallel runner startup
 
+**Cross-task observation from Task 2.3 (must investigate during this step):**
+Run `26695861103` (SHA `dc5b418`, Task 2.3 audit-trail commit) had
+the `azd-patterns` matrix leg succeed but both
+`foundry-prompt-agents` AND `foundry-hosted-agents` matrix legs
+**fail simultaneously**. Both legs went green on the very next push
+(run `26696218650`, SHA `903c7f7` — an empty commit, no fixture
+changes). Possible interpretations:
+
+(a) Genuine non-determinism in those two fixtures that was masked by
+sequential single-leg matrices during Tasks 2.1 + 2.2 (concerning —
+would mean stability re-runs in those tasks were undercounting flakes
+because only the leg-under-test was being scrutinised);
+
+(b) Parallel-matrix-leg resource contention against shared
+`aif-awesome-gbb-ci` / `acrawesomegbbci` — quota throttling, ACR
+push concurrency, or Foundry per-account throughput limits;
+
+(c) Coincidental transient (Foundry agent creation timeout,
+`gpt-5.4-mini` 429) hitting two legs in the same run.
+
+**Triage procedure** before declaring 5/5 simultaneous-green:
+1. `gh run view 26695861103 --log --job=78680174869` (prompt-agents)
+   and `--job=78680174879` (hosted-agents) — read both failure modes
+   in full
+2. Cross-correlate failure timestamps — if both failed within the
+   same 60-second window, that points to interpretation (b) or (c).
+   If they failed at different stages with different error classes,
+   that points to (a) — genuine fixture flakiness.
+3. If (a): re-spawn the corresponding pilot worker session for a
+   fixture-hardening pass before counting any further runs.
+4. If (b) or (c): document the observation in the audit trails for
+   prompt-agents + hosted-agents, then proceed with the stability
+   loop — but require that the 5/5 count be measured at **whole-run
+   conclusion: success**, not at individual matrix-leg granularity.
+
 Anything else — especially anything that looks like a SKILL.md prose
 bug — is a STOP-and-triage event.
 
@@ -1199,6 +1234,52 @@ drift in `foundry-iq` / `foundry-doc-vision-speech` / `azd-patterns`;
 KI-002/003 A/B rigor; L95 audience parity). Pilot exit means each
 deferred item has either landed a follow-up PR or been explicitly
 re-scoped to Phase 3 with a written rationale in the audit-trail file.
+
+- [ ] **Step 4b: Roll out `copilot -s` result-contract simplification across all 3 pilot fixtures** (NEW from Task 2.3 Finding #15)
+
+Task 2.3's empirical probe on macOS Copilot CLI 1.0.57-3 confirmed
+that `copilot -s` suppresses the `Changes`/`Duration`/`Tokens`
+footer. AGENTS.md § 9.7 pattern 2 is updated; the Linux runner probe
+is the prerequisite to a cross-fixture rollout.
+
+Procedure:
+
+1. **Linux probe** (5-min job, before any fixture edit). Add a
+   one-line debug step to the `copilot-cli-matrix` job in
+   `.github/workflows/skill-test.yml`:
+
+   ```yaml
+   - name: Probe copilot -s footer suppression
+     run: copilot -s -p "say hi" 2>&1 | tee /tmp/probe.log && tail -5 /tmp/probe.log
+   ```
+
+   Push to the PR branch. Read the run log. If `/tmp/probe.log` ends
+   on a footer line, the simplification is BLOCKED — keep
+   FAIL-first whole-file grep. If the probe is clean, proceed.
+
+2. **Fixture simplification.** For each of the 3 pilot fixtures
+   (`foundry-prompt-agents`, `foundry-hosted-agents`, `azd-patterns`),
+   replace the FAIL-first whole-file grep block with:
+
+   ```bash
+   copilot -s -p @consumer_prompt.md 2>&1 | tee transcript.log
+   tail -n 1 transcript.log | grep -q "^SMOKE_RESULT=PASS$"
+   ```
+
+   Estimated reduction: ~80 lines per fixture (the FAIL-first block,
+   the autoregressive-priming `_MOKE_RESULT` callouts, the "no
+   backtick wrap" rules — most of pattern 5's body becomes
+   unnecessary because the tail-grep contract doesn't care what was
+   said in the preamble).
+
+3. **Stability re-validation.** Once all 3 fixtures are simplified,
+   reset the 5-run counter and re-run Step 1's empty-commit loop.
+   This is non-negotiable — the result-contract change is a behaviour
+   change in every matrix leg.
+
+If the Linux probe FAILS, AGENTS.md § 9.7 pattern 2 stays as the
+verified-on-macOS-only contract, and Phase 3 fixtures continue to
+use the FAIL-first whole-file grep template.
 
 - [ ] **Step 5: When 5/5 green AND deferred items triaged, open the rollout-go-ahead issue**
 
