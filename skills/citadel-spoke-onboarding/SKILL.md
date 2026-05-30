@@ -12,7 +12,7 @@ description: >
   deploying model backends, apim backend pools, hub policy fragment deployment,
   spoke-side VNet/peering creation (use foundry-vnet-deploy).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Citadel Spoke Onboarding — Reference Guide
@@ -353,6 +353,11 @@ environment_variables:
 The `FoundryChatClient` in `container.py` resolves the connection automatically:
 
 ```python
+# Async azure.identity — FoundryChatClient with sync DefaultAzureCredential
+# hangs 60s then raises `session_not_ready` / `network_error`.
+# See foundry-hosted-agents § Critical rules (MID-I).
+from azure.identity.aio import DefaultAzureCredential
+
 client = FoundryChatClient(
     project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
     model=os.environ["MODEL_DEPLOYMENT_NAME"],  # "connectionName/gpt-5.4"

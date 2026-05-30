@@ -12,7 +12,7 @@ description: >
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq),
   real-time voice / Voice Live (use foundry-voice-live).
 metadata:
-  version: "1.2.2"
+  version: "1.2.3"
 ---
 
 # Foundry Doc / Vision / Speech
@@ -152,13 +152,18 @@ from typing import Any
 # .aio variant here returns a coroutine that gets f-string-formatted as
 # "Bearer <coroutine object _provider at 0x...>" and the server returns 401.
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+# Separate ASYNC credential for FoundryChatClient — sync DefaultAzureCredential
+# there causes a 60s `session_not_ready` hang then `network_error`. The two
+# credentials are kept distinct so the bearer provider keeps a sync callable.
+# See foundry-hosted-agents § Critical rules (MID-I).
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
 
 # 1. Build a refreshing Entra token provider for the Toolbox MCP endpoint.
 #    Scope MUST be https://ai.azure.com/.default — wrong scope = 401.
-credential = DefaultAzureCredential()  # reads AZURE_CLIENT_ID for UAMI
-token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
+sync_credential = DefaultAzureCredential()  # reads AZURE_CLIENT_ID for UAMI
+token_provider = get_bearer_token_provider(sync_credential, "https://ai.azure.com/.default")
 
 # 2. Build the MCP tool.
 #    Endpoint format (note the "toolboxes/.../versions/.../mcp" shape — pin a version):
@@ -179,8 +184,8 @@ async def _no_ping(*args: Any, **kwargs: Any) -> None: return None
 mcp_tool._ensure_connected = _no_ping  # type: ignore[assignment]
 
 async def main() -> None:
-    async with mcp_tool, Agent(
-        client=FoundryChatClient(credential=credential, model="gpt-5.4-mini"),
+    async with AsyncDefaultAzureCredential() as agent_credential, mcp_tool, Agent(
+        client=FoundryChatClient(credential=agent_credential, model="gpt-5.4-mini"),
         name="ClaimsIntake",
         tools=[mcp_tool],
     ) as agent:
@@ -443,7 +448,9 @@ job):
 ```python
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+# Async azure.identity — sync AzureCliCredential here causes the 60s
+# `session_not_ready` hang. See foundry-hosted-agents (MID-I).
+from azure.identity.aio import AzureCliCredential
 
 agent = Agent(
     client=FoundryChatClient(

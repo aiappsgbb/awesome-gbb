@@ -17,7 +17,7 @@ description: >
   tools (use foundry-toolbox), file-system SkillsProvider wiring (use
   foundry-hosted-agents § Skill Loading), generic hosted-agent runtime.
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # Foundry Skills Catalog — Reference Guide
@@ -473,7 +473,9 @@ Wire it into a hosted agent (`container.py` or equivalent):
 ```python
 from agent_framework import Agent, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
-from azure.identity import DefaultAzureCredential
+# Async azure.identity — FoundryChatClient with sync DefaultAzureCredential
+# hangs 60s then raises `session_not_ready`. See foundry-hosted-agents (MID-I).
+from azure.identity.aio import DefaultAzureCredential
 
 from foundry_skills_source import FoundrySkillsSource
 
