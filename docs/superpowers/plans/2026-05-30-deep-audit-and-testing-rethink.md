@@ -895,6 +895,44 @@ gh pr merge --squash --auto
 
 ### Task 2.2 · Pilot skill — `foundry-hosted-agents`
 
+> **Lessons harvested from Task 2.1 (`foundry-prompt-agents`)** — read
+> these BEFORE starting. They are codified in `AGENTS.md` § 9.7; this
+> callout is a quick reference so you don't have to context-switch.
+>
+> 1. **UAMI FIC is narrow** — only `pull_request`, `ref:refs/heads/main`,
+>    `ref:refs/tags/*`. `workflow_dispatch` on a PR branch fails
+>    `AADSTS700213`. Stability re-runs MUST be `pull_request synchronize`
+>    (empty commits, one push at a time, **≥ 45 s spacing**) — GitHub
+>    coalesces simultaneous pushes into one event regardless of any
+>    workflow `concurrency:` block.
+> 2. **Result marker contract** is grep-whole-transcript, **FAIL beats
+>    PASS**, never `tail`. Copilot CLI emits an unsuppressible
+>    `Changes / Duration / Tokens` footer after the agent reply. The
+>    matrix job grep contract is already correct in
+>    `.github/workflows/skill-test.yml` — your fixture just needs to
+>    emit `SMOKE_RESULT=PASS` (or `SMOKE_RESULT=FAIL <reason>`) on its
+>    own line at the end. `copilot -s/--silent` was NOT tried in Task
+>    2.1 — worth probing if you want a cleaner transcript.
+> 3. **UUID suffix on every resource name** —
+>    `f"ci-smoke-ha-{uuid.uuid4().hex[:8]}"` for agent display name, ACA
+>    service name, ACR image tag, etc. Parallel runners + same-SHA
+>    retries WILL collide on fixed names.
+> 4. **Anti-theater principle from Task 2.1** — if the audit-trail file
+>    contains "TODO / fill in later / placeholder" for any of the 21
+>    bug classes, the deliverable is NOT done. List each class explicitly
+>    with evidence citations (file:line) or an explicit "not applicable"
+>    + one-sentence justification. Deferred items go to a separate "Open
+>    items" section with an owner and a rationale for deferral.
+> 5. **AGENTS.md § 2.7, § 2.8, § 9.6, § 9.8, § 10.3, § 12.3, § 12.5 still
+>    reference the deleted `pin-smoke` / `e2e-azure` jobs and
+>    `scripts/tests/test_e2e_*.py` files.** Those jobs were deleted in
+>    commit `3af9662` (Task 2.1). The replacement is the
+>    `copilot-cli-matrix` job — see `.github/workflows/skill-test.yml`
+>    L201+. Do NOT author a pytest `test_e2e_<name>.py`; author the
+>    fixture under `skills/<name>/test-fixture/consumer_prompt.md`
+>    instead. Updating AGENTS.md to reflect this is its own separate
+>    cleanup task — out of scope here.
+
 **Files:**
 - Create: `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
 - Create: `docs/audit/foundry-hosted-agents-audit-trail.md`
@@ -955,6 +993,15 @@ Expected: `copilot-cli-matrix (foundry-hosted-agents)` = success.
 ---
 
 ### Task 2.3 · Pilot skill — `azd-patterns`
+
+> **Lessons harvested from Task 2.1** (also see the callout on Task 2.2):
+> UAMI FIC narrow → `pull_request synchronize` for stability; result
+> marker contract is grep-whole-transcript with FAIL beating PASS; UUID
+> suffix every resource name; anti-theater on audit trail. Codified in
+> `AGENTS.md` § 9.7. `azd-patterns` is shaped differently from the two
+> agent-runtime pilots (Bicep module library, not a runtime), so the
+> fixture exercises a **single representative pattern** (the ACA-job
+> pattern; spec § 11 accepts the incomplete-coverage trade-off).
 
 **Files:**
 - Create: `skills/azd-patterns/test-fixture/consumer_prompt.md`
@@ -1017,34 +1064,94 @@ gh pr merge --squash --auto
 
 ### Task 2.4 · Pilot exit criteria — 5 consecutive green matrix runs
 
+> **Status note (harvested from Task 2.1):** Task 2.1
+> (`foundry-prompt-agents`) has already shipped 5 consecutive green
+> matrix runs on `unsafecode/pr-review` — see
+> `docs/audit/foundry-prompt-agents-audit-trail.md`. Task 2.4 here is
+> NOT a third repetition of that — it is the **all-three-pilots-on-the-
+> same-SHA** check. The 5 runs from 2.1 only counted while 2.1 was the
+> ONLY fixture in the matrix; once 2.2 and 2.3 land, the matrix is
+> wider and the 5-green counter resets to zero.
+
 **Files:** (no commits; verification only)
 
-- [ ] **Step 1: Dispatch the matrix workflow 3 times manually**
+- [ ] **Step 0: Confirm matrix scope BEFORE counting**
 
 ```bash
-for _ in 1 2 3; do
-  gh workflow run skill-test.yml
-  sleep 5
+python3 scripts/build-test-matrix.py | jq '.include[].skill'
+```
+
+Expected output: `"foundry-prompt-agents"`, `"foundry-hosted-agents"`,
+`"azd-patterns"`. If any of the three is missing, do NOT start counting
+— go fix the missing fixture first.
+
+- [ ] **Step 1: Trigger 3 stability runs via empty-commit pushes (NOT
+      `workflow_dispatch`)**
+
+```bash
+for i in 1 2 3; do
+  git commit --allow-empty -m "ci: stability run #$i for 3-pilot matrix [audit-2026-Q2]"
+  git push origin HEAD
+  # Wait for the previous CI run to start before queuing the next
+  # (≥ 45 s — GitHub coalesces simultaneous pushes per AGENTS.md § 9.7).
+  sleep 60
 done
 ```
 
-- [ ] **Step 2: Wait for 2 cron cycles + watch for all-green**
+`workflow_dispatch` against a PR branch fails `AADSTS700213` because the
+UAMI's federated credentials don't cover non-`main` refs — this is
+documented in `AGENTS.md` § 9.7 and was learned the hard way during
+Task 2.1.
 
-The workflow runs on push + PR + weekly cron. The 3 manual dispatches plus the next 2 PR/push events that touch `skills/**` give 5 runs. Track them:
+- [ ] **Step 2: Wait for the natural cron cycle to provide runs 4 + 5**
+
+The workflow runs on weekly cron Monday 07:00 UTC. The 3 empty-commit
+runs above plus the next 2 PR-`synchronize` events (any review comment,
+amend, or rebase counts) make 5. Track them:
 
 ```bash
-gh run list --workflow=skill-test.yml --limit 5 --json conclusion,createdAt,displayTitle
+gh run list --workflow=skill-test.yml --branch unsafecode/pr-review \
+  --limit 5 --json conclusion,createdAt,displayTitle,headSha
 ```
 
 - [ ] **Step 3: If any of the 5 fail on a NON-classified-transient cause, STOP and triage**
 
 A non-transient failure during pilot means the design is broken. Quarantine is NOT acceptable as a pilot exit. Fix the root cause (likely: fixture too brittle, or SKILL.md missed a bug class) and reset the 5-run counter.
 
-- [ ] **Step 4: When 5/5 green, post a comment on the spec PR / open the rollout-go-ahead issue**
+Transient causes documented during Task 2.1 (allowed retry without
+reset):
+- `gpt-5.4-mini` 429 quota (rare; back off + retry on next push)
+- Foundry agent creation timing out (back off 30s, retry once)
+- ACR auth token race during parallel runner startup
+
+Anything else — especially anything that looks like a SKILL.md prose
+bug — is a STOP-and-triage event.
+
+- [ ] **Step 4: Triage the deferred items from each pilot's audit trail
+      BEFORE declaring exit**
+
+Each pilot audit-trail file has an "Open items" / "Deferred" section.
+Task 2.1's deferred set is in
+`docs/audit/foundry-prompt-agents-audit-trail.md` (Class 11 cross-skill
+drift in `foundry-iq` / `foundry-doc-vision-speech` / `azd-patterns`;
+KI-002/003 A/B rigor; L95 audience parity). Pilot exit means each
+deferred item has either landed a follow-up PR or been explicitly
+re-scoped to Phase 3 with a written rationale in the audit-trail file.
+
+- [ ] **Step 5: When 5/5 green AND deferred items triaged, open the rollout-go-ahead issue**
 
 ```bash
 gh issue create --title "Phase 2 pilot exit criteria met — Phase 3 rollout cleared" \
-  --body "5 consecutive green copilot-cli-matrix runs across pilot skills (foundry-prompt-agents, foundry-hosted-agents, azd-patterns). Phase 3 rollout authorized."
+  --body "5 consecutive green copilot-cli-matrix runs across all three pilot fixtures (foundry-prompt-agents, foundry-hosted-agents, azd-patterns). Run URLs:
+- run 1: <url>
+- run 2: <url>
+- run 3: <url>
+- run 4: <url>
+- run 5: <url>
+
+Deferred items from pilot audits: triaged (see audit-trail files).
+
+Phase 3 rollout authorized."
 ```
 
 ---

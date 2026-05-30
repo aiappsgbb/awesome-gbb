@@ -762,9 +762,76 @@ infrastructure for CI use in `rg-awesome-gbb-ci` (Sweden Central):
 - Cognitive Services OpenAI User on `aif-awesome-gbb-ci`
 - Foundry User on `aif-awesome-gbb-ci`
 
-Federated credentials cover both `pull_request` and `ref:refs/heads/main`
-triggers. Workflows use `azure/login@v2` with OIDC — no stored secrets
-or service principal passwords.
+**Federated credentials are narrow — these are the ONLY allowed subjects:**
+
+| Subject pattern | Why |
+|-----------------|-----|
+| `pull_request` | Every PR-triggered CI run |
+| `ref:refs/heads/main` | `push: main` + `schedule:` runs |
+| `ref:refs/tags/*` | Release tag pushes |
+
+`workflow_dispatch` against a non-`main` branch (e.g. a PR feature branch)
+fails with `AADSTS700213: No matching federated identity record found`,
+because the OIDC token's `sub` claim becomes `ref:refs/heads/<feature>`
+which isn't in the FIC list. Two consequences:
+
+- **Stability re-runs for CI gate verification MUST trigger via
+  `pull_request synchronize`,** not `workflow_dispatch`. Push an empty
+  commit to the PR branch: `git commit --allow-empty -m "..." && git push`.
+- **Cross-PR-branch dispatch is impossible without expanding the FIC
+  list** (intentional — keeps the credential blast radius small).
+
+Workflows use `azure/login@v2` with OIDC — no stored secrets or service
+principal passwords.
+
+#### CI fixture patterns (lessons from `foundry-prompt-agents` pilot)
+
+Three patterns proved load-bearing during Task 2.1 of the
+`2026-05-30-deep-audit-and-testing-rethink` plan. Future fixtures (Task
+2.2, 2.3, and the Phase 3 rollout) MUST follow them:
+
+1. **Empty-commit stability runs must be spaced ≥ 45 s apart, one push
+   per run.** GitHub coalesces simultaneous pushes into a single
+   `pull_request synchronize` event regardless of whether the target
+   workflow has a `concurrency:` block — coalescing happens at the
+   event-routing layer, not the workflow-scheduling layer. A 5-run
+   stability series MUST be 5 separate `git push` invocations, each
+   waiting for the previous CI run to start before the next is queued.
+
+2. **Result contract on Copilot CLI transcripts is whole-file grep,
+   FAIL beats PASS, never `tail`.** The CLI emits an unsuppressible
+   footer (`Changes`, `Duration`, `Tokens`) AFTER the agent reply, so
+   `tail -n 1 | grep 'SMOKE_RESULT=PASS'` always fails. The matrix job
+   uses:
+
+   ```bash
+   if grep -q '^SMOKE_RESULT=FAIL' transcript.log; then
+     echo "::error::Fixture reported FAIL"
+     exit 1
+   fi
+   if grep -q '^SMOKE_RESULT=PASS$' transcript.log; then
+     exit 0
+   fi
+   echo "::error::No SMOKE_RESULT marker"
+   exit 1
+   ```
+
+   `copilot -s` / `--silent` is documented as an unverified workaround
+   for the footer; until empirically confirmed by a future pilot, the
+   grep-whole-transcript contract stands.
+
+3. **Agent / resource names in fixtures MUST carry a UUID suffix.**
+   Parallel matrix runners (and retries from the same SHA) collide on
+   fixed names. Canonical pattern:
+
+   ```python
+   import uuid
+   agent_name = f"ci-smoke-pa-{uuid.uuid4().hex[:8]}"
+   ```
+
+   ACA service names, ACR image tags, agent display names, environment
+   names — all of these need short-UUID suffixes when authored in a
+   fixture under `skills/<name>/test-fixture/`.
 
 ### 9.8 · Skill testing tiers
 
