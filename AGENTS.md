@@ -198,7 +198,7 @@ call an Azure endpoint, provision a resource, or authenticate with
 - ❌ **"I tested locally" is NOT sufficient** — CI must reproduce it
 
 **Exceptions** (too complex for CI, manually validated only):
-`citadel-hub-deploy`, `citadel-spoke-onboarding`, `foundry-vnet-deploy`.
+`citadel-hub-deploy`, `foundry-vnet-deploy`.
 These require multi-resource deployments that exceed CI budget. Document
 manual validation in the PR description.
 
@@ -711,7 +711,7 @@ This policy is enforced both by the cap-aware
 [`pin-validation.yml`](.github/workflows/pin-validation.yml) gate (which
 re-runs the script on the runner) and by reviewer eyeball.
 
-### 9.6 · Five CI gates that protect the catalog
+### 9.6 · Six CI gates that protect the catalog
 
 | Gate | When | What it checks |
 |------|------|---------------|
@@ -923,7 +923,7 @@ credibility instantly. Consequences:
   doesn't run, the skill is broken.
 - **Testing tiers are mandatory.** § 9.8 defines T0–T3. PRs that skip
   the appropriate tier are rejected, no exceptions.
-- **CI gates are real gates.** The five workflows in § 9.6 are not
+- **CI gates are real gates.** The six workflows in § 9.6 are not
   advisory — they block merge. If CI can't prove a change is safe, the
   change doesn't land.
 
@@ -952,9 +952,9 @@ human review as the quality gate, not the bottleneck. Key design choices:
   bump pin files and frontmatter. It CANNOT rewrite SKILL.md body
   without `[skill-rewrite]` tag. This prevents accidental prose damage.
 
-### 12.3 Defense in depth — five CI gates, four testing tiers
+### 12.3 Defense in depth — six CI gates, four testing tiers
 
-No single gate catches everything. The catalog uses **five workflows**
+No single gate catches everything. The catalog uses **six workflows**
 (§ 9.6) and **four testing tiers** (§ 9.8) layered so that a regression
 must slip through multiple independent checks to reach main.
 
@@ -962,24 +962,28 @@ must slip through multiple independent checks to reach main.
 PR opened
  ├─ skill-validation.yml      T0: lint (frontmatter, SemVer, forbidden strings)
  ├─ automation-pr-gate.yml    mass-edit invariants + unit tests
- └─ pin-validation.yml        T1: re-runs validation.script for changed pins
-                                   (pip install + import; asserts expected_output)
+ ├─ pin-validation.yml        T1: re-runs validation.script for changed pins
+ │                                 (pip install + import; asserts expected_output)
+ └─ skill-test.yml            T2 on PR: all-pin smoke + E2E Azure tests
 
 Push to main / weekly cron
- ├─ skill-test.yml            T2: all-pin smoke (pip install + import for ALL auto-tier pins)
- └─ skill-test.yml            T3: E2E Azure (credential chains, API surfaces, model
+ └─ skill-test.yml            T2: all-pin smoke (pip install + import for ALL auto-tier pins)
+                              T3: E2E Azure (credential chains, API surfaces, model
                                    inference against real resources in rg-awesome-gbb-ci)
 
 Weekly cron (detection only)
  └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
+
+On Copilot PR check-suite success
+ └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
 **Current coverage (27 skills, 23 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (`runnable: true`) | 16 pins | T0 + T1 + T2 in CI |
-| Auto-tier (`runnable: false`, CI-validated) | 5 pins | T0 in CI; T1–T3 via `--include-azure` on PR/schedule |
+| Auto-tier (`runnable: true`) | 18 pins | T0 + T1 + T2 in CI |
+| Auto-tier (`runnable: false`, CI-validated) | 3 pins | T0 in CI; T1–T3 via `--include-azure` on PR/schedule |
 | Issue-only (complex multi-resource deploy) | 2 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
 | E2E Azure tests | 3 skills | T3 in CI (`foundry-prompt-agents`, `foundry-voice-live`, `foundry-toolbox`) |
@@ -1020,7 +1024,7 @@ Consequences:
 | Issue-only (human / complex deploy) | 2 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 6 |
-| Unit tests | 71 (18 PR gate + 43 skill validation + 10 E2E Azure) |
+| Unit tests | 73 (18 PR gate + 45 skill validation + 10 E2E Azure) |
 | Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
