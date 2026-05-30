@@ -2,7 +2,7 @@
 name: foundry-hosted-agents
 description: >
   Deploy, evaluate, and manage Foundry hosted agents on the refreshed
-  May 2026 preview — MAF 1.6.0, Foundry User role, azd ai agent
+  May 2026 preview — MAF 1.7.0, Foundry User role, azd ai agent
   extension. The canonical reference for hosted-agent lifecycle from
   container build through production evaluation. Read the full skill
   body for SDK patterns, identity wiring, and troubleshooting — do
@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.8.0"
+  version: "1.8.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -207,12 +207,12 @@ dependencies
 | order by timestamp desc
 ```
 
-### Upgrade recipe (1.4.0 → 1.6.0)
+### Upgrade recipe (→ 1.7.0)
 
 ```bash
-sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.6.0"/' pyproject.toml
-sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.6.0"/' pyproject.toml
-sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-hosting==1.0.0a260521"/' pyproject.toml
+sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.7.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.7.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-hosting==1.0.0a260528"/' pyproject.toml
 # Remove explicit OTel deps — now bundled via hosting package:
 # azure-monitor-opentelemetry, opentelemetry-sdk, opentelemetry-instrumentation-*
 ```
@@ -865,24 +865,24 @@ You have a `save_report` tool for generating downloadable files:
 
 > **🔴 DO NOT** install the `agent-framework` meta-package with `>=`. Pin individual sub-packages:
 > ```
-> agent-framework-core~=1.6.0
-> agent-framework-foundry~=1.6.0
-> agent-framework-foundry-hosting==1.0.0a260521
+> agent-framework-core~=1.7.0
+> agent-framework-foundry~=1.7.0
+> agent-framework-foundry-hosting==1.0.0a260528
 > ```
 > The meta-package pulls transitive deps that may conflict. Pin what you need.
 
 > 🚨 **READ FIRST.** Three pyproject mistakes silently break this stack:
 >
-> 1. **`agent-framework>=1.6.0` meta-package** — non-deterministic transitive resolution; resolves differently across uv versions. **DO** pin `agent-framework-core` and `agent-framework-foundry` individually.
-> 2. **`agent-framework-core[mcp]` extra** — that extra **does NOT exist** in 1.6.0. `MCPStreamableHTTPTool` / `MCPSseTool` / `MCPStdioTool` are top-level exports of `agent_framework`; the bare `agent-framework-core~=1.6.0` pin already includes them. Writing `[mcp]` produces a uv warning but does NOT fail resolution, so the pyproject can ship looking "MCP-ready" while operators chase phantom problems.
+> 1. **`agent-framework>=1.7.0` meta-package** — non-deterministic transitive resolution; resolves differently across uv versions. **DO** pin `agent-framework-core` and `agent-framework-foundry` individually.
+> 2. **`agent-framework-core[mcp]` extra** — that extra **does NOT exist** in 1.6.0/1.7.0. `MCPStreamableHTTPTool` / `MCPSseTool` / `MCPStdioTool` are top-level exports of `agent_framework`; the bare `agent-framework-core~=1.7.0` pin already includes them. Writing `[mcp]` produces a uv warning but does NOT fail resolution, so the pyproject can ship looking "MCP-ready" while operators chase phantom problems.
 > 3. **Missing `mcp>=1.10.0`** — `agent_framework_foundry_hosting._responses` imports `from mcp import McpError` at module-load time, so the container crashes at startup with `ModuleNotFoundError: No module named 'mcp'` even when no MCP tool is wired. The platform surfaces this as `session_not_ready` after a ~60 s timeout, so diagnosis cost is high. Pin `mcp>=1.10.0` in **every** hosted-agent `pyproject.toml`.
 
-> **MUST:** Copy verbatim from [`references/python/pyproject.toml`](references/python/pyproject.toml). Do NOT redefine inline — the validator enforces single-source-of-truth. That file pins `agent-framework-core~=1.6.0`, `agent-framework-foundry~=1.6.0`, the alpha hosting at `==1.0.0a260521`, `mcp>=1.10.0` (mandatory — see READ FIRST callout above), and `azure-identity<1.26.0a0` to avoid beta. The header comment captures the three pitfalls (meta-package, phantom `[mcp]` extra, missing `mcp`) the file prevents.
+> **MUST:** Copy verbatim from [`references/python/pyproject.toml`](references/python/pyproject.toml). Do NOT redefine inline — the validator enforces single-source-of-truth. That file pins `agent-framework-core~=1.7.0`, `agent-framework-foundry~=1.7.0`, the alpha hosting at `==1.0.0a260528`, `mcp~=1.27.1` (mandatory — see READ FIRST callout above), `python-dotenv~=1.2.2`, and `azure-identity<1.26.0a0` to avoid beta. The header comment captures the three pitfalls (meta-package, phantom `[mcp]` extra, missing `mcp`) the file prevents.
 
-**Do NOT use `agent-framework>=1.6.0` as a meta-package.** The meta-package's transitive
-resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.6.0` and
-`agent-framework-foundry~=1.6.0` (PEP 440 compatible-release caps) instead, and pin the
-alpha hosting package by exact version `==1.0.0a260521` — pre-release cap math doesn't
+**Do NOT use `agent-framework>=1.7.0` as a meta-package.** The meta-package's transitive
+resolution is non-deterministic across uv versions. Pin `agent-framework-core~=1.7.0` and
+`agent-framework-foundry~=1.7.0` (PEP 440 compatible-release caps) instead, and pin the
+alpha hosting package by exact version `==1.0.0a260528` — pre-release cap math doesn't
 survive across alpha boundaries, so `~=` would silently jump to a later alpha. Verified
 working on linux/amd64 as the current reference shape.
 
@@ -902,13 +902,13 @@ version conflicts.
   at startup with `ModuleNotFoundError: No module named 'mcp'` even when the agent uses no MCP
   tools. The platform surfaces this as `session_not_ready` after a ~60 s timeout (not as an
   import error), so the diagnosis cost is high — pin `mcp>=1.10.0` in **every** hosted-agent
-  `pyproject.toml`. Verified on `agent-framework-foundry-hosting==1.0.0a260521`
+  `pyproject.toml`. Verified on `agent-framework-foundry-hosting==1.0.0a260528`
   (May 2026, fruocco pilot).
 - **Do NOT write `agent-framework-core[mcp]`.** The `[mcp]` extra does NOT exist in
-  `agent-framework-core` 1.6.0 (PEP 503 / `setup.cfg` of the published wheel has no
+  `agent-framework-core` 1.6.0/1.7.0 (PEP 503 / `setup.cfg` of the published wheel has no
   `[project.optional-dependencies] mcp = […]` entry). `MCPStreamableHTTPTool` /
   `MCPSseTool` / `MCPStdioTool` are **top-level exports** of `agent_framework` — pin
-  `agent-framework-core~=1.6.0` (plain, no extras) and import them with
+  `agent-framework-core~=1.7.0` (plain, no extras) and import them with
   `from agent_framework import MCPStreamableHTTPTool`. Writing the non-existent extra
   produces a uv warning but does **not** fail resolution, so a pyproject can ship looking
   "MCP-ready" while actually missing nothing (the transports are already there) — but the
@@ -923,10 +923,10 @@ stays GA. Do NOT use `"allow"` — it pulls beta azure-identity 1.26.0b2.
 
 | Package | Version | Type | Pulls in |
 |---------|---------|------|----------|
-| `agent-framework-core` | 1.6.0 | ✅ Stable | pydantic, opentelemetry-api (instrumentation enabled by default) |
-| `agent-framework-foundry` | 1.6.0 | ✅ Stable | core, openai, azure-ai-projects |
-| `agent-framework-foundry-hosting` | 1.0.0a260521 | ⚠️ Alpha | agentserver-core==2.0.0b4, agentserver-responses==1.0.0b6. **agentserver-core** pulls **microsoft-opentelemetry>=1.0.0** (resolves to 1.1.0, bundles all OTel instrumentors + exporters) |
-| `mcp` | ≥1.10.0 | ✅ Stable | **Required by every hosted agent** — `agent_framework_foundry_hosting._responses` imports `from mcp import McpError` unconditionally, even when no MCP tools are used. Not auto-pulled by core 1.6.0 |
+| `agent-framework-core` | 1.7.0 | ✅ Stable | pydantic, opentelemetry-api (instrumentation enabled by default) |
+| `agent-framework-foundry` | 1.7.0 | ✅ Stable | core, openai, azure-ai-projects |
+| `agent-framework-foundry-hosting` | 1.0.0a260528 | ⚠️ Alpha | agentserver-core, agentserver-responses (transitive — pinned by the hosting alpha). **agentserver-core** pulls **microsoft-opentelemetry** (bundles all OTel instrumentors + exporters) |
+| `mcp` | ~=1.27.1 | ✅ Stable | **Required by every hosted agent** — `agent_framework_foundry_hosting._responses` imports `from mcp import McpError` unconditionally, even when no MCP tools are used. Not auto-pulled by core 1.7.0 |
 | `azure-identity` | 1.25.3 | ✅ Stable (pinned `<1.26.0a0` to avoid beta) | |
 
 No `override-dependencies` needed — the hosting package pins its own transitive deps.
@@ -1052,14 +1052,14 @@ it will deploy a hosted agent. Wire them as `output`s from your
 | `AZURE_AI_PROJECT_ID` | Bicep output of the Foundry project resource ID | `/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>` | `azd deploy <hosted-agent-service>` fails with **"Microsoft Foundry project ID is required: AZURE_AI_PROJECT_ID is not set"** without it |
 | `AZURE_TENANT_ID` | constant, set with `azd env set` before provision | GUID | Required for the postdeploy hook's auto-RBAC assignment to the per-agent identities |
 | `AZURE_RESOURCE_GROUP` | Bicep output | string | Used to scope agent CLI ops |
-| `AZURE_AI_PROJECT_ENDPOINT` | Bicep output | `https://<acct>.cognitiveservices.azure.com/api/projects/<proj>` | Used by `azd ai agent invoke` and the data-plane Responses calls |
+| `AZURE_AI_PROJECT_ENDPOINT` | Bicep output | `https://<acct>.services.ai.azure.com/api/projects/<proj>` | Used by `azd ai agent invoke` and the data-plane Responses calls |
 
 Bicep `output` example:
 
 ```bicep
 // main.bicep
 output AZURE_AI_PROJECT_ID string = '${foundryAccount.id}/projects/${foundryProject.name}'
-output AZURE_AI_PROJECT_ENDPOINT string = '${foundryAccount.properties.endpoint}api/projects/${foundryProject.name}'
+output AZURE_AI_PROJECT_ENDPOINT string = '${foundryAccount.endpoints['AI Foundry API']}api/projects/${foundryProject.name}'
 ```
 
 `azd provision` writes these into `.azure/<env>/.env`; the extension picks
