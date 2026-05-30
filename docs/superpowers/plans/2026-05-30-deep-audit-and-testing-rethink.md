@@ -994,14 +994,39 @@ Expected: `copilot-cli-matrix (foundry-hosted-agents)` = success.
 
 ### Task 2.3 · Pilot skill — `azd-patterns`
 
-> **Lessons harvested from Task 2.1** (also see the callout on Task 2.2):
-> UAMI FIC narrow → `pull_request synchronize` for stability; result
-> marker contract is grep-whole-transcript with FAIL beating PASS; UUID
-> suffix every resource name; anti-theater on audit trail. Codified in
-> `AGENTS.md` § 9.7. `azd-patterns` is shaped differently from the two
-> agent-runtime pilots (Bicep module library, not a runtime), so the
-> fixture exercises a **single representative pattern** (the ACA-job
-> pattern; spec § 11 accepts the incomplete-coverage trade-off).
+> **Lessons harvested from Task 2.1 + Task 2.2** (codified in
+> `AGENTS.md` § 9.7 patterns 1–7):
+> 1. UAMI FIC narrow → `pull_request synchronize` for stability,
+>    spaced ≥ 45 s apart (audit-trail correlation hygiene; not
+>    auto-cancel avoidance — `skill-test.yml` has NO `concurrency:`
+>    block and Task 2.3 MUST NOT add one).
+> 2. Result-marker contract is grep-whole-transcript with FAIL
+>    beating PASS. `copilot -s` / `--silent` flag IS PRESENT in the
+>    CLI (1.0.57-3+) but has NOT been empirically tested against
+>    the footer — **Task 2.3 owns the 5-min probe**
+>    (`copilot -s -p "say hi" 2>&1 | tail -30`); if the footer is
+>    suppressed, this fixture (and every future one) can simplify the
+>    contract back to `tail -n 1 | grep PASS`.
+> 3. UUID suffix every resource name (`ci-azd-pat-<uuid8>` for env
+>    name, ACA-job name, container image tag).
+> 4. **Autoregressive priming defeats anchored grep**: use
+>    `_MOKE_RESULT` placeholder in the fixture body, enumerate WRONG
+>    patterns, forbid backticks. Task 2.2 worker backfilled this to
+>    Task 2.1's fixture in the same commit that opens this task, so
+>    the cross-skill defer is closed before Task 2.3 starts.
+> 5. **Explicit `azd auth login` Step 0** required (don't rely on
+>    implicit OIDC env-var pickup; surfaces credential failures
+>    up-front).
+> 6. **Pre-granted-RBAC preamble** template required if the fixture
+>    touches resources whose RBAC is pre-provisioned in
+>    `rg-awesome-gbb-ci`.
+> 7. Anti-theater on audit trail (no claimed-but-not-shipped runs,
+>    no future-dated empirical claims).
+>
+> `azd-patterns` is shaped differently from the two agent-runtime
+> pilots (Bicep module library, not a runtime), so the fixture
+> exercises a **single representative pattern** (the ACA-job pattern;
+> spec § 11 accepts the incomplete-coverage trade-off).
 
 **Files:**
 - Create: `skills/azd-patterns/test-fixture/consumer_prompt.md`
@@ -1019,7 +1044,20 @@ This skill is the Bicep-module library; pay extra attention to classes 9 (Bicep 
 
 - [ ] **Step 2: Write the audit-trail file**
 
-- [ ] **Step 3: Write the consumer prompt fixture**
+- [ ] **Step 3: Probe `copilot -s` footer-suppression empirically**
+
+```bash
+copilot -s -p "say hi" 2>&1 | tail -30
+```
+
+If output is clean (no `Changes / Duration / Tokens` footer), update
+`AGENTS.md` § 9.7 pattern 2 to mark `copilot -s` as the verified
+contract and simplify the Step 4 fixture below to use
+`copilot -s -p @fixture.md 2>&1 | tail -n 1 | grep -q PASS`. If
+footer still appears, leave the contract as-is and note the negative
+result in the audit trail.
+
+- [ ] **Step 4: Write the consumer prompt fixture**
 
 `azd-patterns` can't be exercised as a whole; pick the most-used pattern as the fixture surface. Spec §11 acknowledges this and accepts incomplete coverage in the first wave. Example:
 
@@ -1028,17 +1066,41 @@ This skill is the Bicep-module library; pay extra attention to classes 9 (Bicep 
 
 You are testing the `azd-patterns` skill's ACA-job pattern end-to-end.
 
+## Step 0 — Explicit OIDC login (DO NOT rely on implicit env-var pickup)
+
+```bash
+azd auth login \
+  --federated-credential-provider github \
+  --client-id "$AZURE_CLIENT_ID" \
+  --tenant-id "$AZURE_TENANT_ID"
+```
+
+## Pre-granted RBAC (do NOT re-grant)
+
+- UAMI `uami-awesome-gbb-ci` already has Contributor on
+  `rg-awesome-gbb-ci` and AcrPush on `acrawesomegbbci`. The fixture
+  inherits these via the federated workflow login above. Do NOT add
+  `az role assignment create` calls — propagation takes 5-15 min and
+  races the 30-min workflow timeout.
+
+## Steps
+
 Use the skill to:
 1. Scaffold a minimal `azure.yaml` + `infra/main.bicep` for an ACA job
    that runs `echo HELLO` once. Use the module shapes documented in
-   the skill's references.
-2. Run `azd up` against resource group `rg-awesome-gbb-ci` (use a
-   short-lived environment name `ci-azd-pat-<short-uuid>` so cleanup
-   is unambiguous).
+   the skill's references. Environment name: `ci-azd-pat-<uuid8>`
+   (substitute a fresh `uuid.uuid4().hex[:8]`).
+2. Run `azd up` against resource group `rg-awesome-gbb-ci`.
 3. Trigger the job once via `az containerapp job start`.
 4. Verify the job's log contains `HELLO`.
 5. Run `azd down --force --purge` to clean up.
-6. Exit 0 on success.
+6. Emit the literal token (`_` substituted with capital `S` of
+   `_MOKE_RESULT`) on its own line: `_MOKE_RESULT=PASS` on success
+   or `_MOKE_RESULT=FAIL <≤80 char reason>` on any failure. Anchored
+   grep — no backticks, bold, indentation, or trailing punctuation
+   around the marker; no decorated mentions of the literal token
+   elsewhere in the reply (autoregressive priming will corrupt the
+   final marker).
 
 Note: This fixture covers the ACA-job pattern. Other azd-patterns
 (ACA service, Functions, container apps with managed identity) are
@@ -1046,7 +1108,7 @@ audited per the 21-class catalog but not exercised by this fixture.
 That gap is accepted per spec §11.
 ```
 
-- [ ] **Step 4: Open PR + verify matrix green + merge**
+- [ ] **Step 5: Open PR + verify matrix green + merge**
 
 ```bash
 git add skills/azd-patterns/test-fixture/ docs/audit/azd-patterns-audit-trail.md

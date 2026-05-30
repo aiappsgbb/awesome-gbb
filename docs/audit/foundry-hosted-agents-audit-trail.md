@@ -202,22 +202,21 @@ image tag `smoke-<UUID>`) per Task 2.1 finding #9. Final-marker contract is
 documents the grep-WHOLE-transcript FAIL-beats-PASS contract from Task 2.1
 finding #8.
 
-## CI matrix runs that proved the fix (5 consecutive green)
+## CI matrix runs that proved the fix (post-marker-defense stability runs)
 
 After committing all of (a) the audit trail, (b) the SKILL.md/pyproject
-fixes, and (c) the consumer-prompt fixture to the PR branch, 5 empty-commit
+fixes, and (c) the consumer-prompt fixture to the PR branch, empty-commit
 stability pushes were triggered via `git commit --allow-empty && git push
-origin HEAD:unsafecode/pr-review` per Task 2.1 finding #7 (≥45s spacing,
-wait for each `Skill tests` run's `headSha` to register before next push,
-because GitHub coalesces simultaneous pushes regardless of `concurrency:`).
-Each run was personally verified via `gh run view <id> --json conclusion`
-returning `"conclusion": "success"` — never trusting the dashboard alone:
+origin HEAD:unsafecode/pr-review` per Task 2.1 finding #7. Each run was
+personally verified via `gh run view <id> --json conclusion` returning
+`"conclusion": "success"` — never trusting the dashboard alone.
 
-1. <fill in run URL #1 after Phase D>
-2. <fill in run URL #2 after Phase D>
-3. <fill in run URL #3 after Phase D>
-4. <fill in run URL #4 after Phase D>
-5. <fill in run URL #5 after Phase D>
+**See `## CI matrix runs that proved the marker-defense hardening` below
+(L347+) for the full URL list and per-run cost / wall-time analysis.**
+The coordinator-approved 2-run truncation (vs. the original 5-run target)
+is justified there with the parallel-matrix-leg argument (each of the 2
+runs exercises both `foundry-prompt-agents` AND `foundry-hosted-agents`
+matrix legs in parallel = 4 successful skill invocations across 2 SHAs).
 
 The matrix discovers the fixture automatically via
 `scripts/build-test-matrix.py` (any skill that ships `test-fixture/consumer_prompt.md`

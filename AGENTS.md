@@ -816,9 +816,14 @@ Three patterns proved load-bearing during Task 2.1 of the
    exit 1
    ```
 
-   `copilot -s` / `--silent` is documented as an unverified workaround
-   for the footer; until empirically confirmed by a future pilot, the
-   grep-whole-transcript contract stands.
+   `copilot -s` / `--silent` is **present in the CLI** (`copilot --help`
+   on 1.0.57-3 documents it as "Output only the agent response"), but
+   **has not yet been empirically tested against the footer** in a
+   matrix run. Task 2.3 (`azd-patterns`) is the assigned ticket to
+   run the 5-min probe (`copilot -s -p "say hi" 2>&1 | tail -30`) and
+   document whether the footer is actually suppressed. Until that probe
+   lands, the grep-whole-transcript + FAIL-beats-PASS contract above is
+   the canonical pattern.
 
 3. **Agent / resource names in fixtures MUST carry a UUID suffix.**
    Parallel matrix runners (and retries from the same SHA) collide on
@@ -832,6 +837,90 @@ Three patterns proved load-bearing during Task 2.1 of the
    ACA service names, ACR image tags, agent display names, environment
    names — all of these need short-UUID suffixes when authored in a
    fixture under `skills/<name>/test-fixture/`.
+
+4. **Do NOT add a `concurrency:` block to `skill-test.yml`** (lesson
+   from Task 2.2). Earlier coordinator diagnosis claimed the workflow
+   was auto-cancelling overlapping runs — that was wrong. The 5
+   apparent-cancellations on `06ea5ef..5d6b2ef` were either manual
+   `gh run cancel` or GitHub's job-matrix supersede-on-newer-commit (a
+   different mechanism, scoped per-matrix-leg, not workflow-level).
+   `skill-test.yml` deliberately has no concurrency block so two
+   overlapping PR pushes still both produce a green-or-red signal.
+   The ≥ 45 s empty-commit spacing in pattern 1 above is for
+   **audit-trail correlation hygiene** (one run = one SHA = one
+   commit message), not to avoid auto-cancel.
+
+5. **Autoregressive priming defeats anchored grep — `_MOKE_RESULT`
+   placeholder is the standard defense.** In `actions/runs/26693703357`
+   the same workflow run had the prompt-agents matrix leg emit the
+   marker clean while the parallel hosted-agents leg emitted it
+   wrapped in backticks (`` `SMOKE_RESULT=PASS` ``), defeating
+   `^SMOKE_RESULT=PASS$`. Root cause: the fixture body discussed
+   `SMOKE_RESULT` repeatedly in prose with backtick decoration, and
+   the LLM's autoregression carried that decoration into the final
+   marker emission. **Defense** (now baked into both Task 2.1 and
+   Task 2.2 fixtures; MUST be the template for every future fixture):
+
+   - In the fixture body, render the literal token as `_MOKE_RESULT`
+     (substitute `_` for the leading `S`) so the prompt itself never
+     ships an anchored-grep-matching string. The fixture explicitly
+     tells the agent to substitute back to literal `S` in its own
+     reply.
+   - Enumerate WRONG patterns (`` `…` ``, `**…**`, leading whitespace,
+     trailing punctuation, blockquote prefix, emoji) with `←` callouts
+     so the agent has explicit negative examples.
+   - Place the single RIGHT pattern LAST so it primes the continuation
+     more strongly than any WRONG example.
+   - Forbid backticks (or any decoration) around `SMOKE_RESULT`
+     anywhere else in the agent's reply — preamble, intermediate
+     status lines, summaries — because each prior decorated mention
+     primes the final emission.
+   - Forbid `exec > >(tee -a "$LOG") 2>&1` and any process-substitution
+     pattern in shell heredocs. The Copilot CLI's shell wrapper blocks
+     these as "dangerous shell expansion" (run `26693703357`,
+     20:09:44Z). The runner already captures stdout — agents do not
+     need to tee.
+
+6. **Explicit `azd auth login` Step 0, not implicit OIDC pickup**
+   (Task 2.2 finding to apply forward). When a fixture uses `azd`,
+   make the federated-credential exchange explicit:
+
+   ```bash
+   azd auth login \
+     --federated-credential-provider github \
+     --client-id "$AZURE_CLIENT_ID" \
+     --tenant-id "$AZURE_TENANT_ID"
+   ```
+
+   Current hosted-agents fixture relies on `azure/login@v2` writing
+   `AZURE_FEDERATED_TOKEN_FILE` for azd's auto-detection. That path
+   has two silent failure modes: (a) `azd` CLI < 1.5.0 doesn't
+   auto-detect the file → hangs on interactive login → 30-min
+   workflow timeout; (b) sub-shell env reset blanks the credential
+   mid-run. ~2 s overhead per fixture run; mirrors what a customer
+   reading SKILL.md verbatim would run on their own machine; surfaces
+   credential failures up-front instead of buried inside `azd
+   deploy`'s ACR push.
+
+7. **Pre-granted-RBAC preamble pattern** (Task 2.2 finding). When a
+   fixture exercises Azure resources whose RBAC is pre-provisioned in
+   `rg-awesome-gbb-ci`, the fixture preamble MUST:
+
+   - Explicitly list the pre-granted RBAC (subject + role + scope)
+   - State "do NOT re-grant these — propagation takes 5-15 min and
+     races your 30-min workflow timeout"
+   - When two identities are involved (e.g., a Foundry project MI
+     pre-granted at pull-time vs. a per-agent instance MI provisioned
+     per-deploy), distinguish them by name and explain which retry
+     loop owns each
+   - Reserve any retry-with-backoff to the identity whose MI is
+     created per-deploy (the per-agent-instance MI), not the
+     pre-granted one
+
+   The hosted-agents fixture (`skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
+   L37-50) is the canonical template. The single biggest waste in
+   the first `unsafecode/pr-review` cycle was a fixture re-granting
+   AcrPull and racing propagation against the timeout.
 
 ### 9.8 · Skill testing tiers
 
