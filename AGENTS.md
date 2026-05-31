@@ -1681,6 +1681,60 @@ on auth now is if `azd auth login` itself fails, which means the
 workflow's OIDC exchange genuinely broke (a real signal worth FAILing
 on).
 
+#### Pattern 18 — Retry classifier covers ARM cross-resource cache lag (Finding #19)
+
+**The bug.** Run `26704135920` (azd-patterns leg, SHA `c94d607`) failed
+with `ManagedEnvironmentNotFound` for `cae-awesome-gbb-ci` during
+`az deployment group create`. The CAE existed at deploy time with
+`provisioningState: Succeeded` (verified post-mortem from a local
+`az containerapp env show`), and the **same agent**, in the **same
+job**, reproduced the deployment as `Succeeded` via a direct
+`az containerapp job create` after the Bicep path failed. This is an
+ARM cross-resource index-rebuild race: the deployment engine's resolver
+takes 30 s – 5 min to "see" newly-touched `Microsoft.App` resources
+even after CRUD on the resource itself returns 200 OK.
+
+**Why the pre-Pattern-18 retry regex missed it.** The classifier on
+`skill-test.yml` L298 covered `429|503|throttl|capacity|EOF during
+azd deploy|revision .* not found` — the dataplane/Foundry transients
+the catalog had seen previously. `ManagedEnvironmentNotFound` is an
+ARM **control-plane** transient and never landed in the regex because
+no prior fixture had triggered it (the HA fixture uses `azd deploy`
+which goes through its own retry layer; only the azd-patterns ACA-Jobs
+fixture takes the raw `az deployment group create` path that exposes
+the ARM resolver race).
+
+**The fix.** Extend the classifier on `skill-test.yml` L298 to:
+
+```
+429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App
+```
+
+The added alternatives are **anchored on `Microsoft.App`** — the
+resource provider with the slowest ARM index-rebuild path. Generic
+`ResourceNotFound` across all providers would mask real consumer-
+written bugs (e.g., a typo in a resource name). The anchored form
+catches the ARM-cache-lag class without false-positive risk.
+
+**Detection in future failures.** If a fixture FAILs and the failure
+log contains the literal token `ManagedEnvironmentNotFound`:
+
+1. Verify the resource exists right now via
+   `az containerapp env show -g <rg> -n <name>` — if `state: Succeeded`,
+   the production resource is healthy.
+2. Confirm the failure was during `az deployment group create`, not
+   `azd deploy`. The latter has its own retry layer.
+3. If both hold, the regex caught it (or should have) and the retry
+   leg will pass.
+
+**Cost / benefit.** The retry leg costs one extra `copilot` invocation
+when triggered (~$0.005 + ~3 min wall-clock). The class of false-FAIL
+this catches: any ARM cross-resource lookup against `Microsoft.App`
+that hits the resolver in its pre-warmed window. Across the catalog,
+that's every ACA-Jobs / ACA-Apps fixture that uses Bicep — currently
+azd-patterns only, but threadlight-skills and any future ACA-on-Bicep
+skill will benefit.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |

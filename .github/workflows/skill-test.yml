@@ -295,7 +295,19 @@ jobs:
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
           RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
           MARKER="/tmp/${SKILL}-smoke-result"
-          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found" "$TRANSCRIPT"; then
+          # Pattern 18 (AGENTS.md § 9.7): expand the retry-classifier
+          # regex to include known ARM/ACA control-plane transients that
+          # a real Azure deployment hits even when the target resource
+          # exists with provisioningState=Succeeded. Proof points:
+          #   - ManagedEnvironmentNotFound: run 26704135920 (azd leg)
+          #     against an EXISTING cae-awesome-gbb-ci (state:Succeeded),
+          #     reproduced as Succeeded via direct `az containerapp job
+          #     create` in the same job — ARM stale-cache, not a fixture
+          #     bug.
+          # Anchored on Microsoft.App because that resource provider
+          # has a slower ARM index-rebuild path than Microsoft.Resources
+          # generic CRUD.
+          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App" "$TRANSCRIPT"; then
             echo "classified-transient — retrying once"
             # Pattern 12: clear marker AND retry transcript before the
             # second attempt so retry-leg evaluation is hermetic.
