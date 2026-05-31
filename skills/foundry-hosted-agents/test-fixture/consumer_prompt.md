@@ -1,336 +1,159 @@
-# foundry-hosted-agents — CI verification fixture
+# Customer goal — `foundry-hosted-agents` skill smoke
 
-Context: this prompt is fed to the `copilot-cli-matrix` job in the
-awesome-gbb repo to verify that the `foundry-hosted-agents` skill (at
-`skills/foundry-hosted-agents/SKILL.md` in the current working
-directory) still deploys end-to-end against the live Azure Foundry CI
-test project. We're checking that the documented `azd ai agent`
-container-deploy flow — scaffold → `azd deploy` → invoke → teardown —
-still runs against the real platform.
+You are a developer on a customer team. You just installed the `awesome-gbb`
+Copilot CLI plugin and you want to prove that the `foundry-hosted-agents`
+skill works end-to-end against your CI Foundry project + Container Registry
++ Container Apps environment.
 
-**Expected per-run cost: ~$0.005** — ACR storage for one ~200 MB
-image held for ≤2 min (~$0.001), ACA cold-start of 1 vCPU × ~30 s
-(~$0.001), and one `gpt-5.4-mini` completion of a few tokens
-(~$0.0003). Weekly stability cost on this fixture is negligible.
+Do whatever the skill tells you to do. Do NOT improvise from training-data
+knowledge of `azd`, ACA, ACR, or the Azure AI SDK — read the skill's
+`SKILL.md` (and the canonical reference files it points to under
+`skills/foundry-hosted-agents/references/`) first, and follow its
+documented contract. If your memory of how `azd ai agent`, `azure.yaml`,
+`agent.yaml`, or `container.py` should look conflicts with what the skill
+says, **the skill wins**.
 
-## Environment available
+---
 
-- `FOUNDRY_PROJECT_ENDPOINT` — Foundry project endpoint URL in the
+## Environment available to your run
+
+The workflow has pre-provisioned shared CI infrastructure. You consume it;
+you do NOT create it.
+
+- `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` —
+  populated by `azure/login@v2` OIDC upstream.
+- Resource group: `rg-awesome-gbb-ci` (Sweden Central). Pre-provisioned.
+  Do NOT run `azd provision` or `az group create`.
+- Container Apps environment: `cae-awesome-gbb-ci`. Pre-provisioned.
+- Container Registry: `ACR_LOGIN_SERVER=acrawesomegbbci.azurecr.io`.
+  The UAMI you authenticate as has `AcrPush` here.
+- Foundry project endpoint: `FOUNDRY_PROJECT_ENDPOINT` (also published
+  as `AZURE_AI_ENDPOINT` for compatibility) — in the
   `https://<acct>.services.ai.azure.com/api/projects/<proj>` form.
-  Use this for `AZURE_AI_PROJECT_ENDPOINT` (azd env) AND for any
-  data-plane REST invoke calls.
-- `FOUNDRY_MODEL_DEPLOYMENT` — chat-model deployment name to use.
-  Will be `gpt-5.4-mini` in CI. The matching model version is
-  `2026-03-17` (see SKILL.md § Model Version Lookup).
-- `ACR_LOGIN_SERVER` — `acrawesomegbbci.azurecr.io`. The shared CI
-  Container Registry where `azd deploy` with `remoteBuild: true` will
-  push the agent image.
-- `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID` — populated by OIDC
-  login. The resource group is `rg-awesome-gbb-ci` and the Container
-  Apps environment is `cae-awesome-gbb-ci` (both pre-provisioned —
-  do NOT run `azd provision`).
-- Azure CLI is logged in via OIDC with the `uami-awesome-gbb-ci`
-  workload identity, which has Contributor on `rg-awesome-gbb-ci`,
-  AcrPush on `acrawesomegbbci`, and Cognitive Services OpenAI User
-  + Foundry User on the Foundry account. `DefaultAzureCredential()`
-  resolves without extra setup.
-- **Pre-granted hosted-agent ACR pull RBAC** (one-time CI infra
-  setup, **not** something you provision per run): the **Foundry
-  project's system-assigned managed identity** (the principal that
-  pulls the hosted-agent container at runtime — see SKILL.md
-  § Identity & RBAC L1142-1156) holds **AcrPull** AND **Container
-  Registry Repository Reader** on `acrawesomegbbci`. Do NOT attempt
-  to grant these roles yourself — RBAC propagation is 5-15 min
-  (SKILL.md L1218) and the workflow's retry classifier does not
-  catch `ImagePullError|401 Unauthorized`, so a fresh grant inside
-  the fixture would `SMOKE_RESULT=FAIL` on first-deploy image pull.
-  If your `azd deploy` returns success but the agent invoke 401s
-  for >2 min, that's the *agent's own* per-instance identity
-  propagation (different concern) — handle it with the step-5 retry
-  loop, not by re-granting RBAC.
-- `azd` CLI is **pre-installed by the workflow** (Azure/setup-azd@v2
-  step before this fixture runs). Do NOT hunt for the binary, do NOT
-  `curl install-azd.sh`, do NOT `apt install`. If `command -v azd`
-  returns empty, that's a workflow regression — `SMOKE_RESULT=FAIL azd
-  missing from PATH` and stop. The `azure.ai.agents` preview extension
-  is NOT pre-installed — you must `azd extension install -s
-  azure.ai.agents --allow-prerelease` before `azd deploy`.
-- Python 3 + `uv` are installed for the container image build.
+- Foundry model deployment to use: `FOUNDRY_MODEL_DEPLOYMENT=gpt-5.4-mini`
+  (already deployed on the Foundry account `aif-awesome-gbb-ci`).
 
-## Steps
+**Pre-granted RBAC (do NOT re-grant — propagation is 5-15 min and would
+race the workflow timeout):**
 
-Before scratching out code, skim SKILL.md sections **container.py**,
-**Dockerfile**, **agent.yaml (ContainerAgent Schema)** (including the
-Critical Rules table — note the literal-vs-mustache trap MID-3 and
-the reserved env-var rules), **azure.yaml (azd ai agent Extension)**,
-**Required `azd env` variables**, and the **Identity & RBAC** /
-**RBAC propagation** rows in Troubleshooting. The canonical container
-source lives at:
+- The UAMI `uami-awesome-gbb-ci` holds Contributor on `rg-awesome-gbb-ci`,
+  AcrPush on `acrawesomegbbci`, AcrPull on `acrawesomegbbci`, and
+  Cognitive Services OpenAI User + Foundry User on the Foundry account.
+- The Foundry project's **system-assigned managed identity** (the
+  principal that pulls the hosted-agent container at runtime — see
+  SKILL.md § Identity & RBAC) holds **AcrPull** and **Container Registry
+  Repository Reader** on `acrawesomegbbci`. This is the load-bearing one
+  for hosted-agent image pull. Do NOT attempt to grant or verify it
+  yourself.
+- The per-agent-instance MI created at deploy time is a separate identity
+  whose role propagation is 1-5 min — if a fresh invoke 401s briefly,
+  retry per the skill's documented backoff.
 
-- `skills/foundry-hosted-agents/references/python/container.py`
-- `skills/foundry-hosted-agents/references/python/pyproject.toml`
-- `skills/foundry-hosted-agents/references/yaml/agent.yaml`
+**Tooling pre-installed by the workflow** (Pattern 15 — AGENTS.md § 9.7):
 
-Copy these verbatim — they're the validator-enforced single source of
-truth. The Dockerfile pattern is in SKILL.md § Dockerfile (~L934).
+- `azd` CLI is pre-installed via `Azure/setup-azd@v2`. Do NOT hunt for
+  the binary, `curl install-azd.sh`, or `apt install`. If `command -v
+  azd` is empty, that is a workflow regression — FAIL with `azd missing
+  from PATH` and stop.
+- The `azure.ai.agents` azd preview extension is **NOT** pre-installed.
+  The skill tells you when to install it.
+- `az` CLI, Python 3, and `uv` are pre-installed.
 
-Then run these steps. Use a shell heredoc or python heredoc as you
-prefer — the goal is the result marker, not a particular ergonomics
-choice.
+---
 
-0. **Step 0 — Verify the CI auth contract BEFORE any work.** Run
-   three checks. **All three** MUST succeed before you proceed. If any
-   fails, **stop immediately** and emit a single `SMOKE_RESULT=FAIL`
-   line with the precise failure mode (see Result contract). Do NOT
-   invent additional credential checks (no `az ad sp show`, no
-   `az role assignment list`, no `az login --service-principal`) —
-   those are workflow-bug indicators, not skill bugs.
+## Step 0 — Auth context (show, do not assert)
 
-   - **Inventory the three OIDC env vars** in THIS shell. Copilot CLI
-     subprocesses only inherit the workflow step's `env:` block — not
-     the Azure CLI credential cache — so this matters even though
-     `azure/login@v2` ran earlier (per AGENTS.md § 9.7 Pattern 11):
+Print the auth context for the run log. Do NOT gate flow on any of these
+checks — `azure/login@v2` already validated the credentials upstream
+(Pattern 17 — show-don't-assert):
 
-     ```bash
-     echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
-     echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
-     echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
-     ```
+```bash
+echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
+echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER:+set}"
+az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
+```
 
-     Every line MUST print `…=set`. If any is empty, the workflow env
-     contract is broken — FAIL with `workflow env contract: <var> empty`.
+If any env var prints empty, the workflow's `env:` block is broken
+(AGENTS.md § 9.7 Pattern 11). That is a workflow bug, not a skill bug.
+Write the FAIL marker (Step 2) with reason `auth context missing: <var-name>`
+and stop.
 
-   - **Show-don't-assert: `az` CLI state (Pattern 17).** Per AGENTS.md
-     § 9.7 Pattern 11, copilot CLI subprocesses inherit the workflow
-     step's `env:` block but **NOT** the `az` CLI credential cache
-     (`~/.azure/`). Whether the cache is visible depends on
-     shell-creation semantics, which are non-deterministic — racing it
-     caused the false FAIL in run `26703036366` (Finding #18). The
-     deterministic auth proof is the explicit `azd auth login` below,
-     not the inherited cache. Print the table for the audit log but do
-     NOT gate flow on the result:
+Then run `azd auth login` via federated credential **before** any `azd`
+command (Pattern 6) so failure is loud and immediate, not buried inside
+`azd deploy`:
 
-     ```bash
-     az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
-     ```
+```bash
+azd auth login \
+  --federated-credential-provider github \
+  --client-id "$AZURE_CLIENT_ID" \
+  --tenant-id "$AZURE_TENANT_ID"
+```
 
-     **No assertion. Even if `az` is "not logged in" here, the workload
-     proceeds — `azd auth login` is the auth gate.**
+---
 
-   - **Explicit `azd auth login` via OIDC federated credential**
-     (AGENTS.md § 9.7 Pattern 6). Implicit env-var pickup by `azd`
-     has hidden failure modes (azd < 1.5.0 doesn't auto-detect
-     `AZURE_FEDERATED_TOKEN_FILE`; sub-shell env strip blanks the
-     credential mid-run). Authenticate explicitly so failure is loud
-     and immediate — not buried inside an `azd deploy` ACR push or
-     Bicep evaluation phase 5 minutes from now:
+## Step 1 — The goal
 
-     ```bash
-     azd auth login \
-       --federated-credential-provider github \
-       --client-id "$AZURE_CLIENT_ID" \
-       --tenant-id "$AZURE_TENANT_ID"
-     ```
+Using the `foundry-hosted-agents` skill, deploy a hosted Foundry agent
+as a Container App that classifies inbound customer-support messages
+into one of three categories: `billing`, `technical`, `account`. Then
+prove it works by sending one test message through it and verifying the
+response is one of those three labels. When you're done, tear down
+everything you created (the agent, the ACA app, and the ACR repository).
 
-     If this errors, FAIL with `azd auth login: <one-line reason>`.
+The skill's `SKILL.md` and its `references/` directory are the source of
+truth for:
 
-   Only if all three checks pass, proceed to step 1.
+- which container source / Dockerfile / pyproject to ship
+- which `azure.yaml` and `agent.yaml` shapes to use
+- which `azd env` keys to set
+- which `azd` and `azd ai agent` subcommands to invoke and in what order
+- which SDK to use to invoke the agent (and whether to use the
+  preview-CLI surface — see AGENTS.md § 9.7 Pattern 16 if relevant)
+- how to authenticate the invoke call (managed identity vs `DefaultAzureCredential`)
+- how to delete the agent + the ACA app + the ACR repository on teardown
 
-1. **Generate a per-run UUID suffix** and export reusable names. Use
-   8 hex chars from `uuid.uuid4().hex`. Naming pattern (mandatory —
-   parallel matrix runs collide on fixed names):
-   - `SUFFIX="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"`
-   - `AGENT_NAME="ci-smoke-ha-${SUFFIX}"` (used as the azd service
-     name, ACA app name, ACR repository name, AND Foundry agent name)
-   - `SCAFFOLD_DIR="${GITHUB_WORKSPACE}/.scratch/${AGENT_NAME}"`
-     (Pattern 20 — AGENTS.md § 9.7: the Copilot CLI's shell-tool
-     permission gate rejects `cd` / file creation OUTSIDE
-     `$GITHUB_WORKSPACE`, even with `--allow-all-tools`. Single-shot
-     `printf > /tmp/...` writes pass, but heredocs that `cd /tmp/$X`
-     and then run `azd init` trip the gate every time. `.scratch/`
-     under the workspace is gitignored, so `git status` stays clean.)
+Read the SKILL (and the canonical reference files it cites) before you
+write any code. If you have to write your own container source, Dockerfile,
+or `agent.yaml` from training-data memory, you are doing it wrong — copy
+verbatim from the skill's `references/`.
 
-2. **Scaffold the agent project** in `${SCAFFOLD_DIR}`:
-   - `mkdir -p "${SCAFFOLD_DIR}"`
-   - Copy `skills/foundry-hosted-agents/references/python/container.py`
-     and `references/python/pyproject.toml` into it verbatim.
-   - Copy `skills/foundry-hosted-agents/references/yaml/agent.yaml`
-     into it, then substitute the `name:` field at the top with
-     `${AGENT_NAME}` and replace any `gpt-5.4` model-name literal
-     with `${FOUNDRY_MODEL_DEPLOYMENT}` (CI ships `gpt-5.4-mini`).
-   - Write a `Dockerfile` matching SKILL.md § Dockerfile (~L934) —
-     `python:3.12-slim` base, `uv sync --no-dev --no-install-project`,
-     `COPY container.py .`, `EXPOSE 8088`, `CMD
-     [".venv/bin/python", "container.py"]`. Enumerate the files
-     explicitly in `COPY` — do NOT glob with `.` or `./*` (per the
-     sticky-424 row in SKILL.md Troubleshooting).
-   - Write `azure.yaml` per SKILL.md § azure.yaml. Service name MUST
-     be `${AGENT_NAME}`. Set `docker.remoteBuild: true`. Drop the
-     `infra:` block (we are NOT provisioning). Drop the `deployments:`
-     block under `config` (the gpt-5.4-mini deployment already exists
-     on `aif-awesome-gbb-ci`).
+Give every Azure resource you create a CI-safe name with a short UUID
+suffix so parallel matrix runs don't collide (Pattern 15.3). Suggested
+pattern: `ci-smoke-ha-$(uuidgen | cut -c1-8)`. Use the same suffix for
+the azd service name, ACA app name, ACR repository name, and Foundry
+agent name.
 
-3. **Initialize azd** without a template and wire it to existing CI
-   infrastructure:
-   - `cd "${SCAFFOLD_DIR}"`
-   - `azd init -e "${AGENT_NAME}" --no-prompt` (minimal env, no
-     template scaffold — we already wrote azure.yaml ourselves)
-   - `azd extension install -s azure.ai.agents --allow-prerelease`
-   - `azd env set AZURE_SUBSCRIPTION_ID "${AZURE_SUBSCRIPTION_ID}"`
-   - `azd env set AZURE_TENANT_ID "${AZURE_TENANT_ID}"`
-   - `azd env set AZURE_LOCATION swedencentral`
-   - `azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci`
-   - **Foundry project endpoint — set BOTH key names** (the
-     `azure.ai.agents` preview extension contract drifted between
-     pin SHA `7cb89c2` and the version installed by
-     `--allow-prerelease` today — run 26699177054 HA log L743
-     confirmed the running extension reads `FOUNDRY_PROJECT_ENDPOINT`,
-     not the documented `AZURE_AI_PROJECT_ENDPOINT`. Keep both for
-     belt-and-suspenders; the unused one is a harmless no-op):
-     - `azd env set FOUNDRY_PROJECT_ENDPOINT "${FOUNDRY_PROJECT_ENDPOINT}"`
-     - `azd env set AZURE_AI_PROJECT_ENDPOINT "${FOUNDRY_PROJECT_ENDPOINT}"`
-   - **Container registry endpoint** — same drift class. The fixture
-     receives the registry FQDN via the workflow's `ACR_LOGIN_SERVER`
-     env var, but the azd extension reads it from the azd env under
-     the canonical `AZURE_CONTAINER_REGISTRY_ENDPOINT` key (see
-     `azd-patterns` SKILL.md). Without this, `azd deploy` fails the
-     ACR push stage:
-     - `azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "${ACR_LOGIN_SERVER}"`
-   - Compose `AZURE_AI_PROJECT_ID` from the endpoint host + project
-     name. The endpoint is `https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test`
-     so the ID is `/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.CognitiveServices/accounts/aif-awesome-gbb-ci/projects/ci-test`.
-     `azd env set AZURE_AI_PROJECT_ID "<that-id>"`
+Do all scaffolding under `${GITHUB_WORKSPACE}/.scratch/<your-agent-name>/`
+— the Copilot CLI's shell-tool gate rejects `cd` outside
+`$GITHUB_WORKSPACE` even with `--allow-all-tools`. `.scratch/` is
+gitignored.
 
-4. **Deploy with `azd deploy`** (this builds the image in ACR and
-   creates the ACA container app + Foundry agent registration):
-   - `azd deploy "${AGENT_NAME}"`
-   - If this prints a clear error about a missing Bicep `infra/`
-     directory, write a no-op stub `infra/main.bicep` (empty
-     module) and `infra/main.parameters.json` (empty `parameters`
-     object), then retry once. Do NOT add real resource declarations.
+---
 
-5. **Sleep 60 s** for RBAC propagation on the newly-created per-agent
-   workload identity (per SKILL.md § RBAC propagation — first invoke
-   often 401s while the agent's instance identity gets its role
-   assignment). Then invoke the agent via the **Python SDK** — this
-   is the ONLY prescribed invocation path (per SKILL.md L1248-1264).
+## Step 2 — Marker contract (deterministic, MANDATORY)
 
-   **Do NOT** use `azd ai agent invoke` — its flag surface is preview
-   and has drifted across azd extension versions (`--message`,
-   `--prompt`, positional — none are stable; current builds reject
-   `--message` with `unknown flag: --message`). Do NOT branch on
-   "if the CLI subcommand exists, prefer it; else fall back to REST".
-   A single prescribed SDK path removes the model's failure mode where
-   partial CLI success (subcommand recognised, flag rejected) prevents
-   the fallback (AGENTS.md § 9.7 Pattern 16, Finding #17). The SDK
-   surface is GA-stable; use it.
+Your FINAL action — after teardown — is to invoke the Bash tool to write
+the marker file. The file's literal byte content is what CI grades; your
+assistant-text reply is NOT graded.
 
-   Install once (idempotent if already on runner):
+On success (all of: agent + ACA app deployed, test message returned a
+valid label, teardown completed):
 
-   ```bash
-   pip install -q azure-ai-projects azure-identity openai
-   ```
+```bash
+printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result
+```
 
-   Then invoke with retry-on-401 (the workflow retry classifier does
-   NOT cover 401s; this fixture self-retries):
+On ANY failure (auth, skill not found, `azd deploy` failure, invoke
+error, invalid response, teardown failure):
 
-   ```bash
-   FOUNDRY_PROJECT_ENDPOINT="https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test" \
-   AGENT_NAME="${AGENT_NAME}" \
-   python3 - <<'PY'
-   import os, sys, time
-   from azure.ai.projects import AIProjectClient
-   from azure.identity import DefaultAzureCredential
+```bash
+printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-hosted-agents-smoke-result
+```
 
-   project = AIProjectClient(
-       endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-       credential=DefaultAzureCredential(),
-       allow_preview=True,  # REQUIRED for agent_name (SKILL.md L1257)
-   )
-   oai = project.get_openai_client(agent_name=os.environ["AGENT_NAME"])
-
-   last_err = None
-   for attempt in range(3):
-       try:
-           resp = oai.responses.create(input="ping", stream=False)
-           if resp.output_text:
-               print(f"OK: {resp.output_text[:120]}")
-               sys.exit(0)
-           last_err = "empty output_text"
-       except Exception as e:
-           last_err = f"{type(e).__name__}: {str(e)[:160]}"
-       time.sleep(60)
-   print(f"FAIL after 3 attempts: {last_err}", file=sys.stderr)
-   sys.exit(2)
-   PY
-   ```
-
-   Exit code 0 = invoke succeeded; proceed to step 6. Non-zero = invoke
-   failed; emit `SMOKE_RESULT=FAIL invoke: <one-line reason>` via step 7
-   and stop (do NOT proceed to teardown — a leak is cheaper than a
-   misclassified PASS).
-
-6. **Teardown** (best-effort — do NOT FAIL the run if cleanup throws,
-   just log and continue, because partial teardown still costs less
-   than a leak):
-   - `az containerapp delete --name "${AGENT_NAME}" --resource-group
-     rg-awesome-gbb-ci --yes` to release the ACA app + revision.
-   - `az acr repository delete --name acrawesomegbbci --repository
-     "${AGENT_NAME}" --yes` to drop the image and all its tags.
-   - Delete the Foundry agent registration. If `azd ai agent delete
-     "${AGENT_NAME}" --no-prompt` is supported, use it. Otherwise
-     issue a DELETE against the Foundry agents REST endpoint for
-     `${AGENT_NAME}`. A 404 here means the agent was already gone —
-     treat as success.
-   - `rm -rf "${SCAFFOLD_DIR}" 2>/dev/null || true` to drop the
-     workspace-local scaffold dir (Pattern 20).
-
-7. **Step 7 — Write the result marker (deterministic, MANDATORY).**
-   After step 6 succeeds, your FINAL action is to invoke the Bash tool
-   to run exactly this command. The file's literal byte content is what
-   CI grades — **NOT** your assistant text reply. Do NOT type the marker
-   token in prose; do NOT echo it; do NOT mention it in your summary.
-
-   ```bash
-   printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result
-   ```
-
-   If ANY step 0-6 fails, instead run (substitute a real reason, ≤80
-   chars, no backticks, no newlines):
-
-   ```bash
-   printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-hosted-agents-smoke-result
-   ```
-
-   The marker path is fixed: `/tmp/foundry-hosted-agents-smoke-result`.
-   After writing the marker you may add a brief free-form prose summary
-   for the human reviewer, but it does not affect grading.
-
-## Result contract
-
-CI clears `/tmp/foundry-hosted-agents-smoke-result` BEFORE invoking you,
-then after your turn ends grades the result in this strict order:
-
-1. If the marker file contains a line starting with `SMOKE_RESULT=FAIL`
-   → the leg FAILs (and the line's reason is surfaced in the run log).
-2. If the marker file contains exactly the bytes `SMOKE_RESULT=PASS\n`
-   (compared with `cmp -s`, byte-exact) → the leg PASSes.
-3. If the marker file is missing or malformed → the leg FAILs with a
-   diagnostic dump (legacy transcript-grep fallback exists for the
-   transition window but is scheduled for removal — do not rely on it).
-
-The deterministic file-write path is mandatory because an earlier run
-(`actions/runs/26697592828`, 2026-05-30) showed the LLM stochastically
-wraps the marker in markdown decoration (backticks, bold) when asked
-to emit it as prose, breaking line-boundary grep. Writing the marker
-via a Bash tool call bypasses prose rendering entirely — the bytes that
-hit disk are the bytes `printf` puts there.
-
-### Runtime guardrail
-
-- Do NOT redirect your own stdout via `exec > >(tee ...)` or any
-  process-substitution pattern. The Copilot CLI shell wrapper blocks
-  process substitution. Your stdout is already captured by CI — you do
-  not need to tee it.
-
-Please don't modify any file under `skills/` — this is verification only.
+The marker file is single-source-of-truth. Do not print the marker token
+anywhere else in your reply — no echoes, no summaries, no fenced code
+blocks containing the literal string. The Bash tool write is the only
+legitimate emission path.
