@@ -413,6 +413,24 @@ jobs:
             exit 1
           fi
 
+      - name: Post-hoc audit — did the agent reach for the skill?
+        if: always()
+        run: |
+          SKILL="${{ matrix.skill }}"
+          TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+          if [ ! -f "$TRANSCRIPT" ]; then
+            echo "::warning::No transcript file — cannot audit skill usage"
+            exit 0
+          fi
+          # Evidence the agent loaded the skill: it should have called the
+          # `skill` tool (Copilot CLI's invocation primitive) OR explicitly
+          # read SKILL.md OR referenced the skill name in its reasoning.
+          if grep -qE "skill[(]\"${SKILL}\"|SKILL\.md|skills/${SKILL}/" "$TRANSCRIPT"; then
+            echo "✅ Skill-usage evidence found in transcript"
+          else
+            echo "::warning::No evidence in transcript that agent loaded the '${SKILL}' skill — agent may have freelanced from training data. Review transcript: $TRANSCRIPT"
+          fi
+
       - name: Upload transcript (forensics)
         if: always()
         uses: actions/upload-artifact@v4
