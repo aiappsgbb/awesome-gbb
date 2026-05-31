@@ -1,4 +1,5 @@
 # Customer goal — `foundry-memory` skill smoke
+<!-- retest-trigger: 2026-05-31 post-Foundry-MI-RBAC-grant -->
 
 You are a developer on a customer team. You just installed the `awesome-gbb`
 Copilot CLI plugin and you want to prove that the `foundry-memory`
