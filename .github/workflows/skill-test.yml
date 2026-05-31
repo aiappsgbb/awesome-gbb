@@ -17,7 +17,11 @@ on:
     paths:
       - "skills/**"
       - ".github/workflows/skill-test.yml"
+      - ".github/skill-deps.yml"
+      - ".github/quarantine.yml"
       - "scripts/build-test-matrix.py"
+      - "plugin.json"
+      - ".github/plugin/**"
   push:
     branches: [main]
     paths:
@@ -26,6 +30,8 @@ on:
       - "plugin.json"
       - ".github/plugin/**"
       - ".github/workflows/skill-test.yml"
+      - ".github/skill-deps.yml"
+      - ".github/quarantine.yml"
   schedule:
     - cron: "0 8 * * 1"  # Monday 08:00 UTC (after freshness at 07:00)
     - cron: "0 8 * * 4"  # Thursday 08:00 UTC (redundancy)
@@ -82,12 +88,31 @@ jobs:
       matrix: ${{ steps.build.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR change-gating needs full history so `git diff base..HEAD`
+          # against ${{ github.event.pull_request.base.sha }} resolves.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install pyyaml
       - id: build
-        run: echo "matrix=$(python scripts/build-test-matrix.py --repo-root .)" >> "$GITHUB_OUTPUT"
+        # PRs: emit only skills with touched files (plus forward fanout
+        # via .github/skill-deps.yml). Infra-file changes (plugin.json,
+        # marketplace.json, build-test-matrix.py, skill-test.yml,
+        # quarantine.yml, skill-deps.yml) force the full matrix.
+        # push:main, schedule:, workflow_dispatch: always full matrix.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            MATRIX=$(python scripts/build-test-matrix.py \
+              --repo-root . \
+              --changed-only \
+              --base-ref "${{ github.event.pull_request.base.sha }}")
+          else
+            MATRIX=$(python scripts/build-test-matrix.py --repo-root .)
+          fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Resolved matrix: $MATRIX"
 
   # ── Job 4: Copilot-CLI consumer matrix (the real validation gate) ──
   # Spawns ONE runner per discovered skill. Each runner installs the
