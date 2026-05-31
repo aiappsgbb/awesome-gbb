@@ -244,10 +244,17 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     sha, date = git_head_info(REPO_ROOT)
     stats = f'{len(skills)} skills · {len(plugins)} plugins · MIT license'
 
-    # Clean output directory (preserving dotfiles like .gitkeep / .nojekyll)
+    # Clean output directory (preserving dotfiles like .gitkeep / .nojekyll,
+    # and hand-authored content directories that this script does NOT generate
+    # — e.g. `audit/` holds per-skill audit trails, `superpowers/` holds
+    # planning specs and plans, both committed by humans). Add new dir names
+    # here if more hand-authored content lands under docs/.
+    PRESERVE_DIRS = {'audit', 'superpowers'}
     if out_dir.exists():
         for entry in out_dir.iterdir():
             if entry.name.startswith('.'):
+                continue
+            if entry.is_dir() and entry.name in PRESERVE_DIRS:
                 continue
             if entry.is_dir():
                 shutil.rmtree(entry)
