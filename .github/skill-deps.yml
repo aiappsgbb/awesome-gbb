@@ -1,0 +1,46 @@
+# Cross-skill dependency graph for change-gated E2E matrix.
+#
+# Source of truth: this file declares which skills functionally depend on
+# which other skills. Used by scripts/build-test-matrix.py to compute the
+# transitive fanout when a PR touches a skill (forward-only: A changes →
+# also run any B where B.depends_on contains A).
+#
+# Invariants (enforced by scripts/validate-skills.py):
+#   1. Every `depends_on` entry MUST resolve to a real skill directory
+#      under skills/<name>/
+#   2. Every skill that has skills/<name>/test-fixture/consumer_prompt.md
+#      MUST have an entry here (drift catcher — new fixture without an
+#      entry will fail catalog-lint)
+#   3. No cycles (DFS check)
+#
+# Source for dep edges: (a) the goal-based fixture itself — if a skill's
+# fixture creates a resource owned by another skill, that's a dep; or
+# (b) explicit USE FOR / DO NOT USE FOR cross-references in SKILL.md.
+#
+# Adding a skill to this file does NOT require an entry in
+# .github/quarantine.yml — quarantine is for transiently broken fixtures.
+# Skills without a fixture (e.g. internal-IP skills) should NOT appear
+# here; only skills with a `test-fixture/consumer_prompt.md` need an
+# entry (and they MUST have one).
+
+skills:
+  # ── Core fixtures (no upstream deps within this catalog) ────────────
+  azd-patterns:
+    depends_on: []
+  foundry-prompt-agents:
+    depends_on: []
+  foundry-hosted-agents:
+    depends_on: []
+  foundry-memory:
+    depends_on: []
+  foundry-toolbox:
+    depends_on: []
+
+  # ── Cross-skill deps ────────────────────────────────────────────────
+  # foundry-evals fixture creates a prompt agent (via PA's
+  # PromptAgentDefinition) and then runs an eval against it — so any
+  # PA-side change (SDK pin bump, instructions schema drift, conversation
+  # API change) can break the evals fixture.
+  foundry-evals:
+    depends_on:
+      - foundry-prompt-agents

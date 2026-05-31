@@ -1,19 +1,27 @@
 name: Skill tests
 
 # Consolidated test suite for the awesome-gbb catalog.
-# - unit-tests + catalog-lint: run on push to main + schedule + dispatch
-# - pin-smoke: run ALL auto-tier pin scripts (weekly + dispatch)
-# - e2e-azure: run ALL pin scripts including Azure-dependent ones (weekly + dispatch)
+# - unit-tests: runner-side infra tests (build-matrix, validate-skills, gate)
+# - catalog-lint: validate-skills.py + build-plugins.py --check
+# - build-matrix + copilot-cli-matrix: real Copilot CLI agent runs the
+#   fixture against live Foundry, one runner per skill. THIS is the test.
 #
-# PR-gating is handled by skill-validation.yml, automation-pr-gate.yml,
-# and pin-validation.yml. This workflow adds periodic + on-demand coverage.
+# We deliberately do NOT run pytest-based e2e tests or pin-import smoke
+# tests — those were the legacy approach. The mandate is: a Copilot CLI
+# agent reads the skill, executes its instructions against real Azure,
+# and either succeeds or fails. PR-gating for the catalog is handled by
+# skill-validation.yml, automation-pr-gate.yml, and pin-validation.yml.
 
 on:
   pull_request:
     paths:
       - "skills/**"
-      - "scripts/tests/test_e2e_*.py"
       - ".github/workflows/skill-test.yml"
+      - ".github/skill-deps.yml"
+      - ".github/quarantine.yml"
+      - "scripts/build-test-matrix.py"
+      - "plugin.json"
+      - ".github/plugin/**"
   push:
     branches: [main]
     paths:
@@ -22,19 +30,15 @@ on:
       - "plugin.json"
       - ".github/plugin/**"
       - ".github/workflows/skill-test.yml"
+      - ".github/skill-deps.yml"
+      - ".github/quarantine.yml"
   schedule:
     - cron: "0 8 * * 1"  # Monday 08:00 UTC (after freshness at 07:00)
     - cron: "0 8 * * 4"  # Thursday 08:00 UTC (redundancy)
   workflow_dispatch:
-    inputs:
-      include_azure:
-        description: "Run E2E Azure tests (needs OIDC secrets)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
-  id-token: write  # OIDC for Azure login in e2e-azure job
 
 jobs:
   # ── Job 1: Unit tests ──────────────────────────────────────────────
@@ -74,109 +78,397 @@ jobs:
       - name: Verify single-plugin structure
         run: python scripts/build-plugins.py --check
 
-  # ── Job 3: Pin smoke (all auto-tier, no Azure) ────────────────────
-  pin-smoke:
+  # ── Job 3: Build skill-matrix (PR + push + dispatch + schedule) ────
+  # Reads scripts/build-test-matrix.py and emits a JSON list of skills
+  # that have a test-fixture/consumer_prompt.md AND are NOT quarantined.
+  # The downstream copilot-cli-matrix job fans out one runner per skill.
+  build-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
+          # PR change-gating needs full history so `git diff base..HEAD`
+          # against ${{ github.event.pull_request.base.sha }} resolves.
           fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install runner deps
-        run: pip install --quiet pyyaml
-
-      - name: Run pin validations
+          python-version: "3.11"
+      - run: pip install pyyaml
+      - id: build
+        # PRs: emit only skills with touched files (plus forward fanout
+        # via .github/skill-deps.yml). Infra-file changes (plugin.json,
+        # marketplace.json, build-test-matrix.py, skill-test.yml,
+        # quarantine.yml, skill-deps.yml) force the full matrix.
+        # push:main, schedule:, workflow_dispatch: always full matrix.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # On PRs: only validate changed pins (don't let unrelated failures block)
-            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }}
+            MATRIX=$(python scripts/build-test-matrix.py \
+              --repo-root . \
+              --changed-only \
+              --base-ref "${{ github.event.pull_request.base.sha }}")
           else
-            # On push/schedule: validate ALL pins
-            python scripts/run-pin-validation.py --all
+            MATRIX=$(python scripts/build-test-matrix.py --repo-root .)
           fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Resolved matrix: $MATRIX"
 
-  # ── Job 4: E2E Azure (all pins including Azure-dependent) ──────────
-  e2e-azure:
-    if: >-
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'push') ||
-      (github.event_name == 'schedule') ||
-      (github.event_name == 'workflow_dispatch' && inputs.include_azure)
+  # ── Job 4: Copilot-CLI consumer matrix (the real validation gate) ──
+  # Spawns ONE runner per discovered skill. Each runner installs the
+  # Copilot CLI, points it at Foundry (gpt-5.4-mini in aif-awesome-gbb-ci)
+  # via BYOK env vars, and runs the skill's consumer_prompt.md fixture.
+  # Success contract: somewhere in the whole transcript a line matches
+  # the anchored regex `^SMOKE_RESULT=PASS$`. An explicit
+  # `^SMOKE_RESULT=FAIL` line beats PASS (checked first). The Copilot
+  # CLI appends a `Changes / Duration / Tokens` footer that cannot be
+  # suppressed, so `tail -n 1` form CANNOT be used here.
+  copilot-cli-matrix:
+    needs: build-matrix
+    if: fromJSON(needs.build-matrix.outputs.matrix).skill[0] != null
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # Note: secrets are at repo level. OIDC federated credentials on the
-    # UAMI cover three subjects (string-match only — Entra does NOT support
-    # wildcards or claimsMatchingExpression for the GitHub Actions issuer):
-    #   - repo:aiappsgbb/awesome-gbb:pull_request       (PR events)
-    #   - repo:aiappsgbb/awesome-gbb:ref:refs/heads/main (push to main)
-    #   - repo:aiappsgbb/awesome-gbb:ref:refs/tags/*    (release tags)
-    # workflow_dispatch on non-main branches will FAIL with AADSTS700213
-    # unless a branch-specific FIC is created on the UAMI first.
+    strategy:
+      fail-fast: false
+      # Pattern 22: matrix-parallelism cap. Each Copilot CLI leg consumes
+      # tokens from the SAME Copilot CLI model quota. 5+ legs in parallel
+      # exceeds the per-account RPM ceiling → agent's internal 5× retry
+      # exhausts → leg fails with CAPIError "Too Many Requests" before
+      # any agent work starts. 2 is the empirical safe cap (verified on
+      # run 26711407035 where 6 legs in parallel killed foundry-hosted-
+      # agents at T+1.5min). DO NOT raise without first re-verifying
+      # against current Copilot CLI quota. See AGENTS.md § 9.7.
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
+    # 30 → 40 → 50 evolution:
+    # - 30 min: run 26698566215 emitted "PASS via marker file
+    #   (deterministic)" 13 ms before the timeout fired
+    #   (conclusion=cancelled). Bumped to 40.
+    # - 40 min: run 26706884005 was cancelled at 40m 16s. The smoke
+    #   step itself burned 22 min on Pattern 18-class transients
+    #   (agent wrestled with `ManagedEnvironmentNotFound` + Bicep
+    #   schema iteration before emitting the FAIL marker). The
+    #   Pattern 21 retry classifier then fired correctly, started its
+    #   ~13 min retry, but the wall clock ran out at 40 min. So Pattern
+    #   14 must account for the COMPOUND budget when the first attempt
+    #   burns its budget on internal iteration AND the retry path
+    #   fires:
+    #     Setup (checkout + login + npm + azd + ext + bearer)  ~3 min
+    #     Smoke worst-case (agent fights API + Bicep schema)   ~22 min
+    #     Pattern 19 cooldown (jittered 90-180 s)              ~3 min
+    #     Retry (clean run, no agent iteration)                ~13 min
+    #     Teardown                                             ~2 min
+    #     ───────────────────────────────────────────────────────────
+    #     WORST CASE                                           ~43 min
+    # 50 min ceiling gives ~7 min safety margin against the worst
+    # observed compound (smoke-retry) path. Do NOT bisect this comment
+    # block when shaving — bump only if a NEW measurement exceeds the
+    # budget (Pattern 14 rule).
+    timeout-minutes: 50
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install runner deps
-        run: pip install --quiet pyyaml pytest
-
-      - name: Azure OIDC login
-        uses: azure/login@v2
+      - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run pin validations (including Azure E2E)
+      - name: Install Copilot CLI
+        # Node 22 is pre-installed on ubuntu-latest. npm install is the
+        # documented install path; proven green by
+        # .github/workflows/copilot-cli-foundry-auth-smoke.yml.
+        # Do NOT use `curl … install.sh | bash` — no canonical URL exists.
+        run: |
+          # Pattern 19 (AGENTS.md § 9.7): pin the CLI version. An
+          # unpinned `@github/copilot` install lets npm pick the latest
+          # tag silently between runs, which has bitten us with
+          # permission-model drift (Pattern 20) and provider-routing
+          # quirks. Bump deliberately, in its own commit, after
+          # verifying the new version against the matrix.
+          npm install -g @github/copilot@1.0.57-3
+          copilot --version
+
+      - name: Install azd (Azure Developer CLI)
+        # Counter-intuitive: ubuntu-latest does NOT pre-install azd.
+        # Run 26699177054 HA leg burned ~5 min hunting for the binary
+        # and `curl`-installing it to /tmp/azd-install before any real
+        # work — the same pattern blew time on the azd-patterns leg too
+        # (see /tmp/ha-fail-full.log + /tmp/azd-leg.log, both legs hit
+        # `find / -name azd` empty within seconds of starting). Pinning
+        # to v2.3.0 (latest stable as of 2026-05) keeps drift visible.
+        # See AGENTS.md § 9.7 Pattern 15.
+        uses: Azure/setup-azd@v2.3.0
+
+      - name: Install awesome-gbb plugin from this checkout
+        run: |
+          copilot plugin marketplace add "$GITHUB_WORKSPACE"
+          copilot plugin install awesome-gbb@awesome-gbb
+
+      - name: Get Foundry bearer token
+        # `--resource` takes the v1 AAD audience identifier (NO `/.default`
+        # suffix). Passing the v2 scope form to `--resource` produces
+        # AADSTS500011 "resource principal not found". The auth-smoke
+        # workflow (L63-75) documents this in detail and is the canonical
+        # reference. `tr -d '\r\n'` defends against trailing newline from
+        # `-o tsv` that would otherwise produce a cryptic 401 from Foundry.
+        run: |
+          set -euo pipefail
+          TOKEN=$(az account get-access-token \
+            --resource https://cognitiveservices.azure.com \
+            --query accessToken -o tsv | tr -d '\r\n')
+          echo "::add-mask::$TOKEN"
+          echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Run consumer prompt for ${{ matrix.skill }}
+        id: run
+        # Pattern 21 (AGENTS.md § 9.7): suppress this step's exit code
+        # from poisoning the job conclusion so the retry step (below) can
+        # actually unfail the job on classified-transient recovery. Without
+        # `continue-on-error: true` here, GHA marks the job failed as soon
+        # as this step exits non-zero — even when the subsequent retry step
+        # executes successfully and exits 0. Discovered on run 26705962430
+        # where Pattern 18 retry recovered ARM stale-cache cleanly with
+        # `retry PASS via marker file (deterministic)` + `exit 0`, but the
+        # overall job still reported `conclusion: failure`. The retry-step
+        # `if:` below is correspondingly changed from `failure() && …` to
+        # `steps.run.outcome == 'failure'` because `failure()` evaluates
+        # false once continue-on-error suppresses the failure signal.
+        continue-on-error: true
         env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # BYOK routing → Foundry, identical to the auth-smoke workflow.
+          # Env-var names verified against CLI 1.0.57-2 via `copilot help
+          # providers` / `copilot help environment` (Task 1.0). Legacy
+          # `COPILOT_MODEL_*` names DO NOT EXIST and would be silently
+          # ignored.
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          # Explicit OIDC identity vars for the consumer fixture's
+          # subshells. `azure/login@v2` (above) authenticates the Azure
+          # CLI cache, but bash subprocesses spawned by Copilot CLI tool
+          # calls only inherit env-block vars, not the CLI cache. Without
+          # these, fixtures that reference `$AZURE_CLIENT_ID` / `_TENANT_ID`
+          # / `_SUBSCRIPTION_ID` (e.g. `azd auth login`, `azd env set`)
+          # get empty strings → silent auth failures or paranoid
+          # printenv-and-bail (see AGENTS.md § 9.7 Pattern 11).
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # Foundry project endpoint + model deployment exposed to the
+          # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
+          # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
+          # the per-project URL on the services.ai.azure.com host that
+          # `AIProjectClient(endpoint=…)` requires. These are CI
+          # infrastructure URLs/names, not secrets.
+          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
+          FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # On PRs: only validate changed pins
-            python scripts/run-pin-validation.py --base=origin/${{ github.base_ref }} --include-azure
+          set -euo pipefail
+          SKILL="${{ matrix.skill }}"
+          PROMPT="skills/${SKILL}/test-fixture/consumer_prompt.md"
+          TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+          MARKER="/tmp/${SKILL}-smoke-result"
+          test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
+          # Pattern 12 (AGENTS.md § 9.7): the fixture writes its result
+          # marker to MARKER via a deterministic Bash-tool printf. The
+          # transcript grep is a legacy fallback only — see eval block
+          # below. Clean stale state BEFORE the run so a leftover marker
+          # from a prior local repro / retry leg can't false-PASS.
+          rm -f "$TRANSCRIPT" "$MARKER"
+          # `-p` is the released CLI's one-shot prompt form. `copilot run`
+          # does not exist; `--prompt-file` does not exist. Inline the
+          # fixture body with $(cat …). `--disable-builtin-mcps` drops the
+          # GitHub MCP server so this test doesn't depend on github.com
+          # reachability — fixtures opt back in to specific MCP servers
+          # via `--allow-tool=mcp__…` flags.
+          #
+          # Disable `-e` around the pipeline so a non-zero copilot exit
+          # (timeout, internal error) doesn't preempt the marker-file
+          # evaluation — Pattern 12 grades on the marker, not the CLI's
+          # exit status. PIPESTATUS[0] captures copilot's actual code.
+          set +e
+          copilot -p "$(cat "$PROMPT")" \
+                  --allow-all-tools \
+                  --disable-builtin-mcps \
+                  -C "$GITHUB_WORKSPACE" \
+                  2>&1 | tee "$TRANSCRIPT"
+          COPILOT_STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "copilot exit status: $COPILOT_STATUS"
+          # === Result evaluation (Pattern 12, AGENTS.md § 9.7) ===
+          # Marker file is AUTHORITATIVE when present — its bytes were
+          # written by the fixture's final Bash-tool printf, deterministic
+          # and immune to LLM prose-formatting drift (backticks, asterisks,
+          # surrounding decoration). Transcript grep is the legacy fallback
+          # retained during the transition window, scheduled for removal
+          # after 10+ consecutive green runs prove the marker path stable.
+          if [ -f "$MARKER" ]; then
+            if grep -qE "^SMOKE_RESULT=FAIL" "$MARKER"; then
+              echo "FAIL via marker file:"; cat "$MARKER"; exit 1
+            fi
+            if cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n'); then
+              echo "PASS via marker file (deterministic)"; exit 0
+            fi
+            echo "marker file present but content is neither PASS nor FAIL:"
+            cat "$MARKER"; exit 1
+          fi
+          echo "no marker file — falling back to transcript grep (legacy)"
+          if grep -qE "^SMOKE_RESULT=FAIL" "$TRANSCRIPT"; then
+            echo "FAIL via transcript (no marker file written)"; exit 1
+          fi
+          if grep -q "^SMOKE_RESULT=PASS$" "$TRANSCRIPT"; then
+            echo "PASS via transcript (legacy fallback — to be retired)"; exit 0
+          fi
+          echo "FAIL: no PASS in marker file nor transcript"
+          echo "  expected marker path: $MARKER"
+          echo "  marker file exists: no"
+          echo "  copilot exit status: $COPILOT_STATUS"
+          echo "  transcript tail (last 80 lines):"
+          tail -80 "$TRANSCRIPT" 2>/dev/null || echo "  (transcript missing)"
+          exit 1
+
+      - name: Retry once on classified-transient failure
+        # Pattern 21 (AGENTS.md § 9.7): use `steps.run.outcome` (the pre-
+        # continue-on-error state) instead of `failure()` (which the
+        # continue-on-error on the previous step voids). `outcome` is
+        # `success`, `failure`, `cancelled`, or `skipped`. If a pre-run
+        # step (azure/login, bearer mint) failed and `run` was skipped,
+        # `outcome == 'skipped'` so retry skips — correct. If `run`
+        # succeeded, `outcome == 'success'` so retry skips — correct.
+        # Only `failure` triggers retry — same gate as before, just
+        # spelled in continue-on-error-compatible terms.
+        if: steps.run.outcome == 'failure'
+        env:
+          COPILOT_PROVIDER_TYPE: azure
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
+          COPILOT_PROVIDER_WIRE_API: responses
+          COPILOT_ALLOW_ALL: "true"
+          COPILOT_AUTO_UPDATE: "false"
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          # See "Run consumer prompt" step above for the rationale on
+          # the explicit AZURE_CLIENT_ID/_TENANT_ID/_SUBSCRIPTION_ID
+          # exports; the retry step must mirror it or the second attempt
+          # runs with a different env contract than the first.
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
+          FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
+        run: |
+          set -euo pipefail
+          SKILL="${{ matrix.skill }}"
+          PROMPT="skills/${SKILL}/test-fixture/consumer_prompt.md"
+          TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+          RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
+          MARKER="/tmp/${SKILL}-smoke-result"
+          # Pattern 18 (AGENTS.md § 9.7): expand the retry-classifier
+          # regex to include known ARM/ACA control-plane transients that
+          # a real Azure deployment hits even when the target resource
+          # exists with provisioningState=Succeeded. Proof points:
+          #   - ManagedEnvironmentNotFound: run 26704135920 (azd leg)
+          #     against an EXISTING cae-awesome-gbb-ci (state:Succeeded),
+          #     reproduced as Succeeded via direct `az containerapp job
+          #     create` in the same job — ARM stale-cache, not a fixture
+          #     bug.
+          # Anchored on Microsoft.App because that resource provider
+          # has a slower ARM index-rebuild path than Microsoft.Resources
+          # generic CRUD.
+          #
+          # Pattern 19 (AGENTS.md § 9.7): additionally match the CLI's
+          # provider-throttle surface. The Copilot CLI in CI is routed
+          # to our own Foundry/Azure OpenAI deployment via
+          # COPILOT_PROVIDER_TYPE=azure (see L177-182), and 3 parallel
+          # matrix legs share one `gpt-5.4-mini` deployment. When TPM/
+          # RPM saturates, the CLI surfaces a generic `CAPIError: Too
+          # Many Requests` after exhausting its own internal retries
+          # ("Failed to get response from the AI model; retried 5
+          # times"). Run 26704692414 saw all 3 legs die in 30-80 s on
+          # this exact signature. None of the literal strings above
+          # match — extend the classifier so a real provider throttle
+          # is a classified-transient and gets the retry leg with a
+          # cooldown.
+          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error" "$TRANSCRIPT"; then
+            echo "classified-transient — retrying once"
+            # Pattern 19: jittered cooldown BEFORE the retry. Azure
+            # OpenAI throttle windows are typically measured in minutes,
+            # not seconds; an immediate retry just re-trips the same
+            # throttle. 90-180 s window also de-correlates the 3 matrix
+            # legs if they all retry simultaneously.
+            COOLDOWN=$((90 + RANDOM % 90))
+            echo "Pattern 19 cooldown: sleeping ${COOLDOWN}s before retry"
+            sleep "${COOLDOWN}"
+            # Pattern 12: clear marker AND retry transcript before the
+            # second attempt so retry-leg evaluation is hermetic.
+            rm -f "$RETRY_TRANSCRIPT" "$MARKER"
+            set +e
+            copilot -p "$(cat "$PROMPT")" \
+                    --allow-all-tools \
+                    --disable-builtin-mcps \
+                    -C "$GITHUB_WORKSPACE" \
+                    2>&1 | tee "$RETRY_TRANSCRIPT"
+            COPILOT_STATUS=${PIPESTATUS[0]}
+            set -e
+            echo "copilot retry exit status: $COPILOT_STATUS"
+            # Same Pattern 12 eval ladder as the primary step
+            if [ -f "$MARKER" ]; then
+              if grep -qE "^SMOKE_RESULT=FAIL" "$MARKER"; then
+                echo "retry FAIL via marker file:"; cat "$MARKER"; exit 1
+              fi
+              if cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n'); then
+                echo "retry PASS via marker file (deterministic)"; exit 0
+              fi
+              echo "retry marker file present but malformed:"; cat "$MARKER"; exit 1
+            fi
+            echo "no retry marker file — falling back to retry transcript grep (legacy)"
+            if grep -qE "^SMOKE_RESULT=FAIL" "$RETRY_TRANSCRIPT"; then
+              echo "retry FAIL via transcript"; exit 1
+            fi
+            if grep -q "^SMOKE_RESULT=PASS$" "$RETRY_TRANSCRIPT"; then
+              echo "retry PASS via transcript (legacy fallback — to be retired)"; exit 0
+            fi
+            echo "retry FAIL: no PASS in marker file nor retry transcript"
+            tail -80 "$RETRY_TRANSCRIPT" 2>/dev/null || echo "  (retry transcript missing)"
+            exit 1
           else
-            # On push/schedule: validate ALL pins
-            python scripts/run-pin-validation.py --all --include-azure
+            echo "non-transient failure — not retrying"
+            exit 1
           fi
 
-      # Note: `always() &&` decouples each pytest from the preceding
-      # pin-validation step so a single pin failure doesn't skip live E2E
-      # coverage. These run on PRs too because the `pull_request` OIDC
-      # subject is covered by the `github-pr` federated credential and
-      # the repo policy is "every skill must be field-tested on Azure".
-      - name: Run E2E prompt agent test
+      - name: Post-hoc audit — did the agent reach for the skill?
         if: always()
-        env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
         run: |
-          pip install --quiet "azure-ai-projects~=2.1.0" "azure-identity~=1.23.0"
-          python -m pytest scripts/tests/test_e2e_prompt_agents.py -v
+          SKILL="${{ matrix.skill }}"
+          TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+          if [ ! -f "$TRANSCRIPT" ]; then
+            echo "::error::No transcript file — cannot audit skill usage"
+            exit 1
+          fi
+          # Evidence the agent loaded the skill: it should have called the
+          # `skill` tool (Copilot CLI's invocation primitive) OR explicitly
+          # read SKILL.md OR referenced the skill name in its reasoning.
+          if grep -qE "skill[(]\"${SKILL}\"|SKILL\.md|skills/${SKILL}/" "$TRANSCRIPT"; then
+            echo "✅ Skill-usage evidence found in transcript"
+          else
+            echo "::error::No evidence in transcript that agent loaded the '${SKILL}' skill — agent may have freelanced from training data. Review transcript: $TRANSCRIPT"
+            exit 1
+          fi
 
-      - name: Run E2E voice-live test
+      - name: Upload transcript (forensics)
         if: always()
-        env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-        run: |
-          pip install --quiet "openai~=2.0.0" "azure-identity~=1.23.0"
-          python -m pytest scripts/tests/test_e2e_voice_live.py -v
-
-      - name: Run E2E foundry-toolbox test
-        if: always()
-        env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-        run: |
-          pip install --quiet "agent-framework~=1.6.0" "agent-framework-foundry~=1.6.0" "azure-identity~=1.25.3" "mcp~=1.27.0" "tenacity~=8.5.0"
-          python -m pytest scripts/tests/test_e2e_foundry_toolbox.py -v
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-${{ matrix.skill }}
+          path: /tmp/${{ matrix.skill }}-transcript.log
+          retention-days: 7

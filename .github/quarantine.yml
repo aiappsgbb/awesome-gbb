@@ -1,0 +1,18 @@
+# .github/quarantine.yml
+#
+# Skills temporarily excluded from the copilot-cli-matrix job in
+# .github/workflows/skill-test.yml.
+#
+# Add a skill here ONLY when it has failed 3 consecutive matrix runs
+# (transient flake threshold per spec §8.4). Each entry MUST have a
+# GitHub issue linked in the comment so quarantine doesn't become silent
+# deprecation.
+#
+# Format:
+#   skills:
+#     - name: foundry-toolbox
+#       since: 2026-06-01
+#       issue: https://github.com/aiappsgbb/awesome-gbb/issues/NNN
+#       reason: "Flake on ACA cold-start, see issue"
+
+skills: []

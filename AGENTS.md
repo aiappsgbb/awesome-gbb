@@ -762,9 +762,1364 @@ infrastructure for CI use in `rg-awesome-gbb-ci` (Sweden Central):
 - Cognitive Services OpenAI User on `aif-awesome-gbb-ci`
 - Foundry User on `aif-awesome-gbb-ci`
 
-Federated credentials cover both `pull_request` and `ref:refs/heads/main`
-triggers. Workflows use `azure/login@v2` with OIDC — no stored secrets
-or service principal passwords.
+**Federated credentials are narrow — these are the ONLY allowed subjects:**
+
+| Subject pattern | Why |
+|-----------------|-----|
+| `pull_request` | Every PR-triggered CI run |
+| `ref:refs/heads/main` | `push: main` + `schedule:` runs |
+| `ref:refs/tags/*` | Release tag pushes |
+
+`workflow_dispatch` against a non-`main` branch (e.g. a PR feature branch)
+fails with `AADSTS700213: No matching federated identity record found`,
+because the OIDC token's `sub` claim becomes `ref:refs/heads/<feature>`
+which isn't in the FIC list. Two consequences:
+
+- **Stability re-runs for CI gate verification MUST trigger via
+  `pull_request synchronize`,** not `workflow_dispatch`. Push an empty
+  commit to the PR branch: `git commit --allow-empty -m "..." && git push`.
+- **Cross-PR-branch dispatch is impossible without expanding the FIC
+  list** (intentional — keeps the credential blast radius small).
+
+Workflows use `azure/login@v2` with OIDC — no stored secrets or service
+principal passwords.
+
+#### CI fixture patterns (lessons from `foundry-prompt-agents` pilot)
+
+Three patterns proved load-bearing during Task 2.1 of the
+`2026-05-30-deep-audit-and-testing-rethink` plan. Future fixtures (Task
+2.2, 2.3, and the Phase 3 rollout) MUST follow them:
+
+1. **Empty-commit stability runs must be spaced ≥ 45 s apart, one push
+   per run.** GitHub coalesces simultaneous pushes into a single
+   `pull_request synchronize` event regardless of whether the target
+   workflow has a `concurrency:` block — coalescing happens at the
+   event-routing layer, not the workflow-scheduling layer. A 5-run
+   stability series MUST be 5 separate `git push` invocations, each
+   waiting for the previous CI run to start before the next is queued.
+
+2. **Result contract on Copilot CLI transcripts is whole-file grep,
+   FAIL beats PASS, never `tail`.** The CLI emits an unsuppressible
+   footer (`Changes`, `Duration`, `Tokens`) AFTER the agent reply, so
+   `tail -n 1 | grep 'SMOKE_RESULT=PASS'` always fails. The matrix job
+   uses:
+
+   ```bash
+   if grep -q '^SMOKE_RESULT=FAIL' transcript.log; then
+     echo "::error::Fixture reported FAIL"
+     exit 1
+   fi
+   if grep -q '^SMOKE_RESULT=PASS$' transcript.log; then
+     exit 0
+   fi
+   echo "::error::No SMOKE_RESULT marker"
+   exit 1
+   ```
+
+   `copilot -s` / `--silent` is **present in the CLI** (`copilot --help`
+   on 1.0.57-3 documents it as "Output only the agent response"). Task
+   2.3's empirical probe on **macOS Copilot CLI 1.0.57-3** confirmed the
+   footer IS suppressed — `copilot -s -p "say hi" 2>&1 | tail -30`
+   emitted only the agent reply, no `Changes` / `Duration` / `Tokens`
+   block; `-s` and `--silent` behaved identically. **Linux runner probe
+   is still outstanding** (the GitHub-hosted runner's pre-installed CLI
+   build is unverified). Until that confirmation lands, the
+   grep-whole-transcript + FAIL-beats-PASS contract above is the
+   canonical pattern. Task 2.4 owns the Linux probe + cross-fixture
+   simplification rollout (`tail -n 1 | grep -q "^SMOKE_RESULT=PASS$"`
+   shrinks each fixture's result-contract block by ~80 lines).
+
+3. **Agent / resource names in fixtures MUST carry a UUID suffix.**
+   Parallel matrix runners (and retries from the same SHA) collide on
+   fixed names. Canonical pattern:
+
+   ```python
+   import uuid
+   agent_name = f"ci-smoke-pa-{uuid.uuid4().hex[:8]}"
+   ```
+
+   ACA service names, ACR image tags, agent display names, environment
+   names — all of these need short-UUID suffixes when authored in a
+   fixture under `skills/<name>/test-fixture/`.
+
+4. **Do NOT add a `concurrency:` block to `skill-test.yml`** (lesson
+   from Task 2.2). Earlier coordinator diagnosis claimed the workflow
+   was auto-cancelling overlapping runs — that was wrong. The 5
+   apparent-cancellations on `06ea5ef..5d6b2ef` were either manual
+   `gh run cancel` or GitHub's job-matrix supersede-on-newer-commit (a
+   different mechanism, scoped per-matrix-leg, not workflow-level).
+   `skill-test.yml` deliberately has no concurrency block so two
+   overlapping PR pushes still both produce a green-or-red signal.
+   The ≥ 45 s empty-commit spacing in pattern 1 above is for
+   **audit-trail correlation hygiene** (one run = one SHA = one
+   commit message), not to avoid auto-cancel.
+
+5. **Autoregressive priming defeats anchored grep — `_MOKE_RESULT`
+   placeholder is the standard defense.** In `actions/runs/26693703357`
+   the same workflow run had the prompt-agents matrix leg emit the
+   marker clean while the parallel hosted-agents leg emitted it
+   wrapped in backticks (`` `SMOKE_RESULT=PASS` ``), defeating
+   `^SMOKE_RESULT=PASS$`. Root cause: the fixture body discussed
+   `SMOKE_RESULT` repeatedly in prose with backtick decoration, and
+   the LLM's autoregression carried that decoration into the final
+   marker emission. **Defense** (now baked into both Task 2.1 and
+   Task 2.2 fixtures; MUST be the template for every future fixture):
+
+   - In the fixture body, render the literal token as `_MOKE_RESULT`
+     (substitute `_` for the leading `S`) so the prompt itself never
+     ships an anchored-grep-matching string. The fixture explicitly
+     tells the agent to substitute back to literal `S` in its own
+     reply.
+   - Enumerate WRONG patterns (`` `…` ``, `**…**`, leading whitespace,
+     trailing punctuation, blockquote prefix, emoji) with `←` callouts
+     so the agent has explicit negative examples.
+   - Place the single RIGHT pattern LAST so it primes the continuation
+     more strongly than any WRONG example.
+   - Forbid backticks (or any decoration) around `SMOKE_RESULT`
+     anywhere else in the agent's reply — preamble, intermediate
+     status lines, summaries — because each prior decorated mention
+     primes the final emission.
+   - Forbid `exec > >(tee -a "$LOG") 2>&1` and any process-substitution
+     pattern in shell heredocs. The Copilot CLI's shell wrapper blocks
+     these as "dangerous shell expansion" (run `26693703357`,
+     20:09:44Z). The runner already captures stdout — agents do not
+     need to tee.
+
+6. **Explicit `azd auth login` Step 0, not implicit OIDC pickup**
+   (Task 2.2 finding to apply forward). When a fixture uses `azd`,
+   make the federated-credential exchange explicit:
+
+   ```bash
+   azd auth login \
+     --federated-credential-provider github \
+     --client-id "$AZURE_CLIENT_ID" \
+     --tenant-id "$AZURE_TENANT_ID"
+   ```
+
+   Current hosted-agents fixture relies on `azure/login@v2` writing
+   `AZURE_FEDERATED_TOKEN_FILE` for azd's auto-detection. That path
+   has two silent failure modes: (a) `azd` CLI < 1.5.0 doesn't
+   auto-detect the file → hangs on interactive login → 30-min
+   workflow timeout; (b) sub-shell env reset blanks the credential
+   mid-run. ~2 s overhead per fixture run; mirrors what a customer
+   reading SKILL.md verbatim would run on their own machine; surfaces
+   credential failures up-front instead of buried inside `azd
+   deploy`'s ACR push.
+
+7. **Pre-granted-RBAC preamble pattern** (Task 2.2 finding). When a
+   fixture exercises Azure resources whose RBAC is pre-provisioned in
+   `rg-awesome-gbb-ci`, the fixture preamble MUST:
+
+   - Explicitly list the pre-granted RBAC (subject + role + scope)
+   - State "do NOT re-grant these — propagation takes 5-15 min and
+     races your 30-min workflow timeout"
+   - When two identities are involved (e.g., a Foundry project MI
+     pre-granted at pull-time vs. a per-agent instance MI provisioned
+     per-deploy), distinguish them by name and explain which retry
+     loop owns each
+   - Reserve any retry-with-backoff to the identity whose MI is
+     created per-deploy (the per-agent-instance MI), not the
+     pre-granted one
+
+   The hosted-agents fixture (`skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
+   L37-50) is the canonical template. The single biggest waste in
+   the first `unsafecode/pr-review` cycle was a fixture re-granting
+   AcrPull and racing propagation against the timeout.
+
+8. **`azd deploy` does NOT cover ACA Jobs — hand-roll `az deployment
+   group create` + `az containerapp job start`** (Task 2.3 finding).
+   SKILL.md `azd-patterns` L26 documents this explicitly: there is no
+   `azd-service-name` tag for `Microsoft.App/jobs` that `azd deploy`
+   recognises. `azd up` against a job-only Bicep provisions the resource
+   group + a placeholder image but never pushes the real image. Any
+   fixture whose marquee surface is an ACA Job (the `azd-patterns`
+   fixture; future fixtures for ACA-Job-variant skills like potential
+   `foundry-mcp-aca` jobs / threadlight-skills jobs) MUST therefore
+   build two variants of the canonical fixture template:
+
+   - **Service variant** — `azd up` happy path (works for ACA Services)
+   - **Job variant** — `az deployment group create` for the Bicep +
+     `az containerapp job start` to execute, because `azd deploy`
+     cannot trigger a job execution
+
+   The `skills/azd-patterns/test-fixture/consumer_prompt.md` fixture is
+   the canonical reference for the **Job variant**;
+   `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md` is the
+   canonical reference for the **Service variant**.
+
+9. **ACA control-plane consistency races are fixture-side retries, NOT
+   workflow-level retry-classifier work** (Task 2.3 finding,
+   generalising the Task 2.2 `AcrPull` precedent). Observed races so
+   far, all 5–15 s windows:
+
+   - `AcrPull` permission propagation after Bicep deploy (Task 2.2)
+   - `JobExecutionNotFound` from `az containerapp job execution show`
+     immediately after a successful `az containerapp job start` (Task
+     2.3 — observed during fixture authoring, ~5-15 s window)
+   - `Forbidden` from any dataplane call during RBAC propagation
+   - `ResourceProvisioningInProgress` from concurrent ARM operations
+
+   **Defense:** wrap the relevant CLI call in a bounded retry loop in
+   the fixture itself (6 iterations × 5 s back-off = 30 s budget is the
+   Task 2.3 pattern). Do NOT add these tokens to the workflow's
+   transient-classifier regex — the precedent set by both Task 2.2 and
+   2.3 is that ACA-control-plane races belong inside the fixture's
+   "what success looks like" definition, not in workflow-level
+   infrastructure. The cost of a fixture retry loop is bounded (~30 s
+   per call) and visible in the transcript; a workflow-level retry
+   re-runs the entire 8–15-min matrix leg.
+
+   When you observe a NEW ACA-control-plane race that isn't in this
+   list, add it here and document the retry budget. Do not assume a
+   single shared retry helper — the back-off math is per-API.
+
+10. **Marker-omission bug class — make marker emission a NUMBERED FINAL
+    STEP, not a postscript** ⚠️ **SUPERSEDED by Pattern 12** (the
+    numbered-final-step imperative was necessary but not sufficient —
+    run [`26697592828`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697592828)
+    PA leg, 2026-05-30, emitted prose `"the smoke emitted \`SMOKE_RESULT=PASS\`"`
+    despite a numbered-final-step imperative; the LLM stochastically
+    decorated the marker in prose). **Keep this pattern's defenses in
+    fixtures as belt-and-braces, but Pattern 12 below — file-write via
+    Bash tool — is the load-bearing path.** Original Task 2.4 finding
+    (root cause of `foundry-prompt-agents`
+    leg in run [`26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)).
+
+    Even with `_MOKE_RESULT` placeholder defense (Pattern 4) and an
+    explicit "Result contract" section, an agent CAN declare success in
+    prose and then stop without ever emitting the anchored
+    `^SMOKE_RESULT=PASS$` line. The CI grep then fails on a fixture leg
+    that did all the real work correctly — pure marker-omission, not
+    skill failure.
+
+    **Forensic signature** (run 1, PA leg): transcript contains
+    "lifecycle complete", "all assertions held", explicit per-step
+    confirmations — but NO marker line of any form (bare, backticked,
+    placeholder). Agent emitted its prose summary, hit the CLI footer
+    boundary, and exited. The result contract was treated as descriptive
+    background instead of an executable terminal step.
+
+    **Defense — copy the `azd-patterns` fixture's "Step 6 — Emit the
+    result marker" pattern across every Copilot-CLI fixture:**
+
+    1. The result contract MUST be the LAST major numbered step
+       (e.g. "Step N — Emit the result marker"). Not a sidebar, not a
+       trailing "Result contract" section, not a header above
+       authoring notes. **It is work the agent has to perform.**
+    2. Spell out the imperative: "Print exactly one line to stdout that
+       matches `^SMOKE_RESULT=PASS$` (no backticks, no leading spaces,
+       no prose after)."
+    3. Add an explicit rule: "If you have already declared success in
+       prose, you are not done. The run is not complete until you emit
+       the marker line."
+    4. The FINAL line of the fixture body should be that imperative —
+       so the autoregressive continuation has marker-emission as the
+       most recent priming context.
+    5. Continue using `_MOKE_RESULT` placeholder in any explanatory
+       prose ABOVE the final-step block (Pattern 4 still applies).
+
+    **Don't relax the workflow grep** (`grep -q '^SMOKE_RESULT=PASS$'`
+    against the whole transcript, FAIL-first). The grep is doing its
+    job — it's the fixture that has to make marker emission
+    non-skippable. A looser grep (e.g. `grep PASS`) buys flake in
+    exchange for false positives on any prose mention of the word.
+
+11. **Workflow env contract — explicit `AZURE_*` exports are mandatory,
+    NOT defensive paranoia** (Task 2.4 finding; root cause of
+    `foundry-hosted-agents` leg in run
+    [`26695861103`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26695861103)).
+
+    `azure/login@v2` (passed `client-id` / `tenant-id` / `subscription-id`
+    as `with:` inputs) authenticates the Azure CLI's TOKEN CACHE. It
+    does **NOT** automatically export `AZURE_CLIENT_ID`,
+    `AZURE_TENANT_ID`, or `AZURE_SUBSCRIPTION_ID` into the workflow
+    step env. Bash subprocesses that Copilot CLI spawns inherit the
+    workflow step's env block — not the CLI cache. If a fixture
+    references `$AZURE_CLIENT_ID` (for `azd auth login`,
+    `azd env set AZURE_TENANT_ID`, or any explicit credential
+    inventory), those variables are empty strings unless the workflow
+    explicitly puts them in the env block.
+
+    **Forensic signature** (run 1, HA leg): transcript contains a
+    `printenv | grep AZURE` step that returns ~1 line
+    (`AZURE_HTTP_USER_AGENT=…`), agent concludes "missing CI env vars
+    in shell", emits `SMOKE_RESULT=FAIL`. This is NOT agent paranoia —
+    the agent is correct. The env vars genuinely were missing.
+
+    **Defense — TWO mandatory edits, both required:**
+
+    - **Workflow side** (`.github/workflows/skill-test.yml` →
+      `copilot-cli-matrix` job):
+
+      Every step that runs a fixture (initial run AND retry step) MUST
+      include `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and
+      `AZURE_SUBSCRIPTION_ID` in its `env:` block, sourced from the
+      same secrets that the `azure/login@v2` step uses:
+
+      ```yaml
+      env:
+        # … existing COPILOT_*, AZURE_AI_ENDPOINT, ACR_LOGIN_SERVER …
+        AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ```
+
+      The initial-run and retry env blocks must be byte-identical for
+      the auth contract — otherwise a transient retry runs under a
+      different env than the original attempt.
+
+    - **Fixture side** — every Copilot-CLI fixture that calls Azure
+      MUST open with a **non-secret inventory + auth-proof** Step 0
+      before any work:
+
+      ```
+      ### Step 0 — verify CI auth contract
+
+      Run these two commands first. Both MUST succeed before you
+      proceed to any other step. If either fails, emit
+      `SMOKE_RESULT=FAIL` immediately with the precise failure mode
+      and stop.
+
+      1. echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+         echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+         echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+
+         Every line MUST print `…=set`. If any is empty, the workflow
+         env contract is broken (see AGENTS.md § 9.7 Pattern 11) —
+         that is a workflow bug, not a skill bug.
+
+      2. az account show --output table
+
+         MUST return a row whose `SubscriptionId` column matches
+         `$AZURE_SUBSCRIPTION_ID`. If `az account show` errors with
+         "Please run 'az login'", the `azure/login@v2` step failed —
+         workflow bug.
+
+      If both pass, you have a valid auth context. Do NOT invent
+      additional credential checks (no `az ad sp show`, no
+      `az role assignment list`, no `az login --service-principal`).
+      Proceed to Step 1.
+      ```
+
+      For `azd`-based fixtures, Step 0 ALSO runs Pattern 6's explicit
+      `azd auth login --federated-credential-provider github
+      --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID"`.
+      The non-secret inventory above is what makes Pattern 6's
+      failure mode (silent token-file pickup) visible BEFORE the
+      `azd deploy` step buries it.
+
+    **Don't make the agent re-discover this.** Without the inventory
+    Step 0, an agent that hits a missing env var has two equally bad
+    options: (a) panic on `printenv` and bail with vague language
+    (the run-1 HA failure mode), or (b) silently fall through to
+    DefaultAzureCredential and produce a misleading downstream error.
+    Step 0 makes the auth contract explicit and the failure precise.
+
+    **Cross-skill carry:** the existing `azd-patterns` fixture has
+    Pattern 6 (explicit `azd auth login`) but not the Step 0 inventory
+    — it passes 5/5 in CI today because `azd auth login` fails loudly
+    if the vars are missing. Retrofit the inventory anyway for
+    consistency; the cost is two `echo` lines and one `az account show`.
+
+12. **Deterministic result marker via Bash tool file-write — the
+    load-bearing path** (Task 2.4 finding; root cause of
+    `foundry-prompt-agents` leg in run
+    [`26697592828`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697592828),
+    2026-05-30 23:20:33Z).
+
+    Pattern 10's numbered-final-step imperative reduces but does NOT
+    eliminate marker mis-emission. In the failing run, the agent's
+    final assistant reply was:
+
+    > Verified end-to-end: the prompt agent was created, chatted with
+    > via a conversation, listed, deleted, and the smoke emitted
+    > `` `SMOKE_RESULT=PASS` ``.
+
+    The anchored grep correctly rejected this because the marker is
+    backtick-wrapped inside prose, not a bare line. Run #1 of the
+    same fixture, same skill, different roll, **did** emit a bare line.
+    Same prompt, opposite outcomes — pure LLM autoregressive
+    stochasticity. No prose hardening can close this; only bypassing
+    prose rendering entirely can.
+
+    **Defense — file-based deterministic marker. Two coordinated edits:**
+
+    - **Fixture side** — the final step is an explicit Bash tool
+      invocation that writes the marker file. The fixture instructs
+      the agent NOT to mention the marker token in prose at all:
+
+      ```markdown
+      Step N — Write the result marker (deterministic, MANDATORY).
+      After step N-1 succeeds, your FINAL action is to invoke the Bash
+      tool to run exactly this command. The file's literal byte content
+      is what CI grades — NOT your assistant text reply.
+
+          printf 'SMOKE_RESULT=PASS\n' > /tmp/<skill>-smoke-result
+
+      If ANY prior step fails:
+
+          printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/<skill>-smoke-result
+      ```
+
+      Per-skill marker path (matrix-leg isolation): `/tmp/${SKILL}-smoke-result`.
+
+    - **Workflow side** (`.github/workflows/skill-test.yml` →
+      `copilot-cli-matrix` job, BOTH the main "Run consumer prompt"
+      step AND the "Retry once on classified-transient failure" step):
+
+      ```bash
+      set -euo pipefail
+      SKILL="${{ matrix.skill }}"
+      PROMPT="skills/${SKILL}/test-fixture/consumer_prompt.md"
+      TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+      MARKER="/tmp/${SKILL}-smoke-result"
+      test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
+      rm -f "$TRANSCRIPT" "$MARKER"
+      set +e
+      copilot -p "$(cat "$PROMPT")" --allow-all-tools --disable-builtin-mcps \
+        -C "$GITHUB_WORKSPACE" 2>&1 | tee "$TRANSCRIPT"
+      COPILOT_STATUS=${PIPESTATUS[0]}
+      set -e
+      # Marker file is authoritative
+      if [ -f "$MARKER" ]; then
+        if grep -qE "^SMOKE_RESULT=FAIL" "$MARKER"; then
+          echo "::error::Fixture reported FAIL"; cat "$MARKER"; exit 1
+        fi
+        if cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n'); then
+          exit 0
+        fi
+        echo "::error::Marker malformed"; cat "$MARKER"; exit 1
+      fi
+      # Legacy transcript fallback (retire after 10+ greens on Pattern 12)
+      if grep -qE "^SMOKE_RESULT=FAIL" "$TRANSCRIPT"; then exit 1; fi
+      if grep -q "^SMOKE_RESULT=PASS$" "$TRANSCRIPT"; then exit 0; fi
+      echo "::error::No marker (file or transcript). copilot exit=$COPILOT_STATUS"
+      tail -80 "$TRANSCRIPT"; exit 1
+      ```
+
+      Three non-obvious choices, all load-bearing:
+
+      1. **`rm -f` BEFORE invocation** — a stale marker from a previous
+         step (or, on a retry, the failed first attempt) would otherwise
+         dominate the grade. Both main and retry steps clean the same
+         path; retry uses the same fixture and same marker path.
+      2. **`set +e` around the pipeline + `PIPESTATUS[0]` capture** —
+         default GHA bash is `bash --noprofile --norc -eo pipefail`. With
+         `-e` + `pipefail`, a non-zero `copilot` exit (timeout, internal
+         error) terminates the step BEFORE marker evaluation runs. The
+         `|| true` workaround corrupts `PIPESTATUS`, so toggling `-e`
+         is the cleanest path to capturing the real copilot status
+         while still evaluating the marker.
+      3. **`cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n')`** —
+         byte-exact comparison. NOT `grep` — a marker file containing
+         `SMOKE_RESULT=PASS\nleftover-prose\n` should FAIL malformed,
+         not PASS on the first line match.
+
+    **Marker-FAIL ALWAYS beats marker-PASS** (the order of the
+    grep ladder), and the marker file is ALWAYS authoritative over
+    the transcript — the transcript fallback exists only as a
+    transition-window safety net. **Retirement schedule:** after 10
+    consecutive green runs across all 3 pilot fixtures on Pattern 12,
+    delete the transcript fallback. Until then keep it so a fixture
+    that hasn't been migrated yet still has a chance to grade
+    correctly during the rollout.
+
+    **Cross-skill carry:** Pattern 12 is mandatory for every Copilot
+    CLI fixture. Pattern 10's WRONG/RIGHT marker-emission rules in
+    fixtures can be DELETED once Pattern 12 is in place — the file
+    write bypasses the prose-rendering surface entirely, so the
+    autoregressive-priming defenses (`_MOKE_RESULT` placeholder,
+    no-backticks rule) become unnecessary noise in the fixture body.
+
+    **Why this works.** Bash tool calls produce shell output — bytes
+    on disk — not LLM continuations. The model decides to invoke the
+    tool with a specific command string; the tool runtime executes
+    that string verbatim. There is no markdown rendering layer
+    between `printf 'SMOKE_RESULT=PASS\n'` and the bytes that hit
+    `/tmp/<skill>-smoke-result`. The only remaining failure mode is
+    the model invoking the tool with a DIFFERENT command (e.g.
+    `printf 'SMOKE_RESULT=FAIL ...'` when steps actually succeeded)
+    — and that surfaces as a fixture-level logic bug, not a stochastic
+    rendering bug.
+
+#### Pattern 13 — LAW ingestion lag MUST NOT fail the smoke (Finding #18)
+
+> **Provenance.** First observed on Pattern 12 stability run #1/5 for
+> azd-patterns ([`26697996194`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697996194),
+> 2026-05-30 23:54:17 UTC). The matrix leg FAIL'd with
+> `SMOKE_RESULT=FAIL LAW latency >120s or HELLO not in console logs`
+> — even though Step 3 (`az containerapp job execution show`) had
+> already returned `Succeeded` 7 minutes earlier. Pattern 12's marker
+> mechanism worked perfectly; the failure was content-side: the
+> fixture's LAW polling budget (120 s) was unrealistic against
+> documented Azure ingestion latency (p50 ~2 min, p95 ~5 min, p99
+> ~10 min). Re-running the workflow was unlikely to help — LAW lag is
+> physics, not a transient. Pattern 13 reframes the failure mode.
+
+**The anti-pattern.** A fixture polls Log Analytics for an expected
+log row and FAILs on empty result after a tight window (e.g. 60-120 s).
+This conflates two distinct signals:
+
+1. **Did the workload succeed?** (control-plane question, answerable
+   synchronously: `az containerapp job execution show`, agent
+   `status_code`, response body, etc.)
+2. **Did the documented telemetry path work?** (observability question,
+   answerable only after LAW ingestion has landed — best-effort)
+
+The control-plane signal is **deterministic** (the platform reports
+success or failure synchronously). The LAW probe is **best-effort
+verification** (the platform reports success synchronously, then logs
+arrive asynchronously through an agent pipeline with documented
+variable latency). Conflating the two causes flaky failures whenever
+LAW ingestion is on the slower end of its distribution.
+
+**The fix.** Three rules for any fixture that probes LAW:
+
+1. **Establish the control-plane success signal FIRST** (a `Succeeded`
+   status from `az containerapp job execution show`, an `HTTP 200` +
+   non-empty body from an agent invocation, etc.). This is the smoke's
+   primary success criterion.
+2. **Treat the LAW probe as best-effort verification with a generous
+   budget** — minimum 300 s for ACA Job console logs (under typical
+   warm-workspace conditions, p95 is comfortably inside this window).
+3. **Soft-PASS on LAW lag.** If the control-plane signal is `Succeeded`
+   AND the LAW row is empty after the budget, emit a clear NOTE to
+   stdout (transcript captures it for audit) and STILL write
+   `printf 'SMOKE_RESULT=PASS\n' > /tmp/<skill>-smoke-result`. The
+   marker MUST remain byte-exact (Pattern 12's `cmp -s` contract);
+   the lag-observed NOTE goes ONLY to the transcript, never to the
+   marker file.
+
+**Cross-skill carry.** Any future fixture that probes LAW or another
+async telemetry pipeline (App Insights, Foundry traces, eventhub
+forwards) needs the same soft-PASS contract. Stamp the rule into the
+fixture-authoring checklist. If a customer-pilot E2E later wants a
+strict "LAW row MUST appear within window" gate, that belongs in a
+**dedicated observability smoke** with its own budget, NOT bolted
+onto the skill smoke as a secondary FAIL condition.
+
+**Why we don't just delete the LAW probe.** The documented SKILL.md
+log-query pattern (azd-patterns L351-357) is something consumers
+copy verbatim — verifying it works occasionally is valuable. The
+soft-PASS keeps that verification in the loop without trading
+deterministic CI for flaky CI. Frequency of NOTE emission can be
+monitored across the matrix to decide whether SKILL.md needs an
+explicit "expect LAW lag of N min" warning.
+
+#### Pattern 14 — Job-level `timeout-minutes` MUST exceed observed p99 by ≥ 20% (Finding #19)
+
+**Provenance.** Validating Pattern 13 (LAW soft-PASS) on run
+`26698566215` (2026-05-31). The azd-patterns leg's smoke step emitted
+`PASS via marker file (deterministic)` at `00:39:37.8348` — and the
+runner killed the job 113 ms later at `00:39:37.8461` with
+`##[error]The operation was canceled.` because `timeout-minutes: 30`
+fired. Job conclusion ended up `cancelled`, masking what was
+functionally a green run.
+
+The Pattern 12 + 13 contract worked correctly: marker file written,
+`cmp -s` byte-exact PASS, evaluator emitted the deterministic PASS
+message. We just had no headroom — observed run time was 30 min 5 s
+(setup + azure-login + npm install copilot + copilot prompt for
+29 m 48 s including azd Bicep deploy + ACA Job create + execute +
+LAW poll 300 s + agent's unsuppressible footer). The 30-min ceiling
+left zero margin for the milliseconds-long tail of marker eval.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```yaml
+# WRONG — too tight for any leg whose p99 approaches the ceiling
+jobs:
+  copilot-cli-matrix:
+    timeout-minutes: 30   # observed p99 = 30:05 → guaranteed cancellation
+```
+
+**Fix (3 rules).**
+
+1. **`timeout-minutes` ≥ p99 × 1.2** (round up to whole minutes). PA
+   leg p99 ≈ 5 min, HA leg p99 ≈ 15 min, azd-patterns leg p99 ≈ 30 min
+   → the matrix-shared ceiling MUST be ≥ 36 min. Use **40 min** so the
+   buffer absorbs npm install variance + GHA scheduler jitter.
+2. **Do NOT split `timeout-minutes` per matrix leg.** Matrix legs
+   share one job template; per-leg timeouts require duplicating the
+   whole `steps:` block. Cost of giving PA/HA the same 40-min ceiling
+   = 0 (they finish in 5/15 min, the timer is just an upper bound).
+3. **Document the budget breakdown in a comment above the
+   `timeout-minutes:` line** so the next sub-agent who sees "40 min,
+   that's huge, let's tighten it" understands the floor before
+   shaving.
+
+**Cross-skill carry rule.** Any new Copilot-CLI matrix leg added in
+the future inherits the 40-min ceiling. If a new leg's p99 grows past
+36 min (e.g., a future fixture exercises a multi-resource deploy),
+bump the shared ceiling — do NOT bisect this comment block.
+
+**Diagnostic protocol.** If a leg gets `conclusion: cancelled`:
+1. Pull the LAST 100 lines of the cancelled job's log
+   (`gh run view <id> --log --job=<job-id> | tail -100`).
+2. If `PASS via marker file (deterministic)` appears within the last
+   ~500 ms before `##[error]The operation was canceled.`, the smoke
+   actually passed and the job timed out at the wire. Increase
+   `timeout-minutes` per Rule 1 and re-run.
+3. If no PASS marker appears, the smoke genuinely failed or hung —
+   diagnose the agent's tool-call sequence, NOT the timeout.
+
+#### Pattern 15 — Tooling install belongs in the workflow, not the fixture (Findings #15+#16)
+
+**Provenance.** Run [`26699177054`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26699177054)
+HA + azd-patterns legs (SHA `84221eb`). Both legs' Copilot CLI agents
+ran identical `command -v azd || find / -name azd` probes, both got
+empty results, both fell back to downloading `azd-linux-amd64.tar.gz`
+from `aka.ms/install-azd-script-linux`. HA leg burned ~5 min on the
+tarball detour and still failed (on Bug C/B downstream, see Findings
+#16/#17 in HA audit trail). azd-patterns leg burned ~3 min and barely
+made it inside its (then 30 min) ceiling. **Task 2.3's 5/5 green was
+luck, not correctness** — the fixture assumed azd was present; the
+agent was silently remediating each run.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — fixture tries to "be portable" by detecting + installing tooling -->
+# Step 0: Ensure azd is available
+if ! command -v azd >/dev/null 2>&1; then
+  curl -fsSL https://aka.ms/install-azd-script-linux | bash
+fi
+```
+
+```yaml
+# WRONG — workflow assumes ubuntu-latest pre-installs all Microsoft CLIs
+runs-on: ubuntu-latest
+steps:
+  - run: azd auth login --federated-token "$AZURE_OIDC_TOKEN"   # ENOENT
+```
+
+**Fix (3 rules).**
+
+1. **The workflow installs CLI tooling once, the fixture consumes it.**
+   Use the official pinned action (e.g., `Azure/setup-azd@v2.3.0`,
+   `Azure/setup-kubectl@v4`, `hashicorp/setup-terraform@v3`,
+   `azure/setup-helm@v4`). Pin to a tag or SHA; never to `@main` or
+   `@latest`. Place the install step immediately after Copilot CLI
+   install so all subsequent `copilot prompt` invocations inherit the
+   PATH.
+2. **The fixture preamble explicitly forbids hunting/installing.**
+   Use Pattern 7-style "infra preconditions" block: name the binary,
+   name its install location (`/usr/local/bin/azd`), forbid both
+   filesystem hunts (`find /`, `command -v`) and curl-installs
+   (`aka.ms/install-azd-script-linux`). The agent treats this as a
+   pre-granted capability, same as pre-granted RBAC.
+3. **ubuntu-latest pre-installs ONLY a small set of CLIs.** The known
+   pre-installed Microsoft CLIs are `az`, `gh`. **Everything else
+   needs explicit install:** `azd`, `func`, `mcr`, `kubectl` (after
+   v22 image roll), `helm`, `terraform`, plus all third-party tooling.
+   When in doubt, install explicitly — the cost of a redundant install
+   step is ~10 s; the cost of a fixture silently remediating is
+   ~3-5 min per run × every run forever.
+
+**Anti-pattern variant — "install in the agent prompt" (also wrong).**
+
+```markdown
+<!-- WRONG — even more wrong: makes every model invocation re-emit the install -->
+Step 0: First, install azd with `curl -fsSL https://aka.ms/install-azd-script-linux | bash`.
+Step 1: Then run `azd auth login --federated-token ...`
+```
+
+The model has to spend tokens reasoning about install before any
+domain work. Tokens are not free, latency is not free, and the agent
+may decide the install is "optional" if it can't run the command for
+any reason. Workflow-level install removes the decision entirely.
+
+**Cross-skill carry rule.** Any new fixture that wraps a CLI tool
+checks:
+- Is the tool in `{az, gh}`? → no workflow install needed.
+- Is the tool elsewhere? → add the official setup action to
+  `skill-test.yml` (alphabetical by binary name to keep diffs readable),
+  AND add a fixture preamble line naming the tool + install location +
+  forbidding hunts.
+- Is the tool not yet packaged as a setup action? → `apt-get install`
+  step in the workflow with a version pin. Document the pin in
+  AGENTS.md § 9.7 alongside this pattern.
+
+**Diagnostic protocol.** If a fixture leg fails with a tool-not-found
+or tool-detour symptom:
+1. Grep the leg's log for `command not found`, `aka.ms/install-`,
+   `tarball`, `curl -fsSL.*\.(tar\.gz|sh)`.
+2. If present, the workflow is missing an install step. Add the
+   official setup action, pin to a tag or SHA, commit, and reset the
+   stability cycle counter.
+3. If absent, the binary is installed but failing for another reason
+   (auth, env vars, ACA quota, etc.) — diagnose that instead.
+
+**Cost / benefit.** A single `Azure/setup-azd@v2.3.0` step adds ~10 s
+to every leg that runs on the matrix. The current matrix has 3 legs
+(PA, HA, azd-patterns); at ~150 stability runs/year that's ~75 min
+cumulative install time. The avoided cost is ~3-5 min/run × ~80 runs
+that would have agent-side remediated = ~5 hours of wasted budget +
+the actual failures masking real bugs (Finding #16's
+`FOUNDRY_PROJECT_ENDPOINT` extension drift was only visible AFTER the
+install detour stopped consuming budget).
+
+#### Pattern 16 — Single-path invoke contract — never branch on preview-CLI flags (Finding #17)
+
+**Provenance.** Run [`26701034360`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26701034360)
+HA leg (SHA `2af039d`), 4th stability run on Patterns 12+13+14+15.
+Fixture step 5 said:
+
+> Prefer `azd ai agent invoke "${AGENT_NAME}" --message "ping"` if the
+> extension version supports the subcommand; otherwise fall back to a
+> Foundry data-plane Responses REST call …
+
+The `azure.ai.agents` azd extension in the current build accepts
+`azd ai agent invoke` (the **subcommand**) but rejects `--message`
+(the **flag**) with `unknown flag: --message`. The model's literal
+branch evaluation went: "subcommand exists → take CLI path → flag
+fails → conclude broken → emit `SMOKE_RESULT=FAIL azd ai agent
+invoke: unknown --message flag`". The fallback was reached **only on
+subcommand absence**, not flag absence. Three prior runs had passed
+because the model non-deterministically chose the REST fallback first.
+SKILL.md L1264 actually documents `azd ai agent invoke "Hello!"` as
+**positional** — the fixture invented the `--message` flag.
+
+Same run had a second compounding bug: the preamble's
+`az account show` assertion ("MUST return a row whose SubscriptionId
+matches `$AZURE_SUBSCRIPTION_ID`") invited the model to write a
+strict subscription-ID equality check, which failed twice on shell
+quoting before the invoke step even ran.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — branch on preview-CLI flag presence -->
+5. Prefer `azd ai agent invoke "${AGENT_NAME}" --message "ping"` if the
+   extension version supports the subcommand; otherwise fall back to a
+   Foundry data-plane Responses REST call …
+```
+
+```markdown
+<!-- WRONG — strict-equality preamble assertion invites brittle compares -->
+az account show MUST return a row whose SubscriptionId matches
+`$AZURE_SUBSCRIPTION_ID`.
+```
+
+**Fix (3 rules).**
+
+1. **For preview-unstable CLI surfaces, prescribe the GA SDK/REST
+   path ONLY.** Preview CLI flag surfaces drift across versions
+   (`--message` → `--prompt` → positional → removed). The Python SDK
+   surface (`AIProjectClient(allow_preview=True).get_openai_client(agent_name=...).responses.create(input=...)`)
+   is GA-stable. Document the SDK call inline in the fixture; never
+   write `if CLI works, else fall back to SDK`. The model takes
+   branch logic literally; partial CLI success without flag
+   recognition will NOT trigger the fallback.
+2. **Preamble assertions: "show, don't assert".** For workflow-
+   provided context (subscription ID, OIDC token, env vars), the
+   fixture should print the state for the run log only. The workflow
+   has already validated the context before invoking the agent.
+   Strict-equality compares (`[[ "$(... -o tsv)" == "$ENV_VAR" ]]`)
+   in the fixture body invite the model to invent stale-quoting
+   variants that false-FAIL. Only existence checks
+   (`[[ -n "$ENV_VAR" ]]`) and "did the command error?" are allowed.
+3. **One-shot fixture invokes use the SYNC SDK.** `AIProjectClient`
+   has both sync and async variants. In-container code
+   (`FoundryChatClient` etc.) uses async; one-shot fixture invokes
+   should use sync (`from azure.ai.projects import AIProjectClient`,
+   not `.aio`). Async-in-Bash-heredoc invites event-loop pitfalls.
+
+**Cross-skill carry rule.** Any new fixture invoking an Azure
+preview-CLI surface (azd extensions, `az` preview commands) checks:
+
+- Is there a GA SDK / REST path that does the same thing? → use
+  that exclusively. Add an explicit "Do NOT use `<cli-cmd>` — its
+  flag surface is preview-unstable" rule.
+- Is the CLI the only path? → pin the CLI flag set in the fixture
+  preamble: name the exact flags + values + expected behaviour.
+  Add a "if `<cli-cmd>` exits non-zero with `unknown flag`, the
+  binary version on PATH has drifted from this fixture — bump the
+  workflow's setup-action SHA and reset the stability counter"
+  diagnostic.
+
+**Diagnostic protocol.** If a fixture leg fails with `unknown flag`
+or `unknown subcommand`:
+
+1. Grep the failed agent's log for `unknown flag:|unknown subcommand:|unknown command:`.
+2. Cross-reference the offending CLI invocation against the
+   documented SKILL.md signature (the SKILL is the contract).
+3. If the fixture invented the flag → fix the fixture (rewrite to
+   the GA SDK path or correct the flag).
+4. If the SKILL also has the wrong signature → the upstream CLI
+   drifted. Bump the SKILL and the fixture together; reset the
+   stability counter.
+
+**Cost / benefit.** SDK-only invoke adds ~1 s for `pip install -q
+azure-ai-projects azure-identity openai` (pre-cached on second run
+of the stability cycle). Removed cost: the entire class of `unknown
+flag`/`unknown subcommand` non-deterministic failures across every
+preview-CLI fixture. The HA leg's flap rate (4 runs to first
+failure × ~13 min per run = ~52 min wasted budget on Pattern 15
+cycle alone) drops to zero under the SDK path.
+
+#### Pattern 17 — Show-don't-assert on `az` CLI state (Finding #18)
+
+**Provenance.** Run [`26703036366`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26703036366)
+azd-patterns leg (SHA `d390033`), 4th stability run on Pattern 16
+foundation. The fixture's Step 0 preamble asserted:
+
+> If this errors with "Please run 'az login'", `azure/login@v2` failed
+> upstream — FAIL with `az account show: not logged in`.
+
+The agent's transcript:
+
+> **Blocked:** the smoke couldn't proceed because `az account show`
+> was not logged in in this shell, so the required Azure auth
+> precondition was missing. I wrote the failure marker with that
+> reason.
+
+Wall-clock: ~6 min (vs the ~13 min expected for a real deploy) — the
+fast-fail at Step 0 is the smoking gun. Three prior runs (`9a79d2a`,
+`8dcc536`, `c2b4d50`) passed because the `~/.azure/azureProfile.json`
+cache happened to be visible in the spawned shell; run #4 fell on the
+wrong side of the race.
+
+**Root cause.** This is the fixture-side enforcement of the contract
+already documented in Pattern 11 (workflow env contract): copilot CLI
+subprocesses **inherit the workflow step's `env:` block but NOT the
+`az` CLI credential cache** at `~/.azure/`. The `azure/login@v2`
+action writes its OIDC-exchanged credentials to that cache, but
+whether the subshell sees the file depends on:
+
+- shell-creation semantics (POSIX `bash -l` vs `bash` vs `sh`)
+- whether the GHA runner's `$HOME` is preserved across the
+  copilot-cli subprocess boundary
+- the order in which the action's post-step credential cleanup runs
+  relative to the in-progress subprocess
+
+None of these are deterministic. Three of five recent runs got lucky;
+one didn't. The fixture asserted on the lucky path and called the
+unlucky one a failure.
+
+The fixture itself runs `azd auth login --federated-credential-provider
+github` **immediately after** the broken `az account show` assertion.
+That command **is** the deterministic OIDC exchange — it consumes the
+inherited `AZURE_*` env vars (which ARE deterministic per Pattern 11)
+and produces a fresh `azd` token. The `az` cache check was redundant
+to begin with, and adding a hard FAIL on its absence turned it from
+"redundant" to "actively harmful".
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — assert on inherited cache that may not be visible -->
+- **Prove `az` is actually authenticated.**
+
+  ```bash
+  az account show --output table
+  ```
+
+  If this errors with "Please run 'az login'", `azure/login@v2`
+  failed upstream — FAIL with `az account show: not logged in`.
+```
+
+**Fix.**
+
+```markdown
+- **Show-don't-assert: `az` CLI state.** Per Pattern 11, copilot CLI
+  subprocesses inherit env vars but NOT `~/.azure/`. Cache visibility
+  is non-deterministic. Print for the audit log; do NOT gate flow:
+
+  ```bash
+  az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
+  ```
+
+  **No assertion. `azd auth login` (next step) is the auth gate.**
+```
+
+**General rule (extends Pattern 16 rule 2).** "Show, don't assert"
+applies to any workflow-provided credential or context that the
+fixture re-reads:
+
+| Asserted on | Anti-pattern | Pattern |
+|------|------|------|
+| Subscription-ID equality | `[[ "$(az account show ...)" == "$ENV_VAR" ]]` | 16 |
+| `az` cache presence | `az account show \|\| FAIL` | 17 |
+| `azd` cache presence | `azd auth login --check-only \|\| FAIL` | 17 |
+| Inherited env-var values matching a *form* | `[[ "$ENV_VAR" =~ ^[a-f0-9-]{36}$ ]]` | 17 |
+| OIDC token claim contents | jwt-decode + claim compare | 17 |
+
+The only allowed assertion shape on workflow-provided context is
+existence (`[[ -n "$VAR" ]]`) — for everything else, **print and move
+on**. The actual cred validation happens when a real Azure call is
+made (Foundry SDK, `azd up`, `az containerapp create`); let *those*
+calls fail loudly and the agent will report the real error.
+
+**Cross-skill carry rule.** All 3 pilot fixtures
+(`foundry-prompt-agents`, `foundry-hosted-agents`, `azd-patterns`)
+shipped the same anti-pattern and were patched in the same commit
+that introduced Pattern 17. Any future fixture that touches `az` or
+`azd` CLI state in its preamble MUST use the show-don't-assert form
+from day one — there is no "first I'll get the assert version working
+locally, then soften it" path; the assert version passes locally
+because your `~/.azure/` is always populated.
+
+**Diagnostic protocol.** If a fixture leg fails with a Step 0/precondition
+error mentioning `az account show` or `azd auth login --check-only`:
+
+1. Verify the run is fast (≤ 8 min vs ≥ 13 min for real deploy work).
+   A fast-fail is the smoking gun for Pattern 17.
+2. Grep the failed agent's transcript for `not logged in` or
+   `Please run 'az login'`.
+3. Confirm the workflow's `azure/login@v2` step succeeded (it almost
+   always will — the failure is downstream of OIDC exchange).
+4. Patch the fixture's preamble to the show-don't-assert form. Bump
+   the SKILL.md PATCH version. Reset the stability counter to 0/5.
+
+**Cost / benefit.** Show-don't-assert costs nothing (the `||
+echo "(...)"` clause is < 50 ms). Removed cost: the entire class of
+non-deterministic preamble false-FAILs across every Azure fixture.
+The azd-patterns leg's flap rate (3 of 4 runs passed → 4th failed on
+inheritance race) drops to zero — the only way the fixture can fail
+on auth now is if `azd auth login` itself fails, which means the
+workflow's OIDC exchange genuinely broke (a real signal worth FAILing
+on).
+
+#### Pattern 18 — Retry classifier covers ARM cross-resource cache lag (Finding #19)
+
+**The bug.** Run `26704135920` (azd-patterns leg, SHA `c94d607`) failed
+with `ManagedEnvironmentNotFound` for `cae-awesome-gbb-ci` during
+`az deployment group create`. The CAE existed at deploy time with
+`provisioningState: Succeeded` (verified post-mortem from a local
+`az containerapp env show`), and the **same agent**, in the **same
+job**, reproduced the deployment as `Succeeded` via a direct
+`az containerapp job create` after the Bicep path failed. This is an
+ARM cross-resource index-rebuild race: the deployment engine's resolver
+takes 30 s – 5 min to "see" newly-touched `Microsoft.App` resources
+even after CRUD on the resource itself returns 200 OK.
+
+**Why the pre-Pattern-18 retry regex missed it.** The classifier on
+`skill-test.yml` L298 covered `429|503|throttl|capacity|EOF during
+azd deploy|revision .* not found` — the dataplane/Foundry transients
+the catalog had seen previously. `ManagedEnvironmentNotFound` is an
+ARM **control-plane** transient and never landed in the regex because
+no prior fixture had triggered it (the HA fixture uses `azd deploy`
+which goes through its own retry layer; only the azd-patterns ACA-Jobs
+fixture takes the raw `az deployment group create` path that exposes
+the ARM resolver race).
+
+**The fix.** Extend the classifier on `skill-test.yml` L298 to:
+
+```
+429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App
+```
+
+The added alternatives are **anchored on `Microsoft.App`** — the
+resource provider with the slowest ARM index-rebuild path. Generic
+`ResourceNotFound` across all providers would mask real consumer-
+written bugs (e.g., a typo in a resource name). The anchored form
+catches the ARM-cache-lag class without false-positive risk.
+
+**Detection in future failures.** If a fixture FAILs and the failure
+log contains the literal token `ManagedEnvironmentNotFound`:
+
+1. Verify the resource exists right now via
+   `az containerapp env show -g <rg> -n <name>` — if `state: Succeeded`,
+   the production resource is healthy.
+2. Confirm the failure was during `az deployment group create`, not
+   `azd deploy`. The latter has its own retry layer.
+3. If both hold, the regex caught it (or should have) and the retry
+   leg will pass.
+
+**Cost / benefit.** The retry leg costs one extra `copilot` invocation
+when triggered (~$0.005 + ~3 min wall-clock). The class of false-FAIL
+this catches: any ARM cross-resource lookup against `Microsoft.App`
+that hits the resolver in its pre-warmed window. Across the catalog,
+that's every ACA-Jobs / ACA-Apps fixture that uses Bicep — currently
+azd-patterns only, but threadlight-skills and any future ACA-on-Bicep
+skill will benefit.
+
+#### Pattern 19 — Retry classifier needs jittered cooldown for matrix-leg races (Finding #20)
+
+**Provenance.** Run [`26711407035`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711407035)
+(SHA `cd5213a`), Phase 3 6-leg matrix. The `foundry-hosted-agents` leg
+hit `CAPIError: 429 Too Many Requests` from the **Copilot CLI's own
+backing model** (not the Foundry deployment under test) while
+parallel matrix legs were spinning their own copilot processes.
+Retry leg also hit 429 a few seconds later because both legs were
+re-running in lockstep against the same shared CLI-backing-model
+quota.
+
+**The fix.** Extend the retry classifier on `skill-test.yml` to
+include `CAPIError|Too Many Requests|Failed to get response from
+the AI model|transient API error` AND space the retry by ≥ 30 s
+random jitter (`sleep $(( RANDOM % 30 + 30 ))`) so concurrent legs
+don't re-fire into the same throttle window. Combined with
+Pattern 22's `max-parallel: 2` throttle, this collapses the 429
+flap rate to zero on subsequent runs (verified
+[`26711952364`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364)
++ [`26714879734`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26714879734)).
+
+**Cross-skill carry rule.** Any future fixture that calls a model
+through Copilot CLI (i.e. every Copilot-CLI fixture) inherits this
+class of failure. The retry classifier + jitter is workflow-side
+and protects all legs automatically; no fixture-side change needed.
+
+#### Pattern 20 — Copilot CLI cannot read `~/.copilot/installed-plugins/` for fixture skills (Finding #21)
+
+**The bug.** Earlier Phase 3 attempts tried to ship the `awesome-gbb`
+plugin to the CI runner via `gh skill install` so the fixture could
+reference the very skill under test by name. The Copilot CLI's
+plugin-resolution path only reads from its bundled marketplace
+registry at startup, NOT from `~/.copilot/installed-plugins/` on the
+runner. The agent had no awareness of any locally-installed skill,
+so "use foundry-hosted-agents to deploy …" prompted from a fixture
+would be treated as plain English, not a skill reference.
+
+**The fix.** Fixtures MUST be **self-contained goal prompts** — they
+state the task in plain English ("create a hosted agent that …") and
+the agent is expected to know how to do it from its **general training
++ the SKILL.md content pasted into the prompt body via the existing
+audit-step guard**. The fixture file is therefore the test surface,
+not a `Use skill X` directive. This pattern is now load-bearing for
+every Copilot-CLI fixture in the catalog (PA, HA, evals, memory,
+toolbox, azd-patterns all follow it).
+
+**Cross-skill carry rule.** Never write `Use the foundry-X skill`
+in a fixture. Always state the goal directly. The agent will use
+the SKILL.md context the workflow provides, not a plugin lookup.
+
+#### Pattern 21 — Sweden Central requires `GlobalStandard` SKU for embedding deployments (Finding #22)
+
+**The bug.** Earlier `foundry-memory` fixture iteration tried to
+deploy `text-embedding-3-small` with the default `Standard` SKU in
+Sweden Central. ARM rejected with `InvalidResourceProperties: Sku is
+not supported in this region`. Sweden Central, our CI region, only
+offers embeddings under `GlobalStandard`.
+
+**The fix.** When provisioning embedding models in Sweden Central
+(the CI region), the deployment SKU MUST be `GlobalStandard`. This
+applies to the standing `text-embedding-3-small` deployment in
+`aif-awesome-gbb-ci` and to any future embedding deployment used
+by a fixture. Chat completion models (`gpt-5.4-mini`, `gpt-5.4`)
+work fine under `Standard` in Sweden Central — only embeddings
+need `GlobalStandard`.
+
+**Cross-skill carry rule.** Any fixture or skill that documents
+embedding-deployment provisioning in Sweden Central MUST specify
+`sku: { name: "GlobalStandard" }` in its Bicep / azd template.
+Cross-check region capacity before changing region — other regions
+(EastUS, EastUS2) accept `Standard` for embeddings.
+
+#### Pattern 22 — Throttle matrix parallelism to ≤ 2 to avoid CLI-backing-model 429s (Finding #23)
+
+**Provenance.** Run [`26711407035`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711407035)
+ran the 6-leg matrix at default GHA `max-parallel: 5` and
+**deterministically** hit `CAPIError: 429 Too Many Requests` on
+the heaviest leg (`foundry-hosted-agents`). The Copilot CLI's
+backing model has per-account RPM quota that 5 parallel legs of
+`copilot -p` consume in seconds. After fix
+([`47112b2`](https://github.com/aiappsgbb/awesome-gbb/commit/47112b2)),
+run [`26711952364`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364)
+ran 5/6 GREEN at `max-parallel: 2`; the only remaining failure was
+Pattern 23 (different bug entirely).
+
+**The fix.**
+
+```yaml
+# .github/workflows/skill-test.yml
+copilot-cli-matrix:
+  strategy:
+    max-parallel: 2   # Pattern 22 — Copilot CLI's own backing model
+                      # has tight RPM quota; 3+ parallel copilot -p
+                      # invocations from the same runner-account hit
+                      # CAPIError 429. 2 is the verified safe ceiling.
+```
+
+**Trade-off.** Wall-clock for a full 6-leg matrix grows from
+~25 min (max-parallel=5, with retries) to ~30-35 min
+(max-parallel=2, stable). The wall-clock cost is worth it — flap
+rate goes from "first 429 within seconds" to zero across the next
+two stability runs.
+
+**Cross-skill carry rule.** Do NOT raise `max-parallel` above 2
+without a quota-side change. If you need more throughput, the
+correct path is to run smaller targeted matrices via the
+change-gating in Pattern 24 (`build-test-matrix.py --changed-only`)
+— not to fan out wider.
+
+#### Pattern 23 — Foundry project MI is the THIRD identity, needs separate `Cognitive Services OpenAI User` grant (Finding #24)
+
+**Provenance.** Run [`26711952364`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364)
+(SHA `47112b2`), `foundry-memory` leg job
+[`78723651792`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364/job/78723651792).
+Memory store creation succeeded, but the **Foundry-internal memory
+consolidation worker** returned 401 when calling the chat deployment
+to extract semantic memories. Three rounds of forensic log capture
+(596-line `/tmp/mem-job-78723651792.log`, lines 192, 418, 425) showed
+the 401 came from the server-side worker hitting
+`https://cognitiveservices.azure.com` with a token issued to an
+identity that was NOT the CI UAMI used by every other passing leg.
+
+**The three identities** in `aif-awesome-gbb-ci`, NONE of which
+overlap by default:
+
+| # | Identity | Object ID | Default RBAC | Used by |
+|---|---|---|---|---|
+| 1 | **Account SAMI** | `fbe3089f-…` | Empty | Account-level system tasks (rarely used directly) |
+| 2 | **Project `ci-test` SAMI** | `8c1b62da-…` | **Only ACR roles** | **Foundry server-side workers** (memory consolidation, hosted-agent runtime, evals graders) |
+| 3 | **CI UAMI** | `ff405901-…` | Contributor + AcrPush + Cog OpenAI User + Foundry User | Every CI fixture's direct deployment calls |
+
+The 5 passing legs (PA, HA, evals, toolbox, azd-patterns) all call
+deployments **directly** with identity #3 (the UAMI) which has the
+right roles. Memory uniquely triggers identity #2 because Foundry's
+memory consolidation runs server-side as the **project** MI, NOT the
+caller's UAMI.
+
+**The fix.** Grant `Cognitive Services OpenAI User` AND `Cognitive
+Services User` to the **project MI** at **account scope**:
+
+```bash
+SUB=2c745a8f-9d37-45e3-8506-80797e89735e
+ACCT_SCOPE=/subscriptions/$SUB/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.CognitiveServices/accounts/aif-awesome-gbb-ci
+PROJECT_MI_OBJECT_ID=8c1b62da-a294-4bec-b1eb-e5664b7bd490  # from `az cognitiveservices account project show`
+
+az role assignment create --assignee-object-id $PROJECT_MI_OBJECT_ID \
+  --assignee-principal-type ServicePrincipal \
+  --role "Cognitive Services OpenAI User" --scope $ACCT_SCOPE
+az role assignment create --assignee-object-id $PROJECT_MI_OBJECT_ID \
+  --assignee-principal-type ServicePrincipal \
+  --role "Cognitive Services User" --scope $ACCT_SCOPE
+```
+
+Wait ≥ 5 min for AAD propagation, then re-trigger.
+[`26714879734`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26714879734)
+verified the fix: memory leg GREEN in 13 min after the grant.
+
+**Cross-skill carry rule.** Any fixture that exercises a Foundry
+server-side worker (memory, hosted-agent runtime callbacks, eval
+graders running in the project, server-orchestrated retrievals) MUST
+either (a) confirm the project MI already has the right Cog roles,
+or (b) include a pre-fixture RBAC grant step in a CI bootstrap
+script. The audit step must check identity #2's role assignments,
+not just identity #3's.
+
+**Diagnostic protocol.** When a fixture fails with 401 from an
+Azure call:
+
+1. Determine which identity the call ran as. If the SDK call was
+   direct (your code) → identity #3 (UAMI). If the call was
+   triggered by `AIProjectClient.beta.memory_stores.create(...)`,
+   `AgentRunner.run(...)`, an eval grader invocation, etc.
+   → identity #2 (project MI).
+2. List role assignments on identity #2:
+   `az role assignment list --assignee $PROJECT_MI_OBJECT_ID --all`.
+3. If `Cognitive Services OpenAI User` or `Cognitive Services User`
+   is missing on the account scope → Pattern 23. Grant + wait
+   ≥ 5 min + retry.
+
+**Why this lurks.** Identity #2 is created automatically when a
+Foundry project is created; the create flow grants ACR roles
+(needed for hosted-agent image pulls) but not Cog roles (because
+the user might not deploy chat models). The catalog's CI used to
+ride on identity #3 for everything, so this gap was invisible
+until the first server-orchestrated workload (memory) landed.
+
+#### Pattern 24 — Change-gated matrix saves 80% of CI cost on iterative PRs (Finding #25)
+
+**Provenance.** Phase 3 matrix expansion (PA + HA + evals + memory
++ toolbox + azd-patterns = 6 legs × ~5-18 min each = ~75 min of
+runner time per full PR push). Iterative debugging on a single skill
+(e.g. 5 stability runs on memory alone) would burn ~375 min of CI
+budget if the full matrix re-ran every time.
+
+**The fix.** [`scripts/build-test-matrix.py`](scripts/build-test-matrix.py)
+gained `--changed-only --base-ref <sha>` flags. The PR-triggered
+workflow path computes `git diff $base_ref..HEAD`, maps changed
+files to changed skills, applies **forward fanout** from
+[`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
+and B `depends_on` A, run B too), and forces a full matrix on
+**infra-file changes** (`plugin.json`, the workflow itself, the
+matrix script, `skill-deps.yml`, `quarantine.yml`). The `push: main`
+and `schedule:` paths always run the full matrix.
+
+**Cost / benefit.** A PR that touches only `foundry-memory/test-fixture/`
+runs ONE leg (memory) instead of six. Wall-clock for an iterative
+retry drops from ~30 min to ~13 min; budget cost drops 5/6. Catch
+rate is preserved because the full matrix still runs on `main`
+and weekly, and forward fanout protects against upstream-skill
+changes silently breaking downstream consumers.
+
+**Cross-skill carry rule.** When you add a new fixture, also add
+an entry to `.github/skill-deps.yml` even if `depends_on: []`. The
+matrix-builder's "all fixtured skills" set is derived from this
+file; a missing entry → your fixture never runs in CI even when
+its files change.
+
+**Gotcha.** Change-gating diffs against `github.event.pull_request.base.sha`,
+which is the **target branch's HEAD** (usually `main`). So iterative
+retries on the SAME PR will still re-include every fixture that's
+been touched anywhere in the PR's commit history, not just the
+last commit. This is correct behaviour (the PR as a unit must
+pass), but means the cost savings show on PRs that touch a
+**subset** of skills, not on iterative-retry cycles.
+
+#### Pattern 25 — Teardown is best-effort, NOT a success criterion (Finding #26)
+
+**Provenance.** Run [`26714879734`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26714879734)
+(SHA `e06ca76`, stability #1) HA leg passed in 15m27s — right AT the
+OIDC federated-credential TTL boundary. Run
+[`26715679675`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26715679675)
+(SHA `72b77d8`, stability #2) HA leg `78733744851` failed at 17m22s
+because teardown ran past that boundary. Forensic transcript:
+
+> Deploy succeeded. Invoke returned `billing` (valid label). Then
+> the agent spent ~7 minutes searching for an `azd ai agent delete`
+> subcommand that does not exist in the current `azure.ai.agents`
+> azd extension. By the time it pivoted to REST DELETE, the OIDC
+> assertion had expired → 401. Wrote `SMOKE_RESULT=FAIL teardown
+> blocked: federated auth expired before delete`.
+
+The skill contract — `azd deploy` produces a working hosted agent,
+agent answers correctly — was **proven** end-to-end. The fixture
+then false-FAIL'd on cleanup of resources the SKILL.md doesn't
+even guarantee a deterministic delete path for.
+
+**Root cause.** Two compounding factors:
+
+1. **Hosted-agent teardown is preview-CLI-unstable** (extends
+   Pattern 16). The `azure.ai.agents` azd extension exposes
+   `invoke` but not `delete`; the documented teardown path drifts
+   across extension versions (data-plane REST one quarter, azd
+   subcommand the next). An agent following the fixture goal
+   literally will spend wall-clock budget discovering this gap.
+2. **OIDC federated-credential TTL is bounded** (~5-10 min after
+   `azd auth login`). Any teardown phase that exceeds that window
+   401s on the next data-plane call. The TTL is **not** a per-token
+   refresh — `azure/login@v2` exchanges ONCE per workflow step and
+   that exchange has a fixed lifetime.
+
+These compose: the longer teardown discovery takes, the more
+likely it crosses the TTL. Stability #1 happened to land inside
+the window (15m27s); stability #2 didn't (17m22s). Both runs
+exercised the SKILL contract identically.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — hard FAIL when teardown fails -->
+On ANY failure (auth, skill not found, azd deploy failure, invoke
+error, invalid response, teardown failure):
+
+    printf 'SMOKE_RESULT=FAIL <reason>\n' > /tmp/<skill>-smoke-result
+```
+
+```markdown
+<!-- WRONG — no budget; agent hunts for delete path until OIDC dies -->
+When you're done, tear down everything you created (the agent,
+the ACA app, and the ACR repository).
+```
+
+**Fix — three rules.**
+
+1. **Separate hard success criteria from best-effort hygiene.**
+   The fixture's PASS marker MUST be conditioned ONLY on the
+   skill-contract surfaces (deploy succeeded + invoke returned
+   the expected shape). Teardown is hygiene; it goes in a
+   separate sentence in the fixture goal with explicit
+   best-effort framing. Pattern 13 (LAW soft-PASS) is the
+   precedent — same shape applied to a different async surface.
+
+2. **Bound teardown with a wall-clock budget.** Cap the teardown
+   phase at 5 minutes (single-API fixtures) or 10 minutes
+   (multi-resource fixtures like ACR repo + ACA app + agent
+   version). Past the cap, the fixture STOPS hunting and writes
+   the marker. The budget MUST be smaller than the OIDC TTL
+   floor (~5 min observed) for single-API teardown, or the
+   fixture MUST be re-architected to re-`azd auth login` if it
+   genuinely needs a longer cleanup window. **Do NOT** chase
+   token refresh in fixtures — it's an order-of-magnitude more
+   complexity than the contract this catalog is testing.
+
+3. **Soft-PASS with a transcript NOTE on teardown failure.**
+   When deploy + invoke succeed but teardown fails or times out,
+   emit a single NOTE line to stdout (transcript captures it for
+   audit) describing what couldn't be cleaned up. STILL write
+   `printf 'SMOKE_RESULT=PASS\n'` to the marker file. The NOTE
+   makes orphan resources discoverable; the PASS marker keeps
+   CI green on a passing contract.
+
+**Cross-skill carry rule.** Any fixture that creates Azure
+resources beyond the immediate skill-contract surface
+(supporting ACR repos, ACA managed env children, RBAC role
+assignments, side-deployed identities, agent versions,
+Foundry threads/runs) inherits Pattern 25. The rule:
+
+| Resource created for | Teardown FAIL classification |
+|---|---|
+| Direct skill contract output | Hard FAIL (the contract IS the resource) |
+| Supporting infra the skill happens to need | Best-effort soft-PASS |
+| Side artefacts (logs, traces, generated docs) | Soft-PASS (auto-prune in CI RG) |
+
+If you can't decide which row a resource lives on, ask: "Would
+a customer following SKILL.md verbatim consider this resource
+part of what they asked for?" YES → hard. NO → best-effort.
+
+**Janitor contract.** The `rg-awesome-gbb-ci` resource group
+is the catch-all for orphaned fixture resources under Pattern
+25. A periodic cron (manual today; automation deferred) prunes:
+
+- ACR repositories matching `ci-smoke-*` older than 7 days
+- Foundry agent versions matching `ci-smoke-*` older than 7 days
+- ACA Container Apps matching `ci-smoke-*` older than 7 days
+- Role assignments scoped to deleted principals
+
+The janitor's existence is what lets fixtures soft-PASS without
+unbounded resource leak. Do NOT use Pattern 25 in production
+deployments — the janitor lives only in CI infrastructure.
+
+**Diagnostic protocol.** If a fixture leg fails with a 401, an
+"assertion expired", an "OIDC token" error, or any auth error
+that surfaces AFTER the smoke's hard success criteria already
+succeeded:
+
+1. Grep the transcript for the first occurrence of the marker
+   token `SMOKE_RESULT=`. If it appears AFTER the documented
+   skill contract has succeeded (deploy ok, invoke ok, etc.) →
+   Pattern 25 violation in the fixture.
+2. Confirm by checking wall-clock: if total > 12 min and the
+   skill contract is single-deploy + single-invoke, the leg is
+   spending ≥7 min on teardown/cleanup.
+3. Fix at the fixture, not the workflow: rewrite the marker
+   contract to soft-PASS on teardown failure. Do NOT add OIDC
+   token tokens to the retry classifier (Pattern 19) — a retry
+   would just re-fail at teardown again, wasting another full
+   leg's budget.
+
+**Cost / benefit.** Pattern 25 adds zero CI cost on the green
+path (NOTE is one stdout line). On the orphan-cleanup path,
+the janitor cron is shared infra (~$0.02/day across all skills,
+not per-leg). Removed cost: the entire class of "skill works
+but cleanup is preview-unstable" false-FAILs. HA leg's flap
+rate (1/2 stability runs failing on teardown) drops to 0/N
+once the fixture rewrite lands.
+
+**Cross-fixture audit (post-rollout).** After Pattern 25
+proves stable on HA, audit other fixtures that create
+side-resources:
+
+- `azd-patterns` — creates an ACA Job + Bicep deployment;
+  teardown is `az containerapp job delete` + `az group
+  deployment delete`. Different shape, may or may not have
+  the same OIDC vulnerability — defer audit until HA proven.
+- `foundry-evals` — creates an evaluation + dataset on
+  Foundry; teardown via SDK. Short-lived, likely safe.
+- `foundry-memory` — creates a memory store + entries;
+  teardown via SDK. Short-lived, likely safe.
+- `foundry-toolbox` — registers in-process tools, no
+  external resources to clean. Not applicable.
+- `foundry-prompt-agents` — creates a prompt agent; teardown
+  via SDK. Short-lived, likely safe.
+
+Don't preemptively soft-PASS-teardown the safe ones — only
+apply Pattern 25 when a fixture has demonstrated a real flap
+attributable to teardown.
 
 ### 9.8 · Skill testing tiers
 

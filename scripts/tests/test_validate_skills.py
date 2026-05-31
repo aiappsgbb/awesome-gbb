@@ -601,5 +601,263 @@ class TestRegexMatching(unittest.TestCase):
             self.assertIn("failure_signature", msg)
 
 
+class TestSkillDeps(unittest.TestCase):
+    """Tests for vs.validate_skill_deps + helpers."""
+
+    def _layout(
+        self,
+        root: pathlib.Path,
+        deps_yaml: str | None,
+        skill_names: list[str],
+        fixtured_skills: list[str] | None = None,
+    ) -> tuple[pathlib.Path, pathlib.Path]:
+        skills_dir = root / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        for name in skill_names:
+            sd = skills_dir / name
+            sd.mkdir(parents=True, exist_ok=True)
+            (sd / "SKILL.md").write_text(_skill_md(name=name), encoding="utf-8")
+        for name in (fixtured_skills or []):
+            fixture_dir = skills_dir / name / "test-fixture"
+            fixture_dir.mkdir(parents=True, exist_ok=True)
+            (fixture_dir / "consumer_prompt.md").write_text("# fixture\n", encoding="utf-8")
+        deps_path = root / "skill-deps.yml"
+        if deps_yaml is not None:
+            deps_path.write_text(deps_yaml, encoding="utf-8")
+        return deps_path, skills_dir
+
+    def test_absent_file_returns_empty(self):
+        """No skill-deps.yml on disk → empty error list (graceful)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            _, skills_dir = self._layout(root, None, ["alpha"])
+            # deps_path intentionally points to a non-existent file
+            missing = root / "does-not-exist.yml"
+            errs = vs.validate_skill_deps(deps_path=missing, skills_dir=skills_dir)
+            self.assertEqual(errs, [])
+
+    def test_missing_skills_key(self):
+        """Top-level YAML without `skills:` key → one schema error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(
+                root, "version: 1\n", ["alpha"]
+            )
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertEqual(len(errs), 1)
+            self.assertIn("missing top-level `skills:` key", errs[0])
+
+    def test_non_dict_root(self):
+        """YAML that parses as a list, not a dict → schema error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(
+                root, "- alpha\n- beta\n", ["alpha"]
+            )
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertEqual(len(errs), 1)
+            self.assertIn("missing top-level `skills:` key", errs[0])
+
+    def test_skills_must_be_mapping(self):
+        """`skills:` as a list instead of a mapping → schema error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(
+                root, "skills:\n  - alpha\n  - beta\n", ["alpha"]
+            )
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertEqual(len(errs), 1)
+            self.assertIn("`skills:` must be a mapping", errs[0])
+
+    def test_invalid_kebab_name(self):
+        """Skill name like `Bad_Name` → invalid-kebab error."""
+        deps_yaml = (
+            "skills:\n"
+            "  Bad_Name:\n"
+            "    depends_on: []\n"
+            "  alpha:\n"
+            "    depends_on: []\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(any("invalid skill name `Bad_Name`" in e for e in errs))
+
+    def test_entry_must_be_mapping(self):
+        """`alpha: null` (or scalar) → entry-must-be-mapping error."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha: null\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any("entry for `alpha` must be a mapping" in e for e in errs),
+                msg=f"errors: {errs}",
+            )
+
+    def test_depends_on_must_be_list(self):
+        """`depends_on: beta` (string, not list) → schema error."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha:\n"
+            "    depends_on: beta\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha", "beta"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any("`alpha.depends_on` must be a list" in e for e in errs),
+                msg=f"errors: {errs}",
+            )
+
+    def test_declared_skill_must_exist_on_disk(self):
+        """skill-deps declares `ghost` but no skills/ghost/SKILL.md → error."""
+        deps_yaml = (
+            "skills:\n"
+            "  ghost:\n"
+            "    depends_on: []\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            # Only `alpha` lives on disk; `ghost` is declared but absent
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any("declared skill `ghost` has no skills/ghost/SKILL.md" in e for e in errs),
+                msg=f"errors: {errs}",
+            )
+
+    def test_unresolved_depends_on(self):
+        """`alpha.depends_on: [phantom]` where phantom has no SKILL.md → error names both."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha:\n"
+            "    depends_on: [phantom]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any("`alpha.depends_on` references unknown skill `phantom`" in e for e in errs),
+                msg=f"errors: {errs}",
+            )
+
+    def test_fixtured_skill_missing_entry(self):
+        """Skill has test-fixture/consumer_prompt.md but no skill-deps entry → drift error."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha:\n"
+            "    depends_on: []\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            # `beta` has a fixture but no entry in deps_yaml
+            deps_path, skills_dir = self._layout(
+                root, deps_yaml, ["alpha", "beta"], fixtured_skills=["beta"]
+            )
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any(
+                    "skill `beta` has a test-fixture/consumer_prompt.md" in e
+                    and "no entry in skill-deps.yml" in e
+                    for e in errs
+                ),
+                msg=f"errors: {errs}",
+            )
+
+    def test_simple_cycle_detected(self):
+        """A → B → A → cycle error."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha:\n"
+            "    depends_on: [beta]\n"
+            "  beta:\n"
+            "    depends_on: [alpha]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha", "beta"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any("dependency cycle detected" in e for e in errs),
+                msg=f"errors: {errs}",
+            )
+
+    def test_self_cycle_detected(self):
+        """A → A → cycle error."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha:\n"
+            "    depends_on: [alpha]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(root, deps_yaml, ["alpha"])
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertTrue(
+                any("dependency cycle detected" in e for e in errs),
+                msg=f"errors: {errs}",
+            )
+
+    def test_valid_catalogue_shape_no_errors(self):
+        """The current live-shape — single forward edge, all skills present, all fixtures declared."""
+        deps_yaml = (
+            "skills:\n"
+            "  foundry-prompt-agents:\n"
+            "    depends_on: []\n"
+            "  foundry-hosted-agents:\n"
+            "    depends_on: []\n"
+            "  foundry-evals:\n"
+            "    depends_on: [foundry-prompt-agents]\n"
+            "  azd-patterns:\n"
+            "    depends_on: []\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(
+                root,
+                deps_yaml,
+                [
+                    "foundry-prompt-agents",
+                    "foundry-hosted-agents",
+                    "foundry-evals",
+                    "azd-patterns",
+                ],
+                fixtured_skills=[
+                    "foundry-prompt-agents",
+                    "foundry-hosted-agents",
+                    "foundry-evals",
+                    "azd-patterns",
+                ],
+            )
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertEqual(errs, [], msg=f"unexpected errors: {errs}")
+
+    def test_acyclic_chain_no_errors(self):
+        """A → B → C (no cycle) → no errors."""
+        deps_yaml = (
+            "skills:\n"
+            "  alpha:\n"
+            "    depends_on: [beta]\n"
+            "  beta:\n"
+            "    depends_on: [gamma]\n"
+            "  gamma:\n"
+            "    depends_on: []\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            deps_path, skills_dir = self._layout(
+                root, deps_yaml, ["alpha", "beta", "gamma"]
+            )
+            errs = vs.validate_skill_deps(deps_path=deps_path, skills_dir=skills_dir)
+            self.assertEqual(errs, [], msg=f"unexpected errors: {errs}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
