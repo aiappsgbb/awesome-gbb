@@ -100,8 +100,19 @@ Using the `foundry-hosted-agents` skill, deploy a hosted Foundry agent
 as a Container App that classifies inbound customer-support messages
 into one of three categories: `billing`, `technical`, `account`. Then
 prove it works by sending one test message through it and verifying the
-response is one of those three labels. When you're done, tear down
-everything you created (the agent, the ACA app, and the ACR repository).
+response is one of those three labels.
+
+**Teardown is best-effort, NOT a success criterion** (AGENTS.md § 9.7
+Pattern 25). After the invoke proves success, attempt to delete what
+you created (the agent, the ACA app, and the ACR repository), but cap
+your total teardown attempt at **5 minutes wall-clock**. If teardown
+fails or runs over budget for ANY reason (missing CLI subcommand,
+expired OIDC token, REST endpoint changed, AAD propagation race),
+that is acceptable — emit a single transcript NOTE describing what
+couldn't be cleaned up and proceed to write the PASS marker. The CI
+resource group `rg-awesome-gbb-ci` is periodically pruned of orphaned
+hosted-agent versions and ACR repositories by a separate janitor; do
+NOT spend stability-run budget hunting for delete paths.
 
 The skill's `SKILL.md` and its `references/` directory are the source of
 truth for:
@@ -114,6 +125,7 @@ truth for:
   preview-CLI surface — see AGENTS.md § 9.7 Pattern 16 if relevant)
 - how to authenticate the invoke call (managed identity vs `DefaultAzureCredential`)
 - how to delete the agent + the ACA app + the ACR repository on teardown
+  (best-effort only — see the 5-minute cap above)
 
 Read the SKILL (and the canonical reference files it cites) before you
 write any code. If you have to write your own container source, Dockerfile,
@@ -135,23 +147,47 @@ gitignored.
 
 ## Step 2 — Marker contract (deterministic, MANDATORY)
 
-Your FINAL action — after teardown — is to invoke the Bash tool to write
-the marker file. The file's literal byte content is what CI grades; your
-assistant-text reply is NOT graded.
+Your FINAL action — after the invoke succeeds AND after your best-effort
+teardown attempt (or after the 5-minute teardown budget expires) — is to
+invoke the Bash tool to write the marker file. The file's literal byte
+content is what CI grades; your assistant-text reply is NOT graded.
 
-On success (all of: agent + ACA app deployed, test message returned a
-valid label, teardown completed):
+**PASS condition (hard success criteria):**
+
+- `azd deploy` succeeded (the hosted agent is up as an ACA app)
+- The test invoke returned a valid label (`billing`, `technical`, or `account`)
+
+Teardown outcome is irrelevant to the PASS marker. On hard success:
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result
 ```
 
-On ANY failure (auth, skill not found, `azd deploy` failure, invoke
-error, invalid response, teardown failure):
+If teardown was incomplete, ALSO print one transcript NOTE (NOT to the
+marker file) describing what could not be cleaned up, e.g.:
+
+```
+NOTE teardown best-effort: agent version <name> + ACR repo ci-smoke-ha-<uuid> not deleted (reason: azd ai agent delete subcommand not present in extension v<x>); rg-awesome-gbb-ci janitor will prune.
+```
+
+**FAIL condition (deploy or invoke failed):**
+
+- Auth context missing (Step 0)
+- Skill or required reference file not findable
+- `azd deploy` failed
+- Invoke errored or returned a response that is NOT one of the three
+  valid labels
+
+On FAIL:
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-hosted-agents-smoke-result
 ```
+
+**Do NOT FAIL on teardown failure.** Teardown is best-effort (Pattern 25).
+Any teardown error — missing CLI subcommand, expired OIDC assertion,
+REST 404, AAD propagation race, network blip — gets a NOTE and a PASS,
+never a FAIL. The CI janitor handles orphan cleanup.
 
 The marker file is single-source-of-truth. Do not print the marker token
 anywhere else in your reply — no echoes, no summaries, no fenced code

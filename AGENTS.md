@@ -1960,6 +1960,167 @@ last commit. This is correct behaviour (the PR as a unit must
 pass), but means the cost savings show on PRs that touch a
 **subset** of skills, not on iterative-retry cycles.
 
+#### Pattern 25 — Teardown is best-effort, NOT a success criterion (Finding #26)
+
+**Provenance.** Run [`26714879734`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26714879734)
+(SHA `e06ca76`, stability #1) HA leg passed in 15m27s — right AT the
+OIDC federated-credential TTL boundary. Run
+[`26715679675`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26715679675)
+(SHA `72b77d8`, stability #2) HA leg `78733744851` failed at 17m22s
+because teardown ran past that boundary. Forensic transcript:
+
+> Deploy succeeded. Invoke returned `billing` (valid label). Then
+> the agent spent ~7 minutes searching for an `azd ai agent delete`
+> subcommand that does not exist in the current `azure.ai.agents`
+> azd extension. By the time it pivoted to REST DELETE, the OIDC
+> assertion had expired → 401. Wrote `SMOKE_RESULT=FAIL teardown
+> blocked: federated auth expired before delete`.
+
+The skill contract — `azd deploy` produces a working hosted agent,
+agent answers correctly — was **proven** end-to-end. The fixture
+then false-FAIL'd on cleanup of resources the SKILL.md doesn't
+even guarantee a deterministic delete path for.
+
+**Root cause.** Two compounding factors:
+
+1. **Hosted-agent teardown is preview-CLI-unstable** (extends
+   Pattern 16). The `azure.ai.agents` azd extension exposes
+   `invoke` but not `delete`; the documented teardown path drifts
+   across extension versions (data-plane REST one quarter, azd
+   subcommand the next). An agent following the fixture goal
+   literally will spend wall-clock budget discovering this gap.
+2. **OIDC federated-credential TTL is bounded** (~5-10 min after
+   `azd auth login`). Any teardown phase that exceeds that window
+   401s on the next data-plane call. The TTL is **not** a per-token
+   refresh — `azure/login@v2` exchanges ONCE per workflow step and
+   that exchange has a fixed lifetime.
+
+These compose: the longer teardown discovery takes, the more
+likely it crosses the TTL. Stability #1 happened to land inside
+the window (15m27s); stability #2 didn't (17m22s). Both runs
+exercised the SKILL contract identically.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — hard FAIL when teardown fails -->
+On ANY failure (auth, skill not found, azd deploy failure, invoke
+error, invalid response, teardown failure):
+
+    printf 'SMOKE_RESULT=FAIL <reason>\n' > /tmp/<skill>-smoke-result
+```
+
+```markdown
+<!-- WRONG — no budget; agent hunts for delete path until OIDC dies -->
+When you're done, tear down everything you created (the agent,
+the ACA app, and the ACR repository).
+```
+
+**Fix — three rules.**
+
+1. **Separate hard success criteria from best-effort hygiene.**
+   The fixture's PASS marker MUST be conditioned ONLY on the
+   skill-contract surfaces (deploy succeeded + invoke returned
+   the expected shape). Teardown is hygiene; it goes in a
+   separate sentence in the fixture goal with explicit
+   best-effort framing. Pattern 13 (LAW soft-PASS) is the
+   precedent — same shape applied to a different async surface.
+
+2. **Bound teardown with a wall-clock budget.** Cap the teardown
+   phase at 5 minutes (single-API fixtures) or 10 minutes
+   (multi-resource fixtures like ACR repo + ACA app + agent
+   version). Past the cap, the fixture STOPS hunting and writes
+   the marker. The budget MUST be smaller than the OIDC TTL
+   floor (~5 min observed) for single-API teardown, or the
+   fixture MUST be re-architected to re-`azd auth login` if it
+   genuinely needs a longer cleanup window. **Do NOT** chase
+   token refresh in fixtures — it's an order-of-magnitude more
+   complexity than the contract this catalog is testing.
+
+3. **Soft-PASS with a transcript NOTE on teardown failure.**
+   When deploy + invoke succeed but teardown fails or times out,
+   emit a single NOTE line to stdout (transcript captures it for
+   audit) describing what couldn't be cleaned up. STILL write
+   `printf 'SMOKE_RESULT=PASS\n'` to the marker file. The NOTE
+   makes orphan resources discoverable; the PASS marker keeps
+   CI green on a passing contract.
+
+**Cross-skill carry rule.** Any fixture that creates Azure
+resources beyond the immediate skill-contract surface
+(supporting ACR repos, ACA managed env children, RBAC role
+assignments, side-deployed identities, agent versions,
+Foundry threads/runs) inherits Pattern 25. The rule:
+
+| Resource created for | Teardown FAIL classification |
+|---|---|
+| Direct skill contract output | Hard FAIL (the contract IS the resource) |
+| Supporting infra the skill happens to need | Best-effort soft-PASS |
+| Side artefacts (logs, traces, generated docs) | Soft-PASS (auto-prune in CI RG) |
+
+If you can't decide which row a resource lives on, ask: "Would
+a customer following SKILL.md verbatim consider this resource
+part of what they asked for?" YES → hard. NO → best-effort.
+
+**Janitor contract.** The `rg-awesome-gbb-ci` resource group
+is the catch-all for orphaned fixture resources under Pattern
+25. A periodic cron (manual today; automation deferred) prunes:
+
+- ACR repositories matching `ci-smoke-*` older than 7 days
+- Foundry agent versions matching `ci-smoke-*` older than 7 days
+- ACA Container Apps matching `ci-smoke-*` older than 7 days
+- Role assignments scoped to deleted principals
+
+The janitor's existence is what lets fixtures soft-PASS without
+unbounded resource leak. Do NOT use Pattern 25 in production
+deployments — the janitor lives only in CI infrastructure.
+
+**Diagnostic protocol.** If a fixture leg fails with a 401, an
+"assertion expired", an "OIDC token" error, or any auth error
+that surfaces AFTER the smoke's hard success criteria already
+succeeded:
+
+1. Grep the transcript for the first occurrence of the marker
+   token `SMOKE_RESULT=`. If it appears AFTER the documented
+   skill contract has succeeded (deploy ok, invoke ok, etc.) →
+   Pattern 25 violation in the fixture.
+2. Confirm by checking wall-clock: if total > 12 min and the
+   skill contract is single-deploy + single-invoke, the leg is
+   spending ≥7 min on teardown/cleanup.
+3. Fix at the fixture, not the workflow: rewrite the marker
+   contract to soft-PASS on teardown failure. Do NOT add OIDC
+   token tokens to the retry classifier (Pattern 19) — a retry
+   would just re-fail at teardown again, wasting another full
+   leg's budget.
+
+**Cost / benefit.** Pattern 25 adds zero CI cost on the green
+path (NOTE is one stdout line). On the orphan-cleanup path,
+the janitor cron is shared infra (~$0.02/day across all skills,
+not per-leg). Removed cost: the entire class of "skill works
+but cleanup is preview-unstable" false-FAILs. HA leg's flap
+rate (1/2 stability runs failing on teardown) drops to 0/N
+once the fixture rewrite lands.
+
+**Cross-fixture audit (post-rollout).** After Pattern 25
+proves stable on HA, audit other fixtures that create
+side-resources:
+
+- `azd-patterns` — creates an ACA Job + Bicep deployment;
+  teardown is `az containerapp job delete` + `az group
+  deployment delete`. Different shape, may or may not have
+  the same OIDC vulnerability — defer audit until HA proven.
+- `foundry-evals` — creates an evaluation + dataset on
+  Foundry; teardown via SDK. Short-lived, likely safe.
+- `foundry-memory` — creates a memory store + entries;
+  teardown via SDK. Short-lived, likely safe.
+- `foundry-toolbox` — registers in-process tools, no
+  external resources to clean. Not applicable.
+- `foundry-prompt-agents` — creates a prompt agent; teardown
+  via SDK. Short-lived, likely safe.
+
+Don't preemptively soft-PASS-teardown the safe ones — only
+apply Pattern 25 when a fixture has demonstrated a real flap
+attributable to teardown.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |
