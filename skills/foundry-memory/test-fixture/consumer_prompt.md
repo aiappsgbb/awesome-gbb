@@ -38,7 +38,8 @@ fact (either in a returned memory's content or in a summary of stored
 profile attributes). Then delete the memory store.
 
 Foundry project endpoint: `$AZURE_AI_ENDPOINT`
-Model deployment available in that project: `gpt-5.4-mini`
+Model deployments available in that project: `gpt-5.4-mini` (chat),
+`text-embedding-3-small` (embedding).
 
 The skill's `SKILL.md` is the source of truth for which SDK to use, how to
 authenticate, how to construct the memory store definition, how to write
@@ -48,12 +49,11 @@ remember from training data, the skill wins.
 
 The skill documents both a `chat_model` and an `embedding_model` field on
 the memory-store definition. The CI Foundry project at `$AZURE_AI_ENDPOINT`
-deploys `gpt-5.4-mini` for chat; the embedding model may or may not be
-deployed. Probe the project's available deployments (e.g. via the
+has both deployed (names above). Pass those exact deployment names to the
+memory-store definition. If either is missing (e.g. infra drift), probe via
 `AIProjectClient`'s deployments collection or the Azure OpenAI REST
-`/deployments` endpoint). If no embedding model that the skill recommends
-is deployed, write the FAIL marker with a clear reason naming the missing
-deployment — do not invent one.
+`/deployments` endpoint and write the FAIL marker with a clear reason
+naming the missing deployment — do not invent one.
 
 Give every Azure resource you create a CI-safe name that includes a short
 UUID suffix (Pattern 15.3) so parallel runs don't collide. Suggested pattern:
