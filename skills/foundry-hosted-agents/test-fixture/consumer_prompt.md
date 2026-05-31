@@ -100,16 +100,25 @@ choice.
      Every line MUST print `…=set`. If any is empty, the workflow env
      contract is broken — FAIL with `workflow env contract: <var> empty`.
 
-   - **Prove `az` is actually authenticated** with the right subscription:
+   - **Prove `az` is actually authenticated.** Run the command and
+     check for the "not logged in" error case ONLY. Do **NOT** invent
+     additional strictness (no subscription-ID equality compare, no
+     `--query id -o tsv` exact match, no whitespace/regex assertion) —
+     the workflow's `azure/login@v2` step has already validated the
+     subscription before invoking you, and the active subscription is
+     guaranteed to be `$AZURE_SUBSCRIPTION_ID`. A subscription-ID
+     equality check in this fixture caused a false FAIL in run
+     `26701034360` because the model wrote a strict comparison whose
+     output shape did not survive shell quoting (AGENTS.md § 9.7
+     Pattern 16, Finding #17).
 
      ```bash
      az account show --output table
      ```
 
-     MUST return a row whose `SubscriptionId` matches
-     `$AZURE_SUBSCRIPTION_ID`. If it errors with "Please run
-     'az login'", `azure/login@v2` failed upstream — FAIL with
-     `az account show: not logged in`.
+     If this errors with "Please run 'az login'", `azure/login@v2`
+     failed upstream — FAIL with `az account show: not logged in`.
+     **No other assertion. Print the table; move on.**
 
    - **Explicit `azd auth login` via OIDC federated credential**
      (AGENTS.md § 9.7 Pattern 6). Implicit env-var pickup by `azd`
@@ -200,18 +209,63 @@ choice.
 5. **Sleep 60 s** for RBAC propagation on the newly-created per-agent
    workload identity (per SKILL.md § RBAC propagation — first invoke
    often 401s while the agent's instance identity gets its role
-   assignment). Then invoke the agent. Prefer
-   `azd ai agent invoke "${AGENT_NAME}" --message "ping"` if the
-   extension version supports the subcommand; otherwise fall back to
-   a Foundry data-plane Responses REST call against
-   `${FOUNDRY_PROJECT_ENDPOINT}` using `DefaultAzureCredential` with
-   the `https://ai.azure.com/.default` scope (per the MAF 1.4.0
-   token-scope migration documented in SKILL.md L60-62).
-   - **Retry-on-401:** if the first invoke returns HTTP 401 or
-     `agent_not_found`, sleep another 60 s and retry up to 2 more
-     times. The skill-test workflow's retry classifier does NOT cover
-     401s, so this fixture must self-retry.
-   - Capture the response body. Verify the response is non-empty.
+   assignment). Then invoke the agent via the **Python SDK** — this
+   is the ONLY prescribed invocation path (per SKILL.md L1248-1264).
+
+   **Do NOT** use `azd ai agent invoke` — its flag surface is preview
+   and has drifted across azd extension versions (`--message`,
+   `--prompt`, positional — none are stable; current builds reject
+   `--message` with `unknown flag: --message`). Do NOT branch on
+   "if the CLI subcommand exists, prefer it; else fall back to REST".
+   A single prescribed SDK path removes the model's failure mode where
+   partial CLI success (subcommand recognised, flag rejected) prevents
+   the fallback (AGENTS.md § 9.7 Pattern 16, Finding #17). The SDK
+   surface is GA-stable; use it.
+
+   Install once (idempotent if already on runner):
+
+   ```bash
+   pip install -q azure-ai-projects azure-identity openai
+   ```
+
+   Then invoke with retry-on-401 (the workflow retry classifier does
+   NOT cover 401s; this fixture self-retries):
+
+   ```bash
+   FOUNDRY_PROJECT_ENDPOINT="https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test" \
+   AGENT_NAME="${AGENT_NAME}" \
+   python3 - <<'PY'
+   import os, sys, time
+   from azure.ai.projects import AIProjectClient
+   from azure.identity import DefaultAzureCredential
+
+   project = AIProjectClient(
+       endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+       credential=DefaultAzureCredential(),
+       allow_preview=True,  # REQUIRED for agent_name (SKILL.md L1257)
+   )
+   oai = project.get_openai_client(agent_name=os.environ["AGENT_NAME"])
+
+   last_err = None
+   for attempt in range(3):
+       try:
+           resp = oai.responses.create(input="ping", stream=False)
+           if resp.output_text:
+               print(f"OK: {resp.output_text[:120]}")
+               sys.exit(0)
+           last_err = "empty output_text"
+       except Exception as e:
+           last_err = f"{type(e).__name__}: {str(e)[:160]}"
+       time.sleep(60)
+   print(f"FAIL after 3 attempts: {last_err}", file=sys.stderr)
+   sys.exit(2)
+   PY
+   ```
+
+   Exit code 0 = invoke succeeded; proceed to step 6. Non-zero = invoke
+   failed; emit `SMOKE_RESULT=FAIL invoke: <one-line reason>` via step 7
+   and stop (do NOT proceed to teardown — a leak is cheaper than a
+   misclassified PASS).
 
 6. **Teardown** (best-effort — do NOT FAIL the run if cleanup throws,
    just log and continue, because partial teardown still costs less

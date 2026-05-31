@@ -1459,6 +1459,105 @@ the actual failures masking real bugs (Finding #16's
 `FOUNDRY_PROJECT_ENDPOINT` extension drift was only visible AFTER the
 install detour stopped consuming budget).
 
+#### Pattern 16 — Single-path invoke contract — never branch on preview-CLI flags (Finding #17)
+
+**Provenance.** Run [`26701034360`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26701034360)
+HA leg (SHA `2af039d`), 4th stability run on Patterns 12+13+14+15.
+Fixture step 5 said:
+
+> Prefer `azd ai agent invoke "${AGENT_NAME}" --message "ping"` if the
+> extension version supports the subcommand; otherwise fall back to a
+> Foundry data-plane Responses REST call …
+
+The `azure.ai.agents` azd extension in the current build accepts
+`azd ai agent invoke` (the **subcommand**) but rejects `--message`
+(the **flag**) with `unknown flag: --message`. The model's literal
+branch evaluation went: "subcommand exists → take CLI path → flag
+fails → conclude broken → emit `SMOKE_RESULT=FAIL azd ai agent
+invoke: unknown --message flag`". The fallback was reached **only on
+subcommand absence**, not flag absence. Three prior runs had passed
+because the model non-deterministically chose the REST fallback first.
+SKILL.md L1264 actually documents `azd ai agent invoke "Hello!"` as
+**positional** — the fixture invented the `--message` flag.
+
+Same run had a second compounding bug: the preamble's
+`az account show` assertion ("MUST return a row whose SubscriptionId
+matches `$AZURE_SUBSCRIPTION_ID`") invited the model to write a
+strict subscription-ID equality check, which failed twice on shell
+quoting before the invoke step even ran.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — branch on preview-CLI flag presence -->
+5. Prefer `azd ai agent invoke "${AGENT_NAME}" --message "ping"` if the
+   extension version supports the subcommand; otherwise fall back to a
+   Foundry data-plane Responses REST call …
+```
+
+```markdown
+<!-- WRONG — strict-equality preamble assertion invites brittle compares -->
+az account show MUST return a row whose SubscriptionId matches
+`$AZURE_SUBSCRIPTION_ID`.
+```
+
+**Fix (3 rules).**
+
+1. **For preview-unstable CLI surfaces, prescribe the GA SDK/REST
+   path ONLY.** Preview CLI flag surfaces drift across versions
+   (`--message` → `--prompt` → positional → removed). The Python SDK
+   surface (`AIProjectClient(allow_preview=True).get_openai_client(agent_name=...).responses.create(input=...)`)
+   is GA-stable. Document the SDK call inline in the fixture; never
+   write `if CLI works, else fall back to SDK`. The model takes
+   branch logic literally; partial CLI success without flag
+   recognition will NOT trigger the fallback.
+2. **Preamble assertions: "show, don't assert".** For workflow-
+   provided context (subscription ID, OIDC token, env vars), the
+   fixture should print the state for the run log only. The workflow
+   has already validated the context before invoking the agent.
+   Strict-equality compares (`[[ "$(... -o tsv)" == "$ENV_VAR" ]]`)
+   in the fixture body invite the model to invent stale-quoting
+   variants that false-FAIL. Only existence checks
+   (`[[ -n "$ENV_VAR" ]]`) and "did the command error?" are allowed.
+3. **One-shot fixture invokes use the SYNC SDK.** `AIProjectClient`
+   has both sync and async variants. In-container code
+   (`FoundryChatClient` etc.) uses async; one-shot fixture invokes
+   should use sync (`from azure.ai.projects import AIProjectClient`,
+   not `.aio`). Async-in-Bash-heredoc invites event-loop pitfalls.
+
+**Cross-skill carry rule.** Any new fixture invoking an Azure
+preview-CLI surface (azd extensions, `az` preview commands) checks:
+
+- Is there a GA SDK / REST path that does the same thing? → use
+  that exclusively. Add an explicit "Do NOT use `<cli-cmd>` — its
+  flag surface is preview-unstable" rule.
+- Is the CLI the only path? → pin the CLI flag set in the fixture
+  preamble: name the exact flags + values + expected behaviour.
+  Add a "if `<cli-cmd>` exits non-zero with `unknown flag`, the
+  binary version on PATH has drifted from this fixture — bump the
+  workflow's setup-action SHA and reset the stability counter"
+  diagnostic.
+
+**Diagnostic protocol.** If a fixture leg fails with `unknown flag`
+or `unknown subcommand`:
+
+1. Grep the failed agent's log for `unknown flag:|unknown subcommand:|unknown command:`.
+2. Cross-reference the offending CLI invocation against the
+   documented SKILL.md signature (the SKILL is the contract).
+3. If the fixture invented the flag → fix the fixture (rewrite to
+   the GA SDK path or correct the flag).
+4. If the SKILL also has the wrong signature → the upstream CLI
+   drifted. Bump the SKILL and the fixture together; reset the
+   stability counter.
+
+**Cost / benefit.** SDK-only invoke adds ~1 s for `pip install -q
+azure-ai-projects azure-identity openai` (pre-cached on second run
+of the stability cycle). Removed cost: the entire class of `unknown
+flag`/`unknown subcommand` non-deterministic failures across every
+preview-CLI fixture. The HA leg's flap rate (4 runs to first
+failure × ~13 min per run = ~52 min wasted budget on Pattern 15
+cycle alone) drops to zero under the SDK path.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |

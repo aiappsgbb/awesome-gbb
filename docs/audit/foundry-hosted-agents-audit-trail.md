@@ -775,10 +775,93 @@ weekly cron picks it up first).
 
 ---
 
-## Appendix — Stability runs (post-Finding-#15+#16 fix)
+## Finding #17 — `azd ai agent invoke --message` flag drift + model fallback inertia
+
+**Symptom.** Run [`26701034360`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26701034360)
+HA leg (SHA `2af039d`, 4th stability run on Patterns 12+13+14+15)
+failed at step 5. Agent log (`/tmp/ha-fail-r4.log`, 393 lines, job
+`78693805571`):
+
+```
+$ azd ai agent invoke "${AGENT_NAME}" --message "ping"
+Error: unknown flag: --message
+
+Usage:
+  azd ai agent invoke <agent-name> [flags]
+  ...
+$ printf 'SMOKE_RESULT=FAIL azd ai agent invoke: unknown --message flag\n' > /tmp/ha-smoke-result
+```
+
+Wall-clock: 4 m 43 s before FAIL marker write. Three prior cycle
+runs (`b3ac011`, `c5ce60e`, `897b11b`) had been green because the
+model non-deterministically chose the REST fallback path each time.
+
+**Root cause — two compounding bugs.**
+
+**Bug A: Invoke step had a non-deterministic CLI/REST branch.**
+Fixture L200-214 prescribed:
+
+> Prefer `azd ai agent invoke "${AGENT_NAME}" --message "ping"` if
+> the extension version supports the subcommand; otherwise fall back
+> to a Foundry data-plane Responses REST call …
+
+The current `azure.ai.agents` azd extension build accepts the
+`agent invoke` subcommand but rejects `--message`. The model's
+literal branch logic: "subcommand exists → take CLI path → flag
+fails → FAIL". The fallback was reached only on subcommand absence,
+not flag absence. SKILL.md L1264 actually documents
+`azd ai agent invoke "Hello!"` as **positional**; the fixture
+invented `--message`. This is Finding #17's primary cause.
+
+**Bug B: Preamble subscription assertion was over-strict.**
+Fixture L103-112 read "MUST return a row whose SubscriptionId
+matches `$AZURE_SUBSCRIPTION_ID`". The "MUST return a row whose …
+matches" wording invited the model to write a strict
+subscription-ID equality compare, which it did, and which failed
+twice on shell quoting before the invoke step ran. The agent
+recovered (the fix was 1 attempt), but it consumed budget reasoning
+about an assertion that the workflow's `azure/login@v2 + OIDC`
+already satisfies. This is the compounding cause.
+
+**Fix.** Single commit on `unsafecode/pr-review`:
+
+1. Fixture L200-214 — replaced CLI/REST branch with a single SDK
+   call (`AIProjectClient(allow_preview=True).get_openai_client(agent_name=...).responses.create(input=...)`,
+   sync variant, 3-attempt retry-on-401 with 60 s sleep). Added an
+   explicit rule: "Do NOT use `azd ai agent invoke` — its flag
+   surface is preview-unstable."
+2. Fixture L103-112 — replaced "MUST return a row whose
+   SubscriptionId matches" with "show, don't assert": print
+   `az account show --output table` for the log; check only that
+   `[[ -n "$AZURE_SUBSCRIPTION_ID" ]]`; trust the workflow's OIDC
+   step.
+3. SKILL.md L22 — `metadata.version` `1.8.3` → `1.8.4`.
+4. AGENTS.md § 9.7 — added Pattern 16 ("Single-path invoke contract —
+   never branch on preview-CLI flags") with the 3-rule fix and
+   diagnostic protocol.
+
+Stability counter was reset to 0; next 5/5 cycle restarts on the fix
+SHA.
+
+**Why three prior runs passed.** The model's branch logic
+("Prefer X; otherwise fall back to Y") is non-deterministic when
+**both** paths are reachable at the top. Sampling chose REST in
+3 prior cycles and CLI in run #4. The fixture authored a branch the
+model could go either way on — that's not a stability test, that's
+a coin flip with a long tail. Pattern 16 removes the branch.
+
+**Audit:** the same anti-pattern (`if preview-CLI works, else fall
+back to SDK/REST`) should not exist in any other fixture. Verified
+absent in `prompt-agents` and `azd-patterns` fixtures at SHA
+`2af039d`; both prescribe SDK or `az` (GA) commands directly with no
+preview-CLI branches.
+
+---
+
+## Appendix — Stability runs (post-Finding-#17 fix)
 
 **Goal:** N≥5 consecutive green `copilot-cli-matrix (foundry-hosted-agents)`
-matrix legs against the combined Patterns 12+13+14+15 fix stack.
+matrix legs against the combined Patterns 12+13+14+15+16 fix stack.
 
 - F4 — TBD (SHA TBD) — TBD
 - F5 — TBD (SHA TBD) — TBD
