@@ -49,18 +49,23 @@ following:
      Every line MUST print `…=set`. If any is empty, the workflow env
      contract is broken — FAIL with `workflow env contract: <var> empty`.
 
-   - Then prove `az` is actually authenticated:
+   - **Show-don't-assert: `az` CLI state (Pattern 17).** Per AGENTS.md
+     § 9.7 Pattern 11, copilot CLI subprocesses inherit env vars but
+     **NOT** the `az` CLI credential cache (`~/.azure/`). Cache
+     visibility is non-deterministic across shell-creation semantics
+     (run `26703036366` Finding #18). The fixture is GA-SDK-only — it
+     uses `DefaultAzureCredential()` which reads env vars, not the
+     `az` cache. Print the `az` table for the audit log; do NOT gate
+     flow on it:
 
      ```bash
-     az account show --output table
+     az account show --output table || echo "(az cache not inherited — SDK path uses env-var OIDC)"
      ```
 
-     MUST return a row whose `SubscriptionId` column matches
-     `$AZURE_SUBSCRIPTION_ID`. If it errors with "Please run
-     'az login'", `azure/login@v2` failed upstream — FAIL with
-     `az account show: not logged in`.
+     **No assertion. The auth contract is the env-var OIDC chain
+     `DefaultAzureCredential` consumes — not the `az` cache.**
 
-   Only if both checks pass, proceed to step 1.
+   Only if the env-var check passes, proceed to step 1.
 
 1. Build an `AIProjectClient(endpoint=FOUNDRY_PROJECT_ENDPOINT,
    credential=DefaultAzureCredential())`.

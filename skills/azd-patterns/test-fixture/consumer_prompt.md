@@ -74,15 +74,20 @@ choice.
      Every line MUST print `…=set`. If any is empty, FAIL with
      `workflow env contract: <var> empty`.
 
-   - **Prove `az` is actually authenticated** with the right subscription:
+   - **Show-don't-assert: `az` CLI state.** Per AGENTS.md § 9.7 Pattern
+     11, copilot CLI subprocesses inherit the workflow step's `env:`
+     block but NOT the `az` CLI credential cache. The cache MAY or MAY
+     NOT be inherited depending on shell-creation semantics — racing
+     this is the Pattern 17 anti-pattern. Print for the audit log; do
+     NOT gate flow on the result:
 
      ```bash
-     az account show --output table
+     az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
      ```
 
-     MUST return a row whose `SubscriptionId` matches
-     `$AZURE_SUBSCRIPTION_ID`. If it errors with "Please run
-     'az login'", FAIL with `az account show: not logged in`.
+     Per Pattern 16 + 17, the `azd auth login` step immediately below is
+     the deterministic auth proof. Do NOT FAIL the smoke on this `az`
+     output — it is informational only.
 
    - **Explicit `azd auth login`** (AGENTS.md § 9.7 Pattern 6).
      Implicit OIDC pickup via `AZURE_FEDERATED_TOKEN_FILE` has two

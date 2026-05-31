@@ -1558,6 +1558,129 @@ preview-CLI fixture. The HA leg's flap rate (4 runs to first
 failure × ~13 min per run = ~52 min wasted budget on Pattern 15
 cycle alone) drops to zero under the SDK path.
 
+#### Pattern 17 — Show-don't-assert on `az` CLI state (Finding #18)
+
+**Provenance.** Run [`26703036366`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26703036366)
+azd-patterns leg (SHA `d390033`), 4th stability run on Pattern 16
+foundation. The fixture's Step 0 preamble asserted:
+
+> If this errors with "Please run 'az login'", `azure/login@v2` failed
+> upstream — FAIL with `az account show: not logged in`.
+
+The agent's transcript:
+
+> **Blocked:** the smoke couldn't proceed because `az account show`
+> was not logged in in this shell, so the required Azure auth
+> precondition was missing. I wrote the failure marker with that
+> reason.
+
+Wall-clock: ~6 min (vs the ~13 min expected for a real deploy) — the
+fast-fail at Step 0 is the smoking gun. Three prior runs (`9a79d2a`,
+`8dcc536`, `c2b4d50`) passed because the `~/.azure/azureProfile.json`
+cache happened to be visible in the spawned shell; run #4 fell on the
+wrong side of the race.
+
+**Root cause.** This is the fixture-side enforcement of the contract
+already documented in Pattern 11 (workflow env contract): copilot CLI
+subprocesses **inherit the workflow step's `env:` block but NOT the
+`az` CLI credential cache** at `~/.azure/`. The `azure/login@v2`
+action writes its OIDC-exchanged credentials to that cache, but
+whether the subshell sees the file depends on:
+
+- shell-creation semantics (POSIX `bash -l` vs `bash` vs `sh`)
+- whether the GHA runner's `$HOME` is preserved across the
+  copilot-cli subprocess boundary
+- the order in which the action's post-step credential cleanup runs
+  relative to the in-progress subprocess
+
+None of these are deterministic. Three of five recent runs got lucky;
+one didn't. The fixture asserted on the lucky path and called the
+unlucky one a failure.
+
+The fixture itself runs `azd auth login --federated-credential-provider
+github` **immediately after** the broken `az account show` assertion.
+That command **is** the deterministic OIDC exchange — it consumes the
+inherited `AZURE_*` env vars (which ARE deterministic per Pattern 11)
+and produces a fresh `azd` token. The `az` cache check was redundant
+to begin with, and adding a hard FAIL on its absence turned it from
+"redundant" to "actively harmful".
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — assert on inherited cache that may not be visible -->
+- **Prove `az` is actually authenticated.**
+
+  ```bash
+  az account show --output table
+  ```
+
+  If this errors with "Please run 'az login'", `azure/login@v2`
+  failed upstream — FAIL with `az account show: not logged in`.
+```
+
+**Fix.**
+
+```markdown
+- **Show-don't-assert: `az` CLI state.** Per Pattern 11, copilot CLI
+  subprocesses inherit env vars but NOT `~/.azure/`. Cache visibility
+  is non-deterministic. Print for the audit log; do NOT gate flow:
+
+  ```bash
+  az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
+  ```
+
+  **No assertion. `azd auth login` (next step) is the auth gate.**
+```
+
+**General rule (extends Pattern 16 rule 2).** "Show, don't assert"
+applies to any workflow-provided credential or context that the
+fixture re-reads:
+
+| Asserted on | Anti-pattern | Pattern |
+|------|------|------|
+| Subscription-ID equality | `[[ "$(az account show ...)" == "$ENV_VAR" ]]` | 16 |
+| `az` cache presence | `az account show \|\| FAIL` | 17 |
+| `azd` cache presence | `azd auth login --check-only \|\| FAIL` | 17 |
+| Inherited env-var values matching a *form* | `[[ "$ENV_VAR" =~ ^[a-f0-9-]{36}$ ]]` | 17 |
+| OIDC token claim contents | jwt-decode + claim compare | 17 |
+
+The only allowed assertion shape on workflow-provided context is
+existence (`[[ -n "$VAR" ]]`) — for everything else, **print and move
+on**. The actual cred validation happens when a real Azure call is
+made (Foundry SDK, `azd up`, `az containerapp create`); let *those*
+calls fail loudly and the agent will report the real error.
+
+**Cross-skill carry rule.** All 3 pilot fixtures
+(`foundry-prompt-agents`, `foundry-hosted-agents`, `azd-patterns`)
+shipped the same anti-pattern and were patched in the same commit
+that introduced Pattern 17. Any future fixture that touches `az` or
+`azd` CLI state in its preamble MUST use the show-don't-assert form
+from day one — there is no "first I'll get the assert version working
+locally, then soften it" path; the assert version passes locally
+because your `~/.azure/` is always populated.
+
+**Diagnostic protocol.** If a fixture leg fails with a Step 0/precondition
+error mentioning `az account show` or `azd auth login --check-only`:
+
+1. Verify the run is fast (≤ 8 min vs ≥ 13 min for real deploy work).
+   A fast-fail is the smoking gun for Pattern 17.
+2. Grep the failed agent's transcript for `not logged in` or
+   `Please run 'az login'`.
+3. Confirm the workflow's `azure/login@v2` step succeeded (it almost
+   always will — the failure is downstream of OIDC exchange).
+4. Patch the fixture's preamble to the show-don't-assert form. Bump
+   the SKILL.md PATCH version. Reset the stability counter to 0/5.
+
+**Cost / benefit.** Show-don't-assert costs nothing (the `||
+echo "(...)"` clause is < 50 ms). Removed cost: the entire class of
+non-deterministic preamble false-FAILs across every Azure fixture.
+The azd-patterns leg's flap rate (3 of 4 runs passed → 4th failed on
+inheritance race) drops to zero — the only way the fixture can fail
+on auth now is if `azd auth login` itself fails, which means the
+workflow's OIDC exchange genuinely broke (a real signal worth FAILing
+on).
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |

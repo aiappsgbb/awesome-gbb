@@ -562,3 +562,40 @@ fix needs its own fresh 5/5 cycle starting from the next commit.
 Pattern 12 + 13 are individually validated — Pattern 14 just gives
 them enough wall-clock room to land.
 
+---
+
+## Finding F-A — Pattern 17 carry-forward (cross-skill)
+
+**Class:** F-class — Fixture preamble false-FAIL on inherited `az` cache.
+
+**Provenance.** Originated **in this skill's matrix leg** — run
+[`26703036366`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26703036366)
+(SHA `d390033`), 4th run of the Pattern 16 stability cycle. The
+azd-patterns leg's Step 0 preamble asserted hard FAIL on `az account
+show: not logged in`, but per AGENTS.md § 9.7 Pattern 11 the copilot CLI
+subprocess inherits the workflow's `env:` block but NOT the
+`~/.azure/azureProfile.json` cache. Three prior runs (`9a79d2a`,
+`8dcc536`, `c2b4d50`) passed because the cache happened to be visible
+in those subshells; run #4 fell on the wrong side of the inheritance
+race. The deterministic OIDC gate is the immediately-following
+`azd auth login --federated-credential-provider github` step, which
+consumes inherited `AZURE_*` env vars (Pattern 11) — the `az` cache
+check was redundant from day one.
+
+**Full evidence + 5-row "allowed assertion shape" table:** see
+`docs/audit/foundry-hosted-agents-audit-trail.md` Finding #18 (single
+source of truth — avoiding duplication across audit trails).
+
+**Cross-skill fix applied this commit.**
+- `skills/azd-patterns/test-fixture/consumer_prompt.md` Step 0
+  preamble patched to show-don't-assert form (`az account show ... ||
+  echo "(informational)"`).
+- `skills/azd-patterns/SKILL.md` `metadata.version` bumped
+  1.4.3 → **1.4.4** (fixture body changed → PATCH per § 5).
+
+**AGENTS.md.** § 9.7 Pattern 17 added immediately after Pattern 16 —
+single canonical reference for all future Azure fixtures.
+
+**Stability counter reset to 0/5.** This is the 2nd reset of the
+Phase 2 cycle (Pattern 16 was the 1st). Next 5/5 cycle restarts on
+the combined Patterns 12+13+14+15+16+17 stack.

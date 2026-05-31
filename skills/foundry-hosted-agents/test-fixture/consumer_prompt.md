@@ -100,25 +100,22 @@ choice.
      Every line MUST print `…=set`. If any is empty, the workflow env
      contract is broken — FAIL with `workflow env contract: <var> empty`.
 
-   - **Prove `az` is actually authenticated.** Run the command and
-     check for the "not logged in" error case ONLY. Do **NOT** invent
-     additional strictness (no subscription-ID equality compare, no
-     `--query id -o tsv` exact match, no whitespace/regex assertion) —
-     the workflow's `azure/login@v2` step has already validated the
-     subscription before invoking you, and the active subscription is
-     guaranteed to be `$AZURE_SUBSCRIPTION_ID`. A subscription-ID
-     equality check in this fixture caused a false FAIL in run
-     `26701034360` because the model wrote a strict comparison whose
-     output shape did not survive shell quoting (AGENTS.md § 9.7
-     Pattern 16, Finding #17).
+   - **Show-don't-assert: `az` CLI state (Pattern 17).** Per AGENTS.md
+     § 9.7 Pattern 11, copilot CLI subprocesses inherit the workflow
+     step's `env:` block but **NOT** the `az` CLI credential cache
+     (`~/.azure/`). Whether the cache is visible depends on
+     shell-creation semantics, which are non-deterministic — racing it
+     caused the false FAIL in run `26703036366` (Finding #18). The
+     deterministic auth proof is the explicit `azd auth login` below,
+     not the inherited cache. Print the table for the audit log but do
+     NOT gate flow on the result:
 
      ```bash
-     az account show --output table
+     az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
      ```
 
-     If this errors with "Please run 'az login'", `azure/login@v2`
-     failed upstream — FAIL with `az account show: not logged in`.
-     **No other assertion. Print the table; move on.**
+     **No assertion. Even if `az` is "not logged in" here, the workload
+     proceeds — `azd auth login` is the auth gate.**
 
    - **Explicit `azd auth login` via OIDC federated credential**
      (AGENTS.md § 9.7 Pattern 6). Implicit env-var pickup by `azd`

@@ -858,13 +858,117 @@ preview-CLI branches.
 
 ---
 
-## Appendix — Stability runs (post-Finding-#17 fix)
+## Finding #18 — Show-don't-assert on `az` CLI state (Pattern 17, cross-cutting)
+
+**Class:** F-class — Fixture preamble false-FAIL (precondition gate
+asserts on non-deterministic inherited state).
+
+**Discovered:** Run [`26703036366`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26703036366),
+azd-patterns leg, SHA `d390033` (4th stability run on combined
+Patterns 12+13+14+15+16 foundation). Cross-cutting — same anti-pattern
+shipped in all 3 pilot fixtures (`foundry-prompt-agents`,
+`foundry-hosted-agents`, `azd-patterns`).
+
+**Symptom.**
+
+```
+SMOKE_RESULT=FAIL
+Reason: az account show: not logged in
+```
+
+Wall-clock: ~6 min vs ≥ 13 min expected for real deploy work — fast-fail
+at Step 0 precondition gate. Three prior runs (`9a79d2a`, `8dcc536`,
+`c2b4d50`) had passed on the same fixture body, confirming a race not
+a bug in the workflow's OIDC exchange.
+
+**Root cause.** This is the fixture-side enforcement of the contract
+already documented in Pattern 11 (workflow env contract): copilot CLI
+subprocesses inherit the workflow step's `env:` block but NOT the `az`
+CLI credential cache at `~/.azure/azureProfile.json`. The `azure/login@v2`
+action writes its OIDC-exchanged credentials to that cache, but whether
+the spawned subshell sees the file depends on POSIX shell-creation
+semantics, GHA runner `$HOME` preservation across the copilot-cli
+subprocess boundary, and the order in which the action's post-step
+credential cleanup runs relative to the in-progress subprocess. None of
+these are deterministic. Three of five runs got lucky; the 4th didn't.
+The fixture asserted on the lucky path and called the unlucky one a
+failure — but `azd auth login --federated-credential-provider github`
+**immediately after** the broken assertion IS the deterministic OIDC
+gate (it consumes inherited `AZURE_*` env vars, which ARE deterministic
+per Pattern 11). The `az` cache check was redundant from day one;
+adding a hard FAIL on its absence turned it from "redundant" to
+"actively harmful".
+
+**Agent transcript quote.**
+
+> Blocked: the smoke couldn't proceed because `az account show` was
+> not logged in in this shell, so the required Azure auth precondition
+> was missing. I wrote the failure marker with that reason.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+- **Prove `az` is actually authenticated.**
+
+  ```bash
+  az account show --output table
+  ```
+
+  If this errors with "Please run 'az login'", `azure/login@v2`
+  failed upstream — FAIL with `az account show: not logged in`.
+```
+
+**Fix.** Show-don't-assert form:
+
+```markdown
+- **Show-don't-assert: `az` CLI state.** Per Pattern 11, copilot CLI
+  subprocesses inherit env vars but NOT `~/.azure/`. Cache visibility
+  is non-deterministic. Print for the audit log; do NOT gate flow:
+
+  ```bash
+  az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
+  ```
+
+  **No assertion. `azd auth login` (next step) is the auth gate.**
+```
+
+For PA (GA-SDK-only, no `azd`), the gate is `DefaultAzureCredential()`'s
+env-var chain — same show-don't-assert form, different downstream gate.
+
+**Cross-skill action.** All 3 pilot fixtures patched in the same commit
+that introduced Pattern 17. SKILL.md PATCH versions bumped:
+- `azd-patterns` 1.4.3 → 1.4.4
+- `foundry-hosted-agents` 1.8.4 → 1.8.5
+- `foundry-prompt-agents` 1.0.5 → 1.0.6
+
+**AGENTS.md update.** § 9.7 Pattern 17 added immediately after Pattern 16
+with the 5-row "allowed assertion shape" table covering the general rule
+("show, don't assert" on any workflow-provided credential or context the
+fixture re-reads; existence-check is the only allowed assertion shape).
+
+**Stability counter reset to 0/5.** This is the 2nd reset of the Phase 2
+cycle (1st was Pattern 16, 4th run failed on `unknown flag: --message`
+in HA fixture's preview-CLI branch). Next 5/5 cycle restarts on the
+combined Patterns 12+13+14+15+16+17 stack.
+
+**Audit.** Same anti-pattern (hard FAIL on `az account show` /
+`azd auth login --check-only` / inherited-env regex match) should not
+exist in any other fixture. Verified at fix-commit SHA: all 3 pilot
+fixtures patched; future fixtures must use show-don't-assert from day
+one per AGENTS.md § 9.7 Pattern 17.
+
+---
+
+## Appendix — Stability runs (post-Finding-#18 / Pattern 17 fix)
 
 **Goal:** N≥5 consecutive green `copilot-cli-matrix (foundry-hosted-agents)`
-matrix legs against the combined Patterns 12+13+14+15+16 fix stack.
+matrix legs against the combined Patterns 12+13+14+15+16+17 fix stack.
+**All 3 pilot legs (PA, HA, azd) must be green per run** — Pattern 17
+is cross-cutting.
 
 - F4 — TBD (SHA TBD) — TBD
 - F5 — TBD (SHA TBD) — TBD
 - F6 — TBD (SHA TBD) — TBD
 - F7 — TBD (SHA TBD) — TBD
 - F8 — TBD (SHA TBD) — TBD
+

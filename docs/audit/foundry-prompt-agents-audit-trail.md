@@ -140,3 +140,43 @@ only fix is to bypass the prose-rendering surface entirely.
 - Stability counter for Task 2.4 reset from 1/5 → 0/5; fresh series
   starts on the Pattern 12 commit.
 - See AGENTS.md § 9.7 Pattern 12 (deterministic marker file write).
+
+---
+
+## Finding F-B — Pattern 17 carry-forward (cross-skill)
+
+**Class:** F-class — Fixture preamble false-FAIL on inherited `az` cache.
+
+**Provenance.** Originated in the **azd-patterns leg** of run
+[`26703036366`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26703036366)
+(SHA `d390033`), 4th run of the Pattern 16 stability cycle. The
+prompt-agents fixture shipped the same anti-pattern (hard FAIL on
+`az account show: not logged in`) at L52-61. Although the prompt-agents
+leg DID NOT fail in run #4 (it was the azd-patterns leg that fell on
+the wrong side of the inheritance race), the latent bug was identical —
+three prior runs passed by luck, the 4th would have failed eventually.
+
+**PA-specific context.** The PA fixture is **GA-SDK-only** — there is no
+`azd auth login` in this fixture. `DefaultAzureCredential()` reads the
+inherited `AZURE_*` env vars (per Pattern 11) and that is the
+deterministic auth gate. The `az account show` preamble was redundant
+to begin with.
+
+**Full evidence + 5-row "allowed assertion shape" table:** see
+`docs/audit/foundry-hosted-agents-audit-trail.md` Finding #18 (single
+source of truth — avoiding duplication across audit trails).
+
+**Cross-skill fix applied this commit.**
+- `skills/foundry-prompt-agents/test-fixture/consumer_prompt.md`
+  L52-61 patched to show-don't-assert form. Downstream auth gate
+  documented as `DefaultAzureCredential()` env-var chain (NOT
+  `azd auth login` — PA is SDK-only).
+- `skills/foundry-prompt-agents/SKILL.md` `metadata.version` bumped
+  1.0.5 → **1.0.6** (fixture body changed → PATCH per § 5).
+
+**AGENTS.md.** § 9.7 Pattern 17 added immediately after Pattern 16 —
+single canonical reference for all future Azure fixtures.
+
+**Stability counter reset to 0/5.** This is the 2nd reset of the
+Phase 2 cycle (Pattern 16 was the 1st). Next 5/5 cycle restarts on
+the combined Patterns 12+13+14+15+16+17 stack.
