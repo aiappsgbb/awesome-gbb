@@ -60,6 +60,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 PLUGIN_JSON = REPO_ROOT / "plugin.json"
 MARKETPLACE_PATH = REPO_ROOT / ".github" / "plugin" / "marketplace.json"
+SKILL_DEPS_PATH = REPO_ROOT / ".github" / "skill-deps.yml"
 
 MAX_DESCRIPTION_CHARS = 1024
 KEBAB_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -831,6 +832,148 @@ def _anchor_resolves(anchor: str, sections: set[str]) -> bool:
     return False
 
 
+def _load_skill_deps(path: pathlib.Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Parse .github/skill-deps.yml. Returns (deps_map, errors).
+
+    On parse failure, returns ({}, [<one error>]) so the caller can still
+    proceed with the other checks rather than crashing the run.
+    """
+    errors: list[str] = []
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return {}, [f"skill-deps.yml: failed to parse YAML — {exc}"]
+
+    if not isinstance(raw, dict) or "skills" not in raw:
+        return {}, ["skill-deps.yml: missing top-level `skills:` key"]
+
+    skills = raw.get("skills")
+    if not isinstance(skills, dict):
+        return {}, ["skill-deps.yml: `skills:` must be a mapping"]
+
+    deps_map: dict[str, list[str]] = {}
+    for name, entry in skills.items():
+        if not isinstance(name, str) or not KEBAB_NAME_RE.match(name):
+            errors.append(f"skill-deps.yml: invalid skill name `{name}` — must be kebab-case")
+            continue
+        if not isinstance(entry, dict):
+            errors.append(f"skill-deps.yml: entry for `{name}` must be a mapping with `depends_on:`")
+            continue
+        depends_on = entry.get("depends_on", [])
+        if not isinstance(depends_on, list):
+            errors.append(
+                f"skill-deps.yml: `{name}.depends_on` must be a list (got {type(depends_on).__name__})"
+            )
+            continue
+        for dep in depends_on:
+            if not isinstance(dep, str) or not KEBAB_NAME_RE.match(dep):
+                errors.append(
+                    f"skill-deps.yml: `{name}.depends_on` contains invalid entry `{dep}` — must be a kebab-case skill name"
+                )
+        deps_map[name] = [d for d in depends_on if isinstance(d, str)]
+
+    return deps_map, errors
+
+
+def _detect_dep_cycles(deps_map: dict[str, list[str]]) -> list[str]:
+    """Return one error per cycle detected via DFS coloring."""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {n: WHITE for n in deps_map}
+    errors: list[str] = []
+
+    def visit(node: str, stack: list[str]) -> None:
+        color[node] = GRAY
+        for dep in deps_map.get(node, []):
+            if dep not in deps_map:
+                # Unresolved dep — already reported by validate_skill_deps; skip here
+                continue
+            if color[dep] == GRAY:
+                cycle = stack[stack.index(dep):] + [dep] if dep in stack else [dep, node, dep]
+                errors.append(
+                    f"skill-deps.yml: dependency cycle detected: {' → '.join(cycle)}"
+                )
+                continue
+            if color[dep] == WHITE:
+                visit(dep, stack + [dep])
+        color[node] = BLACK
+
+    for node in deps_map:
+        if color[node] == WHITE:
+            visit(node, [node])
+
+    # De-duplicate cycle reports (DFS can rediscover the same cycle from
+    # different entry points)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for err in errors:
+        if err not in seen:
+            seen.add(err)
+            deduped.append(err)
+    return deduped
+
+
+def validate_skill_deps(
+    deps_path: pathlib.Path | None = None,
+    skills_dir: pathlib.Path | None = None,
+) -> list[str]:
+    """Validate .github/skill-deps.yml: schema, dep resolution, fixture
+    coverage, and cycles. Returns a list of human-readable error strings
+    (empty list = no errors).
+
+    Both `deps_path` and `skills_dir` are injectable for unit-test
+    isolation; default to repo-level constants when omitted.
+    """
+    deps_path = deps_path or SKILL_DEPS_PATH
+    skills_dir = skills_dir or SKILLS_DIR
+
+    if not deps_path.exists():
+        # No skill-deps file → nothing to validate. The matrix builder
+        # treats absence as "no transitive fanout".
+        return []
+
+    deps_map, errors = _load_skill_deps(deps_path)
+
+    if not deps_map and errors:
+        # Hard parse failure — return early; cycle/resolution checks
+        # would just spam additional noise.
+        return errors
+
+    # Check 1 — every declared skill in skill-deps.yml MUST exist on disk
+    real_skills = {p.parent.name for p in skills_dir.glob("*/SKILL.md")}
+    for name in deps_map:
+        if name not in real_skills:
+            errors.append(
+                f"skill-deps.yml: declared skill `{name}` has no skills/{name}/SKILL.md"
+            )
+
+    # Check 2 — every `depends_on` entry MUST resolve to a real skill on disk
+    for name, deps in deps_map.items():
+        for dep in deps:
+            if dep not in real_skills:
+                errors.append(
+                    f"skill-deps.yml: `{name}.depends_on` references unknown skill `{dep}`"
+                )
+
+    # Check 3 — every skill WITH a fixture MUST have a skill-deps entry
+    # (drift catcher: new fixture authored without updating skill-deps.yml
+    # would otherwise silently miss transitive fanout)
+    fixtured = {
+        p.parent.parent.name
+        for p in skills_dir.glob("*/test-fixture/consumer_prompt.md")
+    }
+    for name in sorted(fixtured):
+        if name not in deps_map:
+            errors.append(
+                f"skill-deps.yml: skill `{name}` has a test-fixture/consumer_prompt.md "
+                f"but no entry in skill-deps.yml — add `{name}: {{ depends_on: [] }}`"
+            )
+
+    # Check 4 — no cycles
+    errors.extend(_detect_dep_cycles(deps_map))
+
+    return errors
+
+
 def main() -> int:
     if not SKILLS_DIR.is_dir():
         print(f"ERROR: {SKILLS_DIR} does not exist", file=sys.stderr)
@@ -864,6 +1007,9 @@ def main() -> int:
 
     anchor_errors = validate_reference_section_anchors()
     all_errors.extend(anchor_errors)
+
+    skill_deps_errors = validate_skill_deps()
+    all_errors.extend(skill_deps_errors)
 
     reference_file_count = sum(
         1
