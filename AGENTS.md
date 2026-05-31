@@ -1735,6 +1735,231 @@ that's every ACA-Jobs / ACA-Apps fixture that uses Bicep — currently
 azd-patterns only, but threadlight-skills and any future ACA-on-Bicep
 skill will benefit.
 
+#### Pattern 19 — Retry classifier needs jittered cooldown for matrix-leg races (Finding #20)
+
+**Provenance.** Run [`26711407035`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711407035)
+(SHA `cd5213a`), Phase 3 6-leg matrix. The `foundry-hosted-agents` leg
+hit `CAPIError: 429 Too Many Requests` from the **Copilot CLI's own
+backing model** (not the Foundry deployment under test) while
+parallel matrix legs were spinning their own copilot processes.
+Retry leg also hit 429 a few seconds later because both legs were
+re-running in lockstep against the same shared CLI-backing-model
+quota.
+
+**The fix.** Extend the retry classifier on `skill-test.yml` to
+include `CAPIError|Too Many Requests|Failed to get response from
+the AI model|transient API error` AND space the retry by ≥ 30 s
+random jitter (`sleep $(( RANDOM % 30 + 30 ))`) so concurrent legs
+don't re-fire into the same throttle window. Combined with
+Pattern 22's `max-parallel: 2` throttle, this collapses the 429
+flap rate to zero on subsequent runs (verified
+[`26711952364`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364)
++ [`26714879734`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26714879734)).
+
+**Cross-skill carry rule.** Any future fixture that calls a model
+through Copilot CLI (i.e. every Copilot-CLI fixture) inherits this
+class of failure. The retry classifier + jitter is workflow-side
+and protects all legs automatically; no fixture-side change needed.
+
+#### Pattern 20 — Copilot CLI cannot read `~/.copilot/installed-plugins/` for fixture skills (Finding #21)
+
+**The bug.** Earlier Phase 3 attempts tried to ship the `awesome-gbb`
+plugin to the CI runner via `gh skill install` so the fixture could
+reference the very skill under test by name. The Copilot CLI's
+plugin-resolution path only reads from its bundled marketplace
+registry at startup, NOT from `~/.copilot/installed-plugins/` on the
+runner. The agent had no awareness of any locally-installed skill,
+so "use foundry-hosted-agents to deploy …" prompted from a fixture
+would be treated as plain English, not a skill reference.
+
+**The fix.** Fixtures MUST be **self-contained goal prompts** — they
+state the task in plain English ("create a hosted agent that …") and
+the agent is expected to know how to do it from its **general training
++ the SKILL.md content pasted into the prompt body via the existing
+audit-step guard**. The fixture file is therefore the test surface,
+not a `Use skill X` directive. This pattern is now load-bearing for
+every Copilot-CLI fixture in the catalog (PA, HA, evals, memory,
+toolbox, azd-patterns all follow it).
+
+**Cross-skill carry rule.** Never write `Use the foundry-X skill`
+in a fixture. Always state the goal directly. The agent will use
+the SKILL.md context the workflow provides, not a plugin lookup.
+
+#### Pattern 21 — Sweden Central requires `GlobalStandard` SKU for embedding deployments (Finding #22)
+
+**The bug.** Earlier `foundry-memory` fixture iteration tried to
+deploy `text-embedding-3-small` with the default `Standard` SKU in
+Sweden Central. ARM rejected with `InvalidResourceProperties: Sku is
+not supported in this region`. Sweden Central, our CI region, only
+offers embeddings under `GlobalStandard`.
+
+**The fix.** When provisioning embedding models in Sweden Central
+(the CI region), the deployment SKU MUST be `GlobalStandard`. This
+applies to the standing `text-embedding-3-small` deployment in
+`aif-awesome-gbb-ci` and to any future embedding deployment used
+by a fixture. Chat completion models (`gpt-5.4-mini`, `gpt-5.4`)
+work fine under `Standard` in Sweden Central — only embeddings
+need `GlobalStandard`.
+
+**Cross-skill carry rule.** Any fixture or skill that documents
+embedding-deployment provisioning in Sweden Central MUST specify
+`sku: { name: "GlobalStandard" }` in its Bicep / azd template.
+Cross-check region capacity before changing region — other regions
+(EastUS, EastUS2) accept `Standard` for embeddings.
+
+#### Pattern 22 — Throttle matrix parallelism to ≤ 2 to avoid CLI-backing-model 429s (Finding #23)
+
+**Provenance.** Run [`26711407035`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711407035)
+ran the 6-leg matrix at default GHA `max-parallel: 5` and
+**deterministically** hit `CAPIError: 429 Too Many Requests` on
+the heaviest leg (`foundry-hosted-agents`). The Copilot CLI's
+backing model has per-account RPM quota that 5 parallel legs of
+`copilot -p` consume in seconds. After fix
+([`47112b2`](https://github.com/aiappsgbb/awesome-gbb/commit/47112b2)),
+run [`26711952364`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364)
+ran 5/6 GREEN at `max-parallel: 2`; the only remaining failure was
+Pattern 23 (different bug entirely).
+
+**The fix.**
+
+```yaml
+# .github/workflows/skill-test.yml
+copilot-cli-matrix:
+  strategy:
+    max-parallel: 2   # Pattern 22 — Copilot CLI's own backing model
+                      # has tight RPM quota; 3+ parallel copilot -p
+                      # invocations from the same runner-account hit
+                      # CAPIError 429. 2 is the verified safe ceiling.
+```
+
+**Trade-off.** Wall-clock for a full 6-leg matrix grows from
+~25 min (max-parallel=5, with retries) to ~30-35 min
+(max-parallel=2, stable). The wall-clock cost is worth it — flap
+rate goes from "first 429 within seconds" to zero across the next
+two stability runs.
+
+**Cross-skill carry rule.** Do NOT raise `max-parallel` above 2
+without a quota-side change. If you need more throughput, the
+correct path is to run smaller targeted matrices via the
+change-gating in Pattern 24 (`build-test-matrix.py --changed-only`)
+— not to fan out wider.
+
+#### Pattern 23 — Foundry project MI is the THIRD identity, needs separate `Cognitive Services OpenAI User` grant (Finding #24)
+
+**Provenance.** Run [`26711952364`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364)
+(SHA `47112b2`), `foundry-memory` leg job
+[`78723651792`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26711952364/job/78723651792).
+Memory store creation succeeded, but the **Foundry-internal memory
+consolidation worker** returned 401 when calling the chat deployment
+to extract semantic memories. Three rounds of forensic log capture
+(596-line `/tmp/mem-job-78723651792.log`, lines 192, 418, 425) showed
+the 401 came from the server-side worker hitting
+`https://cognitiveservices.azure.com` with a token issued to an
+identity that was NOT the CI UAMI used by every other passing leg.
+
+**The three identities** in `aif-awesome-gbb-ci`, NONE of which
+overlap by default:
+
+| # | Identity | Object ID | Default RBAC | Used by |
+|---|---|---|---|---|
+| 1 | **Account SAMI** | `fbe3089f-…` | Empty | Account-level system tasks (rarely used directly) |
+| 2 | **Project `ci-test` SAMI** | `8c1b62da-…` | **Only ACR roles** | **Foundry server-side workers** (memory consolidation, hosted-agent runtime, evals graders) |
+| 3 | **CI UAMI** | `ff405901-…` | Contributor + AcrPush + Cog OpenAI User + Foundry User | Every CI fixture's direct deployment calls |
+
+The 5 passing legs (PA, HA, evals, toolbox, azd-patterns) all call
+deployments **directly** with identity #3 (the UAMI) which has the
+right roles. Memory uniquely triggers identity #2 because Foundry's
+memory consolidation runs server-side as the **project** MI, NOT the
+caller's UAMI.
+
+**The fix.** Grant `Cognitive Services OpenAI User` AND `Cognitive
+Services User` to the **project MI** at **account scope**:
+
+```bash
+SUB=2c745a8f-9d37-45e3-8506-80797e89735e
+ACCT_SCOPE=/subscriptions/$SUB/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.CognitiveServices/accounts/aif-awesome-gbb-ci
+PROJECT_MI_OBJECT_ID=8c1b62da-a294-4bec-b1eb-e5664b7bd490  # from `az cognitiveservices account project show`
+
+az role assignment create --assignee-object-id $PROJECT_MI_OBJECT_ID \
+  --assignee-principal-type ServicePrincipal \
+  --role "Cognitive Services OpenAI User" --scope $ACCT_SCOPE
+az role assignment create --assignee-object-id $PROJECT_MI_OBJECT_ID \
+  --assignee-principal-type ServicePrincipal \
+  --role "Cognitive Services User" --scope $ACCT_SCOPE
+```
+
+Wait ≥ 5 min for AAD propagation, then re-trigger.
+[`26714879734`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26714879734)
+verified the fix: memory leg GREEN in 13 min after the grant.
+
+**Cross-skill carry rule.** Any fixture that exercises a Foundry
+server-side worker (memory, hosted-agent runtime callbacks, eval
+graders running in the project, server-orchestrated retrievals) MUST
+either (a) confirm the project MI already has the right Cog roles,
+or (b) include a pre-fixture RBAC grant step in a CI bootstrap
+script. The audit step must check identity #2's role assignments,
+not just identity #3's.
+
+**Diagnostic protocol.** When a fixture fails with 401 from an
+Azure call:
+
+1. Determine which identity the call ran as. If the SDK call was
+   direct (your code) → identity #3 (UAMI). If the call was
+   triggered by `AIProjectClient.beta.memory_stores.create(...)`,
+   `AgentRunner.run(...)`, an eval grader invocation, etc.
+   → identity #2 (project MI).
+2. List role assignments on identity #2:
+   `az role assignment list --assignee $PROJECT_MI_OBJECT_ID --all`.
+3. If `Cognitive Services OpenAI User` or `Cognitive Services User`
+   is missing on the account scope → Pattern 23. Grant + wait
+   ≥ 5 min + retry.
+
+**Why this lurks.** Identity #2 is created automatically when a
+Foundry project is created; the create flow grants ACR roles
+(needed for hosted-agent image pulls) but not Cog roles (because
+the user might not deploy chat models). The catalog's CI used to
+ride on identity #3 for everything, so this gap was invisible
+until the first server-orchestrated workload (memory) landed.
+
+#### Pattern 24 — Change-gated matrix saves 80% of CI cost on iterative PRs (Finding #25)
+
+**Provenance.** Phase 3 matrix expansion (PA + HA + evals + memory
++ toolbox + azd-patterns = 6 legs × ~5-18 min each = ~75 min of
+runner time per full PR push). Iterative debugging on a single skill
+(e.g. 5 stability runs on memory alone) would burn ~375 min of CI
+budget if the full matrix re-ran every time.
+
+**The fix.** [`scripts/build-test-matrix.py`](scripts/build-test-matrix.py)
+gained `--changed-only --base-ref <sha>` flags. The PR-triggered
+workflow path computes `git diff $base_ref..HEAD`, maps changed
+files to changed skills, applies **forward fanout** from
+[`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
+and B `depends_on` A, run B too), and forces a full matrix on
+**infra-file changes** (`plugin.json`, the workflow itself, the
+matrix script, `skill-deps.yml`, `quarantine.yml`). The `push: main`
+and `schedule:` paths always run the full matrix.
+
+**Cost / benefit.** A PR that touches only `foundry-memory/test-fixture/`
+runs ONE leg (memory) instead of six. Wall-clock for an iterative
+retry drops from ~30 min to ~13 min; budget cost drops 5/6. Catch
+rate is preserved because the full matrix still runs on `main`
+and weekly, and forward fanout protects against upstream-skill
+changes silently breaking downstream consumers.
+
+**Cross-skill carry rule.** When you add a new fixture, also add
+an entry to `.github/skill-deps.yml` even if `depends_on: []`. The
+matrix-builder's "all fixtured skills" set is derived from this
+file; a missing entry → your fixture never runs in CI even when
+its files change.
+
+**Gotcha.** Change-gating diffs against `github.event.pull_request.base.sha`,
+which is the **target branch's HEAD** (usually `main`). So iterative
+retries on the SAME PR will still re-include every fixture that's
+been touched anywhere in the PR's commit history, not just the
+last commit. This is correct behaviour (the PR as a unit must
+pass), but means the cost savings show on PRs that touch a
+**subset** of skills, not on iterative-retry cycles.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |
