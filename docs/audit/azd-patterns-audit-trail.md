@@ -505,3 +505,60 @@ succeed? vs. did telemetry land?) and produces flaky CI.
 - See AGENTS.md § 9.7 Pattern 13 (LAW soft-PASS / async telemetry
   conflation anti-pattern).
 - Bumped `metadata.version` PATCH `1.4.2` → `1.4.3`.
+
+### F6 — Finding #19: GHA job timeout raced marker eval at the wire (2026-05-31)
+
+**Provenance.** First stability run on the combined Pattern 12 +
+Pattern 13 foundation: run
+[`26698566215`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26698566215)
+on SHA `46e0657`. PA and HA legs both `success`. The azd-patterns
+leg's `Run consumer prompt` step ran to completion — the workflow
+evaluator printed `PASS via marker file (deterministic)` at
+`00:39:37.8348` UTC — and the GHA runner cancelled the job 113 ms
+later at `00:39:37.8461` with `##[error]The operation was canceled.`.
+Job conclusion: `cancelled`, masking what was functionally a green
+run.
+
+**Root cause.** `.github/workflows/skill-test.yml` line 109 was set
+to `timeout-minutes: 30`. Observed total job duration for the
+azd-patterns leg on this run was 30 min 5 s:
+
+| Phase | Approx. duration |
+|-------|-----------------:|
+| `actions/checkout@v4` + `azure/login@v2` + npm install Copilot CLI | ~2 min |
+| Copilot CLI prompt (azd init + Bicep + ACA Job create + execute + verify Succeeded + LAW poll up to 300 s + agent footer emission) | 29 min 48 s |
+| Workflow eval + marker `cmp -s` + `PASS via marker file (deterministic)` echo | ~0.2 s |
+| **Total** | **~30 min 5 s** |
+
+The marker file was written, `cmp -s` was byte-exact, and the
+Pattern 12 evaluator emitted PASS — but the 30-min job timeout fired
+in the milliseconds between that PASS echo and the next step's
+start. GHA reports the job as `cancelled` (not `success`) when a
+timeout interrupts ANY step, even one that already finished its
+real work.
+
+**Why this happened on this run and not on prior cycles.** Pattern
+13's LAW poll window extension (120 s → 300 s) plus the agent's
+unsuppressible footer at end-of-prompt pushed the p99 wall-clock
+past the 30 min ceiling. Prior runs without Pattern 13 finished in
+~24 min — they had 6 min of headroom.
+
+**Defense applied (this commit).**
+- Bumped `timeout-minutes: 30` → `40` at L109 of
+  `.github/workflows/skill-test.yml`. Justification: observed p99
+  ≈ 30 min × 1.2 buffer = 36 min, rounded up to 40 min for GHA
+  scheduler jitter + npm install variance.
+- Added comment block above the `timeout-minutes:` line documenting
+  the floor and pointing to AGENTS.md § 9.7 Pattern 14.
+- Codified the rule as **Pattern 14** in AGENTS.md § 9.7:
+  "Job-level `timeout-minutes` MUST exceed observed p99 by ≥ 20%".
+- This is a workflow-only fix; no fixture or SKILL.md changes.
+  `skills/azd-patterns/SKILL.md` `metadata.version` stays at
+  `1.4.3` because the skill behaviour is unchanged.
+
+**Verification protocol.** This run does NOT count toward the 5/5
+stability cycle (conclusion was `cancelled`, not `success`). The
+fix needs its own fresh 5/5 cycle starting from the next commit.
+Pattern 12 + 13 are individually validated — Pattern 14 just gives
+them enough wall-clock room to land.
+

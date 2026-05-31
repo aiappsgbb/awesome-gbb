@@ -1306,6 +1306,63 @@ deterministic CI for flaky CI. Frequency of NOTE emission can be
 monitored across the matrix to decide whether SKILL.md needs an
 explicit "expect LAW lag of N min" warning.
 
+#### Pattern 14 — Job-level `timeout-minutes` MUST exceed observed p99 by ≥ 20% (Finding #19)
+
+**Provenance.** Validating Pattern 13 (LAW soft-PASS) on run
+`26698566215` (2026-05-31). The azd-patterns leg's smoke step emitted
+`PASS via marker file (deterministic)` at `00:39:37.8348` — and the
+runner killed the job 113 ms later at `00:39:37.8461` with
+`##[error]The operation was canceled.` because `timeout-minutes: 30`
+fired. Job conclusion ended up `cancelled`, masking what was
+functionally a green run.
+
+The Pattern 12 + 13 contract worked correctly: marker file written,
+`cmp -s` byte-exact PASS, evaluator emitted the deterministic PASS
+message. We just had no headroom — observed run time was 30 min 5 s
+(setup + azure-login + npm install copilot + copilot prompt for
+29 m 48 s including azd Bicep deploy + ACA Job create + execute +
+LAW poll 300 s + agent's unsuppressible footer). The 30-min ceiling
+left zero margin for the milliseconds-long tail of marker eval.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```yaml
+# WRONG — too tight for any leg whose p99 approaches the ceiling
+jobs:
+  copilot-cli-matrix:
+    timeout-minutes: 30   # observed p99 = 30:05 → guaranteed cancellation
+```
+
+**Fix (3 rules).**
+
+1. **`timeout-minutes` ≥ p99 × 1.2** (round up to whole minutes). PA
+   leg p99 ≈ 5 min, HA leg p99 ≈ 15 min, azd-patterns leg p99 ≈ 30 min
+   → the matrix-shared ceiling MUST be ≥ 36 min. Use **40 min** so the
+   buffer absorbs npm install variance + GHA scheduler jitter.
+2. **Do NOT split `timeout-minutes` per matrix leg.** Matrix legs
+   share one job template; per-leg timeouts require duplicating the
+   whole `steps:` block. Cost of giving PA/HA the same 40-min ceiling
+   = 0 (they finish in 5/15 min, the timer is just an upper bound).
+3. **Document the budget breakdown in a comment above the
+   `timeout-minutes:` line** so the next sub-agent who sees "40 min,
+   that's huge, let's tighten it" understands the floor before
+   shaving.
+
+**Cross-skill carry rule.** Any new Copilot-CLI matrix leg added in
+the future inherits the 40-min ceiling. If a new leg's p99 grows past
+36 min (e.g., a future fixture exercises a multi-resource deploy),
+bump the shared ceiling — do NOT bisect this comment block.
+
+**Diagnostic protocol.** If a leg gets `conclusion: cancelled`:
+1. Pull the LAST 100 lines of the cancelled job's log
+   (`gh run view <id> --log --job=<job-id> | tail -100`).
+2. If `PASS via marker file (deterministic)` appears within the last
+   ~500 ms before `##[error]The operation was canceled.`, the smoke
+   actually passed and the job timed out at the wire. Increase
+   `timeout-minutes` per Rule 1 and re-run.
+3. If no PASS marker appears, the smoke genuinely failed or hung —
+   diagnose the agent's tool-call sequence, NOT the timeout.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |

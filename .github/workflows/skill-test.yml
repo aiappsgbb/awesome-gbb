@@ -106,7 +106,14 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
-    timeout-minutes: 30
+    # 30 min was too tight: run 26698566215 emitted "PASS via marker file
+    # (deterministic)" 13 ms before the timeout fired and the job ended up
+    # conclusion=cancelled. The azd-patterns leg routinely runs ~28-30 min
+    # (azd init + Bicep + ACA Job create + execute + LAW soft-PASS 300 s
+    # poll + agent's footer-emission tail). 40 min gives ~10 min headroom
+    # while still tight enough that a hung agent gets reaped. See
+    # AGENTS.md § 9.7 Pattern 14.
+    timeout-minutes: 40
     permissions:
       id-token: write
       contents: read
