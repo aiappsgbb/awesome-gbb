@@ -271,6 +271,13 @@ jobs:
           # infrastructure URLs/names, not secrets.
           FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
+          # Phase 4 (AGENTS.md § 9.7 Pattern 11): App Insights + LAW
+          # context exposed to consumer fixtures that emit traces and
+          # poll telemetry (e.g. foundry-observability). LAW_WORKSPACE_ID
+          # is the GUID, not the ARM resource ID, so fixtures can run
+          # `az monitor log-analytics query -w "$LAW_WORKSPACE_ID" …`.
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          LAW_WORKSPACE_ID: ${{ secrets.LAW_WORKSPACE_ID }}
         run: |
           set -euo pipefail
           SKILL="${{ matrix.skill }}"
@@ -366,6 +373,10 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
+          # Phase 4 — mirror the initial-run env block per Pattern 11
+          # (byte-identical auth/observability contract on retry).
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          LAW_WORKSPACE_ID: ${{ secrets.LAW_WORKSPACE_ID }}
         run: |
           set -euo pipefail
           SKILL="${{ matrix.skill }}"

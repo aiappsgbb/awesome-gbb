@@ -44,3 +44,23 @@ skills:
   foundry-evals:
     depends_on:
       - foundry-prompt-agents
+
+  # ── Phase 4 additions (Copilot CLI fixture coverage 6 → 9) ──────────
+  # foundry-observability — bare configure_azure_monitor() + custom span +
+  # LAW soft-PASS probe. No catalog-internal deps; tests the App Insights
+  # ingestion contract.
+  foundry-observability:
+    depends_on: []
+
+  # foundry-mcp-aca — ACA Service deploy mirroring foundry-hosted-agents'
+  # shape (azd up + image push + ingress). Any HA-side change to the
+  # azd hooks, Bicep module library, or ACA placeholder pattern can
+  # break this fixture.
+  foundry-mcp-aca:
+    depends_on:
+      - foundry-hosted-agents
+
+  # foundry-agt — pure in-process MAF middleware (no Azure resource
+  # create). Independent of every other catalog skill.
+  foundry-agt:
+    depends_on: []
