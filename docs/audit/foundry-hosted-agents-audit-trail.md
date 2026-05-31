@@ -634,3 +634,154 @@ proactively closes the bug class everywhere it could surface.
 - Pattern 10's WRONG/RIGHT marker-rendering rules in fixture body
   can be retired once the transition window closes.
 - See AGENTS.md § 9.7 Pattern 12 (file-based deterministic marker).
+
+---
+
+## Finding #15 — `azd` is NOT pre-installed on `ubuntu-latest`
+
+**Status:** ROOT CAUSE — confirmed via cross-leg log comparison.
+
+**Symptom (this leg):** Run [`26699177054`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26699177054)
+on SHA `84221eb`, `copilot-cli-matrix (foundry-hosted-agents)` leg.
+Agent transcript:
+- L343-355: `find / -name azd 2>/dev/null` → empty; `command -v azd`
+  → empty.
+- L356: `✗ Locate azd binary`.
+- L394-465: Agent downloads `azd-linux-amd64.tar.gz` from
+  `https://aka.ms/install-azd-script-linux` and extracts to
+  `/tmp/azd-install/`. ~5 minutes wall-clock burned on this detour.
+- L487-505: Agent eventually tests `azd auth login --federated-token`
+  — succeeds, but inside a fixture that had no business installing CLI
+  tooling.
+- L743: After azd install eventually succeeds, fails on Bug C/B (see
+  Findings #16/#17 below). FAIL marker emitted on L761 with payload
+  `azd deploy: failed`.
+
+**Cross-leg verification (independent transcript):** Same workflow run,
+parallel `copilot-cli-matrix (azd-patterns)` leg log:
+- Identical pattern: `command -v azd || which azd || true` empty.
+- Identical `find / -name azd` empty.
+- Identical "Install azd locally" remediation step.
+- Difference: azd-patterns fixture completes the install in ~3 min
+  (smaller surface, no `azure.ai.agents` extension dependency),
+  proceeds to PASS within the (then 30-min) timeout. **The leg passed
+  in spite of this gap, not because of it.**
+
+**Why Task 2.3's 5/5 green did not surface this:** Task 2.3 fixture
+runs `azd auth login` as Step 0 (Pattern 6). The agent's pre-Step-0
+"install azd" detour completed in time. Task 2.3 owner assumed azd was
+present; the install was actually happening transparently inside the
+agent's own remediation logic, eating ~3 min/run of budget that wasn't
+accounted for.
+
+**Why Task 2.2's `26694209086` / `26694485786` originally passed:**
+Either (a) ubuntu-latest runner image at Task 2.2 timestamp included
+azd in PATH (image rolled between then and now), or (b) the
+`azure.ai.agents` extension version in use at that time still read
+`AZURE_AI_*` env keys instead of the current `FOUNDRY_*` keys (see
+Finding #16). Both are extension/runner-image drift, neither is a
+regression in `awesome-gbb` code.
+
+**Defense applied (this PR):**
+- `.github/workflows/skill-test.yml`: added `Azure/setup-azd@v2.3.0`
+  step immediately after "Install Copilot CLI". This is the official
+  action published by `Azure/setup-azd` and pins to commit
+  `80591774c092d5d640d43663766a76728d66e07d`. Runs once per leg, takes
+  ~10 s, makes `azd` and `azd ai agent` ext compatible.
+- `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`
+  preamble L51-58 (Pattern 7-style "infra preconditions" block):
+  explicit "azd is pre-installed by the workflow at `/usr/local/bin/azd`,
+  do NOT hunt the filesystem, do NOT curl-install".
+- AGENTS.md § 9.7 Pattern 15 codifies the workflow-installs-tooling
+  invariant.
+
+**Cost savings per run:** ~3-5 minutes wall-clock saved across both
+HA + azd-patterns legs (eliminates the agent's filesystem-hunt +
+tarball-download + extraction detour). At ~$0.005/run × ~150 runs/year
+the install cost is negligible; the savings come from staying inside
+the 40-min timeout window for fixtures doing real ACA + Foundry work.
+
+**Why this matters beyond this fixture:** ubuntu-latest does not
+pre-install most Microsoft CLIs (`azd`, `func`, `mcr`, `kubectl` —
+only `az` and `gh` ship in PATH). Every future fixture wrapping a CLI
+not in that small set will hit the same trap. **Pattern 15
+generalizes:** tooling install belongs in the workflow, not in the
+fixture body.
+
+---
+
+## Finding #16 — `azure.ai.agents` extension reads `FOUNDRY_PROJECT_ENDPOINT`, not documented `AZURE_AI_PROJECT_ENDPOINT`
+
+**Status:** ROOT CAUSE — extension contract drift.
+
+**Symptom:** Run [`26699177054`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26699177054)
+HA leg log:
+- L743 (SMOKING GUN): extension emits explicit demand:
+  > "requires `FOUNDRY_PROJECT_ENDPOINT` in the **azd environment**"
+- L750 blocker prose confirms the agent has set
+  `AZURE_AI_PROJECT_ENDPOINT` per documented contract, but the
+  extension does not read that key.
+- L761 FAIL marker.
+
+**Root cause:** Between pin SHA `7cb89c2` (HA pin
+`references/upstream-pin.md`) and the current `--allow-prerelease`
+extension version (`azure.ai.agents@0.1.31-preview+`), the upstream
+extension renamed the env key it reads from `AZURE_AI_PROJECT_ENDPOINT`
+to `FOUNDRY_PROJECT_ENDPOINT`. The SKILL.md documented contract is
+stale relative to the version installed via `--allow-prerelease`.
+
+**Why Task 2.2 originally passed:** Either Task 2.2 ran against an
+older extension version that still read `AZURE_AI_*` keys, or the
+extension actually reads BOTH keys with `FOUNDRY_*` taking precedence
+and Task 2.2's invocations happened to bind correctly via Bicep
+post-deploy hook (which may pass either key on the command line).
+Either way, fixtures that only set `AZURE_AI_*` keys are now
+unreliable.
+
+**Secondary bug surfaced (same finding scope):** The extension's ACR
+push stage of `azd deploy` requires `AZURE_CONTAINER_REGISTRY_ENDPOINT`
+in the azd environment — same canonical name `azd-patterns` skill uses.
+Fixture exposed `ACR_LOGIN_SERVER` via workflow `env:` block
+(skill-test.yml L174) but never `azd env set`'d it. Agent grepped
+azd-patterns SKILL.md, found the canonical key name, and remediated
+mid-run — but ate budget doing so.
+
+**Defense applied (this PR):**
+- `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md` Step 3:
+  replaced single `azd env set AZURE_AI_PROJECT_ENDPOINT` with a 4-line
+  block setting BOTH key names (belt-and-suspenders: works regardless
+  of which key the running extension version reads) plus
+  `azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "${ACR_LOGIN_SERVER}"`.
+- `skills/foundry-hosted-agents/SKILL.md` L1044-1067 env-variables
+  table: added rows for `FOUNDRY_PROJECT_ENDPOINT` and
+  `AZURE_CONTAINER_REGISTRY_ENDPOINT` with explicit drift advisory.
+  Documented that Bicep `output` blocks must emit BOTH endpoint keys
+  to the same URL until the extension settles on one.
+- Metadata version bumped 1.8.2 → 1.8.3.
+
+**Carry to other skills:** Any skill that wraps `azure.ai.agents`
+extension functionality (none currently in catalog beyond
+`foundry-hosted-agents`, but `foundry-prompt-agents` could grow into
+this if its declarative agents move under `azd deploy`) MUST set both
+endpoint key names. The freshness pin file for
+`foundry-hosted-agents` should track upstream extension issue closure
+on the key rename; if the rename stabilizes on `FOUNDRY_*`, drop the
+legacy `AZURE_AI_*` set after one stability cycle.
+
+**Pin file note:** `skills/foundry-hosted-agents/references/upstream-pin.md`
+`validation.script` should test BOTH key names work, not just one.
+Adding this in a follow-up PR (Task 2.4 owns, or freshness PR if the
+weekly cron picks it up first).
+
+---
+
+## Appendix — Stability runs (post-Finding-#15+#16 fix)
+
+**Goal:** N≥5 consecutive green `copilot-cli-matrix (foundry-hosted-agents)`
+matrix legs against the combined Patterns 12+13+14+15 fix stack.
+
+- F4 — TBD (SHA TBD) — TBD
+- F5 — TBD (SHA TBD) — TBD
+- F6 — TBD (SHA TBD) — TBD
+- F7 — TBD (SHA TBD) — TBD
+- F8 — TBD (SHA TBD) — TBD

@@ -135,6 +135,17 @@ jobs:
           npm install -g @github/copilot
           copilot --version
 
+      - name: Install azd (Azure Developer CLI)
+        # Counter-intuitive: ubuntu-latest does NOT pre-install azd.
+        # Run 26699177054 HA leg burned ~5 min hunting for the binary
+        # and `curl`-installing it to /tmp/azd-install before any real
+        # work — the same pattern blew time on the azd-patterns leg too
+        # (see /tmp/ha-fail-full.log + /tmp/azd-leg.log, both legs hit
+        # `find / -name azd` empty within seconds of starting). Pinning
+        # to v2.3.0 (latest stable as of 2026-05) keeps drift visible.
+        # See AGENTS.md § 9.7 Pattern 15.
+        uses: Azure/setup-azd@v2.3.0
+
       - name: Install awesome-gbb plugin from this checkout
         run: |
           copilot plugin marketplace add "$GITHUB_WORKSPACE"

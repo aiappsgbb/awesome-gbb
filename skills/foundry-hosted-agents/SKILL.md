@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.8.2"
+  version: "1.8.3"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1052,7 +1052,18 @@ it will deploy a hosted agent. Wire them as `output`s from your
 | `AZURE_AI_PROJECT_ID` | Bicep output of the Foundry project resource ID | `/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>` | `azd deploy <hosted-agent-service>` fails with **"Microsoft Foundry project ID is required: AZURE_AI_PROJECT_ID is not set"** without it |
 | `AZURE_TENANT_ID` | constant, set with `azd env set` before provision | GUID | Required for the postdeploy hook's auto-RBAC assignment to the per-agent identities |
 | `AZURE_RESOURCE_GROUP` | Bicep output | string | Used to scope agent CLI ops |
-| `AZURE_AI_PROJECT_ENDPOINT` | Bicep output | `https://<acct>.services.ai.azure.com/api/projects/<proj>` | Used by `azd ai agent invoke` and the data-plane Responses calls |
+| `AZURE_AI_PROJECT_ENDPOINT` | Bicep output | `https://<acct>.services.ai.azure.com/api/projects/<proj>` | Used by `azd ai agent invoke` and the data-plane Responses calls (LEGACY key — see drift note below) |
+| `FOUNDRY_PROJECT_ENDPOINT` | same value as `AZURE_AI_PROJECT_ENDPOINT` | same | **Required by `azure.ai.agents@0.1.31-preview+` (extension contract drifted from `AZURE_AI_*` to `FOUNDRY_*` between pin SHA `7cb89c2` and current `--allow-prerelease`). Always set BOTH keys to the same endpoint URL** |
+| `AZURE_CONTAINER_REGISTRY_ENDPOINT` | Bicep output (`acr.properties.loginServer`) | `<acr-name>.azurecr.io` | Required by `azd deploy` ACR push stage. Symptom when missing: extension attempts a Docker push to an empty / unset registry FQDN and fails with a clearly mis-targeted host error |
+
+> **Drift advisory (May 2026):** The preview extension changed which
+> env keys it reads. Empirically validated in run `26699177054` HA
+> leg (L743) — running extension wants `FOUNDRY_PROJECT_ENDPOINT`,
+> not `AZURE_AI_PROJECT_ENDPOINT`. Bicep `output` blocks must emit
+> BOTH key names until the extension settles on one. The
+> `AZURE_CONTAINER_REGISTRY_ENDPOINT` key is the same name the
+> `azd-patterns` skill uses canonically — set it from your ACR's
+> `loginServer` output.
 
 Bicep `output` example:
 

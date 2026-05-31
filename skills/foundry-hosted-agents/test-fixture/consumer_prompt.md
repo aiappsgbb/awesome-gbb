@@ -48,8 +48,12 @@ image held for ≤2 min (~$0.001), ACA cold-start of 1 vCPU × ~30 s
   for >2 min, that's the *agent's own* per-instance identity
   propagation (different concern) — handle it with the step-5 retry
   loop, not by re-granting RBAC.
-- `azd` CLI is installed. The `azure.ai.agents` preview extension is
-  NOT pre-installed — you must `azd extension install -s
+- `azd` CLI is **pre-installed by the workflow** (Azure/setup-azd@v2
+  step before this fixture runs). Do NOT hunt for the binary, do NOT
+  `curl install-azd.sh`, do NOT `apt install`. If `command -v azd`
+  returns empty, that's a workflow regression — `SMOKE_RESULT=FAIL azd
+  missing from PATH` and stop. The `azure.ai.agents` preview extension
+  is NOT pre-installed — you must `azd extension install -s
   azure.ai.agents --allow-prerelease` before `azd deploy`.
 - Python 3 + `uv` are installed for the container image build.
 
@@ -164,7 +168,22 @@ choice.
    - `azd env set AZURE_TENANT_ID "${AZURE_TENANT_ID}"`
    - `azd env set AZURE_LOCATION swedencentral`
    - `azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci`
-   - `azd env set AZURE_AI_PROJECT_ENDPOINT "${FOUNDRY_PROJECT_ENDPOINT}"`
+   - **Foundry project endpoint — set BOTH key names** (the
+     `azure.ai.agents` preview extension contract drifted between
+     pin SHA `7cb89c2` and the version installed by
+     `--allow-prerelease` today — run 26699177054 HA log L743
+     confirmed the running extension reads `FOUNDRY_PROJECT_ENDPOINT`,
+     not the documented `AZURE_AI_PROJECT_ENDPOINT`. Keep both for
+     belt-and-suspenders; the unused one is a harmless no-op):
+     - `azd env set FOUNDRY_PROJECT_ENDPOINT "${FOUNDRY_PROJECT_ENDPOINT}"`
+     - `azd env set AZURE_AI_PROJECT_ENDPOINT "${FOUNDRY_PROJECT_ENDPOINT}"`
+   - **Container registry endpoint** — same drift class. The fixture
+     receives the registry FQDN via the workflow's `ACR_LOGIN_SERVER`
+     env var, but the azd extension reads it from the azd env under
+     the canonical `AZURE_CONTAINER_REGISTRY_ENDPOINT` key (see
+     `azd-patterns` SKILL.md). Without this, `azd deploy` fails the
+     ACR push stage:
+     - `azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "${ACR_LOGIN_SERVER}"`
    - Compose `AZURE_AI_PROJECT_ID` from the endpoint host + project
      name. The endpoint is `https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test`
      so the ID is `/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.CognitiveServices/accounts/aif-awesome-gbb-ci/projects/ci-test`.

@@ -1363,6 +1363,102 @@ bump the shared ceiling — do NOT bisect this comment block.
 3. If no PASS marker appears, the smoke genuinely failed or hung —
    diagnose the agent's tool-call sequence, NOT the timeout.
 
+#### Pattern 15 — Tooling install belongs in the workflow, not the fixture (Findings #15+#16)
+
+**Provenance.** Run [`26699177054`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26699177054)
+HA + azd-patterns legs (SHA `84221eb`). Both legs' Copilot CLI agents
+ran identical `command -v azd || find / -name azd` probes, both got
+empty results, both fell back to downloading `azd-linux-amd64.tar.gz`
+from `aka.ms/install-azd-script-linux`. HA leg burned ~5 min on the
+tarball detour and still failed (on Bug C/B downstream, see Findings
+#16/#17 in HA audit trail). azd-patterns leg burned ~3 min and barely
+made it inside its (then 30 min) ceiling. **Task 2.3's 5/5 green was
+luck, not correctness** — the fixture assumed azd was present; the
+agent was silently remediating each run.
+
+**Anti-pattern (DO NOT REVERT).**
+
+```markdown
+<!-- WRONG — fixture tries to "be portable" by detecting + installing tooling -->
+# Step 0: Ensure azd is available
+if ! command -v azd >/dev/null 2>&1; then
+  curl -fsSL https://aka.ms/install-azd-script-linux | bash
+fi
+```
+
+```yaml
+# WRONG — workflow assumes ubuntu-latest pre-installs all Microsoft CLIs
+runs-on: ubuntu-latest
+steps:
+  - run: azd auth login --federated-token "$AZURE_OIDC_TOKEN"   # ENOENT
+```
+
+**Fix (3 rules).**
+
+1. **The workflow installs CLI tooling once, the fixture consumes it.**
+   Use the official pinned action (e.g., `Azure/setup-azd@v2.3.0`,
+   `Azure/setup-kubectl@v4`, `hashicorp/setup-terraform@v3`,
+   `azure/setup-helm@v4`). Pin to a tag or SHA; never to `@main` or
+   `@latest`. Place the install step immediately after Copilot CLI
+   install so all subsequent `copilot prompt` invocations inherit the
+   PATH.
+2. **The fixture preamble explicitly forbids hunting/installing.**
+   Use Pattern 7-style "infra preconditions" block: name the binary,
+   name its install location (`/usr/local/bin/azd`), forbid both
+   filesystem hunts (`find /`, `command -v`) and curl-installs
+   (`aka.ms/install-azd-script-linux`). The agent treats this as a
+   pre-granted capability, same as pre-granted RBAC.
+3. **ubuntu-latest pre-installs ONLY a small set of CLIs.** The known
+   pre-installed Microsoft CLIs are `az`, `gh`. **Everything else
+   needs explicit install:** `azd`, `func`, `mcr`, `kubectl` (after
+   v22 image roll), `helm`, `terraform`, plus all third-party tooling.
+   When in doubt, install explicitly — the cost of a redundant install
+   step is ~10 s; the cost of a fixture silently remediating is
+   ~3-5 min per run × every run forever.
+
+**Anti-pattern variant — "install in the agent prompt" (also wrong).**
+
+```markdown
+<!-- WRONG — even more wrong: makes every model invocation re-emit the install -->
+Step 0: First, install azd with `curl -fsSL https://aka.ms/install-azd-script-linux | bash`.
+Step 1: Then run `azd auth login --federated-token ...`
+```
+
+The model has to spend tokens reasoning about install before any
+domain work. Tokens are not free, latency is not free, and the agent
+may decide the install is "optional" if it can't run the command for
+any reason. Workflow-level install removes the decision entirely.
+
+**Cross-skill carry rule.** Any new fixture that wraps a CLI tool
+checks:
+- Is the tool in `{az, gh}`? → no workflow install needed.
+- Is the tool elsewhere? → add the official setup action to
+  `skill-test.yml` (alphabetical by binary name to keep diffs readable),
+  AND add a fixture preamble line naming the tool + install location +
+  forbidding hunts.
+- Is the tool not yet packaged as a setup action? → `apt-get install`
+  step in the workflow with a version pin. Document the pin in
+  AGENTS.md § 9.7 alongside this pattern.
+
+**Diagnostic protocol.** If a fixture leg fails with a tool-not-found
+or tool-detour symptom:
+1. Grep the leg's log for `command not found`, `aka.ms/install-`,
+   `tarball`, `curl -fsSL.*\.(tar\.gz|sh)`.
+2. If present, the workflow is missing an install step. Add the
+   official setup action, pin to a tag or SHA, commit, and reset the
+   stability cycle counter.
+3. If absent, the binary is installed but failing for another reason
+   (auth, env vars, ACA quota, etc.) — diagnose that instead.
+
+**Cost / benefit.** A single `Azure/setup-azd@v2.3.0` step adds ~10 s
+to every leg that runs on the matrix. The current matrix has 3 legs
+(PA, HA, azd-patterns); at ~150 stability runs/year that's ~75 min
+cumulative install time. The avoided cost is ~3-5 min/run × ~80 runs
+that would have agent-side remediated = ~5 hours of wasted budget +
+the actual failures masking real bugs (Finding #16's
+`FOUNDRY_PROJECT_ENDPOINT` extension drift was only visible AFTER the
+install detour stopped consuming budget).
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |
