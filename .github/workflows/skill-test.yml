@@ -106,14 +106,31 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
-    # 30 min was too tight: run 26698566215 emitted "PASS via marker file
-    # (deterministic)" 13 ms before the timeout fired and the job ended up
-    # conclusion=cancelled. The azd-patterns leg routinely runs ~28-30 min
-    # (azd init + Bicep + ACA Job create + execute + LAW soft-PASS 300 s
-    # poll + agent's footer-emission tail). 40 min gives ~10 min headroom
-    # while still tight enough that a hung agent gets reaped. See
-    # AGENTS.md § 9.7 Pattern 14.
-    timeout-minutes: 40
+    # 30 → 40 → 50 evolution:
+    # - 30 min: run 26698566215 emitted "PASS via marker file
+    #   (deterministic)" 13 ms before the timeout fired
+    #   (conclusion=cancelled). Bumped to 40.
+    # - 40 min: run 26706884005 was cancelled at 40m 16s. The smoke
+    #   step itself burned 22 min on Pattern 18-class transients
+    #   (agent wrestled with `ManagedEnvironmentNotFound` + Bicep
+    #   schema iteration before emitting the FAIL marker). The
+    #   Pattern 21 retry classifier then fired correctly, started its
+    #   ~13 min retry, but the wall clock ran out at 40 min. So Pattern
+    #   14 must account for the COMPOUND budget when the first attempt
+    #   burns its budget on internal iteration AND the retry path
+    #   fires:
+    #     Setup (checkout + login + npm + azd + ext + bearer)  ~3 min
+    #     Smoke worst-case (agent fights API + Bicep schema)   ~22 min
+    #     Pattern 19 cooldown (jittered 90-180 s)              ~3 min
+    #     Retry (clean run, no agent iteration)                ~13 min
+    #     Teardown                                             ~2 min
+    #     ───────────────────────────────────────────────────────────
+    #     WORST CASE                                           ~43 min
+    # 50 min ceiling gives ~7 min safety margin against the worst
+    # observed compound (smoke-retry) path. Do NOT bisect this comment
+    # block when shaving — bump only if a NEW measurement exceeds the
+    # budget (Pattern 14 rule).
+    timeout-minutes: 50
     permissions:
       id-token: write
       contents: read
