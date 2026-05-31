@@ -26,7 +26,7 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential
 from pydantic import Field
 
 client = FoundryChatClient(
