@@ -121,7 +121,12 @@ choice.
    - `RG="rg-awesome-gbb-ci"`
    - `CAE_NAME="cae-awesome-gbb-ci"`
    - `LOCATION="swedencentral"`
-   - `SCAFFOLD_DIR="/tmp/${JOB_NAME}"`
+   - `SCAFFOLD_DIR="${GITHUB_WORKSPACE}/.scratch/${JOB_NAME}"`
+     (Pattern 20 — AGENTS.md § 9.7: the Copilot CLI's shell-tool
+     permission gate rejects file creation OUTSIDE `$GITHUB_WORKSPACE`,
+     even with `--allow-all-tools`. Writes to `/tmp/...` from heredocs
+     get "Permission denied and could not request permission from
+     user". Use a workspace-local gitignored scratch dir instead.)
    - `mkdir -p "${SCAFFOLD_DIR}"`
 
    Write `${SCAFFOLD_DIR}/main.bicep` — a minimal `Microsoft.App/jobs`
@@ -303,9 +308,12 @@ choice.
      --resource-group "${RG}" \
      --name "${JOB_NAME}" \
      --yes -o none
+   rm -rf "${SCAFFOLD_DIR}" 2>/dev/null || true
    ```
 
-   A 404 here means the job was already gone — treat as success.
+   A 404 here means the job was already gone — treat as success. The
+   `rm -rf` cleans the workspace-local scratch dir (Pattern 20) so
+   subsequent steps see a clean tree.
 
 7. **Step 6 — Write the result marker (deterministic, MANDATORY).**
    After step 5 succeeds, your FINAL action is to invoke the Bash tool

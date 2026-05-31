@@ -142,7 +142,13 @@ choice.
    - `SUFFIX="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"`
    - `AGENT_NAME="ci-smoke-ha-${SUFFIX}"` (used as the azd service
      name, ACA app name, ACR repository name, AND Foundry agent name)
-   - `SCAFFOLD_DIR="/tmp/${AGENT_NAME}"`
+   - `SCAFFOLD_DIR="${GITHUB_WORKSPACE}/.scratch/${AGENT_NAME}"`
+     (Pattern 20 — AGENTS.md § 9.7: the Copilot CLI's shell-tool
+     permission gate rejects `cd` / file creation OUTSIDE
+     `$GITHUB_WORKSPACE`, even with `--allow-all-tools`. Single-shot
+     `printf > /tmp/...` writes pass, but heredocs that `cd /tmp/$X`
+     and then run `azd init` trip the gate every time. `.scratch/`
+     under the workspace is gitignored, so `git status` stays clean.)
 
 2. **Scaffold the agent project** in `${SCAFFOLD_DIR}`:
    - `mkdir -p "${SCAFFOLD_DIR}"`
@@ -276,6 +282,8 @@ choice.
      issue a DELETE against the Foundry agents REST endpoint for
      `${AGENT_NAME}`. A 404 here means the agent was already gone —
      treat as success.
+   - `rm -rf "${SCAFFOLD_DIR}" 2>/dev/null || true` to drop the
+     workspace-local scaffold dir (Pattern 20).
 
 7. **Step 7 — Write the result marker (deterministic, MANDATORY).**
    After step 6 succeeds, your FINAL action is to invoke the Bash tool

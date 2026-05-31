@@ -30,3 +30,9 @@ __pycache__/
 skills/*.zip
 
 .zava-audit/
+
+# CI fixture scratch dirs (Pattern 20 — AGENTS.md § 9.7).
+# The Copilot CLI shell-tool permission gate rejects writes outside
+# $GITHUB_WORKSPACE, so Azure fixtures scaffold azd projects + Bicep
+# files under <workspace>/.scratch/<unique-name>/ instead of /tmp.
+.scratch/
