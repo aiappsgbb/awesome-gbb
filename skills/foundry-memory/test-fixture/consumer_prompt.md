@@ -55,6 +55,26 @@ memory-store definition. If either is missing (e.g. infra drift), probe via
 `/deployments` endpoint and write the FAIL marker with a clear reason
 naming the missing deployment — do not invent one.
 
+**Pattern 23 — RBAC propagation lag on brand-new deployments.** The CI
+embedding deployment was created recently and Azure has documented 5-15
+min RBAC/metadata propagation lag for new Cognitive Services deployments
+(account-scope role assignments may not yet be visible to the deployment
+endpoint even though `az role assignment list` shows them granted). The
+visible symptom is a 401 from the embedding endpoint on the FIRST few
+calls. The UAMI ALREADY has the correct roles (`Cognitive Services
+OpenAI User` + `Foundry User` at account scope) — do NOT try to re-grant
+them; that races propagation further. Instead, wrap the memory-store
+write (the first call that exercises the embedding) in a retry loop:
+
+- max 6 attempts
+- 30 s sleep between attempts (3 min total budget)
+- retry ONLY on 401 / 403 / "AuthenticationFailed" / "AccessDenied"
+- on other errors, FAIL immediately with the original reason
+
+If after 3 min you're still getting 401, the issue is NOT propagation —
+write the FAIL marker with `embedding 401 after 3min retry budget — check
+deployment auth`.
+
 Give every Azure resource you create a CI-safe name that includes a short
 UUID suffix (Pattern 15.3) so parallel runs don't collide. Suggested pattern:
 `ci-smoke-mem-$(uuidgen | cut -c1-8)`.

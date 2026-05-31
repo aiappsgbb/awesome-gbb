@@ -129,7 +129,15 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 5
+      # Pattern 22: matrix-parallelism cap. Each Copilot CLI leg consumes
+      # tokens from the SAME Copilot CLI model quota. 5+ legs in parallel
+      # exceeds the per-account RPM ceiling → agent's internal 5× retry
+      # exhausts → leg fails with CAPIError "Too Many Requests" before
+      # any agent work starts. 2 is the empirical safe cap (verified on
+      # run 26711407035 where 6 legs in parallel killed foundry-hosted-
+      # agents at T+1.5min). DO NOT raise without first re-verifying
+      # against current Copilot CLI quota. See AGENTS.md § 9.7.
+      max-parallel: 2
       matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
     # 30 → 40 → 50 evolution:
     # - 30 min: run 26698566215 emitted "PASS via marker file
