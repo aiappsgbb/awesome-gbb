@@ -29,7 +29,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential  # async — see ../python/main.py § MID-I
 from pydantic import Field
 
 log = logging.getLogger(__name__)

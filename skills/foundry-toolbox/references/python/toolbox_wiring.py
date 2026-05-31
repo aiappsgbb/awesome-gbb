@@ -26,7 +26,10 @@ import os
 
 from agent_framework import Agent, MCPStreamableHTTPTool, tool
 from agent_framework.foundry import AzureAIToolbox, FoundryChatClient
-from azure.identity import DefaultAzureCredential
+# Async azure.identity — FoundryChatClient (and AzureAIToolbox, same
+# `agent_framework.foundry` namespace) with sync DefaultAzureCredential
+# hangs 60s then raises `session_not_ready`. See foundry-hosted-agents (MID-I).
+from azure.identity.aio import DefaultAzureCredential
 
 from references.python.mcp_text_extractor import extract_mcp_text
 

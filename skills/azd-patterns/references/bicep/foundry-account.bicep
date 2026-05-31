@@ -147,10 +147,26 @@ output projectName string = project.name
 output projectResourceId string = project.id
 output projectSystemMiPrincipalId string = project.identity.principalId
 
-// (MID-2) — explicitly the 'AI Foundry API' endpoint, NOT the legacy
-// account.properties.endpoint (which returns *.cognitiveservices.azure.com).
-// The 'AI Foundry API' value is what `azd ai agent show` expects.
-output projectEndpoint string = account.properties.endpoints['AI Foundry API']
+// (MID-2 sharpened by MID-G — 2026-05-30 Contoso claim-triage live run)
+// Two endpoint forms — they are NOT interchangeable:
+//   1. accountEndpoint = the bare AI Foundry API endpoint (no path).
+//      Used by `azd ai agent` extension auto-derivation and by Foundry
+//      account-level REST calls that target the account itself.
+//   2. projectEndpoint = the PROJECT-SCOPED endpoint.
+//      Used by FoundryChatClient(project_endpoint=...) and by every direct
+//      REST POST against /agents/<name>/versions, /endpoint/protocols/...
+//      Constructed by appending `api/projects/<projectName>` to the account
+//      endpoint. The bare-account form WITHOUT this path causes
+//      `azd deploy <agent-service>` to 404 with a double-slash signature
+//      in the URL: `POST <acct>/services.ai.azure.com//agents/...` —
+//      because the consumer treated the bare string as already project-scoped.
+//
+// Always wire BOTH outputs from main.bicep to azd env (separate names — e.g.
+// AZURE_AI_PROJECT_ENDPOINT for the bare account, FOUNDRY_PROJECT_ENDPOINT
+// for the project-scoped form). See main.bicepparam consumer for the
+// exact wiring pattern.
+output accountEndpoint string = account.properties.endpoints['AI Foundry API']
+output projectEndpoint string = '${account.properties.endpoints['AI Foundry API']}api/projects/${project.name}'
 
 // First deployment is the chat model for the agent.
 output modelDeploymentName string = aiProjectDeployments[0].name
