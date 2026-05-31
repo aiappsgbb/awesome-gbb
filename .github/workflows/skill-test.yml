@@ -174,6 +174,19 @@ jobs:
 
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
+        # Pattern 21 (AGENTS.md § 9.7): suppress this step's exit code
+        # from poisoning the job conclusion so the retry step (below) can
+        # actually unfail the job on classified-transient recovery. Without
+        # `continue-on-error: true` here, GHA marks the job failed as soon
+        # as this step exits non-zero — even when the subsequent retry step
+        # executes successfully and exits 0. Discovered on run 26705962430
+        # where Pattern 18 retry recovered ARM stale-cache cleanly with
+        # `retry PASS via marker file (deterministic)` + `exit 0`, but the
+        # overall job still reported `conclusion: failure`. The retry-step
+        # `if:` below is correspondingly changed from `failure() && …` to
+        # `steps.run.outcome == 'failure'` because `failure()` evaluates
+        # false once continue-on-error suppresses the failure signal.
+        continue-on-error: true
         env:
           # BYOK routing → Foundry, identical to the auth-smoke workflow.
           # Env-var names verified against CLI 1.0.57-2 via `copilot help
@@ -274,7 +287,16 @@ jobs:
           exit 1
 
       - name: Retry once on classified-transient failure
-        if: failure() && steps.run.outcome == 'failure'
+        # Pattern 21 (AGENTS.md § 9.7): use `steps.run.outcome` (the pre-
+        # continue-on-error state) instead of `failure()` (which the
+        # continue-on-error on the previous step voids). `outcome` is
+        # `success`, `failure`, `cancelled`, or `skipped`. If a pre-run
+        # step (azure/login, bearer mint) failed and `run` was skipped,
+        # `outcome == 'skipped'` so retry skips — correct. If `run`
+        # succeeded, `outcome == 'success'` so retry skips — correct.
+        # Only `failure` triggers retry — same gate as before, just
+        # spelled in continue-on-error-compatible terms.
+        if: steps.run.outcome == 'failure'
         env:
           COPILOT_PROVIDER_TYPE: azure
           COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
