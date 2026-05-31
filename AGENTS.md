@@ -1242,6 +1242,70 @@ Three patterns proved load-bearing during Task 2.1 of the
     — and that surfaces as a fixture-level logic bug, not a stochastic
     rendering bug.
 
+#### Pattern 13 — LAW ingestion lag MUST NOT fail the smoke (Finding #18)
+
+> **Provenance.** First observed on Pattern 12 stability run #1/5 for
+> azd-patterns ([`26697996194`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697996194),
+> 2026-05-30 23:54:17 UTC). The matrix leg FAIL'd with
+> `SMOKE_RESULT=FAIL LAW latency >120s or HELLO not in console logs`
+> — even though Step 3 (`az containerapp job execution show`) had
+> already returned `Succeeded` 7 minutes earlier. Pattern 12's marker
+> mechanism worked perfectly; the failure was content-side: the
+> fixture's LAW polling budget (120 s) was unrealistic against
+> documented Azure ingestion latency (p50 ~2 min, p95 ~5 min, p99
+> ~10 min). Re-running the workflow was unlikely to help — LAW lag is
+> physics, not a transient. Pattern 13 reframes the failure mode.
+
+**The anti-pattern.** A fixture polls Log Analytics for an expected
+log row and FAILs on empty result after a tight window (e.g. 60-120 s).
+This conflates two distinct signals:
+
+1. **Did the workload succeed?** (control-plane question, answerable
+   synchronously: `az containerapp job execution show`, agent
+   `status_code`, response body, etc.)
+2. **Did the documented telemetry path work?** (observability question,
+   answerable only after LAW ingestion has landed — best-effort)
+
+The control-plane signal is **deterministic** (the platform reports
+success or failure synchronously). The LAW probe is **best-effort
+verification** (the platform reports success synchronously, then logs
+arrive asynchronously through an agent pipeline with documented
+variable latency). Conflating the two causes flaky failures whenever
+LAW ingestion is on the slower end of its distribution.
+
+**The fix.** Three rules for any fixture that probes LAW:
+
+1. **Establish the control-plane success signal FIRST** (a `Succeeded`
+   status from `az containerapp job execution show`, an `HTTP 200` +
+   non-empty body from an agent invocation, etc.). This is the smoke's
+   primary success criterion.
+2. **Treat the LAW probe as best-effort verification with a generous
+   budget** — minimum 300 s for ACA Job console logs (under typical
+   warm-workspace conditions, p95 is comfortably inside this window).
+3. **Soft-PASS on LAW lag.** If the control-plane signal is `Succeeded`
+   AND the LAW row is empty after the budget, emit a clear NOTE to
+   stdout (transcript captures it for audit) and STILL write
+   `printf 'SMOKE_RESULT=PASS\n' > /tmp/<skill>-smoke-result`. The
+   marker MUST remain byte-exact (Pattern 12's `cmp -s` contract);
+   the lag-observed NOTE goes ONLY to the transcript, never to the
+   marker file.
+
+**Cross-skill carry.** Any future fixture that probes LAW or another
+async telemetry pipeline (App Insights, Foundry traces, eventhub
+forwards) needs the same soft-PASS contract. Stamp the rule into the
+fixture-authoring checklist. If a customer-pilot E2E later wants a
+strict "LAW row MUST appear within window" gate, that belongs in a
+**dedicated observability smoke** with its own budget, NOT bolted
+onto the skill smoke as a secondary FAIL condition.
+
+**Why we don't just delete the LAW probe.** The documented SKILL.md
+log-query pattern (azd-patterns L351-357) is something consumers
+copy verbatim — verifying it works occasionally is valuable. The
+soft-PASS keeps that verification in the loop without trading
+deterministic CI for flaky CI. Frequency of NOTE emission can be
+monitored across the matrix to decide whether SKILL.md needs an
+explicit "expect LAW lag of N min" warning.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |

@@ -467,3 +467,41 @@ later "we hit the same bug on azd-patterns" cycle.
   graded by `cmp -s` byte-exact; transcript grep retained as a
   legacy fallback only (slated for retirement after 10+ greens).
 - See AGENTS.md § 9.7 Pattern 12 (file-based deterministic marker).
+
+### F5 — Pattern 13: LAW soft-PASS (Finding #18)
+
+**Symptom.** Pattern 12 stability run #1/5 for this skill
+([`26697996194`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26697996194),
+2026-05-30 23:54:17 UTC). The marker file was written with
+`SMOKE_RESULT=FAIL LAW latency >120s or HELLO not in console logs`
+even though Step 3's `az containerapp job execution show` had
+returned `Succeeded` 7 minutes earlier. Pattern 12's marker mechanism
+worked perfectly (marker correctly read, FAIL pattern detected, retry
+classifier correctly declined to retry — LAW lag is not a transient).
+The failure was fixture-content: the 120 s LAW polling budget was
+unrealistic against documented Azure ingestion latency (p50 ~2 min,
+p95 ~5 min, p99 ~10 min).
+
+**Why this fixture changed.** The PRIMARY success signal is already
+Step 3's `STATUS=Succeeded` (control-plane synchronous). The LAW
+probe is verification that the documented SKILL.md L351-357 query
+pattern works **when ingestion has landed**, but ingestion latency
+is inherent to the LAW pipeline — not a bug in the ACA Job, not a
+skill regression, not a transient retryable by the workflow. Failing
+the smoke on LAW lag conflates two distinct signals (did the work
+succeed? vs. did telemetry land?) and produces flaky CI.
+
+**Defense applied (this PR):**
+- Step 4 polling window extended 120 s → 300 s (24 iterations × 5 s
+  → 60 iterations × 5 s). Still under the 30 min job timeout with
+  headroom for the retry step.
+- Soft-PASS path: if `STATUS=Succeeded` was proven at Step 3 AND the
+  LAW row is empty after 300 s, emit a NOTE line to stdout
+  ("LAW ingestion lag observed (300 s budget exhausted, execution
+  status Succeeded). Skill behavior verified via control-plane
+  signal.") and STILL write the byte-exact `SMOKE_RESULT=PASS\n`
+  marker. The marker MUST remain unqualified (Pattern 12's `cmp -s`
+  contract); the lag-observed NOTE goes ONLY to the transcript.
+- See AGENTS.md § 9.7 Pattern 13 (LAW soft-PASS / async telemetry
+  conflation anti-pattern).
+- Bumped `metadata.version` PATCH `1.4.2` → `1.4.3`.

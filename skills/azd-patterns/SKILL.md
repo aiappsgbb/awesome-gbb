@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.4.2"
+  version: "1.4.3"
 ---
 
 # AZD Tips & Patterns
