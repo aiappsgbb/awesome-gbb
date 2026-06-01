@@ -19,8 +19,8 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.6.0"
-  validated: 2026-05-28
+  version: "1.6.1"
+  validated: 2026-06-01
 ---
 
 # Microsoft Foundry Toolbox — Reference Guide
@@ -357,8 +357,8 @@ print(f"Created {toolbox_version.name} v{toolbox_version.version}")
 >
 > | Package | Validated version | Notes |
 > |---|---|---|
-> | agent-framework-core | 1.6.0 | MAF core runtime |
-> | agent-framework-foundry | 1.6.0 | Foundry integration; 1.3.0+ removed `get_toolbox()` |
+> | agent-framework-core | 1.7.0 | MAF core runtime |
+> | agent-framework-foundry | 1.7.0 | Foundry integration; 1.3.0+ removed `get_toolbox()` |
 > | agent-framework-foundry-hosting | 1.0.0a260521 | Alpha; ResponsesHostServer (contains May-2026 fixes) |
 > | azure-ai-projects | latest GA | SDK toolbox CRUD methods |
 > | mcp | 1.10+ | Streamable HTTP transport |
@@ -467,7 +467,7 @@ learn_mcp = MCPStreamableHTTPTool(
 When you wire a remote MCP via `MCPStreamableHTTPTool` (toolbox endpoint OR a
 public MCP like Microsoft Learn / GitHub MCP), the raw `tools/call` response
 contains an array of `content` items with `{"type": "text", "text": "..."}`
-shape. MAF 1.6 doesn't unwrap this for you — without a `parse_tool_results`
+shape. MAF 1.7 doesn't unwrap this for you — without a `parse_tool_results`
 extractor, the model sees the wire-level JSON envelope instead of just the
 text. Models will sometimes parse through it, sometimes not, leading to
 "the agent found the docs but didn't cite them" type bugs.
@@ -494,7 +494,7 @@ works for any remote streamable-http MCP.
 #### Validated remote-MCP recipe — Microsoft Learn MCP (no-auth, public)
 
 The simplest possible remote-MCP wiring: a public, free, no-auth MCP server.
-Verified end-to-end on a hosted-agent pilot (MAF 1.6.0, May 2026) — the
+Verified end-to-end on a hosted-agent pilot (MAF 1.7.0, May 2026) — the
 agent ran 4 demo scenarios with 5–6 `learn.microsoft.com` citations per
 grounded answer.
 
@@ -512,7 +512,7 @@ learn_mcp = MCPStreamableHTTPTool(
 )
 
 agent = Agent(
-    client=FoundryChatClient(),                  # MAF 1.6 API
+    client=FoundryChatClient(),                  # MAF 1.7 API
     tools=[learn_mcp],
     instructions=(
         "You are a Microsoft Learn assistant. For every Azure / .NET / "
@@ -747,8 +747,8 @@ controls which version the consumer endpoint serves.
 
 ```python
 # 1. Create new version (does NOT auto-promote, except for the very first)
-new_v = project.beta.toolboxes.create_toolbox_version(
-    toolbox_name="agent-tools",
+new_v = project.beta.toolboxes.create_version(
+    name="agent-tools",
     description="v4 — added file_search",
     tools=[...new_tool_list...],
 )
@@ -775,16 +775,16 @@ project.beta.toolboxes.update(
 ```
 
 `default_version` cannot be empty — to "remove" a version, promote
-something else first, then `delete_toolbox_version` the unwanted one.
+something else first, then `delete_version` the unwanted one.
 
 ### List + delete
 
 ```python
-versions = list(project.beta.toolboxes.list_toolbox_versions("agent-tools"))
+versions = list(project.beta.toolboxes.list_versions("agent-tools"))
 for v in versions:
     print(f"{v.version}  created {v.created_at}")
 
-project.beta.toolboxes.delete_toolbox_version("agent-tools", "v1")
+project.beta.toolboxes.delete_version("agent-tools", "v1")
 ```
 
 > **`azd` only supports CREATE** during deployment. Use the SDK or REST
