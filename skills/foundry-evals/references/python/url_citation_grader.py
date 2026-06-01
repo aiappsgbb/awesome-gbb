@@ -30,11 +30,10 @@ Wire-up in your eval config (example):
         - citation_present (>= 0.8)
         - citation_resolves (>= 0.95)
 
-Verified against the 2026-05-28 learn-assistant pilot (agentic-loop SKILL
-Validation history row 4): 4/4 in-scope demo scenarios returned ≥ 2
-citations; every URL resolved. The same shape ran on smb-credit-memo
-(row 8) with policy-section identifiers in place of URLs — only the
-regex differs.
+Field-tested against a grounded-Q&A pilot: 4/4 in-scope demo scenarios
+returned ≥ 2 citations; every URL resolved. The same shape ran on a
+separate document-grounding pilot with policy-section identifiers in
+place of URLs — only the regex differs.
 """
 
 from __future__ import annotations
