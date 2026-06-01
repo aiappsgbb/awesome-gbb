@@ -435,3 +435,24 @@ pre code { background: transparent; border: 0; padding: 0; }
   .stats-stripe .stat { flex-basis: 50%; border-right: 0; padding: 10px 8px; }
   .install-cta { padding: 18px 18px 16px; }
 }
+
+/* ---------- see-also note (subtle inline pointer, NOT a hero/card) ---------- */
+.see-also {
+  max-width: 720px;
+  margin: 28px auto 8px;
+  padding: 16px 18px 4px;
+  border-top: 1px solid var(--line);
+}
+.see-also p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.see-also strong { color: var(--ink-1); font-weight: 600; }
+.see-also a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.see-also a:hover { color: var(--ink-0); }
