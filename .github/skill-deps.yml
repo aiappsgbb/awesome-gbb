@@ -27,6 +27,8 @@ skills:
   # ── Core fixtures (no upstream deps within this catalog) ────────────
   azd-patterns:
     depends_on: []
+  foundry-agt:
+    depends_on: []
   foundry-prompt-agents:
     depends_on: []
   foundry-hosted-agents:
