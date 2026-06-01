@@ -10,7 +10,7 @@ description: >
   DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
   (use threadlight-design), unit testing code.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Foundry Agent Evaluations
@@ -188,7 +188,7 @@ Banned characters: `→ × · ✓ ✗ ❌ ✅ ▶ ▲ ▼ ←  ° €` and any e
 en-dash. Replacements: `-> x :: PASS FAIL ! [done] etc.`
 
 **2. The agent's response can ALSO contain non-ASCII** (the gap that bit
-us twice on KYC even with #1 in place)
+us twice in pilot runs even with #1 in place)
 
 Banning Unicode in your own `print()` calls only solves half the
 problem. The hosted agent is free to emit `→`, em-dashes, smart quotes,
@@ -264,7 +264,7 @@ ceiling — **every** `run_evals.py` should write its results JSON
 real things that have wiped a full eval batch this pilot cycle:
 
 1. `UnicodeEncodeError` on the agent's response (the trap above) —
-   killed v10/v12 mid-S-019 every cold-start run, lost 4 prior results.
+   killed agent versions mid-scenario every cold-start run, lost 4 prior results.
 2. Foundry gateway sticky 5xx window — kills attempt N, you lose 1..N-1.
 3. Ctrl+C / shell window closed by accident — same outcome.
 
@@ -441,7 +441,7 @@ else:
 
 ```python
 # Create a new run against the existing definition.
-# `name=` is REQUIRED as of Azure AI Projects SDK 1.0.x (May 2026).
+# `name=` is REQUIRED as of Azure AI Projects SDK 2.0.x (May 2026).
 # Omitting it returns: `400 UserError: Evaluation display name is required`.
 import time
 
@@ -641,8 +641,22 @@ The eval judge models need model access. Assign these roles:
 | Your user identity | `Cognitive Services OpenAI User` | AI Services account |
 | Account managed identity | `Cognitive Services OpenAI User` | AI Services account |
 | Project managed identity | `Cognitive Services OpenAI User` | AI Services account |
+| Project managed identity | `Cognitive Services User` | AI Services account |
 
 Without these, evals fail with permission errors on the judge model.
+
+> **Pattern 23 (server-side worker RBAC).** Eval graders run **inside the
+> Foundry project as the project's system-assigned managed identity
+> (SAMI)**, NOT as the caller's UAMI. The project SAMI is a distinct
+> principal from your user and from any agent-instance MI. It MUST hold
+> **both** `Cognitive Services OpenAI User` AND `Cognitive Services User`
+> at the AI Services account scope — the first lets it call OpenAI
+> deployments, the second lets it enumerate them. Missing either role
+> manifests as a silent 401 from the grader (no error in your client
+> code, eval run just never completes). Grant order: project MI
+> first; user/account MIs second. AAD propagation: wait ≥ 5 min after
+> the role assignment lands before re-triggering the eval. See
+> `AGENTS.md` § 9.7 Pattern 23 for the catalog-side post-mortem.
 
 ### TPM Requirements
 
@@ -701,7 +715,7 @@ signal: **did the agent actually cite real, reachable sources?**
 >
 > - [`references/python/url_citation_grader.py`](references/python/url_citation_grader.py) — both graders (`grade_citation_present` + `grade_citation_resolves`) plus the `LEARN_URL_PATTERN` regex (swap the domain for your corpus).
 > - [`references/python/eval_runner.py`](references/python/eval_runner.py) — Day-1 smoke recipe runner (`tool_selection >= 0.7` pass gate); see § Day-1 Smoke Test Recipe.
-> - [`references/data/sample_eval_dataset.jsonl`](references/data/sample_eval_dataset.jsonl) — 8 representative items from the weather-agent + learn-assistant pilots showing the standard simple item shape (`{"item": {"prompt", "expected_tool", ...}}`).
+> - [`references/data/sample_eval_dataset.jsonl`](references/data/sample_eval_dataset.jsonl) — 8 representative items from grounded-Q&A + hosted-agent pilots showing the standard simple item shape (`{"item": {"prompt", "expected_tool", ...}}`).
 
 Wire two complementary graders into your eval suite:
 
@@ -748,9 +762,9 @@ gates:
 ```
 
 If your domain isn't `learn.microsoft.com`, swap the regex (and put the
-domain in a config rather than hardcoded). Verified pattern from the
-2026-05-28 learn-assistant pilot — 4/4 in-scope demo scenarios returned
-≥2 citations, every URL resolved.
+domain in a config rather than hardcoded). Verified pattern from a
+grounded-Q&A pilot — 4/4 in-scope demo scenarios returned ≥2 citations,
+every URL resolved.
 
 ---
 
@@ -883,7 +897,7 @@ Keep a reusable `eval/compile_scores.py` helper that does this end-to-end
 | All scores 0 | Empty responses | Concurrent eval requests; switch to sequential |
 | `task_adherence` 0% specifically | Using wrong judge model (gpt-5.4 instead of gpt-5.4-mini) | **Must use gpt-5.4-mini as judge** — gpt-5.4 penalizes tool claims it can't verify |
 | `tool_selection` + `tool_output_utilization` both 0% | Missing `tool_definitions` in JSONL | Every JSONL item must include `tool_definitions` array |
-| Eval run fails | RBAC missing on judge model | Assign `Cognitive Services OpenAI User` |
+| Eval run fails | RBAC missing on judge model | Assign `Cognitive Services OpenAI User` AND `Cognitive Services User` to the project MI (Pattern 23 — graders run as the project SAMI, not the caller) |
 | Inconsistent scores | Low TPM causing rate limits | Increase to ≥300K TPM |
 | Scenario fails but agent is correct | Eval scenario references data not in seed/mock data | Align scenario IDs with actual sample data (e.g., S-003 uses LA-1011 but only LA-1001..1003 exist) |
 | Broad query causes >5min tool loop | No tool budget in instructions | Add tool budget directive: "max 5 tool calls per message" |
@@ -1053,7 +1067,7 @@ proves the agent earned its budget at the next steering committee.
 
 ### Plan A (default): Foundry built-in continuous evaluation
 
-**Use this first.** As of `azure-ai-projects>=2.0.0` (May 2026), Foundry has a
+**Use this first.** As of `azure-ai-projects~=2.0` (May 2026), Foundry has a
 first-party `EvaluationRule` API that runs evaluators on **every response**
 (or sampled) without you owning a cron job. It's wired through the Foundry
 project itself, results land in the **Agent Monitoring Dashboard**, and works
@@ -1062,7 +1076,7 @@ for both Prompt Agents AND hosted agents.
 **Setup (Python — also available in .NET):**
 
 ```bash
-pip install "azure-ai-projects>=2.0.0" python-dotenv
+pip install "azure-ai-projects~=2.0" "azure-identity~=1.19" "python-dotenv~=1.0"
 ```
 
 ```python
@@ -1109,17 +1123,36 @@ with (
     )
 ```
 
-**Required RBAC** (keyless throughout):
-- The Foundry **project's own managed identity** needs **Azure AI User**
-  (role ID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) on the project itself.
-  This is what runs the evaluators server-side. **Not your agent's UAMI;
-  not your user account — the project's MI.**
-- The project MI also needs `Cognitive Services OpenAI User` on whichever
-  AOAI account hosts the **judge model** (typically `gpt-5.4` or `gpt-5.4-mini`),
-  so the LLM-as-judge calls succeed.
-- Verify with `az role assignment list --assignee <project-mi-principalId> --scope <project-resource-id>`
-  before declaring the rule ready — silent failures here look like "no eval
-  runs ever appear" with no error logged.
+**Required RBAC** (keyless throughout — three grants on **two distinct identities**):
+
+| # | Principal | Role | Scope |
+|---|-----------|------|-------|
+| 1 | **Caller** (your user / deploy UAMI / CI UAMI) | `Azure AI User` (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) | Foundry **project** |
+| 2 | **Project SAMI** (the project's own managed identity — NOT the caller) | `Cognitive Services OpenAI User` | AOAI account hosting the judge model |
+| 3 | **Project SAMI** (same identity as row 2) | `Cognitive Services User` | AOAI account hosting the judge model |
+
+The project SAMI is a **different principal** from anything you've already
+granted — it's auto-created when the Foundry project is provisioned, and
+the LLM-as-judge calls execute server-side as that principal (Pattern 23).
+Granting your caller `Cognitive Services OpenAI User` does NOT cover the
+grader path — the grader never sees your token. `Cognitive Services OpenAI
+User` alone is also not sufficient on the SAMI: list-deployments
+enumeration during judge dispatch requires `Cognitive Services User` too.
+
+Look up the project SAMI's principalId from the project resource's
+`identity.principalId`, then verify (replace `<AOAI_ACCOUNT_RESOURCE_ID>`
+with the full ARM ID of the AI Services account):
+
+```bash
+az role assignment list \
+  --assignee <project-sami-principalId> \
+  --scope <AOAI_ACCOUNT_RESOURCE_ID> \
+  --query "[].roleDefinitionName"
+```
+
+Both `Cognitive Services OpenAI User` and `Cognitive Services User` must
+appear. Silent failures here look like "no eval runs ever appear" with
+no error surfaced to the caller.
 
 **Where results show up:**
 - Foundry portal → agent → **Monitor** tab → evaluation charts

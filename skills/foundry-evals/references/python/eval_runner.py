@@ -24,8 +24,8 @@ Pre-conditions:
     AZURE_AI_PROJECT_ENDPOINT — set by azd env (Bicep output)
     Default credentials available (DefaultAzureCredential chain)
 
-This is the canonical recipe from agentic-loop SKILL Validation history
-row 4 (learn-assistant 2026-05-28). Used as the day-1 gate in every
+This is the canonical day-1 smoke recipe, field-tested against
+grounded-Q&A and hosted-agent pilots. Used as the day-1 gate in every
 subsequent from-scratch pilot.
 """
 
