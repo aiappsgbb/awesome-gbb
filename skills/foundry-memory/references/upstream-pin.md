@@ -77,11 +77,11 @@ consumable `SKILL.md` under `skills/foundry-memory`.
 |-------|-------|
 | **Upstream** | `microsoft/skills` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `325091fc44bafebc11330a442af58039248c9f29` |
+| **Pinned SHA** | `858117a89d7e8f8c907141e1165b8816f3c18611` |
 | **Pinned commit subject** | `Merge pull request #317 from LarryOsterman/larryo/updated_rust_skills` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-25` |
-| **Last re-validated** | `2026-05-25` |
+| **Last re-validated** | `2026-05-29` |
 
 Refresh procedure:
 
@@ -143,11 +143,11 @@ echo "symlink stub: HTTP $SYMLINK_STATUS"
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| `git ls-remote microsoft/skills main` | ✅ | `325091fc44bafebc11330a442af58039248c9f29` at authoring time |
+| `git ls-remote microsoft/skills main` | ✅ | `858117a89d7e8f8c907141e1165b8816f3c18611` at last validation |
 | upstream tree path | ✅ | `skills/foundry-memory: HTTP 404` |
 | symlink stub path | ✅ | `symlink stub: HTTP 200` |
 
-Captured at `last_validated: 2026-05-25` by `copilot-cli`.
+Captured at `last_validated: 2026-05-29` by `copilot-bot`.
 
 ---
 
