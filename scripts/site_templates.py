@@ -473,6 +473,27 @@ pre code { background: transparent; border: 0; padding: 0; }
   .stats-stripe .stat { flex-basis: 50%; border-right: 0; padding: 10px 8px; }
   .install-cta { padding: 18px 18px 16px; }
 }
+
+/* ---------- see-also note (subtle inline pointer, NOT a hero/card) ---------- */
+.see-also {
+  max-width: 720px;
+  margin: 28px auto 8px;
+  padding: 16px 18px 4px;
+  border-top: 1px solid var(--line);
+}
+.see-also p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.see-also strong { color: var(--ink-1); font-weight: 600; }
+.see-also a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.see-also a:hover { color: var(--ink-0); }
 </style>
 </head>'''
 
@@ -692,13 +713,6 @@ def render_home(
             'control-plane dashboard to Azure.',
             count='experience',
         ),
-        _browse_card(
-            f'{SITE_BASE}/engineering/', _ICON_QUALITY, 'Engineering',
-            'How the catalog stays green — six CI gates, four testing tiers, '
-            'a self-healing freshness loop, and 25 hard-won patterns from real '
-            'Azure CI runs. The contract behind every SKILL.md.',
-            count='6 gates',
-        ),
     ]
 
     runtime_pills = ''.join(
@@ -736,6 +750,16 @@ def render_home(
         '</section>'
     )
 
+    see_also = (
+        '<aside class="see-also" aria-label="Engineering &amp; quality">'
+        '<p><strong>How does the catalog stay green?</strong> '
+        'Read the <a href="' + SITE_BASE + '/engineering/">engineering '
+        '&amp; quality story</a> — curation discipline, six CI gates, '
+        'four testing tiers, and 25 patterns hard-won from live Azure '
+        'CI runs.</p>'
+        '</aside>'
+    )
+
     body = (
         '<section class="hero">'
         '<p class="eyebrow"><span class="dot"></span>Microsoft AI Apps GBB · Copilot skill catalog</p>'
@@ -756,6 +780,7 @@ def render_home(
         '</section>'
         + install_cta
         + stats_stripe
+        + see_also
     )
     return body
 
@@ -796,6 +821,56 @@ def render_engineering() -> str:
         '<span class="stat-label">drift checks</span>'
         '<span class="stat-foot">auto-PR by Copilot coding agent</span></div>'
         '</section>'
+    )
+
+    curation = [
+        ('Every skill is a contract',
+         'Code samples in <code>SKILL.md</code> are not suggestions — they '
+         'are the exact bytes a consumer will copy. If they don&rsquo;t '
+         'run, the skill is broken. Quality is the only differentiator.'),
+        ('Single source of truth for code',
+         'Non-trivial snippets live in <code>references/&lt;lang&gt;/</code> '
+         'and SKILL.md cross-links them with a one-line MUST. A validator '
+         'compiles every reference file and rejects inline duplication — '
+         'excerpts drift, then ship wrong.'),
+        ('Description ≤ 1024 characters',
+         'The runtime caps skill descriptions at 1024 chars (some loaders at '
+         '512). Every <code>USE FOR</code> / <code>DO NOT USE FOR</code> '
+         'trigger phrase must fit. We count bytes on every PR.'),
+        ('SemVer discipline',
+         'MAJOR for breaking renames or removed sections. MINOR for new '
+         'capabilities. PATCH for typo fixes and pin refreshes. The CI '
+         'gate rejects non-PATCH bumps for metadata-only changes — '
+         'history stays honest.'),
+        ('Reference data is canon — do NOT normalize',
+         'Industry shorthand (EIN prefixes, sort codes, NANPA ranges) cites '
+         'real standards. A scrub agent once &ldquo;fixed&rdquo; single-digit '
+         'EIN prefixes to double-digit; the revert took a full turn. '
+         'Mass-edit invariants now block it at PR gate.'),
+        ('Agnostic by design',
+         'No customer names, no PoC names, no real GUIDs or ARM IDs. '
+         'Skills are reusable building blocks — what stays in the catalog '
+         'must read sensibly to a stranger who has never seen the engagement '
+         'it was first authored for.'),
+        ('<code>azd</code> is the default deploy model',
+         'Every infra-bearing skill ships <code>azure.yaml</code> + Bicep, '
+         'not hand-rolled <code>az</code> CLI scripts. The '
+         '<em>azd-patterns</em> skill is the single source of truth for '
+         'module shapes, hooks, and env conventions.'),
+    ]
+    curation_grid = (
+        '<div class="section-head"><h2>Curation discipline</h2>'
+        '<span class="count">AGENTS.md §§ 2, 5, 7, 12.1</span></div>'
+        '<p class="lede" style="max-width:760px;">A skill earns its place '
+        'in the catalog only if it&rsquo;s reusable, honest, and small '
+        'enough to load. These rules are mechanical — every PR runs '
+        'through them, human or coding-agent authored.</p>'
+        '<div class="grid">'
+        + ''.join(
+            f'<div class="card"><h3>{title}</h3><p>{desc}</p></div>'
+            for title, desc in curation
+        )
+        + '</div>'
     )
 
     gates = [
@@ -996,6 +1071,7 @@ def render_engineering() -> str:
     body = (
         hero
         + stats
+        + curation_grid
         + gates_grid
         + tiers_grid
         + freshness
