@@ -103,11 +103,60 @@ event loop wrangling.
 
 ### C8 — Deprecated SDK APIs / removed parameters
 
-**Status:** none observed (signature evidence captured by
-stability-run-1).
+**Status:** **HIT — fix-in-PR via commit 3 (`[skill-rewrite]` tag).**
 
-The fixture's Step 3 prints `inspect.signature()` for the six
-load-bearing call sites: `create_governance_middleware`,
+Stability-run-1 against AGT 3.7.0 surfaced a **policy operator
+drift** in the canonical reference policy file
+`references/policies/default.yaml`. The `cap-message-length` rule
+used `operator: length_gt` with `value: 16000` — an operator that
+**does not exist** in the AGT 3.7.0 `PolicyOperator` enum. The
+canonical enum is defined in
+[`agent_os/policies/policy_schema.json`](https://github.com/microsoft/agent-governance-toolkit/blob/main/agent-governance-python/agent-os/src/agent_os/policies/policy_schema.json)
+as exactly:
+
+```
+["eq", "ne", "gt", "lt", "gte", "lte", "in", "not_in", "matches", "contains"]
+```
+
+`length_gt` is not in that set. `PolicyEvaluator._match_condition`
+silently skips conditions with unknown operators, so the cap-rule
+was a no-op against AGT 3.7.0 — a textbook "valid YAML, dead
+policy" failure mode that neither the pin's `validation.script`
+nor the prose review caught.
+
+**How the audit caught it:** the fixture's Step 3 attempts to
+load `references/policies/default.yaml` via
+`PolicyEvaluator.load_policies(...)`. On the GREEN run
+[`26745982162` (leg `78821489441`)](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441)
+the agent grep'd the file (run log L418, L425-441), identified
+the bogus operator, self-healed the file with the canonical
+`operator: matches` + a regex value (run log L468), and proceeded.
+The self-heal proved the fix; commit 3 of this PR persists it
+in the repo.
+
+**Fix C (now applied to `references/policies/default.yaml`):**
+
+```yaml
+- name: cap-message-length
+  priority: 10
+  condition:
+    field: message
+    operator: matches
+    value: "[\\s\\S]{16001,}"
+  action: deny
+  message: Message exceeds 16k chars; refusing to forward to model.
+```
+
+`[\s\S]` (not `.`) because `_match_condition` calls
+`re.search(...)` without `DOTALL` — `.` would not match newlines,
+making the cap a hole on multi-line payloads. Verified locally
+against `PolicyEvaluator` on 4 inputs (benign greeting → allow ✓,
+SQL `DROP TABLE` → deny ✓, 17001-char w/ embedded newline → deny ✓,
+100-char → allow ✓).
+
+**Signature evidence (the original C8 lower-bound check, still
+clean):** The fixture's Step 3 prints `inspect.signature()` for
+the six load-bearing call sites: `create_governance_middleware`,
 `PolicyEvaluator.evaluate`, `AuditLog.log`,
 `AuditLog.export_cloudevents`, `Agent.__init__`,
 `GovernancePolicyMiddleware.__init__`. The first GREEN CI run on
@@ -120,7 +169,7 @@ this PR (cited in v1.0.6 changelog) is the evidence that:
 
 If any signature surface drifts on a future bump, the fixture
 emits a `SMOKE_RESULT=FAIL` with the exact import or signature
-that broke, and this finding is upgraded to **HIT**.
+that broke, and the new failure is added to this finding.
 
 ### C9 — RBAC propagation race (Pattern 7)
 
@@ -270,16 +319,38 @@ risk is structurally eliminated.
 
 ### C18 — Validation-script gate (Pattern 17 of testing tiers)
 
-**Status:** none observed.
+**Status:** **observed gap — closed by this PR's fixture.**
 
 The pin's `validation.script` at L60-77 of `upstream-pin.md`
 runs `agt --version`, `agt doctor`, `agt verify`, and a Python
 import-smoke. `expected_output: ["OWASP ASI 2026", "factory ok"]`
 greps both the `agt verify` OWASP-tag output and the import-
-smoke's success line. The fixture in this PR is **strictly more
-exhaustive** than the pin script (it also asserts
-`Agent.middleware` parameter and exercises `AuditLog`
-round-trip), so the pin remains a correct lower-bound gate.
+smoke's success line.
+
+**The gap:** the pin script never actually **loads** the canonical
+`references/policies/default.yaml` against `PolicyEvaluator` and
+asserts a deny on a synthetic payload. That's how the
+`length_gt` operator drift (see C8) survived undetected through
+the most recent pin refresh — the policy file's YAML parsed
+cleanly, the evaluator silently skipped the unknown operator, and
+`agt verify` (which checks compliance schema coverage, not policy
+runtime behaviour) reported all green.
+
+The fixture in this PR is **strictly more exhaustive**:
+
+- Loads `references/policies/default.yaml` via
+  `PolicyEvaluator.load_policies(...)` and asserts both the SQL
+  DENY rule rejects `DROP TABLE` **and** the benign greeting is
+  not denied (using a version-tolerant `decision_text(decision)`
+  helper)
+- Asserts `Agent.__init__` exposes a `middleware` parameter
+- Exercises `AuditLog` round-trip (`log()` × 2 →
+  `verify_integrity()` → `export_cloudevents()`)
+
+The pin remains a correct lower-bound gate for CLI smoke + import
+resolution; the fixture is the upper-bound gate for runtime policy
+behaviour. The two complement each other and together would have
+caught `length_gt` on the first refresh.
 
 ### C19 — Governance / forbidden-string regressions
 
@@ -386,11 +457,11 @@ model, or ACA calls**.
 
 ## CI matrix runs
 
-| # | SHA | Outcome | Notes |
-|---|---|---|---|
-| 1 | `<pending>` | `<pending>` | Stability-run-1 — captures `inspect.signature()` evidence cited by C8 and commit 3's changelog |
-| 2 | `<pending>` | `<pending>` | Stability-run-2 — ≥ 45 s after #1 (P1) |
-| 3 | `<pending>` | `<pending>` | Stability-run-3 — ≥ 45 s after #2 (P1) |
+| # | SHA | Run / leg | Outcome | Notes |
+|---|---|---|---|---|
+| 1 | `ece4b18` | [`26745982162` / `78821489441`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441) | ✅ GREEN (3m6s copilot wall-clock; 3m37s job total) | Captures `inspect.signature()` evidence (C8); discovered + self-healed the `length_gt` operator drift in `references/policies/default.yaml` (run log L425-441 grep, L468 self-heal). Self-heal persisted in repo by commit 3. |
+| 2 | `<pending>` | `<pending>` | `<pending>` | Stability-run-2 — ≥ 45 s after #1 (P1); validates self-heal persists across runs |
+| 3 | `<pending>` | `<pending>` | `<pending>` | Stability-run-3 — ≥ 45 s after #2 (P1); proves ≥ 3 GREEN before ready-for-review |
 
 Update this table after each empty-commit stability push.
 
