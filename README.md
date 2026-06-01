@@ -263,6 +263,47 @@ The agentic-loop skill will recommend awesome-gbb skills based on your spec's co
 
 ---
 
+## How we test — six CI gates, four testing tiers, live Azure
+
+Every skill in this catalog is a **contract**: the code samples in `SKILL.md` are the exact code a consumer will copy. If a sample doesn't run, the skill is broken. To keep that contract honest as upstream SDKs move, we run a self-healing test+freshness pipeline on real Azure infrastructure — not just lint.
+
+```mermaid
+flowchart LR
+    PR[PR opened] --> G1[skill-validation<br/>T0 lint]
+    PR --> G2[automation-pr-gate<br/>mass-edit invariants]
+    PR --> G3[pin-validation<br/>T1 re-runs validation.script]
+    PR --> G4[skill-test<br/>T2 import smoke + T3 E2E Azure]
+    G1 & G2 & G3 & G4 --> M{all green?}
+    M -- yes --> R[human review + merge]
+    M -- yes, Copilot PR --> A[auto-merge-copilot<br/>squash-merges]
+    CRON[weekly cron] --> F[skill-freshness<br/>drift detection]
+    F --> ISSUE[consolidated issue<br/>impact-classified] --> COP[@Copilot opens PR] --> PR
+```
+
+**Six CI gates** (see [`.github/workflows/`](.github/workflows/)):
+
+| Gate | When | What it checks |
+|------|------|----------------|
+| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR | Frontmatter parses, description ≤ 1024 chars, valid SemVer, no forbidden strings, pin files conform to schema, plugin manifests version-consistent |
+| [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR | Mass-edit invariants (no normalization of reference canon, no cross-skill body edits without `[multi-skill]`, no MAJOR bumps from metadata-only changes) |
+| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill — no "trust me, I tested" path |
+| [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron | Detects SHA drift, PyPI version bumps, upstream KI closures, link rot, validation age — opens one consolidated issue per skill with `impact:critical/high/medium/low` label |
+| [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | T2 import smoke (all auto-tier pins) + **T3 E2E Azure** (deploys agents, calls models, verifies the credential chain works against real resources in `rg-awesome-gbb-ci`) |
+| [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check-suite completion | Auto-approves and squash-merges Copilot PRs once all gates pass — closes the freshness loop without a human bottleneck |
+
+**Four testing tiers** (see [AGENTS.md § 9.8](AGENTS.md#98--skill-testing-tiers)) — each subsumes the ones below:
+
+- **T0 · Lint** — frontmatter parses, description ≤ 1024, no forbidden strings, deprecated-API scan passes. Every PR.
+- **T1 · Pin validation** — `validation.script` runs end-to-end; every `expected_output` substring must appear in stdout. Required on pin-file changes.
+- **T2 · Import smoke** — `pip install <pinned-version>` + `python -c "from X import Y"` for every import in SKILL.md code samples. Required on MINOR/MAJOR upstream bumps.
+- **T3 · E2E Azure** — deploys real agents, makes real API calls (Foundry, ACA, ACR), verifies the credential chain works end-to-end. CI has OIDC-federated credentials and dedicated infra (`aif-awesome-gbb-ci`, `acrawesomegbbci`, `cae-awesome-gbb-ci`, `gpt-5.4-mini`, `text-embedding-3-small`). Required for any skill that tells consumers to connect to Azure.
+
+**Self-healing freshness loop.** Every wrapper skill ships a machine-readable [`upstream-pin.md`](scripts/templates/upstream-pin.template.md). The weekly cron runs five drift detectors (SHA, PyPI, upstream-issue closure, link rot, validation age), consolidates signals into one issue per skill with an impact label, and assigns auto-tier skills to **`@Copilot`**. The coding agent refreshes the pin, opens a PR, the six gates above validate it live against Azure, and `auto-merge-copilot` squash-merges on green. A human only intervenes when impact is `critical` or the pin requires credentials the agent doesn't have.
+
+**Patterns from the trenches.** The pipeline is what it is because 25 hard-won patterns (LAW ingestion lag, OIDC TTL on teardown, ARM cross-resource cache lag, Foundry project-MI vs caller-UAMI 401s, autoregressive marker priming, Copilot-CLI 429 throttling, …) are baked into the workflows and fixture authoring rules. Each pattern carries a forensic provenance link to the run that exposed it. See [AGENTS.md § 9.7](AGENTS.md#97--azure-ci-credentials-and-e2e-infrastructure) for the full list, or the [Engineering page](https://aiappsgbb.github.io/awesome-gbb/engineering/) for a curated tour.
+
+---
+
 ## Repository Structure
 
 ```

@@ -502,6 +502,7 @@ _LAYOUT = '''<!doctype html>
     <div class="links">
       <a href="{base}/"{a_home}>Home</a>
       <a href="{base}/skills/"{a_skills}>Skills</a>
+      <a href="{base}/engineering/"{a_engineering}>Engineering</a>
       <a href="https://aiappsgbb.github.io/threadlight-skills/"{a_threadlight}>Threadlight</a>
       <a href="https://aiappsgbb.github.io/zava-constellation/"{a_zava}>Zava</a>
       <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
@@ -531,7 +532,10 @@ def render_layout(
     stats: str = '',
 ) -> str:
     """Render the full HTML document with nav, body, and footer."""
-    active = {'home': '', 'skills': '', 'plugins': '', 'threadlight': '', 'zava': ''}
+    active = {
+        'home': '', 'skills': '', 'plugins': '',
+        'engineering': '', 'threadlight': '', 'zava': '',
+    }
     if active_nav in active:
         active[active_nav] = ' class="active"'
     return _LAYOUT.format(
@@ -542,6 +546,7 @@ def render_layout(
         a_home=active['home'],
         a_skills=active['skills'],
         a_plugins=active['plugins'],
+        a_engineering=active['engineering'],
         a_threadlight=active['threadlight'],
         a_zava=active['zava'],
         sha=html.escape(sha or 'dev'),
@@ -621,6 +626,13 @@ _ICON_DOCS = (
     '<path d="M8 13h8M8 17h6"/>'
     '</svg>'
 )
+_ICON_QUALITY = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z"/>'
+    '<path d="m9 12 2 2 4-4"/>'
+    '</svg>'
+)
 
 
 def _browse_card(
@@ -680,6 +692,13 @@ def render_home(
             'control-plane dashboard to Azure.',
             count='experience',
         ),
+        _browse_card(
+            f'{SITE_BASE}/engineering/', _ICON_QUALITY, 'Engineering',
+            'How the catalog stays green — six CI gates, four testing tiers, '
+            'a self-healing freshness loop, and 25 hard-won patterns from real '
+            'Azure CI runs. The contract behind every SKILL.md.',
+            count='6 gates',
+        ),
     ]
 
     runtime_pills = ''.join(
@@ -737,6 +756,252 @@ def render_home(
         '</section>'
         + install_cta
         + stats_stripe
+    )
+    return body
+
+
+# ---------------------------------------------------------------------------
+# Engineering page (CI gates, testing tiers, freshness loop, patterns)
+# ---------------------------------------------------------------------------
+
+def render_engineering() -> str:
+    """Render the /engineering/ page body.
+
+    Advertises the catalog's quality posture: six CI gates, four testing
+    tiers, the self-healing freshness loop, the 25 hard-won fixture
+    patterns in AGENTS.md § 9.7, and the real Azure infrastructure that
+    backs E2E runs. All content is hard-coded — no catalog inputs.
+    """
+    hero = (
+        '<section class="hero">'
+        '<p class="eyebrow"><span class="dot"></span>Engineering &amp; quality</p>'
+        '<h1>How <strong>awesome-gbb</strong> stays green</h1>'
+        '<p class="lede">Every skill is a contract. Code samples in SKILL.md '
+        'are the exact bytes a customer will paste — so we wrap the catalog '
+        'in six CI gates, four testing tiers, weekly drift detection, and a '
+        'self-healing refresh loop. Nothing lands on <code>main</code> '
+        'unless it passed live on Azure.</p>'
+        '</section>'
+    )
+
+    stats = (
+        '<section class="stats-stripe" aria-label="Quality at a glance">'
+        '<div class="stat"><span class="stat-num">6</span>'
+        '<span class="stat-label">CI gates</span>'
+        '<span class="stat-foot">block merge on regression</span></div>'
+        '<div class="stat"><span class="stat-num">4</span>'
+        '<span class="stat-label">testing tiers</span>'
+        '<span class="stat-foot">T0 lint → T3 live Azure</span></div>'
+        '<div class="stat"><span class="stat-num">weekly</span>'
+        '<span class="stat-label">drift checks</span>'
+        '<span class="stat-foot">auto-PR by Copilot coding agent</span></div>'
+        '</section>'
+    )
+
+    gates = [
+        ('skill-validation.yml', 'every PR',
+         'Frontmatter parses, <code>description ≤ 1024</code>, valid SemVer, '
+         'no forbidden strings, pin files conform to schema v2, '
+         '<code>plugin.json</code> + marketplace are version-consistent.'),
+        ('automation-pr-gate.yml', 'every PR',
+         'Enforces the mass-edit invariants — rejects multi-skill body '
+         'edits, normalization of reference canon, and non-PATCH bumps for '
+         'metadata-only changes. Opt-in commit tags make intent explicit.'),
+        ('pin-validation.yml', 'pin changes',
+         'Re-runs the pin file&rsquo;s <code>validation.script</code> on the '
+         'runner and asserts every <code>expected_output</code> substring. '
+         'No &ldquo;trust me, I tested&rdquo; path.'),
+        ('skill-freshness.yml', 'weekly cron',
+         'Detects SHA drift, PyPI bumps, upstream issue closure, link rot, '
+         'and stale validation. Opens one consolidated issue per skill with '
+         'an <code>impact:</code> label — <em>auto</em>-tier issues are '
+         'assigned to <code>@Copilot</code>.'),
+        ('skill-test.yml', 'every PR · push · cron',
+         'Unit tests, catalog lint, the all-pin smoke job, and the '
+         'E2E Azure matrix — real <code>azd up</code>, real Foundry calls, '
+         'real model inference in <code>rg-awesome-gbb-ci</code>.'),
+        ('auto-merge-copilot.yml', 'on check-suite success',
+         'Auto-approves and squash-merges Copilot-authored PRs once every '
+         'gate is green. Closes the freshness loop end-to-end.'),
+    ]
+    gates_grid = (
+        '<div class="section-head"><h2>Six CI gates</h2>'
+        '<span class="count">.github/workflows/</span></div>'
+        '<div class="grid">'
+        + ''.join(
+            f'<div class="card"><h3><code>{name}</code></h3>'
+            f'<p>{desc}</p>'
+            f'<div class="meta"><span class="badge">{when}</span></div>'
+            '</div>'
+            for name, when, desc in gates
+        )
+        + '</div>'
+    )
+
+    tiers = [
+        ('T0', 'Lint',
+         'Frontmatter shape, description length, forbidden-string scan, '
+         'deprecated-API detection. Runs on every PR.'),
+        ('T1', 'Pin validation',
+         '<code>validation.script</code> executes on the runner; every '
+         'expected substring must appear in stdout. Runs whenever a pin '
+         'file changes.'),
+        ('T2', 'Import smoke',
+         '<code>pip install</code> + <code>python -c &quot;from X import '
+         'Y&quot;</code> for every documented dependency. Catches dead '
+         'imports the moment upstream bumps.'),
+        ('T3', 'E2E Azure',
+         'Deploys real resources, calls real Azure APIs, exercises real '
+         'credential chains. The bar: if SKILL.md tells consumers to '
+         'connect to Azure, CI must prove that connection works.'),
+    ]
+    tiers_grid = (
+        '<div class="section-head"><h2>Four testing tiers</h2>'
+        '<span class="count">each subsumes the one below</span></div>'
+        '<div class="grid">'
+        + ''.join(
+            f'<div class="card"><h3>'
+            f'<span class="badge ver">{tier}</span> &nbsp; {name}</h3>'
+            f'<p>{desc}</p></div>'
+            for tier, name, desc in tiers
+        )
+        + '</div>'
+    )
+
+    freshness = (
+        '<div class="section-head"><h2>Self-healing freshness loop</h2>'
+        '<span class="count">closed end-to-end</span></div>'
+        '<section class="install-cta" aria-labelledby="freshness-h">'
+        '<h2 id="freshness-h" class="sr-only">Freshness loop</h2>'
+        '<p class="lede">Drift detection &rarr; consolidated issue &rarr; '
+        'autonomous PR &rarr; CI gates &rarr; human review &rarr; merge. '
+        'Manual tracking doesn&rsquo;t scale past 10 skills.</p>'
+        '<pre><code>'
+        'weekly cron (Mon 07:00 UTC)\n'
+        '  ├─ git ls-remote   → SHA drift\n'
+        '  ├─ PyPI JSON       → version drift\n'
+        '  ├─ GitHub issues   → upstream KI closure\n'
+        '  ├─ HEAD probes     → docs link rot\n'
+        '  └─ pin age check   → validation &gt; 180d\n'
+        '       ↓\n'
+        '  one consolidated issue per skill\n'
+        '  (labelled impact:critical | high | medium | low)\n'
+        '       ↓\n'
+        '  auto-tier issues → assigned to @Copilot\n'
+        '       ↓\n'
+        '  Copilot coding agent opens refresh PR\n'
+        '       ↓\n'
+        '  six CI gates validate the PR\n'
+        '       ↓\n'
+        '  human review → squash-merge'
+        '</code></pre>'
+        '<p class="install-alt">The Copilot agent reads '
+        '<code>.github/copilot-setup-steps.md</code> as its scope contract '
+        '— pin files and frontmatter only, never prose rewrites.</p>'
+        '</section>'
+    )
+
+    patterns = [
+        ('Pattern 4', 'Marker priming defenses',
+         'Render the literal token as <code>_MOKE_RESULT</code> in fixture '
+         'prose so autoregressive LLM continuations can&rsquo;t accidentally '
+         'wrap the real marker in backticks.'),
+        ('Pattern 12', 'File-write marker, not prose',
+         'Final fixture step is a Bash tool call: '
+         '<code>printf &#39;SMOKE_RESULT=PASS\\n&#39; &gt; /tmp/&lt;skill&gt;'
+         '-smoke-result</code>. The file is graded byte-exact — '
+         'prose rendering can&rsquo;t corrupt it.'),
+        ('Pattern 14', 'Timeout ≥ p99 × 1.2',
+         'Job-level <code>timeout-minutes</code> must exceed observed p99 '
+         'by 20%, or PASS markers get killed at the wire and CI shows '
+         '<em>cancelled</em>.'),
+        ('Pattern 17', 'Show-don&rsquo;t-assert on CLI cache',
+         '<code>az</code> credential cache may or may not be inherited by '
+         'subshells. Print it for audit — never gate flow on it. '
+         '<code>azd auth login</code> is the real auth gate.'),
+        ('Pattern 22', 'Throttle matrix parallelism to 2',
+         'Copilot CLI&rsquo;s own backing model has tight RPM quota. '
+         'Three parallel <code>copilot -p</code> invocations deterministically '
+         'hit <code>CAPIError 429</code>.'),
+        ('Pattern 23', 'Foundry project MI needs Cog roles',
+         'Server-side workers (memory consolidation, hosted-agent runtime) '
+         'run as the project MI — a third identity beyond your UAMI. Grant '
+         '<em>Cognitive Services OpenAI User</em> explicitly.'),
+        ('Pattern 25', 'Teardown is best-effort',
+         'Skill contract: hard FAIL. Cleanup of side resources: soft-PASS '
+         'with a NOTE. OIDC TTL bounds discovery; a CI janitor reaps orphans.'),
+    ]
+    patterns_grid = (
+        '<div class="section-head"><h2>25 hard-won fixture patterns</h2>'
+        '<span class="count">AGENTS.md § 9.7</span></div>'
+        '<p class="lede" style="max-width:760px;">Every CI flake we hit on '
+        'live Azure became a numbered pattern. Future fixtures inherit '
+        'them by default — the catalog doesn&rsquo;t rediscover the same '
+        'bug twice. A representative slice:</p>'
+        '<div class="grid">'
+        + ''.join(
+            f'<div class="card"><h3>'
+            f'<span class="badge cat">{pat}</span> &nbsp; {title}</h3>'
+            f'<p>{desc}</p></div>'
+            for pat, title, desc in patterns
+        )
+        + '</div>'
+        '<p class="install-alt">All 25 patterns live in '
+        '<a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/AGENTS.md#97--azure-ci-credentials-and-e2e-infrastructure">'
+        'AGENTS.md § 9.7</a> with provenance, anti-patterns, and forensic '
+        'diagnostic protocols.</p>'
+    )
+
+    infra = (
+        '<div class="section-head"><h2>Real Azure infrastructure for E2E</h2>'
+        '<span class="count">rg-awesome-gbb-ci · Sweden Central</span></div>'
+        '<div class="grid">'
+        '<div class="card"><h3>OIDC identity</h3>'
+        '<p><code>uami-awesome-gbb-ci</code> — federated via '
+        '<code>azure/login@v2</code>, no stored secrets. Narrow subject list: '
+        '<code>pull_request</code>, <code>ref:refs/heads/main</code>, '
+        '<code>ref:refs/tags/*</code>.</p></div>'
+        '<div class="card"><h3>Foundry host</h3>'
+        '<p><code>aif-awesome-gbb-ci</code> with <code>gpt-5.4-mini</code> '
+        'for chat smoke and <code>text-embedding-3-small</code> '
+        '(<code>GlobalStandard</code>) for memory.</p></div>'
+        '<div class="card"><h3>Container registry</h3>'
+        '<p><code>acrawesomegbbci.azurecr.io</code> — UAMI has AcrPush; '
+        '<code>azd deploy</code> swaps Bicep placeholder images to real '
+        'pushes automatically.</p></div>'
+        '<div class="card"><h3>ACA environment</h3>'
+        '<p><code>cae-awesome-gbb-ci</code> for hosted-agent and MCP-server '
+        'E2E fixtures. ACA Jobs use raw <code>az deployment</code> + '
+        '<code>az containerapp job start</code> — see <em>azd-patterns</em>.</p></div>'
+        '</div>'
+    )
+
+    footer = (
+        '<section class="install-cta" aria-labelledby="more-h">'
+        '<h2 id="more-h">Want the receipts?</h2>'
+        '<p class="lede">Every claim on this page is grounded in '
+        '<code>AGENTS.md</code> and reproducible from green CI runs.</p>'
+        '<p class="install-alt">'
+        '<a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/AGENTS.md">'
+        'AGENTS.md</a> · '
+        '<a href="https://github.com/aiappsgbb/awesome-gbb/actions/workflows/skill-test.yml">'
+        'skill-test runs</a> · '
+        '<a href="https://github.com/aiappsgbb/awesome-gbb/actions/workflows/skill-freshness.yml">'
+        'freshness runs</a> · '
+        '<a href="https://github.com/aiappsgbb/awesome-gbb/issues?q=is%3Aissue+label%3Aimpact%3Acritical">'
+        'open critical-impact issues</a></p>'
+        '</section>'
+    )
+
+    body = (
+        hero
+        + stats
+        + gates_grid
+        + tiers_grid
+        + freshness
+        + patterns_grid
+        + infra
+        + footer
     )
     return body
 
