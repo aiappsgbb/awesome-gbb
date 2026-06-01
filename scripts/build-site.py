@@ -290,6 +290,14 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     )
     html_count += 1
 
+    # Engineering / quality posture
+    eng_body = tpl.render_engineering()
+    total_bytes += _write(
+        out_dir / 'engineering' / 'index.html',
+        render('engineering', 'Engineering — awesome-gbb', eng_body, '/engineering/'),
+    )
+    html_count += 1
+
     # Skills index
     skills_body = tpl.render_skills_index(skills, CATEGORIES)
     total_bytes += _write(
