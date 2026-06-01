@@ -1,4 +1,4 @@
-"""Canonical toolbox wiring sample — MAF 1.6 + Foundry Toolbox.
+"""Canonical toolbox wiring sample — MAF 1.7 + Foundry Toolbox.
 
 Source of truth for the prose example in `../../SKILL.md § Step 2 —
 Wire into a hosted agent`.
@@ -17,7 +17,7 @@ Demonstrates 3 patterns:
     3. Composing both — toolbox tools + a couple of direct MCP tools
        alongside local @tool-decorated functions.
 
-Verified against MAF 1.6.0 + azure-ai-projects 2.1.0 on May 2026 pilots.
+Verified against MAF 1.7.0 + azure-ai-projects 2.1.0 on May 2026 pilots.
 """
 
 from __future__ import annotations

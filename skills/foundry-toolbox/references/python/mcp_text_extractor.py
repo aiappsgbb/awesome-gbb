@@ -8,7 +8,7 @@ Why this file exists (TB2 from PR #180):
     OR a public MCP like Microsoft Learn / GitHub MCP), the raw tools/call
     response contains an array of `content` items with the shape:
         {"type": "text", "text": "..."}
-    MAF 1.6 does NOT unwrap this for you. Without a `parse_tool_results=`
+    MAF 1.7 does NOT unwrap this for you. Without a `parse_tool_results=`
     extractor, the model sees the wire-level JSON envelope instead of just
     the text — leading to "the agent found the docs but didn't cite them"
     type bugs (verified on 2026-05-28 learn-assistant run).

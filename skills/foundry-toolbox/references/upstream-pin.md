@@ -89,7 +89,7 @@ validation:
     - "ok select_toolbox_tools removed"
     - "ok skill_paths constructor removed"
 
-last_validated: 2026-05-29
+last_validated: 2026-06-01
 validated_by: copilot-bot
 known_issues_count: 1
 ---
@@ -103,7 +103,7 @@ This Tier-B pin captures the PyPI package stack and preview-header dependency fo
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
 | `azure-ai-projects` | PyPI | **2.1.0** | Toolbox beta client surface |
-| `agent-framework` | PyPI | **1.6.0** | MAF MCP consumer surface |
+| `agent-framework` | PyPI | **1.7.0** | MAF MCP consumer surface |
 | `mcp` | PyPI | **1.27.1** | Streamable HTTP MCP client primitives |
 
 ## Verification checklist
