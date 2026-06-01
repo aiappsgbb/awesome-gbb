@@ -459,9 +459,10 @@ model, or ACA calls**.
 
 | # | SHA | Run / leg | Outcome | Notes |
 |---|---|---|---|---|
-| 1 | `ece4b18` | [`26745982162` / `78821489441`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441) | ✅ GREEN (3m6s copilot wall-clock; 3m37s job total) | Captures `inspect.signature()` evidence (C8); discovered + self-healed the `length_gt` operator drift in `references/policies/default.yaml` (run log L425-441 grep, L468 self-heal). Self-heal persisted in repo by commit 3. |
-| 2 | `<pending>` | `<pending>` | `<pending>` | Stability-run-2 — ≥ 45 s after #1 (P1); validates self-heal persists across runs |
-| 3 | `<pending>` | `<pending>` | `<pending>` | Stability-run-3 — ≥ 45 s after #2 (P1); proves ≥ 3 GREEN before ready-for-review |
+| 1 | `ece4b18` | [`26745982162` / `78821489441`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441) | ✅ GREEN (3m33s leg total; copilot wall ≈ 3m6s) | **Stability-run-1 (pre-Fix-C).** Captures `inspect.signature()` evidence (C8); discovered + self-healed the `length_gt` operator drift in `references/policies/default.yaml` (run log L425-441 grep, L468 self-heal). This run is the live evidence that drove commit `482a5b0`. |
+| 2 | `482a5b0` | [`26748324664` / `78829530684`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26748324664/job/78829530684) | ✅ GREEN (2m23s leg total) | **Fix-C commit (`[skill-rewrite]`).** Validates Fix C (`operator: matches` + `[\s\S]{16001,}`) and version refresh (3.6.0 → 3.7.0, 1.3.0 → 1.7.0) all persist correctly; first GREEN with SKILL.md / pin / snippet / `default.yaml` all aligned to v1.0.6. |
+| 3 | `5d9642c` | [`26748371486` / `78829692955`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26748371486/job/78829692955) | ✅ GREEN (3m9s leg total) | **Stability-run-2 (post-Fix-C, empty).** ≥ 45 s after #2 per P1; first empty-commit run with Fix C in repo — confirms self-heal is no longer needed at runtime. |
+| 4 | `9bbfe41` | [`26748704731` / `78830862693`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26748704731/job/78830862693) | ✅ GREEN (2m58s leg total) | **Stability-run-3 (post-Fix-C, empty).** ≥ 45 s after #3 per P1; closes the strict P1 contract — ≥ 3 GREEN empty-commit stability runs before ready-for-review. |
 
 Update this table after each empty-commit stability push.
 
