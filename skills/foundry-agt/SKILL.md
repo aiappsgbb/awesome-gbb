@@ -5,7 +5,7 @@ description: >
   agents, MCP servers, and Citadel spokes. Adds deterministic policy
   enforcement, capability allow/deny, hash-chained audit, and OWASP ASI
   2026 coverage via in-process MAF middleware (8-12 µs/eval verified on
-  Windows + Py 3.13 + AGT 3.6.0) or ACA sidecar. Ships 3 starter policies
+  Windows + Py 3.13 + AGT 3.7.0) or ACA sidecar. Ships 3 starter policies
   (default / HITL gate / PII deny), working create_governance_middleware
   snippet, ACA sidecar Bicep, and field-tested Known Issues (rogue detection
   setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
@@ -16,7 +16,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.0.5"
+  version: "1.0.6"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -216,8 +216,9 @@ re-document upstream. Always link.
 | `agt verify --evidence` (CI gate) | `threadlight-safe-check` | ✅ tested (10/10 OWASP ASI 2026) |
 | Shadow AI Discovery | cross-cutting (find unregistered agents) | 📖 documented upstream |
 
-**Legend:** ✅ verified by GBB live smoke test on Windows + Python 3.13 + AGT 3.6.0;
-📖 documented by upstream, not yet GBB-tested. Bump entries to ✅ as you validate.
+**Legend:** ✅ verified by GBB live smoke test (CI: Linux + Python 3.12 + AGT 3.7.0;
+original: Windows + Python 3.13 + AGT 3.6.0); 📖 documented by upstream, not yet
+GBB-tested. Bump entries to ✅ as you validate.
 
 ---
 
@@ -279,7 +280,7 @@ This is the path for every Foundry hosted agent. Latency overhead is
 
 ### Wiring snippet
 
-The **working** snippet — verified end-to-end against AGT 3.6.0 + MAF 1.3.0
+The **working** snippet — verified end-to-end against AGT 3.7.0 + MAF 1.7.0
 — is at [`references/maf-middleware-snippet.py`](references/maf-middleware-snippet.py).
 Drop the `build_governed_agent(...)` helper into your hosted-agent module
 and pass it the `FoundryChatClient` your azd-deployed project provides.
@@ -423,6 +424,7 @@ agt eval prompt-defense --agent ./agent.yaml --report ./pd-report.json
 
 | Recipe | Status | Last verified |
 |--------|--------|---------------|
+| `pip install` + `create_governance_middleware` + `load_policies` + `AuditLog` (CI smoke) | ✅ | AGT 3.7.0, Linux, Py 3.12 ([run 26745982162](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441)) |
 | `pip install agent-governance-toolkit[full]` | ✅ | AGT 3.6.0, Win11, Py 3.13.13 |
 | `agt doctor` | ✅ | same |
 | `agt verify` → 10/10 OWASP ASI 2026 | ✅ | same |
@@ -448,7 +450,7 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
    `False` for first-pass; revisit after baselining.
 
 2. **Verifier version skew is cosmetic** — `agt verify` reports
-   `Toolkit: 3.2.2` while the meta-package is `3.6.0`. Verifier carries
+   `Toolkit: 3.2.2` while the meta-package is `3.7.0`. Verifier carries
    its own compliance schema version; OWASP ASI coverage check still
    passes 10/10.
 
@@ -505,6 +507,21 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
 
 ## GBB Changelog
 
+- **v1.0.6** — CI E2E smoke landed
+  ([run 26745982162](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441),
+  3m6s wall-clock, Linux + Python 3.12 + AGT 3.7.0 + MAF 1.7.0). Refreshed
+  prose version strings across SKILL.md, `references/upstream-pin.md`, and
+  `references/maf-middleware-snippet.py` to match the actual pinned wheels
+  (`agent-governance-toolkit~=3.7.0` + `agent-framework~=1.7.0`). Fixed
+  `references/policies/default.yaml` — the `cap-message-length` rule used a
+  bogus `length_gt` operator (not in the AGT `PolicyOperator` enum
+  `[eq, ne, gt, lt, gte, lte, in, not_in, matches, contains]`); the policy
+  silently failed to load. Replaced with `matches: "[\s\S]{16001,}"` which
+  the CI smoke now confirms is enforced end-to-end. No API surface change;
+  callers of `create_governance_middleware(...)` and `PolicyEvaluator.load_policies(...)`
+  are unaffected. Note: L336 ACA sidecar image (`enforcer:3.6.0`) intentionally
+  left unchanged — no evidence a 3.7.0 sidecar image exists in MCR; the in-process
+  path is what this CI smoke validates.
 - **v1.0.1** — Clarification pass (no API or policy changes). Added
   "Why this matters" section with the 26.67 % vs 0.00 % red-team stat
   and an ASCII flow diagram of where AGT sits. Refactored the

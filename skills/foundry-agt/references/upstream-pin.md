@@ -9,12 +9,12 @@ upstream:
   ref: main
   pinned_sha: 6572fd0803b87f0d53489bc3ecff5fa4a3d6a047
   pinned_commit_message: |
-    AGT 3.6.0 release — meta-package + 6 sub-packages
+    AGT 3.7.0 release — meta-package + 6 sub-packages
   license: MIT
   notes: |
     Wrapper skill around the AGT meta-package. The skill body documents
     the in-process middleware path (create_governance_middleware factory)
-    and verified API surface at 3.6.0 — re-validate API signatures on
+    and verified API surface at 3.7.0 — re-validate API signatures on
     every minor bump.
 
 packages:
@@ -94,9 +94,9 @@ re-pin to a newer upstream and re-run the smoke checklist below.
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `agent-governance-toolkit` | PyPI (`pip install agent-governance-toolkit[full]`) | **3.6.0** | Meta-package; pulls 6 sub-packages with `[full]` extra |
+| `agent-governance-toolkit` | PyPI (`pip install agent-governance-toolkit[full]`) | **3.7.0** | Meta-package; pulls 6 sub-packages with `[full]` extra |
 | `agent-governance-toolkit` repo | <https://github.com/microsoft/agent-governance-toolkit> | main `8c4692cf...` | Public Preview, MIT, Microsoft-owned |
-| `agent-framework` (MAF) | PyPI (`pip install agent-framework`) | **1.3.0** | Required for in-process middleware path |
+| `agent-framework` (MAF) | PyPI (`pip install agent-framework`) | **1.7.0** | Required for in-process middleware path |
 | Internal `agentmesh-runtime` | bundled with `[full]` | 2.3.0 | Independent versioning cadence — note skew |
 
 Sub-packages installed by `agent-governance-toolkit[full]` (verified via
@@ -112,7 +112,7 @@ Sub-packages installed by `agent-governance-toolkit[full]` (verified via
 - ⛔ `agentmesh_lightning` — not pulled by `[full]`
 
 CLI version skew: `agt verify` self-reports `Toolkit: 3.2.2` while the
-meta-package is `3.6.0`. The verifier ships its own compliance schema
+meta-package is `3.7.0`. The verifier ships its own compliance schema
 version independently. Cosmetic, not a bug.
 
 ---
@@ -162,7 +162,7 @@ threadlight processes.
 
 ---
 
-## Verified API surface (3.6.0)
+## Verified API surface (3.7.0)
 
 These are the **actual** signatures from `inspect.signature(...)`. The
 upstream `docs/deployment/azure-foundry-agent-service.md` page documents
@@ -191,7 +191,7 @@ from agent_os.integrations.maf_adapter import (
 ```python
 from agent_framework import Agent
 
-# Agent ctor (1.3.0):
+# Agent ctor (1.7.0):
 #   Agent(client, instructions=None, *, name=None, middleware=None, tools=None, ...)
 # - first positional is `client` (NOT `chat_client` as some doc snippets show)
 # - `middleware` accepts the list returned by create_governance_middleware()
@@ -254,7 +254,7 @@ Bake `PYTHONUTF8=1` into every CI runner that calls `agt verify`.
 ### Issue 2 — Upstream Foundry deployment doc has stale signatures
 
 `docs/deployment/azure-foundry-agent-service.md` shows manual middleware
-construction with kwargs that **do not exist** in 3.6.0:
+construction with kwargs that **do not exist** in 3.7.0:
 
 | Doc shows | 3.6.0 actual |
 |-----------|--------------|
@@ -291,7 +291,7 @@ omits rogue detection by default for this reason.
 
 ### Issue 5 — Verifier version skew is cosmetic
 
-`agt verify` reports `Toolkit: 3.2.2` while the meta-package is `3.6.0`.
+`agt verify` reports `Toolkit: 3.2.2` while the meta-package is `3.7.0`.
 The verifier carries its own compliance schema version. Don't be
 alarmed; the OWASP ASI 2026 coverage check still passes 10/10.
 

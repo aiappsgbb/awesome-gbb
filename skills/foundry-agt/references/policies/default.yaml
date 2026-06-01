@@ -42,7 +42,10 @@ rules:
     priority: 10
     condition:
       field: message
-      operator: length_gt
-      value: 16000
+      # AGT 3.7.0 PolicyOperator enum has no length_* operator. Match any
+      # message body 16,001+ chars (incl. newlines — [\s\S], not . — because
+      # AGT's MATCHES dispatch uses re.search WITHOUT re.DOTALL).
+      operator: matches
+      value: "[\\s\\S]{16001,}"
     action: deny
     message: Message exceeds 16k chars; refusing to forward to model.
