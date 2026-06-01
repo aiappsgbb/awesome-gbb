@@ -11,7 +11,7 @@ description: >
   replace Mem0. DO NOT USE FOR: RAG/knowledge retrieval (use foundry-iq),
   document grounding, vector search over documents.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry Memory
@@ -67,6 +67,13 @@ Before you create a memory store, make sure the project has:
 Deploy **`text-embedding-3-small`** or **`text-embedding-3-large`** in the same
 project (or via a connected resource). Memory retrieval uses that embedding
 model to index and recall relevant memories.
+
+> **Sweden Central:** embedding deployments MUST use SKU `GlobalStandard`,
+> not the default `Standard` — ARM rejects `Standard` with
+> `InvalidResourceProperties: Sku is not supported in this region`. Other
+> regions may impose similar constraints; verify the SKU-by-region
+> availability table in the Foundry / Cognitive Services capacity docs
+> before deploying elsewhere. (AGENTS.md § 9.7 Pattern 21.)
 
 ### Supported regions (May 2026 field audit)
 
@@ -349,6 +356,16 @@ Operationally:
 - it retrieves **contextual memories** per turn
 - it schedules memory writes after inactivity using `update_delay`
 
+**RBAC requirement** (Pattern 23 — server-side worker identity): Memory
+consolidation runs as the **project's system-assigned managed identity**
+(NOT the caller's identity). That identity needs `Cognitive Services
+OpenAI User` AND `Cognitive Services User` at the Foundry account scope to
+call the chat deployment. The project SAMI is created with ACR roles only —
+the two Cog roles must be granted explicitly. Symptom of omission: 401 from
+the memory worker on its first consolidation pass, with the deploy/invoke
+path superficially succeeding. See `AGENTS.md` § 9.7 Pattern 23 for the
+canonical grant script.
+
 This is the cleanest replacement for external memory middleware when the agent
 already runs on Foundry.
 
@@ -396,6 +413,7 @@ await project.beta.memoryStores.searchMemories(...);
 | Memory APIs or tool are unavailable | Region not in preview footprint | Recreate the project in a supported region |
 | Wrong user's preferences appear | Scope mismatch or missing `x-memory-user-id` | Use a stable per-user scope and always pass the header when acting on behalf of a user |
 | Agent never seems to remember after one turn | `update_delay` not elapsed yet | Wait for inactivity, or set a smaller delay for demos/tests |
+| 401 from memory worker (server-side, not your client) | Project SAMI lacks `Cognitive Services OpenAI User` AND `Cognitive Services User` at account scope | Grant **both** roles per Pattern 23 (AGENTS.md § 9.7), then wait ≥ 5 min for AAD propagation |
 | Direct API call does not isolate users automatically | Expecting tool-style auto-resolution | Pass `scope` explicitly on every direct memory API call |
 
 Security reminder: memory can be poisoned by bad prompts or bad imported
