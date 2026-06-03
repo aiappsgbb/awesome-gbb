@@ -252,11 +252,11 @@ A new Copilot CLI test fixture lives at `skills/foundry-observability/test-fixtu
 
 | # | SHA | Run ID | Wall-clock | Marker | Notes |
 |---|-----|--------|-----------|--------|-------|
-| 1 | _filled after stability run #1_ | | | | |
-| 2 | _filled after stability run #2_ | | | | |
-| 3 | _filled after stability run #3_ | | | | |
+| 1 | `9e4e6dd` | [`26877150659`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26877150659) | 15m41s | ✅ PASS | Initial fixture push; hard-gate (`configure_azure_monitor`) + LAW soft-PASS path both exercised. |
+| 2 | `66da12b` | [`26877956932`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26877956932) | 11m04s | ✅ PASS | Empty stability commit. Faster wall-clock — KQL probe landed inside the budget. |
+| 3 | `9736b78` | [`26878513714`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26878513714) | 15m17s | ✅ PASS | Empty stability commit. Confirms deterministic green across 3 consecutive runs (P1 cadence respected, ≥45s spacing). |
 
-(Section updated post-stability-run-3 with run-IDs from `gh run list --workflow skill-test.yml --branch unsafecode/foundry-observability-fixture-audit --limit 10`.)
+3-of-3 GREEN. No fix-in-PR cycles required — Phase 2 fixture authoring landed clean on the first iteration. SKILL.md stays at v1.1.3 (no `[skill-rewrite]` tag).
 
 ---
 
