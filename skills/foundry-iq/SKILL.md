@@ -7,11 +7,12 @@ description: >
   threadlight process; SPEC § 7 must declare a Knowledge Base for the process domain.
   USE FOR: knowledge base, RAG, agentic retrieval, policy assistant, citations,
   multi-hop QA, Knowledge Agent, AI Search Knowledge Base, document grounding,
-  semantic retrieval, foundry-iq, knowledge index, hybrid search, vector search.
+  semantic retrieval, foundry-iq, knowledge index, hybrid search, vector search,
+  kb-mcp, web iq, serverless knowledge base, purview acl knowledge.
   DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
   MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
 metadata:
-  version: "1.2.6"
+  version: "1.3.0"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
@@ -92,6 +93,42 @@ Foundry IQ is Microsoft's enterprise-grade RAG solution that treats retrieval as
 
 ---
 
+## Knowledge Base GA + Serverless (Build 2026)
+
+> **GA as of //build 2026.** Knowledge Base graduated from preview to
+> general availability on the **`2026-05-01-preview`** API version
+> (paired with the `/knowledgebases/<name>` flat surface from the
+> migration callout above). Two consumption shapes ship:
+>
+> 1. **Standard KB** — bring your own AI Search service. You manage
+>    the index, vector profile, and capacity. Use when you already
+>    operate AI Search or need control over the search SKU.
+> 2. **Serverless KB** — Foundry-managed index and capacity. No AI
+>    Search SKU to size, no index schema to author. Use for pilots,
+>    POCs, and any consumer that hasn't already standardized on a
+>    Search service. Billing is per-query + storage.
+>
+> The wire shape is **identical** across both — the same
+> `knowledge_agent_manager.create_agent` call works; only the
+> `serverless: true` flag on the request body switches modes.
+>
+> **KB-MCP integration.** Knowledge Bases now expose an **MCP
+> server surface** that any hosted agent (or third-party MCP
+> client) can attach to via `tools=[{"type": "mcp",
+> "server_label": "kb", "server_url": "<kb-endpoint>/mcp"}]`. This
+> replaces the older "wire your agent to call `corpus_query`
+> manually" pattern — the agent now discovers KB capabilities
+> through MCP tool listing and the agentic-retrieval loop runs
+> inside the KB service. See `foundry-hosted-agents` for the
+> agent-side wiring.
+>
+> **Four knowledge source types** ship at GA — Web IQ (public-web
+> grounding), Files (blob upload), Search (existing AI Search
+> index), and External MCP (third-party KB connectors). See
+> Key Components § 4 below for source-by-source guidance.
+
+---
+
 ## Architecture
 
 ```
@@ -143,6 +180,31 @@ The Knowledge Agent provides:
 - `minimal`: Basic retrieval
 - `low`: Light query planning
 - `medium`: Full query planning and multi-hop reasoning
+
+### 4. Knowledge Sources (4 source types, Build 2026)
+
+Knowledge Bases ingest from four distinct source types — pick the one
+that matches where your domain knowledge already lives:
+
+- **Web IQ** — public-web grounding via Bing. No upload step; the
+  KB queries the live web at retrieval time and returns Bing-style
+  citations. Use for evergreen factual lookups (regulations,
+  product docs, news). Subject to per-tenant Bing quota.
+- **Files** — drop documents into the KB and let Foundry chunk +
+  embed + index them for you. Backed by managed AI Search (or
+  Serverless KB). Use when you own the source documents and want
+  zero index-management ceremony.
+- **Search** — attach an existing Azure AI Search index as-is.
+  Foundry queries your index through the agentic-retrieval loop
+  without re-ingesting. Use when you've already invested in a
+  Search index and don't want to re-chunk.
+- **External MCP** — connect any MCP-speaking third-party
+  knowledge backend (vendor KB, internal wiki MCP server, partner
+  RAG service) by URL. Foundry treats it as just another retrieval
+  source in the agentic loop.
+
+Mix-and-match: a single KB can compose all four. The agentic-retrieval
+planner fans the query across sources and merges citations.
 
 ---
 
@@ -254,6 +316,21 @@ you cannot use managed identity or `az login`.
 >
 > See `foundry-doc-vision-speech` for the full keyless RBAC matrix across
 > all Cognitive Services.
+>
+> **Purview ACL passthrough (2026-05-01-preview).** Knowledge Bases
+> now honor **document-level Purview sensitivity labels** at query
+> time. When the KB ingests Files (or queries a Search index whose
+> documents carry Purview labels), each retrieved chunk is filtered
+> against the **calling user's** Purview permissions before the
+> agent ever sees it — meaning two users running the same query
+> against the same KB get different citations based on what they're
+> cleared to read. The filter is enforced server-side; no code
+> change in the agent. Requires Purview to be configured on the
+> source documents AND the caller's identity to flow through
+> (works out-of-the-box with hosted agents using user-on-behalf
+> tokens; for agent-as-service identity, the agent's MI permissions
+> are evaluated instead — beware of over-privileged agent identities
+> defeating the filter).
 
 ```bash
 # Azure OpenAI Configuration
