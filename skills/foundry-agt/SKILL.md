@@ -11,12 +11,13 @@ description: >
   setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
   policy enforcement, capability guard, audit trail, OWASP ASI 2026, MAF
   middleware, MCP scanner, PromptDefense, Citadel adapter, agt verify, agt
-  doctor, agt red-team. DO NOT USE FOR: Foundry agent deployment (use
+  doctor, agt red-team, acs policy, guardrail decision, agt vs
+  guardrailtool. DO NOT USE FOR: Foundry agent deployment (use
   foundry-hosted-agents), Citadel hub setup (use citadel-spoke-onboarding),
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.0.6"
+  version: "1.1.0"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -121,6 +122,38 @@ you've mistaken the problem for an AGT one:
 | Telemetry plumbing (App Insights, OTel exporters) | [`foundry-observability`](../foundry-observability/SKILL.md) | AGT **emits** CloudEvents; the observability skill **owns** the pipe they flow through. |
 | Authoring or deploying the Foundry agent itself | [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md), [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-deploy/SKILL.md) | AGT plugs **into** the agent runtime. It does not provision, deploy, or version your agent. |
 | Vector store / RAG / retrieval | [`foundry-iq`](../foundry-iq/SKILL.md) | AGT has no embeddings story — that's not its layer. |
+
+---
+
+## ACS as policy language — relationship to AGT
+
+The "What AGT isn't" table above pairs Azure AI Content Safety (ACS)
+with AGT as **message-bus vs action-bus**. The //build 2026 generation
+of ACS expanded that picture: in addition to the classic categorical
+filters (toxicity, self-harm, jailbreak), ACS now exposes a richer
+**policy surface** — custom categories, prompt-shield rules, declarative
+blocklists, structured policy artefacts. That puts ACS visibly closer
+to AGT in shape (both look like "declarative policy → runtime enforcement
+of deny / allow / escalate"), and teams sometimes pattern-match one as a
+replacement for the other.
+
+They are not interchangeable. They govern non-overlapping surfaces:
+
+| Concern | **ACS** (Content Safety) | **AGT** (this skill) |
+|---|---|---|
+| Gates | Tokens — model input + model output | Actions — tool calls + capabilities |
+| Runtime | Managed service call per turn (~50–200 ms) | In-process middleware (8–12 µs/eval) or ACA sidecar |
+| Policy shape | Categories, blocklists, shield rules, custom classifiers — **content shape** | YAML allow/deny on `capability_id`, parameters, principal, context — **action shape** |
+| Deny shape | Block or redact a message | Drop, sanitize, escalate (HITL), or audit-only an action |
+| Audit | ACS service logs | Hash-chained `AuditLog` + CloudEvents export |
+
+> **TL;DR.** ACS is your **content policy** — what the model is allowed
+> to *say*. AGT is your **action policy** — what the agent is allowed
+> to *do*. They share vocabulary (declarative YAML, deny/allow primitives,
+> audit trails) precisely *because* they're orthogonal layers reusing
+> the same mental model. Any workload that has BOTH chat content AND
+> tool side effects needs BOTH — never pick one as a stand-in for the
+> other.
 
 ---
 
@@ -360,6 +393,48 @@ tool-call edge **inside** the spoke's hosted agent.
 **Status: 📖** documented upstream. Not yet GBB-tested. Pin a Citadel hub
 + spoke pair to validate when one is on hand. Recipe will land here as
 a follow-up PATCH bump.
+
+---
+
+## Decision table: when to use GuardrailTool vs AGT vs ACS
+
+//build 2026 introduced `GuardrailTool` as a new prompt-agent tool
+option (see [`foundry-prompt-agents`](../foundry-prompt-agents/SKILL.md)).
+It surfaces server-side guardrail evaluation as a tool the model can
+invoke mid-loop. That places it conceptually adjacent to both AGT and
+ACS, but it is **not a replacement for either**. Use this matrix to
+pick the right mechanism — or, more commonly, the right combination:
+
+| Mechanism | Layer it gates | Owner | Reach for it when |
+|---|---|---|---|
+| **ACS** ([Azure AI Content Safety](https://learn.microsoft.com/azure/ai-services/content-safety/)) | LLM I/O — message content (tokens) | Microsoft GA service | You need declarative content filtering (toxicity, self-harm, jailbreak, custom categories, prompt shield) on user input or model output. No code to own; it's a managed call per turn. |
+| **`GuardrailTool`** ([Foundry prompt agents](../foundry-prompt-agents/SKILL.md)) | Per-turn tool surface **inside** a prompt agent's loop | Microsoft Foundry built-in tool | You're building a prompt agent (declarative, no container) and want the model to **call out** to guardrail evaluation mid-conversation as a tool. The agent decides when to invoke; Foundry runs the rule. No middleware to wire, but enforcement is **opt-in** — the agent has to choose to call the tool. |
+| **AGT** (this skill) | Tool/action plane — `capability_id`, parameters, principal, context | Microsoft + community, MIT, in-process | You need **deterministic, non-bypassable** policy enforcement on every tool call. You're on MAF / hosted-agent runtime. You need µs-latency evaluation, hash-chained audit, OWASP ASI 2026 coverage, red-team regression harness, and side-effects governance the agent itself cannot route around. |
+
+### Composition — these stack, they do not compete
+
+- **All three** for a regulated hosted-agent workload: ACS on the
+  message bus → `GuardrailTool` for in-loop guardrail introspection
+  the agent surfaces explicitly → AGT for non-bypassable action gates
+  on every tool call. Each layer covers a surface the others
+  structurally can't see.
+- **ACS + AGT** for hosted-agent runtimes that don't expose tools to
+  a prompt-agent loop (e.g., Path B/C sidecar deployments where the
+  agent runtime owns the tool dispatch directly).
+- **`GuardrailTool` + AGT** for a prompt agent that benefits from both
+  opt-in guardrail introspection (model chooses when to ask) AND
+  deterministic action gates (AGT decides what fires regardless).
+- **AGT alone** for MCP server / ACA sidecar / non-LLM workloads where
+  there is no chat content surface to govern in the first place.
+
+> **The decision rule.** If you're governing what the **model says**,
+> reach for ACS. If you're governing what the **agent invokes as a
+> tool**, reach for `GuardrailTool` (opt-in, prompt-agent-resident) or
+> AGT (non-bypassable, middleware-resident) — and prefer AGT whenever
+> the policy must hold even when the model tries not to call the
+> guardrail. The three compose into the only complete content +
+> action governance story for Foundry hosted agents on the //build
+> 2026 generation.
 
 ---
 
