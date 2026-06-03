@@ -8,16 +8,16 @@ description: >
   HD voices, fast transcription), agent routing triplet, benchmark pattern
   (TTFA/TTFT metrics), and Gradio + FastRTC WebRTC UI plumbing.
   USE FOR: voice live, realtime voice, voice agent, real-time audio, speech to
-  speech, voice assistant, Azure Voice Live, websocket voice, realtime API
-  migration, semantic VAD, echo cancellation, noise reduction, Neural HD voices,
-  FastRTC, Gradio voice, voice benchmark, TTFA, TTFT, voice live agent,
-  gpt-realtime, voice-live-gradio.
+  speech, voice assistant, Azure Voice Live, websocket voice, semantic VAD,
+  echo cancellation, noise reduction, Neural HD voices, FastRTC, Gradio voice,
+  voice benchmark, TTFA, TTFT, gpt-realtime, voice live hosted agent, byo wss,
+  voice avatar, custom voice live.
   DO NOT USE FOR: batch STT/TTS (use foundry-doc-vision-speech), document
   extraction (use foundry-doc-vision-speech), deploying hosted agents without
   voice (use foundry-hosted-agents), prompt agents without voice (use
   foundry-prompt-agents).
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # Foundry Voice Live
@@ -276,6 +276,20 @@ are **not** valid for the Realtime API. The handler falls back to
 `alloy` if the current voice isn't in the OpenAI set — the UI also
 snaps the picker to a valid value (belt-and-braces).
 
+### Avatars + custom voice
+
+> 🆕 //build 2026 — public preview.
+
+Voice Live now ships **avatar rendering** (lip-sync video over the
+audio stream) and **custom voice** (BYO speaker model registered via
+Azure Speech Studio). Both surfaces live behind the same WSS
+connection — no new SDK; toggle via `session.update` extensions.
+Configure in the [Foundry portal](https://aka.ms/speech_build2026)
+under your Voice Live resource. The STT/TTS locale catalog grew to
+**140+ STT / 600+ TTS** at GA, so the existing voice picker in
+[`ui/voice_picker.py`](https://github.com/aiappsgbb/voice-live-gradio/blob/main/voice-live-gradio/ui/voice_picker.py)
+will auto-populate any new options surfaced by `/voices`.
+
 ---
 
 ## 5 · Foundry Agent Routing
@@ -323,6 +337,22 @@ via environment variables.
 The identity running the app needs `Cognitive Services User` on the
 Foundry resource. No additional role is needed for Voice Live — it's
 the same resource.
+
+### One-click hosted-agent integration
+
+> 🆕 //build 2026 — public preview.
+
+The Foundry portal now wires Voice Live into any hosted agent's
+Responses endpoint with a **single toggle** — no `extra_query`
+triplet required. Pick this path when you don't need client-side
+custom orchestration; pick the `extra_query` triplet above (or the
+BYO WSS path in §6) when you do.
+
+| Path | When to use |
+|------|-------------|
+| Portal one-click | Standard call/response, no custom client-side state machine |
+| `extra_query` triplet | Custom Python client (Rung 3 sample above) |
+| BYO WSS endpoint (§6) | Pipecat / LiveKit / your own broker |
 
 ---
 
@@ -375,13 +405,37 @@ only in subdomain:
 Voice Live hosts a curated allow-list of **managed models** you don't
 need to deploy yourself:
 
-- `gpt-realtime`, `gpt-realtime-mini` — native realtime
-- `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5-chat` — text + Azure TTS
-- `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini` — text + Azure TTS
-- `phi4-mm-realtime`, `phi4-mini` — open models
+- `gpt-realtime-1.5`, `gpt-realtime`, `gpt-realtime-mini` — native realtime
+- `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` — text + Azure TTS
+- `gpt-5`, `gpt-5-mini`, `gpt-5-nano` — text + Azure TTS
+- `gpt-5.1`, `gpt-5.1-chat`, `gpt-5.2`, `gpt-5.2-chat`, `gpt-5.3-chat`, `gpt-5.4` — text + Azure TTS (🆕 //build 2026)
+- `phi4-mm-realtime`, `phi4-mini`, `azure-realtime` — open / hosted models
 
 Pass the managed model name in `extra_query={"model": "<name>"}` — no
 Foundry-side deployment required.
+
+**BYOM path** (bring-your-own-model via the BYO WSS endpoint below):
+`gpt-5.5`, `gpt-5.4-mini`, `gpt-5.4-nano`.
+
+### BYO WSS endpoint
+
+> 🆕 //build 2026 — public preview. Direct WS pass-through for custom
+> orchestrators (Pipecat, LiveKit, your own broker).
+
+For BYO orchestrators, connect to the **Invocations-WS** endpoint
+directly — bypassing the managed-model allow-list — and the hosted
+agent's Responses endpoint duplexes the audio:
+
+```text
+wss://<account>.services.ai.azure.com/api/projects/agents/endpoint/protocols/invocations_ws?project_name=<project>&agent_name=<agent>
+```
+
+Reference samples (4 client variants) live in the Foundry samples tree
+under `samples/python/hosted-agents/bring-your-own/invocations_ws/`:
+`hello-world`, `livekit-server`, `pipecat-webrtc`, `pipecat-ws-server`.
+
+> NCUS-only at GA. Other regions follow as the Invocations-WS endpoint
+> light up — track via `aka.ms/speech_build2026`.
 
 ---
 
