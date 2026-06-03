@@ -266,6 +266,9 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
+  tags: {
+    'azd-service-name': 'mcp'
+  }
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -345,58 +348,72 @@ services:
 
 ---
 
-## Step 4 — `azd up` (HARD GATE)
+## Step 4 — pre-build image, then `azd provision` (HARD GATE)
 
-Initialize the `azd` env and provision + deploy. The Container App
-resource gets created in `rg-awesome-gbb-ci` (which already exists), so
-the `azd` env is configured to reuse it:
+The MCP server listens on port 8080 and the Bicep `targetPort` is pinned
+to 8080 (see SKILL.md L489-494 — the ACA helloworld placeholder serves
+port 80, which would trap the MCP revision in `InProgress` forever).
+SKILL.md's `image` Bicep param is required and **undefaulted on purpose**
+— there is no safe placeholder for an MCP-on-ACA deploy. So build the
+real image FIRST via `az acr build` (ACR remote build — no docker
+engine needed on the runner), then run `azd provision` (NOT `azd up`)
+to deploy the Bicep referencing the real image.
+
+```bash
+# 1) Build the MCP container image via ACR remote build. The runner
+#    needs no docker daemon — ACR's build agent compiles + pushes in
+#    one round trip. Takes ~3-5 min cold.
+IMAGE_REF="${ACR_LOGIN_SERVER}/${APP_NAME}:${SUFFIX}"
+echo "Building image: $IMAGE_REF"
+az acr build \
+  --registry "$ACR_LOGIN_SERVER" \
+  --image "${APP_NAME}:${SUFFIX}" \
+  --file src/Dockerfile \
+  src/
+echo "Image built: $IMAGE_REF"
+```
+
+Initialize the `azd` env and set the Bicep params. `azd` auto-maps
+`UPPER_SNAKE_CASE` env-var keys to `camelCase` Bicep params (so
+`APP_NAME` → `appName`, `IMAGE` → `image`, `UAMI_RESOURCE_ID` →
+`uamiResourceId`). The Container App lands in `rg-awesome-gbb-ci`
+(pre-existing):
 
 ```bash
 azd env new "$APP_NAME" --location swedencentral --subscription "$AZURE_SUBSCRIPTION_ID"
 azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci
 azd env set APP_NAME "$APP_NAME"
+azd env set IMAGE "$IMAGE_REF"
 azd env set UAMI_RESOURCE_ID "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
 ```
 
-Also tag the `mcp` service so `azd` recognizes the Bicep Container App
-as the deploy target. Add this annotation to the Bicep `app` resource
-via `azd`'s standard `azd-service-name` tag — the cleanest path is to
-add a `tags` block to the `containerApps` resource referencing
-`appName`. If you need to revise the Bicep, add:
-
-```bicep
-  tags: {
-    'azd-service-name': 'mcp'
-  }
-```
-
-(Add this `tags` block as a sibling of `identity` and `properties` on
-the `containerApps` resource above. Without the tag, `azd deploy` won't
-know which Bicep resource to swap the placeholder image on.)
-
-Then run `azd up`. ACA's ARM resolver has a documented cross-resource
-index-rebuild race (`ManagedEnvironmentNotFound`, AGENTS.md § 9.7
-Pattern 18) — wrap with a bounded retry loop:
+Then run `azd provision` (NOT `azd up`). The image is already built and
+in ACR — we don't need the `azd deploy` swap step, just the Bicep
+deploy referencing `$IMAGE_REF`. ACA's ARM resolver has a documented
+cross-resource index-rebuild race (`ManagedEnvironmentNotFound`,
+AGENTS.md § 9.7 Pattern 18) — wrap with a bounded retry loop:
 
 ```bash
 attempts=0
 max_attempts=6
-until azd up --no-prompt; do
+until azd provision --no-prompt; do
   attempts=$((attempts + 1))
   if [ $attempts -ge $max_attempts ]; then
-    echo "azd up failed after $max_attempts attempts"
-    printf 'SMOKE_RESULT=FAIL azd up failed after retry exhaustion\n' > /tmp/foundry-mcp-aca-smoke-result
+    echo "azd provision failed after $max_attempts attempts"
+    printf 'SMOKE_RESULT=FAIL azd provision failed after retry exhaustion\n' > /tmp/foundry-mcp-aca-smoke-result
     # Best-effort cleanup of any partial deploy:
     azd down --purge --force --no-prompt || true
     exit 1
   fi
-  echo "azd up attempt $attempts failed, sleeping 5s before retry (Pattern 18 — ARM cross-resource race)"
+  echo "azd provision attempt $attempts failed, sleeping 5s before retry (Pattern 18 — ARM cross-resource race)"
   sleep 5
 done
 ```
 
-Total budget for this step: ~12-18 min under typical conditions
-(Bicep deploy + ACR remote build + revision reaches Running state).
+Total budget for this step: ~8-12 min under typical conditions
+(ACR build ~3-5 min + Bicep provision ~5-7 min until revision reaches
+Running state). This is materially faster than `azd up` because we
+skip the `azd deploy` revision-swap loop entirely.
 
 ---
 
