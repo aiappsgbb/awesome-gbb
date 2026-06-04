@@ -102,22 +102,49 @@ into one of three categories: `billing`, `technical`, `account`. Then
 prove it works by sending one test message through it and verifying the
 response is one of those three labels.
 
-**Deploy-path choice (SKILL.md decides; either path counts as success):**
+**Deploy-path choice — DEFAULT TO `container_configuration` (AGENTS.md § 9.7 Pattern 16):**
 
-The SKILL.md as of v1.9.0 documents two mutually exclusive agent-source
-shapes in the manifest — `container_configuration` (GA, customer
-authors the Dockerfile + container.py) and `code_configuration`
-(preview, source-code zip with `dependency_resolution: remote_build`
-or `bundled`, no Dockerfile). Read the SKILL's `## //build 2026
-(Nov 2026) additions § 1 + § 3` and pick the path the skill recommends
-as the CI default. EITHER path counts as a successful deploy for the
-PASS marker. If you pick `code_configuration`, use
+The SKILL.md v1.9.0 documents two agent-source shapes:
+`container_configuration` (GA, the v1.8.x-proven path the canonical
+references implement) and `code_configuration` (preview, source-code
+zip with `dependency_resolution`). The preview surface depends on the
+`azure.ai.agents` azd extension actually exposing it on this runner;
+that surface drifts faster than the SKILL.md text (Pattern 16). To
+avoid CI flap on extension-version skew, the **CI default is always
+`container_configuration`** unless you first prove the preview surface
+is present on this runner:
+
+```bash
+azd ai agent deploy --help 2>&1 \
+  | grep -qE 'code_configuration|--code|deploy-mode.*code' \
+  && echo "code_configuration surface present on this runner" \
+  || echo "code_configuration NOT in installed extension — using container_configuration"
+```
+
+If the grep does NOT match, author `container_configuration` ONLY and
+do NOT attempt `code_configuration` on this matrix leg. The SKILL's
+//build 2026 § 1 + § 3 are forward-looking documentation for consumers
+whose extensions have caught up; the CI gate proves the GA path stays
+green against today's installed extension.
+
+If the grep DOES match, you MAY author `code_configuration` with
 `dependency_resolution: remote_build` (the documented default) and
-`runtime: python_3_13` (the default per the skill's runtime bumps in
-§ 2) — `bundled` requires Linux-x64 deps that the GitHub runner cannot
-produce portably. If `code_configuration` poll returns `failed` for
-ANY reason on this matrix leg, fall back to `container_configuration`
-and continue — both paths are equally valid hard-success surfaces.
+`runtime: python_3_13`, but if the poll returns `failed` for ANY
+reason, fall back to `container_configuration` and continue. EITHER
+path counts as a successful deploy for the PASS marker.
+
+**Identity wiring for the container path is non-negotiable.** The
+hosted-agent runtime injects identity via the workload-identity env
+vars; the container code MUST construct an `AzureAIAgent` (or
+equivalent) with an explicit `credential=DefaultAzureCredential()`
+(async) — exactly what
+`skills/foundry-hosted-agents/references/python/container.py` and
+`references/python/main.py` already do. **Copy those files verbatim
+into your scratch directory; do NOT write your own credential chain
+from training-data memory.** Skipping the explicit credential argument
+or substituting `ManagedIdentityCredential()` directly causes the
+runtime to log "missing identity context" and the invoke to 401
+silently.
 
 **WebSocket protocol declaration (declare-only, do NOT invoke):**
 
