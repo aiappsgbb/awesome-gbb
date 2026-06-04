@@ -5,19 +5,21 @@ description: >
   combine a model, instructions, and tools without containers or
   custom code. Covers azure-ai-projects SDK (PromptAgentDefinition),
   tool wiring (web search, code interpreter, file search, MCP,
-  OpenAPI), conversations API, versioning, structured inputs, and
-  publishing as agent applications.
-  USE FOR: prompt agent, create agent, declarative agent, no-code
-  agent, PromptAgentDefinition, azure-ai-projects, create_version,
-  agent tools, WebSearchTool, CodeInterpreterTool, FileSearchTool,
-  MCPTool, OpenApiTool, agent versioning, agent application, publish
-  agent, conversations API, structured inputs, Foundry Agent Service,
-  agent playground. DO NOT USE FOR: hosted container agents (use
-  foundry-hosted-agents), MAF agent framework (use
-  foundry-hosted-agents), MCP server deployment (use
-  foundry-mcp-aca), agent evaluation (use foundry-evals).
+  OpenAPI, Fabric IQ, Work IQ, Tool Search, Skill Reference,
+  Guardrail, A2A, Browser Automation), conversations API,
+  versioning, structured inputs, and publishing as agent
+  applications.
+  USE FOR: prompt agent, declarative agent, PromptAgentDefinition,
+  azure-ai-projects, agent tools, WebSearchTool, CodeInterpreterTool,
+  FileSearchTool, MCPTool, OpenApiTool, FabricIQTool, WorkIQTool,
+  ToolSearchTool, SkillReferenceTool, GuardrailTool, A2ATool,
+  BrowserAutomationTool, conversations API, structured inputs,
+  publish agent, Foundry Agent Service. DO NOT USE FOR: hosted
+  container agents (use foundry-hosted-agents), MAF agent framework,
+  MCP server deployment (use foundry-mcp-aca), agent evaluation (use
+  foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.0.6"
+  version: "1.1.0"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -176,6 +178,152 @@ agent = project.agents.create_version(
 > **MCP servers for prompt agents** are hosted remotely (not in-process).
 > Use `foundry-mcp-aca` skill to deploy MCP servers on Azure Container Apps,
 > then wire them here via `MCPTool(server_url=...)`.
+
+### Build 2026 additions (preview)
+
+The //build 2026 wave shipped seven additional first-class prompt-agent
+tools. Each is exposed in `azure-ai-projects ≥ 2.0.0` and wired the same
+way as the GA tools above. Cross-references point to the dedicated skills
+that cover the connection setup, server-side resources, or governance
+contract for each tool — some of those skills are forthcoming in this
+catalog (tracked in the //build 2026 update wave); use the upstream Foundry
+docs in the meantime.
+
+#### FabricIQTool
+
+Grounds a prompt agent in Microsoft Fabric data via a Fabric workspace
+connection.
+
+```python
+from azure.ai.projects.models import FabricIQTool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="Answer questions about Q3 revenue using Fabric data.",
+    tools=[FabricIQTool(connection_id="<fabric-connection-id>")],
+)
+```
+
+Requires a Fabric workspace + a project-scoped connection
+(`Microsoft.CognitiveServices/accounts/.../connections/<name>`).
+See the [Fabric IQ tool docs](https://learn.microsoft.com/azure/ai-foundry/tools/fabric-iq).
+
+#### WorkIQTool
+
+Grounds a prompt agent in Microsoft 365 / Graph (mail, calendar,
+SharePoint, Teams) via a Work IQ connection.
+
+```python
+from azure.ai.projects.models import WorkIQTool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="Summarize my unread email threads about Project Hummingbird.",
+    tools=[WorkIQTool(connection_id="<work-iq-connection-id>")],
+)
+```
+
+Requires an M365 / Graph connection on the Foundry project. The connection
+contract is identical to Fabric IQ — see the
+[Work IQ tool docs](https://learn.microsoft.com/azure/ai-foundry/tools/work-iq)
+for tenant-admin consent + scope guidance.
+
+#### ToolSearchTool
+
+Lets a prompt agent dynamically discover and call tools registered in a
+Foundry **toolbox** (server-side MCP bundle) without enumerating every
+tool in `tools=[...]`.
+
+```python
+from azure.ai.projects.models import ToolSearchTool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="Use the most appropriate tool for the user's task.",
+    tools=[ToolSearchTool(toolbox_ids=["<toolbox-id>"])],
+)
+```
+
+Toolbox registration is server-side — see the `foundry-toolboxes` skill
+(forthcoming in this catalog) for the toolbox lifecycle. ToolSearchTool
+is the **consumption** side; `foundry-toolboxes` is the **production**
+side.
+
+#### SkillReferenceTool
+
+Lets a prompt agent invoke a published **Foundry Skill** (a declarative
+tool pack) by reference, the same way a hosted agent does.
+
+```python
+from azure.ai.projects.models import SkillReferenceTool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="Use the published payments-lookup skill when asked about transactions.",
+    tools=[SkillReferenceTool(skill_id="<published-skill-id>")],
+)
+```
+
+Foundry Skills are managed in the same catalog as Toolboxes — see the
+`foundry-toolboxes` skill (forthcoming) for publishing + versioning.
+
+#### GuardrailTool
+
+Wires Azure Content Safety (ACS) as a server-side policy check around the
+agent's input and output, expressed as a tool the agent can invoke.
+
+```python
+from azure.ai.projects.models import GuardrailTool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="Be helpful, but always run the user message through GuardrailTool first.",
+    tools=[GuardrailTool(connection_id="<acs-connection-id>")],
+)
+```
+
+For the **decision** of when to use `GuardrailTool` vs full in-process
+governance (AGT) vs raw ACS API calls, see the `foundry-agt` skill — it
+carries the canonical decision table.
+
+#### A2ATool
+
+Lets a prompt agent invoke a peer hosted agent (Agent-to-Agent protocol,
+GA at //build 2026).
+
+```python
+from azure.ai.projects.models import A2ATool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="When asked for current weather, delegate to the weather-bot agent.",
+    tools=[A2ATool(target_agent_id="<peer-agent-id>")],
+)
+```
+
+Identity propagation, peer-agent RBAC, and the project-MI Cog-roles
+gotcha (AGENTS.md §9.7 Pattern 23) are covered in the `foundry-a2a`
+skill (forthcoming in this catalog).
+
+#### BrowserAutomationTool
+
+Lets a prompt agent drive a Playwright-backed remote browser session
+(GA Nov 2026) — useful for forms, multi-page workflows, and pages that
+require interactive navigation.
+
+```python
+from azure.ai.projects.models import BrowserAutomationTool, PromptAgentDefinition
+
+definition = PromptAgentDefinition(
+    model="gpt-5-mini",
+    instructions="When asked to fill a form, use BrowserAutomationTool.",
+    tools=[BrowserAutomationTool(connection_id="<browser-connection-id>")],
+)
+```
+
+Connection setup, deterministic-page testing patterns, and Pattern 25
+soft-PASS teardown for ephemeral browser sessions are covered in the
+`foundry-browser-automation` skill (forthcoming in this catalog).
 
 ---
 
@@ -443,6 +591,14 @@ from azure.ai.projects.models import (
     BingGroundingTool,
     FunctionTool,
     AzureAISearchTool,
+    # //build 2026 additions (preview) — see § 2 "Build 2026 additions"
+    FabricIQTool,
+    WorkIQTool,
+    ToolSearchTool,
+    SkillReferenceTool,
+    GuardrailTool,
+    A2ATool,
+    BrowserAutomationTool,
 )
 ```
 
@@ -454,7 +610,11 @@ from azure.ai.projects.models import (
 | Deploy MCP servers for tool wiring | `foundry-mcp-aca` |
 | RAG via Knowledge Bases | `foundry-iq` |
 | Agent evaluation | `foundry-evals` |
-| Agent governance (AGT) | `foundry-agt` |
+| Agent governance (AGT) — incl. GuardrailTool decision | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |
 | Memory across sessions | `foundry-memory` |
-| Toolbox management | `foundry-toolbox` |
+| In-process toolbox utilities | `foundry-toolbox` |
+| Server-side MCP toolboxes + Foundry-Skills (ToolSearchTool / SkillReferenceTool) | `foundry-toolboxes` (forthcoming) |
+| A2A peer-agent invocation (A2ATool) | `foundry-a2a` (forthcoming) |
+| Remote browser automation (BrowserAutomationTool) | `foundry-browser-automation` (forthcoming) |
+| Eval-driven prompt optimization (`azd ai agent eval/optimize/apply` loop) | `foundry-agent-optimizer` (forthcoming) |
