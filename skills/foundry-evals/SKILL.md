@@ -3,14 +3,18 @@ name: foundry-evals
 description: >
   Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry
   built-in evaluators. Covers sequential invocation, cold-start handling, dataset
-  creation, evaluator configuration, RBAC for eval judges, and result interpretation.
-  USE FOR: evaluate agent post-deploy, score grounding quality, measure tool_selection,
-  detect dataset drift, write custom grader, check URL citations, validate eval RBAC,
-  day-1 smoke test, continuous eval loop, pre-merge eval gate, Foundry Evals SDK setup.
-  DO NOT USE FOR: deploying agents (use threadlight-deploy), designing processes
-  (use threadlight-design), unit testing code.
+  creation, evaluator configuration, RBAC for eval judges, result interpretation,
+  and cross-refs to community evaluator frameworks (foundry-assert) and eval-driven
+  prompt optimization loops (foundry-agent-optimizer). USE FOR: evaluate agent
+  post-deploy, score grounding quality, measure tool_selection, detect dataset drift,
+  write custom grader, check URL citations, validate eval RBAC, day-1 smoke test,
+  continuous eval loop, pre-merge eval gate, Foundry Evals SDK setup, evaluator
+  framework, eval-driven optimization, ASSERT evaluators. DO NOT USE FOR: deploying
+  agents (use threadlight-deploy), designing processes (use threadlight-design),
+  unit testing code, reimplementing evaluator framework (use foundry-assert), writing
+  your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # Foundry Agent Evaluations
@@ -1440,3 +1444,5 @@ code change.
 | [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the `aca-job-cron` scaffold the **Plan B** loop runs on |
 | [**threadlight-hitl-patterns**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns/) | Writes the `case_audit` records the **Plan B** loop reads for custom KPI computation |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | App Insights connection on Foundry account is prerequisite for both plans |
+| [**foundry-assert**](../foundry-assert/) | Use the `responsibleai/ASSERT` community evaluator framework when Foundry built-ins don't cover your assertion shape (custom rubrics, multi-step reasoning checks, domain-specific graders); pairs with `foundry-evals` two-phase pattern |
+| [**foundry-agent-optimizer**](../foundry-agent-optimizer/) | Wraps the `azd ai agent eval/optimize/apply` loop — feeds `foundry-evals` scores into prompt optimization and applies the winning variant back to the hosted agent |
