@@ -145,6 +145,42 @@ gitignored.
 
 ---
 
+## Step 1b — Build 2026 features (best-effort, Pattern 13 soft-PASS)
+
+If the `azure.ai.agents` azd preview extension installed in Step 1
+supports the Build 2026 deltas documented in SKILL.md § Build 2026
+deltas (GA June 2026), exercise them as **best-effort verification
+only**. None of these gate the hard PASS marker — they are optional
+demonstrations following the Pattern 13 soft-PASS shape (separate
+hard contract from best-effort verification).
+
+1. **`agent.manifest.yaml` — preferred over inline `agent.yaml`** if
+   the extension recognises the unified manifest format. If
+   `azd ai agent --help` does NOT show manifest registration, skip
+   with one transcript NOTE:
+   `NOTE agent.manifest.yaml skipped — extension predates Build 2026 unification`.
+
+2. **`--deploy-mode code`** — attempt `azd ai agent deploy --deploy-mode code`
+   to skip Bicep generation. If the flag is rejected with `unknown flag`
+   (extension version drift, Pattern 16 territory), skip with one NOTE:
+   `NOTE --deploy-mode code skipped — extension does not yet accept the flag`.
+   The fallback is the GA-stable default mode (no SDK change), so this
+   is Pattern 16-safe.
+
+3. **WebSocket invocation verification is SKIPPED in CI by design** —
+   the WS endpoint is NCUS-only at GA and the Sweden Central CI
+   resource group cannot reach it. Emit one NOTE:
+   `NOTE WS invocation skipped — NCUS-only at GA; Sweden Central exercises Responses HTTP via the ACA app instead`.
+   The Responses HTTP invocation in Step 1 already satisfies the hard
+   PASS contract for the agent's invocation surface.
+
+For each skipped best-effort feature, emit ONE transcript NOTE line.
+Do NOT FAIL the smoke on any best-effort skip. The PASS marker
+condition (Step 2) is unchanged: deploy succeeded + invoke returned
+a valid label.
+
+---
+
 ## Step 2 — Marker contract (deterministic, MANDATORY)
 
 Your FINAL action — after the invoke succeeds AND after your best-effort

@@ -1,25 +1,24 @@
 ---
 name: foundry-hosted-agents
 description: >
-  Deploy, evaluate, and manage Foundry hosted agents on the refreshed
-  May 2026 preview — MAF 1.7.0, Foundry User role, azd ai agent
-  extension. The canonical reference for hosted-agent lifecycle from
-  container build through production evaluation. Read the full skill
-  body for SDK patterns, identity wiring, and troubleshooting — do
-  not deploy from this summary alone.
-  USE FOR: deploy foundry agent,
-  hosted agent, container agent, agent.yaml,
-  FoundryChatClient, ResponsesHostServer, MAF agent framework,
-  OpenAIChatClient, refreshed preview April 2026, ACR push, batch
-  eval, dataset curation, agent identity, Foundry User role, prompt
-  optimization, azd ai agent extension, entra-agent-id. DO NOT USE
-  FOR: prompt agents (use foundry-prompt-agents), ACA MCP server deployment (use
-  foundry-mcp-aca), GHCP coding agent (use ghcp-hosted-agents),
-  Citadel hub/spoke (use citadel-hub-deploy or
-  citadel-spoke-onboarding), pilot pipeline orchestration (use
-  threadlight-deploy), continuous evaluation (use foundry-evals).
+  Deploy + manage Foundry hosted agents — GA June 2026: MAF 1.7.0,
+  --deploy-mode code, agent.manifest.yaml, WS invocations, Activity
+  bridge, Foundry User + Foundry Project Manager roles. Read the body
+  for SDK patterns, identity wiring, runtime selection, troubleshooting
+  — do not deploy from this summary alone. USE FOR: deploy foundry
+  agent, hosted agent, container agent, agent.yaml, agent manifest,
+  code-mode deploy, FoundryChatClient, ResponsesHostServer, MAF, ACR
+  push, batch eval, agent identity, Foundry User role, Foundry Project
+  Manager role, azd ai agent extension, entra-agent-id, WS invocations,
+  Activity protocol, dependency resolution pyproject, vNext hosted
+  agent, python_3_13, dotnet_10. DO NOT USE FOR: prompt agents (use
+  foundry-prompt-agents), ACA MCP (use foundry-mcp-aca), GHCP coding
+  agent (use ghcp-hosted-agents), Citadel hub/spoke (use
+  citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
+  continuous eval (use foundry-evals), Routines (deferred), A2A wiring
+  (use foundry-a2a).
 metadata:
-  version: "1.8.6"
+  version: "1.9.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -259,6 +258,182 @@ New base-image code never reaches the container.
 Discovered May 2026: base image rebuild with `SkillsProvider.from_paths()`
 fix + observability fix never reached any agent until both guards were
 applied.
+
+---
+
+## Build 2026 deltas (GA June 2026)
+
+> **GA target: ~30 days from Microsoft Build 2026.** This section
+> captures the deltas the GA wave introduces over the May 2026
+> preview. Sources: `aka.ms/Build2026HostedAgents`,
+> `learn.microsoft.com/en-us/azure/ai-foundry/agents/quickstarts/quickstart-hosted-agent`.
+> Until GA ships, treat these as forward-looking guidance — pin to the
+> preview behavior documented in the rest of this skill for code you
+> are deploying today.
+
+### 1. `--deploy-mode code` (Bicep generation skip)
+
+The `azd ai agent init` extension gains a new `--deploy-mode` flag:
+
+| Mode | Behavior |
+|------|----------|
+| `container` (existing) | You author Bicep + Dockerfile. `azd up` builds + pushes + deploys per the SDK Patterns section above. |
+| `code` (new at GA) | Platform builds the image with BuildKit + a pinned base image. You ship source + manifest only — no Dockerfile, no Bicep. |
+
+Use `code` mode for new greenfield deploys where you want the
+platform-managed base image and CVE patching cadence. Stay on
+`container` mode when you need a custom Dockerfile (private base
+images, OS-level dependencies, custom entrypoint scripts).
+
+```bash
+azd ai agent init -m ./manifest --project-id $PROJECT_ID \
+  --deploy-mode code --runtime python_3_13 \
+  --entry-point main.py --dep-resolution remote_build -e my-env
+```
+
+### 2. Runtime selection: `python_3_13` / `python_3_14` / `dotnet_10`
+
+Hosted agents at GA support **only** these runtimes via the
+`--runtime` flag:
+
+- `python_3_13`
+- `python_3_14`
+- `dotnet_10`
+
+**Python 3.11 and 3.12 are NOT supported for hosted agents at GA.**
+If your container today targets 3.11/3.12, you must bump to 3.13+
+before adopting `--deploy-mode code`. Container-mode deploys with a
+custom Dockerfile can keep whatever Python the base image ships —
+the runtime flag only applies to the platform-managed `code` mode.
+
+### 3. Dependency resolution: `--dep-resolution`
+
+`--dep-resolution` controls how Python dependencies are materialized
+into the platform-built image:
+
+| Value | Behavior | When to use |
+|-------|----------|-------------|
+| `remote_build` | Platform resolves + installs from your `pyproject.toml` or `requirements.txt` server-side using BuildKit. | Default. Faster iteration; smaller repo. |
+| `bundled` | You vendor wheels locally (`pip download -d ./wheels`) and the platform installs from the bundle. | Air-gapped policies; reproducible builds; deps not on PyPI. |
+
+The resolver auto-detects `pyproject.toml` first, then falls back to
+`requirements.txt`. Mixing both is unsupported — pick one and delete
+the other from your source tree.
+
+### 4. Built-in content-safety toggle
+
+Content safety is now a **Foundry portal toggle** under the
+**Guardrails** blade of the agent resource — not an SDK call, not an
+`agent.yaml` field. Toggle on to enable platform-side
+prompt/response filtering with the project's default content-safety
+policy. Toggle off if you bring your own filtering layer upstream
+(e.g., APIM policy fragment, in-agent middleware).
+
+The toggle is per-agent, per-environment. Production environments
+should turn it ON by default; dev environments may turn it off to
+test prompt patterns that would otherwise be blocked.
+
+### 5. WebSocket invocations vs Activity protocol
+
+Two new invocation surfaces auto-register alongside the existing
+Responses HTTP endpoint:
+
+| Protocol | Endpoint | Use for |
+|----------|----------|---------|
+| Responses (HTTP) | `POST https://{account}.services.ai.azure.com/api/projects/agents/endpoint/protocols/responses?project_name={p}&agent_name={a}` | Stateless request/response. Existing pattern. |
+| Invocations-WS (NCUS only at GA) | `wss://{account}.services.ai.azure.com/api/projects/agents/endpoint/protocols/invocations_ws?project_name={p}&agent_name={a}` | Full-duplex streaming, server-initiated events, long-running multi-turn interactions. |
+| Activity (auto-bridge) | Bot Framework Activity endpoint registered automatically | Teams + M365 Copilot channels. No code change — the platform translates Activity ↔ Responses. |
+
+**WS regional constraint:** `invocations_ws` is **NCUS-only at GA**.
+Other Foundry regions (including Sweden Central) get HTTP Responses
++ Activity bridge only. If your topology requires WS in another
+region, pin the WS endpoint deploy to NCUS and call across regions
+from your client tier.
+
+### 6. `agent.manifest.yaml` — prompt-agent + hosted-agent unification
+
+The `agent.yaml` shape used today is superseded by
+`agent.manifest.yaml`, a single manifest format that covers BOTH
+prompt agents (Foundry Agent Service) and hosted agents. The
+`template.kind` field distinguishes them.
+
+```yaml
+name: agent-framework-agent-basic-responses
+description: >
+  A basic Agent Framework agent hosted by Foundry that demonstrates
+  the agent template for the responses protocol.
+metadata:
+  tags:
+    - Agent Framework
+    - AI Agent Hosting
+    - Responses
+template:
+  name: agent-framework-agent-basic-responses
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+resources:
+  - kind: model
+    id: gpt-4.1-mini
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+```
+
+Key fields:
+- `template.kind: hosted` for hosted agents (this skill); `prompt`
+  for Foundry Agent Service prompt agents
+- `template.protocols[]` enumerates the protocols the agent exposes
+  — `responses`, `invocations_ws`, `activity`
+- `template.environment_variables[]` projects `azd env` values into
+  the runtime container at deploy time
+- `resources[]` declares Foundry resources the agent depends on
+  (model deployments, knowledge sources, memory stores)
+
+### 7. `enableHostedAgentVNext` flag + full end-to-end deploy
+
+GA wave is gated behind an `azd env` opt-in flag during the rollout
+window. Set it before `azd provision`:
+
+```bash
+azd env set enableHostedAgentVNext "true" -e my-env
+```
+
+Full deploy CLI from a clean manifest:
+
+```bash
+PROJECT_ID="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>"
+
+azd ai agent init \
+  -m ./manifest \
+  --project-id $PROJECT_ID \
+  --deploy-mode code \
+  --runtime python_3_13 \
+  --entry-point main.py \
+  --dep-resolution remote_build \
+  -e my-env
+
+azd env set enableHostedAgentVNext "true" -e my-env
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-4.1-mini" -e my-env
+azd provision -e my-env
+azd deploy   -e my-env
+azd ai agent invoke --new-session "hello" --timeout 120
+```
+
+### Hosting SDK matrix (Python, at GA)
+
+| Framework | Hosting package | Server class |
+|-----------|-----------------|--------------|
+| MAF | `agent-framework-foundry-hosting` | `agent_framework_foundry_hosting.ResponsesHostServer` |
+| BYO Responses | `azure-ai-agentserver-responses` | `azure.ai.agentserver.responses.ResponsesHostServer` |
+| BYO Invocations (WS) | `azure-ai-agentserver-invocations` | `azure.ai.agentserver.invocations.InvocationsHostServer` |
+| LangGraph | `langchain-azure-ai[hosting]` | `langchain_azure_ai.agents.hosting.ResponsesHostServer` |
+
+Pin to the MAF row unless you have a documented reason to use one of
+the BYO packages (custom protocol handler, non-MAF framework lock-in,
+LangGraph state-graph requirements).
 
 ---
 
@@ -1117,7 +1292,7 @@ View them with `azd ai agent show`.
 
 | Role | Scope | Why |
 |------|-------|-----|
-| `Azure AI Project Manager` | Foundry project | Create agents + auto-assign RBAC to agent identity |
+| `Foundry Project Manager` | Foundry project | Create agents + auto-assign RBAC to agent identity (formerly `Azure AI Project Manager`) |
 | `Contributor` | Resource group | Provision Azure resources |
 
 **Automated deployer MI (backend service, CI/CD pipeline, or ACA app that creates agents programmatically):**
@@ -1130,7 +1305,7 @@ View them with `azd ai agent show`.
 > **⚠️ `Contributor` alone is insufficient for RBAC assignment.** The `Contributor`
 > built-in role explicitly **excludes** `Microsoft.Authorization/roleAssignments/write`.
 > If your deploy script calls `az role assignment create` (or the ARM REST API) to
-> assign `Foundry User` / `Azure AI Developer` / `Cognitive Services OpenAI User`
+> assign `Foundry User` / `Cognitive Services OpenAI User`
 > to per-agent identities, the deployer MI needs `User Access Administrator` on the
 > target scope. Without it, RBAC assignment fails silently (deploy logs a warning
 > and continues), and the agent starts with **zero roles** → `server_error` on
@@ -1197,7 +1372,7 @@ View them with `azd ai agent show`.
 The `azd ai agent` extension's postdeploy hook **automatically assigns** `Foundry User`
 (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) to the agent identity. For this to work, you need:
 
-1. `Azure AI Project Manager` role on the Foundry project
+1. `Foundry Project Manager` role on the Foundry project (formerly `Azure AI Project Manager`)
 2. `AZURE_TENANT_ID` set in azd env: `azd env set AZURE_TENANT_ID <tenant-id>`
 
 Without both, postdeploy fails silently and the agent gets 401 at runtime.
