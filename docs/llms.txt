@@ -7,7 +7,7 @@
 ### 🏗️ Foundry Building Blocks
 
 - [foundry-prompt-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-prompt-agents/SKILL.md): Create and manage Foundry prompt agents — declarative agents that combine a model, instructions, and tools without containers or custom code.
-- [foundry-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-hosted-agents/SKILL.md): Deploy, evaluate, and manage Foundry hosted agents on the refreshed May 2026 preview — MAF 1.7.0, Foundry User role, azd ai agent extension.
+- [foundry-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-hosted-agents/SKILL.md): Deploy, evaluate, manage Foundry hosted agents — MAF 1.7.0, azd ai agent ext.
 - [foundry-teams-bot](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-teams-bot/SKILL.md): Connect a Microsoft Foundry Hosted Agent to Microsoft Teams — generate the bot code, Bicep infrastructure, Teams manifest, and ACA deployment.
 - [ghcp-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-hosted-agents/SKILL.md): Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK authentication and Invocations protocol.
 - [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.

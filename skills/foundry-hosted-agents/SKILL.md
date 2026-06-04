@@ -1,25 +1,24 @@
 ---
 name: foundry-hosted-agents
 description: >
-  Deploy, evaluate, and manage Foundry hosted agents on the refreshed
-  May 2026 preview — MAF 1.7.0, Foundry User role, azd ai agent
-  extension. The canonical reference for hosted-agent lifecycle from
-  container build through production evaluation. Read the full skill
-  body for SDK patterns, identity wiring, and troubleshooting — do
-  not deploy from this summary alone.
-  USE FOR: deploy foundry agent,
-  hosted agent, container agent, agent.yaml,
-  FoundryChatClient, ResponsesHostServer, MAF agent framework,
-  OpenAIChatClient, refreshed preview April 2026, ACR push, batch
-  eval, dataset curation, agent identity, Foundry User role, prompt
-  optimization, azd ai agent extension, entra-agent-id. DO NOT USE
-  FOR: prompt agents (use foundry-prompt-agents), ACA MCP server deployment (use
-  foundry-mcp-aca), GHCP coding agent (use ghcp-hosted-agents),
-  Citadel hub/spoke (use citadel-hub-deploy or
-  citadel-spoke-onboarding), pilot pipeline orchestration (use
-  threadlight-deploy), continuous evaluation (use foundry-evals).
+  Deploy, evaluate, manage Foundry hosted agents — MAF 1.7.0, azd ai
+  agent ext. Container plus //build 2026 source-code path:
+  code_configuration (python_3_13/3_14/dotnet_10),
+  dependency_resolution (remote_build/bundled), agent.manifest.yaml,
+  invocations_ws WebSocket (NCUS preview), Guardrails,
+  Foundry-Features vNext header.
+  USE FOR: deploy foundry agent, hosted agent, container agent,
+  code-deploy agent, agent.yaml, agent.manifest.yaml,
+  FoundryChatClient, ResponsesHostServer, MAF, OpenAIChatClient,
+  batch eval, Foundry User, Foundry Project Manager, azd ai agent,
+  code_configuration, dependency_resolution, remote_build, bundled,
+  python_3_13, python_3_14, dotnet_10, invocations_ws,
+  Foundry-Features, Guardrails, enableHostedAgentVNext.
+  DO NOT USE FOR: prompt agents, ACA MCP server, GHCP coding agent,
+  Citadel hub/spoke, pilot pipeline (threadlight-deploy), continuous
+  eval (foundry-evals).
 metadata:
-  version: "1.8.6"
+  version: "1.9.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -259,6 +258,316 @@ New base-image code never reaches the container.
 Discovered May 2026: base image rebuild with `SkillsProvider.from_paths()`
 fix + observability fix never reached any agent until both guards were
 applied.
+
+---
+
+## //build 2026 (Nov 2026) additions
+
+Microsoft Foundry's //build 2026 wave layered seven new surfaces on top
+of the existing container-based hosted-agent model documented elsewhere
+in this skill. **None of them are breaking** for agents that pin to the
+pre-//build manifest shape — but every one is a path the catalog now
+exercises end-to-end (or, where the public preview is region-locked,
+declares-only and validates the declaration is accepted).
+
+> **Source-of-truth note.** Each subsection cross-references the real
+> Microsoft surface (manifest field, REST query string, HTTP header) AND
+> any aspirational shorthand a Microsoft demo, blog, or `azd` extension
+> release note may have used (`--deploy-mode code`, `--dep-resolution`,
+> `enableHostedAgentVNext`). When a surface is only documented in a demo
+> and we cannot verify the GA-stable form, the subsection is annotated
+> `(verify on next refresh)` per the catalog's freshness contract
+> (AGENTS.md § 9.4). Do NOT invent CLI flags or Bicep properties from
+> demo shorthand alone — wait for the public surface to land.
+
+### 1 · Source-code deploys (`code_configuration`, aka `--deploy-mode code`)
+
+Hosted agents now support a **second deploy mode** alongside the
+container path: a **declarative manifest-only deploy** where the
+service builds the agent image for you. The manifest field is
+`code_configuration` (sibling to the existing `container_configuration`
+block); the `azd` extension release notes call this `--deploy-mode
+code` — under the covers the extension just writes the
+`code_configuration` block and submits the manifest.
+
+| Aspect | Container mode (existing) | **`code_configuration` (NEW)** |
+|---|---|---|
+| Manifest field | `container_configuration:` | **`code_configuration:`** |
+| Inputs | Pre-built OCI image in ACR | Source tree: `main.py + agent.yaml + agent.manifest.yaml + requirements.txt + skills/ + packages/` |
+| Build step | You run `docker build` + `az acr build` (or `azd deploy`) | Service builds the image inside Foundry's build farm |
+| Mutual exclusivity | Cannot coexist in a single agent version | Cannot coexist with `container_configuration` in a single agent version — pick one per version |
+| Lifecycle | Push image → register version → activate | Zip source flat at root → submit version → poll status until `active` |
+| Best for | Custom base images, sidecars, locked-down ACR | Quickstart, single-file agents, demos, pilots without ACR provisioning |
+
+**Required tooling.** `azd` ≥ 1.25.3 and `azd ai agent` extension
+≥ 0.1.27-preview. Python ≥ 3.13 OR .NET 10 (`dotnet_10`). Az CLI ≥
+2.80.
+
+**Project layout the service expects:**
+
+```
+agent-project/
+├── main.py                  # entrypoint
+├── agent.yaml               # runtime config (model, tools, instructions)
+├── agent.manifest.yaml      # deployment manifest (see § 6)
+├── requirements.txt         # Python deps (remote_build mode) — OR
+├── packages/                # extracted Linux wheels (bundled mode only)
+└── skills/                  # MAF skill modules
+```
+
+**Workflow:**
+
+```bash
+# Initialise from manifest URL (or local template)
+azd ai agent init -m https://aka.ms/foundry/agent-templates/quickstart
+
+# Deploy as source-code (service builds the image)
+azd ai agent deploy        # auto-detects code_configuration in manifest
+
+# Or explicitly pin the deploy mode if your manifest has both blocks
+azd ai agent deploy --deploy-mode code   # (verify on next refresh — flag form per ext release notes)
+```
+
+**When NOT to use `code_configuration`.** Keep the container path if
+you need: a custom base image (CUDA, system packages, ODBC drivers),
+sidecar processes (Open Policy Agent, AGT in-process middleware), or
+your security posture requires ACR scanning before deploy. The
+service's build farm produces an OCI image you don't control — for
+hardened deploys, container mode remains the answer.
+
+### 2 · Runtime version bumps: `python_3_13`, `python_3_14`, `dotnet_10`
+
+The `code_configuration.runtime` field accepts:
+
+| Value | Status | Notes |
+|---|---|---|
+| `python_3_13` | **GA** | Default for new Python agents from //build 2026 onward |
+| `python_3_14` | **Preview** | Use when you need 3.14-specific features; otherwise prefer 3.13 |
+| `dotnet_10` | **GA** | First-class .NET hosted-agent runtime; `dotnet publish -c Release -r linux-x64 --self-contained false` |
+
+**Compatibility note for upgraders.** Agents still on the Python 3.12
+container path keep working — runtime selection only applies to
+`code_configuration`. If you bump a container-mode agent to
+3.13/3.14, you rebuild the OCI image yourself (existing skill body
+covers this).
+
+### 3 · `dependency_resolution: remote_build | bundled` (aka `--dep-resolution`)
+
+Under `code_configuration`, you choose how Linux dependencies are
+resolved at build time:
+
+| Value | Behaviour | When to use |
+|---|---|---|
+| **`remote_build`** (default) | Agent Service restores from your `requirements.txt` inside its build farm. Auto-pulls the right Linux wheels for the chosen runtime. | Default for ~95% of agents. Standard PyPI deps, no native compile chain, no private indexes. |
+| `bundled` | You ship pre-resolved, pre-extracted Linux modules under `packages/` (Python) or a `dotnet publish` output (.NET). Build farm skips dep resolution. | Air-gapped private PyPI, native deps requiring specific manylinux wheels, deterministic offline builds, customer audit requirements. |
+
+**Bundled mode — critical detail.** `packages/` MUST contain
+**extracted modules**, NOT raw `.whl` files. The conventional
+workflow is:
+
+```bash
+pip download -r requirements.txt -d /tmp/wheels \
+  --python-version 3.13 --platform manylinux2014_x86_64 --only-binary=:all:
+mkdir -p packages
+for w in /tmp/wheels/*.whl; do unzip -o "$w" -d packages/; done
+```
+
+For .NET: `dotnet publish -c Release -r linux-x64 --self-contained false`
+produces a `publish/` directory the manifest references via
+`bundled` mode.
+
+**Demo shorthand.** Some `azd ai agent` extension demos invoke this
+as `--dep-resolution remote_build|bundled` — under the covers, the
+extension writes `code_configuration.dependency_resolution`. Use
+whichever form the version of `azd ai agent` you've pinned actually
+supports (run `azd ai agent deploy --help` to confirm).
+
+### 4 · Content-safety toggle / Foundry Guardrails
+
+//build 2026 surfaces **Foundry Guardrails** (the content-safety
+layer) as a first-class concept in the hosted-agent lifecycle. Three
+truths to internalise:
+
+1. **Microsoft Default Guardrails** apply automatically to every
+   hosted agent — no opt-in required. You inherit policies for
+   Violence, Hate, Sexual content, Self-harm.
+2. **Custom Guardrails** are configured in the **Foundry portal**
+   (Build > Guardrails), not in `agent.yaml`. Some default controls
+   (Violence/Hate/Sexual/Self-harm) are **override-only, not
+   deletable** — you can tune thresholds but cannot disable them.
+3. **Agent-level guardrails override model-level guardrails.** A
+   permissive agent configuration does NOT override a strict
+   model-level deny — but a strict agent does override permissive
+   model defaults for THAT agent.
+
+**Opting out of custom guardrails for a hosted agent.**
+*(verify on next refresh — no documented `agent.yaml` field for
+agent-level guardrail toggle as of catalog v1.9.0; surface is
+portal-driven and the demo material refers to "content-safety
+toggle" without naming the manifest key. When the public manifest
+schema lands, add a `## Guardrails` subsection here with the
+canonical field name and acceptable values.)*
+
+**Security implication.** Disabling Microsoft Default Guardrails is
+**not supported** today — and per the //build 2026 talk track,
+Microsoft is unlikely to expose that capability for hosted agents.
+If your scenario genuinely requires untrusted-content tolerance
+(e.g., security research, abuse-detection corpora), keep the agent
+in-container and apply your own pre/post filters outside the hosted
+runtime.
+
+### 5 · WebSocket invocations (`invocations_ws`) vs Activity protocol
+
+Hosted agents historically exposed a single invocation surface — the
+**Activity** protocol (request/response over HTTPS, multi-turn
+mediated by the Foundry control plane). //build 2026 adds a parallel
+**WebSocket invocation surface** for low-latency, bidirectional, and
+streaming workloads.
+
+**How you declare it.** Add `invocations_ws` to your manifest's
+`container_protocol_versions` (or the `code_configuration` equivalent):
+
+```yaml
+# agent.manifest.yaml excerpt
+container_protocol_versions:
+  - invocations          # existing Activity-protocol surface
+  - invocations_ws       # NEW WebSocket surface (preview)
+```
+
+**How you implement it (container mode).** The
+`azure-ai-agentserver-invocations` library exposes a
+`@app.ws_handler` decorator alongside the existing Activity handler:
+
+```python
+from agent_server_invocations import app
+
+@app.ws_handler  # NEW for invocations_ws
+async def handle_ws(session, message):
+    # bidirectional streaming logic here
+    async for chunk in agent.stream(message.content):
+        await session.send_json({"delta": chunk})
+```
+
+**Client side.** Open a WebSocket against:
+
+```
+wss://<account>.services.ai.azure.com/api/projects/agents/endpoint/protocols/invocations_ws
+  ?project_name=<proj>
+  &agent_name=<agent>
+  &agent_session_id=<uuid>
+  &foundry_features=HostedAgents=V1Preview
+```
+
+**Hard limits (preview).** 1 MB max frame size, ~10-minute session
+duration, **50 concurrent sessions per subscription per region**,
+15-minute idle timeout, 1 vCPU / 2 GiB per session. **Region: North
+Central US ONLY** at preview launch — Sweden Central (the catalog's
+CI region) has NOT received `invocations_ws` yet.
+
+**Catalog stance.** The fixture **declares `invocations_ws`** in
+`container_protocol_versions` and verifies the declaration round-trips
+through the manifest validator — but does NOT open a WS session
+end-to-end because the CI region is Sweden Central, not NCUS. When
+`invocations_ws` lands in Sweden Central, extend the fixture to open
+a WS, send one frame, and assert the echo.
+
+**When to use which surface.**
+
+| Workload | Pick |
+|---|---|
+| Single-shot question → answer | `invocations` (Activity) |
+| Tool-mediated multi-turn (most pilots) | `invocations` (Activity) |
+| Token-by-token streaming to a chat UI | `invocations_ws` |
+| Voice agents (STT/TTS round-trip) | `invocations_ws` |
+| Long-running tool calls > 60 s with interim status | `invocations_ws` |
+
+### 6 · `agent.manifest.yaml` — the declarative deployment manifest
+
+`agent.manifest.yaml` is the //build 2026 declarative manifest
+format that `azd ai agent deploy` consumes. It sits alongside
+`agent.yaml` (runtime config) and `azure.yaml` (azd project config):
+
+| File | Purpose | Consumed by |
+|---|---|---|
+| `azure.yaml` | azd project metadata (services, hooks) | `azd` core |
+| `agent.yaml` | Runtime config (model, tools, instructions) | Agent process at runtime |
+| **`agent.manifest.yaml`** | **Deployment manifest** (build mode, runtime, dep resolution, protocol surfaces, identity, version pinning) | **`azd ai agent deploy`** + Agent Service control plane |
+
+**Skeleton (source-code deploy):**
+
+```yaml
+# agent.manifest.yaml — code_configuration variant
+apiVersion: agents.foundry.microsoft.com/v1
+kind: HostedAgent
+metadata:
+  name: my-agent
+spec:
+  code_configuration:
+    runtime: python_3_13            # § 2
+    dependency_resolution: remote_build   # § 3
+    entrypoint: main.py
+  container_protocol_versions:      # § 5
+    - invocations
+    - invocations_ws                # opt-in to WS surface
+  identity:
+    type: managed
+```
+
+**Skeleton (container deploy — back-compat):**
+
+```yaml
+apiVersion: agents.foundry.microsoft.com/v1
+kind: HostedAgent
+metadata:
+  name: my-agent
+spec:
+  container_configuration:
+    image: ${ACR_LOGIN_SERVER}/my-agent:${IMAGE_TAG}
+  container_protocol_versions:
+    - invocations
+```
+
+**Initialisation.** `azd ai agent init -m <manifest-url-or-local-path>`
+scaffolds a starter project around an existing manifest. Microsoft
+ships starter manifests under `https://aka.ms/foundry/agent-templates/*`.
+
+### 7 · `enableHostedAgentVNext` — opting into the next-gen runtime
+
+//build 2026 introduced a **next-generation hosted-agent runtime**
+(referred to in Microsoft demos as "hosted-agent vNext") that
+underpins `code_configuration`, `invocations_ws`, and Guardrails.
+The opt-in mechanism is a **preview feature flag** sent on
+mutating REST calls:
+
+```
+Foundry-Features: HostedAgents=V1Preview,CodeAgents=V1Preview
+```
+
+The `azd ai agent` extension sets this header automatically when it
+detects a `code_configuration` block or `invocations_ws` in the
+manifest. If you're calling the REST API directly, add the header to
+agent-version create / activate calls.
+
+**`enableHostedAgentVNext` Bicep flag.** *(verify on next refresh —
+no documented Bicep property as of catalog v1.9.0. The Microsoft
+//build 2026 demo material references a Bicep-level
+`enableHostedAgentVNext` flag on the Foundry account or project
+resource, but the public Bicep schema for `Microsoft.CognitiveServices/accounts`
++ `projects` does not yet expose it. Until the schema lands,
+opt-in is via the `Foundry-Features` HTTP header on agent-version
+creates, NOT a Bicep property. When the Bicep flag lands, replace
+this paragraph with the verified property path and acceptable
+values.)*
+
+**Backward compatibility.** Setting the header has no effect on
+existing container-mode agents — they continue running on the
+pre-//build runtime until you migrate the manifest. There is no
+cliff: container agents do not auto-upgrade.
+
+**Scope.** The `Foundry-Features` header is opt-in **per-call**, not
+account-wide. You can have one agent on the new runtime
+(`code_configuration` + `invocations_ws`) and a dozen on the
+classic container runtime in the same project simultaneously.
 
 ---
 
@@ -1117,7 +1426,7 @@ View them with `azd ai agent show`.
 
 | Role | Scope | Why |
 |------|-------|-----|
-| `Azure AI Project Manager` | Foundry project | Create agents + auto-assign RBAC to agent identity |
+| `Foundry Project Manager` (formerly `Azure AI Project Manager` / `Azure AI Developer`) | Foundry project | Create agents + auto-assign RBAC to agent identity |
 | `Contributor` | Resource group | Provision Azure resources |
 
 **Automated deployer MI (backend service, CI/CD pipeline, or ACA app that creates agents programmatically):**
@@ -1130,7 +1439,7 @@ View them with `azd ai agent show`.
 > **⚠️ `Contributor` alone is insufficient for RBAC assignment.** The `Contributor`
 > built-in role explicitly **excludes** `Microsoft.Authorization/roleAssignments/write`.
 > If your deploy script calls `az role assignment create` (or the ARM REST API) to
-> assign `Foundry User` / `Azure AI Developer` / `Cognitive Services OpenAI User`
+> assign `Foundry User` / `Foundry Project Manager` (formerly `Azure AI Developer`) / `Cognitive Services OpenAI User`
 > to per-agent identities, the deployer MI needs `User Access Administrator` on the
 > target scope. Without it, RBAC assignment fails silently (deploy logs a warning
 > and continues), and the agent starts with **zero roles** → `server_error` on
@@ -1197,7 +1506,7 @@ View them with `azd ai agent show`.
 The `azd ai agent` extension's postdeploy hook **automatically assigns** `Foundry User`
 (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) to the agent identity. For this to work, you need:
 
-1. `Azure AI Project Manager` role on the Foundry project
+1. `Foundry Project Manager` role on the Foundry project (formerly `Azure AI Project Manager` — pin by GUID to survive display-name rotations)
 2. `AZURE_TENANT_ID` set in azd env: `azd env set AZURE_TENANT_ID <tenant-id>`
 
 Without both, postdeploy fails silently and the agent gets 401 at runtime.

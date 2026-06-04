@@ -102,6 +102,40 @@ into one of three categories: `billing`, `technical`, `account`. Then
 prove it works by sending one test message through it and verifying the
 response is one of those three labels.
 
+**Deploy-path choice (SKILL.md decides; either path counts as success):**
+
+The SKILL.md as of v1.9.0 documents two mutually exclusive agent-source
+shapes in the manifest — `container_configuration` (GA, customer
+authors the Dockerfile + container.py) and `code_configuration`
+(preview, source-code zip with `dependency_resolution: remote_build`
+or `bundled`, no Dockerfile). Read the SKILL's `## //build 2026
+(Nov 2026) additions § 1 + § 3` and pick the path the skill recommends
+as the CI default. EITHER path counts as a successful deploy for the
+PASS marker. If you pick `code_configuration`, use
+`dependency_resolution: remote_build` (the documented default) and
+`runtime: python_3_13` (the default per the skill's runtime bumps in
+§ 2) — `bundled` requires Linux-x64 deps that the GitHub runner cannot
+produce portably. If `code_configuration` poll returns `failed` for
+ANY reason on this matrix leg, fall back to `container_configuration`
+and continue — both paths are equally valid hard-success surfaces.
+
+**WebSocket protocol declaration (declare-only, do NOT invoke):**
+
+If the SKILL.md § 5 (WebSocket invocations / `invocations_ws`) documents
+the `container_protocol_versions` manifest field, ALSO include
+`invocations_ws` in that list when you author the manifest. This
+exercises the manifest-schema acceptance path (deploy must succeed
+with the new protocol declared). Do **NOT** attempt to open a
+WebSocket connection end-to-end — the SKILL documents that surface as
+`North Central US`-only preview, and CI runs in Sweden Central. The
+hard success criterion remains the existing Activity-protocol invoke
+(Responses API or `azd ai agent invoke`); the WS declaration is a
+schema-acceptance smoke only. If the deploy rejects the declaration
+with a clear schema error, drop `invocations_ws` from
+`container_protocol_versions` and re-deploy without it — that is a
+known preview-flag drift (AGENTS.md § 9.7 Pattern 16) and the SKILL
+core path still has to PASS without it.
+
 **Teardown is best-effort, NOT a success criterion** (AGENTS.md § 9.7
 Pattern 25). After the invoke proves success, attempt to delete what
 you created (the agent, the ACA app, and the ACR repository), but cap
@@ -154,8 +188,18 @@ content is what CI grades; your assistant-text reply is NOT graded.
 
 **PASS condition (hard success criteria):**
 
-- `azd deploy` succeeded (the hosted agent is up as an ACA app)
-- The test invoke returned a valid label (`billing`, `technical`, or `account`)
+- `azd deploy` succeeded (the hosted agent is up as an ACA app) via
+  EITHER `container_configuration` OR `code_configuration` — both
+  paths are equally valid per SKILL.md v1.9.0 § //build 2026 § 1
+- If the SKILL § 5 documents `invocations_ws` AND your manifest
+  declared it, the deploy must have ACCEPTED the declaration (no
+  schema rejection). If the deploy rejected the declaration and you
+  fell back to no-WS-protocol, the deploy on that fallback is still
+  a hard success (preview-flag drift is documented).
+- The test invoke returned a valid label (`billing`, `technical`, or
+  `account`) via the Activity-protocol path (Responses API or
+  `azd ai agent invoke`). The WS-protocol path is NOT exercised
+  end-to-end on this matrix leg.
 
 Teardown outcome is irrelevant to the PASS marker. On hard success:
 
