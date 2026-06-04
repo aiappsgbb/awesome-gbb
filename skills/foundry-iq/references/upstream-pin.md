@@ -6,9 +6,9 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: ba617fc3b5028605e55dc56050871ef918913f5e
+  pinned_sha: c3901a4ddda0c0467472de786b21aad66ff138bf
   pinned_commit_message: |
-    Don't count dependabot prs as part of the limit (#6317)
+    Fix Observability/WorkflowAsAnAgent sampl (#6316)
   license: MIT
   notes: |
     foundry-iq primarily wraps Azure AI Search Knowledge Base / agentic retrieval docs. The only GitHub upstream referenced by SKILL.md is microsoft/agent-framework for hosted-MCP behavior; validation also pins the Azure AI Search Python SDK.
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-ba617fc3b5028605e55dc56050871ef918913f5e}"
+    PINNED_SHA="${PINNED_SHA:-c3901a4ddda0c0467472de786b21aad66ff138bf}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -85,8 +85,8 @@ weekly; the prose below is the human audit trail. Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/agent-framework` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `ba617fc3b5028605e55dc56050871ef918913f5e` |
-| **Pinned commit subject** | `Don't count dependabot prs as part of the limit (#6317)` |
+| **Pinned SHA** | `c3901a4ddda0c0467472de786b21aad66ff138bf` |
+| **Pinned commit subject** | `Fix Observability/WorkflowAsAnAgent sampl (#6316)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
 | **Last re-validated** | `2026-06-03` |
@@ -117,7 +117,7 @@ git ls-remote https://github.com/microsoft/agent-framework main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-ba617fc3b5028605e55dc56050871ef918913f5e}"
+PINNED_SHA="${PINNED_SHA:-c3901a4ddda0c0467472de786b21aad66ff138bf}"
 PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
 WORK=".upstream-pin-smoke/foundry-iq"
 
