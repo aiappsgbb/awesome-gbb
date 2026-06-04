@@ -19,7 +19,7 @@ description: >
   citadel-spoke-onboarding), pilot pipeline orchestration (use
   threadlight-deploy), continuous evaluation (use foundry-evals).
 metadata:
-  version: "1.8.5"
+  version: "1.8.6"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1381,6 +1381,56 @@ flying blind.
 
 ## Troubleshooting
 
+### Diagnosing `server_error` locally
+
+Foundry's `server_error` is a **generic envelope** that hides the actual
+failure code. Don't read it as "the agent is broken" — it almost always means
+a specific downstream layer failed (chat-model quota, telemetry init,
+identity, MCP) and the runtime swallowed the real exception in the response
+body. **Always pull `run.last_error` first** before chasing higher-level
+theories — it carries the actual code and message in most cases.
+
+**Step 1 — pull `run.last_error` with the SYNC client** (async
+`AIProjectClient` silently fails to surface `last_error` on streamed
+responses; use the SYNC client for this one-shot diagnostic):
+
+```python
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+pc = AIProjectClient(endpoint="<your-project-endpoint>",
+                     credential=DefaultAzureCredential())
+client = pc.get_openai_client(agent_name="<agent-name>")
+resp = client.responses.create(input="ping")
+print(resp.model_dump_json(indent=2))  # inspect `last_error.code` + `.message`
+```
+
+Common `last_error.code` values seen behind `server_error`:
+
+| `last_error.code` | Real cause | Where to look next |
+|-------------------|------------|--------------------|
+| `rate_limit_exceeded` | Backing chat-model deployment hit TPM/RPM quota | "Backing-model 429" row below; run `references/bash/diagnose_server_error.sh` |
+| `model_error` / `invalid_request` | Bad request shape (tools schema, max tokens) | Reproduce against the model deployment directly with the helper's Step 3 |
+| `internal_error` + empty message | Container crashed at startup, or `_init_telemetry()` raised | "telemetry init" rows below; pull `:logstream` |
+| (no `last_error` at all) | Agent identity has no inference role on the deployment | "agent returns `server_error` … zero rows" row below |
+
+**Step 2 — run the bash helper** for the most common root cause (backing-model
+quota exhaustion). It consolidates deployment-quota inspection, a direct
+chat-completions reproduction that bypasses the agent runtime, and an
+optional App Insights KQL probe — see
+[`references/bash/diagnose_server_error.sh`](references/bash/diagnose_server_error.sh):
+
+```bash
+AZURE_RESOURCE_GROUP=<rg> FOUNDRY_ACCOUNT=<acct> \
+MODEL_DEPLOYMENT_NAME=<deployment> \
+  ./references/bash/diagnose_server_error.sh
+```
+
+The helper prints `=== Verdict ===` ending in `CONFIRMED 429` / `LIKELY 429`
+/ `NOT 429` / `inconclusive`. On `CONFIRMED 429`, raise the deployment's
+`Capacity` (TPM in thousands) via portal or `az cognitiveservices account
+deployment update --capacity <N>` — no agent redeploy needed.
+
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `FOUNDRY_PROJECT_ENDPOINT is reserved` | Declared in agent.yaml env vars | Remove it — platform injects automatically |
@@ -1414,6 +1464,7 @@ flying blind.
 | **Skill silently missing from agent — `load_skill` never offered for one skill; container starts fine, other skills work** | `SkillsProvider` (MAF 1.6.0) validates each `SKILL.md` YAML frontmatter `description:` field against a **1024-character limit**. If a skill's description exceeds 1024 chars, MAF logs `ERROR agent_framework._skills Skill '<name>' has an invalid description: Must be 1024 characters or fewer` and **silently drops the skill** from the advertised set. No crash, no `session_not_ready` — the agent runs with N-1 skills. Extremely hard to diagnose without container logs because the agent appears healthy | Trim the YAML `description:` field to ≤ 1024 chars. Condense `USE FOR` / `DO NOT USE FOR` phrases; move verbose guidance into the skill body below the frontmatter. Verify with: `python3 -c "import yaml; d=yaml.safe_load(open('SKILL.md').read().split('---')[1]); print(len(d.get('description','')))"` — must print ≤ 1024. Discovered May 2026 — a skill with 1054-char description was silently dropped, only 3/4 skills loaded |
 | **`agent.yaml` `resources:` and `scale:` blocks silently dropped by `azd ai agent deploy`** | The deploy CLI accepts both blocks at the YAML schema layer but does NOT pass them through to the platform — deployed agents come up at `cpu=0.25 / memory=0.5Gi / no scale` regardless of what's in the YAML. Discovered May 2026; `PATCH versions/<n>` returns 405 (versions are immutable); `PUT versions/<n>` returns 405 (must auto-assign via POST) | **Workaround**: bypass `azd ai agent deploy` and POST directly to `<endpoint>/api/projects/<proj>/agents/<name>/versions?api-version=2025-11-15-preview` with the full `HostedAgentDefinition` body including `cpu`, `memory`, `min_replicas`, `max_replicas`, `image`, `env_vars`. Status transitions `creating` → `active` in <20s. File a CLI bug if not yet tracked upstream |
 | **Scary RED `404 NotFound` block at the tail of `azd deploy <any-service>` (`agents/<key>/versions/<n>` not found); the actual deploy succeeded** | The `azure.ai.agents` azd extension's postdeploy hook fires after **every** `azd deploy` invocation (including unrelated services like `bot`, `workspace`, `mcp`) and looks up `agents/<service-key>/versions/<n>` — using the SERVICE KEY from `azure.yaml` verbatim, not the actual agent name. If your azure.yaml has e.g. `services.agent.host: azure.ai.agent` but the real agent is named `orchestrator`, the postdeploy hook 404s on `agents/agent/versions/<n>` every single time. Benign-but-loud false alarm; pollutes CI logs and CX in pilots | **Preferred**: rename the service key in `azure.yaml` to match the agent name (`services.orchestrator.host: azure.ai.agent`). **If you can't rename** (downstream scripts reference the key): error is cosmetic — verify with `azd ai agent show <agent-name>`. Track as `azure.ai.agents` extension bug; consider proposing an extension-level config like `agentName:` override |
+| **Agent returns `server_error`; `run.last_error.code` is `rate_limit_exceeded`** | The **backing chat-model deployment** (the one named in `MODEL_DEPLOYMENT_NAME`) hit its TPM/RPM quota. The agent runtime catches the 429 and re-emits the generic `server_error` in the chat envelope, so the throttle is invisible from the agent's response body. Hits demos and bursty eval loops most often. This is the deployment's own quota — NOT the gateway-level throttle described in `## Gateway throttle finding (preview)`, which is a different layer. | Run `references/bash/diagnose_server_error.sh` (lists deployment `Capacity`, reproduces a direct chat call to confirm the 429 is at the model layer, optionally KQLs App Insights for `429`). On `CONFIRMED 429`, raise `Capacity` (TPM, in thousands) via `az cognitiveservices account deployment update --deployment-name <name> --capacity <N>` or the portal. No agent redeploy needed. See `### Diagnosing server_error locally` above for the SYNC `last_error` probe. |
 | **Agent returns `server_error` on every call; RBAC looks correct from deployer's perspective; `az role assignment list --assignee <principal_id> --all` returns ZERO rows** | Deploy script calls ARM `PUT roleAssignments/` for the per-agent identity, but the deployer MI only has `Contributor` — which **excludes** `Microsoft.Authorization/roleAssignments/write`. The ARM PUT returns 403, deploy script logs a warning and continues. Agent boots with zero roles → inference calls fail, especially APIM gateway model routes (`remote-gw/…`) that require `Cognitive Services OpenAI User` | Grant `User Access Administrator` (GUID `18d7d88d-d35e-4fb5-a5c3-7773c20a72d9`) to the deployer MI, scoped to the Foundry account (`Microsoft.CognitiveServices/accounts/<name>`). **NOT** the whole subscription — least-privilege scope to the account. Verify: `az role assignment list --assignee <deployer_mi> --scope <account_id> --query "[].roleDefinitionName"`. See § Identity & RBAC "Automated deployer MI" row |
 | **Deploy script polls `.../versions/{v}/containers/default` and gets 404 for minutes; agent is actually working** | Refreshed-preview hosted agents auto-provision containers — the legacy `/containers/default` status endpoint and `:start` action are not exposed. Polling this endpoint wastes 3+ min and blocks downstream steps (RBAC assignment, eval warmup) | Skip the container status/start API entirely. Go straight to a warmup chat (`responses.create("ping")`) with retry/backoff. If the warmup succeeds, the agent is ready — no container API needed. See § Compute Lifecycle note on refreshed preview |
 
