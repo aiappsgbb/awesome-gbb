@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -302,8 +302,8 @@ definition = PromptAgentDefinition(
 ```
 
 Identity propagation, peer-agent RBAC, and the project-MI Cog-roles
-gotcha (AGENTS.md §9.7 Pattern 23) are covered in the `foundry-a2a`
-skill (forthcoming in this catalog).
+gotcha (AGENTS.md §9.7 Pattern 23) are documented under the
+`a2a_preview` tool type in the `foundry-toolbox` skill.
 
 #### BrowserAutomationTool
 
@@ -615,6 +615,6 @@ from azure.ai.projects.models import (
 | Memory across sessions | `foundry-memory` |
 | In-process toolbox utilities | `foundry-toolbox` |
 | Server-side MCP toolboxes + Foundry-Skills (ToolSearchTool / SkillReferenceTool) | `foundry-toolboxes` (forthcoming) |
-| A2A peer-agent invocation (A2ATool) | `foundry-a2a` (forthcoming) |
+| A2A peer-agent invocation (A2ATool) | `foundry-toolbox` (`a2a_preview` tool type) |
 | Remote browser automation (BrowserAutomationTool) | `foundry-browser-automation` (forthcoming) |
 | Eval-driven prompt optimization (`azd ai agent eval/optimize/apply` loop) | `foundry-agent-optimizer` (forthcoming) |

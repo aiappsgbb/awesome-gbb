@@ -16,9 +16,9 @@ description: >
   agent (use ghcp-hosted-agents), Citadel hub/spoke (use
   citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
   continuous eval (use foundry-evals), Routines (deferred), A2A wiring
-  (use foundry-a2a).
+  (use foundry-toolbox).
 metadata:
-  version: "1.9.0"
+  version: "1.9.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
