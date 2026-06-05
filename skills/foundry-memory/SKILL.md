@@ -2,16 +2,17 @@
 name: foundry-memory
 description: >
   Use Azure AI Foundry Memory Store for persistent agent memory across sessions:
-  user profiles, chat summaries, semantic memory retrieval, hosted-agent memory
-  tool wiring, scope isolation via x-memory-user-id / {{$userId}}, and
-  azure-ai-projects patterns across Python, C#, and TypeScript. USE FOR:
-  foundry memory, memory store, user profile, chat summary, cross-session
-  memory, persistent memory, agent memory, remember user preferences,
-  conversation history, semantic memory retrieval, azure-ai-projects memory,
-  replace Mem0. DO NOT USE FOR: RAG/knowledge retrieval (use foundry-iq),
-  document grounding, vector search over documents.
+  user profiles, chat summaries, procedural memory, semantic memory retrieval,
+  hosted-agent memory tool wiring, scope isolation via x-memory-user-id /
+  {{$userId}}, and azure-ai-projects patterns across Python, C#, and TypeScript.
+  USE FOR: foundry memory, memory store, user profile, chat summary, procedural
+  memory, cross-session memory, persistent memory, agent memory, remember user
+  preferences, conversation history, semantic memory retrieval, memory CRUD,
+  memory TTL, azd memory commands, azure-ai-projects memory, replace Mem0.
+  DO NOT USE FOR: RAG/knowledge retrieval (use foundry-iq), document grounding,
+  vector search over documents.
 metadata:
-  version: "1.0.2"
+  version: "1.1.0"
 ---
 
 # Foundry Memory
@@ -20,12 +21,16 @@ Foundry Memory Store is the native Azure AI Foundry feature for **persistent
 agent memory across sessions**. It gives a Foundry agent a managed long-term
 memory layer instead of requiring an external sidecar such as Mem0.
 
-It stores two memory types:
+It stores three memory types:
 
 1. **User profiles** — durable facts and preferences about a user (for example,
    preferred units, UI settings, loyalty program, or role context).
 2. **Chat summaries** — distilled cross-session summaries of prior threads so a
    later conversation can resume without replaying the full transcript.
+3. **Procedural memory** — codified procedures the agent has learned through
+   experience (for example, "when the user asks for a refund, always confirm
+   the order ID first"). Procedural memory is opt-in per store via
+   `procedural_memory_enabled=True`.
 
 Use it when the memory is **user-scoped, conversational, and agent-native**.
 If the problem is document grounding or enterprise RAG over files, use
@@ -405,7 +410,203 @@ await project.beta.memoryStores.searchMemories(...);
 
 ---
 
-## 9. Troubleshooting
+## 9. Procedural memory
+
+Procedural memory is the third memory type alongside user profiles and chat
+summaries. It stores **codified procedures the agent has learned through
+experience** — patterns like "always confirm the order ID before issuing a
+refund", "for premium-tier users, skip the upsell prompt", or "when a customer
+mentions an outage, check the status page before opening a ticket".
+
+Procedural memory is **opt-in per store**. Enable it on
+`MemoryStoreDefaultOptions` at create-time:
+
+### Python
+
+```python
+import os
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import (
+    MemoryStoreDefaultDefinition,
+    MemoryStoreDefaultOptions,
+)
+from azure.identity import DefaultAzureCredential
+
+project_client = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+)
+
+definition = MemoryStoreDefaultDefinition(
+    chat_model=os.environ["MEMORY_STORE_CHAT_MODEL_DEPLOYMENT_NAME"],
+    embedding_model=os.environ["MEMORY_STORE_EMBEDDING_MODEL_DEPLOYMENT_NAME"],
+    options=MemoryStoreDefaultOptions(
+        user_profile_enabled=True,
+        chat_summary_enabled=True,
+        procedural_memory_enabled=True,
+        user_profile_details=(
+            "Remember stable user preferences and history; avoid secrets, "
+            "credentials, and irrelevant personal data."
+        ),
+    ),
+)
+
+store = project_client.beta.memory_stores.create(
+    name="<store-name>",
+    definition=definition,
+    description="Persistent memory store with procedural memory enabled",
+)
+```
+
+### Behavioral contract
+
+- Procedural memory items have `kind="procedural"` when returned by
+  `list_memories` or `search_memories`.
+- Foundry extracts procedural memories from conversation turns the same way it
+  extracts profile facts and summaries — submit turns via
+  `begin_update_memories` (see § 4), then wait for the `update_delay` window.
+- Procedural memory is scope-isolated like the other types — always pass a
+  stable `scope` (typically `{"user_id": "<id>"}`) so an agent's learned
+  procedures stay separated per user / per tenant.
+- Enabling procedural memory **does not retroactively populate** the store from
+  prior conversations. It applies only to turns submitted after the flag is on.
+
+Keep `user_profile_details` (or the procedural-side hints) focused on the
+domain the agent operates in. Procedural memory can be poisoned by adversarial
+prompts the same way as user profiles — apply the input-filtering and
+no-secrets rules from § 13.
+
+---
+
+## 10. CRUD on memories via direct API
+
+In addition to `search_memories` (§ 5) for retrieval and `begin_update_memories`
+(§ 4) for write, the direct API surfaces store-level CRUD and a `list_memories`
+helper for browsing the current contents of a scope.
+
+### Store-level CRUD
+
+```python
+# Get a store by name (raises ResourceNotFoundError if absent)
+store = project_client.beta.memory_stores.get(name="<store-name>")
+
+# List all stores in the project
+for s in project_client.beta.memory_stores.list():
+    print(s.name, s.description)
+
+# Delete a store (idempotent — returns an object with .deleted boolean)
+result = project_client.beta.memory_stores.delete(name="<store-name>")
+assert result.deleted
+```
+
+### Listing memories inside a store
+
+`list_memories` enumerates the memory items Foundry has extracted for a given
+scope. Use it for audit, debugging, and admin UIs — for runtime retrieval,
+prefer `search_memories` (§ 5) which returns semantically-ranked items.
+
+```python
+for item in project_client.beta.memory_stores.list_memories(
+    name="<store-name>",
+    scope={"user_id": "<user-id>"},
+):
+    print(item.memory_id, item.kind, item.content)
+```
+
+`kind` is one of `"user_profile"`, `"chat_summary"`, or `"procedural"` —
+filter client-side when you only want one type.
+
+### Per-item deletion
+
+The current preview surface does **not** expose a per-item
+`delete_memory(memory_id)` call. To prune individual memories, the supported
+paths are:
+
+- **Store-level delete + recreate** for full reset (acceptable for tests and
+  rebuilds; destructive in production).
+- **TTL-based expiry** (see § 11) — set a `default_ttl_seconds` so unused
+  memories self-evict instead of accumulating.
+- **Scope-bounded retention** — give each tenant / session / sandbox its own
+  scope, then drop the scope when you're done with it; the store stays alive
+  for other scopes.
+
+Track the upstream preview surface — per-item delete is a likely addition.
+Don't hand-roll a delete-by-ID workaround that touches storage primitives
+underneath the API.
+
+---
+
+## 11. `default_ttl_seconds` on memory store config
+
+`MemoryStoreDefaultOptions.default_ttl_seconds` sets a default expiry window
+(in seconds) for every memory item Foundry stores in this store. After the
+TTL elapses without re-touch, the memory item is evicted server-side.
+
+- `default_ttl_seconds=0` (the default) means **no expiry** — memories live
+  until the store is deleted or a future per-item delete API ships.
+- A positive value (for example `30 * 24 * 60 * 60` for 30 days) caps every
+  memory's lifetime. Use this to keep stores from accumulating stale
+  preferences across long-lived deployments.
+- TTL is a **store-wide default**; per-item TTL overrides are not currently
+  surfaced. Choose a value that matches the slowest-changing memory in the
+  store (e.g. user preferences may need months; transient session notes may
+  need hours).
+
+```python
+from azure.ai.projects.models import (
+    MemoryStoreDefaultDefinition,
+    MemoryStoreDefaultOptions,
+)
+
+definition = MemoryStoreDefaultDefinition(
+    chat_model=os.environ["MEMORY_STORE_CHAT_MODEL_DEPLOYMENT_NAME"],
+    embedding_model=os.environ["MEMORY_STORE_EMBEDDING_MODEL_DEPLOYMENT_NAME"],
+    options=MemoryStoreDefaultOptions(
+        user_profile_enabled=True,
+        chat_summary_enabled=True,
+        procedural_memory_enabled=True,
+        default_ttl_seconds=30 * 24 * 60 * 60,  # 30 days
+    ),
+)
+```
+
+When you set a short TTL for testing (for example `30` seconds), allow a small
+grace window beyond the TTL before re-querying — server-side expiry is
+eventually consistent, not synchronous.
+
+---
+
+## 12. `azd ai agent memory` direct commands
+
+The `azd ai agent` extension exposes a `memory` subcommand group for
+admin-style operations on memory stores from the CLI. Use this for one-off
+inspection, smoke tests, and CI fixtures where you'd otherwise hand-roll a
+Python script.
+
+Discover the current surface — the flag set is preview-unstable (Pattern 16,
+AGENTS.md § 9.7) and will drift across extension versions:
+
+```bash
+azd ai agent memory --help
+```
+
+The documented operations (subject to the extension version on your PATH)
+cover store create / get / list / delete and memory list / search workflows.
+**Do not hardcode flag names from this skill into production scripts** —
+preview-CLI flag surfaces have already broken hosted-agent fixtures in this
+catalog (see Pattern 16). For production, prefer the SDK paths in §§ 3-11.
+
+If you need a stable scripted entry point, wrap the SDK call (§ 10) in a
+small Python helper rather than depending on the CLI surface — the SDK is GA
+ahead of the CLI extension.
+
+When `azd ai agent memory --help` returns "unknown subcommand", the
+extension on your PATH is older than the preview that added memory support.
+Update with `azd extension upgrade ai`.
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -422,7 +623,7 @@ focused on business-relevant memory only.
 
 ---
 
-## 10. Related skills
+## 14. Related skills
 
 - [`foundry-hosted-agents`](../foundry-hosted-agents/) — deploys and operates
   the hosted agent runtime that can consume memory tools
