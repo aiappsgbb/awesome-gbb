@@ -469,7 +469,10 @@ jobs:
           # Evidence the agent loaded the skill: it should have called the
           # `skill` tool (Copilot CLI's invocation primitive) OR explicitly
           # read SKILL.md OR referenced the skill name in its reasoning.
-          if grep -qE "skill[(]\"${SKILL}\"|SKILL\.md|skills/${SKILL}/" "$TRANSCRIPT"; then
+          # Quotes around the skill name are optional — Copilot CLI renders
+          # invocations as `skill(name)` (no quotes) in transcripts; the
+          # quoted form was an artifact of an earlier CLI build.
+          if grep -qE "skill[(]\"?${SKILL}\"?|SKILL\.md|skills/${SKILL}/" "$TRANSCRIPT"; then
             echo "✅ Skill-usage evidence found in transcript"
           else
             echo "::error::No evidence in transcript that agent loaded the '${SKILL}' skill — agent may have freelanced from training data. Review transcript: $TRANSCRIPT"
