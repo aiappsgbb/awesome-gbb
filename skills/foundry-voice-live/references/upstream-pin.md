@@ -24,11 +24,15 @@ packages:
     version: "5.42.0"
     specifier: "~=5.42.0"
     source: pypi
+  - name: azure-ai-voicelive
+    version: "1.2.0"
+    specifier: "~=1.2.0"
+    source: pypi
 known_issues: []
 docs_to_revalidate:
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live"
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to"
-  - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2025-10-01"
+  - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2026-04-10"
   - "https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio"
 validation:
   requires:
@@ -52,13 +56,33 @@ validation:
       "openai~=2.0.0" \
       "azure-identity~=1.24.0" \
       "fastrtc~=0.0.34" \
-      "gradio~=5.42.0"
+      "gradio~=5.42.0" \
+      "azure-ai-voicelive[aiohttp]~=1.2.0"
 
     echo "=== Import smoke tests ==="
     python -c "from openai import AsyncAzureOpenAI; print('openai.AsyncAzureOpenAI OK')"
     python -c "from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider; print('azure.identity.aio OK')"
     python -c "from fastrtc import AsyncStreamHandler, WebRTC, wait_for_item; print('fastrtc OK')"
     python -c "import gradio as gr; print('gradio OK')"
+    python -c "
+    from azure.ai.voicelive.aio import connect
+    from azure.ai.voicelive.models import (
+        AzureSemanticVad,
+        AzureStandardVoice,
+        MCPServer,
+        RequestSession,
+    )
+    import inspect
+    sig = inspect.signature(connect)
+    assert 'endpoint' in sig.parameters, 'connect() missing endpoint kwarg'
+    assert 'credential' in sig.parameters, 'connect() missing credential kwarg'
+    assert 'api_version' in sig.parameters, 'connect() missing api_version kwarg'
+    assert 'model' in sig.parameters, 'connect() missing model kwarg'
+    fields = {f.name for f in AzureSemanticVad.__attrs_attrs__} if hasattr(AzureSemanticVad, '__attrs_attrs__') else set(dir(AzureSemanticVad))
+    for ga_field in ('create_response', 'auto_truncate', 'interrupt_response'):
+        assert ga_field in fields, f'AzureSemanticVad missing GA field: {ga_field}'
+    print('voicelive-sdk-import-ok')
+    "
 
     echo "=== Realtime connect API surface ==="
     python -c "
@@ -78,9 +102,10 @@ validation:
     - "azure.identity.aio OK"
     - "fastrtc OK"
     - "gradio OK"
+    - "voicelive-sdk-import-ok"
     - "AsyncAzureOpenAI.realtime + websocket_base_url OK"
     - "VALIDATION_PASSED"
-last_validated: "2026-05-28"
+last_validated: "2026-06-08"
 validated_by: "ricchi"
 ---
 
@@ -88,8 +113,9 @@ validated_by: "ricchi"
 
 ## Tier B — SDK / Demo Wrapper
 
-This skill wraps the `unsafecode/voice-live-gradio` demo repository and
-the `openai` SDK's realtime API surface for Azure Voice Live (GA 2025-10-01).
+This skill wraps the `unsafecode/voice-live-gradio` demo repository,
+the `openai` SDK's realtime API surface for Azure Voice Live (GA
+2026-04-10), and the native `azure-ai-voicelive` Python SDK.
 
 ### What's pinned
 
@@ -100,19 +126,27 @@ the `openai` SDK's realtime API surface for Azure Voice Live (GA 2025-10-01).
 | `azure-identity` | `~=1.24.0` | `DefaultAzureCredential` + `get_bearer_token_provider` async |
 | `fastrtc` | `~=0.0.34` | `AsyncStreamHandler`, `WebRTC`, `wait_for_item` |
 | `gradio` | `~=5.42.0` | Blocks UI, state management |
+| `azure-ai-voicelive` | `~=1.2.0` | Native `connect()` + `AzureSemanticVad` GA fields (`create_response`, `auto_truncate`, `interrupt_response`), `MCPServer`, `AzureStandardVoice` |
 
 ### Validation
 
 The validation script verifies:
-1. All four packages install cleanly
+1. All five packages install cleanly (including `azure-ai-voicelive`
+   with the `[aiohttp]` extra required for the async `connect` path).
 2. Key imports succeed (`AsyncAzureOpenAI`, `DefaultAzureCredential`,
-   `AsyncStreamHandler`, `gradio`)
+   `AsyncStreamHandler`, `gradio`, `azure.ai.voicelive.aio.connect`).
 3. The `websocket_base_url` kwarg exists on `AsyncAzureOpenAI.__init__`
-   (the critical Voice Live parameter)
-4. The `.realtime` attribute exists on the client class
+   (the critical Voice Live parameter for Rungs 2–3).
+4. The `.realtime` attribute exists on the openai client class.
+5. `azure.ai.voicelive.aio.connect()` accepts `endpoint`, `credential`,
+   `api_version`, and `model` kwargs (Rung 4 surface).
+6. `AzureSemanticVad` exposes the 2026-04-10 GA fields
+   `create_response`, `auto_truncate`, and `interrupt_response`
+   (catches preview→GA field drift).
 
 ### Audit trail
 
 | Date | By | What |
 |------|----|------|
 | 2026-05-28 | ricchi | Initial pin. Verified against voice-live-gradio v0.3.0 (ad612a6). All imports pass, websocket_base_url confirmed in openai SDK. |
+| 2026-06-08 | ricchi | Add `azure-ai-voicelive ~=1.2.0` (Rung 4). Bump docs URL to `voice-live-api-reference-2026-04-10` (302 OK). Extend validation.script with native SDK import + `AzureSemanticVad` GA field probe. Other 4 package versions unchanged (no upstream drift). |
