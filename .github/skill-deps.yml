@@ -47,6 +47,14 @@ skills:
     depends_on:
       - foundry-prompt-agents
 
+  # foundry-routines fixture creates a prompt agent (Step 1b) and binds
+  # a routine action to it (Step 1c) — so any PA-side change (SDK pin
+  # bump, agent-identity contract drift, version-resolution semantics)
+  # can break the routines fixture's create-or-update + dispatch path.
+  foundry-routines:
+    depends_on:
+      - foundry-prompt-agents
+
   # ── Phase 4 additions (Copilot CLI fixture coverage 6 → 9) ──────────
   # foundry-observability — bare configure_azure_monitor() + custom span +
   # LAW soft-PASS probe. No catalog-internal deps; tests the App Insights
