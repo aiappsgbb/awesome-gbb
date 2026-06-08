@@ -1,35 +1,38 @@
 ---
 name: foundry-voice-live
 description: >
-  Build real-time voice agents with Azure AI Foundry Voice Live (GA 2025-10-01).
-  Three-rung migration ladder from Azure OpenAI Realtime to Voice Live to
-  Voice Live + Foundry Agent — 3 lines of code change. Covers connection code,
-  session config (semantic VAD, echo cancellation, noise reduction, Azure Neural
-  HD voices, fast transcription), agent routing triplet, benchmark pattern
-  (TTFA/TTFT metrics), and Gradio + FastRTC WebRTC UI plumbing.
-  USE FOR: voice live, realtime voice, voice agent, real-time audio, speech to
-  speech, voice assistant, Azure Voice Live, websocket voice, semantic VAD,
-  echo cancellation, noise reduction, Neural HD voices, FastRTC, Gradio voice,
-  voice benchmark, TTFA, TTFT, gpt-realtime, voice live hosted agent, byo wss,
-  voice avatar, custom voice live.
-  DO NOT USE FOR: batch STT/TTS (use foundry-doc-vision-speech), document
-  extraction (use foundry-doc-vision-speech), deploying hosted agents without
-  voice (use foundry-hosted-agents), prompt agents without voice (use
-  foundry-prompt-agents).
+  Build real-time voice agents on Azure AI Foundry Voice Live (GA 2026-04-10).
+  Four-rung migration ladder: Azure OpenAI Realtime → Voice Live → Voice Live
+  + Foundry Agent → native azure-ai-voicelive SDK. Covers semantic VAD, AEC,
+  Neural HD voices, agent routing triplet, TTFA/TTFT benchmark, Gradio +
+  FastRTC UI, plus 2026-04-10 GA deltas: proactive turn control, MCP tools
+  mid-turn, OpenTelemetry via diagnostic settings, auto-truncate.
+  USE FOR: voice live, realtime voice, voice agent, speech to speech, semantic
+  VAD, Neural HD voices, FastRTC, Gradio voice, TTFA, gpt-realtime, byo wss,
+  voice avatar, azure-ai-voicelive, voice live sdk, voice live mcp, mcp
+  mid-turn, voice live proactive turn, voice live auto-truncate, voice live
+  otel.
+  DO NOT USE FOR: batch STT/TTS (use foundry-doc-vision-speech), non-voice
+  agents (use foundry-hosted-agents / foundry-prompt-agents), App Insights
+  ingestion (use foundry-observability), authoring an MCP server (use
+  foundry-mcp-aca or ui-widget-developer).
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Foundry Voice Live
 
 Build **real-time voice agents** on Azure AI Foundry using Voice Live —
-the GA (2025-10-01) server-side voice pipeline that adds semantic VAD,
+the GA (2026-04-10) server-side voice pipeline that adds semantic VAD,
 echo cancellation, noise reduction, and Azure Neural HD voices on top of
 the standard Azure OpenAI Realtime API.
 
-The migration from Realtime to Voice Live is **three small code changes**.
-This skill walks through those changes, the session config that unlocks
-Voice Live features, and the extra routing needed for a Foundry Agent.
+The migration from Realtime to Voice Live is **three small code changes**;
+the migration from `openai`-shim to the native `azure-ai-voicelive` SDK
+is one additional step (Rung 4). This skill walks through both ladders,
+the session config that unlocks Voice Live features, and the four
+2026-04-10 GA deltas — proactive turn control, MCP tools mid-turn,
+OpenTelemetry via diagnostic settings, and auto-truncate governance.
 
 ## When to Use
 
@@ -48,23 +51,27 @@ extraction.
 
 ---
 
-## 1 · The Three Rungs
+## 1 · The Four Rungs
 
-The entire migration from "plain Realtime" to "Voice Live + Agent" is a
-**diff ladder** — each rung changes only the connection-setup block.
+The entire migration from "plain Realtime" to "native Voice Live SDK
+on a Foundry Agent" is a **diff ladder** — each rung changes only the
+connection-setup block.
 
 ```
-Rung 1: Azure OpenAI Realtime        ← the "before"
+Rung 1: Azure OpenAI Realtime              ← the "before"
   │
   ▼  diff = 3 small lines (api_version, websocket_base_url, extra_query)
-Rung 2: Azure Voice Live             ← the punchline
+Rung 2: Azure Voice Live                   ← the punchline
   │
   ▼  diff = 1 line (extra_query gains agent-id / -project-name / -access-token)
-Rung 3: Voice Live + Foundry Agent   ← the endgame
+Rung 3: Voice Live + Foundry Agent         ← the endgame on `openai` SDK
+  │
+  ▼  swap `openai.AsyncAzureOpenAI` → `azure.ai.voicelive.aio.connect`
+Rung 4: native `azure-ai-voicelive` SDK    ← the GA path
 ```
 
 Everything else — the audio pipe, transcript fan-out, status events,
-voice picker, UI — is **identical across all three rungs**.
+voice picker, UI — is **identical across all four rungs**.
 
 ---
 
@@ -100,7 +107,7 @@ async def connect_voicelive(*, settings, token_provider):
     actual_model = settings.azure_deployment_name
     client = AsyncAzureOpenAI(
         azure_endpoint=settings.azure_endpoint,
-        api_version="2025-10-01",                                       # ← GA
+        api_version="2026-04-10",                                       # ← GA
         azure_ad_token_provider=token_provider,
         websocket_base_url=settings.azure_voice_live_endpoint,          # ← wss://.../voice-live
     )
@@ -121,7 +128,7 @@ async def connect_voicelive(*, settings, token_provider):
 async def connect_agent(*, settings, token_provider, agent_token_provider):
     client = AsyncAzureOpenAI(
         azure_endpoint=settings.azure_endpoint,
-        api_version="2025-10-01",
+        api_version="2026-04-10",
         azure_ad_token_provider=token_provider,
         websocket_base_url=settings.azure_voice_live_endpoint,
     )
@@ -146,10 +153,98 @@ async def connect_agent(*, settings, token_provider, agent_token_provider):
 2. **`api_version`** — Realtime is still on `2025-04-01-preview`
    (the `openai 2.x` SDK emits `/openai/realtime`; when it adopts the
    GA `/openai/v1/realtime` URL this difference collapses). Voice Live
-   is GA on `2025-10-01`.
+   is GA — the latest stable version is `2026-04-10` (was `2025-10-01`
+   pre-//build 2026).
 3. **`extra_query={"model": ...}`** — the SDK adds `&deployment=…` to
    the WSS URL by default; Voice Live keys off `&model=…`, so we add
    it explicitly.
+
+### Rung 4 — native `azure-ai-voicelive` SDK
+
+The `azure-ai-voicelive` Python SDK (stable `1.2.0`; latest preview
+`1.3.0b1`) is the **first-party path** for Voice Live. It speaks the
+same wire protocol as Rungs 2–3 (so the event-handling code in §9
+still works verbatim), but replaces the `openai`-shim plumbing with
+a typed, Voice-Live-native client.
+
+```python
+from contextlib import asynccontextmanager
+
+from azure.ai.voicelive.aio import connect       # async client
+from azure.ai.voicelive.models import (
+    AzureSemanticVad,
+    AzureStandardVoice,
+    InputAudioFormat,
+    Modality,
+    OutputAudioFormat,
+    RequestSession,
+)
+from azure.identity.aio import DefaultAzureCredential
+
+
+@asynccontextmanager
+async def connect_voicelive_sdk(*, settings):
+    credential = DefaultAzureCredential()
+    try:
+        # SDK reshapes https://<resource>.services.ai.azure.com/ →
+        # wss://<resource>.services.ai.azure.com/voice-live/realtime
+        # ?api-version=2026-04-10&model=<model>
+        async with connect(
+            credential=credential,
+            endpoint=settings.azure_voice_live_endpoint,   # https://, NOT wss://
+            api_version="2026-04-10",                       # default in 1.2.0
+            model=settings.azure_deployment_name,           # e.g. "gpt-realtime"
+            # credential_scopes default = ["https://ai.azure.com/.default"]
+        ) as conn:
+            await conn.session.update(session=RequestSession(
+                modalities=[Modality.TEXT, Modality.AUDIO],
+                instructions="You are a friendly assistant.",
+                voice=AzureStandardVoice(name="en-US-Ava:DragonHDLatestNeural"),
+                input_audio_format=InputAudioFormat.PCM16,
+                output_audio_format=OutputAudioFormat.PCM16,
+                turn_detection=AzureSemanticVad(
+                    create_response=True,        # §12.1 proactive
+                    auto_truncate=True,          # §12.4 token governance
+                ),
+            ))
+            yield conn
+    finally:
+        await credential.close()
+```
+
+### Why move to Rung 4
+
+| Concern | Rungs 1–3 (`openai` shim) | Rung 4 (`azure-ai-voicelive`) |
+|---------|---------------------------|-------------------------------|
+| Typed session config | dict literals | `RequestSession` + typed models |
+| Endpoint shape | `wss://…/voice-live` + base override | `https://…services.ai.azure.com` (SDK derives) |
+| Auth scope default | manual `https://ai.azure.com/.default` | SDK default `https://ai.azure.com/.default` |
+| MCP tools mid-turn | manual JSON | `MCPServer` + `MCPTool` typed |
+| Avatar / custom voice | manual JSON | `AvatarConfig`, `AzureCustomVoice` |
+| Interim response | not exposed | `LlmInterimResponseConfig` |
+| API version pin | env var | SDK constant (override via kwarg) |
+
+The native SDK is the **recommended path for new code** as of GA
+`2026-04-10`. Migrate Rungs 1–3 incrementally — the wire protocol is
+identical, so the audio pipe and event handler can stay as-is.
+
+### Endpoint hostname (services.ai vs cognitiveservices)
+
+Voice Live lives on the `services.ai.azure.com` subdomain of your
+Foundry resource — the SAME resource that serves chat models on
+`cognitiveservices.azure.com`. Map your CI/prod env var like:
+
+```python
+endpoint = os.environ["AZURE_AI_ENDPOINT"].replace(
+    "cognitiveservices.azure.com", "services.ai.azure.com"
+)
+# Or set AZURE_VOICELIVE_ENDPOINT directly to the services.ai host.
+```
+
+> **Install:** `pip install "azure-ai-voicelive[aiohttp]~=1.2.0"`.
+> The `[aiohttp]` extra is **required** for the async `connect`
+> path — without it the import raises `RuntimeError: aiohttp not
+> installed`.
 
 ---
 
@@ -375,7 +470,7 @@ AZURE_OPENAI_DEPLOYMENT_NAME="gpt-realtime-1.5"
 
 # ── API versions ──────────────────────────────────────────────────────
 AZURE_OPENAI_API_VERSION="2025-04-01-preview"    # Realtime (preview)
-AZURE_VOICELIVE_API_VERSION="2025-10-01"         # Voice Live (GA)
+AZURE_VOICELIVE_API_VERSION="2026-04-10"         # Voice Live (GA)
 
 # ── Agent (Rung 3 only — leave blank for Rung 1 & 2) ─────────────────
 AGENT_PROJECT_NAME=""
@@ -564,7 +659,7 @@ Adding a locale = one entry per dict in `i18n.py`.
 
 ## 9 · Event Handling
 
-All three rungs speak the **same OpenAI Realtime event schema**. Voice
+All four rungs speak the **same OpenAI Realtime event schema**. Voice
 Live exposes identical wire format, event names, and payload shapes.
 No mode-specific branching in the handler:
 
@@ -669,6 +764,226 @@ dependencies = [
 | Voice quality dips in non-English | Multilingual Neural vs DragonHD | Expected — DragonHD (English) is newer. Try standard Neural voices for crisper output |
 | Sovereign cloud `401` | Wrong token scope | Set `AZURE_COGNITIVE_SERVICES_SCOPE` / `AZURE_AI_SCOPE` in `.env` |
 | `"Model … is not supported in this region"` | Region doesn't serve that managed model | Check the [Voice Live region/model matrix](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions) |
+| `RuntimeError: aiohttp not installed` from `azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.2.0"` (async path requires it) |
+| `MCPToolApprovalRequest` event mid-turn but no approval reply | `require_approval` set on `MCPServer` | Send `mcp_tool_approval_response` event back; see §12.2 |
+
+---
+
+## 12 · 2026-04-10 GA Deltas
+
+Four features that **only exist on the `2026-04-10` API version** —
+all reachable from Rung 4's `azure-ai-voicelive` SDK, all surfaceable
+in `session.update` payloads on Rungs 2–3 (typed in SDK, raw JSON in
+the openai shim).
+
+### 12.1 · Proactive turn control
+
+The server can **initiate a response without waiting for user audio**
+— useful for assistants that need to greet, follow up on silence, or
+chase a clarification. Configured on the VAD object via
+`create_response: bool` (default `True` — let the server decide when
+to respond) and `interrupt_response: bool` (default `True` — barge-in
+support).
+
+**Native SDK (Rung 4):**
+
+```python
+from azure.ai.voicelive.models import AzureSemanticVad, RequestSession
+
+session = RequestSession(
+    turn_detection=AzureSemanticVad(
+        threshold=0.5,
+        prefix_padding_ms=300,
+        silence_duration_ms=500,
+        create_response=True,        # ← proactive (server may start a turn)
+        interrupt_response=True,     # ← barge-in (server cuts itself off on user speech)
+        remove_filler_words=False,
+    ),
+    modalities=["text", "audio"],
+)
+await conn.session.update(session=session)
+
+# Manually drive a proactive turn (e.g., after a long silence):
+await conn.response.create()
+```
+
+**Raw JSON (Rungs 2–3):**
+
+```python
+await conn.session.update(session={
+    "turn_detection": {
+        "type": "azure_semantic_vad",
+        "create_response": True,
+        "interrupt_response": True,
+    },
+    "modalities": ["text", "audio"],
+})
+
+# Force a proactive turn from the client:
+await conn.send({"type": "response.create"})
+```
+
+> **Wire impact:** when `create_response: false`, the client owns
+> turn-taking — the server emits `input_audio_buffer.speech_stopped`
+> events but waits for an explicit `response.create` to speak.
+
+### 12.2 · MCP server tools mid-turn
+
+Voice Live agents can call **MCP servers** during a turn — the model
+emits an `mcp_call` event, the server invokes the MCP tool, and the
+response flows back into the same turn (no client round-trip).
+
+**Native SDK:**
+
+```python
+from azure.ai.voicelive.models import (
+    MCPServer,
+    MCPApprovalMode,
+    RequestSession,
+)
+
+mcp_inventory = MCPServer(
+    server_label="inventory",
+    server_url="https://ca-inventory-mcp.<region>.azurecontainerapps.io/mcp",
+    authorization="Bearer <token-from-aca-managed-identity>",   # or Entra
+    allowed_tools=["check_stock", "list_skus"],
+    require_approval=MCPApprovalMode.NEVER,                     # auto-execute
+)
+
+session = RequestSession(
+    modalities=["text", "audio"],
+    tools=[mcp_inventory],
+    instructions="When asked about stock, call inventory.check_stock.",
+)
+await conn.session.update(session=session)
+```
+
+**Approval flow.** When `require_approval=MCPApprovalMode.ALWAYS`,
+the server emits `mcp_tool_approval_request`. Reply with an
+`mcp_tool_approval_response` event carrying `approve: true|false`
+before the turn continues. Cache approvals in the client to avoid
+re-prompting per turn.
+
+**Cross-refs:**
+
+- Hosting the MCP server itself on Azure Container Apps → `foundry-mcp-aca`
+- Authoring an MCP server with widget rendering for Copilot Chat → `ui-widget-developer`
+- The MCP server's RBAC / Entra token plumbing → `foundry-mcp-aca` (Auth section)
+
+### 12.3 · OpenTelemetry instrumentation
+
+Voice Live emits **service-side OTLP traces** for every session —
+turn-by-turn spans (`session.created`, `response.created`,
+`response.done`) with `gen_ai.*` semantic attributes. The traces
+flow through **Foundry diagnostic settings** to App Insights or a
+Log Analytics workspace (LAW) — no in-process SDK instrumentation
+needed for the WSS pipeline itself.
+
+**Enable on the Foundry resource (one-time, Bicep):**
+
+```bicep
+resource voicelive_diag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'voicelive-otel'
+  scope: foundry_account
+  properties: {
+    workspaceId: law.id
+    logs: [
+      { category: 'VoiceLiveSession',  enabled: true }
+      { category: 'VoiceLiveAudit',    enabled: true }
+      { category: 'RequestResponse',   enabled: true }
+    ]
+    metrics: [
+      { category: 'AllMetrics', enabled: true }
+    ]
+  }
+}
+```
+
+**Query traces in LAW (KQL):**
+
+```kusto
+AzureDiagnostics
+| where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
+| where Category in ("VoiceLiveSession", "RequestResponse")
+| extend session_id = tostring(properties_session_id_s)
+| extend model = tostring(properties_model_s)
+| extend ttfa_ms = todouble(properties_ttfa_ms_d)
+| summarize p50_ttfa=percentile(ttfa_ms, 50), p95_ttfa=percentile(ttfa_ms, 95) by model
+```
+
+**Client-side OTLP correlation.** If your client (Gradio / FastRTC
+process) is already OTel-instrumented (per `foundry-observability`),
+pass the W3C `traceparent` header on the WSS handshake via the
+SDK's `headers` kwarg. The service stitches client spans into the
+same trace ID:
+
+```python
+async with connect(
+    credential=credential,
+    endpoint=endpoint,
+    model="gpt-realtime",
+    headers={"traceparent": current_traceparent()},
+) as conn:
+    ...
+```
+
+**Cross-ref:** App Insights / LAW ingestion setup, sampler config,
+Distro vs vanilla OTel choices → `foundry-observability`.
+
+### 12.4 · Auto-truncation + token-budget governance
+
+Long voice sessions accumulate transcript context that bloats every
+turn's prompt → cost and latency creep upward. The 2026-04-10 GA
+adds two governance knobs:
+
+1. **`auto_truncate: bool`** on the VAD object — server drops the
+   oldest turns from the active context window when the rolling
+   token budget would exceed the model's limit. Transparent to the
+   client; transcript events are preserved (only the model's input
+   context shrinks).
+2. **`max_response_output_tokens: int`** on the session — hard cap
+   per assistant turn, after which `response.done` fires even if
+   the model wanted to keep speaking.
+
+**Native SDK:**
+
+```python
+from azure.ai.voicelive.models import (
+    AzureSemanticVad,
+    RequestSession,
+)
+
+session = RequestSession(
+    modalities=["text", "audio"],
+    max_response_output_tokens=400,           # ~30s of speech at avg rate
+    turn_detection=AzureSemanticVad(
+        auto_truncate=True,                   # ← drop oldest turns under pressure
+    ),
+)
+await conn.session.update(session=session)
+```
+
+**Raw JSON (Rungs 2–3):**
+
+```python
+await conn.session.update(session={
+    "turn_detection": {"type": "azure_semantic_vad", "auto_truncate": True},
+    "max_response_output_tokens": 400,
+})
+```
+
+**When to use which:**
+
+| Situation | Knob |
+|-----------|------|
+| Long-running kiosk / phone-bank session | `auto_truncate: true` |
+| Cost cap per turn for a paid demo | `max_response_output_tokens: 200` |
+| Greeting-only proactive agent (one-shot) | both `auto_truncate: false`, `max_response_output_tokens: 100` |
+| Telephony hand-off with strict latency SLA | `max_response_output_tokens: 150` (lower TTFT tail) |
+
+> **Cost observability:** the `usage` payload on `response.done`
+> reports `total_tokens_in_context` and `tokens_truncated`. Log
+> both to App Insights to right-size the budget per scenario.
 
 ---
 
@@ -676,10 +991,11 @@ dependencies = [
 
 - [Voice Live overview](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live)
 - [Voice Live how-to](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to)
-- [Voice Live API reference (2025-10-01)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2025-10-01)
+- [Voice Live API reference (2026-04-10)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2026-04-10)
+- [`azure-ai-voicelive` on PyPI](https://pypi.org/project/azure-ai-voicelive/) · [SDK source](https://github.com/Azure/azure-sdk-for-python/tree/main/sdk/voicelive/azure-ai-voicelive)
 - [Azure OpenAI Realtime — concepts](https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio) · [how-to](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio)
 - [Voice Live quickstart (models)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-quickstart?pivots=programming-language-python)
 - [Voice Live quickstart (agents)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-agents-quickstart?pivots=programming-language-python)
 - [Regional availability](https://learn.microsoft.com/azure/ai-services/speech-service/regions?tabs=voice-live#regions)
 - [Demo repo](https://github.com/unsafecode/voice-live-gradio) — running three-rung side-by-side demo with benchmark
-- Related skills: `foundry-hosted-agents`, `foundry-prompt-agents`, `foundry-doc-vision-speech`, `azure-tenant-isolation`
+- Related skills: `foundry-hosted-agents`, `foundry-prompt-agents`, `foundry-doc-vision-speech`, `foundry-mcp-aca`, `ui-widget-developer`, `foundry-observability`, `azure-tenant-isolation`

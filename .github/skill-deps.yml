@@ -66,3 +66,9 @@ skills:
   # create). Independent of every other catalog skill.
   foundry-agt:
     depends_on: []
+
+  # foundry-voice-live — opens a Voice Live WSS session (transient,
+  # closes on script exit). No catalog-internal deps; tests Voice Live
+  # GA 2026-04-10 surface via native azure-ai-voicelive SDK.
+  foundry-voice-live:
+    depends_on: []
