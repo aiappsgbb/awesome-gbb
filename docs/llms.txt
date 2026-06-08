@@ -20,6 +20,7 @@
 - [foundry-toolbox](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-toolbox/SKILL.md): Wire the Microsoft Foundry Toolbox into hosted agents — a managed multi-tool bundle (mcp, web_search, azure_ai_search, code_interpreter, file_search, openapi, a2a_preview) behind…
 - [foundry-skill-catalog](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-skill-catalog/SKILL.md): Centrally store and distribute instruction-only `SKILL.md` files via the Foundry **Skills** REST API (`{project}/skills`) — and consume them at runtime from MAF agents through a custom `SkillsSource` adapter.
 - [foundry-memory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-memory/SKILL.md): Use Azure AI Foundry Memory Store for persistent agent memory across sessions: user profiles, chat summaries, procedural memory, semantic memory retrieval, hosted-agent memory…
+- [foundry-routines](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-routines/SKILL.md): Schedule and dispatch Foundry agent invocations via Routines — declarative automation rules that fire on cron (schedule trigger) or at a specific time (timer trigger).
 - [foundry-voice-live](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-voice-live/SKILL.md): Build real-time voice agents on Azure AI Foundry Voice Live (GA 2026-04-10).
 
 ### 🛠️ Cross-Cutting Helpers
