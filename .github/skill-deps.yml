@@ -72,6 +72,17 @@ skills:
     depends_on:
       - foundry-hosted-agents
 
+  # foundry-network-runbook — operational runbook for network-layer
+  # failures after a Foundry VNet deploy. Cross-references specific
+  # sections in foundry-vnet-deploy (§ 11 verification matrix, Step 8
+  # DNS) and foundry-caphost-lifecycle (§ 7 delete, § 8 purge,
+  # § 11 anti-patterns). When either of those skills changes, the
+  # runbook's cross-refs may drift and need re-validation.
+  foundry-network-runbook:
+    depends_on:
+      - foundry-vnet-deploy
+      - foundry-caphost-lifecycle
+
   # foundry-agt — pure in-process MAF middleware (no Azure resource
   # create). Independent of every other catalog skill.
   foundry-agt:
