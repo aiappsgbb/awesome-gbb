@@ -9,16 +9,16 @@ description: >
   Citadel hub VNet. Read the full skill body for the guided interview,
   retry logic, and subnet sizing — do not deploy from this summary.
   USE FOR: foundry private vnet, network-secured foundry, agent
-  injection, capability host, customerSubnet, bicepparam generator,
-  capability host timeout retry, P2S VPN, citadel hub peering,
-  vnet-isolated citadel spoke, apim private dns zone link.
+  injection, capability host, citadel hub peering, vnet-isolated
+  citadel spoke, apim private dns zone link, central dns at scale,
+  hub-spoke private dns, InvalidPrivateDnsZoneIds.
   DO NOT USE FOR: azd-based deploys (use threadlight-deploy or
   foundry-hosted-agents), public-network Foundry, APIM cross-resource
   (use foundry-cross-resource), tenant isolation
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.1.3"
+  version: "1.1.4"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -210,6 +210,10 @@ If YES → ask:
    - `privatelink.documents.azure.com`
 
 The format is an object where each key is the zone name and the value is the resource group (empty = create a new one).
+
+> **Central DNS at scale (hub-and-spoke).** When the spoke is deployed into an enterprise hub-and-spoke topology, the 6 zones above are typically owned by the **platform team in a separate subscription** (often the connectivity hub). The `dnsZonesSubscriptionId` parameter combined with the per-zone resource-group map in `existingDnsZones` is exactly the pattern described in Microsoft's Cloud Adoption Framework — see [Private Link and DNS integration at scale](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale#private-link-and-dns-integration-in-hub-and-spoke-network-architectures) for the canonical reference architecture. The deployment principal needs `Private DNS Zone Contributor` on each zone in the hub subscription to create the VNet links; without this you will hit `InvalidPrivateDnsZoneIds` at deploy time.
+>
+> - For deploy-time DNS troubleshooting (including the `InvalidPrivateDnsZoneIds` symptom → cause → fix table), see the upcoming `foundry-network-runbook` skill.
 
 ### Step 8b: Hosted agent developers (optional but recommended)
 

@@ -23,6 +23,7 @@ docs_to_revalidate:
   - "https://github.com/microsoft-foundry/foundry-samples"
   - "https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup"
   - "https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup/README.md"
+  - "https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale"
 
 known_issues: []
 
@@ -85,7 +86,7 @@ validation:
     - "FOUNDRY_VNET_DEPLOY_VALIDATION_PASS"
   failure_signatures: []
 
-last_validated: 2026-05-15
+last_validated: 2026-06-09
 validated_by: ricchi
 known_issues_count: 0
 ---
@@ -109,7 +110,7 @@ Keep them in sync.
 | **Pinned commit subject** | `feat: add azure-search-rag hosted agent sample (#283)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-06-09` |
 
 Refresh procedure:
 ```bash
@@ -191,7 +192,7 @@ echo "FOUNDRY_VNET_DEPLOY_VALIDATION_PASS"
 |-------|--------|----------|
 | Issue-only validation procedure | ✅ | Human-run script documented for Bicep build, what-if, and live deployment. |
 
-Captured at `last_validated: 2026-05-15` by `ricchi`.
+Captured at `last_validated: 2026-06-09` by `ricchi`.
 
 ---
 
@@ -232,6 +233,7 @@ When upstream advances:
 - <https://github.com/microsoft-foundry/foundry-samples>
 - <https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup>
 - <https://github.com/microsoft-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup/README.md>
+- <https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale>
 
 ---
 
