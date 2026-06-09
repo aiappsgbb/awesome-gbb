@@ -40,28 +40,38 @@ Do NOT run `command -v`, `find /`, or `curl -fsSL` to hunt for tooling
 `curl` — assume them.
 
 - **Log `az` into the subshell** so Steps 1-4 have a working token (Pattern 11
-  fix — `azure/login@v2` authenticates the runner's CLI cache, but copilot CLI
-  spawns each tool call in a fresh subshell that cannot read that cache).
-  Run this verbatim:
+  v2 fix — `azure/login@v2` authenticates the runner's CLI cache, but copilot
+  CLI spawns each tool call in a fresh subshell that cannot read that cache.
+  `AZURE_FEDERATED_TOKEN_FILE` does NOT inherit either — it's set inside
+  azure/login's own process, not via `core.exportVariable`. The runner-level
+  `ACTIONS_ID_TOKEN_REQUEST_URL` + `ACTIONS_ID_TOKEN_REQUEST_TOKEN` vars DO
+  inherit because GHA sets them on the parent process when `id-token: write`
+  is in job permissions). Run this verbatim:
 
   ```bash
-  if [[ -n "${AZURE_FEDERATED_TOKEN_FILE:-}" && -f "$AZURE_FEDERATED_TOKEN_FILE" ]]; then
-    az login --service-principal \
-      --username "$AZURE_CLIENT_ID" \
-      --tenant "$AZURE_TENANT_ID" \
-      --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" \
-      --allow-no-subscriptions \
-      --output none && \
-    az account set --subscription "$AZURE_SUBSCRIPTION_ID" --output none && \
-    echo "subshell-az-login: ok"
+  if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+    OIDC_TOKEN=$(curl -sS \
+      -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+      "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+      | jq -r .value)
+    if [ -n "$OIDC_TOKEN" ] && [ "$OIDC_TOKEN" != "null" ]; then
+      az login --service-principal \
+        --username "$AZURE_CLIENT_ID" \
+        --tenant "$AZURE_TENANT_ID" \
+        --federated-token "$OIDC_TOKEN" \
+        --output none
+      echo "subshell-az-login: ok"
+    else
+      echo "subshell-az-login: skipped (OIDC token fetch returned empty)"
+    fi
   else
-    echo "subshell-az-login: skipped (no AZURE_FEDERATED_TOKEN_FILE)"
+    echo "subshell-az-login: skipped (ACTIONS_ID_TOKEN_REQUEST_* missing — id-token: write not set?)"
   fi
   ```
 
   The `echo` line MUST land in the transcript so we have evidence the login
-  path ran. Both `ok` and `skipped` outcomes are acceptable — they classify
-  downstream curl behaviour in Step 4.
+  path ran. `ok` is the success state; `skipped` outcomes classify downstream
+  curl behaviour in Step 4.
 
 ---
 
