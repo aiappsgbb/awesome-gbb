@@ -28,6 +28,7 @@
 
 - [azd-patterns](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azd-patterns/SKILL.md): Tips and patterns for Azure Developer CLI (azd) workflows, ACA job deployment, and infrastructure scripting conventions.
 - [azure-tenant-isolation](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-tenant-isolation/SKILL.md): Multi-tenant Azure CLI and AZD isolation for concurrent terminal sessions.
+- [foundry-cost-monitoring](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-cost-monitoring/SKILL.md): Continuous Foundry token-cost monitoring, chargeback, budget alerts, and FinOps automation.
 - [foundry-network-runbook](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-network-runbook/SKILL.md): Operational runbook for diagnosing Microsoft Foundry **network-layer** failures after a deploy succeeds — DNS, VNet peering, NSG / Azure Firewall denies, RBAC scope, capability…
 - [gbb-humanizer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-humanizer/SKILL.md): Remove signs of AI-generated writing from prose.
 - [ghcp-cli-config](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-cli-config/SKILL.md): Bootstrap GitHub Copilot CLI for GBB workflows: 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), settings.json baseline (model, sessionSync,…

@@ -59,7 +59,8 @@ CATEGORIES: dict[str, list[str]] = {
     ],
     # Threadlight Pipeline skills moved to aiappsgbb/threadlight-skills
     '🛠️ Cross-Cutting Helpers': [
-        'azd-patterns', 'azure-tenant-isolation', 'foundry-network-runbook',
+        'azd-patterns', 'azure-tenant-isolation',
+        'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
         'ghcp-cli-config', 'paygo-ptu-cost-analyzer',
     ],
