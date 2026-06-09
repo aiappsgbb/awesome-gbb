@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -28,6 +28,8 @@ metadata:
 Guide the user step by step to deploy **Azure AI Foundry with Agent in a private VNet** using the Bicep files from the `15-private-network-standard-agent-setup` reference project. The skill collects all required parameters, generates the `.bicepparam` file, and runs the deployment.
 
 > **Optional scenario hint.** When the user invokes the skill, they may pass a one-line scenario hint such as `"new VNet in swedencentral"` or `"existing VNet with existing DNS zones"`. Use it to pre-fill defaults during the interview wherever it applies.
+
+> **Day-2 lifecycle companion.** This skill covers greenfield create only. For **Day-2 capability host lifecycle** (idempotent re-create, delete, soft-delete + purge of the parent account, `Subnet already in use` redeploy guard, soft-delete recovery) see [`foundry-caphost-lifecycle`](../foundry-caphost-lifecycle/SKILL.md). You will need it any time you tear down and redeploy a Foundry caphost into the same VNet/subnet.
 
 ## 2. Architecture being deployed
 
