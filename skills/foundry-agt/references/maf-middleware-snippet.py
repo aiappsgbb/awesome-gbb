@@ -1,6 +1,6 @@
 """
 GBB-verified MAF middleware wiring for the Microsoft Agent Governance
-Toolkit (AGT v3.7.0) on top of agent-framework v1.7.0.
+Toolkit (AGT v3.7.0) on top of agent-framework v1.8.0.
 
 This is the **working** version — the upstream Foundry deployment doc
 (`docs/deployment/azure-foundry-agent-service.md`) shows manual

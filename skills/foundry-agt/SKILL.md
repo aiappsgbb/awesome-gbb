@@ -17,7 +17,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -313,7 +313,7 @@ This is the path for every Foundry hosted agent. Latency overhead is
 
 ### Wiring snippet
 
-The **working** snippet — verified end-to-end against AGT 3.7.0 + MAF 1.7.0
+The **working** snippet — verified end-to-end against AGT 3.7.0 + MAF 1.8.0
 — is at [`references/maf-middleware-snippet.py`](references/maf-middleware-snippet.py).
 Drop the `build_governed_agent(...)` helper into your hosted-agent module
 and pass it the `FoundryChatClient` your azd-deployed project provides.
@@ -499,7 +499,7 @@ agt eval prompt-defense --agent ./agent.yaml --report ./pd-report.json
 
 | Recipe | Status | Last verified |
 |--------|--------|---------------|
-| `pip install` + `create_governance_middleware` + `load_policies` + `AuditLog` (CI smoke) | ✅ | AGT 3.7.0, Linux, Py 3.12 ([run 26745982162](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441)) |
+| `pip install` + `create_governance_middleware` + `load_policies` + `AuditLog` (CI smoke) | ✅ | AGT 3.7.0 + MAF 1.8.0, Linux, Py 3.12 (CI run cited in [v1.2.0 changelog](#gbb-changelog); MAF 1.7.0 baseline historical run: [26745982162](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441)) |
 | `pip install agent-governance-toolkit[full]` | ✅ | AGT 3.6.0, Win11, Py 3.13.13 |
 | `agt doctor` | ✅ | same |
 | `agt verify` → 10/10 OWASP ASI 2026 | ✅ | same |
@@ -582,6 +582,20 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
 
 ## GBB Changelog
 
+- **v1.2.0** — MAF 1.8.0 compat refresh. Bumped `agent-framework` pin
+  `1.7.0` → `1.8.0` (PyPI release 2026-06-04). AGT pin held at `3.7.0`
+  — the AGT 4.0.0 GA package-reorg (5 distributions replacing 45
+  sub-packages) is deferred to a dedicated future PR so this PR stays
+  reviewable. MAF 1.8.0 ships two `[BREAKING]` markers, neither of which
+  affects this skill: (a) the `agent-framework-github-copilot` sub-package
+  is not pinned here; (b) the experimental `Skill` abstract-class refactor
+  in `agent-framework-core` is not consumed by AGT's middleware stack.
+  The four-layer middleware stack (`AuditTrail`, `GovernancePolicy`,
+  `CapabilityGuard`, `RogueDetection`) still hooks `FunctionInvocationContext`
+  the same way it did at 1.7.0; `create_governance_middleware(...)` factory
+  signature and the `Agent(client, instructions, *, name, middleware, tools, ...)`
+  ctor shape are unchanged. CI smoke run citation: TBD — added after the
+  initial green.
 - **v1.0.6** — CI E2E smoke landed
   ([run 26745982162](https://github.com/aiappsgbb/awesome-gbb/actions/runs/26745982162/job/78821489441),
   3m6s wall-clock, Linux + Python 3.12 + AGT 3.7.0 + MAF 1.7.0). Refreshed
