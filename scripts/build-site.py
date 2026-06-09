@@ -52,6 +52,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-mcp-aca', 'foundry-evals', 'foundry-iq',
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
+        'foundry-caphost-lifecycle',
         'foundry-toolbox', 'foundry-skill-catalog', 'foundry-memory',
         'foundry-routines',
         'foundry-voice-live',
