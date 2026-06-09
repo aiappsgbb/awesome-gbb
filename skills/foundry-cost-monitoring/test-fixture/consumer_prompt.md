@@ -39,6 +39,30 @@ Do NOT run `command -v`, `find /`, or `curl -fsSL` to hunt for tooling
 (Pattern 15). The CI runner already has `az` CLI 2.74+, `python3`, and
 `curl` — assume them.
 
+- **Log `az` into the subshell** so Steps 1-4 have a working token (Pattern 11
+  fix — `azure/login@v2` authenticates the runner's CLI cache, but copilot CLI
+  spawns each tool call in a fresh subshell that cannot read that cache).
+  Run this verbatim:
+
+  ```bash
+  if [[ -n "${AZURE_FEDERATED_TOKEN_FILE:-}" && -f "$AZURE_FEDERATED_TOKEN_FILE" ]]; then
+    az login --service-principal \
+      --username "$AZURE_CLIENT_ID" \
+      --tenant "$AZURE_TENANT_ID" \
+      --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" \
+      --allow-no-subscriptions \
+      --output none && \
+    az account set --subscription "$AZURE_SUBSCRIPTION_ID" --output none && \
+    echo "subshell-az-login: ok"
+  else
+    echo "subshell-az-login: skipped (no AZURE_FEDERATED_TOKEN_FILE)"
+  fi
+  ```
+
+  The `echo` line MUST land in the transcript so we have evidence the login
+  path ran. Both `ok` and `skipped` outcomes are acceptable — they classify
+  downstream curl behaviour in Step 4.
+
 ---
 
 ## Step 1 — Retail Prices API probe (HARD GATE)
@@ -84,6 +108,10 @@ if missing:
 with open("/tmp/foundry-cost-monitoring-sample-row.json", "w") as f:
     json.dump(sample, f)
 
+# Persist HTTP status for the Step 5 smoke-summary line.
+with open("/tmp/foundry-cost-monitoring-retail-http", "w") as f:
+    f.write("200")
+
 print(f"OK: Retail Prices returned {len(items)} rows")
 print(f"  sample.meterName       = {sample['meterName']}")
 print(f"  sample.retailPrice     = {sample['retailPrice']}")
@@ -126,12 +154,14 @@ KQL
 QUERY="$(cat /tmp/cost-mon-kql.txt)"
 
 set +e
-KQL_OUT=$(az monitor log-analytics query \
+KQL_OUT=$(timeout 60s az monitor log-analytics query \
   -w "$LAW_WORKSPACE_ID" \
   --analytics-query "$QUERY" \
   -o json 2>&1)
 KQL_STATUS=$?
 set -e
+echo "kql-rc: $KQL_STATUS (0=ok, 124=timeout, other=error)"
+echo "$KQL_STATUS" > /tmp/foundry-cost-monitoring-kql-rc
 
 echo "--- KQL output ---"
 echo "$KQL_OUT" | head -40
@@ -284,6 +314,7 @@ else
     echo "$HTTP_CODE" > /tmp/foundry-cost-monitoring-costmgmt-status
   fi
 fi
+echo "cost-mgmt-http: $(cat /tmp/foundry-cost-monitoring-costmgmt-status 2>/dev/null || echo unknown)"
 ```
 
 SOFT gate per Pattern 25. Marker remains `SMOKE_RESULT=PASS` regardless
@@ -307,6 +338,14 @@ On success (Step 0 auth context complete AND Step 1 Retail Prices probe
 returned 200 + non-empty Items AND Step 3 cost computation join
 executed without exception — Step 2 KQL and Step 4 Cost Mgmt outcomes
 do NOT affect the marker):
+
+Just BEFORE writing the marker, emit one summary line so the workflow
+transcript artifact has all three Azure-surface outcomes on a single
+grep-able line:
+
+```bash
+echo "smoke-summary: retail=$(cat /tmp/foundry-cost-monitoring-retail-http 2>/dev/null || echo n/a) kql=$(cat /tmp/foundry-cost-monitoring-kql-rc 2>/dev/null || echo n/a) costmgmt=$(cat /tmp/foundry-cost-monitoring-costmgmt-status 2>/dev/null || echo n/a)"
+```
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-cost-monitoring-smoke-result

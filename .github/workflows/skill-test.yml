@@ -280,6 +280,13 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # AZURE_FEDERATED_TOKEN_FILE is exported by azure/login@v2 via
+          # core.exportVariable and is visible to subsequent steps' env.
+          # Re-declaring it here makes the propagation explicit so that
+          # fixtures spawning fresh subshells (Pattern 11) can run
+          # `az login --service-principal --federated-token "$(cat …)"`
+          # against the runner's per-step OIDC token file.
+          AZURE_FEDERATED_TOKEN_FILE: ${{ env.AZURE_FEDERATED_TOKEN_FILE }}
           # Foundry project endpoint + model deployment exposed to the
           # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
           # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
@@ -398,6 +405,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_FEDERATED_TOKEN_FILE: ${{ env.AZURE_FEDERATED_TOKEN_FILE }}
           FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 — mirror the initial-run env block per Pattern 11
