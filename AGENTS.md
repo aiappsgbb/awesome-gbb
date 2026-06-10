@@ -1950,9 +1950,20 @@ workflow path computes `git diff $base_ref..HEAD`, maps changed
 files to changed skills, applies **forward fanout** from
 [`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
 and B `depends_on` A, run B too), and forces a full matrix on
-**infra-file changes** (`plugin.json`, the workflow itself, the
-matrix script, `skill-deps.yml`, `quarantine.yml`). The `push: main`
-and `schedule:` paths always run the full matrix.
+**infra-file changes** (the workflow itself, the matrix script,
+`skill-deps.yml`, `quarantine.yml`, `ci-shared-preamble.md`). The
+`push: main` and `schedule:` paths always run the full matrix.
+
+**What's deliberately NOT in the force-full list:** `plugin.json` and
+`.github/plugin/marketplace.json`. They are metadata manifests — a
+new skill is detected via its own `skills/<name>/` paths in the
+natural diff, and a pure version bump has zero per-leg test impact.
+Treating them as infra (the original design) fired a full 14-leg
+matrix on PR #240's `4.14.0 → 4.15.0` bump (1 line of metadata),
+~30 min of needless runner time. Removed in run `27295753637`'s
+follow-up. Catch-rate is preserved by the weekly + push-to-main
+full-matrix paths, which re-validate plugin-structural changes
+within ≤7 days even when the PR fan-out skipped them.
 
 **Cost / benefit.** A PR that touches only `foundry-memory/test-fixture/`
 runs ONE leg (memory) instead of six. Wall-clock for an iterative

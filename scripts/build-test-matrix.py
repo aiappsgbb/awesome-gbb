@@ -16,15 +16,23 @@ Sorted alphabetically for deterministic GHA matrix expansion.
   with two refinements:
 
   - Force-full-matrix paths (any one of them touched → emit the full set):
-        plugin.json
-        .github/plugin/marketplace.json
         scripts/build-test-matrix.py
         .github/workflows/skill-test.yml
         .github/quarantine.yml
         .github/skill-deps.yml
-    These files change the matrix shape, the gating logic itself, or the
-    cross-skill dependency map — so any change to them MUST re-validate
-    every fixtured skill.
+        .github/ci-shared-preamble.md
+    These files change the matrix shape, the gating logic itself, the
+    cross-skill dependency map, or the per-leg input contract — so any
+    change to them MUST re-validate every fixtured skill.
+
+    `plugin.json` and `.github/plugin/marketplace.json` are deliberately
+    NOT in this list. They are metadata manifests: a new skill adds its
+    own `skills/<name>/` paths to the diff (caught by natural skill-
+    change detection), and a pure version bump has zero test impact.
+    The push-to-main + weekly schedule paths still run the full matrix
+    as a catalogue canary, so any plugin-structural change (categories,
+    keywords, name) is re-validated within ≤7 days even when the PR
+    didn't fan out.
 
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
@@ -47,11 +55,13 @@ from pathlib import Path
 import yaml
 
 # Paths whose modification forces a full-matrix run. These files change
-# the matrix shape itself (plugin manifest, quarantine list), the gating
-# logic (this script, the workflow), or the cross-skill dep map.
+# the matrix shape itself (quarantine list), the gating logic (this
+# script, the workflow), the cross-skill dep map, or the per-leg input
+# contract (shared preamble). plugin.json/marketplace.json are NOT here
+# — they are metadata manifests; a new skill is detected via its own
+# `skills/<name>/` paths and a pure version bump has zero test impact.
+# See module docstring for rationale.
 FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
-    "plugin.json",
-    ".github/plugin/marketplace.json",
     "scripts/build-test-matrix.py",
     ".github/workflows/skill-test.yml",
     ".github/quarantine.yml",

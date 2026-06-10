@@ -184,14 +184,33 @@ class TestChangedOnly(unittest.TestCase):
     def test_changed_only_force_full_on_infra_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, base = self._setup(td)
-            # Touching plugin.json forces the full fixtured set even
-            # though no skill/* path changed.
-            (repo / "plugin.json").write_text('{"x": 1}\n')
+            # Touching the workflow file forces the full fixtured set
+            # even though no skill/* path changed.
+            workflow = repo / ".github" / "workflows" / "skill-test.yml"
+            workflow.parent.mkdir(parents=True, exist_ok=True)
+            workflow.write_text("name: test\n")
             _git(repo, "add", "-A")
-            _git(repo, "commit", "-q", "-m", "edit plugin.json")
+            _git(repo, "commit", "-q", "-m", "edit workflow")
             self.assertEqual(
                 _run_changed_only(repo, base), ["alpha", "beta", "gamma"]
             )
+
+    def test_changed_only_plugin_json_is_metadata_no_fanout(self) -> None:
+        # plugin.json and marketplace.json are metadata manifests — a
+        # bare version bump (or new-skill registration) must NOT trigger
+        # a full-matrix fan-out. The new skill's own skills/<name>/
+        # paths in the diff drive natural detection.
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            (repo / "plugin.json").write_text('{"x": 1}\n')
+            (repo / ".github" / "plugin").mkdir(parents=True, exist_ok=True)
+            (repo / ".github" / "plugin" / "marketplace.json").write_text(
+                '{"x": 1}\n'
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "bump plugin metadata")
+            # No skill folders changed → empty matrix.
+            self.assertEqual(_run_changed_only(repo, base), [])
 
     def test_changed_only_empty_diff_returns_empty_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as td:
