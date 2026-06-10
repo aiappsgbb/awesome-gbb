@@ -135,11 +135,22 @@ jobs:
       # tokens from the SAME Copilot CLI model quota. 5+ legs in parallel
       # exceeds the per-account RPM ceiling → agent's internal 5× retry
       # exhausts → leg fails with CAPIError "Too Many Requests" before
-      # any agent work starts. 2 is the empirical safe cap (verified on
+      # any agent work starts. 2 was the historical safe cap (verified on
       # run 26711407035 where 6 legs in parallel killed foundry-hosted-
-      # agents at T+1.5min). DO NOT raise without first re-verifying
-      # against current Copilot CLI quota. See AGENTS.md § 9.7.
-      max-parallel: 2
+      # agents at T+1.5min).
+      #
+      # 2026-06-10 (M1 quota forensic, run 27275270370): per-minute TPM
+      # metric on aif-awesome-gbb-ci/gpt-5.4-mini showed each leg burns
+      # ~100K TPM sustained, ~110K peak. With max-parallel=2 the peak
+      # demand hits 212K against the deployment's 170K cap → instant
+      # CAPIError 429 with total retry wait ~0.1s (account-tier wall).
+      # Tier 1 quota bump (50K → 170K) was insufficient. Coordinator
+      # Option B (defer Citadel reclaim, drop max-parallel to 1) chosen
+      # 2026-06-10 14:18Z. 1 leg @ 110K peak vs 170K cap = 55% headroom.
+      # Cost: matrix wall-clock doubles (~1.3h → ~2.5h per PR). To raise
+      # back to 2: either reclaim Citadel 100K (CI cap → 270K, 28%
+      # headroom) OR confirm new sub-quota allocation. See AGENTS.md § 9.7.
+      max-parallel: 1
       matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
     # 30 → 40 → 50 evolution:
     # - 30 min: run 26698566215 emitted "PASS via marker file
