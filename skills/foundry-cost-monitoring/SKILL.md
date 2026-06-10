@@ -496,9 +496,10 @@ az role definition create --role-definition foundry-cost-reader.json
 
 ### CI-side grants used by `awesome-gbb`'s own fixture
 
-The CI UAMI (`uami-awesome-gbb-ci`) currently has Contributor + AcrPush
-+ Cognitive Services OpenAI User + Foundry User on `rg-awesome-gbb-ci`
-(see AGENTS.md § 9.7). The fixture for this skill exercises the **Cost
+The CI UAMI currently has Contributor + AcrPush + Cognitive Services
+OpenAI User + Foundry User on the CI resource group (see
+AGENTS.md § 9.7 and `.github/ci-shared-preamble.md` for the canonical
+identifiers). The fixture for this skill exercises the **Cost
 Management read** path; the role needed is **Cost Management Reader**
 at subscription scope:
 
