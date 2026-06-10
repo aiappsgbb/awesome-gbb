@@ -37,6 +37,23 @@ does NOT deploy any infrastructure, and does NOT invoke any models.
 
 ---
 
+## Step −1 — Load the skill contract (mandatory FIRST action)
+
+Before Step 0, use the `view` tool to read
+`skills/foundry-cost-monitoring/SKILL.md`. This is the ONE allowed
+repo-file read for this fixture — it loads the skill's documented
+contract so the rest of the steps are grounded in the actual skill,
+not training-data improvisation. This also produces the audit-trail
+evidence the workflow's post-hoc audit step grades on. Skipping this
+step is a fixture-contract violation and will fail the run even if
+every Bash step succeeds.
+
+After viewing SKILL.md, proceed to Step 0. Do NOT view any other repo
+files — the "do NOT inspect repo files" rule from the preamble applies
+to everything except this single SKILL.md read.
+
+---
+
 ## Step 0 — Auth context (show, do not assert)
 
 Print the auth context for the run log. Do NOT gate flow on the `az`
