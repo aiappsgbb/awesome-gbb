@@ -213,13 +213,17 @@ jobs:
         # `--resource` takes the v1 AAD audience identifier (NO `/.default`
         # suffix). Passing the v2 scope form to `--resource` produces
         # AADSTS500011 "resource principal not found". The auth-smoke
-        # workflow (L63-75) documents this in detail and is the canonical
-        # reference. `tr -d '\r\n'` defends against trailing newline from
-        # `-o tsv` that would otherwise produce a cryptic 401 from Foundry.
+        # workflow (L63-100) documents this in detail and is the canonical
+        # reference, including the 2026-06-10 audience switch from
+        # `cognitiveservices.azure.com` → `ai.azure.com` (Foundry project
+        # endpoints require the `ai.azure.com` AAD app's audience after
+        # the post-recovery endpoint contract change).
+        # `tr -d '\r\n'` defends against trailing newline from `-o tsv`
+        # that would otherwise produce a cryptic 401 from Foundry.
         run: |
           set -euo pipefail
           TOKEN=$(az account get-access-token \
-            --resource https://cognitiveservices.azure.com \
+            --resource https://ai.azure.com \
             --query accessToken -o tsv | tr -d '\r\n')
           echo "::add-mask::$TOKEN"
           echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"

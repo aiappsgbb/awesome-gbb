@@ -59,7 +59,7 @@ jobs:
       - name: Get Foundry bearer token
         run: |
           set -euo pipefail
-          echo "Fetching Foundry bearer token for cognitiveservices.azure.com…"
+          echo "Fetching Foundry bearer token for ai.azure.com (Foundry project audience)…"
           # `--resource` takes the v1 AAD audience identifier (the SP appId
           # URI). The v2 scope form (`<resource>/.default`) is only valid
           # with `--scope`. Passing the v2 form to `--resource` produces
@@ -67,11 +67,24 @@ jobs:
           # up the SP by the literal string and there is no SP named
           # "<resource>/.default".
           #
+          # AUDIENCE NOTE (2026-06-10): switched from
+          # `https://cognitiveservices.azure.com` to `https://ai.azure.com`.
+          # Foundry **project** endpoints
+          # (`*.services.ai.azure.com/api/projects/<name>/openai/v1/*`)
+          # validate tokens against the `https://ai.azure.com` AAD app, NOT
+          # the legacy Cognitive Services audience. Hitting a project
+          # endpoint with a `cognitiveservices.azure.com` token returns
+          # HTTP 401 with no body — the audience-mismatch signature.
+          # Reproducible via curl matrix on 2026-06-10 after CI account
+          # recovery. The old audience worked against account-host URLs
+          # (`*.cognitiveservices.azure.com/openai/v1/*`); the
+          # post-2026-06-09 endpoint contract uses project-host URLs.
+          #
           # `tr -d '\r\n'` defends against trailing whitespace from `-o tsv`
           # that would otherwise produce a cryptic 401 from Foundry instead
           # of a clear token-acquisition failure.
           TOKEN=$(az account get-access-token \
-            --resource https://cognitiveservices.azure.com \
+            --resource https://ai.azure.com \
             --query accessToken -o tsv | tr -d '\r\n')
           # Mask the token in logs before exporting it to subsequent steps.
           echo "::add-mask::$TOKEN"
