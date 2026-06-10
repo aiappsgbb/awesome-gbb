@@ -5,9 +5,19 @@ Copilot CLI plugin and you want to prove that the `foundry-observability`
 skill works end-to-end against your CI Application Insights + Log Analytics
 Workspace.
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of OpenTelemetry or Azure Monitor — read the skill's `SKILL.md`
-first, and follow its documented contract.
+**This is an EXECUTION smoke, not a catalog inspection.** You MUST run
+every Bash code block below in order. Do NOT inspect repo files, do NOT
+run `validate-skills.py`, do NOT rebuild docs, do NOT `git status` —
+those are catalog-author concerns, not consumer-smoke concerns. Your only
+acceptable terminal state is a Bash tool call that writes a marker file
+to `/tmp/foundry-observability-smoke-result` (Step 3). If you find
+yourself reading `skill-deps.yml`, `upstream-pin.md`, or anything under
+`docs/`, you are off-script — stop and execute Step 0.
+
+Do whatever the skill's `SKILL.md` tells you to do, but do NOT improvise
+from training-data knowledge of OpenTelemetry or Azure Monitor — read
+`skills/foundry-observability/SKILL.md` first, then follow the documented
+contract.
 
 ---
 
