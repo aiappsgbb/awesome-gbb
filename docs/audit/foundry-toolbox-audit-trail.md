@@ -124,7 +124,7 @@ layer" pattern the freshness contract is designed for.
 
 The fixture performs zero `az role assignment create` calls. SKILL.md
 L213 prescribes `Azure AI User` at the project scope as a
-prerequisite (pre-granted in `aif-awesome-gbb-ci` per Pattern 23) —
+prerequisite (pre-granted in `<ci-foundry-account>` per Pattern 23) —
 no in-fixture grant + propagation race.
 
 ### C10 — Region / SKU drift (Sweden Central, GlobalStandard embeddings)
@@ -133,7 +133,7 @@ no in-fixture grant + propagation race.
 
 The skill is region-agnostic. No model deployments are provisioned
 by the fixture; the standing `gpt-5.4-mini` and
-`text-embedding-3-small` in `aif-awesome-gbb-ci` (Sweden Central,
+`text-embedding-3-small` in `<ci-foundry-account>` (Sweden Central,
 `GlobalStandard` per Pattern 21) are consumed read-only.
 
 ### C11 — Cross-skill reference drift

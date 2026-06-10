@@ -6,7 +6,7 @@
 
 **Architecture:** Build a new `copilot-cli-matrix` GHA job that, per skill, spins up `azure/login@v2` (OIDC) + `copilot plugin install awesome-gbb@local` + `copilot run --prompt-file skills/<name>/test-fixture/consumer_prompt.md`. Exit code IS the test result. The Copilot CLI reads SKILL.md and self-verifies; no parallel pytest assertions can drift from it. In parallel, dispatch one `general-purpose` audit sub-agent per skill (cap 5 concurrent) with a verbatim copy of the 21-item bug-class catalog and the §4 anti-normalization clause; each agent produces (a) a fix PR, (b) `skills/<name>/test-fixture/consumer_prompt.md`, and (c) `docs/audit/<name>-audit-trail.md`. Pilot 3 skills hands-on, then unleash the army on 22 more (2 stay manual). Delete all `scripts/tests/test_e2e_*.py` files and the `pin-smoke` + `e2e-azure` jobs from `skill-test.yml`.
 
-**Tech Stack:** GitHub Actions (matrix jobs, `azure/login@v2` OIDC, `actions/upload-artifact@v4`), Copilot CLI (`copilot plugin marketplace add .` + `copilot run --prompt-file`), Python 3.11+ (matrix builder, AST lints, unit tests via pytest — for the lints, not for skills), Bash, Azure (`rg-awesome-gbb-ci`, `aif-awesome-gbb-ci`, `gpt-5.4-mini`), Foundry-routed model auth via `COPILOT_MODEL_ENDPOINT` + `COPILOT_MODEL_DEPLOYMENT` (exact names verified against released CLI in Task 1.0).
+**Tech Stack:** GitHub Actions (matrix jobs, `azure/login@v2` OIDC, `actions/upload-artifact@v4`), Copilot CLI (`copilot plugin marketplace add .` + `copilot run --prompt-file`), Python 3.11+ (matrix builder, AST lints, unit tests via pytest — for the lints, not for skills), Bash, Azure (`<ci-resource-group>`, `<ci-foundry-account>`, `gpt-5.4-mini`), Foundry-routed model auth via `COPILOT_MODEL_ENDPOINT` + `COPILOT_MODEL_DEPLOYMENT` (exact names verified against released CLI in Task 1.0).
 
 **Spec:** [`docs/superpowers/specs/2026-05-30-deep-audit-and-testing-rethink-design.md`](../specs/2026-05-30-deep-audit-and-testing-rethink-design.md) (commit `5c8268b`).
 
@@ -510,7 +510,7 @@ This is the **single load-bearing assumption** of the whole design: that the Cop
 > **Empirical findings recorded mid-execution (2026-05-30):**
 >
 > - **Auth-smoke shipped at commit `8209f68`** uses the verified Task-1.0 env-var stack (`COPILOT_PROVIDER_TYPE=azure`, `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_BEARER_TOKEN`, `COPILOT_PROVIDER_MODEL_ID`, `COPILOT_PROVIDER_WIRE_MODEL`, `COPILOT_PROVIDER_WIRE_API=responses`, `COPILOT_ALLOW_ALL=true`). The legacy `COPILOT_MODEL_*` placeholders in §5.3 of the spec **do not exist** in the released CLI 1.0.57-2 and would be silently ignored. Task 2.1 Step 4 above has been corrected to use the verified stack.
-> - **`AZURE_AI_ENDPOINT` secret is account-host shape** (`https://aif-awesome-gbb-ci.cognitiveservices.azure.com/`) — confirmed by querying the CI resource directly with `az cognitiveservices account show -n aif-awesome-gbb-ci -g rg-awesome-gbb-ci`. This matches AGENTS.md §9.7 documentation; that section is **correct**, not stale. Workflows that need the **project endpoint** (`https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test`) for `AIProjectClient` must derive it from the account host inside the workflow rather than introducing a new secret.
+> - **`AZURE_AI_ENDPOINT` secret is account-host shape** (`https://<ci-foundry-account>.cognitiveservices.azure.com/`) — confirmed by querying the CI resource directly with `az cognitiveservices account show -n <ci-foundry-account> -g <ci-resource-group>`. This matches AGENTS.md §9.7 documentation; that section is **correct**, not stale. Workflows that need the **project endpoint** (`https://<ci-foundry-account>.services.ai.azure.com/api/projects/ci-test`) for `AIProjectClient` must derive it from the account host inside the workflow rather than introducing a new secret.
 > - **The legacy `scripts/tests/test_e2e_*.py` files have never actually executed in CI.** The `unit-tests` job skips them (`@unittest.skipUnless(AZURE_AI_ENDPOINT, ...)` — the secret is not exposed there); the `e2e-azure` job invokes `scripts/run-pin-validation.py --include-azure`, not `pytest scripts/tests/`. Their pass/fail status has never been observed empirically. Phase 4's deletion step is therefore lower-risk than originally feared — but if any consumer-fixture rewrites cross-reference patterns from those files, **verify the pattern works** rather than trusting "it was green on main" (it wasn't observed).
 
 ### Task 1.0 · Verify exact Copilot CLI Foundry-routing env-var names
@@ -648,7 +648,7 @@ Expected: `PONG` in the run log; conclusion = success.
 
 - [ ] **Step 4: If RED, STOP and triage**
 
-The most likely failure modes (per spec §11): wrong env-var names (re-do Task 1.0), missing RBAC on UAMI (check Cognitive Services OpenAI User on `aif-awesome-gbb-ci`), CLI install path moved (check the install script URL). Do NOT proceed to Phase 2 until this is green on `main`.
+The most likely failure modes (per spec §11): wrong env-var names (re-do Task 1.0), missing RBAC on UAMI (check Cognitive Services OpenAI User on `<ci-foundry-account>`), CLI install path moved (check the install script URL). Do NOT proceed to Phase 2 until this is green on `main`.
 
 ---
 
@@ -796,7 +796,7 @@ Edit `.github/workflows/skill-test.yml`. Add a new job alongside (not replacing 
           # failure that's actually a misconfigured provider stack.
           #
           # AZURE_AI_ENDPOINT secret is verified account-host shape per
-          # AGENTS.md §9.7 (`https://aif-awesome-gbb-ci.cognitiveservices.azure.com/`).
+          # AGENTS.md §9.7 (`https://<ci-foundry-account>.cognitiveservices.azure.com/`).
           # If a consumer fixture also needs the Foundry project endpoint
           # (`…services.ai.azure.com/api/projects/<name>`), derive it from
           # the account host inside the fixture's prompt or add a derive
@@ -961,8 +961,8 @@ You are testing the `foundry-hosted-agents` skill end-to-end.
 Use the skill to:
 1. Build a minimal hosted agent container using the skill's canonical
    reference at `skills/foundry-hosted-agents/references/python/main.py`.
-   Deploy it as an ACA service to `cae-awesome-gbb-ci` with image
-   pushed to `acrawesomegbbci.azurecr.io/ci-smoke-<short-uuid>:latest`.
+   Deploy it as an ACA service to `<ci-container-app-env>` with image
+   pushed to `<ci-container-registry>.azurecr.io/ci-smoke-<short-uuid>:latest`.
    Use deployment `gpt-5.4-mini` at endpoint `$AZURE_AI_ENDPOINT`.
 2. Send one chat turn: "Reply with EXACTLY the single word READY and
    nothing else." Assert the reply contains `READY`.
@@ -1019,7 +1019,7 @@ Expected: `copilot-cli-matrix (foundry-hosted-agents)` = success.
 >    up-front).
 > 6. **Pre-granted-RBAC preamble** template required if the fixture
 >    touches resources whose RBAC is pre-provisioned in
->    `rg-awesome-gbb-ci`.
+>    `<ci-resource-group>`.
 > 7. Anti-theater on audit trail (no claimed-but-not-shipped runs,
 >    no future-dated empirical claims).
 >
@@ -1077,8 +1077,8 @@ azd auth login \
 
 ## Pre-granted RBAC (do NOT re-grant)
 
-- UAMI `uami-awesome-gbb-ci` already has Contributor on
-  `rg-awesome-gbb-ci` and AcrPush on `acrawesomegbbci`. The fixture
+- UAMI `<ci-uami-name>` already has Contributor on
+  `<ci-resource-group>` and AcrPush on `<ci-container-registry>`. The fixture
   inherits these via the federated workflow login above. Do NOT add
   `az role assignment create` calls — propagation takes 5-15 min and
   races the 30-min workflow timeout.
@@ -1090,7 +1090,7 @@ Use the skill to:
    that runs `echo HELLO` once. Use the module shapes documented in
    the skill's references. Environment name: `ci-azd-pat-<uuid8>`
    (substitute a fresh `uuid.uuid4().hex[:8]`).
-2. Run `azd up` against resource group `rg-awesome-gbb-ci`.
+2. Run `azd up` against resource group `<ci-resource-group>`.
 3. Trigger the job once via `az containerapp job start`.
 4. Verify the job's log contains `HELLO`.
 5. Run `azd down --force --purge` to clean up.
@@ -1200,7 +1200,7 @@ would mean stability re-runs in those tasks were undercounting flakes
 because only the leg-under-test was being scrutinised);
 
 (b) Parallel-matrix-leg resource contention against shared
-`aif-awesome-gbb-ci` / `acrawesomegbbci` — quota throttling, ACR
+`<ci-foundry-account>` / `<ci-container-registry>` — quota throttling, ACR
 push concurrency, or Foundry per-account throughput limits;
 
 (c) Coincidental transient (Foundry agent creation timeout,
@@ -1379,7 +1379,7 @@ For each class, record "found at <file>:<line>, fix: <description>" OR
 - Single-task prompt. Specific. Short. Self-verifying (asserts a string
   or exit code).
 - Uses `$AZURE_AI_ENDPOINT`, deployment `gpt-5.4-mini`,
-  `acrawesomegbbci.azurecr.io` for image pushes. Uses a unique
+  `<ci-container-registry>.azurecr.io` for image pushes. Uses a unique
   `<short-uuid>` suffix on every resource it creates so concurrent matrix
   runs don't collide.
 - Tears down ALL resources it creates before exiting 0.
@@ -1763,7 +1763,7 @@ execute the SKILL** — not by running pytest-style assertions.
 
 - ✅ Add `skills/<name>/test-fixture/consumer_prompt.md` — a single-task,
   self-verifying prompt the Copilot CLI executes against
-  `rg-awesome-gbb-ci` infrastructure (§ 9.7).
+  `<ci-resource-group>` infrastructure (§ 9.7).
 - ✅ The fixture creates unique resources with a `<short-uuid>` suffix
   and tears them down before exiting.
 - ✅ `copilot-cli-matrix` picks up the skill automatically once the

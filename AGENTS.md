@@ -192,7 +192,7 @@ call an Azure endpoint, provision a resource, or authenticate with
   exercise real Azure connectivity (credential chain, endpoint
   reachability, API surface existence)
 - ✅ Wire the test into `skill-test.yml` → `e2e-azure` job
-- ✅ Tests run with OIDC credentials against `rg-awesome-gbb-ci` (§ 9.7)
+- ✅ Tests run with OIDC credentials against `<ci-resource-group>` (§ 9.7)
 - ❌ **"pip install + import" is NOT sufficient** for Azure skills — it
   proves the SDK exists, not that the Azure connection works
 - ❌ **"I tested locally" is NOT sufficient** — CI must reproduce it
@@ -719,7 +719,7 @@ re-runs the script on the runner) and by reviewer eyeball.
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching anything under `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
-| [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `rg-awesome-gbb-ci`) |
+| [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `<ci-resource-group>`) |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
 
 The first three run on every PR. The fourth detects drift autonomously.
@@ -729,38 +729,53 @@ auto-approves and squash-merges without waiting for human review.
 
 ### 9.7 · Azure CI credentials and E2E infrastructure
 
-The repo has OIDC-federated Azure credentials and dedicated E2E
-infrastructure for CI use in `rg-awesome-gbb-ci` (Sweden Central):
+The repo has OIDC-federated Azure credentials and a dedicated CI
+resource group hosting persistent E2E infrastructure. The concrete
+identifiers (subscription ID, resource group name, account names,
+endpoint URLs) are NOT documented in this public repo — they live in
+two places only:
+
+1. **GitHub repo Secrets** (Settings → Secrets and variables → Actions)
+   — consumed by `.github/workflows/skill-test.yml` at runtime
+2. **`.env.ci`** (gitignored) — for local maintainer-side manual E2E
+   runs; copy [`.env.ci.example`](.env.ci.example) and fill in the
+   real values
+
+If you need the real values, ask a maintainer. Below we describe the
+shape of the infrastructure using placeholders so the documentation
+stays useful without leaking inventory.
 
 **OIDC identity:**
 
 | Secret | Purpose |
 |--------|---------|
-| `AZURE_CLIENT_ID` | UAMI `uami-awesome-gbb-ci` in `rg-awesome-gbb-ci` |
-| `AZURE_TENANT_ID` | `fruocco` tenant |
-| `AZURE_SUBSCRIPTION_ID` | `ME-MngEnvMCAP979166-fruocco-2` |
+| `AZURE_CLIENT_ID` | Client ID of `<ci-uami-name>` (UAMI in `<ci-resource-group>`) |
+| `AZURE_TENANT_ID` | Entra tenant hosting the CI subscription |
+| `AZURE_SUBSCRIPTION_ID` | Dedicated CI subscription (single-region, single-RG) |
 
-**E2E infrastructure:**
+**E2E infrastructure** (all in `<ci-resource-group>`, single region):
 
-| Resource | Name | Purpose |
+| Resource | Placeholder | Purpose |
 |----------|------|---------|
-| AI Services | `aif-awesome-gbb-ci` | Foundry host for agent/eval/memory tests |
-| Model deployment | `gpt-5.4-mini` | Cheapest model for smoke tests |
-| Container Registry | `acrawesomegbbci` | Container image builds |
-| Container App Environment | `cae-awesome-gbb-ci` | ACA deploy tests |
+| AI Services | `<ci-foundry-account>` | Foundry host for agent / eval / memory tests |
+| Model deployment | `<model-deployment-name>` | Cheapest GPT-5 family SKU for smoke tests |
+| Embedding deployment | `<embedding-deployment-name>` | `text-embedding-3-small` on `GlobalStandard` (Pattern 21) |
+| Container Registry | `<ci-container-registry>` | Container image builds for hosted-agent / ACA tests |
+| Container App Environment | `<ci-container-app-env>` | ACA deploy tests (services and Jobs) |
 
 **Endpoint secrets:**
 
-| Secret | Value |
+| Secret | Shape |
 |--------|-------|
-| `AZURE_AI_ENDPOINT` | `https://aif-awesome-gbb-ci.cognitiveservices.azure.com/` |
-| `ACR_LOGIN_SERVER` | `acrawesomegbbci.azurecr.io` |
+| `AZURE_AI_ENDPOINT` | `https://<ci-foundry-account>.cognitiveservices.azure.com/` |
+| `FOUNDRY_PROJECT_ENDPOINT` | `https://<ci-foundry-account>.services.ai.azure.com/api/projects/<ci-foundry-project>` |
+| `ACR_LOGIN_SERVER` | `<ci-container-registry>.azurecr.io` |
 
-**RBAC on UAMI:**
-- Contributor on `rg-awesome-gbb-ci`
-- AcrPush on `acrawesomegbbci`
-- Cognitive Services OpenAI User on `aif-awesome-gbb-ci`
-- Foundry User on `aif-awesome-gbb-ci`
+**RBAC on `<ci-uami-name>`:**
+- Contributor on `<ci-resource-group>`
+- AcrPush on `<ci-container-registry>`
+- Cognitive Services OpenAI User on `<ci-foundry-account>`
+- Foundry User on `<ci-foundry-account>`
 
 **Federated credentials are narrow — these are the ONLY allowed subjects:**
 
@@ -908,7 +923,7 @@ Three patterns proved load-bearing during Task 2.1 of the
 
 7. **Pre-granted-RBAC preamble pattern** (Task 2.2 finding). When a
    fixture exercises Azure resources whose RBAC is pre-provisioned in
-   `rg-awesome-gbb-ci`, the fixture preamble MUST:
+   `<ci-resource-group>`, the fixture preamble MUST:
 
    - Explicitly list the pre-granted RBAC (subject + role + scope)
    - State "do NOT re-grant these — propagation takes 5-15 min and
@@ -1684,7 +1699,7 @@ on).
 #### Pattern 18 — Retry classifier covers ARM cross-resource cache lag (Finding #19)
 
 **The bug.** Run `26704135920` (azd-patterns leg, SHA `c94d607`) failed
-with `ManagedEnvironmentNotFound` for `cae-awesome-gbb-ci` during
+with `ManagedEnvironmentNotFound` for `<ci-container-app-env>` during
 `az deployment group create`. The CAE existed at deploy time with
 `provisioningState: Succeeded` (verified post-mortem from a local
 `az containerapp env show`), and the **same agent**, in the **same
@@ -1796,7 +1811,7 @@ offers embeddings under `GlobalStandard`.
 **The fix.** When provisioning embedding models in Sweden Central
 (the CI region), the deployment SKU MUST be `GlobalStandard`. This
 applies to the standing `text-embedding-3-small` deployment in
-`aif-awesome-gbb-ci` and to any future embedding deployment used
+`<ci-foundry-account>` and to any future embedding deployment used
 by a fixture. Chat completion models (`gpt-5.4-mini`, `gpt-5.4`)
 work fine under `Standard` in Sweden Central — only embeddings
 need `GlobalStandard`.
@@ -1857,7 +1872,7 @@ the 401 came from the server-side worker hitting
 `https://cognitiveservices.azure.com` with a token issued to an
 identity that was NOT the CI UAMI used by every other passing leg.
 
-**The three identities** in `aif-awesome-gbb-ci`, NONE of which
+**The three identities** in `<ci-foundry-account>`, NONE of which
 overlap by default:
 
 | # | Identity | Object ID | Default RBAC | Used by |
@@ -1876,8 +1891,8 @@ caller's UAMI.
 Services User` to the **project MI** at **account scope**:
 
 ```bash
-SUB=2c745a8f-9d37-45e3-8506-80797e89735e
-ACCT_SCOPE=/subscriptions/$SUB/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.CognitiveServices/accounts/aif-awesome-gbb-ci
+SUB=<ci-subscription-id>
+ACCT_SCOPE=/subscriptions/$SUB/resourceGroups/<ci-resource-group>/providers/Microsoft.CognitiveServices/accounts/<ci-foundry-account>
 PROJECT_MI_OBJECT_ID=8c1b62da-a294-4bec-b1eb-e5664b7bd490  # from `az cognitiveservices account project show`
 
 az role assignment create --assignee-object-id $PROJECT_MI_OBJECT_ID \
@@ -2061,7 +2076,7 @@ If you can't decide which row a resource lives on, ask: "Would
 a customer following SKILL.md verbatim consider this resource
 part of what they asked for?" YES → hard. NO → best-effort.
 
-**Janitor contract.** The `rg-awesome-gbb-ci` resource group
+**Janitor contract.** The `<ci-resource-group>` resource group
 is the catch-all for orphaned fixture resources under Pattern
 25. A periodic cron (manual today; automation deferred) prunes:
 
@@ -2324,7 +2339,7 @@ PR opened
 Push to main / weekly cron
  └─ skill-test.yml            T2: all-pin smoke (pip install + import for ALL auto-tier pins)
                               T3: E2E Azure (credential chains, API surfaces, model
-                                   inference against real resources in rg-awesome-gbb-ci)
+                                   inference against real resources in <ci-resource-group>)
 
 Weekly cron (detection only)
  └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
@@ -2380,7 +2395,7 @@ Consequences:
 | Internal IP (no upstream) | 4 |
 | CI workflows | 6 |
 | Unit tests | 73 (18 PR gate + 45 skill validation + 10 E2E Azure) |
-| Azure E2E resources | AI Services + ACR + CAE in `rg-awesome-gbb-ci` |
+| Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
 ---

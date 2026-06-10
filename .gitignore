@@ -17,6 +17,7 @@ Desktop.ini
 !**/.env.sample
 !**/.env.example
 !**/.env.local.example
+!**/.env.ci.example
 
 # Node (if tooling is added later)
 node_modules/

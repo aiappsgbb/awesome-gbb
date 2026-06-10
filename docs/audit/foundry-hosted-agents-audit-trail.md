@@ -190,8 +190,8 @@ class does not apply to this skill's shape.
 Single Copilot CLI consumer fixture lives at
 `skills/foundry-hosted-agents/test-fixture/consumer_prompt.md`. It instructs
 the agent to scaffold a minimal hosted-agent container in `/tmp/`, build it
-via `az acr build` against `acrawesomegbbci`, declare a hosted-agent service
-in `azure.yaml`, run `azd deploy` against `cae-awesome-gbb-ci`, invoke the
+via `az acr build` against `<ci-container-registry>`, declare a hosted-agent service
+in `azure.yaml`, run `azd deploy` against `<ci-container-app-env>`, invoke the
 deployed agent once with a one-shot prompt against `gpt-5.4-mini`, verify a
 non-empty response, and tear down (ACA app delete + ACR repository delete +
 Foundry agent delete). All resource names carry a `uuid.uuid4().hex[:8]`
@@ -243,7 +243,7 @@ inherits this skill):**
    (GUID `7f951dda-4ed3-4680-a7ca-43fe172d538d`) and **Container
    Registry Repository Reader** (GUID `b93aa761-3e63-49ed-ac28-beffa264f7ac`).
 2. Live RBAC inspection on the shared CI ACR (`az role assignment list
-   --scope <acrawesomegbbci> --query "[?roleDefinitionName=='AcrPull' ||
+   --scope <<ci-container-registry>> --query "[?roleDefinitionName=='AcrPull' ||
    roleDefinitionName=='Container Registry Repository Reader']"`) before
    the fix returned zero rows. The ACR had only `AcrPush` on the workload
    UAMI principal `85bf66ed-...`. The Foundry project's system MI
@@ -263,8 +263,8 @@ inherits this skill):**
 **Fix applied (one-time CI infrastructure setup, NOT in git):**
 
 ```bash
-SUB=2c745a8f-9d37-45e3-8506-80797e89735e
-ACR_ID="/subscriptions/${SUB}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ContainerRegistry/registries/acrawesomegbbci"
+SUB=<ci-subscription-id>
+ACR_ID="/subscriptions/${SUB}/resourceGroups/<ci-resource-group>/providers/Microsoft.ContainerRegistry/registries/<ci-container-registry>"
 PROJ_MI=8c1b62da-a294-4bec-b1eb-e5664b7bd490
 
 # Container Registry Repository Reader (primary per SKILL.md L1146):
@@ -300,7 +300,7 @@ behaviour at L1142-1156 + L1218 + the post-deploy bootstrap recipe at
 `references/bash/postdeploy-agent.sh` were all **correct** — they
 described exactly the dependency that the CI environment did not have.
 The gap was an infra-provisioning oversight in the one-time
-`rg-awesome-gbb-ci` setup, not a documentation defect. The author of
+`<ci-resource-group>` setup, not a documentation defect. The author of
 this audit deliberately did NOT add a "first run will fail with…"
 caveat to SKILL.md, because that caveat does not belong in
 consumer-facing documentation (consumers run `azd ai agent rbac` once
@@ -490,7 +490,7 @@ workers (or human auditors) need to act on it.
 
     Root cause is LLM autoregression: when the agent's reply paragraph
     is heavy with backtick-fenced identifier mentions (which our prompts
-    necessarily are — `${AGENT_NAME}`, `${UUID}`, `acrawesomegbbci`, …),
+    necessarily are — `${AGENT_NAME}`, `${UUID}`, `<ci-container-registry>`, …),
     the model probabilistically formats the closing marker the same way.
     There is **no prompt-side wording that 100% prevents this**, but you
     can substantially reduce its frequency:
