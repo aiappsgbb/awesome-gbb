@@ -17,7 +17,7 @@ description: >
   monitoring (use azure-monitor-query directly), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.0.4"
+  version: "1.0.5"
 ---
 
 # PAYGO vs PTU Cost Analyzer
@@ -36,6 +36,11 @@ runs in a terminal, in CI, or inside an agent — never as a web app).
 > This skill is for the cases where the seller / analyst / agent needs
 > a **report file** — over chat, in a PR, or as part of an automated
 > capacity-planning rollup.
+
+> **Continuous monitoring companion.** [`foundry-cost-monitoring`](../foundry-cost-monitoring/SKILL.md)
+> consumes live OTel `gen_ai.usage.*` spans for per-agent / per-project
+> cost projection — use it when the FinOps question is "what's my
+> spend right now?" rather than "how should I size PTU?"
 
 ---
 

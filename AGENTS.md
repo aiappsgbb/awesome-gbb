@@ -1776,6 +1776,92 @@ through Copilot CLI (i.e. every Copilot-CLI fixture) inherits this
 class of failure. The retry classifier + jitter is workflow-side
 and protects all legs automatically; no fixture-side change needed.
 
+**🔄 ADDENDUM (2026-06-10, run [`27296618970`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/27296618970)).**
+The "Copilot CLI's own backing model" framing above is **correct only
+when CLI runs on its default backend**. The catalog's CI sets
+`COPILOT_PROVIDER_TYPE=azure` + `COPILOT_PROVIDER_BASE_URL=
+${secrets.AZURE_AI_ENDPOINT}` + `COPILOT_PROVIDER_MODEL_ID=gpt-5.4-mini`
+in `skill-test.yml`, so every `copilot -p` invocation in CI calls
+**our own `gpt-5.4-mini` deployment in `aif-awesome-gbb-ci`** — not
+the GitHub-backed CAPI quota. Consequences:
+
+1. `CAPIError 429` in CI now maps to **our TPM cap** (currently 545K
+   = Sweden Central regional ceiling on `gpt-5.4-mini` GlobalStandard,
+   shared with 455K of other allocations).
+2. The jittered 90-180s cooldown was sized for GitHub's RPM windows.
+   Azure OpenAI TPM throttle windows are minute-scale (60s rolling),
+   but **deep saturation** (one large request followed by burst calls)
+   can take 3-5 min to clear. See Pattern 26 for the second-retry leg
+   that handles this case.
+3. Per-request token cost matters now. Each fixture agent message
+   counts ~200K+ tokens against TPM (prompt+context+tools+cached
+   tokens count at full rate for rate-limiting). Cutting fixture
+   prompt size (especially the SHARED CI HARDENING preamble — see
+   `.github/ci-shared-preamble.md`) is the single biggest lever
+   short of more quota.
+4. `max-parallel: 2` (Pattern 22) was sized assuming the CAPI quota.
+   On our Azure routing, that ceiling is now driven by deployment TPM
+   and by the per-call burst, not by a per-account ceiling. A future
+   experiment may raise this back to 3-5 after deployment-side
+   quota work lands.
+
+**TL;DR:** Pattern 19's retry-classifier regex is still correct
+(matches CLI's surfaced 429s regardless of backend). The cooldown
+math and `max-parallel` cap need re-tuning against actual TPM
+consumption per fixture once Pattern 26 data accumulates.
+
+**🔄 ADDENDUM v2 (2026-06-10, post-PR-#240 retries).** Run
+`27300950746` (cost-monitoring + observability matrix at SHA
+`76d2ddb`, sequential — not parallel) showed CAPI 429 on
+cost-monitoring DESPITE no concurrent leg consuming TPM. Forensic:
+
+- Cost-monitoring 19:32:06 → 19:36:58 (~5 min) — FAILED 429
+- Observability   19:37:00 → 19:50:22 (~13 min) — PASSED
+
+The cost-monitoring fixture had a `view skills/foundry-cost-monitoring/SKILL.md`
+mandate (added to defeat audit-grep false-negatives). SKILL.md is
+~23 KB → Copilot CLI's `view` tool reads it in 4 chunked turns →
+each turn re-uploads the full conversation context (system prompt
+~50K + tools ~20K + prior chunks ~50K each) → single agent turn
+hit ~250-300K tokens uploaded. Foundry's gpt-5.4-mini deployment
+in Sweden Central caps at 545K TPM (regional ceiling) → one such
+turn consumes 46-55% of TPM → next CLI internal-retry within
+seconds → 92%+ → CAPI 429 → CLI's 5 immediate retries all hit
+the same 429 within 30 ms. The workflow's retry classifier
+correctly fires Retry-1, but Retry-1 rebuilds the same massive
+context and 429s again.
+
+**Per-fixture token budget rule (mandatory):**
+
+| Per-turn upload | Risk vs 545K TPM ceiling |
+|---|---|
+| ≤ 50K  | Safe at max-parallel: 2 |
+| 50-150K | Safe sequential; risky parallel |
+| 150-300K | One turn is 50%+ of TPM → CAPI 429 inevitable on a follow-up turn within the minute |
+| > 300K | Saturation in a single turn → 429 immediately |
+
+Fixtures that exceed 150K per-turn MUST be one of:
+1. Reduced (don't read large repo files via the `view` tool;
+   use targeted `view_range` if you must)
+2. Rewritten to avoid loading SKILL.md into agent context
+   entirely (use a lightweight `echo skills/foundry-X/SKILL.md`
+   in a Bash step to satisfy audit-grep without context bloat —
+   the cost-monitoring fixture's Step −1 v3 is the canonical pattern)
+3. Moved to a dedicated single-leg matrix at `max-parallel: 1`
+   with cooldown bumped to Pattern 26's 240-360s
+
+**Why the audit-grep false-negative path matters.** The workflow's
+post-hoc audit step greps the agent's transcript for `skill(name)`,
+`SKILL.md`, or `skills/<name>/` to detect freelancing. If the agent
+follows a fully-explicit fixture without ever uttering the skill
+name path, audit fails even when every smoke step succeeded.
+**The lightweight fix** (canonical pattern): the fixture's first
+mandatory action is a single Bash `echo "skills/<skill-name>/SKILL.md"`
+that produces the audit-grep evidence at ~50 tokens of context cost.
+DO NOT mandate `view SKILL.md` — that's 5-10K+ tokens compounded
+across chunked reads. See the cost-monitoring fixture
+`Step −1 — Acknowledge skill contract` for the canonical form.
+
 #### Pattern 20 — Copilot CLI cannot read `~/.copilot/installed-plugins/` for fixture skills (Finding #21)
 
 **The bug.** Earlier Phase 3 attempts tried to ship the `awesome-gbb`
@@ -1858,6 +1944,16 @@ without a quota-side change. If you need more throughput, the
 correct path is to run smaller targeted matrices via the
 change-gating in Pattern 24 (`build-test-matrix.py --changed-only`)
 — not to fan out wider.
+
+**🔄 ADDENDUM (2026-06-10).** See Pattern 19's addendum: in our CI
+the 429 source is **our `gpt-5.4-mini` deployment in
+`aif-awesome-gbb-ci`** (currently 545K TPM, Sweden Central regional
+cap), not GitHub's CAPI quota. The `max-parallel: 2` ceiling still
+applies — with 545K TPM and ~226K tokens per agent message,
+3+ parallel legs trivially saturate. Raising this ceiling requires
+either (a) more deployment TPM (cross-region GlobalStandard, or
+PTU), or (b) fixture token diet (smaller prompts, less cached
+context).
 
 #### Pattern 23 — Foundry project MI is the THIRD identity, needs separate `Cognitive Services OpenAI User` grant (Finding #24)
 
@@ -1950,16 +2046,44 @@ workflow path computes `git diff $base_ref..HEAD`, maps changed
 files to changed skills, applies **forward fanout** from
 [`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
 and B `depends_on` A, run B too), and forces a full matrix on
-**infra-file changes** (`plugin.json`, the workflow itself, the
-matrix script, `skill-deps.yml`, `quarantine.yml`). The `push: main`
-and `schedule:` paths always run the full matrix.
+**input-contract changes** (`.github/workflows/skill-test.yml`,
+`.github/quarantine.yml`, `.github/ci-shared-preamble.md`). The
+`push: main` and `schedule:` paths always run the full matrix.
+
+**What's deliberately NOT in the force-full list:**
+
+- `plugin.json` + `.github/plugin/marketplace.json` — metadata
+  manifests. A new skill is detected via its own `skills/<name>/`
+  paths in the natural diff; a pure version bump has zero per-leg
+  test impact.
+- `scripts/build-test-matrix.py` — the matrix builder itself.
+  Decides WHICH legs run, not what they do. Logic regressions are
+  caught by 12 unit tests in
+  [`scripts/tests/test_build_test_matrix.py`](scripts/tests/test_build_test_matrix.py)
+  + the push-to-main canary. Keeping it in FORCE_FULL caused a
+  chicken-and-egg: every fix to the matrix logic fanned out the
+  full matrix, costing ~30 min per iteration.
+- `.github/skill-deps.yml` — read live by `_load_dep_map` for forward
+  fanout. Adding a NEW entry (the common case when registering a
+  new skill) is purely additive — it doesn't change existing fanout
+  edges. Removals/renames are rare and covered by
+  `validate-skills.py` (cycle + unknown-ref checks) + the
+  push-to-main canary.
+
+Treating any of these as infra (the original design) fired a full
+14-leg matrix on PR #240's `4.14.0 → 4.15.0` plugin bump (1 line of
+metadata) + on every subsequent matrix-builder iteration. Catch-rate
+for structural drift is preserved by the weekly + push-to-main
+full-matrix paths within ≤7 days.
 
 **Cost / benefit.** A PR that touches only `foundry-memory/test-fixture/`
-runs ONE leg (memory) instead of six. Wall-clock for an iterative
-retry drops from ~30 min to ~13 min; budget cost drops 5/6. Catch
-rate is preserved because the full matrix still runs on `main`
-and weekly, and forward fanout protects against upstream-skill
-changes silently breaking downstream consumers.
+runs ONE leg (memory) instead of six. A new-skill PR like #240 runs
+the new skill + its forward-fanout (2 legs) instead of 14. Wall-clock
+for an iterative retry drops from ~30 min to ~13 min; budget cost
+drops 5/6 on iterative PRs, ~12/14 on new-skill PRs. Catch rate is
+preserved because the full matrix still runs on `main` and weekly,
+and forward fanout protects against upstream-skill changes silently
+breaking downstream consumers.
 
 **Cross-skill carry rule.** When you add a new fixture, also add
 an entry to `.github/skill-deps.yml` even if `depends_on: []`. The
@@ -2135,6 +2259,243 @@ side-resources:
 Don't preemptively soft-PASS-teardown the safe ones — only
 apply Pattern 25 when a fixture has demonstrated a real flap
 attributable to teardown.
+
+#### Pattern 27 — Forbid recursive `copilot` invocations from fixture Bash tools (Finding #28)
+
+**Provenance.** Run [`27298061079`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/27298061079)
+(SHA `01a5bdd`, PR #240) `foundry-cost-monitoring` leg job
+[`80636049506`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/27298061079/job/80636049506).
+The leg failed with a compound symptom that defeated Pattern 19's
+retry classifier:
+
+1. **Real CAPI 429** on the initial agent run: token usage from the
+   transcript was `↑ 666.3k (634.4k cached) • ↓ 5.9k` in 1m50s,
+   blowing through our 545K TPM cap. CLI internal retried 5 times
+   ("Failed to get response from the AI model"), then surfaced the
+   429.
+2. **Agent freelanced into recursive `copilot`.** Reading the fixture's
+   permissive intro ("Do whatever the skill tells you"), the agent
+   went into meta-mode: ran a Bash tool that re-invoked `copilot`
+   with `2>&1 | tee /tmp/foundry-cost-monitoring-transcript.log` —
+   treating itself as the test harness. The nested `copilot` had no
+   `COPILOT_GITHUB_TOKEN` (the workflow only sets the Azure
+   provider bearer token, not GitHub auth), so it crashed with
+   `Error: No authentication information found.`.
+3. **Transcript clobber.** The nested `copilot`'s 8-line "No
+   authentication" stub OVERWROTE the workflow's transcript at
+   `/tmp/foundry-cost-monitoring-transcript.log`. The outer `tee`
+   chain had completed before the nested call wrote.
+4. **Pattern 19 retry defeated.** The retry step re-greps `$TRANSCRIPT`
+   for the transient classifier. The clobbered 8-line stub contained
+   neither `CAPIError` nor `Too Many Requests` nor `Failed to get
+   response from the AI model` — so the classifier returned no match
+   and the step exited "non-transient failure — not retrying".
+5. **Audit-step false-negative.** The post-hoc audit step also greps
+   the now-clobbered transcript for skill-usage evidence
+   (`skill\\(${SKILL}\\)|SKILL.md|skills/${SKILL}/`). The stub has
+   none, so it fires `::error::No evidence in transcript that agent
+   loaded the '...' skill` — misleadingly suggesting a freelance
+   failure when the agent DID load the skill but its transcript was
+   wiped.
+
+The combination is invisible to every existing CI gate: Pattern 12
+marker file was never written (the agent crashed before reaching
+its Step N marker), Pattern 19 retry didn't fire (transcript
+clobbered), audit step misclassified (transcript clobbered).
+
+**Fix (3 rules, all required).**
+
+1. **Fixture intro MUST forbid recursive `copilot`.** Every
+   Copilot-CLI fixture's preamble carries this verbatim block (or a
+   skill-specific variant), placed AFTER the "execution smoke, not
+   catalog inspection" guard from the earlier hardening:
+
+   ```markdown
+   **CRITICAL — never invoke `copilot` recursively from a Bash tool.**
+   You ARE the running Copilot CLI process. Do NOT run
+   `copilot -p ...`, `copilot --version`, `npm install -g @github/copilot`,
+   or any other `copilot ...` invocation from inside a Bash tool call.
+   Doing so spawns a nested CLI process WITHOUT GitHub auth (the workflow
+   only sets `COPILOT_PROVIDER_BEARER_TOKEN` for our Foundry routing,
+   NOT `COPILOT_GITHUB_TOKEN`), which will (a) crash with "No
+   authentication information found" and (b) overwrite this run's
+   transcript at `/tmp/<skill>-transcript.log`, defeating the workflow's
+   retry classifier (Pattern 19 addendum). The workflow ALREADY captures
+   your output via the outer `tee` — your job is to EXECUTE Steps
+   directly in Bash tool calls, not to "run the smoke".
+   ```
+
+   The combination of "execution smoke, not catalog inspection"
+   (forbids freelance into repo introspection) + "no recursive
+   copilot" (forbids freelance into self-execution) is the canonical
+   anti-freelance pair. Both are required; either alone is bypassable.
+
+2. **Don't conflate the two failure modes in retry classifier.** The
+   workflow's regex still correctly matches CAPI 429 surfaces. The
+   recursive-copilot clobber is a SEPARATE root cause that the
+   fixture-side guard must prevent. Adding "No authentication
+   information found" to the retry classifier is WRONG — it would
+   cause real auth bugs to silently retry forever instead of failing
+   fast. The cure is fixture-side prohibition, not workflow-side
+   regex broadening.
+
+3. **Documentation in audit-step error.** The post-hoc audit message
+   should mention recursive-copilot as a possible cause:
+
+   ```bash
+   echo "::error::No evidence in transcript that agent loaded the '${SKILL}' skill — \
+   agent may have freelanced from training data, OR the transcript was clobbered \
+   by a recursive 'copilot' invocation in a Bash tool (AGENTS.md § 9.7 Pattern 27)."
+   ```
+
+   This makes the failure mode obvious to the next coordinator
+   without requiring a forensic deep-dive.
+
+**Cross-skill carry rule.** Every existing Copilot-CLI fixture MUST
+have the anti-recursive-copilot block before any future PR lands.
+The rollout pattern matches the existing "execution smoke" hardening:
+inject the block at fixture commit time when each fixture is next
+touched, plus a one-shot sweep PR to retrofit any fixtures that
+haven't been touched recently. Verify with:
+
+```bash
+for f in skills/*/test-fixture/consumer_prompt.md; do
+  grep -q "never invoke \`copilot\` recursively" "$f" || echo "MISSING: $f"
+done
+```
+
+**Diagnostic protocol.** When a fixture leg fails with the
+audit-step error `No evidence in transcript that agent loaded the
+'<skill>' skill`:
+
+1. Download the transcript artifact.
+2. Check its size: if < 1 KB, the transcript was likely clobbered.
+3. Check for "No authentication information found" or "COPILOT_GITHUB_TOKEN"
+   in the tail. If present → recursive-copilot clobber (Pattern 27).
+4. Check the run log (not the artifact) for `CAPIError` /
+   `Failed to get response from the AI model` BEFORE the agent's
+   freelance recursion fired. If present → underlying root cause
+   was TPM saturation (Pattern 19 addendum) and the recursive
+   call masked it.
+5. Fix at the fixture per Rule 1 above. Bump the SKILL.md PATCH
+   version (the fixture is a SKILL.md asset).
+
+**Cost / benefit.** Pattern 27 costs ~20 lines per fixture
+preamble. Removed cost: the entire class of "TPM-throttle + agent
+freelance into recursive copilot" failures that look like freelance
+bugs but are actually TPM with a transcript-clobber masker. The
+cost-monitoring leg in run `27298061079` is the proof point — it
+should have been a clean Pattern 19 retry but instead burned a
+full leg, a full audit-step false positive, and several minutes of
+coordinator triage time.
+
+#### Pattern 26 — Two-tier retry contract for BYOK Azure-routed CLI (Finding #27)
+
+**Provenance.** Run [`27296618970`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/27296618970)
+(SHA `f39759a`, PR #240 `foundry-cost-monitoring` + dep-fanout
+`foundry-observability`). Both legs hit `CAPIError: 429 Too Many
+Requests` on the initial run. Pattern 19's single retry leg
+(90-180s cooldown) recovered `foundry-cost-monitoring` on the
+manual rerun, but the in-line retry still failed because the deep
+TPM saturation hadn't cleared in the original cooldown window. The
+underlying issue (now documented in Patterns 19/22 addenda) is that
+our CI routes the Copilot CLI through our own `gpt-5.4-mini`
+deployment in `aif-awesome-gbb-ci` (Sweden Central, 545K TPM cap
+shared with 455K of other Sweden Central tenant allocations) —
+NOT a separate GitHub-side quota.
+
+Per-request token math (measured from real run):
+- ~226K input tokens per agent message (~210K cached + ~16K new)
+- Cached tokens count at FULL rate for TPM rate-limiting
+- 5-10 tool-call rounds per fixture → 1.1-2.2M tokens attempted
+  per fixture invocation
+- 545K TPM ceiling × 60s window → trivially saturated by a single
+  heavy fixture, never mind 2+ in parallel
+
+**The fix.** Add a SECOND retry step in `skill-test.yml` with a
+longer cooldown (240-360s = 4-6 min). Two-tier escalation:
+
+| Layer | Cooldown | Purpose |
+|---|---|---|
+| Main `run` | n/a | Initial attempt |
+| `retry1` (Pattern 19) | 90-180s | Short-window throttle (RPM windows, mild TPM blip) |
+| `retry2` (Pattern 26) | 240-360s | Deep TPM saturation (cleared only after the heavy 60s window fully rolls past) |
+
+Both retry legs gate on the SAME transient classifier regex (so
+genuine fixture bugs still fail fast). Same Pattern 12 marker
+contract (deterministic `cmp -s`). Same Pattern 11 byte-identical
+env block (so OIDC vars survive into the retry subshells). The
+second retry only fires if the first retry ALSO matched the
+transient classifier — preventing useless double-retries on
+non-transient failures.
+
+**Worked YAML** (paste-ready, anchored on Pattern 12/19/21/24
+conventions):
+
+```yaml
+- name: Retry twice on classified-transient failure (Pattern 26)
+  id: retry2
+  if: steps.retry1.outcome == 'failure'
+  env:
+    # Mirror retry1's env exactly (Pattern 11 byte-identical contract).
+    # Don't refactor into job-level env — Pattern 11 mandates per-step env.
+    ... (copy from retry1)
+  run: |
+    set -euo pipefail
+    SKILL="${{ matrix.skill }}"
+    RETRY1_TRANSCRIPT="/tmp/${SKILL}-retry.log"
+    RETRY2_TRANSCRIPT="/tmp/${SKILL}-retry2.log"
+    MARKER="/tmp/${SKILL}-smoke-result"
+    # Pattern 26 cooldown: 4-6 min so deep TPM saturation can clear.
+    if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error" "$RETRY1_TRANSCRIPT"; then
+      COOLDOWN=$((240 + RANDOM % 120))
+      sleep "${COOLDOWN}"
+      rm -f "$RETRY2_TRANSCRIPT" "$MARKER"
+      PREAMBLE=".github/ci-shared-preamble.md"
+      set +e
+      copilot -p "$(cat "$PREAMBLE" "skills/${SKILL}/test-fixture/consumer_prompt.md")" \
+              --allow-all-tools --disable-builtin-mcps \
+              -C "$GITHUB_WORKSPACE" 2>&1 | tee "$RETRY2_TRANSCRIPT"
+      set -e
+      # Marker file evaluation (FAIL-first, byte-exact PASS) — same as retry1.
+      if [ -f "$MARKER" ]; then
+        grep -qE "^SMOKE_RESULT=FAIL" "$MARKER" && { cat "$MARKER"; exit 1; }
+        cmp -s "$MARKER" <(printf 'SMOKE_RESULT=PASS\n') && exit 0
+      fi
+      exit 1
+    else
+      exit 1
+    fi
+```
+
+**Cross-skill carry rule.** The retry-2 leg is workflow-side and
+applies to every Copilot-CLI fixture automatically — no per-fixture
+change needed. The retry classifier regex is the union of all
+known transients (Patterns 18 + 19); extending it adds new
+recoverable failure modes without changing fixture code.
+
+**Diagnostic protocol.** If a fixture FAILs with
+`CAPIError 429 Too Many Requests` after the second retry leg:
+
+1. Check current TPM cap on `aif-awesome-gbb-ci/gpt-5.4-mini`:
+   `az cognitiveservices account deployment list -g
+   rg-awesome-gbb-ci -n aif-awesome-gbb-ci
+   --query "[?name=='gpt-5.4-mini'].sku.capacity" -o tsv`
+2. Check Sweden Central regional headroom:
+   `az cognitiveservices usage list -l swedencentral
+   --query "[?contains(name.value, 'gpt-5.4-mini')].{name:name.value,
+   used:currentValue, limit:limit}" -o table`
+3. If regional ceiling hit (e.g. 1000K already allocated), deploy
+   `gpt-5.4-mini` in a second region (eastus2 typically has 1000K
+   free) and rotate `AZURE_AI_ENDPOINT` between regions OR shrink
+   the fixture's prompt size.
+
+**Cost / benefit.** Pattern 26 adds ~5 min per retry leg when it
+fires (cooldown + retry execution). When it succeeds, it saves
+the entire matrix leg's worth of human triage on a known-transient
+failure (otherwise the PR author would manually rerun, wait,
+rerun, etc.). Across the 14-leg matrix, even one retry-2 success
+per week is net positive on coordinator time.
 
 ### 9.8 · Skill testing tiers
 

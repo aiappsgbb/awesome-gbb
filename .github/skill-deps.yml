@@ -93,3 +93,12 @@ skills:
   # GA 2026-04-10 surface via native azure-ai-voicelive SDK.
   foundry-voice-live:
     depends_on: []
+
+  # foundry-cost-monitoring — read-only fixture: anonymous Retail Prices
+  # probe + LAW gen_ai.usage KQL (soft) + Cost Mgmt REST (soft). Depends
+  # on foundry-observability for the emit-side telemetry contract; any
+  # change to the OTel cloud_RoleName / gen_ai.usage.* dimension shape
+  # there can break the KQL projections this skill documents in § 4.
+  foundry-cost-monitoring:
+    depends_on:
+      - foundry-observability

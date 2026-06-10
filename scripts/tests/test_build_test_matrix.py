@@ -184,14 +184,69 @@ class TestChangedOnly(unittest.TestCase):
     def test_changed_only_force_full_on_infra_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, base = self._setup(td)
-            # Touching plugin.json forces the full fixtured set even
-            # though no skill/* path changed.
-            (repo / "plugin.json").write_text('{"x": 1}\n')
+            # Touching the workflow file forces the full fixtured set
+            # even though no skill/* path changed.
+            workflow = repo / ".github" / "workflows" / "skill-test.yml"
+            workflow.parent.mkdir(parents=True, exist_ok=True)
+            workflow.write_text("name: test\n")
             _git(repo, "add", "-A")
-            _git(repo, "commit", "-q", "-m", "edit plugin.json")
+            _git(repo, "commit", "-q", "-m", "edit workflow")
             self.assertEqual(
                 _run_changed_only(repo, base), ["alpha", "beta", "gamma"]
             )
+
+    def test_changed_only_plugin_json_is_metadata_no_fanout(self) -> None:
+        # plugin.json and marketplace.json are metadata manifests — a
+        # bare version bump (or new-skill registration) must NOT trigger
+        # a full-matrix fan-out. The new skill's own skills/<name>/
+        # paths in the diff drive natural detection.
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            (repo / "plugin.json").write_text('{"x": 1}\n')
+            (repo / ".github" / "plugin").mkdir(parents=True, exist_ok=True)
+            (repo / ".github" / "plugin" / "marketplace.json").write_text(
+                '{"x": 1}\n'
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "bump plugin metadata")
+            # No skill folders changed → empty matrix.
+            self.assertEqual(_run_changed_only(repo, base), [])
+
+    def test_changed_only_matrix_builder_change_no_fanout(self) -> None:
+        # The matrix builder itself is NOT in FORCE_FULL_MATRIX_PATHS:
+        # the unit tests in this file + the push:main full-matrix canary
+        # cover regression risk, so a pure logic edit must NOT spend
+        # a full Azure fan-out per PR. Only paths that affect what runs
+        # IN each leg (workflow, quarantine, shared preamble) force full.
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            scripts = repo / "scripts"
+            scripts.mkdir(exist_ok=True)
+            (scripts / "build-test-matrix.py").write_text(
+                "# pretend edit\n", encoding="utf-8"
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit matrix builder")
+            # No skill folders changed → empty matrix.
+            self.assertEqual(_run_changed_only(repo, base), [])
+
+    def test_changed_only_skill_deps_yml_change_no_fanout(self) -> None:
+        # skill-deps.yml is read live by _load_dep_map for forward fanout.
+        # Adding a NEW entry (the common case when registering a new
+        # skill) is purely additive — it doesn't change existing fanout
+        # edges. So a pure skill-deps edit must NOT trigger full matrix.
+        # Removals/renames are rare and caught by validate-skills.py +
+        # the push:main canary.
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            (repo / ".github").mkdir(exist_ok=True)
+            (repo / ".github" / "skill-deps.yml").write_text(
+                "new-skill:\n  depends_on: []\n", encoding="utf-8"
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit skill-deps")
+            # No skill folders changed → empty matrix.
+            self.assertEqual(_run_changed_only(repo, base), [])
 
     def test_changed_only_empty_diff_returns_empty_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as td:
