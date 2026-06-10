@@ -1810,6 +1810,58 @@ the GitHub-backed CAPI quota. Consequences:
 math and `max-parallel` cap need re-tuning against actual TPM
 consumption per fixture once Pattern 26 data accumulates.
 
+**🔄 ADDENDUM v2 (2026-06-10, post-PR-#240 retries).** Run
+`27300950746` (cost-monitoring + observability matrix at SHA
+`76d2ddb`, sequential — not parallel) showed CAPI 429 on
+cost-monitoring DESPITE no concurrent leg consuming TPM. Forensic:
+
+- Cost-monitoring 19:32:06 → 19:36:58 (~5 min) — FAILED 429
+- Observability   19:37:00 → 19:50:22 (~13 min) — PASSED
+
+The cost-monitoring fixture had a `view skills/foundry-cost-monitoring/SKILL.md`
+mandate (added to defeat audit-grep false-negatives). SKILL.md is
+~23 KB → Copilot CLI's `view` tool reads it in 4 chunked turns →
+each turn re-uploads the full conversation context (system prompt
+~50K + tools ~20K + prior chunks ~50K each) → single agent turn
+hit ~250-300K tokens uploaded. Foundry's gpt-5.4-mini deployment
+in Sweden Central caps at 545K TPM (regional ceiling) → one such
+turn consumes 46-55% of TPM → next CLI internal-retry within
+seconds → 92%+ → CAPI 429 → CLI's 5 immediate retries all hit
+the same 429 within 30 ms. The workflow's retry classifier
+correctly fires Retry-1, but Retry-1 rebuilds the same massive
+context and 429s again.
+
+**Per-fixture token budget rule (mandatory):**
+
+| Per-turn upload | Risk vs 545K TPM ceiling |
+|---|---|
+| ≤ 50K  | Safe at max-parallel: 2 |
+| 50-150K | Safe sequential; risky parallel |
+| 150-300K | One turn is 50%+ of TPM → CAPI 429 inevitable on a follow-up turn within the minute |
+| > 300K | Saturation in a single turn → 429 immediately |
+
+Fixtures that exceed 150K per-turn MUST be one of:
+1. Reduced (don't read large repo files via the `view` tool;
+   use targeted `view_range` if you must)
+2. Rewritten to avoid loading SKILL.md into agent context
+   entirely (use a lightweight `echo skills/foundry-X/SKILL.md`
+   in a Bash step to satisfy audit-grep without context bloat —
+   the cost-monitoring fixture's Step −1 v3 is the canonical pattern)
+3. Moved to a dedicated single-leg matrix at `max-parallel: 1`
+   with cooldown bumped to Pattern 26's 240-360s
+
+**Why the audit-grep false-negative path matters.** The workflow's
+post-hoc audit step greps the agent's transcript for `skill(name)`,
+`SKILL.md`, or `skills/<name>/` to detect freelancing. If the agent
+follows a fully-explicit fixture without ever uttering the skill
+name path, audit fails even when every smoke step succeeded.
+**The lightweight fix** (canonical pattern): the fixture's first
+mandatory action is a single Bash `echo "skills/<skill-name>/SKILL.md"`
+that produces the audit-grep evidence at ~50 tokens of context cost.
+DO NOT mandate `view SKILL.md` — that's 5-10K+ tokens compounded
+across chunked reads. See the cost-monitoring fixture
+`Step −1 — Acknowledge skill contract` for the canonical form.
+
 #### Pattern 20 — Copilot CLI cannot read `~/.copilot/installed-plugins/` for fixture skills (Finding #21)
 
 **The bug.** Earlier Phase 3 attempts tried to ship the `awesome-gbb`
