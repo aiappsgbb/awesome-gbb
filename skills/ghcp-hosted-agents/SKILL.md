@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "1.1.3"
+  version: "1.2.0"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -228,9 +228,12 @@ Measured against `gpt-5.4-mini` on a live Foundry project (May 2026):
 | `"openai"` | `/openai/v1/` | ✅ Legacy compat | ~6.9s |
 | `"openai"` | bare endpoint | ❌ `400 Missing api-version` | n/a |
 
-Both `github-copilot-sdk` `0.3.0` (stable) and `1.0.0b4` (preview) accept
-both shapes; the legacy dict form is preserved across releases for
-backward compatibility.
+`github-copilot-sdk` `1.0.1` (GA, this skill) and prior `0.3.0` / `1.0.0b*`
+preview lines all accept both `type="azure"` and the legacy
+`type="openai"` shapes; the legacy dict form is preserved across releases
+for backward compatibility. The 1.0 GA constructor is flat — pass
+`github_token=...` directly to `CopilotClient(...)` (no `SubprocessConfig`
+wrapper; `auto_start` kwarg removed — call `await client.start()` explicitly).
 
 ### Common BYOK Mistakes
 
@@ -247,7 +250,9 @@ backward compatibility.
 
 ```python
 # Recommended pattern (matches official Microsoft sample): explicit start().
-client = CopilotClient(auto_start=False)
+# As of github-copilot-sdk 1.0 GA, CopilotClient takes flat kwargs — no
+# SubprocessConfig wrapper, no auto_start. Construct, then await start().
+client = CopilotClient()
 await client.start()
 
 session = await client.create_session(

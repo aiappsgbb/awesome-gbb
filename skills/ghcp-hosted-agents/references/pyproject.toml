@@ -3,10 +3,10 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "github-copilot-sdk~=0.3.0",
-    "azure-ai-agentserver-invocations==1.0.0b3",
+    "github-copilot-sdk~=1.0.0",
+    "azure-ai-agentserver-invocations==1.0.0b4",
     "azure-identity~=1.25.3",
-    "python-dotenv~=1.0.0",
+    "python-dotenv~=1.2.2",
 ]
 
 [tool.setuptools]
