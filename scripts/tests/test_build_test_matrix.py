@@ -212,6 +212,42 @@ class TestChangedOnly(unittest.TestCase):
             # No skill folders changed → empty matrix.
             self.assertEqual(_run_changed_only(repo, base), [])
 
+    def test_changed_only_matrix_builder_change_no_fanout(self) -> None:
+        # The matrix builder itself is NOT in FORCE_FULL_MATRIX_PATHS:
+        # the unit tests in this file + the push:main full-matrix canary
+        # cover regression risk, so a pure logic edit must NOT spend
+        # a full Azure fan-out per PR. Only paths that affect what runs
+        # IN each leg (workflow, quarantine, shared preamble) force full.
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            scripts = repo / "scripts"
+            scripts.mkdir(exist_ok=True)
+            (scripts / "build-test-matrix.py").write_text(
+                "# pretend edit\n", encoding="utf-8"
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit matrix builder")
+            # No skill folders changed → empty matrix.
+            self.assertEqual(_run_changed_only(repo, base), [])
+
+    def test_changed_only_skill_deps_yml_change_no_fanout(self) -> None:
+        # skill-deps.yml is read live by _load_dep_map for forward fanout.
+        # Adding a NEW entry (the common case when registering a new
+        # skill) is purely additive — it doesn't change existing fanout
+        # edges. So a pure skill-deps edit must NOT trigger full matrix.
+        # Removals/renames are rare and caught by validate-skills.py +
+        # the push:main canary.
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            (repo / ".github").mkdir(exist_ok=True)
+            (repo / ".github" / "skill-deps.yml").write_text(
+                "new-skill:\n  depends_on: []\n", encoding="utf-8"
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit skill-deps")
+            # No skill folders changed → empty matrix.
+            self.assertEqual(_run_changed_only(repo, base), [])
+
     def test_changed_only_empty_diff_returns_empty_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, base = self._setup(td)

@@ -1950,27 +1950,44 @@ workflow path computes `git diff $base_ref..HEAD`, maps changed
 files to changed skills, applies **forward fanout** from
 [`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
 and B `depends_on` A, run B too), and forces a full matrix on
-**infra-file changes** (the workflow itself, the matrix script,
-`skill-deps.yml`, `quarantine.yml`, `ci-shared-preamble.md`). The
+**input-contract changes** (`.github/workflows/skill-test.yml`,
+`.github/quarantine.yml`, `.github/ci-shared-preamble.md`). The
 `push: main` and `schedule:` paths always run the full matrix.
 
-**What's deliberately NOT in the force-full list:** `plugin.json` and
-`.github/plugin/marketplace.json`. They are metadata manifests — a
-new skill is detected via its own `skills/<name>/` paths in the
-natural diff, and a pure version bump has zero per-leg test impact.
-Treating them as infra (the original design) fired a full 14-leg
-matrix on PR #240's `4.14.0 → 4.15.0` bump (1 line of metadata),
-~30 min of needless runner time. Removed in run `27295753637`'s
-follow-up. Catch-rate is preserved by the weekly + push-to-main
-full-matrix paths, which re-validate plugin-structural changes
-within ≤7 days even when the PR fan-out skipped them.
+**What's deliberately NOT in the force-full list:**
+
+- `plugin.json` + `.github/plugin/marketplace.json` — metadata
+  manifests. A new skill is detected via its own `skills/<name>/`
+  paths in the natural diff; a pure version bump has zero per-leg
+  test impact.
+- `scripts/build-test-matrix.py` — the matrix builder itself.
+  Decides WHICH legs run, not what they do. Logic regressions are
+  caught by 12 unit tests in
+  [`scripts/tests/test_build_test_matrix.py`](scripts/tests/test_build_test_matrix.py)
+  + the push-to-main canary. Keeping it in FORCE_FULL caused a
+  chicken-and-egg: every fix to the matrix logic fanned out the
+  full matrix, costing ~30 min per iteration.
+- `.github/skill-deps.yml` — read live by `_load_dep_map` for forward
+  fanout. Adding a NEW entry (the common case when registering a
+  new skill) is purely additive — it doesn't change existing fanout
+  edges. Removals/renames are rare and covered by
+  `validate-skills.py` (cycle + unknown-ref checks) + the
+  push-to-main canary.
+
+Treating any of these as infra (the original design) fired a full
+14-leg matrix on PR #240's `4.14.0 → 4.15.0` plugin bump (1 line of
+metadata) + on every subsequent matrix-builder iteration. Catch-rate
+for structural drift is preserved by the weekly + push-to-main
+full-matrix paths within ≤7 days.
 
 **Cost / benefit.** A PR that touches only `foundry-memory/test-fixture/`
-runs ONE leg (memory) instead of six. Wall-clock for an iterative
-retry drops from ~30 min to ~13 min; budget cost drops 5/6. Catch
-rate is preserved because the full matrix still runs on `main`
-and weekly, and forward fanout protects against upstream-skill
-changes silently breaking downstream consumers.
+runs ONE leg (memory) instead of six. A new-skill PR like #240 runs
+the new skill + its forward-fanout (2 legs) instead of 14. Wall-clock
+for an iterative retry drops from ~30 min to ~13 min; budget cost
+drops 5/6 on iterative PRs, ~12/14 on new-skill PRs. Catch rate is
+preserved because the full matrix still runs on `main` and weekly,
+and forward fanout protects against upstream-skill changes silently
+breaking downstream consumers.
 
 **Cross-skill carry rule.** When you add a new fixture, also add
 an entry to `.github/skill-deps.yml` even if `depends_on: []`. The

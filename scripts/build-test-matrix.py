@@ -16,23 +16,39 @@ Sorted alphabetically for deterministic GHA matrix expansion.
   with two refinements:
 
   - Force-full-matrix paths (any one of them touched → emit the full set):
-        scripts/build-test-matrix.py
         .github/workflows/skill-test.yml
         .github/quarantine.yml
-        .github/skill-deps.yml
         .github/ci-shared-preamble.md
-    These files change the matrix shape, the gating logic itself, the
-    cross-skill dependency map, or the per-leg input contract — so any
-    change to them MUST re-validate every fixtured skill.
+    These files change the per-leg input contract (workflow timeouts,
+    env vars, retry logic, runner image; shared preamble prepended to
+    every fixture; quarantine list) — any change to them MUST
+    re-validate every fixtured skill against real Azure resources.
 
-    `plugin.json` and `.github/plugin/marketplace.json` are deliberately
-    NOT in this list. They are metadata manifests: a new skill adds its
-    own `skills/<name>/` paths to the diff (caught by natural skill-
-    change detection), and a pure version bump has zero test impact.
-    The push-to-main + weekly schedule paths still run the full matrix
-    as a catalogue canary, so any plugin-structural change (categories,
-    keywords, name) is re-validated within ≤7 days even when the PR
-    didn't fan out.
+    `plugin.json`, `.github/plugin/marketplace.json`,
+    `scripts/build-test-matrix.py`, and `.github/skill-deps.yml` are
+    deliberately NOT in this list:
+
+      - The two manifests are metadata: a new skill adds its own
+        `skills/<name>/` paths to the diff (caught by natural skill-
+        change detection), and a pure version bump has zero test
+        impact.
+      - The matrix script itself only decides WHICH legs run, not
+        what they do. Regressions are covered by
+        `scripts/tests/test_build_test_matrix.py` (10 unit tests).
+      - `skill-deps.yml` is read live by `_load_dep_map` to apply
+        forward fanout, so a NEW dep entry (the common case when
+        adding a new skill) doesn't change existing fanout — it just
+        adds new edges that fire only when their roots change. A
+        REMOVED or RENAMED entry could cause silent regressions; that
+        rare case is covered by `validate-skills.py` (cycle + unknown-
+        ref checks) and by the unconditional `push: main` / weekly
+        full-matrix canary.
+
+    The push-to-main + weekly schedule paths still run the full
+    matrix as a catalogue canary, so any plugin-structural change
+    (categories, keywords, name), matrix-logic drift, or dep-graph
+    rename is re-validated within ≤7 days even when the PR fan-out
+    skipped it.
 
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
@@ -55,17 +71,19 @@ from pathlib import Path
 import yaml
 
 # Paths whose modification forces a full-matrix run. These files change
-# the matrix shape itself (quarantine list), the gating logic (this
-# script, the workflow), the cross-skill dep map, or the per-leg input
-# contract (shared preamble). plugin.json/marketplace.json are NOT here
-# — they are metadata manifests; a new skill is detected via its own
-# `skills/<name>/` paths and a pure version bump has zero test impact.
-# See module docstring for rationale.
+# the per-leg input contract (workflow timeouts, env vars, retry logic,
+# runner image; shared preamble prepended to every fixture; quarantine
+# list) — any change to them requires real-Azure re-validation across
+# the catalog. plugin.json/marketplace.json, this script, and
+# skill-deps.yml are NOT here: the manifests are metadata, this script
+# is covered by its own unit tests, and skill-deps.yml is read live by
+# _load_dep_map (a new entry is additive and doesn't change existing
+# fanout). All non-listed structural drift is caught by the
+# unconditional push:main full-matrix canary within ≤7 days.
+# See module docstring for full rationale.
 FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
-    "scripts/build-test-matrix.py",
     ".github/workflows/skill-test.yml",
     ".github/quarantine.yml",
-    ".github/skill-deps.yml",
     # SHARED CI HARDENING preamble (post-2026-06-09 incident): every
     # fixture run prepends this file's content, so editing it changes
     # the input contract for every leg — re-validate the whole catalog.
