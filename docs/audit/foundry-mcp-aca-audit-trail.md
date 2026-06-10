@@ -209,7 +209,7 @@ A new Copilot CLI test fixture lives at `skills/foundry-mcp-aca/test-fixture/con
 
 2. **Step 1 — explicit `azd auth login`** (Pattern 6). Runs `azd auth login --federated-credential-provider github --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID"` to make the OIDC exchange visible up-front rather than buried inside `azd up`'s ACR push step.
 
-3. **Step 2 — build the deploy artifact tree.** The agent writes a self-contained `azd` project under a temp directory: `azure.yaml`, `infra/main.bicep` (Container App + ACR repository tag, referencing pre-provisioned `cae-awesome-gbb-ci` + `acrawesomegbbci` + the CI UAMI via `existing`), `src/Dockerfile`, `src/server.py` (a tiny FastMCP server with **explicit `/health` route** — see § Open items HIT-1; the fixture cannot use the canonical `references/python/server.py` verbatim because of the documented composition gap), and `src/requirements.txt`. Service name is suffixed with a short UUID per Pattern 3.
+3. **Step 2 — build the deploy artifact tree.** The agent writes a self-contained `azd` project under a temp directory: `azure.yaml`, `infra/main.bicep` (Container App + ACR repository tag, referencing pre-provisioned `<ci-container-app-env>` + `<ci-container-registry>` + the CI UAMI via `existing`), `src/Dockerfile`, `src/server.py` (a tiny FastMCP server with **explicit `/health` route** — see § Open items HIT-1; the fixture cannot use the canonical `references/python/server.py` verbatim because of the documented composition gap), and `src/requirements.txt`. Service name is suffixed with a short UUID per Pattern 3.
 
 4. **Step 3 — `azd up`.** Hard gate. Bicep deploys the new Container App into the pre-existing CAE, ACR remote build produces the image, the agent waits for the new revision to reach `Running` state. Total budget ~12-18 min under typical conditions.
 
@@ -239,14 +239,14 @@ A new Copilot CLI test fixture lives at `skills/foundry-mcp-aca/test-fixture/con
 
 6. **Step 5 — Marker IMMEDIATELY on hard-gate success** (Pattern 12 + Pattern 25). Before any teardown attempt, the agent invokes the Bash tool to run `printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-aca-smoke-result`. This is the load-bearing inversion that Pattern 25 introduced: **the smoke is the contract; cleanup is hygiene**. The hosted-agents fixture chained marker emission after cleanup and false-FAIL'd on OIDC TTL expiry mid-cleanup; the Phase 4 PR for hosted-agents fixed that race by writing the marker before `azd down`. This fixture inherits the same shape.
 
-7. **Step 6 — Teardown best-effort** (Pattern 25). Attempts `azd down --purge --force` with a **5-minute budget**. On success, the run leaves zero orphans. On timeout or error, the agent emits a single `NOTE: teardown stalled at <step>` line to stdout (transcript-only) and returns. The `rg-awesome-gbb-ci` janitor (AGENTS.md § 9.7 P25) sweeps `ci-smoke-mcp-*` ACR repositories and Container Apps older than 7 days. The marker stays `SMOKE_RESULT=PASS`; cleanup failure does NOT downgrade the smoke verdict.
+7. **Step 6 — Teardown best-effort** (Pattern 25). Attempts `azd down --purge --force` with a **5-minute budget**. On success, the run leaves zero orphans. On timeout or error, the agent emits a single `NOTE: teardown stalled at <step>` line to stdout (transcript-only) and returns. The `<ci-resource-group>` janitor (AGENTS.md § 9.7 P25) sweeps `ci-smoke-mcp-*` ACR repositories and Container Apps older than 7 days. The marker stays `SMOKE_RESULT=PASS`; cleanup failure does NOT downgrade the smoke verdict.
 
 **Marker path:** `/tmp/foundry-mcp-aca-smoke-result`. Workflow evaluator (`.github/workflows/skill-test.yml` L321-330 — the canonical Pattern 12 grader) reads the file and `cmp -s` against `printf 'SMOKE_RESULT=PASS\n'` for byte-exact match.
 
 **Why this fixture protects the catalog:**
 
 - Honest end-to-end test of the deployment + wire-protocol contract: `azd up` succeeds + MCP HTTP `initialize` + `tools/list` both return 200 with conformant JSON-RPC bodies. The MCP HTTP roundtrip is the value contract this skill exists to enable; everything else is plumbing.
-- Tests against pre-provisioned `cae-awesome-gbb-ci` + `acrawesomegbbci` (pre-granted `AcrPush` on the CI UAMI; Pattern 7) — no RBAC propagation race in the critical path.
+- Tests against pre-provisioned `<ci-container-app-env>` + `<ci-container-registry>` (pre-granted `AcrPush` on the CI UAMI; Pattern 7) — no RBAC propagation race in the critical path.
 - Pattern 25 marker-first / cleanup-second shape inherits the hosted-agents fixture's hard-won OIDC TTL resilience.
 - Self-contained goal prompt (Pattern 20) — no `Use the foundry-mcp-aca skill` directive; the agent does the work from general training + the SKILL.md content the workflow's audit step pastes into the prompt.
 - Inline FastMCP server in the fixture (with explicit `/health` route) documents the HIT-1 workaround in-place for future readers, so the fixture survives until HIT-1's canonical-reference fix lands.

@@ -32,14 +32,14 @@
 
 ## Fixture
 
-[`../../skills/foundry-prompt-agents/test-fixture/consumer_prompt.md`](../../skills/foundry-prompt-agents/test-fixture/consumer_prompt.md) — to be authored in Phase C of Task 2.1. Will instruct the Copilot CLI agent to read SKILL.md and execute the full lifecycle (create_version → conversations.create → responses.create → list → delete_version) against `gpt-5.4-mini` in `aif-awesome-gbb-ci` (Sweden Central), self-verifying KI-002 (`.versions` dict shape) and KI-003 (positional `delete_version` signature), then exit with `SMOKE_RESULT=PASS` or `SMOKE_RESULT=FAIL <reason>` as the last line of stdout.
+[`../../skills/foundry-prompt-agents/test-fixture/consumer_prompt.md`](../../skills/foundry-prompt-agents/test-fixture/consumer_prompt.md) — to be authored in Phase C of Task 2.1. Will instruct the Copilot CLI agent to read SKILL.md and execute the full lifecycle (create_version → conversations.create → responses.create → list → delete_version) against `gpt-5.4-mini` in `<ci-foundry-account>` (Sweden Central), self-verifying KI-002 (`.versions` dict shape) and KI-003 (positional `delete_version` signature), then exit with `SMOKE_RESULT=PASS` or `SMOKE_RESULT=FAIL <reason>` as the last line of stdout.
 
 ## CI matrix runs that proved the fix (5 consecutive green)
 
 All runs are PR-`synchronize` events on PR #185 (`unsafecode/pr-review`).
 Each one ran the `copilot-cli-matrix (foundry-prompt-agents)` job, which spawned
 a real Copilot CLI agent that read SKILL.md, executed the documented Python
-quickstart against `aif-awesome-gbb-ci` (Sweden Central) + `gpt-5.4-mini`, and
+quickstart against `<ci-foundry-account>` (Sweden Central) + `gpt-5.4-mini`, and
 self-reported `SMOKE_RESULT=PASS`.
 
 1. https://github.com/aiappsgbb/awesome-gbb/actions/runs/26691175961 — commit `3af9662a` (legacy-pytest-job deletion)

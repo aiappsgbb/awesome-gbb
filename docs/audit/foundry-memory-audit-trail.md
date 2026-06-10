@@ -34,7 +34,7 @@ tenant IDs, or ARM resource IDs anywhere
 **N/A.** Skill ships zero Bicep
 (`find skills/foundry-memory -name '*.bicep' → empty`). Memory store creation
 is a runtime API call (`project_client.beta.memory_stores.create(...)`), not an
-ARM resource. The standing `aif-awesome-gbb-ci` Foundry account is provisioned
+ARM resource. The standing `<ci-foundry-account>` Foundry account is provisioned
 by repo-level infra outside this skill.
 
 ### C3 — CLI install drift (Pattern 15)

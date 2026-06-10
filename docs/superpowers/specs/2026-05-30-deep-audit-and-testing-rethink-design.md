@@ -25,7 +25,7 @@ The catalog has 27 skills. A bug like the smoking gun could live in any of them.
 - Find latent bugs across all 27 skills via a deep, one-shot review.
 - Replace the testing mechanism with one that validates **consumer outcomes** — a simulated consumer follows the SKILL and either achieves the documented result or doesn't.
 - Make the new testing mechanism the sole runtime test surface. No parallel hand-written test code.
-- Land the audit fixes and the new test harness in production within the constraints of the existing CI infrastructure (`rg-awesome-gbb-ci`, OIDC UAMI, weekly cron).
+- Land the audit fixes and the new test harness in production within the constraints of the existing CI infrastructure (`<ci-resource-group>`, OIDC UAMI, weekly cron).
 
 **Non-Goals**
 - Not adding more pytest files anywhere. None. Ever.
@@ -64,7 +64,7 @@ The work splits cleanly into two sub-projects that proceed in parallel and conve
                       └──────────────────────────────────────────────────────────────┘
 ```
 
-**Load-bearing assumption:** Copilot CLI in GHA can authenticate to a Foundry-hosted `gpt-5.4-mini` deployment (Cognitive Services OpenAI User RBAC on `aif-awesome-gbb-ci`) and act as its own brain. If this is false, the entire design collapses. A pre-pilot smoke workflow validates this before pilot scope is touched.
+**Load-bearing assumption:** Copilot CLI in GHA can authenticate to a Foundry-hosted `gpt-5.4-mini` deployment (Cognitive Services OpenAI User RBAC on `<ci-foundry-account>`) and act as its own brain. If this is false, the entire design collapses. A pre-pilot smoke workflow validates this before pilot scope is touched.
 
 ---
 
@@ -208,8 +208,8 @@ Three skills validate the entire design before any rollout:
 
 | Skill | Why it's in the pilot | Test fixture summary | Self-verify hook |
 |---|---|---|---|
-| **foundry-prompt-agents** | Simplest Azure surface — single API call, no container, no Bicep | "Create a `PromptAgentDefinition` named `gbb-pilot-${run_id}` in `aif-awesome-gbb-ci`, invoke once, delete." | Agent returned text + cleanup confirmed |
-| **foundry-hosted-agents** | SSOT-heavy (canonical `FoundryChatClient`, container deploy via `azd`, the bug class that started this) | "Bootstrap a container agent using the canonical `FoundryChatClient`, `azd deploy` it to `cae-awesome-gbb-ci`, send one chat turn, `azd down`." | `azd deploy` exit 0 + non-empty response + clean teardown |
+| **foundry-prompt-agents** | Simplest Azure surface — single API call, no container, no Bicep | "Create a `PromptAgentDefinition` named `gbb-pilot-${run_id}` in `<ci-foundry-account>`, invoke once, delete." | Agent returned text + cleanup confirmed |
+| **foundry-hosted-agents** | SSOT-heavy (canonical `FoundryChatClient`, container deploy via `azd`, the bug class that started this) | "Bootstrap a container agent using the canonical `FoundryChatClient`, `azd deploy` it to `<ci-container-app-env>`, send one chat turn, `azd down`." | `azd deploy` exit 0 + non-empty response + clean teardown |
 | **azd-patterns** | Pattern library, no runtime entry point — proves the fixture can exercise composable modules | "Provision a minimal ACA app composing the library's modules (placeholder image, `azd-service-name` tag, ACR Pull RBAC with `dependsOn`). HTTP probe. `azd down`." | `azd up` exit 0 + HTTP probe passes + clean teardown |
 
 **Pilot exit criteria:** all three skills audit-clean (zero new bugs found OR all bugs fixed and re-tested), all three Copilot-CLI tests green for 5 consecutive runs (PR-gate, weekly cron, three manual dispatches). Only then does the rollout to the remaining 22 begin.
@@ -366,7 +366,7 @@ For traceability:
 
 1. ~~Combine audit + testing rebuild or sequence?~~ → Parallel sub-projects, pilot gate.
 2. ~~Consumer-outcome bar vs structural?~~ → Consumer-outcome.
-3. ~~Shared infra vs per-skill?~~ → Shared `rg-awesome-gbb-ci`.
+3. ~~Shared infra vs per-skill?~~ → Shared `<ci-resource-group>`.
 4. ~~Sub-agent type?~~ → `general-purpose`, one per skill.
 5. ~~Copilot CLI as test runner?~~ → Yes.
 6. ~~Foundry-routing or GHCP entitlement?~~ → Foundry-hosted `gpt-5.4-mini`.

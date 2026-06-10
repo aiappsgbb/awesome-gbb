@@ -190,9 +190,9 @@ and therefore do not apply; each `N/A` below carries a concrete justification.
     `skills/azd-patterns/test-fixture/consumer_prompt.md` (377 lines)
     in this audit; fixture executes the full ACA-Job lifecycle (Bicep
     deploy → `az containerapp job start` → wait → log assertion →
-    cleanup → marker) against `rg-awesome-gbb-ci` in `swedencentral`.
+    cleanup → marker) against `<ci-resource-group>` in `swedencentral`.
     Cost ≤ $0.005/run; ≤ 4 min wall-clock; reuses the pre-existing
-    `cae-awesome-gbb-ci` Container Apps Environment and shared LAW.
+    `<ci-container-app-env>` Container Apps Environment and shared LAW.
     The fixture bakes in all eight binding ridges from AGENTS.md
     § 9.7 (UUID-suffix resource names, `_MOKE_RESULT` placeholder in
     body, WRONG-patterns-first/RIGHT-pattern-last, anchored grep with
@@ -261,7 +261,7 @@ not live-CI.
 All runs are PR-`synchronize` events on PR #185 (`unsafecode/pr-review`).
 Each one ran the `copilot-cli-matrix (azd-patterns)` job, which spawned
 a real Copilot CLI agent that read SKILL.md, deployed a
-`Microsoft.App/jobs@2024-03-01` resource into `rg-awesome-gbb-ci`
+`Microsoft.App/jobs@2024-03-01` resource into `<ci-resource-group>`
 (swedencentral), ran it, asserted `HELLO` in the log, cleaned up,
 and self-reported `SMOKE_RESULT=PASS`.
 

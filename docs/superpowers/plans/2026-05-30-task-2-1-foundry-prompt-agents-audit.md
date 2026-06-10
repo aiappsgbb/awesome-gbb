@@ -22,7 +22,7 @@ itself across the catalog.
 install -g @github/copilot`, `copilot -p`), Azure OIDC federated UAMI
 (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`), Foundry
 endpoint at `AZURE_AI_ENDPOINT` (account-host shape per AGENTS.md §9.7),
-`gpt-5.4-mini` deployment in `rg-awesome-gbb-ci`, Python 3.11 for
+`gpt-5.4-mini` deployment in `<ci-resource-group>`, Python 3.11 for
 `scripts/build-test-matrix.py`.
 
 **Branch & PR:** All commits land on local `unsafecode/solid-disco`,
@@ -342,7 +342,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 `skills/foundry-prompt-agents/test-fixture/consumer_prompt.md` — the
 single fixture that, when piped to `copilot -p`, makes a Copilot CLI
 instance read SKILL.md, execute its instructions against real Foundry
-(`gpt-5.4-mini` in `aif-awesome-gbb-ci`), and self-verify by printing a
+(`gpt-5.4-mini` in `<ci-foundry-account>`), and self-verify by printing a
 machine-checkable success/failure line.
 
 ### Task C.1: Write the fixture
@@ -365,8 +365,8 @@ Azure calls only.
 ## Environment you can rely on
 
 - `AZURE_AI_ENDPOINT` is set to the Foundry account host
-  (`https://aif-awesome-gbb-ci.cognitiveservices.azure.com/`).
-- Azure CLI is logged in via OIDC (UAMI `uami-awesome-gbb-ci` has
+  (`https://<ci-foundry-account>.cognitiveservices.azure.com/`).
+- Azure CLI is logged in via OIDC (UAMI `<ci-uami-name>` has
   `Cognitive Services OpenAI User` + `Foundry User` on the account).
 - `gpt-5.4-mini` is deployed on the account.
 - The skill uses `DefaultAzureCredential`, which picks up the
@@ -431,7 +431,7 @@ git commit -m "audit(foundry-prompt-agents): consumer-prompt fixture for CI matr
 
 The fixture drives a Copilot CLI instance to execute SKILL.md's
 create+invoke+list+delete happy path against real Foundry
-(gpt-5.4-mini in aif-awesome-gbb-ci), exercising KI-001 (project
+(gpt-5.4-mini in <ci-foundry-account>), exercising KI-001 (project
 endpoint derivation), KI-002 (list pagination), KI-003 (delete-by-
 name). Success contract: SMOKE_RESULT=PASS as last line of stdout.
 
@@ -641,7 +641,7 @@ copilot-cli-matrix per spec 2026-05-30 §5.3:
   copilot-cli-matrix — one runner per skill with a test-fixture
                        consumer_prompt.md; uses npm-installed Copilot
                        CLI 1.0.57+ with BYOK Foundry routing
-                       (gpt-5.4-mini in aif-awesome-gbb-ci).
+                       (gpt-5.4-mini in <ci-foundry-account>).
 
 Auth pattern mirrors copilot-cli-foundry-auth-smoke.yml exactly:
 v1 audience (NO /.default suffix), tr -d '\r\n' on the bearer token,
@@ -785,7 +785,7 @@ Task 2.1 complete. 4 deliverables landed on PR #185:
    <sha>) + N "none observed" findings.
 2. skills/foundry-prompt-agents/test-fixture/consumer_prompt.md —
    exercises create+invoke+list+delete against gpt-5.4-mini in
-   aif-awesome-gbb-ci.
+   <ci-foundry-account>.
 3. .github/workflows/skill-test.yml — build-matrix + copilot-cli-matrix
    jobs (auth-smoke pattern verbatim, master plan L782 audience bug
    corrected).

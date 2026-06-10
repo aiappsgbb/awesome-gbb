@@ -894,7 +894,7 @@ def render_engineering() -> str:
         ('skill-test.yml', 'every PR · push · cron',
          'Unit tests, catalog lint, the all-pin smoke job, and the '
          'E2E Azure matrix — real <code>azd up</code>, real Foundry calls, '
-         'real model inference in <code>rg-awesome-gbb-ci</code>.'),
+         'real model inference in <code><ci-resource-group></code>.'),
         ('auto-merge-copilot.yml', 'on check-suite success',
          'Auto-approves and squash-merges Copilot-authored PRs once every '
          'gate is green. Closes the freshness loop end-to-end.'),
@@ -1029,23 +1029,23 @@ def render_engineering() -> str:
 
     infra = (
         '<div class="section-head"><h2>Real Azure infrastructure for E2E</h2>'
-        '<span class="count">rg-awesome-gbb-ci · Sweden Central</span></div>'
+        '<span class="count"><ci-resource-group> · Sweden Central</span></div>'
         '<div class="grid">'
         '<div class="card"><h3>OIDC identity</h3>'
-        '<p><code>uami-awesome-gbb-ci</code> — federated via '
+        '<p><code><ci-uami-name></code> — federated via '
         '<code>azure/login@v2</code>, no stored secrets. Narrow subject list: '
         '<code>pull_request</code>, <code>ref:refs/heads/main</code>, '
         '<code>ref:refs/tags/*</code>.</p></div>'
         '<div class="card"><h3>Foundry host</h3>'
-        '<p><code>aif-awesome-gbb-ci</code> with <code>gpt-5.4-mini</code> '
+        '<p><code><ci-foundry-account></code> with <code>gpt-5.4-mini</code> '
         'for chat smoke and <code>text-embedding-3-small</code> '
         '(<code>GlobalStandard</code>) for memory.</p></div>'
         '<div class="card"><h3>Container registry</h3>'
-        '<p><code>acrawesomegbbci.azurecr.io</code> — UAMI has AcrPush; '
+        '<p><code><ci-container-registry>.azurecr.io</code> — UAMI has AcrPush; '
         '<code>azd deploy</code> swaps Bicep placeholder images to real '
         'pushes automatically.</p></div>'
         '<div class="card"><h3>ACA environment</h3>'
-        '<p><code>cae-awesome-gbb-ci</code> for hosted-agent and MCP-server '
+        '<p><code><ci-container-app-env></code> for hosted-agent and MCP-server '
         'E2E fixtures. ACA Jobs use raw <code>az deployment</code> + '
         '<code>az containerapp job start</code> — see <em>azd-patterns</em>.</p></div>'
         '</div>'
