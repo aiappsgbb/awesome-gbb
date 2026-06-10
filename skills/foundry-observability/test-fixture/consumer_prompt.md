@@ -14,6 +14,19 @@ to `/tmp/foundry-observability-smoke-result` (Step 3). If you find
 yourself reading `skill-deps.yml`, `upstream-pin.md`, or anything under
 `docs/`, you are off-script — stop and execute Step 0.
 
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You
+ARE the running Copilot CLI process. Do NOT run `copilot -p ...`,
+`copilot --version`, `npm install -g @github/copilot`, or any other
+`copilot ...` invocation from inside a Bash tool call. Doing so spawns
+a nested CLI process WITHOUT GitHub auth (the workflow only sets
+`COPILOT_PROVIDER_BEARER_TOKEN` for our Foundry routing, NOT
+`COPILOT_GITHUB_TOKEN`), which will (a) crash with "No authentication
+information found" and (b) overwrite this run's transcript at
+`/tmp/foundry-observability-transcript.log`, defeating the workflow's
+retry classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow
+ALREADY captures your output via the outer `tee` — your job is to
+EXECUTE Steps 0-3 directly in Bash tool calls, not to "run the smoke".
+
 Do whatever the skill's `SKILL.md` tells you to do, but do NOT improvise
 from training-data knowledge of OpenTelemetry or Azure Monitor — read
 `skills/foundry-observability/SKILL.md` first, then follow the documented

@@ -6,6 +6,28 @@ You are a FinOps engineer on a customer team. You just installed the
 subscription, Application Insights workspace, and the public Azure
 Retail Prices API.
 
+**This is an EXECUTION smoke, not a catalog inspection.** You MUST run
+every Bash code block below in order. Do NOT inspect repo files, do NOT
+run `validate-skills.py`, do NOT rebuild docs, do NOT `git status` —
+those are catalog-author concerns, not consumer-smoke concerns. Your only
+acceptable terminal state is a Bash tool call that writes a marker file
+to `/tmp/foundry-cost-monitoring-smoke-result` (Step 5). If you find
+yourself reading `skill-deps.yml`, `upstream-pin.md`, or anything under
+`docs/`, you are off-script — stop and execute Step 0.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You
+ARE the running Copilot CLI process. Do NOT run `copilot -p ...`,
+`copilot --version`, `npm install -g @github/copilot`, or any other
+`copilot ...` invocation from inside a Bash tool call. Doing so spawns
+a nested CLI process WITHOUT GitHub auth (the workflow only sets
+`COPILOT_PROVIDER_BEARER_TOKEN` for our Foundry routing, NOT
+`COPILOT_GITHUB_TOKEN`), which will (a) crash with "No authentication
+information found" and (b) overwrite this run's transcript at
+`/tmp/foundry-cost-monitoring-transcript.log`, defeating the workflow's
+retry classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow
+ALREADY captures your output via the outer `tee` — your job is to
+EXECUTE Steps 0-5 directly in Bash tool calls, not to "run the smoke".
+
 Do whatever the skill tells you to do. Do NOT improvise from
 training-data knowledge of Cost Management or KQL — read the skill's
 `SKILL.md` first, and follow its documented contract.
