@@ -2,23 +2,23 @@
 name: foundry-hosted-agents
 description: >
   Deploy + manage Foundry hosted agents — GA June 2026: MAF 1.7.0,
-  --deploy-mode code, agent.manifest.yaml, WS invocations, Activity
-  bridge, Foundry User + Foundry Project Manager roles. Read the body
-  for SDK patterns, identity wiring, runtime selection, troubleshooting
+  --deploy-mode code, agent.manifest.yaml, WS invocations, Foundry User
+  + Project Manager roles. Read the body for SDK patterns, identity
+  wiring, runtime selection, version rollout patterns, troubleshooting
   — do not deploy from this summary alone. USE FOR: deploy foundry
   agent, hosted agent, container agent, agent.yaml, agent manifest,
   code-mode deploy, FoundryChatClient, ResponsesHostServer, MAF, ACR
-  push, batch eval, agent identity, Foundry User role, Foundry Project
-  Manager role, azd ai agent extension, entra-agent-id, WS invocations,
-  Activity protocol, dependency resolution pyproject, vNext hosted
-  agent, python_3_13, dotnet_10. DO NOT USE FOR: prompt agents (use
+  push, batch eval, agent identity, Foundry User role, azd ai agent,
+  entra-agent-id, WS invocations, Activity protocol, blue-green deploy,
+  canary rollout, version rollback, traffic routing, version_selector,
+  agent_endpoint. DO NOT USE FOR: prompt agents (use
   foundry-prompt-agents), ACA MCP (use foundry-mcp-aca), GHCP coding
   agent (use ghcp-hosted-agents), Citadel hub/spoke (use
   citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
-  continuous eval (use foundry-evals), Routines (deferred), A2A wiring
-  (use foundry-toolbox).
+  continuous eval (use foundry-evals), Routines (use foundry-routines),
+  A2A wiring (use foundry-toolbox).
 metadata:
-  version: "1.9.1"
+  version: "1.10.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1551,6 +1551,219 @@ container-side telemetry for them. Ensure your `_init_telemetry()`
 guard is in place (see § Troubleshooting → AppInsights row + `gap O-011`
 in `foundry-observability`) BEFORE investigating; otherwise you're
 flying blind.
+
+---
+
+## Version rollout patterns (blue-green / canary / rollback)
+
+Foundry hosted agents are versioned and the platform supports **native
+weighted traffic routing** between versions — no client-side router,
+custom load balancer, or APIM rewrite required. Each `create_version`
+call produces an immutable agent version; the agent's
+`agent_endpoint.version_selector` distributes traffic across them via
+`FixedRatio` rules (0–100 % per version, integers summing to 100). This
+unlocks three production rollout patterns from a single primitive.
+
+> **Requires:** Python SDK `azure-ai-projects~=2.1.0`, Azure CLI ≥ 2.80,
+> and `azd` extension `azure.ai.agents`. The traffic-routing surface is
+> preview — REST calls need header `Foundry-Features:
+> AgentEndpoints=V1Preview`; the Python SDK uses
+> `project.beta.agents.patch_agent_details(...)`. Existing pinned
+> dependencies in this skill already cover this — no SDK bump needed.
+
+### When to use which pattern
+
+| Pattern | Use when | Risk profile | Time-to-rollback |
+|---------|----------|--------------|------------------|
+| **Blue-green** | Image / model / role-binding change; want instant cutover with prior version warm in case of regression | Atomic; if v2 is broken, **every** request fails until rollback | < 30 s (one PATCH back to v1) |
+| **Canary** | Same change classes; want gradual exposure with bounded blast radius | Bounded — typically 5–10 % see v2 first, ramp on success | < 30 s (one PATCH back to v1) at any ramp stage |
+| **Rollback** | Production v2 misbehaving after promotion; emergency revert | Re-warm of v1 if cold; `creating` window only if v1 was already deleted | < 30 s (re-PATCH) or 2–5 min (re-create v1 from prior image digest) |
+
+The three patterns share **one primitive**: create v2 → poll to
+`active` → patch routing → invoke → (optional) delete prior. Blue-green
+is "0 → 100 % in one PATCH"; canary is "10 → 50 → 100 % across multiple
+PATCHes"; rollback is "100 → 0 % to the new version in one PATCH". Same
+SDK surface end to end.
+
+### The 4-step rollout primitive
+
+1. **Create v2** with `project.agents.create_version(...)` — supply the
+   new `image`, `cpu`/`memory`, `environment_variables`, protocol
+   versions. Returns immediately with `status: creating`.
+2. **Poll** the version via `project.agents.get_version(agent_name,
+   agent_version)` until `status == "active"` (typically 2–5 min;
+   `failed` is terminal — read the `error` field for cause).
+3. **Patch routing** via `project.beta.agents.patch_agent_details(
+   agent_name, agent_endpoint=...)` with `version_selection_rules`
+   summing to 100 %.
+4. **Invoke** the agent endpoint as usual (`responses.create(...)`) —
+   the platform routes per the rules. (Optional) **delete the prior
+   version** with `project.agents.delete_version(...)` ONLY after
+   sustained success; keep it warm if you might need to roll back.
+
+The canonical reference is
+[`references/python/version_rollout.py`](references/python/version_rollout.py)
+— a single script that demonstrates all three patterns end-to-end
+against a real project. Import it from your tooling; do NOT redefine
+inline (per AGENTS.md § 7 SSOT rule).
+
+### Blue-green example (atomic 0 → 100 % cutover)
+
+```python
+from azure.ai.projects.models import (
+    AgentEndpoint,
+    AgentEndpointProtocol,
+    FixedRatioVersionSelectionRule,
+    VersionSelector,
+)
+
+# After create_version + wait-for-active for v2:
+project.beta.agents.patch_agent_details(
+    agent_name=AGENT_NAME,
+    agent_endpoint=AgentEndpoint(
+        version_selector=VersionSelector(
+            version_selection_rules=[
+                FixedRatioVersionSelectionRule(
+                    agent_version="2", traffic_percentage=100
+                ),
+            ]
+        ),
+        protocols=[AgentEndpointProtocol.RESPONSES],
+    ),
+)
+```
+
+The cutover is **atomic at the gateway** — the next request after the
+PATCH returns 200 sees v2. Existing inflight requests on v1 finish on
+v1 (no mid-request swap).
+
+### Canary example (10 % → 50 % → 100 % staged promotion)
+
+```python
+# Phase 1 — 90/10:
+project.beta.agents.patch_agent_details(
+    agent_name=AGENT_NAME,
+    agent_endpoint=AgentEndpoint(
+        version_selector=VersionSelector(
+            version_selection_rules=[
+                FixedRatioVersionSelectionRule(agent_version="1", traffic_percentage=90),
+                FixedRatioVersionSelectionRule(agent_version="2", traffic_percentage=10),
+            ]
+        ),
+        protocols=[AgentEndpointProtocol.RESPONSES],
+    ),
+)
+# Observe gen_ai response.id mix in AppIn for hours-to-days.
+# Promote phases: 50/50 then 0/100 via the same PATCH shape.
+```
+
+Traffic split percentages can be **arbitrary integers summing to 100**
+— not fixed buckets. Choose ramps (5/95 → 25/75 → 50/50 → 100/0) sized
+to your traffic volume and observation window. For low-QPS agents,
+50/50 may be the smallest split that produces statistically meaningful
+v2 sample within a single business day.
+
+### Rollback (immediate revert)
+
+If v2 misbehaves after promotion, **PATCH back to v1 at 100 %** —
+provided v1 was NOT yet deleted:
+
+```python
+project.beta.agents.patch_agent_details(
+    agent_name=AGENT_NAME,
+    agent_endpoint=AgentEndpoint(
+        version_selector=VersionSelector(
+            version_selection_rules=[
+                FixedRatioVersionSelectionRule(
+                    agent_version="1", traffic_percentage=100
+                ),
+            ]
+        ),
+        protocols=[AgentEndpointProtocol.RESPONSES],
+    ),
+)
+```
+
+This is **< 30 s round-trip** to atomic revert. If you already deleted
+v1, recovery requires re-creating it from the prior image digest (2–5
+min cold provision + warmup) — which is why the **don't delete v1
+until v2 is proven** discipline matters. **Keep prior version for
+≥ 24 h** after promotion to 100 % is the safe default.
+
+### Preconditions and traps
+
+The rollout patterns are sensitive to two existing traps documented
+above — these are NOT new failure modes but they become much more
+visible when you're moving versions around:
+
+- **[`create_version` dedup trap](#create_version-deduplication-trap)**
+  — if v2 has identical environment variables, image tag, **and**
+  metadata to v1, the platform silently returns v1 (no error). Your
+  "v2 deploy" is then your v1, and the canary appears stuck at 100 % v1
+  even though the PATCH succeeded. **Always bump a `_BUILD_TS` or
+  `_GIT_SHA` environment variable** on every `create_version` call to
+  defeat the dedup. The canonical reference script does this.
+- **[ACR layer-cache trap](#acr-layer-cache-trap-per-job-images-built-via-dockerbuildrequest)**
+  — if you tag both versions `:latest` and ACR caches a stale layer, v2
+  may pull v1's image bits. **Pin by digest (`@sha256:...`) for canary
+  windows** so the gateway routes to byte-identical-on-disk versions.
+  Tag by date for human-readable rollback handles
+  (`my-agent:rollback-20260612`).
+
+### Inspection
+
+`azd ai agent show` returns both the active set of versions AND the
+current `agent_endpoint` traffic split — use it as the one-command
+sanity check after every PATCH:
+
+```bash
+azd ai agent show
+# Versions:
+#   1   active    image: my-agent@sha256:abc...
+#   2   active    image: my-agent@sha256:def...
+# Endpoint protocols: responses
+# Traffic routing:
+#   version 1: 90 %
+#   version 2: 10 %
+```
+
+If the traffic split shown by `azd ai agent show` does not match what
+you just PATCH'd, you are likely hitting the dedup trap (v2 silently
+became v1) — re-check `azd ai agent show` for whether v2 was actually
+created, and inspect each version's `environment_variables` for a
+unique build stamp.
+
+### Production posture
+
+- **Pair canary with `Foundry-Features: AgentEndpoints=V1Preview` only
+  in non-prod gateways first.** Preview headers can change behaviour
+  between SDK rolls. Production agents that have already passed
+  promotion should stay on the implicit-default routing path until the
+  feature exits preview (target: Build 2026 GA was June 2026 for
+  hosted agents; the `AgentEndpoints` preview is the layer above —
+  expect GA mid-2026).
+- **Keep prior version for ≥ 24 h** after promotion to 100 %. That's
+  enough for instant rollback without re-provisioning. Idle versions
+  cost nothing — see [§ Compute Lifecycle](#compute-lifecycle) (auto-
+  deprovision after 15 min idle; no replica charges in between
+  requests).
+- **Never canary across the agent version AND the backing chat-model
+  deployment simultaneously.** If you're also bumping
+  `MODEL_DEPLOYMENT_NAME` in v2, the traffic split conflates two
+  independent variables and the gen_ai telemetry becomes ambiguous.
+  Split on agent version first; after promotion, do a separate model
+  rollout.
+- **Pair the canary phase with continuous evaluation** — see
+  `foundry-evals` § Continuous Evaluation Loop. The eval runner's
+  per-response sampling naturally surfaces v2 quality regressions
+  within the canary window.
+- **ACA-side rollout primitives (revisions, ingress weighting) do NOT
+  apply here.** Foundry hosted agents run on platform-managed compute,
+  not customer-managed ACA. The "split-traffic-between-revisions"
+  pattern in `foundry-caphost-lifecycle` is a sibling primitive for a
+  different runtime — it has no integration point with the Foundry
+  agent-version surface. Do NOT try to wire ACA ingress weights to
+  agent versions.
 
 ---
 
