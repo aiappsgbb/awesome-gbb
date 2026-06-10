@@ -56,6 +56,10 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     ".github/workflows/skill-test.yml",
     ".github/quarantine.yml",
     ".github/skill-deps.yml",
+    # SHARED CI HARDENING preamble (post-2026-06-09 incident): every
+    # fixture run prepends this file's content, so editing it changes
+    # the input contract for every leg — re-validate the whole catalog.
+    ".github/ci-shared-preamble.md",
 })
 
 
