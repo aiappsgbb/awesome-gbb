@@ -181,6 +181,46 @@ a valid label.
 
 ---
 
+## Step 1c — Version rollout primitive (best-effort, Pattern 13 soft-PASS)
+
+The skill documents native platform traffic routing for blue-green /
+canary / rollback in § "Version rollout patterns". This step exercises
+the **simplest** primitive — a one-line PATCH that pins traffic to the
+already-active version — to prove the SDK surface works in CI.
+
+This is **best-effort verification**, NOT a hard PASS criterion. None
+of the conditions below gate the Step 2 marker:
+
+1. **Call `project.beta.agents.patch_agent_details(...)`** with a
+   single `FixedRatioVersionSelectionRule(agent_version="1",
+   traffic_percentage=100)` on the agent you just deployed. Use the
+   `version_rollout.py` reference file's `patch_routing()` helper
+   verbatim — do NOT redefine the SDK call inline. If the
+   `AgentEndpoints=V1Preview` feature is not available in the SDK
+   build pinned by this skill, the SDK raises a recognisable error
+   (e.g. `AttributeError: 'BetaAgentsOperations' object has no
+   attribute 'patch_agent_details'`, or a 4xx with body containing
+   `feature` / `preview` / `not enabled`). Skip with one NOTE:
+   `NOTE version_rollout patch_agent_details skipped — preview feature not enabled in this SDK pin`.
+
+2. **Verify with `azd ai agent show`** that the traffic split is what
+   you just patched (single rule, version 1, 100 %). If the output
+   does not include a `Traffic routing` block, the extension version
+   predates the surface — skip with one NOTE:
+   `NOTE version_rollout azd ai agent show traffic routing block missing — extension version drift`.
+
+3. **Do NOT create a v2.** The single-version PATCH is sufficient
+   proof that the routing surface works end-to-end. A real v2 + canary
+   would double the wall-clock (another `create_version` + 2-5 min
+   `wait_for_active`) and would push the leg above its Pattern 14
+   budget on slow CI runs.
+
+For each skipped best-effort step, emit ONE transcript NOTE. Do NOT
+FAIL the smoke on any rollout-primitive skip. The marker contract
+(Step 2) is unchanged.
+
+---
+
 ## Step 2 — Marker contract (deterministic, MANDATORY)
 
 Your FINAL action — after the invoke succeeds AND after your best-effort
