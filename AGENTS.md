@@ -776,6 +776,30 @@ stays useful without leaking inventory.
 - AcrPush on `<ci-container-registry>`
 - Cognitive Services OpenAI User on `<ci-foundry-account>`
 - Foundry User on `<ci-foundry-account>`
+- Role Based Access Control Administrator on `<ci-foundry-account>`,
+  ABAC-constrained via `--condition` to only grant role GUID
+  `53ca6127-db72-4b80-b1b0-d745d6d5456d` (Foundry User). Needed because
+  the `ghcp-hosted-agents` fixture's Step 1c (per SKILL.md KI-001) must
+  grant `Foundry User` at account scope to the **per-agent-instance
+  MIs** that `azd ai agent` creates fresh on every `azd up`. Without
+  this, the UAMI's `Contributor` does NOT include
+  `Microsoft.Authorization/roleAssignments/write` (Azure RBAC design),
+  the postdeploy grant fails with `AuthorizationFailed`, and the BYOK
+  invoke returns 401 with the silent SSE error described in
+  `ghcp-hosted-agents/SKILL.md` § "Identity & RBAC for hosted agents".
+  The ABAC condition makes this strictly least-privilege: UAMI can ONLY
+  hand out Foundry User on this single Foundry account scope and
+  nothing else. Provision once:
+  ```bash
+  az role assignment create \
+    --assignee-object-id "$UAMI_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
+    --role "f58310d9-a9f6-439a-9e8d-f62e7b41a168" \
+    --scope "/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.CognitiveServices/accounts/$ACCT" \
+    --condition "@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAllValues:GuidEquals {53ca6127-db72-4b80-b1b0-d745d6d5456d}" \
+    --condition-version "2.0" \
+    --description "ghcp-hosted-agents fixture KI-001 — least-privilege RBAC admin"
+  ```
 
 **Federated credentials are narrow — these are the ONLY allowed subjects:**
 

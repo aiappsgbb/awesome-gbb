@@ -39,6 +39,14 @@ skills:
     depends_on: []
   foundry-toolbox:
     depends_on: []
+  # ghcp-hosted-agents — alternative GHCP-SDK + Invocations protocol
+  # hosted-agent path. Stand-alone fixture (BYOK to Foundry model via
+  # MI, no GITHUB_TOKEN). Same azd ai agent + ACA + ACR shape as
+  # foundry-hosted-agents but does NOT depend on its container source
+  # — references/container.py is a different SDK surface
+  # (github-copilot-sdk, not Microsoft Agent Framework).
+  ghcp-hosted-agents:
+    depends_on: []
 
   # ── Cross-skill deps ────────────────────────────────────────────────
   # foundry-evals fixture creates a prompt agent (via PA's

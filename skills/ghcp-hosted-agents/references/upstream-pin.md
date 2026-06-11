@@ -16,7 +16,7 @@ upstream:
 packages:
   - name: github-copilot-sdk
     source: pypi
-    version: "0.3.0"
+    version: "1.0.1"
     upstream_changelog: https://pypi.org/project/github-copilot-sdk/#history
   - name: azure-ai-agentserver-invocations
     source: pypi
@@ -87,7 +87,7 @@ known_issues:
 
   - id: KI-005
     description: |
-      Provider shape changed in github-copilot-sdk 0.3.0+: prefer
+      Provider shape (as of github-copilot-sdk 1.0 GA): prefer
       `ProviderConfig(type="azure", base_url=<bare project endpoint>,
       wire_api="responses", bearer_token=<token>)` over the legacy dict form
       `{"type": "openai", "base_url": ".../openai/v1/", ...}`. The legacy form
@@ -98,6 +98,20 @@ known_issues:
     status: open
     workaround_location: SKILL.md § "BYOK Authentication Deep Dive" -> provider shape decision matrix
 
+  - id: KI-006
+    description: |
+      Breaking change in github-copilot-sdk 1.0 GA: the `SubprocessConfig`
+      wrapper class is REMOVED from the public surface, and the
+      `auto_start` kwarg is REMOVED from `CopilotClient.__init__`. The 1.0
+      constructor is flat: `CopilotClient(github_token=...)`
+      (no wrapper) for GitHub-token mode, `CopilotClient()` for BYOK mode,
+      and `await client.start()` is mandatory before creating sessions.
+      0.x code `CopilotClient(SubprocessConfig(github_token=...),
+      auto_start=False)` raises `ImportError` on 1.0.0+ at import time.
+    upstream_url: https://pypi.org/project/github-copilot-sdk/1.0.0/
+    status: documented_in_skill
+    workaround_location: SKILL.md § "CopilotClient Session Parameters" + container.py reference (callout in version-drift note)
+
 validation:
   requires: [pypi]
   runnable: true
@@ -107,16 +121,23 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "github-copilot-sdk~=0.3.0" \
-      "azure-ai-agentserver-invocations~=1.0.0b4" \
+      "github-copilot-sdk~=1.0.0" \
+      "azure-ai-agentserver-invocations==1.0.0b4" \
       "azure-identity~=1.25.3" \
       "python-dotenv~=1.2.2"
     python -c "
-    from copilot import CopilotClient, SubprocessConfig
+    from copilot import CopilotClient
     from copilot.session import PermissionHandler, ProviderConfig
     from copilot.generated.session_events import SessionEventType
     from azure.ai.agentserver.invocations import InvocationAgentServerHost
     print('ok ghcp-hosted-agents imports')
+
+    # KI-006 regression assert: SubprocessConfig MUST be gone (removed in 1.0 GA).
+    try:
+        from copilot import SubprocessConfig  # noqa: F401
+        raise AssertionError('SubprocessConfig should NOT be importable on 1.0 GA')
+    except ImportError:
+        print('ok SubprocessConfig removed in 1.0 GA (KI-006)')
 
     # ProviderConfig is a TypedDict — returns a plain dict at runtime.
     # The meaningful contract is that type='azure' is accepted (the recommended
@@ -127,19 +148,20 @@ validation:
     assert p['type'] == 'azure', 'ProviderConfig.type=azure should be accepted'
     print('ok ProviderConfig type=azure accepted')
 
-    # Assert CopilotClient(auto_start=False) signature works.
-    c = CopilotClient(auto_start=False)
+    # Assert flat CopilotClient(github_token=...) shape works (1.0 GA replacement).
+    c = CopilotClient(github_token='dummy')
     assert c is not None
-    print('ok CopilotClient(auto_start=False)')
+    print('ok CopilotClient(github_token=...)')
     "
   expected_output:
     - "ok ghcp-hosted-agents imports"
+    - "ok SubprocessConfig removed in 1.0 GA (KI-006)"
     - "ok ProviderConfig type=azure accepted"
-    - "ok CopilotClient(auto_start=False)"
+    - "ok CopilotClient(github_token=...)"
 
-last_validated: 2026-05-26
-validated_by: copilot-bot
-known_issues_count: 5
+last_validated: 2026-06-10
+validated_by: ricchi
+known_issues_count: 6
 ---
 
 # Upstream pin — `ghcp-hosted-agents` skill
@@ -152,16 +174,27 @@ hosted-agent wrapper (BYOK + Invocations protocol).
 The skill wraps two preview PyPI packages whose release cadences are not
 coordinated:
 
-- `github-copilot-sdk` — current stable `0.3.0`, with a `1.0.0b4` preview in
-  flight. Both proven to work for our use case (see § "Version drift" in
-  SKILL.md). The `~=0.3.0` cap covers PATCH bumps inside 0.3.x.
-- `azure-ai-agentserver-invocations` — `1.0.0b3` is the only public version;
-  pinned exact (`==`) because the cap pattern doesn't apply across the b3 -> b4
-  pre-release boundary.
+- `github-copilot-sdk` — `1.0.1` is the current **GA** release; the 0.3.x
+  series and the 1.0.0b1-b4 prereleases are superseded. The `~=1.0.0` cap
+  covers PATCH bumps inside 1.0.x. Breaking changes vs 0.3.x: removed
+  `SubprocessConfig` wrapper class, removed `auto_start` kwarg on
+  `CopilotClient.__init__` (see KI-006). Existing skill code using
+  `CopilotClient(SubprocessConfig(...), auto_start=False)` was updated to
+  the flat `CopilotClient(github_token=...)` shape.
+- `azure-ai-agentserver-invocations` — `1.0.0b4` is the latest public
+  beta (no GA release yet); pinned exact (`==`) because the cap pattern
+  doesn't apply across pre-release boundaries.
 
 ## Last validation
 
-`2026-05-17` (ricchi) — full end-to-end on a Foundry test project:
+`2026-06-10` (ricchi) — `github-copilot-sdk==1.0.1` adversarially diff'd
+against `0.3.0` API surface on a clean Python 3.14 venv; every import in
+`container.py` re-verified; `CopilotClient(github_token=...)` and
+`CopilotClient()` constructors instantiated without error; KI-006
+regression added to `validation.script` to assert `SubprocessConfig`
+remains gone on future pins.
+
+Prior end-to-end was `2026-05-17` (ricchi) on a Foundry test project:
 
 - `azd ai agent init -t github-copilot` -> downloaded official MS sample
 - Added `services:` block manually (KI-003)
