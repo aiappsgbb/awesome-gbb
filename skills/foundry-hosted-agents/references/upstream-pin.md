@@ -11,16 +11,22 @@ upstream:
 packages:
   - name: agent-framework-core
     source: pypi
-    version: "1.7.0"
+    version: "1.8.0"
     upstream_changelog: https://pypi.org/project/agent-framework-core/#history
   - name: agent-framework-foundry
     source: pypi
-    version: "1.7.0"
+    version: "1.8.0"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
   - name: agent-framework-foundry-hosting
     source: pypi
     version: "1.0.0a260528"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
+    notes: |
+      Alpha pre-release pinned EXACT per AGENTS.md § 9.5. PEP 440 treats
+      ~=1.0.0aN as >=1.0.0aN, <1.1 — pip drifts to later alphas
+      (a260609, a260612, …). Held on a260528 pending EPIC #261 validation;
+      a future refresh agent should NOT change the specifier shape from
+      ==1.0.0aN to ~= without a corresponding AGENTS.md § 9.5 amendment.
   - name: azure-ai-projects
     source: pypi
     version: "2.1.0"
@@ -91,6 +97,51 @@ known_issues:
     upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/migrate-hosted-agent-preview
     status: open
     workaround_location: SKILL.md § "MAF 1.6.0 update" → create_version deduplication trap
+  - id: KI-008
+    description: |
+      MAF 1.8.0 (June 2026) ships two [BREAKING] markers AND triggers two
+      sibling correctness improvements landing in the same MAF 1.8 refresh
+      PR (alpha-pin discipline fix + FoundryAgent stale-warning correction):
+
+      (1) MAF 1.8 breaking markers — non-impact analysis:
+        - agent-framework-github-copilot sub-package internal rename — not
+          pinned/imported by this skill. N/A.
+        - Experimental Skill abstract-class refactor in agent-framework-core —
+          this skill uses the high-level SkillsProvider.from_paths(...) facade,
+          not the experimental Skill ABC directly. Verified via grep on
+          2026-06-11: no direct imports of agent_framework._skills.Skill or
+          SkillResource from this skill's reference code. Runtime probe in
+          /tmp/m5-probe-strict (2026-06-11) confirms TWO ExperimentalWarnings
+          emit at agent_framework package init time: _skills.py:121 ([SKILLS]
+          SkillResource) and _harness/_memory.py:651 ([HARNESS] MemoryStore).
+          Both are stderr noise — non-impact: no runtime behavior change, no
+          API break, no version sensitivity. Hosted-agent containers don't
+          import either symbol directly. Callers who want clean production
+          logs can filter via warnings.filterwarnings("ignore",
+          category=ExperimentalWarning).
+
+      (2) Alpha-pin discipline fix (bonus, landed alongside MAF 1.8 bump):
+        agent-framework-foundry-hosting was previously specified as
+        ~=1.0.0a260528 in this pin's validation.script — which PEP 440 treats
+        as >=1.0.0a260528, <1.1, allowing pip to drift to a260609. Corrected
+        to exact ==1.0.0a260528 per AGENTS.md § 9.5 alpha pre-release rule.
+        EPIC #261 M5 holds on a260528 pending validation; do NOT change the
+        specifier shape from ==1.0.0aN to ~= without amending AGENTS.md § 9.5.
+
+      (3) FoundryAgent stale-warning correction (bonus, landed alongside
+          MAF 1.8 bump): SKILL.md previously carried two v1.1.1-era warnings
+          marking FoundryAgent as broken (hardcoded extra_body={"agent_reference":
+          ...}). MAF 1.8.0 probe in /tmp/m5-probe-strict on 2026-06-11
+          confirms FoundryAgent has been rehabilitated: __init__ takes
+          project_endpoint + agent_name + agent_version directly; extra_body
+          is opt-in via default_options only. Rehabilitation verified
+          empirically via MAF 1.8.0 probe; exact version of rehabilitation
+          between 1.1.1 and 1.8.0 not determined. Both stale warnings
+          surgically corrected in this PR to reframe as "Historical (MAF
+          1.1.1)" notes with current-version guidance.
+    upstream_url: https://pypi.org/project/agent-framework-core/1.8.1/
+    status: open
+    workaround_location: SKILL.md § "MAF 1.8.0 update (June 2026)" → breaking markers non-impact analysis
 
 validation:
   requires: [pypi]
@@ -100,7 +151,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "agent-framework-core~=1.7.0" "agent-framework-foundry~=1.7.0" "agent-framework-foundry-hosting~=1.0.0a260528" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.27.1" "python-dotenv~=1.2.2"
+    pip install --quiet "agent-framework-core~=1.8.0" "agent-framework-foundry~=1.8.0" "agent-framework-foundry-hosting==1.0.0a260528" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.27.1" "python-dotenv~=1.2.2"
     python -c "
     from agent_framework import Agent, SkillsProvider, tool, MCPStreamableHTTPTool
     from agent_framework.foundry import FoundryChatClient
@@ -127,9 +178,9 @@ validation:
     - "ok microsoft-opentelemetry bundled via agentserver-core"
     - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
-last_validated: 2026-05-29
-validated_by: copilot-bot
-known_issues_count: 7
+last_validated: 2026-06-11
+validated_by: m5-hosted-agents-maf-1-8
+known_issues_count: 8
 ---
 
 # Upstream pin — `foundry-hosted-agents` skill
