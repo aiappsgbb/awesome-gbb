@@ -33,7 +33,7 @@ docs_to_revalidate:
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live"
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to"
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2026-04-10"
-  - "https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio"
+  - "https://learn.microsoft.com/azure/ai-foundry/openai/concepts/audio"
 validation:
   requires:
     - github_only
@@ -105,7 +105,7 @@ validation:
     - "voicelive-sdk-import-ok"
     - "AsyncAzureOpenAI.realtime + websocket_base_url OK"
     - "VALIDATION_PASSED"
-last_validated: "2026-06-08"
+last_validated: "2026-06-11"
 validated_by: "ricchi"
 ---
 
