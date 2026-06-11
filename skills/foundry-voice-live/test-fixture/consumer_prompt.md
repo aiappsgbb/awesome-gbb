@@ -98,8 +98,17 @@ SKILL.md § 11 "Troubleshooting" for the corresponding row).
 ## Step 3 — Open the WSS session
 
 Run the Python script below. It MUST complete without exception, print
-`voice-live-roundtrip-ok` on success, and exit 0. The script's stdout
-is captured into the transcript for audit.
+`voice-live-roundtrip-ok` on success, and exit 0.
+
+**Do NOT redirect the script's stdout anywhere.** The workflow harness
+already captures all output via its own `tee` pipeline (so the
+post-hoc skill-usage audit can see what tools you invoked). Any
+shell redirect — `> /tmp/...`, `>>`, `tee`, `rm` of a `/tmp/*log`
+file, or wrapping the heredoc in a sub-harness that mimics the
+workflow's `MARKER=…; TRANSCRIPT=…; rm -f; python3 … > "$TRANSCRIPT"`
+pattern — clobbers the workflow's audit transcript and fails the
+post-hoc step even when the WSS roundtrip succeeded. Just invoke
+`python3 <<'PY' … PY` and let the runtime print to stdout normally.
 
 ```bash
 python3 <<'PY'

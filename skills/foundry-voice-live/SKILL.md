@@ -17,7 +17,7 @@ description: >
   ingestion (use foundry-observability), authoring an MCP server (use
   foundry-mcp-aca or ui-widget-developer).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Foundry Voice Live
@@ -993,7 +993,7 @@ await conn.session.update(session={
 - [Voice Live how-to](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to)
 - [Voice Live API reference (2026-04-10)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2026-04-10)
 - [`azure-ai-voicelive` on PyPI](https://pypi.org/project/azure-ai-voicelive/) · [SDK source](https://github.com/Azure/azure-sdk-for-python/tree/main/sdk/voicelive/azure-ai-voicelive)
-- [Azure OpenAI Realtime — concepts](https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio) · [how-to](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio)
+- [Azure OpenAI Realtime — concepts](https://learn.microsoft.com/azure/ai-foundry/openai/concepts/audio) · [how-to](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio)
 - [Voice Live quickstart (models)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-quickstart?pivots=programming-language-python)
 - [Voice Live quickstart (agents)](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-agents-quickstart?pivots=programming-language-python)
 - [Regional availability](https://learn.microsoft.com/azure/ai-services/speech-service/regions?tabs=voice-live#regions)
