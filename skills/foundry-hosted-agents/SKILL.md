@@ -1,7 +1,7 @@
 ---
 name: foundry-hosted-agents
 description: >
-  Deploy + manage Foundry hosted agents — GA June 2026: MAF 1.7.0,
+  Deploy + manage Foundry hosted agents — GA June 2026: MAF 1.8.0,
   --deploy-mode code, agent.manifest.yaml, WS invocations, Foundry User
   + Project Manager roles. Read the body for SDK patterns, identity
   wiring, runtime selection, version rollout patterns, troubleshooting
@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "1.10.0"
+  version: "1.11.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -27,15 +27,18 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 (refreshed preview, April 2026). Covers the `Agent` + `FoundryChatClient` +
 `ResponsesHostServer` (MAF) variant exclusively.
 
-> **⚠️ MAF 1.6.0 recommended (May 2026) — gen_ai telemetry built-in.** Upgrade
-> from 1.4.0 to 1.6.0 to get OpenTelemetry gen_ai spans (model name, token
-> usage, latency) without any manual instrumentor code. The new hosting
-> package (`1.0.0a260521`) bundles `microsoft-opentelemetry` which includes
-> `opentelemetry-instrumentation-openai-v2` and `opentelemetry-instrumentation-openai-agents-v2`
-> automatically. See [§ MAF 1.6.0 update](#maf-160-update-may-2026).
+> **⚠️ MAF 1.8.0 recommended (June 2026) — caller-side `FoundryAgent(timeout=...)` knob.**
+> Upgrade from 1.6.0 → 1.8.0 to pick up the new HTTP timeout kwarg on the
+> caller-side `agent_framework.foundry.FoundryAgent` class (overrides the
+> OpenAI-SDK 5s connect / 600s total defaults). All MAF 1.6.0 telemetry
+> bundling (`microsoft-opentelemetry` + `opentelemetry-instrumentation-openai-v2`)
+> is unchanged. The two MAF 1.8.0 `[BREAKING]` markers (github-copilot
+> sub-package internal rename + experimental `Skill` ABC refactor) are
+> **non-impact** for hosted-agent code — see [§ MAF 1.8.0 update](#maf-180-update-june-2026).
 >
-> If you are still on 1.3.x, upgrade directly to 1.6.0 — absorb both the
-> 1.4.0 breaking changes below AND the 1.6.0 telemetry improvements.
+> If you are still on 1.3.x, upgrade directly to 1.8.0 — absorb the 1.4.0
+> breaking changes below AND the 1.6.0 telemetry improvements AND the
+> 1.8.0 timeout knob in one pass.
 
 ## When to Use
 
@@ -258,6 +261,79 @@ New base-image code never reaches the container.
 Discovered May 2026: base image rebuild with `SkillsProvider.from_paths()`
 fix + observability fix never reached any agent until both guards were
 applied.
+
+---
+
+## MAF 1.8.0 update (June 2026)
+
+`agent-framework-core` and `agent-framework-foundry` 1.8.x land one
+hosted-agent-relevant new knob and two `[BREAKING]` markers — both
+non-impact for this skill.
+
+- **`FoundryAgent(timeout=...)`** — new HTTP timeout kwarg on the
+  caller-side `agent_framework.foundry.FoundryAgent` class. Overrides
+  the underlying OpenAI-SDK default (connect: 5s, total: 600s). Useful
+  when orchestrator code calling INTO a hosted agent wants a bounded
+  ceiling. See [§ below](#foundryagent-timeout-parameter-maf-180).
+
+### MAF 1.8.0 breaking markers — non-impact analysis
+
+MAF 1.8.0 ships two `[BREAKING]` markers; neither affects hosted-agent code:
+
+1. **`agent-framework-github-copilot` sub-package internal rename** —
+   this skill does not pin or import `agent-framework-github-copilot`. **N/A.**
+2. **Experimental `Skill` abstract-class refactor in `agent-framework-core`** —
+   this skill uses the high-level `SkillsProvider.from_paths(...)` facade
+   (see § Skill Loading below), not the experimental `Skill` ABC.
+   Hosted-agent containers continue to work unchanged. **Non-impact.**
+
+### FoundryAgent timeout parameter (MAF 1.8.0)
+
+MAF 1.8.0 adds `timeout: float | None = None` to
+`agent_framework.foundry.FoundryAgent.__init__`. This is an **HTTP-layer
+timeout** that overrides the OpenAI SDK's default (connect: 5s, total: 600s)
+for ALL requests made by this agent instance. Per the upstream docstring:
+*"HTTP timeout in seconds for requests. When not provided, the OpenAI SDK
+default is used (connect: 5s, total: 600s)."*
+
+Use it to:
+
+- **Lower the ceiling** for short-running agents that should fail fast
+  (e.g. `timeout=30` for tool-routing agents with user-facing chat budgets).
+- **Raise the ceiling** for long-running agents where 600s isn't enough
+  (e.g. `timeout=1800` for multi-step research loops).
+
+Scope note: this kwarg lives on the CALLER-side `FoundryAgent` class
+(orchestrator code calling a hosted agent). The CONTAINER-side runtime
+covered by [§ Runtime Pattern](#runtime-pattern-maf-variant) uses
+`FoundryChatClient` directly and does NOT accept `timeout=` in 1.8.0 —
+apply HTTP-layer transport timeouts on the underlying client instead.
+
+> **MUST:** Copy verbatim from
+> [`references/python/foundry_agent_timeout.py`](references/python/foundry_agent_timeout.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+
+> **See also (MAF 1.8.0, experimental):**
+> - `AgentFileStore` — new abstract base class for agent file-management
+>   backends. Re-exported as `from agent_framework import AgentFileStore`.
+>   Concrete implementations + usage patterns live in `foundry-memory` and
+>   `foundry-toolbox`. NOT consumed by the hosted-agents runtime patterns
+>   documented in this skill.
+
+### Upgrade recipe (→ 1.8.0)
+
+```bash
+sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.8.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.8.0"/' pyproject.toml
+sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-hosting==1.0.0a260528"/' pyproject.toml
+# Telemetry bundling from MAF 1.6.0 is unchanged in 1.8.0 — no other deps to touch.
+```
+
+Note: the hosting package is pinned **exact** (`==1.0.0a260528`), not
+compatible-release (`~=`). PEP 440 treats `~=1.0.0aN` as
+`>=1.0.0aN, <1.1` — pip will happily drift to a later alpha
+(`a260609`, `a260612`, …). Exact pin per AGENTS.md § 9.5 alpha
+pre-release discipline.
 
 ---
 
@@ -659,10 +735,21 @@ ResponsesHostServer(orchestrator).run()
 - `allow_preview=True` is REQUIRED for `agent_name` to work
 - `FoundryChatClient` does NOT accept `agent_name`/`agent_version` — use the client-swap pattern
 
-> **⚠️ DO NOT use `FoundryAgent` for sub-agent delegation.** `FoundryAgent` (v1.1.1) internally
-> uses `extra_body={"agent_reference": ...}` which is the OLD initial preview pattern.
-> It silently fails in the refreshed preview — tool calls return "Function failed."
-> Use the client-swap pattern above instead.
+> **⚠️ Historical (MAF 1.1.1) — sub-agent delegation note.**
+> `FoundryAgent` in MAF 1.1.1 silently hardcoded
+> `extra_body={"agent_reference": ...}` internally — the old initial-preview
+> pattern that silently failed against the refreshed preview ("Function
+> failed." on tool calls). **As of MAF 1.8.0**, `FoundryAgent` has been
+> rehabilitated: `__init__` takes `project_endpoint` + `agent_name` +
+> `agent_version` directly and `extra_body` is only available as a user
+> opt-in via `default_options`. The 1.1.1-era prohibition no longer
+> applies; use `FoundryAgent` freely under MAF ≥ 1.8.0. The client-swap
+> pattern above remains the recommended path for sub-agent delegation
+> in this skill's container runtime (it composes cleanly with
+> `FoundryChatClient`'s async surface); `FoundryAgent` is most useful
+> for caller-side orchestration code (see
+> [§ FoundryAgent timeout parameter (MAF 1.8.0)](#foundryagent-timeout-parameter-maf-180)).
+> Exact version of rehabilitation between 1.1.1 and 1.8.0 not determined.
 
 ### MCP Tools via FoundryChatClient
 
@@ -1965,9 +2052,19 @@ az role assignment create --assignee "$AGENT_MI" \
 | `project_client.agents.list()` at startup | `TL_SUB_AGENTS` env var (avoids blocking readiness) |
 | `azure.ai.projects` (sync) in container | `azure.ai.projects.aio` (ASYNC) — sync silently fails |
 
-> **⚠️ `FoundryAgent` class (v1.1.1) is NOT compatible with refreshed preview.**
-> It uses `extra_body={"agent_reference": ...}` internally — the old pattern that silently fails.
-> Do NOT use `FoundryAgent` for sub-agent delegation. Use the client-swap pattern instead.
+> **⚠️ Historical (MAF 1.1.1):** `FoundryAgent` in MAF 1.1.1 silently
+> hardcoded `extra_body={"agent_reference": ...}` internally — the old
+> initial-preview pattern that fails against the refreshed preview.
+> **As of MAF 1.8.0**, `FoundryAgent` has been rehabilitated: `__init__`
+> takes `project_endpoint` + `agent_name` + `agent_version` properly,
+> supports both PromptAgents and HostedAgents, and `extra_body` is only
+> available as a user opt-in via `default_options`. The 1.1.1-era
+> prohibition no longer applies; use `FoundryAgent` freely under
+> MAF ≥ 1.8.0. The client-swap pattern above remains the recommended
+> path for sub-agent delegation in this skill's container runtime;
+> `FoundryAgent` is most useful for caller-side orchestration code (see
+> [§ FoundryAgent timeout parameter (MAF 1.8.0)](#foundryagent-timeout-parameter-maf-180)).
+> Exact version of rehabilitation between 1.1.1 and 1.8.0 not determined.
 
 **Deadline:** Initial preview backend retires **May 22, 2026**.
 
