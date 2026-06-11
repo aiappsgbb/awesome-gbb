@@ -4,7 +4,7 @@
 
 **Goal:** Land two NEW peer skills — `foundry-rbac-audit` (#268) and `azure-monitor-alert-baseline` (#272) — that threadlight v0.5.3 needs to flip SEC-301 / OBS-203 from `kind: manual` to `kind: sibling-skill`. Both follow the shared "probe-an-RG, emit findings JSON + manifest file" template defined in spec §4.3.1.
 
-**Architecture:** Two peer skills (NOT under an umbrella per Q5/spec §5.2). Identical scaffold per AGENTS.md §10.3 (SKILL.md + pin + E2E test + Copilot-CLI fixture + plugin MINOR + CATEGORIES + skill-deps.yml + AGENTS.md §12.5 stats). Shared `probe(subscription_id, resource_group, **kwargs) -> dict` signature; both authenticate via `DefaultAzureCredential`; both emit stdout JSON AND a manifest file at `out/<finding-id>.json` (Pattern 12 marker shape). The alert-baseline skill ships 3 YAML baselines (`foundry_pilot`, `spoke_minimum`, `production`).
+**Architecture:** Two peer skills (NOT under an umbrella per Q5/spec §5.2). Identical scaffold per AGENTS.md §10.3 (SKILL.md + pin + Copilot-CLI fixture + plugin MINOR + CATEGORIES + skill-deps.yml + AGENTS.md §12.5 stats). Shared `probe(subscription_id, resource_group, **kwargs) -> dict` signature; both authenticate via `DefaultAzureCredential`; both emit stdout JSON AND a manifest file at `out/<finding-id>.json` (Pattern 12 marker shape). The alert-baseline skill ships 3 YAML baselines (`foundry_pilot`, `spoke_minimum`, `production`). Live Azure testing per AGENTS.md §2.9 is captured as evidence in the PR body (Slice A/B precedent — no `test_e2e_*.py` files).
 
 **Tech Stack:** Python 3.11+, pytest, `azure-mgmt-authorization` (RBAC enumeration), `azure-mgmt-monitor` (alert/diagnostic listing), `azure-identity`, PyYAML.
 
@@ -24,8 +24,15 @@
 - `skills/foundry-rbac-audit/references/python/probe.py`
 - `skills/foundry-rbac-audit/references/python/__main__.py`
 - `skills/foundry-rbac-audit/test-fixture/consumer_prompt.md`
-- `scripts/tests/test_e2e_foundry_rbac_audit.py`
 - `scripts/tests/test_unit_foundry_rbac_audit.py`
+
+> **Drift pivot (post Slice A/B merge):** `scripts/tests/test_e2e_*.py` was
+> deleted upstream and `skill-test.yml` line 9 reads "We deliberately do
+> NOT run pytest-based e2e tests or pin-import smoke." Both Slice A (#279)
+> and Slice B (#281) shipped with unit tests only + §2.9 live evidence in
+> the PR body — no `test_e2e_*.py` files. This plan mirrors that pattern:
+> Tasks 1.6 and 2.6 are now §2.9 live-evidence-capture tasks, not pytest
+> file creation, and Task 3.3 is dropped (no e2e-azure matrix to wire into).
 
 **Create — `azure-monitor-alert-baseline/`:**
 - `skills/azure-monitor-alert-baseline/SKILL.md`
@@ -38,13 +45,11 @@
 - `skills/azure-monitor-alert-baseline/references/baselines/spoke_minimum.yaml`
 - `skills/azure-monitor-alert-baseline/references/baselines/production.yaml`
 - `skills/azure-monitor-alert-baseline/test-fixture/consumer_prompt.md`
-- `scripts/tests/test_e2e_azure_monitor_alert_baseline.py`
 - `scripts/tests/test_unit_azure_monitor_alert_baseline.py`
 
 **Modify:**
 - `scripts/build-site.py` (add both to `CATEGORIES`)
 - `.github/skill-deps.yml` (two new entries: `foundry-rbac-audit: depends_on: []`, `azure-monitor-alert-baseline: depends_on: []`)
-- `.github/workflows/skill-test.yml` (extend e2e-azure matrix with the two new test files)
 - `plugin.json` (MINOR bump; catalog 27 → 29)
 - `.github/plugin/marketplace.json` (MINOR bump matched)
 - `AGENTS.md` (§12.5 catalog stats: 27 → 29; CI workflows count unchanged; tests count += new tests)
@@ -78,20 +83,31 @@ cat skills/foundry-cost-monitoring/test-fixture/consumer_prompt.md | head -80
 
 Note: SKILL.md frontmatter shape, references/python/ structure, pin file shape, fixture preamble shape.
 
-- [ ] **Step 2: Read `foundry-toolbox` (for E2E test pattern)**
+- [ ] **Step 2: Read Slice A's shipped probe code (closest precedent for §2.9 evidence pattern)**
 
 Run:
 ```bash
-cat scripts/tests/test_e2e_foundry_toolbox.py 2>&1 | head -80
+ls scripts/tests/ | head -10                                # confirm NO test_e2e_*.py files exist
+git show a443b5c -- skills/foundry-observability/references/python/kql_probes.py 2>&1 | head -80
+git show a443b5c --stat 2>&1 | head -40                     # what shape did A ship
+git log origin/main -- 'scripts/tests/' --oneline | head -5 # confirm: only 3 CI-infra unit tests
 ```
 
-Note: `sys.path` injection, credential chain test, API surface test, real-resource cleanup. Mirror this shape.
+Note: Slice A used pytest unit tests with `MagicMock` for SDK calls, and
+captured §2.9 live evidence directly in the PR body (no `test_e2e_*.py`
+files). Mirror that pattern.
 
-- [ ] **Step 3: Read `foundry-prompt-agents` E2E test for explicit Azure assertion pattern**
+- [ ] **Step 3: Read Slice B's shipped probe code (alternative precedent: unittest convention)**
 
-Run: `cat scripts/tests/test_e2e_prompt_agents.py 2>&1 | head -60`
+Run:
+```bash
+git show 0f5d75d -- skills/citadel-spoke-onboarding/references/python/access_contract_probe.py 2>&1 | head -60
+git show 0f5d75d -- scripts/tests/test_citadel_access_contract_probe.py 2>&1 | head -40
+```
 
-Note: how it asserts on real API responses (not just import-resolves).
+Note: Slice B used `unittest` convention. Either pytest (Slice A) or
+unittest (Slice B) is acceptable for unit tests; this plan defaults to
+pytest. Both shipped without E2E test files.
 
 - [ ] **Step 4: Read pin template + an existing tier-B pin**
 
@@ -770,105 +786,78 @@ git commit -m "foundry-rbac-audit: add README + upstream pin (tier B, auto)
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
-### Task 1.6: E2E test
+### Task 1.6: §2.9 live-test evidence — `foundry-rbac-audit`
 
-**Files:**
-- Create: `scripts/tests/test_e2e_foundry_rbac_audit.py`
+**Files:** none (no test file created).
 
-- [ ] **Step 1: Create the E2E test**
+**Background:** Per AGENTS.md §2.9 and Slice A (PR #279) / Slice B
+(PR #281) precedent, live Azure testing is captured as evidence in the
+PR body — there is no pytest-based E2E test file. `skill-test.yml` line
+9 reads "We deliberately do NOT run pytest-based e2e tests." Skip this
+task entirely if you do not have CI Azure credentials locally; record
+"§2.9 evidence deferred to CI / human-validated" in the PR body and the
+human reviewer will run the probes before merge.
 
-Read `test_e2e_foundry_toolbox.py` and `test_e2e_prompt_agents.py` first so the imports/skip-markers match the catalog's pattern.
+- [ ] **Step 1: Verify CI auth context (or skip)**
 
-```python
-"""E2E test for foundry-rbac-audit against real Azure resources.
-
-Requires the CI environment variables documented in AGENTS.md §9.7:
-- AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
-
-Skipped locally unless those env vars are present.
-
-What this proves (per AGENTS.md §2.8):
-1. The DefaultAzureCredential chain authenticates in the CI runner.
-2. The azure-mgmt-authorization SDK surface (`role_assignments.list_for_scope`)
-   exists and is callable against a real subscription.
-3. The probe completes and returns the documented shape on a real RG.
-"""
-from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
-
-import pytest
-
-SKILL_DIR = (Path(__file__).resolve().parents[1].parent
-             / "skills" / "foundry-rbac-audit" / "references" / "python")
-sys.path.insert(0, str(SKILL_DIR))
-
-
-def _has_azure_env() -> bool:
-    return all(os.environ.get(k) for k in
-               ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"))
-
-
-pytestmark = pytest.mark.skipif(
-    not _has_azure_env(),
-    reason="Requires AZURE_* env vars (CI-only; AGENTS.md §9.7)"
-)
-
-
-def test_credential_chain_resolves():
-    from azure.identity import DefaultAzureCredential
-    cred = DefaultAzureCredential()
-    token = cred.get_token("https://management.azure.com/.default")
-    assert token.token, "no token returned from DefaultAzureCredential"
-
-
-def test_probe_against_ci_rg():
-    """Probe the CI resource group and validate the returned shape."""
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    rg = os.environ.get("CI_RESOURCE_GROUP", "")
-    if not rg:
-        pytest.skip("CI_RESOURCE_GROUP env var not set — set to <ci-resource-group>")
-
-    result = probe(subscription_id=sub, resource_group=rg)
-    required = {"finding_id", "skill", "subscription_id", "resource_group",
-                "findings", "summary", "manifest_path", "probed_at"}
-    assert required.issubset(result.keys()), f"missing: {required - result.keys()}"
-    assert result["skill"] == "foundry-rbac-audit"
-    assert result["subscription_id"] == sub
-    assert result["resource_group"] == rg
-    assert Path(result["manifest_path"]).exists()
-
-
-def test_probe_does_not_raise_on_nonexistent_rg():
-    """Probe a nonexistent RG: must return shape with probe_error, not raise."""
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    result = probe(subscription_id=sub, resource_group="rg-does-not-exist-xyz123")
-    # Either the SDK returns empty (no error) or surfaces an error in probe_error
-    assert "summary" in result
-    # Both outcomes are acceptable: empty findings OR probe_error
-```
-
-- [ ] **Step 2: Commit**
-
+Run:
 ```bash
-git add scripts/tests/test_e2e_foundry_rbac_audit.py
-git commit -m "foundry-rbac-audit: add E2E Azure test (AGENTS.md §2.8)
-
-Three tests: credential chain resolves, probe against CI_RESOURCE_GROUP
-returns documented shape with manifest written, probe on nonexistent
-RG never raises.
-
-Skipped locally without AZURE_* env vars; runs in skill-test.yml
-e2e-azure job with OIDC credentials.
-
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+az account show --output table 2>&1 | head -5
 ```
+
+If any env var is empty OR `az account show` errors, write
+`§2.9 evidence: deferred to CI gate / human validation` in your notes
+for the PR body and proceed to Task 1.7. Do NOT attempt to fabricate
+evidence — the human reviewer will run Steps 2-4 manually.
+
+- [ ] **Step 2: Path 1 — live probe against a real RG**
+
+Run:
+```bash
+python skills/foundry-rbac-audit/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" \
+  --rg  "<ci-resource-group>" 2>&1 | tee /tmp/rbac-evidence-1.txt | head -40
+```
+
+Expected: JSON with `finding_id`, `skill: foundry-rbac-audit`,
+`subscription_id`, `resource_group`, `findings: [...]`, `summary: {...}`,
+`manifest_path: /tmp/...`, `probed_at: <iso>`. Capture the full stdout
+for the PR body under `§2.9 evidence — path 1: real RG`.
+
+- [ ] **Step 3: Path 2 — never-raises invariant on nonexistent RG**
+
+Run:
+```bash
+python skills/foundry-rbac-audit/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" \
+  --rg  "rg-does-not-exist-xyz123" 2>&1 | tee /tmp/rbac-evidence-2.txt | head -40
+```
+
+Expected: JSON shape with `findings: []` OR shape with
+`probe_error: "<message containing ResourceGroupNotFound or similar>"`.
+A Python traceback is a FAIL. Capture stdout for the PR body under
+`§2.9 evidence — path 2: nonexistent RG (never-raises invariant)`.
+
+- [ ] **Step 4: Path 3 — credential fallback (AzureCliCredential path)**
+
+Run:
+```bash
+env -u AZURE_CLIENT_ID -u AZURE_CLIENT_SECRET -u AZURE_TENANT_ID \
+  python skills/foundry-rbac-audit/references/python/__main__.py \
+    --sub "$AZURE_SUBSCRIPTION_ID" \
+    --rg  "<ci-resource-group>" 2>&1 | tee /tmp/rbac-evidence-3.txt | head -40
+```
+
+Expected: still succeeds via `DefaultAzureCredential`'s
+`AzureCliCredential` fallback (assumes you're `az login`'d locally).
+Capture under `§2.9 evidence — path 3: credential fallback`.
+
+- [ ] **Step 5: No commit; evidence travels in the PR body**
+
+Stash `/tmp/rbac-evidence-*.txt` for the PR description draft in Task 3.7.
 
 ### Task 1.7: Copilot-CLI fixture
 
@@ -1650,71 +1639,42 @@ Description ≤1024 chars per AGENTS.md §2.3. Cross-refs into peer skills
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
-### Task 2.6: E2E test + Copilot-CLI fixture
+### Task 2.6: §2.9 live-test evidence + Copilot-CLI fixture
 
 **Files:**
-- Create: `scripts/tests/test_e2e_azure_monitor_alert_baseline.py`
 - Create: `skills/azure-monitor-alert-baseline/test-fixture/consumer_prompt.md`
 
-- [ ] **Step 1: E2E test (mirror Task 1.6)**
+**Background:** Same as Task 1.6 — no `test_e2e_*.py` file. §2.9 evidence
+captured in PR body.
 
-```python
-"""E2E test for azure-monitor-alert-baseline against real Azure resources."""
-from __future__ import annotations
+- [ ] **Step 1: §2.9 live-test evidence (mirror Task 1.6 Steps 1-5)**
 
-import os
+Run the same auth-context check, then 3 paths:
+
+```bash
+# Path 1 — real RG + foundry_pilot baseline
+python skills/azure-monitor-alert-baseline/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "<ci-resource-group>" \
+  --baseline foundry_pilot 2>&1 | tee /tmp/amab-evidence-1.txt | head -50
+
+# Path 2 — all 3 baselines loadable (no Azure call needed for this one)
+python -c "
 import sys
-from pathlib import Path
+sys.path.insert(0, 'skills/azure-monitor-alert-baseline/references/python')
+from probe import load_baseline
+for n in ('foundry_pilot', 'spoke_minimum', 'production'):
+    b = load_baseline(n)
+    print(f'{n}: {len(b[\"required_alerts\"])} required alerts')
+" 2>&1 | tee /tmp/amab-evidence-2.txt
 
-import pytest
-
-SKILL_DIR = (Path(__file__).resolve().parents[1].parent
-             / "skills" / "azure-monitor-alert-baseline" / "references" / "python")
-sys.path.insert(0, str(SKILL_DIR))
-
-
-def _has_azure_env() -> bool:
-    return all(os.environ.get(k) for k in
-               ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"))
-
-
-pytestmark = pytest.mark.skipif(
-    not _has_azure_env(),
-    reason="Requires AZURE_* env vars (CI-only; AGENTS.md §9.7)"
-)
-
-
-def test_credential_chain_resolves():
-    from azure.identity import DefaultAzureCredential
-    cred = DefaultAzureCredential()
-    token = cred.get_token("https://management.azure.com/.default")
-    assert token.token
-
-
-def test_probe_against_ci_rg_with_foundry_pilot_baseline():
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    rg = os.environ.get("CI_RESOURCE_GROUP", "")
-    if not rg:
-        pytest.skip("CI_RESOURCE_GROUP not set")
-
-    result = probe(subscription_id=sub, resource_group=rg, baseline="foundry_pilot")
-    required = {"finding_id", "skill", "subscription_id", "resource_group",
-                "baseline", "findings", "summary", "manifest_path", "probed_at"}
-    assert required.issubset(result.keys())
-    assert result["skill"] == "azure-monitor-alert-baseline"
-    assert result["baseline"] == "foundry_pilot"
-    assert Path(result["manifest_path"]).exists()
-
-
-def test_all_three_baselines_loadable():
-    from probe import load_baseline
-    for name in ("foundry_pilot", "spoke_minimum", "production"):
-        b = load_baseline(name)
-        assert b["baseline_name"] == name
-        assert isinstance(b.get("required_alerts"), list)
+# Path 3 — nonexistent RG never-raises
+python skills/azure-monitor-alert-baseline/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "rg-does-not-exist-xyz123" \
+  --baseline spoke_minimum 2>&1 | tee /tmp/amab-evidence-3.txt | head -30
 ```
+
+Capture stdout in PR body under `§2.9 evidence — path 1/2/3`. Skip
+entirely if no CI auth (document deferral, as in Task 1.6).
 
 - [ ] **Step 2: Copilot-CLI fixture (mirror Task 1.7)**
 
@@ -1788,13 +1748,13 @@ printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/azure-monitor-alert-baseli
 - [ ] **Step 3: Commit**
 
 ```bash
-git add scripts/tests/test_e2e_azure_monitor_alert_baseline.py \
-        skills/azure-monitor-alert-baseline/test-fixture/consumer_prompt.md
-git commit -m "azure-monitor-alert-baseline: add E2E test + Copilot-CLI fixture
+git add skills/azure-monitor-alert-baseline/test-fixture/consumer_prompt.md
+git commit -m "azure-monitor-alert-baseline: add Copilot-CLI fixture
 
-E2E covers credential chain, probe against CI_RESOURCE_GROUP with
-foundry_pilot baseline, all 3 baselines loadable. Fixture follows
-AGENTS.md §9.7 Patterns 12/19/22/27.
+Fixture follows AGENTS.md §9.7 Patterns 12/19/22/27. §2.9 live-test
+evidence captured in PR body (per Slice A/B precedent; no test_e2e_*.py
+file — skill-test.yml line 9: 'we deliberately do NOT run pytest-based
+e2e tests').
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
@@ -1858,27 +1818,16 @@ git commit -m "build-site: add foundry-rbac-audit + azure-monitor-alert-baseline
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
-### Task 3.3: Wire E2E tests into `skill-test.yml`
+### Task 3.3: ~~Wire E2E tests into `skill-test.yml`~~ (DROPPED — drift pivot)
 
-**Files:**
-- Modify: `.github/workflows/skill-test.yml`
+**This task is intentionally dropped.** `skill-test.yml` has no `e2e-azure`
+job to extend — line 9 reads "We deliberately do NOT run pytest-based e2e
+tests or pin-import smoke." The Copilot-CLI fixture matrix (`copilot-cli-matrix`)
+is wired automatically via `.github/skill-deps.yml` (Task 3.1) and the
+matrix-builder's "all fixtured skills" set. Both new skills' fixtures will
+appear in the next PR-triggered matrix run without a workflow edit.
 
-- [ ] **Step 1: Inspect e2e-azure job structure**
-
-Run: `grep -nA5 "test_e2e_" .github/workflows/skill-test.yml | head -40`
-
-- [ ] **Step 2: Add the two new test files to the e2e-azure matrix**
-
-Mirror the shape used for existing E2E tests (e.g. `test_e2e_prompt_agents.py`). The list lives in the workflow's matrix or in a `pytest scripts/tests/test_e2e_*.py` glob — pick the convention already in use.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add .github/workflows/skill-test.yml
-git commit -m "skill-test: add e2e-azure entries for two new Slice C skills
-
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
-```
+Skip to Task 3.4.
 
 ### Task 3.4: Plugin MINOR bump + AGENTS.md §12.5 stats update
 
@@ -1901,8 +1850,8 @@ Update:
 - `Total skills | 27` → `29`
 - `Skills with upstream pins | 23` → `25`
 - `Auto-tier (CI can refresh autonomously) | 21` → `23`
-- `Unit tests | 73 (...)` → bump by the count added (≈ 6 + 7 unit + 3 + 3 E2E = ~19 → ~92)
-- `Azure E2E resources` row unchanged.
+- `Unit tests | 73 (...)` → bump by the count added (≈ 6 + 7 unit = ~13 → ~86)
+- `Azure E2E resources` row unchanged (no pytest-based E2E added; §2.9 evidence captured in PR body per Slice A/B precedent).
 
 - [ ] **Step 3: Validate**
 
@@ -1922,7 +1871,7 @@ git commit -m "plugin: MINOR bump for v0.6.0 Slice C (27 → 29 skills)
 
 Adds foundry-rbac-audit + azure-monitor-alert-baseline. AGENTS.md §12.5
 catalog stats updated to reflect 29 skills, 25 pins, 23 auto-tier, and
-the new unit + E2E test counts.
+the new unit test counts.
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
@@ -1956,7 +1905,7 @@ python -m pytest scripts/tests/test_unit_foundry_rbac_audit.py \
                   scripts/tests/test_unit_azure_monitor_alert_baseline.py -v 2>&1 | tail -20
 ```
 
-Expected: all PASS.
+Expected: all PASS. (No E2E tests in this set — §2.9 evidence lives in PR body.)
 
 - [ ] **Step 2: Forbidden-string sweep** (per AGENTS.md §2.1)
 
@@ -2002,25 +1951,30 @@ Body skeleton:
   `references/baselines/`.
 - **Plugin** — MINOR bump (catalog 27 → 29).
 - **AGENTS.md §12.5** — stats updated.
-- **CI** — 2 new pytest unit files (13 tests) + 2 new E2E tests in
-  `skill-test.yml` e2e-azure matrix. 2 new Copilot-CLI fixtures
-  registered via `.github/skill-deps.yml`.
+- **CI** — 2 new pytest unit files (~13 tests). 2 new Copilot-CLI
+  fixtures registered via `.github/skill-deps.yml` (auto-included in
+  `copilot-cli-matrix` on next PR). No `scripts/tests/test_e2e_*.py`
+  files (per Slice A/B precedent + `skill-test.yml` line 9).
 
 ## Test plan
 
-- Unit: 13 pytest tests across 2 files, all PASS.
+- Unit: ~13 pytest tests across 2 files, all PASS.
 - `validate-skills.py` PASS.
 - `build-plugins.py --check` PASS.
-- E2E: skipped locally without AZURE_* env vars; runs in CI's
-  `e2e-azure` job with OIDC credentials.
+- §2.9 live-test evidence: 3 paths each (real RG, never-raises, cred
+  fallback) captured in PR body below. If executor lacks Azure auth
+  locally, evidence is deferred to CI matrix run + human reviewer.
 - Copilot-CLI fixtures: 2 new matrix legs (max-parallel: 2 per
   Pattern 22 — neither adds parallelism load).
 
 ## Live Azure testing (AGENTS.md §2.9)
 
-Both probes call real Azure mgmt APIs. The E2E tests (Task 1.6, 2.6)
-exercise the credential chain + SDK surface + probe path against the
-CI `<ci-resource-group>`. Will be re-run as part of CI gate review.
+Both probes call real Azure mgmt APIs. §2.9 evidence captured directly
+in the PR body via Tasks 1.6 and 2.6 (Slice A/B precedent — no
+`scripts/tests/test_e2e_*.py` files; the catalog removed pytest-based
+E2E and `skill-test.yml` line 9 reads "We deliberately do NOT run
+pytest-based e2e tests"). Human reviewer re-runs paths as part of gate
+review before merge.
 
 ## Commit tags
 
@@ -2043,7 +1997,9 @@ commit list (will be ~16 commits in this slice), test results.
 - [ ] Both skills have `metadata.version: "1.0.0"` per AGENTS.md §5.
 - [ ] Pin files schema v2 with `runnable: true`, `requires: ["pypi"]`.
 - [ ] Pin install commands use `~=X.Y.Z` (AGENTS.md §9.5 cap policy).
-- [ ] Both E2E tests are skipped without AZURE_* env vars (CI-only).
+- [ ] §2.9 live-test evidence captured in PR body for both probes (3
+      paths each: real RG, never-raises, cred fallback) — OR explicit
+      "deferred to CI / human reviewer" if executor lacks Azure auth.
 - [ ] Both fixtures include §9.7 Patterns 12, 19-addendum-v2, 27, plus
       Step −1 echo-not-view to keep per-turn upload ≤150K tokens
       (AGENTS.md §9.7 Pattern 19 addendum + #243).
@@ -2051,7 +2007,7 @@ commit list (will be ~16 commits in this slice), test results.
       `<sub-id>`, `<rg>`).
 - [ ] `.github/skill-deps.yml` updated for both.
 - [ ] `scripts/build-site.py CATEGORIES` updated for both.
-- [ ] `skill-test.yml e2e-azure` matrix extended for both.
+- [ ] ~~`skill-test.yml e2e-azure` matrix extended~~ — N/A; Task 3.3 dropped per drift pivot. The two new fixtures auto-enroll in `copilot-cli-matrix` via Task 3.1.
 - [ ] `plugin.json` + `marketplace.json` MINOR bumped in lockstep.
 - [ ] `AGENTS.md §12.5` stats accurate.
 - [ ] Docs site rebuilt and committed.
@@ -2063,8 +2019,8 @@ commit list (will be ~16 commits in this slice), test results.
 Slice C is "done" when:
 1. PR merged to `main`.
 2. CI green across `skill-validation.yml`, `automation-pr-gate.yml`,
-   `pin-validation.yml`, and `skill-test.yml` (pin-smoke + e2e-azure +
-   2 new copilot-cli-matrix legs).
+   `pin-validation.yml`, and `skill-test.yml` (pin-smoke + 2 new
+   copilot-cli-matrix legs). No e2e-azure leg (catalog dropped it).
 3. Threadlight unblocked to open v0.5.3 flip PR for SEC-301 + OBS-203.
 4. The two skills appear on the live docs site at
    `aiappsgbb.github.io/awesome-gbb`.

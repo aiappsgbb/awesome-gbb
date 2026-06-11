@@ -24,8 +24,15 @@
 - `skills/azure-backup-readiness/references/python/probe.py`
 - `skills/azure-backup-readiness/references/python/__main__.py`
 - `skills/azure-backup-readiness/test-fixture/consumer_prompt.md`
-- `scripts/tests/test_e2e_azure_backup_readiness.py`
 - `scripts/tests/test_unit_azure_backup_readiness.py`
+
+> **Drift pivot (post Slice A/B merge):** `scripts/tests/test_e2e_*.py`
+> was deleted upstream and `skill-test.yml` line 9 reads "We deliberately
+> do NOT run pytest-based e2e tests." Both Slice A (#279) and Slice B
+> (#281) shipped with unit tests only + §2.9 live evidence in the PR
+> body — no `test_e2e_*.py` files. This plan mirrors that pattern:
+> Tasks 1.5 and 2.5 are now §2.9 live-evidence + fixture tasks, and
+> Task 3.3 is dropped (no e2e-azure matrix to wire into).
 
 **Create — `azure-resource-diagnostics/`:**
 - `skills/azure-resource-diagnostics/SKILL.md`
@@ -35,13 +42,11 @@
 - `skills/azure-resource-diagnostics/references/python/probe.py`
 - `skills/azure-resource-diagnostics/references/python/__main__.py`
 - `skills/azure-resource-diagnostics/test-fixture/consumer_prompt.md`
-- `scripts/tests/test_e2e_azure_resource_diagnostics.py`
 - `scripts/tests/test_unit_azure_resource_diagnostics.py`
 
 **Modify:**
 - `scripts/build-site.py` (add both to `CATEGORIES`)
 - `.github/skill-deps.yml` (two new entries, `depends_on: []`)
-- `.github/workflows/skill-test.yml` (e2e-azure matrix +2)
 - `plugin.json` (MINOR bump; catalog 29 → 31)
 - `.github/plugin/marketplace.json` (MINOR matched)
 - `AGENTS.md` (§12.5 stats: 29 → 31 skills)
@@ -778,71 +783,55 @@ Description ≤1024 chars per AGENTS.md §2.3.
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
-### Task 1.5: E2E test + Copilot-CLI fixture
+### Task 1.5: §2.9 live-test evidence + Copilot-CLI fixture
 
 **Files:**
-- Create: `scripts/tests/test_e2e_azure_backup_readiness.py`
 - Create: `skills/azure-backup-readiness/test-fixture/consumer_prompt.md`
 
-- [ ] **Step 1: E2E test**
+**Background:** Per AGENTS.md §2.9 and Slice A (PR #279) / Slice B
+(PR #281) precedent, live Azure testing is captured as evidence in the
+PR body — no `scripts/tests/test_e2e_*.py` file. Skip Step 1 entirely if
+you don't have CI Azure credentials locally; document "§2.9 evidence
+deferred to CI / human-validated" in the PR body.
 
-```python
-"""E2E test for azure-backup-readiness against real Azure resources."""
-from __future__ import annotations
+- [ ] **Step 1: §2.9 live-test evidence (3 paths)**
 
-import os
-import sys
-from pathlib import Path
+Verify auth context first:
 
-import pytest
-
-SKILL_DIR = (Path(__file__).resolve().parents[1].parent
-             / "skills" / "azure-backup-readiness" / "references" / "python")
-sys.path.insert(0, str(SKILL_DIR))
-
-
-def _has_azure_env() -> bool:
-    return all(os.environ.get(k) for k in
-               ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"))
-
-
-pytestmark = pytest.mark.skipif(
-    not _has_azure_env(),
-    reason="Requires AZURE_* env vars (CI-only; AGENTS.md §9.7)"
-)
-
-
-def test_credential_chain_resolves():
-    from azure.identity import DefaultAzureCredential
-    cred = DefaultAzureCredential()
-    token = cred.get_token("https://management.azure.com/.default")
-    assert token.token
-
-
-def test_probe_against_ci_rg():
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    rg = os.environ.get("CI_RESOURCE_GROUP", "")
-    if not rg:
-        pytest.skip("CI_RESOURCE_GROUP not set")
-
-    result = probe(subscription_id=sub, resource_group=rg)
-    required = {"finding_id", "skill", "subscription_id", "resource_group",
-                "vaults", "findings", "summary", "manifest_path", "probed_at"}
-    assert required.issubset(result.keys())
-    assert result["skill"] == "azure-backup-readiness"
-    assert Path(result["manifest_path"]).exists()
-
-
-def test_probe_does_not_raise_on_nonexistent_rg():
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    result = probe(subscription_id=sub, resource_group="rg-does-not-exist-xyz123")
-    assert "summary" in result
-    # Either empty findings OR probe_error — both acceptable per never-raises
+```bash
+echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+az account show --output table 2>&1 | head -5
 ```
+
+If any empty / `az account show` errors, skip to Step 2 and record
+"§2.9 evidence deferred" for the PR body.
+
+Otherwise run the 3 paths:
+
+```bash
+# Path 1 — real RG (both vault types probed; one may be empty cleanly)
+python skills/azure-backup-readiness/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "<ci-resource-group>" 2>&1 \
+  | tee /tmp/abr-evidence-1.txt | head -50
+
+# Path 2 — nonexistent RG never-raises invariant
+python skills/azure-backup-readiness/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "rg-does-not-exist-xyz123" 2>&1 \
+  | tee /tmp/abr-evidence-2.txt | head -30
+
+# Path 3 — cred fallback (AzureCliCredential)
+env -u AZURE_CLIENT_ID -u AZURE_CLIENT_SECRET -u AZURE_TENANT_ID \
+  python skills/azure-backup-readiness/references/python/__main__.py \
+    --sub "$AZURE_SUBSCRIPTION_ID" --rg "<ci-resource-group>" 2>&1 \
+    | tee /tmp/abr-evidence-3.txt | head -30
+```
+
+Expected: each prints JSON with `finding_id`, `skill: azure-backup-readiness`,
+`vaults: [...]`, `findings: [...]`, `summary: {...}`, `manifest_path`,
+`probed_at`. A Python traceback on any path is a FAIL. Capture stdout
+in PR body under `§2.9 evidence — path 1/2/3`.
 
 - [ ] **Step 2: Copilot-CLI fixture**
 
@@ -916,11 +905,12 @@ printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/azure-backup-readiness-smo
 - [ ] **Step 3: Commit**
 
 ```bash
-git add scripts/tests/test_e2e_azure_backup_readiness.py \
-        skills/azure-backup-readiness/test-fixture/consumer_prompt.md
-git commit -m "azure-backup-readiness: add E2E test + Copilot-CLI fixture
+git add skills/azure-backup-readiness/test-fixture/consumer_prompt.md
+git commit -m "azure-backup-readiness: add Copilot-CLI fixture
 
-AGENTS.md §9.7 Patterns 12/19/22/27.
+Fixture follows AGENTS.md §9.7 Patterns 12/19/22/27. §2.9 live-test
+evidence captured in PR body per Slice A/B precedent (no test_e2e_*.py
+file — catalog removed pytest-based E2E; skill-test.yml line 9).
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
@@ -1584,77 +1574,42 @@ Per spec §4.4 Q-D2: any destination counts as configured. Description
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
-### Task 2.5: E2E test + Copilot-CLI fixture
+### Task 2.5: §2.9 live-test evidence + Copilot-CLI fixture
 
 **Files:**
-- Create: `scripts/tests/test_e2e_azure_resource_diagnostics.py`
 - Create: `skills/azure-resource-diagnostics/test-fixture/consumer_prompt.md`
 
-- [ ] **Step 1: E2E test**
+**Background:** Same as Task 1.5 — no `test_e2e_*.py` file; §2.9 evidence
+in PR body.
 
-```python
-"""E2E test for azure-resource-diagnostics against real Azure resources."""
-from __future__ import annotations
+- [ ] **Step 1: §2.9 live-test evidence (3 paths)**
 
-import os
-import sys
-from pathlib import Path
+Verify auth context first (mirror Task 1.5 Step 1 preamble). Then:
 
-import pytest
+```bash
+# Path 1 — real RG, no filter (probes all resources)
+python skills/azure-resource-diagnostics/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "<ci-resource-group>" 2>&1 \
+  | tee /tmp/ard-evidence-1.txt | head -50
 
-SKILL_DIR = (Path(__file__).resolve().parents[1].parent
-             / "skills" / "azure-resource-diagnostics" / "references" / "python")
-sys.path.insert(0, str(SKILL_DIR))
+# Path 2 — kind-filter on Foundry account (exercises the --kind flag)
+python skills/azure-resource-diagnostics/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "<ci-resource-group>" \
+  --kind "Microsoft.CognitiveServices/accounts" 2>&1 \
+  | tee /tmp/ard-evidence-2.txt | head -40
 
-
-def _has_azure_env() -> bool:
-    return all(os.environ.get(k) for k in
-               ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"))
-
-
-pytestmark = pytest.mark.skipif(
-    not _has_azure_env(),
-    reason="Requires AZURE_* env vars (CI-only; AGENTS.md §9.7)"
-)
-
-
-def test_credential_chain_resolves():
-    from azure.identity import DefaultAzureCredential
-    cred = DefaultAzureCredential()
-    token = cred.get_token("https://management.azure.com/.default")
-    assert token.token
-
-
-def test_probe_against_ci_rg():
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    rg = os.environ.get("CI_RESOURCE_GROUP", "")
-    if not rg:
-        pytest.skip("CI_RESOURCE_GROUP not set")
-
-    result = probe(subscription_id=sub, resource_group=rg)
-    required = {"finding_id", "skill", "subscription_id", "resource_group",
-                "resources", "findings", "summary", "manifest_path", "probed_at"}
-    assert required.issubset(result.keys())
-    assert result["skill"] == "azure-resource-diagnostics"
-    assert Path(result["manifest_path"]).exists()
-
-
-def test_probe_with_kind_filter():
-    """Filter by Microsoft.CognitiveServices/accounts (Foundry account exists in CI RG)."""
-    from probe import probe
-
-    sub = os.environ["AZURE_SUBSCRIPTION_ID"]
-    rg = os.environ.get("CI_RESOURCE_GROUP", "")
-    if not rg:
-        pytest.skip("CI_RESOURCE_GROUP not set")
-
-    result = probe(subscription_id=sub, resource_group=rg,
-                    resource_kinds=["Microsoft.CognitiveServices/accounts"])
-    assert all(r["type"].lower() == "microsoft.cognitiveservices/accounts"
-               for r in result["resources"])
+# Path 3 — nonexistent RG never-raises invariant
+python skills/azure-resource-diagnostics/references/python/__main__.py \
+  --sub "$AZURE_SUBSCRIPTION_ID" --rg "rg-does-not-exist-xyz123" 2>&1 \
+  | tee /tmp/ard-evidence-3.txt | head -30
 ```
+
+Expected: each prints JSON with `finding_id`, `skill: azure-resource-diagnostics`,
+`resources: [...]`, `findings: [...]`. Path 2 must return only resources
+whose `type.lower()` matches `microsoft.cognitiveservices/accounts`.
+A Python traceback on any path is a FAIL. Capture in PR body under
+`§2.9 evidence — path 1/2/3`. Skip entirely if no auth (document
+deferral).
 
 - [ ] **Step 2: Fixture**
 
@@ -1725,11 +1680,12 @@ printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/azure-resource-diagnostics
 - [ ] **Step 3: Commit**
 
 ```bash
-git add scripts/tests/test_e2e_azure_resource_diagnostics.py \
-        skills/azure-resource-diagnostics/test-fixture/consumer_prompt.md
-git commit -m "azure-resource-diagnostics: add E2E test + Copilot-CLI fixture
+git add skills/azure-resource-diagnostics/test-fixture/consumer_prompt.md
+git commit -m "azure-resource-diagnostics: add Copilot-CLI fixture
 
-AGENTS.md §9.7 Patterns 12/19/22/27.
+Fixture follows AGENTS.md §9.7 Patterns 12/19/22/27. §2.9 live-test
+evidence captured in PR body per Slice A/B precedent (no test_e2e_*.py
+file).
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
@@ -1779,23 +1735,12 @@ git commit -m "build-site: add azure-backup-readiness + azure-resource-diagnosti
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
-### Task 3.3: Wire E2E tests into `skill-test.yml`
+### Task 3.3: ~~Wire E2E tests into `skill-test.yml`~~ (DROPPED — drift pivot)
 
-**Files:**
-- Modify: `.github/workflows/skill-test.yml`
-
-- [ ] **Step 1: Add the two new test files to the e2e-azure matrix**
-
-Mirror the shape used in Slice C.
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add .github/workflows/skill-test.yml
-git commit -m "skill-test: add e2e-azure entries for Slice D's two new skills
-
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
-```
+**This task is intentionally dropped.** Same as Slice C Task 3.3: the
+catalog has no `e2e-azure` job. The two new fixtures auto-enroll in
+`copilot-cli-matrix` via `.github/skill-deps.yml` (Task 3.1). Skip to
+Task 3.4.
 
 ### Task 3.4: Plugin MINOR bump + AGENTS.md §12.5 stats update
 
@@ -1863,7 +1808,7 @@ python -m pytest scripts/tests/test_unit_azure_backup_readiness.py \
                   scripts/tests/test_unit_azure_resource_diagnostics.py -v 2>&1 | tail -20
 ```
 
-Expected: all PASS.
+Expected: all PASS. (No E2E tests in this set — §2.9 evidence lives in PR body per Slice A/B precedent.)
 
 - [ ] **Step 2: Forbidden-string sweep**
 
@@ -1913,9 +1858,10 @@ Body skeleton:
   (LAW / EventHubs / Storage). Optional `--kind` filter.
 - **Plugin** — MINOR bump (catalog 29 → 31).
 - **AGENTS.md §12.5** — stats updated.
-- **CI** — 2 new pytest unit files (13 tests) + 2 new E2E tests in
-  `skill-test.yml` e2e-azure matrix. 2 new Copilot-CLI fixtures
-  registered via `.github/skill-deps.yml`.
+- **CI** — 2 new pytest unit files (~13 tests). 2 new Copilot-CLI
+  fixtures registered via `.github/skill-deps.yml` (auto-included in
+  `copilot-cli-matrix` on next PR). No `scripts/tests/test_e2e_*.py`
+  files (per Slice A/B/C precedent + `skill-test.yml` line 9).
 
 ## v0.6.0 cut
 
@@ -1925,19 +1871,21 @@ threadlight v0.5.4 closes the last two `kind: manual` siblings
 
 ## Test plan
 
-- Unit: 13 pytest tests across 2 files, all PASS.
+- Unit: ~13 pytest tests across 2 files, all PASS.
 - `validate-skills.py` PASS.
 - `build-plugins.py --check` PASS.
-- E2E: skipped locally without AZURE_* env vars; runs in CI's
-  `e2e-azure` job with OIDC credentials.
+- §2.9 live-test evidence: 3 paths each (real RG / nonexistent RG /
+  cred fallback or kind-filter) captured in PR body below. If executor
+  lacks Azure auth locally, evidence is deferred to CI matrix run +
+  human reviewer.
 
 ## Live Azure testing (AGENTS.md §2.9)
 
-Both probes call real Azure mgmt APIs. The E2E tests (Task 1.5, 2.5)
-exercise the credential chain + SDK surface + probe path against the
-CI `<ci-resource-group>`. Backup probe specifically validates the
-both-vault-types code path even when the CI RG only has one vault
-kind (the other class returns empty cleanly).
+Both probes call real Azure mgmt APIs. §2.9 evidence captured directly
+in the PR body via Tasks 1.5 and 2.5 (Slice A/B/C precedent — no
+`scripts/tests/test_e2e_*.py` files). Backup probe specifically
+validates the both-vault-types code path even when the CI RG only has
+one vault kind (the other class returns empty cleanly).
 
 ## Commit tags
 
@@ -1963,14 +1911,16 @@ commit list (~16 commits), test results.
       Vault (azure-mgmt-dataprotection) per Q-D1 locked decision.
 - [ ] Diagnostics probe: ANY destination counts (LAW / EventHubs /
       Storage) per Q-D2 locked decision.
-- [ ] Both E2E tests skipped without AZURE_* env vars.
+- [ ] §2.9 live-test evidence captured in PR body for both probes (3
+      paths each) — OR explicit "deferred to CI / human reviewer" if
+      executor lacks Azure auth.
 - [ ] Both fixtures include Patterns 12, 19-addendum-v2, 27 and Step −1
       echo-not-view.
 - [ ] No identifier leaks (placeholders only — `<ci-resource-group>`,
       `<sub-id>`, `<rg>`).
 - [ ] `.github/skill-deps.yml` updated for both.
 - [ ] `scripts/build-site.py CATEGORIES` updated for both.
-- [ ] `skill-test.yml e2e-azure` matrix extended for both.
+- [ ] ~~`skill-test.yml e2e-azure` matrix extended~~ — N/A; Task 3.3 dropped per drift pivot. Fixtures auto-enroll in `copilot-cli-matrix` via Task 3.1.
 - [ ] `plugin.json` + `marketplace.json` MINOR bumped in lockstep
       (catalog 29 → 31, builds on Slice C's 27 → 29).
 - [ ] `AGENTS.md §12.5` stats accurate (31 / 27 / 25).
