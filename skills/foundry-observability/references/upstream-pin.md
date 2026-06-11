@@ -15,6 +15,15 @@ packages:
     upstream_changelog: https://pypi.org/project/azure-monitor-opentelemetry/#history
     notes: |
       Single dependency recorded in SKILL.md; it transitively pins compatible opentelemetry-* packages and Azure Monitor exporters.
+  - name: azure-monitor-query
+    source: pypi
+    version: "~=1.4.0"
+    upstream_changelog: https://pypi.org/project/azure-monitor-query/#history
+    notes: |
+      Used by kql_probes.py + kql_probes_aio.py for trace_freshness,
+      exception_rate, rai_denials, agt_denials, rate_limit_events.
+      Sync uses azure.monitor.query.LogsQueryClient; async uses
+      azure.monitor.query.aio.LogsQueryClient.
 
 docs_to_revalidate:
   - https://learn.microsoft.com/azure/azure-monitor/app/create-workspace-resource
@@ -48,15 +57,17 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-monitor-opentelemetry~=1.8.8"
+    pip install --quiet "azure-monitor-opentelemetry~=1.8.8" "azure-monitor-query~=1.4.0"
     python - <<'PY'
     from azure.monitor.opentelemetry import configure_azure_monitor
+    from azure.monitor.query import LogsQueryClient
+    from azure.monitor.query.aio import LogsQueryClient as AsyncLogsQueryClient
     print("ok foundry-observability imports")
     PY
   expected_output:
     - "ok foundry-observability imports"
 
-last_validated: 2026-05-26
+last_validated: 2026-06-11
 validated_by: copilot-bot
 known_issues_count: 1
 ---
