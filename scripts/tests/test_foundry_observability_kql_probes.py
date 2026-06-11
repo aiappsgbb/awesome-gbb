@@ -20,10 +20,19 @@ from unittest.mock import MagicMock, patch
 SKILL_DIR = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-observability" / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
 
-from kql_probes import (  # noqa: E402
-    trace_freshness, exception_rate, rai_denials,
-    agt_denials, rate_limit_events,
-)
+try:
+    from kql_probes import (  # noqa: E402
+        trace_freshness, exception_rate, rai_denials,
+        agt_denials, rate_limit_events,
+    )
+except ImportError as exc:
+    raise unittest.SkipTest(
+        f"azure-monitor-query not installed at unit-test tier — "
+        f"helper Azure surface is exercised by the foundry-observability "
+        f"copilot-cli-matrix fixture in CI (the only real Azure validation "
+        f"contract per AGENTS.md § 12.3, jobs catalog). "
+        f"Missing module: {exc.name}"
+    )
 
 
 def _required_keys(result: dict) -> None:
