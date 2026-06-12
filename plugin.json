@@ -1,6 +1,6 @@
 {
   "name": "awesome-gbb",
-  "version": "4.18.0",
+  "version": "4.18.1",
   "description": "Microsoft AI Apps GBB skills catalog — 29 reusable building blocks for Copilot-assisted engagements. Covers Azure infra (azd, Bicep, ACA), Foundry agents (prompt agents, hosted agents, routines, RAG, MCP, evals, observability, network runbook), governance (Citadel, AGT), cost analysis, tenant isolation, and enterprise automation. Threadlight pipeline skills moved to threadlight-skills. Zava digital-clone skills moved to zava-constellation. USE FOR: any pre-sales engagement, pilot, PoC, or demo that involves Azure AI, Foundry, or Copilot CLI workflows. DO NOT USE FOR: Threadlight pipeline (use threadlight-skills), Zava workspace (use zava-constellation).",
   "author": {
     "name": "Microsoft AI Apps GBB",
