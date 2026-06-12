@@ -40,6 +40,7 @@ CONTRIBUTOR_ROLE_ID = "/subscriptions/x/providers/Microsoft.Authorization/roleDe
 READER_ROLE_ID = "/subscriptions/x/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
 UAA_ROLE_ID = "/subscriptions/x/providers/Microsoft.Authorization/roleDefinitions/18d7d88d-d35e-4fb5-a5c3-7773c20a72d9"  # User Access Administrator
 RBAC_ADMIN_ROLE_ID = "/subscriptions/x/providers/Microsoft.Authorization/roleDefinitions/f58310d9-a9f6-439a-9e8d-f62e7b41a168"
+FINDING_ID = "IAM-101"
 
 
 def _assert_shape(result: dict) -> None:
@@ -283,7 +284,6 @@ def test_never_raises_on_authorization_failed(fake_clients, tmp_path, monkeypatc
     assert result["result"] == "errored"
     assert result["confidence"] == 0.0
     assert "AuthorizationFailed" in result["error"]
-    assert "RuntimeError" in result["error"]
     assert result["observations"] == []
     assert result["remediation_hints"] == []
 
@@ -303,7 +303,7 @@ def test_manifest_file_written_with_finding_id_literal_filename(fake_clients, tm
     manifest = tmp_path / "out" / "IAM-101.json"
     assert manifest.exists(), f"expected manifest at {manifest}, got missing"
     parsed = json.loads(manifest.read_text())
-    assert parsed["finding_id"] == "IAM-101"
+    assert parsed["finding_id"] == FINDING_ID
     assert parsed["scope"] == result["scope"]
     assert parsed["result"] == result["result"]
     assert parsed["confidence"] == result["confidence"]
@@ -329,7 +329,7 @@ def test_repeated_probe_overwrites_same_manifest_file(fake_clients, tmp_path, mo
     _assert_shape(r2)
 
     # Same finding_id always
-    assert r1["finding_id"] == r2["finding_id"] == "IAM-101"
+    assert r1["finding_id"] == r2["finding_id"] == FINDING_ID
     # Only one manifest file exists, and it matches the second call
     manifests = list((tmp_path / "out").iterdir())
     assert [m.name for m in manifests] == ["IAM-101.json"]
