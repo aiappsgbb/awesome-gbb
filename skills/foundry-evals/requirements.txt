@@ -1,0 +1,9 @@
+# Python dependencies for foundry-evals scripts/
+#
+# Install with: pip install -r skills/foundry-evals/requirements.txt
+
+# Optional: azure-monitor-query is only needed when the App Insights
+# fallback in scripts/last_run.py is exercised (i.e. when
+# APPLICATIONINSIGHTS_CONNECTION_STRING is set).
+azure-monitor-query~=1.4.0
+azure-identity~=1.19.0
