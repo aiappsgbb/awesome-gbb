@@ -26,6 +26,19 @@ _PRINCIPAL_TYPE_MAP = {
     "Group": {"group"},
 }
 
+_OUT_DIR = Path("out")
+_MANIFEST_NAME = "IAM-101.json"
+
+
+def _write_manifest(result: dict) -> None:
+    """Write the result manifest. Swallows I/O errors to preserve probe()'s never-raise contract."""
+    try:
+        _OUT_DIR.mkdir(exist_ok=True)
+        (_OUT_DIR / _MANIFEST_NAME).write_text(json.dumps(result, indent=2))
+    except Exception:
+        # never-raise contract (spec §4.3.1) — manifest absence will surface to the consumer
+        pass
+
 
 def probe(
     subscription_id: str,
@@ -98,9 +111,7 @@ def probe(
             "error": None,
         }
 
-        out_dir = Path("out")
-        out_dir.mkdir(exist_ok=True)
-        (out_dir / "IAM-101.json").write_text(json.dumps(result, indent=2))
+        _write_manifest(result)
 
         return result
 
@@ -117,8 +128,6 @@ def probe(
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-        out_dir = Path("out")
-        out_dir.mkdir(exist_ok=True)
-        (out_dir / "IAM-101.json").write_text(json.dumps(result, indent=2))
+        _write_manifest(result)
 
         return result
