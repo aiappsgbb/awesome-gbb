@@ -135,7 +135,7 @@ threadlight's apply-plan reasoner.
 
 - Orphan principal detection (assignments to deleted Entra IDs) is
   **out of scope** for v1. Threadlight has not requested it.
-- Only RG scope is supported. Subscription-scope and management-group
+- Only RG scope is supported. Subscription scope and management-group
   audits are intentionally excluded — the threadlight use case is
   spoke-RG-bounded.
 - The privilege-escalation role list is hard-coded (3 GUIDs). Custom
