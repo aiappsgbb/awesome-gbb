@@ -1,0 +1,6 @@
+# Python dependencies for foundry-agt scripts/
+#
+# scripts/capability_detector.py is stdlib-only — no pinned deps.
+# This file exists so the catalog convention "every skill with a
+# scripts/ package ships a requirements.txt" is consistent across
+# all extended skills (foundry-observability, foundry-evals, foundry-agt).
