@@ -531,10 +531,12 @@ The validator (`scripts/validate-skills.py`) checks:
    "renamed the section but forgot the header" silent drift).
 
 Python helpers under `references/` — invoked by Copilot-CLI fixtures
-(via Bash tool calls) or by any future test code — MUST be imported via
-`sys.path` injection, never redefined inline. See existing
-`skills/<name>/references/python/*` modules paired with their
-`skills/<name>/test-fixture/consumer_prompt.md` files for the pattern.
+(via Bash tool calls) or by any future test code — MUST be imported as
+real Python modules (package layout, `sys.path` injection, or
+`PYTHONPATH` — whatever fits the host fixture), never redefined inline.
+See existing `skills/<name>/references/python/*` modules paired with
+their `skills/<name>/test-fixture/consumer_prompt.md` files for the
+pattern.
 
 ---
 
