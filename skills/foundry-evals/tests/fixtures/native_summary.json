@@ -1,0 +1,12 @@
+{
+  "run_id": "ci-smoke-eval-abc12345",
+  "completed_at": "2026-06-10T12:30:00+00:00",
+  "spec_section": "9.2",
+  "dataset": "tests/datasets/customer-pilot-smoke.jsonl",
+  "metrics": {
+    "groundedness": {"score": 0.92, "threshold": 0.85, "status": "pass"},
+    "relevance":    {"score": 0.88, "threshold": 0.80, "status": "pass"},
+    "fluency":      {"score": 0.95, "threshold": 0.90, "status": "pass"}
+  },
+  "totals": {"runs": 50, "passes": 48, "failures": 2}
+}
