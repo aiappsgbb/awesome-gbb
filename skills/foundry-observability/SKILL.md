@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.1.5"
+  version: "1.1.6"
 ---
 
 # Foundry Observability
@@ -716,6 +716,49 @@ After wiring all 3 layers, execute this gate:
 4. **If zero rows**: check (a) connection string propagation, (b) RBAC
    assignment, (c) `configure_azure_monitor()` import order — in that
    sequence. Do NOT report "wiring looks correct" without trace evidence.
+
+---
+
+## Reusable KQL probe helpers (v1.1.6+)
+
+The `scripts/kql_probes.py` module exposes five reusable Log Analytics
+probes that other skills (notably `threadlight-production-ready`) can
+import directly:
+
+```python
+from kql_probes import (
+    trace_freshness, exception_rate,
+    rai_denials, agt_denials, rate_limit_events,
+)
+result = trace_freshness(app_insights_id="<resource-id>", hours=24)
+```
+
+Each helper returns:
+
+```python
+{
+    "metric": "<helper_name>",
+    "result": {...} | None,
+    "confidence": "high" | "medium" | "low",
+    "last_probe_at": "<ISO 8601 UTC>",
+    "stale": bool,
+    "error": str | None,    # never raises
+}
+```
+
+**Auth:** `azure.identity.DefaultAzureCredential` (keyless).
+**Minimum RBAC:** `Log Analytics Reader` on the LA workspace (for
+workspace helpers) AND `Monitoring Reader` on the App Insights
+resource (for `trace_freshness` / `exception_rate`).
+
+**Install deps:** `pip install -r requirements.txt`.
+
+**Raw KQL bodies** live under `references/queries/*.kql` so they can
+be lifted into Grafana / a workbook without round-tripping through
+Python.
+
+See `tests/test_kql_probes.py` for the contract assertions each
+helper honors.
 
 ---
 
