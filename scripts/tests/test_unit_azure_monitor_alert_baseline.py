@@ -40,12 +40,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Make the skill's probe importable without a setup.py
-SKILL_DIR = (Path(__file__).resolve().parents[2]
-             / "skills" / "azure-monitor-alert-baseline" / "references" / "python")
-sys.path.insert(0, str(SKILL_DIR))
+# Load the skill's probe.py under a UNIQUE module name to avoid
+# sys.modules collision with foundry-rbac-audit's probe.py when both
+# test files run in the same pytest session. Both modules are named
+# 'probe' on disk — direct `import probe` caches whichever loads
+# first and breaks the second file's monkeypatch.setattr targets.
+import importlib.util  # noqa: E402
 
-from probe import probe  # noqa: E402
+_PROBE_PY = (Path(__file__).resolve().parents[2]
+             / "skills" / "azure-monitor-alert-baseline"
+             / "references" / "python" / "probe.py")
+_spec = importlib.util.spec_from_file_location("alert_probe", _PROBE_PY)
+alert_probe = importlib.util.module_from_spec(_spec)
+sys.modules["alert_probe"] = alert_probe
+_spec.loader.exec_module(alert_probe)
+probe = alert_probe.probe  # alias public function so test bodies stay stable
 
 
 # ---------- shape helpers (assert spec §4.3.1 contract) ----------
@@ -147,9 +156,9 @@ def fake_monitor(monkeypatch):
     monitor = MagicMock(name="MonitorManagementClient")
     # Default: no alerts present
     monitor.metric_alerts.list_by_resource_group.return_value = []
-    monkeypatch.setattr("probe.MonitorManagementClient",
+    monkeypatch.setattr("alert_probe.MonitorManagementClient",
                         lambda credential, subscription_id: monitor)
-    monkeypatch.setattr("probe.DefaultAzureCredential", lambda: MagicMock(name="cred"))
+    monkeypatch.setattr("alert_probe.DefaultAzureCredential", lambda: MagicMock(name="cred"))
     return monitor
 
 
@@ -166,7 +175,7 @@ def test_empty_rg_foundry_pilot_needs_attention_low_confidence(
     """
     monkeypatch.chdir(tmp_path)
     fake_monitor.metric_alerts.list_by_resource_group.return_value = []
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -196,7 +205,7 @@ def test_all_foundry_pilot_alerts_present_at_safe_thresholds_ok(
         _make_alert(name="HighErrorRate",   severity=2, threshold=3.0),
         _make_alert(name="LowAvailability", severity=1, threshold=0.5),
     ]
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -223,7 +232,7 @@ def test_one_baseline_alert_missing(fake_monitor, tmp_path, monkeypatch):
     fake_monitor.metric_alerts.list_by_resource_group.return_value = [
         _make_alert(name="HighErrorRate", severity=2, threshold=3.0),
     ]
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -251,7 +260,7 @@ def test_alert_present_but_threshold_mismatched(fake_monitor, tmp_path, monkeypa
         _make_alert(name="HighErrorRate",   severity=2, threshold=50.0),  # too loose
         _make_alert(name="LowAvailability", severity=1, threshold=0.5),
     ]
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -279,7 +288,7 @@ def test_multiple_alerts_missing_and_mismatched(fake_monitor, tmp_path, monkeypa
         _make_alert(name="HighErrorRate", severity=2, threshold=999.0),
         # LowAvailability is missing entirely
     ]
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -305,7 +314,7 @@ def test_spoke_minimum_baseline_kind_dispatches(fake_monitor, tmp_path, monkeypa
     fake_monitor.metric_alerts.list_by_resource_group.return_value = [
         _make_alert(name="BasicErrorRate", severity=3, threshold=5.0),
     ]
-    monkeypatch.setattr("probe._load_baseline", lambda kind: SPOKE_MINIMUM_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: SPOKE_MINIMUM_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -335,7 +344,7 @@ def test_production_baseline_kind_dispatches(fake_monitor, tmp_path, monkeypatch
         _make_alert(name="LowAvailability", severity=1, threshold=0.5),
         _make_alert(name="HighLatencyP99",  severity=2, threshold=300.0),
     ]
-    monkeypatch.setattr("probe._load_baseline", lambda kind: PRODUCTION_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: PRODUCTION_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -356,7 +365,7 @@ def test_never_raises_on_auth_failure(fake_monitor, tmp_path, monkeypatch):
     as result=errored with the exception class name in the error field.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     # Simulate azure.core.exceptions.ClientAuthenticationError
     from azure.core.exceptions import ClientAuthenticationError
@@ -414,7 +423,7 @@ def test_manifest_file_written_as_sre104_json(fake_monitor, tmp_path, monkeypatc
     """
     monkeypatch.chdir(tmp_path)
     fake_monitor.metric_alerts.list_by_resource_group.return_value = []
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     result = probe(
         subscription_id="sub-id",
@@ -446,7 +455,7 @@ def test_keyword_only_invocation_contract(fake_monitor, tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     fake_monitor.metric_alerts.list_by_resource_group.return_value = []
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
 
     # Positional form must work
     r_pos = probe("sub-id", "rg", "foundry_pilot")
@@ -483,7 +492,7 @@ def test_never_raises_on_generic_sdk_error(fake_monitor, tmp_path, monkeypatch):
     Azure-specific exception classes.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
+    monkeypatch.setattr("alert_probe._load_baseline", lambda kind: FOUNDRY_PILOT_BASELINE)
     fake_monitor.metric_alerts.list_by_resource_group.side_effect = RuntimeError(
         "unexpected SDK internal error"
     )

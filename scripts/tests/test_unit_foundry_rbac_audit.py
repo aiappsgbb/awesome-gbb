@@ -17,12 +17,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Make the skill's probe importable without a setup.py
-SKILL_DIR = (Path(__file__).resolve().parents[2]
-             / "skills" / "foundry-rbac-audit" / "references" / "python")
-sys.path.insert(0, str(SKILL_DIR))
+# Load the skill's probe.py under a UNIQUE module name to avoid
+# sys.modules collision with azure-monitor-alert-baseline's probe.py
+# when both test files run in the same pytest session. Both modules
+# are named 'probe' on disk — direct `import probe` caches whichever
+# loads first and breaks the second file's monkeypatch.setattr targets.
+import importlib.util  # noqa: E402
 
-from probe import probe  # noqa: E402
+_PROBE_PY = (Path(__file__).resolve().parents[2]
+             / "skills" / "foundry-rbac-audit"
+             / "references" / "python" / "probe.py")
+_spec = importlib.util.spec_from_file_location("rbac_probe", _PROBE_PY)
+rbac_probe = importlib.util.module_from_spec(_spec)
+sys.modules["rbac_probe"] = rbac_probe
+_spec.loader.exec_module(rbac_probe)
+probe = rbac_probe.probe  # alias public function so test bodies stay stable
 
 
 # ---------- shape helpers (assert spec §4.3.1 contract) ----------
@@ -91,9 +100,9 @@ def fake_clients(monkeypatch):
     auth = MagicMock(name="AuthorizationManagementClient")
     # Default: role_definitions.get returns a stub with .role_name extractable
     auth.role_definitions.get.return_value = MagicMock(role_name="Contributor")
-    monkeypatch.setattr("probe.AuthorizationManagementClient",
+    monkeypatch.setattr("rbac_probe.AuthorizationManagementClient",
                         lambda credential, subscription_id: auth)
-    monkeypatch.setattr("probe.DefaultAzureCredential", lambda: MagicMock(name="cred"))
+    monkeypatch.setattr("rbac_probe.DefaultAzureCredential", lambda: MagicMock(name="cred"))
     return auth
 
 
