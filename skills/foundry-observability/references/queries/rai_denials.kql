@@ -1,0 +1,9 @@
+// Reusable: RAI content-filter denials by category over time window
+// Required table: AzureDiagnostics or RAIDiagnostics (depends on resource type)
+// Owner: foundry-observability skill, consumed by foundry_observability.kql_probes.rai_denials
+AzureDiagnostics
+| where Category in ("RequestResponse", "ContentFilter")
+| where ResultType == "Filtered"
+| extend filter_category = tostring(parse_json(properties_s).filterCategory)
+| summarize denials = count(), by_category = make_bag(pack(filter_category, count()))
+  by filter_category

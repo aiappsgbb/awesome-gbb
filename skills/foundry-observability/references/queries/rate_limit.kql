@@ -1,0 +1,7 @@
+// Reusable: Model-rate-limit (429) events by model deployment
+// Required table: AppTraces / AppRequests / ResourceLogs (depends on emitter)
+// Owner: foundry-observability skill, consumed by foundry_observability.kql_probes.rate_limit_events
+AppRequests
+| where ResultCode == "429"
+| extend model = tostring(Properties.model)
+| summarize count = count(), by_model = make_bag(pack(model, count())) by model

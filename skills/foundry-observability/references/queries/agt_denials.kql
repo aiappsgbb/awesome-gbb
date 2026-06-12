@@ -1,0 +1,12 @@
+// Reusable: AGT policy denials by policy_id + deny_path
+// Required table: AppTraces (or per-tenant custom table)
+// Owner: foundry-observability skill, consumed by foundry_observability.kql_probes.agt_denials
+AppTraces
+| where SeverityLevel >= 2
+| where Message has_any ("policy_deny", "AGT.Deny")
+| extend policy_id = tostring(Properties.policy_id),
+         deny_path = tostring(Properties.deny_path)
+| summarize count = count(),
+            by_policy_id = make_bag(pack(policy_id, count())),
+            by_deny_path = make_bag(pack(deny_path, count()))
+  by policy_id, deny_path
