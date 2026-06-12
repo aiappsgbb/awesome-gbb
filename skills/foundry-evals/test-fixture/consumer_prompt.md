@@ -25,7 +25,7 @@ az account show --output table || echo "(az cache not inherited — relying on S
 
 If any env var prints empty, the workflow's `env:` block is broken (AGENTS.md
 § 9.7 Pattern 11). That is a workflow bug, not a skill bug. Write the FAIL
-marker (Step 2) with reason `auth context missing: <var-name>` and stop.
+marker (Step 3) with reason `auth context missing: <var-name>` and stop.
 
 ---
 
@@ -70,21 +70,39 @@ UUID suffix (Pattern 15.3) so parallel runs don't collide. Suggested pattern:
 
 ---
 
-## Step 2 — Marker contract (deterministic, MANDATORY)
+## Step 2 — Validate `scripts/` module import (Slice 1 contract)
+
+After all prior eval-run work succeeds, verify the new
+`scripts/last_run` module ships and imports cleanly:
+
+```bash
+cd "$GITHUB_WORKSPACE" && \
+pip install --quiet -r skills/foundry-evals/requirements.txt && \
+PYTHONPATH=skills/foundry-evals/scripts \
+  python -c "from last_run import last_run_summary; print('last_run-import-ok')"
+```
+
+Expected stdout includes `last_run-import-ok`. If the import fails,
+write `SMOKE_RESULT=FAIL last_run import failed: <reason>` in Step 3.
+
+---
+
+## Step 3 — Marker contract (deterministic, MANDATORY)
 
 Your FINAL action — after cleanup — is to invoke the Bash tool to write the
 marker file. The file's literal byte content is what CI grades; your
 assistant-text reply is NOT graded.
 
 On success (all of: agent created, response captured, evaluator returned a
-numeric score, agent deleted):
+numeric score, agent deleted, Step 2 import check passed):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-evals-smoke-result
 ```
 
 On ANY failure (auth, skill not found, SDK error, agent create/invoke
-failed, evaluator returned no score, cleanup failure):
+failed, evaluator returned no score, cleanup failure, Step 2 import
+failed):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-evals-smoke-result
