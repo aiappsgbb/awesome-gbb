@@ -110,7 +110,26 @@ smoke. Process exit handles all teardown.
 
 ---
 
-## Step 2 — Marker contract (deterministic, MANDATORY)
+## Step 2 — Validate `scripts/` module import (Slice 1 contract)
+
+After all prior policy + intervention work succeeds, verify the new
+`scripts/capability_detector` module ships and imports cleanly:
+
+```bash
+cd "$GITHUB_WORKSPACE" && \
+PYTHONPATH=skills/foundry-agt/scripts \
+  python -c "from capability_detector import detect; print('cap_detector-import-ok')"
+```
+
+Expected stdout includes `cap_detector-import-ok`. If the import
+fails, write `SMOKE_RESULT=FAIL capability_detector import failed: <reason>`
+in Step 3.
+
+(No `pip install` step needed — stdlib only.)
+
+---
+
+## Step 3 — Marker contract (deterministic, MANDATORY)
 
 Your FINAL action — after the Python smoke prints all assertions and
 signature dumps — is to invoke the Bash tool to write the marker file.
@@ -122,7 +141,8 @@ On success (all of: `pip install` succeeded, `agt --version` /
 contained `OWASP ASI 2026`, all 6 signatures printed, the `middleware`
 parameter assertion held, the factory returned a list of length ≥ 2,
 `load_policies` did not raise, both policy evaluations matched the
-expected text, the AuditLog round-trip held):
+expected text, the AuditLog round-trip held, AND the Step 2
+`capability_detector` import printed `cap_detector-import-ok`):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-agt-smoke-result
@@ -130,7 +150,7 @@ printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-agt-smoke-result
 
 On ANY failure (install error, missing CLI, missing signature, broken
 integration contract, policy decision mismatched, AuditLog integrity
-broken):
+broken, OR Step 2 capability_detector import failed):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-agt-smoke-result
