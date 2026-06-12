@@ -1,0 +1,22 @@
+# Foundry Pilot Alert Baseline
+# Single-resource-group Foundry deployment (chat + embeddings + agents).
+# Consumed by SRE-104 finding probe.py to validate observability posture.
+# Realistic baseline for a low-to-medium-traffic pilot or dev environment.
+
+kind: foundry_pilot
+alert_rules:
+  - name: HighErrorRate
+    severity: 2
+    max_threshold: 5.0
+  - name: LowAvailability
+    severity: 1
+    max_threshold: 1.0
+  - name: TokenRateSpike
+    severity: 2
+    max_threshold: 10000.0
+  - name: RAIDenialSpike
+    severity: 2
+    max_threshold: 5.0
+  - name: HostedAgentInvokeError
+    severity: 2
+    max_threshold: 5.0

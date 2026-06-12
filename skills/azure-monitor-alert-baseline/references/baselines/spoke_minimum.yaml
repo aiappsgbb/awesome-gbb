@@ -1,0 +1,16 @@
+# Spoke Minimum Alert Baseline
+# Citadel-governed spoke with minimum observability stack.
+# Single-region deployment with access contract enforcement via APIM.
+# Consumed by SRE-104 finding probe.py to validate observability posture.
+
+kind: spoke_minimum
+alert_rules:
+  - name: BasicErrorRate
+    severity: 3
+    max_threshold: 10.0
+  - name: ChatCompletion401Spike
+    severity: 1
+    max_threshold: 2.0
+  - name: ChatCompletionLatencyP95
+    severity: 3
+    max_threshold: 3000.0
