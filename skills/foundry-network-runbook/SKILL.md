@@ -20,7 +20,7 @@ description: >
   foundry-cross-resource); Citadel JWT 403 (use
   citadel-spoke-onboarding); SDK; quota; cost.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Foundry Network Runbook — Diagnose connectivity failures after the deploy succeeds
@@ -263,7 +263,10 @@ AzureActivity
 ### D. Role-assignment audit for a given principal (JMESPath, not KQL)
 
 Activity-log-based RBAC audits are slow and lag by minutes. For
-real-time RBAC introspection, use the ARM control plane directly:
+real-time RBAC introspection, use the ARM control plane directly
+(or see [`foundry-rbac-audit`](../foundry-rbac-audit/) for a Python-
+wrapped probe that returns a structured manifest consumable by
+sibling-skill flows):
 
 ```bash
 az role assignment list --assignee "$PRINCIPAL_ID" --all \

@@ -55,7 +55,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install --quiet pyyaml
+        # Probe-test modules (test_unit_foundry_rbac_audit.py,
+        # test_unit_azure_monitor_alert_baseline.py) load the skill's
+        # probe.py via importlib, which imports azure SDKs at module
+        # scope. The SDKs are MUST resolve even though every test mocks
+        # them via patch.object — patch.object requires the symbol to
+        # exist on the module. See AGENTS.md § 10.3 (skills that touch
+        # Azure must ship unit-tests that exercise the probe contract).
+        run: pip install --quiet pyyaml azure-identity azure-mgmt-authorization azure-mgmt-monitor
 
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v

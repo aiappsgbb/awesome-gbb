@@ -60,12 +60,14 @@ CATEGORIES: dict[str, list[str]] = {
     # Threadlight Pipeline skills moved to aiappsgbb/threadlight-skills
     '🛠️ Cross-Cutting Helpers': [
         'azd-patterns', 'azure-tenant-isolation',
+        'azure-monitor-alert-baseline',
         'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
         'ghcp-cli-config', 'paygo-ptu-cost-analyzer',
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',
+        'foundry-rbac-audit',
         'azure-sre-agent',
     ],
     '📊 Content Generation': [

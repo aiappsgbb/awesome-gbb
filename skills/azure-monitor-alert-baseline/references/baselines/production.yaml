@@ -1,0 +1,25 @@
+# Production Alert Baseline
+# Multi-region production posture with strict SLO enforcement.
+# Superset of foundry_pilot with additional controls for cost, latency, and reliability.
+# Consumed by SRE-104 finding probe.py to validate observability posture.
+
+kind: production
+alert_rules:
+  - name: HighErrorRate
+    severity: 1
+    max_threshold: 2.0
+  - name: LowAvailability
+    severity: 1
+    max_threshold: 1.0
+  - name: HighLatencyP99
+    severity: 2
+    max_threshold: 500.0
+  - name: TokenThrottle429Rate
+    severity: 2
+    max_threshold: 5.0
+  - name: CostPerHourSpike
+    severity: 2
+    max_threshold: 50.0
+  - name: EmbeddingErrorRate
+    severity: 2
+    max_threshold: 2.0

@@ -28,6 +28,7 @@
 
 - [azd-patterns](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azd-patterns/SKILL.md): Tips and patterns for Azure Developer CLI (azd) workflows, ACA job deployment, and infrastructure scripting conventions.
 - [azure-tenant-isolation](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-tenant-isolation/SKILL.md): Multi-tenant Azure CLI and AZD isolation for concurrent terminal sessions.
+- [azure-monitor-alert-baseline](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-monitor-alert-baseline/SKILL.md): Probes Azure Monitor metric alert rules in a resource-group scope against one of three published baselines (foundry_pilot, spoke_minimum, production), returning a spec §4.3.1…
 - [foundry-cost-monitoring](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-cost-monitoring/SKILL.md): Continuous Foundry token-cost monitoring, chargeback, budget alerts, and FinOps automation.
 - [foundry-network-runbook](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-network-runbook/SKILL.md): Operational runbook for diagnosing Microsoft Foundry **network-layer** failures after a deploy succeeds — DNS, VNet peering, NSG / Azure Firewall denies, RBAC scope, capability…
 - [gbb-humanizer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-humanizer/SKILL.md): Remove signs of AI-generated writing from prose.
@@ -39,6 +40,7 @@
 - [citadel-hub-deploy](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/citadel-hub-deploy/SKILL.md): Deploy the **AI Citadel Governance Hub** (Layer 1) — APIM AI Gateway, Microsoft Foundry control plane, telemetry, 4 LLM APIs (Azure OpenAI, OpenAI Realtime, Universal LLM, Unified…
 - [citadel-spoke-onboarding](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/citadel-spoke-onboarding/SKILL.md): Onboard a Foundry project as a spoke into an AI Citadel Governance Hub.
 - [foundry-agt](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-agt/SKILL.md): Wrap the Microsoft Agent Governance Toolkit (AGT) around Foundry hosted agents, MCP servers, and Citadel spokes.
+- [foundry-rbac-audit](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-rbac-audit/SKILL.md): Probes Azure RBAC role assignments at a resource-group scope for privilege-escalation risks (Owner, User Access Administrator, RBAC Administrator).
 - [azure-sre-agent](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-sre-agent/SKILL.md): Adopt Azure SRE Agent (Microsoft.App/agents) in GBB engagements without rebuilding what Microsoft already ships.
 
 ### 📊 Content Generation
@@ -52,4 +54,4 @@
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 29 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 31 reusable building blocks for Copilot-assisted engagements.
