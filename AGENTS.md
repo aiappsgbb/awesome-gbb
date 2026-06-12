@@ -530,11 +530,11 @@ The validator (`scripts/validate-skills.py`) checks:
    matching `##` / `###` heading in the sibling SKILL.md (catches the
    "renamed the section but forgot the header" silent drift).
 
-Copilot-CLI fixtures and any future test code MUST import canonical
-helpers from `references/` via `sys.path` injection — never redefine
-the helper inline. See existing `skills/<name>/references/python/*`
-modules paired with their `skills/<name>/test-fixture/consumer_prompt.md`
-files for the pattern.
+Python helpers under `references/` — invoked by Copilot-CLI fixtures
+(via Bash tool calls) or by any future test code — MUST be imported via
+`sys.path` injection, never redefined inline. See existing
+`skills/<name>/references/python/*` modules paired with their
+`skills/<name>/test-fixture/consumer_prompt.md` files for the pattern.
 
 ---
 
