@@ -14,7 +14,7 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Foundry Agent Evaluations
@@ -1446,3 +1446,37 @@ code change.
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | App Insights connection on Foundry account is prerequisite for both plans |
 | [**foundry-assert**](../foundry-assert/) | Use the `responsibleai/ASSERT` community evaluator framework when Foundry built-ins don't cover your assertion shape (custom rubrics, multi-step reasoning checks, domain-specific graders); pairs with `foundry-evals` two-phase pattern |
 | [**foundry-agent-optimizer**](../foundry-agent-optimizer/) | Wraps the `azd ai agent eval/optimize/apply` loop — feeds `foundry-evals` scores into prompt optimization and applies the winning variant back to the hosted agent |
+
+## Last-run introspection API (v1.2.1+)
+
+The `scripts/last_run.py` module exposes a single helper for reading
+the most recent eval-run summary, designed for callers (notably
+`threadlight-production-ready`) that need to gate on freshness:
+
+```python
+from last_run import last_run_summary
+
+summary = last_run_summary(
+    evals_dir="evals/",         # convention: latest *.json wins
+    spec_section_9=None,        # reserved for SPEC § 9 threshold compare
+    freshness_hours=168,        # default 7 days
+)
+# → dict | None
+```
+
+**Read order:**
+
+1. Local files under `evals_dir/` — picks the newest by mtime.
+2. **Fallback (opt-in):** App Insights
+   `customEvents | where name == "EvalRunCompleted"` — only attempted
+   when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set.
+
+**Shape detection:** Returns `shape: "native"` for foundry-evals
+emitted summaries (with `totals` + `metrics`) or
+`shape: "azure-ai-evals"` for the Azure AI Evaluation SDK shape
+(with `evaluation_name` + `studio_url`).
+
+**Never raises.** Malformed JSON populates `error` on the returned
+dict; missing files return `None`.
+
+See `tests/test_last_run.py` for the contract assertions.
