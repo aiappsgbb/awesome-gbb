@@ -166,8 +166,8 @@ The catalog defines four tiers — each subsumes the tiers below it.
 |------|------|----------------|---------------|-------------|
 | **T0** | Lint | Frontmatter parses, description ≤ 1024, no forbidden strings, deprecated API scan passes | Every PR | `skill-validation.yml` (CI) |
 | **T1** | Pin validation | `validation.script` runs, every `expected_output` substring present | Pin file changes | `pin-validation.yml` (CI) |
-| **T2** | Import smoke | `python -c "from X import Y"` for every import in SKILL.md code samples | Pin refresh PRs (MINOR/MAJOR) | `skill-test.yml` (pin-smoke job) |
-| **T3** | E2E Azure | Deploy a real agent/resource, call Azure APIs, verify real responses | New skills that touch Azure, code sample rewrites, breaking SDK changes | `skill-test.yml` (e2e-azure job) + human validation for excluded skills |
+| **T2** | Import smoke | `pip install` + `python -c "from X import Y"` for the changed pin (runs inside `validation.script`) | Pin file changes (PR-gated) | `pin-validation.yml` |
+| **T3** | E2E Azure | A Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources, either succeeding or failing | New skills that touch Azure, code sample rewrites, breaking SDK changes | `skill-test.yml` (`copilot-cli-matrix` job) + § 2.9 manual evidence for excluded skills |
 
 Rules:
 - **T0 is always required.** CI enforces it; your PR will not merge without it.
@@ -179,37 +179,49 @@ Rules:
   runner. For `issue_only` skills, a human must run T2 locally.
 - **T3 is required when a skill tells consumers to connect to Azure.**
   The CI runner has OIDC-federated Azure credentials and dedicated E2E
-  infrastructure (§ 9.7). Add a pytest file under `scripts/tests/` and
-  wire it into the `e2e-azure` job in `skill-test.yml`.
+  infrastructure (§ 9.7). Add a Copilot-CLI fixture at
+  `skills/<name>/test-fixture/consumer_prompt.md` and register the skill
+  in `.github/skill-deps.yml` — it auto-enrolls in the `copilot-cli-matrix`
+  job in `skill-test.yml`. (Legacy `scripts/tests/test_e2e_*.py` was
+  retired; see the header comment on `.github/workflows/skill-test.yml`.)
 
-### 2.8 Skills that connect to Azure MUST have E2E tests
+### 2.8 Skills that connect to Azure MUST be live-tested
 
 This is a hard rule, not a suggestion. If SKILL.md tells consumers to
 call an Azure endpoint, provision a resource, or authenticate with
 `DefaultAzureCredential`, the catalog MUST prove that path works:
 
-- ✅ Add `scripts/tests/test_e2e_<name>.py` with pytest tests that
-  exercise real Azure connectivity (credential chain, endpoint
-  reachability, API surface existence)
-- ✅ Wire the test into `skill-test.yml` → `e2e-azure` job
-- ✅ Tests run with OIDC credentials against `<ci-resource-group>` (§ 9.7)
+- ✅ Add a Copilot-CLI fixture at
+  `skills/<name>/test-fixture/consumer_prompt.md` that drives a real
+  Copilot CLI agent to read SKILL.md and execute its instructions
+  against live Azure (credential chain, endpoint reachability, API
+  surface, model inference)
+- ✅ Register the skill in `.github/skill-deps.yml` so the
+  `copilot-cli-matrix` job auto-enrolls it on the next PR
+- ✅ Fixtures run with OIDC credentials against `<ci-resource-group>` (§ 9.7)
 - ❌ **"pip install + import" is NOT sufficient** for Azure skills — it
   proves the SDK exists, not that the Azure connection works
-- ❌ **"I tested locally" is NOT sufficient** — CI must reproduce it
+- ❌ **"I tested locally" is NOT sufficient** — CI must reproduce it,
+  OR § 2.9 evidence must be pasted into the PR body
+- ❌ **`scripts/tests/test_e2e_*.py` is NOT the mechanism** — the
+  legacy pytest E2E framework was retired in favour of
+  `copilot-cli-matrix` (see the header comment on
+  `.github/workflows/skill-test.yml`)
 
-**Exceptions** (too complex for CI, manually validated only):
+**Exceptions** (too complex for CI fixtures, manually validated only):
 `citadel-hub-deploy`, `foundry-vnet-deploy`.
 These require multi-resource deployments that exceed CI budget. Document
-manual validation in the PR description.
+manual validation per § 2.9 in the PR description.
 
 **For skills that don't deploy but connect remotely** (e.g.,
 `foundry-voice-live` connecting to Azure Voice Live WSS): prove the
 credential chain and API surface work. You don't need to deploy
-infrastructure, but you MUST prove the client can construct and
-authenticate.
+infrastructure, but the fixture (or § 2.9 evidence) MUST prove the
+client can construct and authenticate.
 
-See `test_e2e_prompt_agents.py` and `test_e2e_voice_live.py` for
-patterns.
+See existing fixtures under `skills/*/test-fixture/consumer_prompt.md`
+(e.g. `foundry-prompt-agents`, `foundry-hosted-agents`, `azd-patterns`)
+for the canonical patterns.
 
 ### 2.9 Nothing lands on main unless tested on Azure
 
@@ -234,10 +246,11 @@ What "tested on Azure" means, by change type:
 **Who tests:**
 - **Human contributors** test locally or in a dev subscription before
   opening the PR. Document what you tested in the PR description.
-- **AI agents (Copilot, sub-agents)** MUST run the skill's E2E test
-  (`scripts/tests/test_e2e_<name>.py`) or equivalent live validation
-  before committing. If no E2E test exists and the change touches Azure
-  paths, the agent MUST either write one or **stop and ask the human to
+- **AI agents (Copilot, sub-agents)** MUST run the skill's Copilot-CLI
+  fixture (via `copilot-cli-matrix` CI) OR execute the equivalent live
+  commands manually and paste the evidence into the PR body before
+  committing. If the change touches Azure paths and no fixture exists,
+  the agent MUST either author one or **stop and ask the human to
   test** — it cannot self-approve.
 - **Reviewers** verify the PR description includes evidence of live
   testing. No evidence → no merge.
@@ -517,9 +530,13 @@ The validator (`scripts/validate-skills.py`) checks:
    matching `##` / `###` heading in the sibling SKILL.md (catches the
    "renamed the section but forgot the header" silent drift).
 
-E2E tests in `scripts/tests/` MUST import canonical helpers from
-`references/` via `sys.path` injection — never redefine the helper inline.
-See `test_e2e_foundry_toolbox.py` for the import pattern.
+Python helpers under `references/` — invoked by Copilot-CLI fixtures
+(via Bash tool calls) or by any future test code — MUST be imported as
+real Python modules (package layout, `sys.path` injection, or
+`PYTHONPATH` — whatever fits the host fixture), never redefined inline.
+See existing `skills/<name>/references/python/*` modules paired with
+their `skills/<name>/test-fixture/consumer_prompt.md` files for the
+pattern.
 
 ---
 
@@ -602,12 +619,13 @@ Each pin file declares an `automation_tier`:
 
 - If `validation.requires` is restricted to safe categories (`github_only`,
   `pypi`) and `validation.runnable: true`, the pin runs in **every** CI run
-  (standard pin-smoke + e2e-azure modes).
+  (both standard and Azure-credentialed modes of `pin-validation.yml`).
 - If `validation.requires` includes credentialed resources (`azure_subscription`,
   `foundry_project`):
   - `automation_tier: auto` + `validation.runnable: false` → pin runs **only**
-    under `run-pin-validation.py --include-azure` (e2e-azure CI mode). The
-    coding agent edits the pin; CI validates it live against Azure.
+    under `run-pin-validation.py --include-azure` (Azure-credentialed CI
+    mode). The coding agent edits the pin; CI validates it live against
+    Azure.
   - `automation_tier: issue_only` + `validation.runnable: false` → pin is
     **never** auto-executed; refresh is human-driven via an issue.
   - `validation.runnable: true` with credentialed requires is **rejected** —
@@ -654,11 +672,12 @@ When upstream advances:
 3. **🔴 If the skill touches Azure → TEST LIVE (§ 2.9).** The
    validation script (step 2) proves imports resolve. It does NOT prove
    the skill works against real Azure resources. Before proceeding, run
-   the skill's E2E test (`scripts/tests/test_e2e_<name>.py`) or
+   the skill's Copilot-CLI fixture via `copilot-cli-matrix` OR
    manually verify with real Azure API calls (credential chain, endpoint
-   reachability, model inference). **pip + import is necessary but NOT
-   sufficient.** Skip this step only for skills that never connect to
-   Azure (e.g., `gbb-humanizer`, `ghcp-cli-config`).
+   reachability, model inference) and paste the output into the PR body.
+   **pip + import is necessary but NOT sufficient.** Skip this step
+   only for skills that never connect to Azure (e.g., `gbb-humanizer`,
+   `ghcp-cli-config`).
 4. **Update audit trail**:
    - `last_validated: <today>`
    - `validated_by: <handle>` (or `copilot-bot`)
@@ -719,7 +738,7 @@ re-runs the script on the runner) and by reviewer eyeball.
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching anything under `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
-| [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Comprehensive test suite**: unit tests, catalog lint, all-pin smoke test, and **E2E Azure tests** (deploys, API calls, model inference against real Azure resources in `<ci-resource-group>`) |
+| [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Live execution suite**: unit tests, catalog lint, and `copilot-cli-matrix` (one runner per skill — a real Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources in `<ci-resource-group>`: deploys, API calls, model inference). Legacy pytest-based E2E + pin-import smoke were retired; see the header comment on the workflow. |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
 
 The first three run on every PR. The fourth detects drift autonomously.
@@ -2527,13 +2546,16 @@ per week is net positive on coordinator time.
 |------|------|------|---------------|-------------|
 | **T0** | Lint | Frontmatter, desc ≤ 1024, forbidden strings, deprecated API scan | Every PR | `skill-validation.yml` |
 | **T1** | Pin validation | `validation.script` runs, expected_output present | Pin file changes | `pin-validation.yml` |
-| **T2** | Import smoke | `pip install` + `python -c "from X import Y"` for all auto-tier pins | Weekly + dispatch | `skill-test.yml` (pin-smoke job) |
-| **T3** | E2E Azure | Call Azure APIs, verify credential chains + API surfaces work against real resources | Weekly + dispatch + new Azure-touching skills | `skill-test.yml` (e2e-azure job) |
+| **T2** | Import smoke | `pip install` + `python -c "from X import Y"` for the changed pin | Pin file changes (PR-gated) | `pin-validation.yml` |
+| **T3** | E2E Azure | A Copilot CLI agent runs the skill's fixture against real Azure resources (deploys, API calls, model inference) | Every PR + push to main + weekly cron | `skill-test.yml` (`copilot-cli-matrix` job) |
 
-**T3 is CI-automated** for skills with E2E test files under
-`scripts/tests/test_e2e_*.py`. The CI runner has OIDC credentials and
-real Azure infrastructure (§ 9.7). New skills that connect to Azure
-MUST add an E2E test (§ 2.8).
+**T3 is CI-automated** for skills with a Copilot-CLI fixture at
+`skills/<name>/test-fixture/consumer_prompt.md` registered in
+`.github/skill-deps.yml`. The CI runner has OIDC credentials and real
+Azure infrastructure (§ 9.7). New skills that connect to Azure MUST
+add a fixture (§ 2.8). (Legacy pytest-based E2E under
+`scripts/tests/test_e2e_*.py` was retired; see the header comment on
+`.github/workflows/skill-test.yml`.)
 
 **Excluded from CI** (multi-resource greenfield deploys; pin runs human-only):
 `citadel-hub-deploy`, `foundry-vnet-deploy`. Both are
@@ -2594,14 +2616,18 @@ via the same cross-runtime
    `scripts/templates/upstream-pin.template.md` to
    `skills/<name>/references/upstream-pin.md` and fill every placeholder
    (see § 9.5)
-3. **E2E test (skills that touch Azure):** add a pytest file under
-   `scripts/tests/test_e2e_<name>.py` that verifies real Azure
-   connectivity (credential chain, endpoint reachability, API surface).
-   Wire it into `skill-test.yml` → `e2e-azure` job. Skills that only
-   wrap PyPI packages without Azure calls may skip this, but the bar is:
-   **if the skill tells consumers to connect to Azure, CI must prove
-   that connection works.** See `test_e2e_prompt_agents.py` and
-   `test_e2e_voice_live.py` for patterns.
+3. **Copilot-CLI fixture (skills that touch Azure):** author
+   `skills/<name>/test-fixture/consumer_prompt.md` (a paste-ready prompt
+   the CI agent will follow) and register the skill in
+   `.github/skill-deps.yml`. The `copilot-cli-matrix` job in
+   `skill-test.yml` auto-enrolls the skill on the next PR. Skills that
+   only wrap PyPI packages without Azure calls may skip this, but the
+   bar is: **if the skill tells consumers to connect to Azure, CI must
+   prove that connection works.** See existing
+   `skills/*/test-fixture/consumer_prompt.md` files (e.g.
+   `foundry-prompt-agents`, `foundry-hosted-agents`, `azd-patterns`)
+   for the canonical patterns. (Legacy `scripts/tests/test_e2e_*.py`
+   was retired — see header on `.github/workflows/skill-test.yml`.)
 4. **Cross-skill refs:** add `DO NOT USE FOR` entries in related skills
    (e.g., if your skill covers voice, add a cross-ref in
    `foundry-doc-vision-speech`). Bump those skills' version PATCH.
@@ -2613,8 +2639,9 @@ via the same cross-runtime
    actual code. This catches bugs that CI cannot — wrong field names,
    incomplete catalogs, missing dependencies. Do it before opening the PR.
 8. **🔴 TEST LIVE ON AZURE (§ 2.9).** If the skill touches Azure, run
-   the E2E test or manually verify with real Azure API calls. This is
-   not optional. Include evidence in the PR description.
+   the Copilot-CLI fixture (`copilot-cli-matrix`) or manually verify
+   with real Azure API calls. This is not optional. Include evidence
+   in the PR description.
 9. Rebuild docs: `python3 scripts/build-site.py --out docs/`
 10. Bump `plugin.json` version per § 5.1 (MINOR for an added skill)
 11. Bump `marketplace.json` version to match
@@ -2719,12 +2746,14 @@ PR opened
  ├─ automation-pr-gate.yml    mass-edit invariants + unit tests
  ├─ pin-validation.yml        T1: re-runs validation.script for changed pins
  │                                 (pip install + import; asserts expected_output)
- └─ skill-test.yml            T2 on PR: all-pin smoke + E2E Azure tests
+ └─ skill-test.yml            T3 on PR: copilot-cli-matrix runs live agent fixtures
+                                       for every changed skill
 
 Push to main / weekly cron
- └─ skill-test.yml            T2: all-pin smoke (pip install + import for ALL auto-tier pins)
-                              T3: E2E Azure (credential chains, API surfaces, model
-                                   inference against real resources in <ci-resource-group>)
+ └─ skill-test.yml            T3: copilot-cli-matrix runs ALL fixtured skills
+                              (live Copilot CLI agent + real Azure resources
+                              in <ci-resource-group>: deploys, API calls,
+                              model inference)
 
 Weekly cron (detection only)
  └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
@@ -2741,7 +2770,7 @@ On Copilot PR check-suite success
 | Auto-tier (`runnable: false`, CI-validated) | 3 pins | T0 in CI; T1–T3 via `--include-azure` on PR/schedule |
 | Issue-only (complex multi-resource deploy) | 2 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| E2E Azure tests | 3 skills | T3 in CI (`foundry-prompt-agents`, `foundry-voice-live`, `foundry-toolbox`) |
+| Copilot-CLI fixtures | 15 skills | T3 in CI (`copilot-cli-matrix`, see `.github/skill-deps.yml`) |
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks
 issue-only pins when the runner has Azure credentials. The infra is
