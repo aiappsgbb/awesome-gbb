@@ -10,7 +10,7 @@ every Bash code block below in order. Do NOT inspect repo files, do NOT
 run `validate-skills.py`, do NOT rebuild docs, do NOT `git status` —
 those are catalog-author concerns, not consumer-smoke concerns. Your only
 acceptable terminal state is a Bash tool call that writes a marker file
-to `/tmp/foundry-observability-smoke-result` (Step 3). If you find
+to `/tmp/foundry-observability-smoke-result` (Step 4). If you find
 yourself reading `skill-deps.yml`, `upstream-pin.md`, or anything under
 `docs/`, you are off-script — stop and execute Step 0.
 
@@ -25,7 +25,7 @@ information found" and (b) overwrite this run's transcript at
 `/tmp/foundry-observability-transcript.log`, defeating the workflow's
 retry classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow
 ALREADY captures your output via the outer `tee` — your job is to
-EXECUTE Steps 0-3 directly in Bash tool calls, not to "run the smoke".
+EXECUTE Steps 0-4 directly in Bash tool calls, not to "run the smoke".
 
 Do whatever the skill's `SKILL.md` tells you to do, but do NOT improvise
 from training-data knowledge of OpenTelemetry or Azure Monitor — read
@@ -53,7 +53,7 @@ az account show --output table || echo "(az cache not inherited — relying on S
 If `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `APPLICATIONINSIGHTS_CONNECTION_STRING`, or `LAW_WORKSPACE_ID` prints
 empty, the workflow's `env:` block is broken (Pattern 11). That is a
-workflow bug, not a skill bug. Write the FAIL marker (Step 3) with
+workflow bug, not a skill bug. Write the FAIL marker (Step 4) with
 reason `auth context missing: <var-name>` and stop.
 
 Do NOT run `command -v`, `find /`, or `curl -fsSL` to hunt for tooling
@@ -174,7 +174,7 @@ if [ "$LAW_HIT" != "true" ]; then
 fi
 ```
 
-This step is a SOFT gate per Pattern 13. The marker file in Step 3
+This step is a SOFT gate per Pattern 13. The marker file in Step 4
 remains `SMOKE_RESULT=PASS` regardless of `LAW_HIT` — the NOTE above
 captures the lag observation for the audit trail without false-FAILing
 on physics we don't control. Do NOT write `SMOKE_RESULT=FAIL` because
@@ -182,7 +182,25 @@ of an empty KQL result; only write FAIL if Step 0 or Step 1 failed.
 
 ---
 
-## Step 3 — Marker contract (deterministic, MANDATORY)
+## Step 3 — Validate `scripts/` module import (Slice 1 contract)
+
+After all prior probe work succeeds, verify the new
+`scripts/kql_probes` module ships and imports cleanly:
+
+```bash
+cd "$GITHUB_WORKSPACE" && \
+pip install --quiet -r skills/foundry-observability/requirements.txt && \
+PYTHONPATH=skills/foundry-observability/scripts \
+  python -c "from kql_probes import trace_freshness; print('kql_probes-import-ok')"
+```
+
+Expected stdout includes `kql_probes-import-ok`. If the import
+fails, write `SMOKE_RESULT=FAIL kql_probes import failed: <reason>`
+in the marker step below.
+
+---
+
+## Step 4 — Marker contract (deterministic, MANDATORY)
 
 No teardown — the probe span is ephemeral telemetry and there are no
 Azure resources to delete (Pattern 25 N/A for this fixture).
@@ -192,13 +210,15 @@ The file's literal byte content is what CI grades; your assistant-text
 reply is NOT graded.
 
 On success (Step 0 auth context complete AND Step 1 `configure_azure_monitor`
-+ span emission succeeded — Step 2 outcome does NOT affect the marker):
++ span emission succeeded AND Step 3 import check passed — Step 2
+outcome does NOT affect the marker):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-observability-smoke-result
 ```
 
-On Step 0 or Step 1 failure ONLY:
+On Step 0, Step 1, or Step 3 failure (Step 2 outcome does NOT affect
+the marker per Pattern 13 — soft gate):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-observability-smoke-result
