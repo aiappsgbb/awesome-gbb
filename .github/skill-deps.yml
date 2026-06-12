@@ -110,3 +110,18 @@ skills:
   foundry-cost-monitoring:
     depends_on:
       - foundry-observability
+
+  # ── Slice C additions (v0.6.0 — threadlight sibling-skill peers) ────
+  # foundry-rbac-audit — read-only RBAC probe over a resource group.
+  # Wraps azure-mgmt-authorization + DefaultAzureCredential. Threadlight
+  # v0.5.3+ consumes it for the IAM-101 sibling-skill flip (SEC-301
+  # gate). No catalog-internal deps — independent peer skill.
+  foundry-rbac-audit:
+    depends_on: []
+
+  # azure-monitor-alert-baseline — read-only metric-alert baseline probe.
+  # Wraps azure-mgmt-monitor + DefaultAzureCredential + pyyaml. Threadlight
+  # v0.5.3+ consumes it for the SRE-104 sibling-skill flip (OBS-203
+  # gate). No catalog-internal deps — independent peer skill.
+  azure-monitor-alert-baseline:
+    depends_on: []
