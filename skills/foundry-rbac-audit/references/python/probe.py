@@ -61,7 +61,7 @@ def probe(
             if role_guid not in PRIVILEGE_ESCALATION_ROLES:
                 continue
             _, severity = PRIVILEGE_ESCALATION_ROLES[role_guid]
-            role_def = client.role_definitions.get(scope, a.role_definition_id)
+            role_def = client.role_definitions.get(scope, role_guid)
             observations.append({
                 "principal_id": a.principal_id,
                 "role_definition_id": a.role_definition_id,
