@@ -17,7 +17,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -624,3 +624,42 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
   Path A on Windows + Python 3.13.13. Three starter policies, working
   middleware factory snippet, ACA sidecar Bicep fragment, Known Issues
   (5 entries) captured from field testing.
+
+## Canonical capability detector (v1.2.1+)
+
+The `scripts/capability_detector.py` module exposes a single
+`detect(repo_root)` function that scans a repository for AGT
+signals — version pin, intervention points, policy YAML, deny
+paths, verifier audit fields, CI action pinning — and returns a
+canonical capability dict.
+
+```python
+from capability_detector import detect
+
+caps = detect(repo_root=".")
+# {
+#   "version_detected": "4.1" | "3.7" | "mixed" | None,
+#   "intervention_points_present": bool,
+#   "policy_yaml_path": str | None,
+#   "deny_path_present": bool,
+#   "audit_fields_in_verifier_json": bool,
+#   "ci_action_pinned": bool,
+#   "evidence_globs_scanned": [...],
+# }
+```
+
+**Stdlib only.** No third-party deps. Safe to import in any
+Python ≥ 3.10 environment.
+
+**Why this replaces the prose detection guide.** Earlier versions
+of this SKILL.md described AGT-presence detection in prose +
+copy-paste regex snippets. That worked for one consumer (the
+operator following the SKILL.md verbatim) but produced version
+drift when threadlight tried to mirror the same detection
+semantics inline. Now there is exactly one detection implementation,
+shared by every consumer.
+
+See `tests/test_capability_detector.py` for the contract:
+6 unit tests covering v3.7-only, v4.1-with-policy, mixed, no-AGT,
+CI-action-pinned, and the `evidence_globs_scanned` self-reporting
+field.
