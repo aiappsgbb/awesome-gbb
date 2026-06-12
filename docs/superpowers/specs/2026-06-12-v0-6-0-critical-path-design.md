@@ -489,9 +489,25 @@ fixture today). Unit tests against 4 mocked APIM JSON shapes
 (`scripts/access_contract_probe.py` + `pyproject.toml` + a new §
 in SKILL.md + a new entry in `references/upstream-pin.md` known
 issues). It does NOT touch the upstream-pin SHA or any of the
-sections #244 plans to rewrite. Stack ordering: this PR can land
-in either order with #244 if both are open simultaneously, and
-neither will rebase-conflict the other.
+sections #244 plans to rewrite.
+
+**Sequencing constraint (BINDING, ratified 2026-06-12 by Riccardo
+via cross-session message).** #244 has a PR2 in scope that will
+heavily rewrite `citadel-spoke-onboarding` SKILL.md (SHA refresh +
+4–5 new § + access-contracts test updates). To avoid a merge-conflict
+cascade between Slice 2 and #244 PR2:
+
+> **Slice 2 (#246) MUST be open as a PR (or merged) BEFORE #244 PR2
+> dispatches.** Whichever lands first wins; whichever lands second
+> eats the rebase pain. The Slice 2 executor SHOULD open the PR as
+> soon as the first commit lands rather than batching all commits
+> before pushing, so the open-PR signal reaches the #244 coordinator
+> as early as possible.
+
+This is the only cross-slice sequencing constraint added beyond the
+default "extensions before NEW skills" ordering in § 2. All other
+slices remain orderable per the natural plugin-bump cascade
+(Slice 1+2 PATCH, Slice 3 → 4.19.0, Slice 4 → 4.20.0, Slice 5 → 4.21.0).
 
 ### 4.3 · Slice 3 — `foundry-rbac-audit` NEW (#268)
 
@@ -705,27 +721,40 @@ age against declared retention, returns deletion-recipe stub.
 **Cross-ref note in foundry-memory SKILL.md:** "Thread retention
 hygiene → see foundry-hosted-agents scripts/thread_retention.py."
 
-## 5 · Open questions (for human ratification)
+## 5 · Open questions (RATIFIED 2026-06-12)
 
-These were resolvable from the issue bodies + threadlight tracker
-to a **default** with rationale, but the human may override:
+> **Status: RATIFIED 2026-06-12** by Riccardo via cross-session
+> message from `aiappsgbb/threadlight-skills` planner session
+> `120699e4-…` to this `aiappsgbb/awesome-gbb` planner session
+> `45514f4c-…`. All six defaults accepted. One binding sequencing
+> constraint added — see § 4.2 ("Sequencing constraint (BINDING)").
+
+The questions and resolutions below are preserved as the audit
+trail; the executor MUST proceed per the **✅ Ratified** lines.
 
 1. **Slice 1 multi-skill PR vs 3 separate PRs.** Default: multi-skill
    (one threadlight flip round, one matrix run with `[multi-skill]`
    tag). Override would be 3 separate PRs for cleaner reviews at
    the cost of 3 matrix runs + 3 flip rounds. **Recommendation:
    multi-skill.**
+   - ✅ **Ratified:** multi-skill PR (one PR landing all three
+     extensions — #245 + #247 + #248).
 
 2. **Slice 5 multi-skill NEW PR vs 2 separate NEW PRs.** Default:
    multi-skill (one MINOR plugin bump, one matrix fanout with 2 new
    legs). Override would be 2 sequential PRs each with their own
    MINOR bump. **Recommendation: multi-skill given identical shape +
    shared "Order-7 lowest urgency" classification.**
+   - ✅ **Ratified:** multi-skill PR (one PR landing both NEW skills
+     — #267 + #271 — with single MINOR plugin bump 4.20.0 → 4.21.0).
 
 3. **#270 home pick.** Default: `foundry-hosted-agents` (thread API
    owner). Alternative: `foundry-memory` (memory hygiene grouping).
    **Recommendation: hosted-agents** — but flag to confirm because
    the issue body lists both.
+   - ✅ **Ratified:** lives in `foundry-hosted-agents` (per § 4.6
+     Item 2). Cross-reference `DO NOT USE FOR` clause added to
+     `foundry-memory` SKILL.md when #270 promotes from spec to plan.
 
 4. **Citadel timing (#246 vs #244).** Default: ship Slice 2 in
    parallel with #244 if both are open. Add files only, no overlap
@@ -733,6 +762,11 @@ to a **default** with rationale, but the human may override:
    after #244 lands. **Recommendation: parallel** (the file scope
    is orthogonal) — but flag for confirmation since #244 author may
    prefer freezing the skill.
+   - ✅ **Ratified:** parallel-capable, **WITH binding sequencing
+     constraint added in § 4.2.** #246 PR MUST open before #244 PR2
+     dispatches. Riccardo verified #244 state at ratification time:
+     OPEN but no open citadel PRs, last touched 2026-06-10, parked
+     behind the MAF wave (#261).
 
 5. **NEW-skill output contract — "module + CLI + JSON" vs simpler
    alternatives.** Default: ship both (matches `foundry-iq`
@@ -741,6 +775,10 @@ to a **default** with rationale, but the human may override:
    SKILL.md (agent constructs ad-hoc calls per skill guidance).
    **Recommendation: both** — but flag because it's the contract
    surface area the most consumers will touch.
+   - ✅ **Ratified:** full envelope (`skill / skill_version /
+     probed_at / inputs / result / confidence / missing_perms /
+     errors`) per § 3.3. Single source of truth, two consumption
+     modes (module import + CLI shim) for threadlight.
 
 6. **Should #244 (Citadel revamp) gate Slice 2?** The tracker says
    "schedule after wave settles" for citadel work. The wave is M2-M5
@@ -749,6 +787,9 @@ to a **default** with rationale, but the human may override:
    `fc09cf7` shows M5 already landed). MAF cascade may be far enough
    along to dispatch citadel work. **Recommendation: confirm with
    #244 author whether they consider the wave settled enough.**
+   - ✅ **Ratified:** #244 NOT gating Slice 2. Riccardo confirmed
+     #244 not currently dispatching and Slice 2 may proceed in
+     parallel, subject to the § 4.2 binding sequencing constraint.
 
 ## 6 · Non-goals
 

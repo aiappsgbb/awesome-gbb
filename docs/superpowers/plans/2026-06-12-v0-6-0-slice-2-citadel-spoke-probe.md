@@ -27,6 +27,15 @@ plan time. This slice adds files only (`scripts/` + new SKILL.md §
 time that #244 hasn't started a competing rewrite of the SKILL.md
 body.
 
+**🔒 BINDING SEQUENCING (ratified 2026-06-12).** Per umbrella spec
+§ 4.2 "Sequencing constraint (BINDING)": **this PR MUST be open as
+a PR (or merged) BEFORE #244 PR2 dispatches.** #244 PR2 will heavily
+rewrite this skill (SHA refresh + 4–5 new § + access-contracts test
+updates); whichever PR lands second eats the rebase pain. Executor
+guidance: open the PR as soon as the first commit lands rather than
+batching all commits before pushing, so the open-PR signal reaches
+the #244 coordinator as early as possible.
+
 ---
 
 ## File structure
