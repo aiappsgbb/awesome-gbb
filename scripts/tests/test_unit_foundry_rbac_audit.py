@@ -298,6 +298,7 @@ def test_manifest_file_written_with_finding_id_literal_filename(fake_clients, tm
         resource_group="rg",
         target_principal_types=["user"],
     )
+    _assert_shape(result)
 
     manifest = tmp_path / "out" / "IAM-101.json"
     assert manifest.exists(), f"expected manifest at {manifest}, got missing"
@@ -318,11 +319,14 @@ def test_repeated_probe_overwrites_same_manifest_file(fake_clients, tmp_path, mo
         resource_group="rg",
         target_principal_types=["user"],
     )
+    _assert_shape(r1)
+
     r2 = probe(
         subscription_id="sub-id",
         resource_group="rg",
         target_principal_types=["user"],
     )
+    _assert_shape(r2)
 
     # Same finding_id always
     assert r1["finding_id"] == r2["finding_id"] == "IAM-101"
