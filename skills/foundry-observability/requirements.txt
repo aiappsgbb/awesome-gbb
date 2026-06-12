@@ -1,0 +1,6 @@
+# Python dependencies for foundry-observability scripts/
+#
+# Install with: pip install -r skills/foundry-observability/requirements.txt
+
+azure-monitor-query~=1.4.0
+azure-identity~=1.19.0
