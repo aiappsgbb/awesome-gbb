@@ -6,9 +6,9 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: 1519e50f2f54a89499b90ff6ab7f78bc4faa84b4
+  pinned_sha: 699916d639ee63d98ecc45ff53cf3cc9abb62e07
   pinned_commit_message: |
-    Bumped to SHA 1519e50f2f54a89499b90ff6ab7f78bc4faa84b4
+    Bumped to SHA 699916d639ee63d98ecc45ff53cf3cc9abb62e07
   license: MIT
   notes: |
     foundry-iq primarily wraps Azure AI Search Knowledge Base / agentic retrieval docs. The only GitHub upstream referenced by SKILL.md is microsoft/agent-framework for hosted-MCP behavior; validation also pins the Azure AI Search Python SDK.
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-1519e50f2f54a89499b90ff6ab7f78bc4faa84b4}"
+    PINNED_SHA="${PINNED_SHA:-699916d639ee63d98ecc45ff53cf3cc9abb62e07}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -85,8 +85,8 @@ weekly; the prose below is the human audit trail. Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/agent-framework` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `1519e50f2f54a89499b90ff6ab7f78bc4faa84b4` |
-| **Pinned commit subject** | `Bumped to SHA 1519e50f2f54a89499b90ff6ab7f78bc4faa84b4` |
+| **Pinned SHA** | `699916d639ee63d98ecc45ff53cf3cc9abb62e07` |
+| **Pinned commit subject** | `Bumped to SHA 699916d639ee63d98ecc45ff53cf3cc9abb62e07` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
 | **Last re-validated** | `2026-06-18` |
@@ -117,7 +117,7 @@ git ls-remote https://github.com/microsoft/agent-framework main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-1519e50f2f54a89499b90ff6ab7f78bc4faa84b4}"
+PINNED_SHA="${PINNED_SHA:-699916d639ee63d98ecc45ff53cf3cc9abb62e07}"
 PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
 WORK=".upstream-pin-smoke/foundry-iq"
 
