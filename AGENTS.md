@@ -1905,6 +1905,62 @@ DO NOT mandate `view SKILL.md` — that's 5-10K+ tokens compounded
 across chunked reads. See the cost-monitoring fixture
 `Step −1 — Acknowledge skill contract` for the canonical form.
 
+**🔄 ADDENDUM v3 (2026-06-18, freshness-cycle audit — ROOT CAUSE CORRECTION).**
+Every prior addendum in this section (and Patterns 22/26) conflated
+two different numbers and got the diagnosis subtly wrong. Live recon
+of the CI subscription (`2c745a8f-…`, account `aif-awesome-gbb-ci`,
+Sweden Central) on 2026-06-18 found:
+
+| What | Stale claim in this doc | Actual measured value |
+|---|---|---|
+| Regional ceiling, `GlobalStandard.gpt-5.4-mini` (Sweden Central) | "545K TPM regional ceiling" | **1,000K TPM (1M)** |
+| Regional used (whole subscription) | — | 575K (455K non-CI + 120K CI) |
+| **CI deployment capacity** (the rate limit the CLI actually hits) | conflated with the ceiling | **120K TPM** ← the true bottleneck |
+| Free regional headroom sitting unused | "shared with 455K of other allocations" implied ~0 spare | **425K TPM unallocated** |
+
+**The bottleneck was never the regional quota — it was the deployment
+SKU capacity.** The CLI's data-plane calls are rate-limited by the
+*deployment's* `sku.capacity`, not by the regional ceiling. Each
+fixture turn bursts ~226K tokens; against a **120K** deployment that
+is an instant 429, no matter how much regional headroom is free. The
+entire Pattern 19/22/26 apparatus (jittered cooldowns, `max-parallel: 2`,
+two-tier retries, fixture token diets) was working around a 120K
+deployment limit while **425K of regional headroom sat idle**.
+
+**The fix (applied 2026-06-18):** raised `aif-awesome-gbb-ci/gpt-5.4-mini`
+from `sku.capacity` **120 → 545** via
+`az rest --method patch …/deployments/gpt-5.4-mini?api-version=2024-10-01
+--body '{"sku":{"name":"GlobalStandard","capacity":545}}'`. Regional
+usage is now 1000/1000 (full ceiling, no buffer — a deliberate choice
+to maximise CI burst tolerance). **This cost $0:** GlobalStandard is
+pay-per-token; `sku.capacity` is purely a per-minute *rate ceiling*,
+NOT a provisioned commitment. You pay only for tokens actually
+consumed regardless of capacity.
+
+**Consequences for the workarounds in this section:**
+- A 226K-token turn is now ~42% of the 545K deployment ceiling (was
+  >180%). The per-fixture token-budget table above (sized against the
+  phantom "545K ceiling") is now effectively the *deployment* ceiling
+  and finally accurate — but with real headroom for a second turn
+  inside the minute.
+- Do **NOT** rip out Pattern 19/22/26 yet. Validate first: re-run the
+  matrix and confirm green across a few runs. The retries are cheap
+  insurance; revisit `max-parallel` and cooldown tuning only after the
+  capacity bump is proven.
+- The "deploy to a second region" remediation in Pattern 26's
+  diagnostic protocol is now a *last resort*, not the first lever.
+  The first lever is **check `sku.capacity` vs regional headroom and
+  raise the deployment** (see corrected protocol below).
+
+**Corrected first-line diagnostic** (supersedes Pattern 26 step 3 when
+the symptom is a CI 429): before requesting quota or spreading regions,
+run `az cognitiveservices account deployment list -g rg-awesome-gbb-ci
+-n aif-awesome-gbb-ci --query "[?name=='gpt-5.4-mini'].sku.capacity"`
+and compare against regional headroom (`…/locations/swedencentral/usages`).
+If `regional_used < regional_limit`, raise the deployment `sku.capacity`
+into the free headroom — it is free and immediate. Only if the region
+is genuinely full (used == limit) do you spread to a second region.
+
 #### Pattern 20 — Copilot CLI cannot read `~/.copilot/installed-plugins/` for fixture skills (Finding #21)
 
 **The bug.** Earlier Phase 3 attempts tried to ship the `awesome-gbb`
