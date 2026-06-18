@@ -16,7 +16,7 @@ description: >
   foundry-toolbox), deploying your own MCP server (use foundry-mcp-aca),
   the hosted agent runtime (use foundry-hosted-agents).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Microsoft Web IQ Grounding for Foundry Agents — Reference Guide
@@ -130,9 +130,12 @@ whose value is the secret (`WEBIQ_API_KEY`). In Foundry, create a
 connection secret, not in container env.
 
 Because the header is static and identical on every request — including
-the MCP `initialize` / `tools/list` bootstrap — this maps cleanly to
-`MCPStreamableHTTPTool(headers=...)` (or `client.get_mcp_tool(headers=...)`).
-See `build_webiq_mcp_tool_apikey()` in
+the MCP `initialize` / `tools/list` bootstrap — set it as a default header
+on an `httpx.AsyncClient` passed via `http_client=`. (Current MAF
+`MCPStreamableHTTPTool` exposes **no** `headers=` parameter — it is accepted
+but silently ignored — and a per-call `header_provider=` misses the
+bootstrap, exactly as in the Entra caveat below.) See
+`build_webiq_mcp_tool_apikey()` in
 [`references/python/webiq_mcp_grounding.py`](references/python/webiq_mcp_grounding.py).
 
 ### Microsoft Entra auth — bearer token
@@ -269,6 +272,15 @@ Reproduce with [`references/validate_mcp_wiring.py`](references/validate_mcp_wir
 (`SMOKE_RESULT=PASS`). This validates the MCP wiring + citation-unwrap +
 Azure model tool-calling — **not** Web IQ's gated specifics, which still
 require the live fixture below.
+
+**API-key auth path (structural).** Current MAF `MCPStreamableHTTPTool`
+exposes no `headers=` parameter (it is accepted but silently ignored), so the
+API-key builder attaches the static header to an `httpx.AsyncClient` passed
+via `http_client=` — the same bootstrap-safe mechanism as the Entra path.
+Verified live (no-auth stand-in) that the header is set on the underlying
+client and that `tools/list` discovery completes through it. The auth *value*
+itself is still unverified against a gated Web IQ endpoint (see the dormant
+fixture below).
 
 ## Reference files
 

@@ -149,10 +149,14 @@ def _require_env(name: str) -> str:
 def build_webiq_mcp_tool_apikey(*, request_timeout: float = 60.0) -> MCPStreamableHTTPTool:
     """Web IQ MCP tool authenticated by a static API-key header.
 
-    The key rides on every request — including the JSON-RPC `initialize` /
-    `tools/list` bootstrap — so a static `headers=` dict is sufficient. This
-    is the simplest path and the right default for an external, non-AAD MCP
-    server.
+    The key must ride on EVERY request — including the JSON-RPC `initialize` /
+    `tools/list` bootstrap — so it is set as a default header on an
+    `httpx.AsyncClient` passed via `http_client=`. Current MAF
+    `MCPStreamableHTTPTool` has **no** `headers=` parameter (it is accepted
+    for backward compatibility but silently ignored), and a per-call
+    `header_provider=` only covers `tools/call` — it misses the bootstrap and
+    401s on a server that gates discovery. The static-header client mirrors
+    the Entra path in `build_webiq_mcp_tool_entra`.
     """
     endpoint = _require_env("WEBIQ_MCP_ENDPOINT")
     api_key = _require_env("WEBIQ_API_KEY")
@@ -160,10 +164,12 @@ def build_webiq_mcp_tool_apikey(*, request_timeout: float = 60.0) -> MCPStreamab
     # auth docs (e.g. a subscription-key or x-api-key style header).
     header_name = _require_env("WEBIQ_API_KEY_HEADER")
 
+    http_client = httpx.AsyncClient(headers={header_name: api_key}, timeout=request_timeout)
+
     return MCPStreamableHTTPTool(
         name="webiq_grounding",
         url=endpoint,
-        headers={header_name: api_key},
+        http_client=http_client,
         approval_mode="never_require",
         parse_tool_results=_webiq_result_parser,
         request_timeout=request_timeout,
