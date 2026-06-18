@@ -1,0 +1,96 @@
+# Customer goal — `foundry-webiq` skill smoke (DORMANT — see ACTIVATION.md)
+
+> **This fixture is intentionally NOT active.** It lives at
+> `consumer_prompt.md.pending` so CI does not enroll it (the validator
+> requires a `.github/skill-deps.yml` entry for any active
+> `consumer_prompt.md`, and the live matrix would fail without a
+> `WEBIQ_API_KEY` secret). To activate, follow `ACTIVATION.md`: rename this
+> file to `consumer_prompt.md`, add the skill-deps entry, and provision the
+> CI secrets. Do not rename it until those secrets exist.
+
+You are a developer on a customer team. You installed the `awesome-gbb`
+Copilot CLI plugin and want to prove that the `foundry-webiq` skill grounds
+a Foundry agent on Microsoft Web IQ end-to-end — **without deploying any
+infrastructure** (an in-process MAF `Agent` against the CI Foundry project
+is enough).
+
+Do whatever the skill tells you. Do NOT improvise from training-data
+knowledge of Web IQ, MCP, or the Azure AI SDK — read
+`skills/foundry-webiq/SKILL.md` and its canonical reference files under
+`skills/foundry-webiq/references/python/` first, and follow its documented
+contract. If your memory conflicts with the skill, **the skill wins**.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You ARE
+the running Copilot CLI process. Do NOT run `copilot -p ...`,
+`copilot --version`, `npm install -g @github/copilot`, or any other
+`copilot ...` invocation from inside a Bash tool call. The workflow already
+captures your output; your job is to EXECUTE the steps directly.
+
+This is an **execution smoke, not a catalog inspection** — actually build
+the agent and make the grounding call; do not merely summarize the skill.
+
+---
+
+## Environment available to your run
+
+- `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` — populated
+  by `azure/login@v2` OIDC upstream.
+- Foundry project endpoint: `FOUNDRY_PROJECT_ENDPOINT` (also published as
+  `AZURE_AI_ENDPOINT`) — `https://<acct>.services.ai.azure.com/api/projects/<proj>`.
+- Foundry model deployment: `FOUNDRY_MODEL_DEPLOYMENT=gpt-5.4-mini`.
+- **Web IQ (provisioned at activation):** `WEBIQ_MCP_ENDPOINT`,
+  `WEBIQ_API_KEY`, `WEBIQ_API_KEY_HEADER` (and, for the Entra variant,
+  `WEBIQ_ENTRA_SCOPE`). These come from repo secrets — do NOT print their
+  values.
+
+Do NOT create, delete, or modify any shared CI resource (see the SHARED CI
+HARDENING preamble prepended to this prompt).
+
+---
+
+## Step 0 — auth context (show, do not assert)
+
+Print the auth context for the run log. Do NOT gate flow on these — Pattern
+17, show-don't-assert:
+
+```bash
+echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+echo "WEBIQ_MCP_ENDPOINT=${WEBIQ_MCP_ENDPOINT:+set}"
+echo "WEBIQ_API_KEY=${WEBIQ_API_KEY:+set}"
+echo "WEBIQ_API_KEY_HEADER=${WEBIQ_API_KEY_HEADER:+set}"
+az account show --output table || echo "(az cache not inherited — Foundry SDK uses DefaultAzureCredential)"
+```
+
+If `WEBIQ_*` print empty, the activation secret provisioning is incomplete
+— write the FAIL marker (Step N) with `webiq secrets missing` and stop.
+
+---
+
+## Steps 1–N — wire and prove the grounding
+
+1. Read `skills/foundry-webiq/SKILL.md` and
+   `skills/foundry-webiq/references/python/webiq_mcp_grounding.py`.
+2. Construct an in-process MAF `Agent` with a `FoundryChatClient`
+   (`FOUNDRY_PROJECT_ENDPOINT` + `gpt-5.4-mini`) and add the Web IQ MCP tool
+   via `build_webiq_mcp_tool_apikey()` (the API-key static-header path).
+3. Ask the agent a question that requires **fresh web context**
+   (e.g. "What is a notable technology news headline from this week? Cite
+   the source URL.").
+4. Assert the response (a) is non-empty, (b) contains at least one source
+   URL / citation surfaced by the `_webiq_result_parser`, and (c) does not
+   leak a `[<Content object>]` repr.
+
+## Step N — write the result marker (deterministic, MANDATORY)
+
+Your FINAL action is a Bash tool call that writes the marker file. The
+file's literal bytes are what CI grades — not your assistant reply.
+
+```bash
+printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-webiq-smoke-result
+```
+
+If ANY prior step failed:
+
+```bash
+printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-webiq-smoke-result
+```

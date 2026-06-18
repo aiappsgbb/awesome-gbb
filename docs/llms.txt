@@ -23,6 +23,7 @@
 - [foundry-memory](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-memory/SKILL.md): Use Azure AI Foundry Memory Store for persistent agent memory across sessions: user profiles, chat summaries, procedural memory, semantic memory retrieval, hosted-agent memory…
 - [foundry-routines](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-routines/SKILL.md): Schedule and dispatch Foundry agent invocations via Routines — declarative automation rules that fire on cron (schedule trigger) or at a specific time (timer trigger).
 - [foundry-voice-live](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-voice-live/SKILL.md): Build real-time voice agents on Azure AI Foundry Voice Live (GA 2026-04-10).
+- [foundry-webiq](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-webiq/SKILL.md): Integration guidance for grounding a Foundry hosted agent on Microsoft Web IQ — Microsoft's AI-native web grounding service (web/news/images/ video; MCP-native via JSON-RPC 2.0,…
 
 ### 🛠️ Cross-Cutting Helpers
 
