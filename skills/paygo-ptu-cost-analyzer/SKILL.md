@@ -17,7 +17,7 @@ description: >
   monitoring (use azure-monitor-query directly), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.0.5"
+  version: "1.0.6"
 ---
 
 # PAYGO vs PTU Cost Analyzer
@@ -75,8 +75,8 @@ loudly with a descriptive `ValueError`.
 ```bash
 # 0. One-time deps (matches references/upstream-pin.md)
 python3 -m venv .venv && source .venv/bin/activate
-pip install "pandas~=2.2.3" "numpy~=2.1.0" "matplotlib~=3.9.0" \
-            "azure-identity~=1.22.0" "azure-monitor-query~=2.0.0"
+pip install "pandas~=3.0.3" "numpy~=2.4.6" "matplotlib~=3.11.0" \
+            "azure-identity~=1.25.3" "azure-monitor-query~=2.0.0"
 
 # 1. Offline demo — uses the bundled synthetic generator
 python references/run_report.py \
