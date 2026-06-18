@@ -35,6 +35,13 @@ jobs:
         id: detect
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Assigning the Copilot coding agent requires a PAT (or GitHub
+          # App token) with issues:write — the default GITHUB_TOKEN CANNOT
+          # assign the Copilot bot (GitHub returns 422 / silently no-ops).
+          # Add a repo secret COPILOT_ASSIGN_PAT to enable auto-assignment;
+          # if absent, issue creation still works and assignment is skipped
+          # with a WARN. See scripts/check-freshness.py:assign_copilot_to_issue.
+          GH_ASSIGN_TOKEN: ${{ secrets.COPILOT_ASSIGN_PAT }}
           GH_REPO: ${{ github.repository }}
         run: |
           ARGS="--upsert-issues --consolidated --assign-copilot-on-auto-tier --labels freshness,automation --output report.md --print-report"
