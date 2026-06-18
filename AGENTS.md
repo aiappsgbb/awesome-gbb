@@ -734,9 +734,9 @@ re-runs the script on the runner) and by reviewer eyeball.
 
 | Gate | When | What it checks |
 |------|------|---------------|
-| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**`, `plugin.json`, or `.github/plugin/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
-| [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
-| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching anything under `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
+| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR (no `paths:` filter — required-check invariant below) | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
+| [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR (no `paths:` filter; no-ops when no skill changed) | The § 4 mass-edit invariants — see that section |
+| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR (no `paths:` filter; no-ops when no skill folder changed) | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Live execution suite**: unit tests, catalog lint, and `copilot-cli-matrix` (one runner per skill — a real Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources in `<ci-resource-group>`: deploys, API calls, model inference). Legacy pytest-based E2E + pin-import smoke were retired; see the header comment on the workflow. |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
@@ -745,6 +745,23 @@ The first three run on every PR. The fourth detects drift autonomously.
 The fifth runs on every PR (including Copilot's) and on push/schedule.
 The sixth closes the loop: when all checks pass on a Copilot PR, it
 auto-approves and squash-merges without waiting for human review.
+
+> **🔒 Required-check invariant (path-filter-vs-required-check deadlock).**
+> The three PR gates above — `validate` (skill-validation), `gate`
+> (automation-pr-gate), `validate-pins` (pin-validation) — are **required**
+> status contexts in `main` branch protection. A required status check whose
+> workflow is `paths:`-filtered **never reports** on a PR that doesn't touch
+> those paths, so GitHub leaves the PR permanently `BLOCKED` ("Expected —
+> waiting for status to be reported" that never arrives). An infra/docs/
+> scripts-only PR would be un-mergeable without an admin bypass. Therefore
+> these three workflows carry **no `paths:` filter on `pull_request`** — they
+> run on every PR and no-op cheaply (sub-minute) when nothing relevant
+> changed (each underlying script exits 0 on an empty/non-skill changeset).
+> **Never add a `paths:` filter to a workflow whose job is a required check.**
+> By contrast, the heavy `copilot-cli-matrix` (`skill-test.yml`) is **not** a
+> required check, so it **keeps** its `paths:` filter and stays dormant on
+> non-skill PRs — that is how "avoid running the full matrix unnecessarily"
+> and "never deadlock a PR" coexist.
 
 ### 9.7 · Azure CI credentials and E2E infrastructure
 
@@ -1904,6 +1921,62 @@ that produces the audit-grep evidence at ~50 tokens of context cost.
 DO NOT mandate `view SKILL.md` — that's 5-10K+ tokens compounded
 across chunked reads. See the cost-monitoring fixture
 `Step −1 — Acknowledge skill contract` for the canonical form.
+
+**🔄 ADDENDUM v3 (2026-06-18, freshness-cycle audit — ROOT CAUSE CORRECTION).**
+Every prior addendum in this section (and Patterns 22/26) conflated
+two different numbers and got the diagnosis subtly wrong. Live recon
+of the CI subscription (`2c745a8f-…`, account `aif-awesome-gbb-ci`,
+Sweden Central) on 2026-06-18 found:
+
+| What | Stale claim in this doc | Actual measured value |
+|---|---|---|
+| Regional ceiling, `GlobalStandard.gpt-5.4-mini` (Sweden Central) | "545K TPM regional ceiling" | **1,000K TPM (1M)** |
+| Regional used (whole subscription) | — | 575K (455K non-CI + 120K CI) |
+| **CI deployment capacity** (the rate limit the CLI actually hits) | conflated with the ceiling | **120K TPM** ← the true bottleneck |
+| Free regional headroom sitting unused | "shared with 455K of other allocations" implied ~0 spare | **425K TPM unallocated** |
+
+**The bottleneck was never the regional quota — it was the deployment
+SKU capacity.** The CLI's data-plane calls are rate-limited by the
+*deployment's* `sku.capacity`, not by the regional ceiling. Each
+fixture turn bursts ~226K tokens; against a **120K** deployment that
+is an instant 429, no matter how much regional headroom is free. The
+entire Pattern 19/22/26 apparatus (jittered cooldowns, `max-parallel: 2`,
+two-tier retries, fixture token diets) was working around a 120K
+deployment limit while **425K of regional headroom sat idle**.
+
+**The fix (applied 2026-06-18):** raised `aif-awesome-gbb-ci/gpt-5.4-mini`
+from `sku.capacity` **120 → 545** via
+`az rest --method patch …/deployments/gpt-5.4-mini?api-version=2024-10-01
+--body '{"sku":{"name":"GlobalStandard","capacity":545}}'`. Regional
+usage is now 1000/1000 (full ceiling, no buffer — a deliberate choice
+to maximise CI burst tolerance). **This cost $0:** GlobalStandard is
+pay-per-token; `sku.capacity` is purely a per-minute *rate ceiling*,
+NOT a provisioned commitment. You pay only for tokens actually
+consumed regardless of capacity.
+
+**Consequences for the workarounds in this section:**
+- A 226K-token turn is now ~42% of the 545K deployment ceiling (was
+  >180%). The per-fixture token-budget table above (sized against the
+  phantom "545K ceiling") is now effectively the *deployment* ceiling
+  and finally accurate — but with real headroom for a second turn
+  inside the minute.
+- Do **NOT** rip out Pattern 19/22/26 yet. Validate first: re-run the
+  matrix and confirm green across a few runs. The retries are cheap
+  insurance; revisit `max-parallel` and cooldown tuning only after the
+  capacity bump is proven.
+- The "deploy to a second region" remediation in Pattern 26's
+  diagnostic protocol is now a *last resort*, not the first lever.
+  The first lever is **check `sku.capacity` vs regional headroom and
+  raise the deployment** (see corrected protocol below).
+
+**Corrected first-line diagnostic** (supersedes Pattern 26 step 3 when
+the symptom is a CI 429): before requesting quota or spreading regions,
+run `az cognitiveservices account deployment list -g rg-awesome-gbb-ci
+-n aif-awesome-gbb-ci --query "[?name=='gpt-5.4-mini'].sku.capacity"`
+and compare against regional headroom (`…/locations/swedencentral/usages`).
+If `regional_used < regional_limit`, raise the deployment `sku.capacity`
+into the free headroom — it is free and immediate. Only if the region
+is genuinely full (used == limit) do you spread to a second region.
 
 #### Pattern 20 — Copilot CLI cannot read `~/.copilot/installed-plugins/` for fixture skills (Finding #21)
 

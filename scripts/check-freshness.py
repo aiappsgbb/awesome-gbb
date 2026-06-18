@@ -79,35 +79,141 @@ VALIDATION_AGE_DAYS = 180
 # script works in any repo where the org has enabled the Coding Agent.
 COPILOT_BOT_LOGIN = "copilot-swe-agent"
 
+# GraphQL endpoint + the public-preview feature flag that unlocks the
+# Copilot-assignment mutations. Both `suggestedActors` (read) and
+# `replaceActorsForAssignable` (write) must be sent with this header or
+# the request silently no-ops (the issue stays unassigned and the agent
+# never starts). See GitHub Changelog 2025-12-03 "Assign issues to
+# Copilot using the API".
+GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
+COPILOT_ASSIGN_FEATURE = "issues_copilot_assignment_api_support"
+
 USER_AGENT = "awesome-gbb-freshness-bot/1.0"
 HTTP_TIMEOUT = 10
 
 
-def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool:
-    """Assign the Copilot Coding Agent bot to an issue via REST API.
+def _graphql(query: str, variables: dict[str, Any], gh_token: str) -> dict[str, Any]:
+    """POST a GraphQL query with the Copilot-assignment feature header.
 
-    Uses POST /repos/{owner}/{repo}/issues/{issue_number}/assignees which
-    works with GITHUB_TOKEN (unlike the GraphQL suggestedActors approach
-    which requires elevated permissions to see Bot accounts).
+    Raises RuntimeError on a non-2xx response or a GraphQL `errors` block
+    so callers can fail loud instead of silently treating a no-op as
+    success (the bug this function replaces).
     """
     r = requests.post(
-        f"https://api.github.com/repos/{repo}/issues/{issue_number}/assignees",
-        json={"assignees": [COPILOT_BOT_LOGIN]},
+        GITHUB_GRAPHQL_URL,
+        json={"query": query, "variables": variables},
         headers={
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {gh_token}",
             "User-Agent": USER_AGENT,
+            "GraphQL-Features": COPILOT_ASSIGN_FEATURE,
         },
         timeout=HTTP_TIMEOUT,
     )
-    if r.status_code < 300:
-        return True
-    print(
-        f"WARN: assign @{COPILOT_BOT_LOGIN} to issue #{issue_number} failed: "
-        f"{r.status_code} {r.text[:200]}",
-        file=sys.stderr,
-    )
-    return False
+    if r.status_code >= 300:
+        raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+    payload = r.json()
+    if payload.get("errors"):
+        raise RuntimeError(json.dumps(payload["errors"])[:300])
+    return payload["data"]
+
+
+def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool:
+    """Assign the Copilot Coding Agent bot to an issue via GraphQL.
+
+    The REST `/issues/{n}/assignees` field cannot accept Bot accounts —
+    it returns HTTP 422 (or, worse, a 201 that silently drops the bot
+    from the assignees array), so the issue lands unassigned and the
+    autonomous loop never starts. The supported path is the GraphQL
+    `replaceActorsForAssignable` mutation, which accepts any Actor
+    (User OR Bot), guarded by the `issues_copilot_assignment_api_support`
+    feature header.
+
+    Token note: the default Actions `GITHUB_TOKEN` does NOT have
+    permission to assign the Copilot bot. The workflow must supply a PAT
+    (or GitHub App token) with `issues:write` via `GH_ASSIGN_TOKEN`;
+    this falls back to `gh_token` only so local dry-runs with a
+    user PAT still work.
+    """
+    token = os.environ.get("GH_ASSIGN_TOKEN") or gh_token
+    owner, _, name = repo.partition("/")
+    try:
+        # 1. Resolve the Copilot bot's Actor node ID for THIS repo. The
+        #    bot is only assignable where the org has enabled the agent.
+        data = _graphql(
+            """
+            query($owner:String!, $name:String!) {
+              repository(owner:$owner, name:$name) {
+                suggestedActors(capabilities:[CAN_BE_ASSIGNED], first:100) {
+                  nodes { login __typename ... on Bot { id } ... on User { id } }
+                }
+              }
+            }
+            """,
+            {"owner": owner, "name": name},
+            token,
+        )
+        actor_id = next(
+            (
+                n.get("id")
+                for n in data["repository"]["suggestedActors"]["nodes"]
+                if n.get("login") == COPILOT_BOT_LOGIN
+            ),
+            None,
+        )
+        if not actor_id:
+            print(
+                f"WARN: @{COPILOT_BOT_LOGIN} is not assignable in {repo} "
+                "(Copilot coding agent not enabled for this repo/org?)",
+                file=sys.stderr,
+            )
+            return False
+
+        # 2. Resolve the issue's node ID.
+        data = _graphql(
+            """
+            query($owner:String!, $name:String!, $num:Int!) {
+              repository(owner:$owner, name:$name) { issue(number:$num) { id } }
+            }
+            """,
+            {"owner": owner, "name": name, "num": issue_number},
+            token,
+        )
+        issue_id = data["repository"]["issue"]["id"]
+
+        # 3. Assign Copilot. replaceActorsForAssignable REPLACES the
+        #    assignee set — fine for bot-authored freshness issues, which
+        #    carry no human assignees.
+        data = _graphql(
+            """
+            mutation($assignable:ID!, $actor:ID!) {
+              replaceActorsForAssignable(input:{assignableId:$assignable, actorIds:[$actor]}) {
+                assignable { ... on Issue { number assignees(first:10) { nodes { login } } } }
+              }
+            }
+            """,
+            {"assignable": issue_id, "actor": actor_id},
+            token,
+        )
+        assigned = [
+            n["login"]
+            for n in data["replaceActorsForAssignable"]["assignable"]["assignees"]["nodes"]
+        ]
+        if COPILOT_BOT_LOGIN in assigned or "Copilot" in assigned:
+            return True
+        print(
+            f"WARN: mutation for issue #{issue_number} returned but "
+            f"@{COPILOT_BOT_LOGIN} not in assignees {assigned} — token may "
+            "lack permission to assign Copilot (default GITHUB_TOKEN cannot).",
+            file=sys.stderr,
+        )
+        return False
+    except Exception as e:  # noqa: BLE001 — best-effort assignment
+        print(
+            f"WARN: assign @{COPILOT_BOT_LOGIN} to issue #{issue_number} failed: {e}",
+            file=sys.stderr,
+        )
+        return False
 
 
 # ──────────────────────────── data model ────────────────────────────
@@ -838,7 +944,7 @@ def upsert_issue(
 
     print(f"✓ {action} issue: {title}", file=sys.stderr)
 
-    # Assign the Coding Agent bot via REST API
+    # Assign the Coding Agent bot via GraphQL (REST cannot assign Bots)
     if want_copilot_assign:
         issue_number = r.json().get("number")
         if issue_number:

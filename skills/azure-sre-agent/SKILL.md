@@ -18,7 +18,7 @@ description: >
   (citadel-hub-deploy), hosted-agent build (foundry-hosted-agents),
   MCP on ACA (foundry-mcp-aca).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Azure SRE Agent — GBB Adoption Skill

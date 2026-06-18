@@ -11,16 +11,14 @@ name: Pin validation
 #     (because the runner has no Azure / Foundry credentials)
 
 on:
+  # `validate-pins` is a REQUIRED status check in `main` branch protection. A
+  # required check that is `paths:`-filtered never reports on non-matching PRs,
+  # leaving them permanently BLOCKED (the path-filter-vs-required-check
+  # deadlock — AGENTS.md § 9.6). So: NO `paths:` filter on pull_request.
+  # run-pin-validation.py groups changes by skill folder and prints
+  # "No pin files to validate ✅" / exits 0 when no skill folder changed, so
+  # every-PR runs are cheap.
   pull_request:
-    paths:
-      # Any file under a skill folder may invalidate that skill's pin
-      # contract (SKILL.md prose change, references/* extraction, etc).
-      # run-pin-validation.py groups changes by skill folder and runs
-      # each skill's pin script once. Skills without a pin file are
-      # silently skipped.
-      - "skills/**"
-      - "scripts/run-pin-validation.py"
-      - ".github/workflows/pin-validation.yml"
   push:
     branches: [main]
     paths:

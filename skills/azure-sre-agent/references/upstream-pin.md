@@ -12,7 +12,7 @@ upstream:
   type: github_repo
   repo: microsoft/sre-agent
   ref: main
-  pinned_sha: a401e003a3874c374f5fff5278123a1f603fe270
+  pinned_sha: ff0dbd97a1bdce6ada83b5d119bd13a389ccae9d
   pinned_commit_message: |
     Merge pull request #172 from dm-chelupati/fix/e2e-bugs
   license: MIT
@@ -106,8 +106,8 @@ validation:
     - "404"
     - "Could not resolve host"
 
-last_validated: 2026-05-20
-validated_by: copilot-cli
+last_validated: 2026-06-18
+validated_by: copilot-bot
 known_issues_count: 4
 ---
 
