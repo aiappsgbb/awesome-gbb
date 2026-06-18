@@ -10,15 +10,14 @@ description: >
   code-mode deploy, FoundryChatClient, ResponsesHostServer, MAF, ACR
   push, batch eval, agent identity, Foundry User role, azd ai agent,
   entra-agent-id, WS invocations, Activity protocol, blue-green deploy,
-  canary rollout, version rollback, traffic routing, version_selector,
-  agent_endpoint. DO NOT USE FOR: prompt agents (use
+  canary rollout, version rollback, traffic routing. DO NOT USE FOR: prompt agents (use
   foundry-prompt-agents), ACA MCP (use foundry-mcp-aca), GHCP coding
   agent (use ghcp-hosted-agents), Citadel hub/spoke (use
   citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
   continuous eval (use foundry-evals), Routines (use foundry-routines),
-  A2A wiring (use foundry-toolbox).
+  A2A wiring (use foundry-toolbox), Web IQ web grounding (use foundry-webiq).
 metadata:
-  version: "1.11.0"
+  version: "1.11.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide

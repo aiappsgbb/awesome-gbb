@@ -1,0 +1,40 @@
+# =============================================================================
+# Web IQ grounding — Foundry connection + env plumbing (PLACEHOLDERS ONLY)
+# =============================================================================
+#
+# This is a SKETCH, not a drop-in. The PRIMARY wiring for Web IQ grounding is
+# code-based: build an `MCPStreamableHTTPTool` in your container per
+#   references/python/webiq_mcp_grounding.py
+# and add it to your `Agent(..., tools=[...])`. This file shows the
+# surrounding plumbing — how the credential and endpoint reach that code.
+#
+# Replace every <PLACEHOLDER> with values from YOUR gated Web IQ docs.
+# Do NOT commit real keys; store the key as a Foundry project connection
+# secret (key-based MCP connection) or use the agent's managed identity.
+# -----------------------------------------------------------------------------
+
+# Option A — API-key auth. Reference a key-based Foundry connection that holds
+# the Web IQ secret, and surface the endpoint + header name as env vars the
+# container code (`build_webiq_mcp_tool_apikey`) reads.
+env:
+  - name: WEBIQ_MCP_ENDPOINT
+    value: <https://your-webiq-mcp-endpoint>      # CONFIRM from Web IQ docs
+  - name: WEBIQ_API_KEY_HEADER
+    value: <Header-Name-For-Key>                  # CONFIRM exact header name
+  - name: WEBIQ_API_KEY
+    # Pull from a Foundry connection secret — do NOT inline the key.
+    secretRef: <webiq-key-connection>             # CONFIRM connection name
+
+# Option B — Microsoft Entra (bearer) auth. No secret stored; the container
+# code (`build_webiq_mcp_tool_entra`) mints a token for WEBIQ_ENTRA_SCOPE
+# using the agent's managed identity.
+# env:
+#   - name: WEBIQ_MCP_ENDPOINT
+#     value: <https://your-webiq-mcp-endpoint>    # CONFIRM from Web IQ docs
+#   - name: WEBIQ_ENTRA_SCOPE
+#     value: api://<webiq-app-id>/.default         # CONFIRM scope/resource
+
+# -----------------------------------------------------------------------------
+# See Microsoft Learn — "Set up MCP server authentication" (Foundry) — for the
+# portal steps that create the MCP tool connection referenced above.
+# -----------------------------------------------------------------------------

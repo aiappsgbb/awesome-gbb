@@ -11,15 +11,15 @@ description: >
   the `azd ai agent init` declarative path with `kind: toolbox` +
   `{{ param }}` secrets.
   USE FOR: foundry toolbox, toolbox MCP endpoint, Foundry-Features
-  Toolboxes V1Preview, kind toolbox agent.yaml, project_connection_id,
+  Toolboxes V1Preview, kind toolbox agent.yaml,
   toolbox version promote, multi-tool MCP endpoint, MCPStreamableHTTPTool,
   AzureAIProjectToolbox.
   DO NOT USE FOR: building MCP servers (use foundry-mcp-aca), KB-only
   RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use
-  foundry-cross-resource).
+  foundry-cross-resource), Web IQ web grounding (use foundry-webiq).
 metadata:
-  version: "1.6.1"
+  version: "1.6.2"
   validated: 2026-06-01
 ---
 

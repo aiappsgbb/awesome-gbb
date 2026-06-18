@@ -2802,10 +2802,10 @@ Consequences:
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 33 |
-| Skills with upstream pins | 29 |
+| Total skills | 34 |
+| Skills with upstream pins | 30 |
 | Auto-tier (CI can refresh autonomously) | 26 |
-| Issue-only (human / complex deploy) | 3 |
+| Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 6 |
 | Unit tests | 119 (37 PR gate + 59 skill validation + 23 probe units) |

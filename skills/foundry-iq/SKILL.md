@@ -8,11 +8,12 @@ description: >
   USE FOR: knowledge base, RAG, agentic retrieval, policy assistant, citations,
   multi-hop QA, Knowledge Agent, AI Search Knowledge Base, document grounding,
   semantic retrieval, foundry-iq, knowledge index, hybrid search, vector search,
-  kb-mcp, web iq, serverless knowledge base, purview acl knowledge.
+  kb-mcp, web iq knowledge source, serverless knowledge base, purview acl knowledge.
   DO NOT USE FOR: structured-document extraction (use foundry-doc-vision-speech),
-  MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy).
+  MCP server deployment (use foundry-mcp-aca), agent runtime (use threadlight-deploy),
+  standalone Web IQ web grounding API (use foundry-webiq).
 metadata:
-  version: "1.3.2"
+  version: "1.3.3"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
