@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft-foundry/foundry-samples
   ref: main
-  pinned_sha: 34881107721a3bb34875df1ca0d936fb8e09cb9f
+  pinned_sha: f5021de7365779e6901f6fc1c4099e85c7f8de5d
   pinned_commit_message: |
     Add C# observability hosted-agent sample (#390)
   license: MIT
@@ -27,7 +27,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-34881107721a3bb34875df1ca0d936fb8e09cb9f}"
+    PINNED_SHA="${PINNED_SHA:-f5021de7365779e6901f6fc1c4099e85c7f8de5d}"
     REPO_URL="https://github.com/microsoft-foundry/foundry-samples"
     REF="main"
     WORK=".upstream-pin-smoke/foundry-cross-resource"
@@ -56,7 +56,7 @@ validation:
     - "apim module contract ok"
     - "docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-30
+last_validated: 2026-06-18
 validated_by: copilot-bot
 field_test_scope: github_pypi_docs
 known_issues_count: 0
