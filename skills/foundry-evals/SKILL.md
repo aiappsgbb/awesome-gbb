@@ -14,7 +14,7 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # Foundry Agent Evaluations
@@ -878,6 +878,44 @@ for ev, scores in per_evaluator.items():
 
 Keep a reusable `eval/compile_scores.py` helper that does this end-to-end
 (per-case per-evaluator matrix) in your process repo.
+
+## Programmatic last-run introspection
+
+> **MUST:** Copy verbatim from [`references/python/last_run.py`](references/python/last_run.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+> That file is the canonical last-run summary builder that threadlight's EVAL-201
+> finding consumes when `kind: sibling-skill`.
+
+Extract the most-recent eval run summary with the stable 11-key dict:
+
+```python
+from foundry_evals.last_run import last_run_summary
+
+summary = last_run_summary(evals_dir="evals/")
+if summary is None:
+    print("No eval run found yet")
+else:
+    if summary["confidence"] < 0.8:
+        print(f"Run is stale (> 7 days): {summary['stale']}")
+    print(f"Passed: {summary['scenarios_passed']}/{summary['scenarios_total']}")
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `ran_at` | str (ISO-8601 UTC) | Timestamp of the eval run |
+| `run_id` | str | Unique run identifier |
+| `scenarios_total` | int | Total scenario count |
+| `scenarios_passed` | int | Passed scenario count |
+| `scenarios_failed` | int | Failed scenario count |
+| `threshold_breaches` | list[str] | Per-scenario failure + latency-budget overage entries |
+| `p50_latency_ms` | float \| None | Median latency across scenarios |
+| `p95_latency_ms` | float \| None | 95th-percentile latency |
+| `confidence` | float | 1.0 if fresh (≤ 7 days); 0.5 if stale (> 7 days); 0.0 if no scenarios |
+| `stale` | bool | True if run age > 7 days (controlled by `STALE_AFTER_DAYS`) |
+| `source` | str | File path to the run's manifest.json |
+
+The helper returns `None` if no `evals/runs/*/manifest.json` exists (no eval has run yet).
+Consumed by threadlight EVAL-201 when `kind: sibling-skill` (issue #247).
 
 ## Interpreting Results
 

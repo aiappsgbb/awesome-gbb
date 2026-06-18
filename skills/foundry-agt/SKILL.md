@@ -17,7 +17,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -528,6 +528,43 @@ Full details + fixes: [`references/upstream-pin.md`](references/upstream-pin.md)
    `Toolkit: 3.2.2` while the meta-package is `3.7.0`. Verifier carries
    its own compliance schema version; OWASP ASI coverage check still
    passes 10/10.
+
+---
+
+## Using the canonical capability detector
+
+When you need a programmatic read of the host repo's AGT posture
+(version pinned, intervention points present, policy YAML discovered,
+audit fields in the verifier JSON, CI action SHA-pinned), call the
+canonical helper:
+
+```python
+from foundry_agt.capability_detector import detect
+
+caps = detect(repo_root=".")
+# caps["version_detected"]               → str | None
+# caps["detection_confidence"]           → 0.0..1.0
+# caps["package_pins"]                   → dict[str, str]
+# caps["intervention_points_present"]    → bool
+# caps["policy_yaml_path"]               → str | None   (relative POSIX path)
+# caps["deny_path_present"]              → bool
+# caps["audit_fields_in_verifier_json"]  → list[str]
+# caps["ci_action_pinned"]               → bool
+# caps["evidence_globs_scanned"]         → list[str]
+```
+
+> **MUST:** Copy verbatim from
+> [`references/python/capability_detector.py`](references/python/capability_detector.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+> That file is the canonical reshape of threadlight's
+> `production_ready.py::_check_agt_static_v4` (V4_DIST_REGEX,
+> V4_POLICY_REGEX, V4_DYNAMIC_REGEX) into a stable 9-key consumer-facing
+> snapshot. Threadlight v0.5.1's `kind: sibling-skill` dispatch consumes
+> this exact dict shape.
+
+The return dict ALWAYS contains every key listed above. The helper
+NEVER raises — on filesystem errors or partial data, it returns the
+default shape with `detection_confidence: 0.0`.
 
 ---
 

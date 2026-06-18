@@ -12,7 +12,7 @@ description: >
   deploying model backends, apim backend pools, hub policy fragment deployment,
   spoke-side VNet/peering creation (use foundry-vnet-deploy).
 metadata:
-  version: "1.1.2"
+  version: "1.2.2"
 ---
 
 # Citadel Spoke Onboarding — Reference Guide
@@ -771,6 +771,78 @@ to verify end-to-end connectivity:
 | Universal LLM API all-models validation | [`citadel-universal-llm-api-all-models-tests.ipynb`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/citadel-universal-llm-api-all-models-tests.ipynb) |
 
 > Requires Python with packages from [`validation/requirements.txt`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/validation/requirements.txt).
+
+---
+
+## Hub-side Access Contract probe
+
+When threadlight-skills (or any consumer) needs to **verify** that an
+existing spoke is properly onboarded into a Citadel hub — without making
+any changes — call the canonical Python helper:
+
+```python
+from skills.citadel_spoke_onboarding.references.python.access_contract_probe import (
+    probe_hub_contract,
+)
+
+result = probe_hub_contract(
+    hub_rg="rg-citadel-hub",
+    spoke_id="my-spoke",
+    subscription="<hub-subscription-id>",
+    # apim_name="hub-apim",       # optional — auto-discovers if hub RG has exactly one APIM
+    # credential=DefaultAzureCredential(),  # optional — defaults to DefaultAzureCredential()
+)
+```
+
+Returns a never-raising `dict` with this shape (canonical contract — see
+spec §4.2.1):
+
+| Key                          | Type                            | Meaning                                                                                   |
+|------------------------------|---------------------------------|-------------------------------------------------------------------------------------------|
+| `api_present`                | `bool`                          | True iff `{spoke_id}-api` exists in the hub APIM                                          |
+| `product_assigned`           | `bool`                          | True iff `{spoke_id}-product` exists and the API is bound to it                           |
+| `foundry_connection_status`  | `"ok"` \| `"missing"` \| `"errored"` | `"ok"` = api + product both confirmed; `"missing"` = at least one absent; `"errored"` = a probe call raised |
+| `subscription_key_present`   | `bool`                          | True iff at least one APIM subscription's display name contains `spoke_id` (case-insensitive) |
+| `rate_limit_policy`          | `str` \| `None`                 | Reserved for future hub policy introspection                                              |
+| `last_probe_at`              | `str`                           | ISO-8601 UTC timestamp                                                                    |
+| `confidence`                 | `float` 0.0–1.0                 | `1.0` if all 3 signals present, `0.66`/`0.33`/`0.0` for partial / none                    |
+| `missing_perms`              | `list[str]`                     | Human-readable explanations when the probe can't make conclusions (perms, ambiguity, SDK absent) |
+
+**Behavioral guarantees** (enforced by `scripts/tests/test_citadel_access_contract_probe.py` — 10 tests, all green):
+
+- **Never raises.** Any SDK exception (`ResourceNotFoundError`, `HttpResponseError`, generic `Exception`, plain `RuntimeError`) is caught and surfaced via `missing_perms` + zeroed booleans. `BaseException` subclasses (`KeyboardInterrupt`, `SystemExit`) propagate as expected.
+- **404 vs 403 distinction.** A 404 on `api.get` (spoke API not yet onboarded) leaves `missing_perms` empty and reports `foundry_connection_status="missing"`. A 403 (permission gap) populates `missing_perms` and reports `foundry_connection_status="errored"`. This lets consumers decide between "trigger onboarding" and "fix RBAC".
+- **APIM auto-discovery.** Pass `apim_name=None` and the helper queries the hub RG for `Microsoft.ApiManagement/service` resources. Exactly one match → use it. Zero or more than one → error path with explanation in `missing_perms`.
+- **Env-var fallback for hub RG.** If `hub_rg` is empty, the helper reads `TL_CITADEL_HUB_RG` from the environment (backwards-compat with threadlight v0.5.x runtime).
+- **Env-var fallback for subscription.** If `subscription` is empty, the helper reads `AZURE_SUBSCRIPTION_ID`. If still empty, returns the error-path dict.
+- **Guarded azure imports.** The module's azure SDK imports are wrapped in `try/except ImportError` so unit tests run under CI without `azure-mgmt-apimanagement` / `azure-mgmt-resource` / `azure-identity` installed. When called without the SDK, the helper returns an error dict with `"azure SDK not available: pip install azure-mgmt-apimanagement azure-mgmt-resource azure-identity"` in `missing_perms`.
+
+> **MUST:** Use the canonical reference verbatim — do NOT redefine inline.
+> The single source of truth is
+> [`references/python/access_contract_probe.py`](references/python/access_contract_probe.py).
+> Repo invariant: AGENTS.md §7 (SSOT).
+
+### Naming convention
+
+The probe assumes:
+- API ID: `f"{spoke_id}-api"`
+- Product ID: `f"{spoke_id}-product"`
+
+This matches the deploy convention used elsewhere in this skill. If your
+operator chose different IDs, the probe will report `api_present=False` /
+`product_assigned=False` on a spoke that DOES exist with non-conventional
+naming. Document your deploy choice in the platform-team handoff.
+
+### Cross-skill: threadlight self-verify integration
+
+[`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy)
+NET-501 / NET-502 self-verify steps flip from `kind: manual` to
+`kind: sibling-skill` against this helper in threadlight v0.5.2 (tracker:
+[issue #246](https://github.com/aiappsgbb/awesome-gbb/issues/246)).
+Consumers gain machine-readable hub-contract evidence without forcing
+the threadlight runtime to take an `azure-mgmt-*` dependency — the helper
+gracefully degrades to the "SDK not installed" error path when run inside
+threadlight's stdlib-only worker shell.
 
 ---
 

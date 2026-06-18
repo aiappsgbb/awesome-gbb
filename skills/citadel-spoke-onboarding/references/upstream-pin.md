@@ -6,9 +6,9 @@ upstream:
   type: github_repo
   repo: Azure-Samples/ai-hub-gateway-solution-accelerator
   ref: citadel-v1
-  pinned_sha: 26b8c6edb01bdfdc278a4dc2d465bba6b5f45ac4
+  pinned_sha: 449f9647cfcbde7f4ddb794c813cc46bdde3a566
   pinned_commit_message: |
-    Merge pull request #117 from mohamedsaif/citadel-v1
+    Merge pull request #126 from mohamedsaif/citadel-v1
   license: MIT
   notes: |
     This pin tracks the spoke-side Access Contract and Foundry integration artifacts on the citadel-v1 branch. Validation is schema/file based and does not deploy or call APIM.
@@ -27,7 +27,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-26b8c6edb01bdfdc278a4dc2d465bba6b5f45ac4}"
+    PINNED_SHA="${PINNED_SHA:-449f9647cfcbde7f4ddb794c813cc46bdde3a566}"
     REPO_URL="https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator"
     REF="citadel-v1"
     WORK=".upstream-pin-smoke/citadel-spoke-onboarding"
@@ -77,11 +77,11 @@ Keep them in sync.
 |-------|-------|
 | **Upstream** | `Azure-Samples/ai-hub-gateway-solution-accelerator` |
 | **Branch / tag** | `citadel-v1` |
-| **Pinned SHA** | `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4` |
-| **Pinned commit subject** | `Merge pull request #117 from mohamedsaif/citadel-v1` |
+| **Pinned SHA** | `449f9647cfcbde7f4ddb794c813cc46bdde3a566` |
+| **Pinned commit subject** | `Merge pull request #126 from mohamedsaif/citadel-v1` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-15` |
+| **Last re-validated** | `2026-06-18` |
 
 Refresh procedure:
 ```bash
@@ -108,7 +108,7 @@ source files and public GitHub docs only.
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4}"
+PINNED_SHA="${PINNED_SHA:-449f9647cfcbde7f4ddb794c813cc46bdde3a566}"
 REPO_URL="https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator"
 REF="citadel-v1"
 WORK=".upstream-pin-smoke/citadel-spoke-onboarding"
@@ -155,7 +155,7 @@ echo "policy docs link check ok"
 | Access Contract schema | ✅ | `access contract schema ok` |
 | Policy docs | ✅ | `policy docs link check ok` |
 
-Captured at `last_validated: 2026-05-15` by `ricchi`.
+Captured at `last_validated: 2026-06-18` by `copilot-bot`.
 
 ---
 

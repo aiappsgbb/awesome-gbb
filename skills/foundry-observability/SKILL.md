@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.1.5"
+  version: "1.2.0"
 ---
 
 # Foundry Observability
@@ -574,6 +574,52 @@ If `exceptions` returns rows but `console` is empty, the cron initialized
 OTel before crashing — you have a stack trace in AppIn even though logs
 are silent. This is the single most useful query when an ACA Job is
 "failing without telemetry."
+
+---
+
+## Reusable KQL probe helpers
+
+When you need a programmatic read of OTel telemetry health for a Foundry
+workload (trace freshness, exception rate, RAI denials, AGT denials, rate
+limit events), call the canonical helpers:
+
+```python
+from foundry_observability.kql_probes import (
+    trace_freshness, exception_rate, rai_denials,
+    agt_denials, rate_limit_events,
+)
+
+result = trace_freshness(workspace_id="<law-workspace-id>",
+                          app_name="my-agent", since="1h")
+# result["result"]         → int minutes (None on error)
+# result["confidence"]     → 0.0..1.0
+# result["last_probe_at"]  → ISO8601 UTC
+# result["error"]          → None on success, str on failure
+```
+
+For async callers (FastAPI, Quart, etc.) use the mirrored aio module:
+
+```python
+from foundry_observability.kql_probes_aio import trace_freshness
+result = await trace_freshness(workspace_id=..., app_name=...)
+```
+
+| Helper | Returns | Notes |
+|---|---|---|
+| `trace_freshness` | minutes since last OTel trace | int |
+| `exception_rate` | exceptions / minute over window | float |
+| `rai_denials` | RAI denial event count | int |
+| `agt_denials` | AGT deny-list trip count | int |
+| `rate_limit_events` | 429 + throttle event count | int |
+
+> **MUST:** Copy verbatim from
+> [`references/python/kql_probes.py`](references/python/kql_probes.py) and
+> [`references/python/kql_probes_aio.py`](references/python/kql_probes_aio.py).
+> Do NOT redefine inline — the validator enforces single-source-of-truth.
+
+Every helper NEVER raises. On any exception (auth failure, KQL syntax
+error, transient outage) the helper returns `{result: None, confidence: 0.0,
+error: "<reason>"}`.
 
 ---
 

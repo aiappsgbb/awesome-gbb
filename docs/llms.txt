@@ -54,4 +54,4 @@
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 31 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 33 reusable building blocks for Copilot-assisted engagements.
