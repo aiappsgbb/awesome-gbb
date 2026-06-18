@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: Azure-Samples/ai-hub-gateway-solution-accelerator
   ref: citadel-v1
-  pinned_sha: f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4
+  pinned_sha: 26b8c6edb01bdfdc278a4dc2d465bba6b5f45ac4
   pinned_commit_message: |
     Merge pull request #117 from mohamedsaif/citadel-v1
   license: MIT
@@ -27,7 +27,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4}"
+    PINNED_SHA="${PINNED_SHA:-26b8c6edb01bdfdc278a4dc2d465bba6b5f45ac4}"
     REPO_URL="https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator"
     REF="citadel-v1"
     WORK=".upstream-pin-smoke/citadel-spoke-onboarding"
@@ -57,8 +57,8 @@ validation:
     - "access contract schema ok"
     - "policy docs link check ok"
   failure_signatures: []
-last_validated: 2026-05-15
-validated_by: ricchi
+last_validated: 2026-06-18
+validated_by: copilot-bot
 known_issues_count: 0
 ---
 
