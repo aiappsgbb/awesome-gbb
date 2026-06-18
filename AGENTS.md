@@ -734,9 +734,9 @@ re-runs the script on the runner) and by reviewer eyeball.
 
 | Gate | When | What it checks |
 |------|------|---------------|
-| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR touching `skills/**`, `plugin.json`, or `.github/plugin/**` | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
-| [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR touching `skills/**` | The § 4 mass-edit invariants — see that section |
-| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching anything under `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
+| [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR (no `paths:` filter — required-check invariant below) | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
+| [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR (no `paths:` filter; no-ops when no skill changed) | The § 4 mass-edit invariants — see that section |
+| [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR (no `paths:` filter; no-ops when no skill folder changed) | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Live execution suite**: unit tests, catalog lint, and `copilot-cli-matrix` (one runner per skill — a real Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources in `<ci-resource-group>`: deploys, API calls, model inference). Legacy pytest-based E2E + pin-import smoke were retired; see the header comment on the workflow. |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
@@ -745,6 +745,23 @@ The first three run on every PR. The fourth detects drift autonomously.
 The fifth runs on every PR (including Copilot's) and on push/schedule.
 The sixth closes the loop: when all checks pass on a Copilot PR, it
 auto-approves and squash-merges without waiting for human review.
+
+> **🔒 Required-check invariant (path-filter-vs-required-check deadlock).**
+> The three PR gates above — `validate` (skill-validation), `gate`
+> (automation-pr-gate), `validate-pins` (pin-validation) — are **required**
+> status contexts in `main` branch protection. A required status check whose
+> workflow is `paths:`-filtered **never reports** on a PR that doesn't touch
+> those paths, so GitHub leaves the PR permanently `BLOCKED` ("Expected —
+> waiting for status to be reported" that never arrives). An infra/docs/
+> scripts-only PR would be un-mergeable without an admin bypass. Therefore
+> these three workflows carry **no `paths:` filter on `pull_request`** — they
+> run on every PR and no-op cheaply (sub-minute) when nothing relevant
+> changed (each underlying script exits 0 on an empty/non-skill changeset).
+> **Never add a `paths:` filter to a workflow whose job is a required check.**
+> By contrast, the heavy `copilot-cli-matrix` (`skill-test.yml`) is **not** a
+> required check, so it **keeps** its `paths:` filter and stays dormant on
+> non-skill PRs — that is how "avoid running the full matrix unnecessarily"
+> and "never deadlock a PR" coexist.
 
 ### 9.7 · Azure CI credentials and E2E infrastructure
 

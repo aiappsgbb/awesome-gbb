@@ -1,14 +1,13 @@
 name: Skill validation
 
 on:
+  # `validate` is a REQUIRED status check in `main` branch protection. A
+  # required check that is `paths:`-filtered never reports on non-matching PRs,
+  # leaving them permanently BLOCKED (the path-filter-vs-required-check
+  # deadlock — AGENTS.md § 9.6). So: NO `paths:` filter on pull_request. The
+  # catalog-wide validators finish in <1 min and are NOT the heavy
+  # copilot-cli matrix, so every-PR runs are cheap.
   pull_request:
-    paths:
-      - "skills/**"
-      - "plugin.json"
-      - ".github/plugin/**"
-      - "AGENTS.md"
-      - "scripts/**"
-      - ".github/workflows/skill-validation.yml"
   push:
     branches: [main]
     paths:
