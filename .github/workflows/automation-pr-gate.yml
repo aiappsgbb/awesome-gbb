@@ -9,9 +9,13 @@ name: Automation PR gate
 #   - Push description over 1024 chars
 
 on:
+  # `gate` is a REQUIRED status check in `main` branch protection. A required
+  # check that is `paths:`-filtered never reports on PRs outside the filter,
+  # leaving them permanently BLOCKED (the path-filter-vs-required-check
+  # deadlock — AGENTS.md § 9.6). So: NO `paths:` filter. automation-pr-gate.py
+  # finds no skill changes on a non-skill PR and exits 0, so every-PR runs are
+  # cheap (sub-minute).
   pull_request:
-    paths:
-      - "skills/**"
 
 permissions:
   contents: read
