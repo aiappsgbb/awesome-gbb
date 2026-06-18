@@ -12,7 +12,7 @@ description: >
   deploying model backends, apim backend pools, hub policy fragment deployment,
   spoke-side VNet/peering creation (use foundry-vnet-deploy).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Citadel Spoke Onboarding — Reference Guide
