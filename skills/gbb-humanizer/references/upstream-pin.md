@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: blader/humanizer
   ref: main
-  pinned_sha: a2ace14a88a6746f64f1f53ed8272d6788828038
+  pinned_sha: 9600f2b7241cb4eed6ad803abee5ea01d67fe8e4
   pinned_commit_message: |
     Add passive voice rule to humanizer (#80)
   license: MIT
@@ -54,8 +54,8 @@ validation:
     - "humanizer pattern catalog ok"
     - "reference URL check ok"
   failure_signatures: []
-last_validated: 2026-05-28
-validated_by: ricchi
+last_validated: 2026-06-18
+validated_by: copilot-bot
 known_issues_count: 0
 ---
 
