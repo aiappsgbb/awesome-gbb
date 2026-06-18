@@ -16,7 +16,7 @@ description: >
   foundry-toolbox), deploying your own MCP server (use foundry-mcp-aca),
   the hosted agent runtime (use foundry-hosted-agents).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Microsoft Web IQ Grounding for Foundry Agents — Reference Guide
@@ -244,6 +244,32 @@ Web IQ's value proposition is **passage-level, citation-ready retrieval**
 
 ---
 
+## Validation evidence
+
+The Web IQ contract is Entra-gated, so the skill's Web-IQ-specific values
+(endpoint, header name, Entra scope, response field names) remain
+`# CONFIRM:` placeholders and are **not** yet proven against a live Web IQ
+endpoint (see the dormant fixture note below). What **was** validated live on
+Azure (2026-06-18) is the **wiring mechanism** this skill depends on, by
+pointing the *same* `MCPStreamableHTTPTool` + `_webiq_result_parser` code at a
+public no-auth streamable-HTTP MCP grounding server (Microsoft Learn MCP) as a
+stand-in, plus a real Azure model call:
+
+1. **Runtime tool discovery** — `tools/list` over the JSON-RPC handshake
+   returned the grounding tools at runtime (never hardcoded), exactly as the
+   Native MCP path claims.
+2. **Envelope unwrap** — the committed `_webiq_result_parser` (imported from
+   the reference file, not copied) unwrapped a genuine MCP `CallToolResult`
+   into clean, citation-bearing text.
+3. **End-to-end on Azure** — a real Azure OpenAI deployment (`gpt-5.4-mini`,
+   AAD / `disableLocalAuth`) ran a tool-calling loop, invoked the grounding
+   tool, and produced a grounded answer citing live sources.
+
+Reproduce with [`references/validate_mcp_wiring.py`](references/validate_mcp_wiring.py)
+(`SMOKE_RESULT=PASS`). This validates the MCP wiring + citation-unwrap +
+Azure model tool-calling — **not** Web IQ's gated specifics, which still
+require the live fixture below.
+
 ## Reference files
 
 Single source of truth — copy from these, do not re-paste their bodies
@@ -255,6 +281,7 @@ inline (validator-enforced, AGENTS.md § 7).
 | [`references/python/webiq_rest_grounding.py`](references/python/webiq_rest_grounding.py) | REST fallback path | Env-driven `httpx` REST grounding call wrapped as an in-process `@tool`, with confirm-the-schema markers |
 | [`references/agent.yaml.sample`](references/agent.yaml.sample) | Native MCP path | Declarative Foundry connection + env plumbing for the Web IQ MCP tool (placeholders only) |
 | [`references/upstream-pin.md`](references/upstream-pin.md) | (freshness) | Machine-readable freshness contract — `docs_only`, `issue_only`, watches the Web IQ doc URLs |
+| [`references/validate_mcp_wiring.py`](references/validate_mcp_wiring.py) | Validation evidence | Live Azure harness — proves the MCP wiring mechanism (`tools/list` discovery + `_webiq_result_parser` envelope unwrap + Azure model tool-calling) against a public MCP grounding stand-in; **not** a Web IQ contract test |
 
 > **Live testing is pending a CI secret.** Web IQ requires a real key the
 > CI environment does not yet hold, so the live Copilot-CLI fixture for
