@@ -26,7 +26,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-a2ace14a88a6746f64f1f53ed8272d6788828038}"
+    PINNED_SHA="${PINNED_SHA:-9600f2b7241cb4eed6ad803abee5ea01d67fe8e4}"
     REPO_URL="https://github.com/blader/humanizer"
     REF="main"
     WORK=".upstream-pin-smoke/gbb-humanizer"
@@ -105,7 +105,7 @@ GitHub source, `curl`, and shell checks.
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-a2ace14a88a6746f64f1f53ed8272d6788828038}"
+PINNED_SHA="${PINNED_SHA:-9600f2b7241cb4eed6ad803abee5ea01d67fe8e4}"
 REPO_URL="https://github.com/blader/humanizer"
 REF="main"
 WORK=".upstream-pin-smoke/gbb-humanizer"
