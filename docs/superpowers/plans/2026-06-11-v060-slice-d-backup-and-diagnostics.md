@@ -12,6 +12,19 @@
 **Issues closed:** #267, #271
 **Threadlight unlock:** v0.5.4 (BAK-401 + OBS-204) → cuts to v0.6.0
 
+> **Reconciliation note (2026-06-18):** This plan was authored 2026-06-11 with
+> pre-Slice-C catalog counts. Refreshed against `main` after Slice C landed
+> (PR #284, 2026-06-12) and the A+B landing PR (#286) reconciled the plugin
+> version to **4.21.0**:
+> - Catalog baseline is now **33 skills / 29 pins / 26 auto-tier**; Slice D
+>   targets **35 / 31 / 28**.
+> - `plugin.json` baseline **4.21.0** → Slice D MINOR **4.22.0** (lockstep with
+>   `marketplace.json`).
+> - The spec's absolute counts (§4.4.6 "29 → 31", §5.6 "27 → 31", §5.7) predate
+>   this growth — **the numbers in THIS plan supersede them.** The shared probe
+>   template, locked contracts, and Q-D1/Q-D2 decisions in the spec are
+>   unchanged and authoritative.
+
 ---
 
 ## File Structure
@@ -47,9 +60,9 @@
 **Modify:**
 - `scripts/build-site.py` (add both to `CATEGORIES`)
 - `.github/skill-deps.yml` (two new entries, `depends_on: []`)
-- `plugin.json` (MINOR bump; catalog 29 → 31)
+- `plugin.json` (MINOR bump; catalog 33 → 35; version 4.21.0 → 4.22.0)
 - `.github/plugin/marketplace.json` (MINOR matched)
-- `AGENTS.md` (§12.5 stats: 29 → 31 skills)
+- `AGENTS.md` (§12.5 stats: 33 → 35 skills)
 
 **Read-only (reference):**
 - The Slice C scaffolds (committed in the prior PR) — use as the template; do not re-derive shape.
@@ -76,7 +89,7 @@ cat skills/foundry-rbac-audit/references/python/probe.py | head -80
 cat skills/foundry-rbac-audit/test-fixture/consumer_prompt.md
 ```
 
-(Assumes Slice C merged.) If Slice C is NOT yet merged, read its plan: `docs/superpowers/plans/2026-06-11-v060-slice-c-rbac-and-alerts.md`.
+Slice C **landed on `main` via PR #284 (2026-06-12)** — `foundry-rbac-audit` and `azure-monitor-alert-baseline` are present in `skills/`. Read them directly as the template. (Plan, for rationale only: `docs/superpowers/plans/2026-06-11-v060-slice-c-rbac-and-alerts.md`.)
 
 - [ ] **Step 2: Read the two Azure SDK packages we'll need that are new to this slice**
 
@@ -1749,16 +1762,18 @@ Task 3.4.
 - Modify: `.github/plugin/marketplace.json`
 - Modify: `AGENTS.md` (§12.5)
 
-- [ ] **Step 1: Bump plugin.json MINOR (29 → 31)**
+- [ ] **Step 1: Bump plugin.json MINOR (33 → 35 skills; version 4.21.0 → 4.22.0)**
 
 Both `plugin.json` and `marketplace.json` versions match. MINOR bump per AGENTS.md §5.1 (added skills).
 
 - [ ] **Step 2: Update AGENTS.md §12.5 stats**
 
-- `Total skills | 29` → `31`
-- `Skills with upstream pins | 25` → `27`
-- `Auto-tier (CI can refresh autonomously) | 23` → `25`
-- `Unit tests | 92 (...)` → bump for ~13 new (6 backup + 7 diagnostics)
+- `Total skills | 33` → `35`
+- `Skills with upstream pins | 29` → `31`
+- `Auto-tier (CI can refresh autonomously) | 26` → `28`
+- `Unit tests | 119 (37 PR gate + 59 skill validation + 23 probe units)` → bump
+  probe-units for ~13 new (6 backup + 7 diagnostics) ⇒ ~132 (37 + 59 + 36 probe units).
+- `Issue-only` and `Internal IP` rows unchanged.
 - Azure E2E resources row unchanged.
 
 - [ ] **Step 3: Validate**
@@ -1772,7 +1787,7 @@ python scripts/validate-skills.py 2>&1 | tail -10
 
 ```bash
 git add plugin.json .github/plugin/marketplace.json AGENTS.md
-git commit -m "plugin: MINOR bump for v0.6.0 Slice D (29 → 31 skills)
+git commit -m "plugin: MINOR bump for v0.6.0 Slice D (33 → 35 skills, 4.22.0)
 
 Adds azure-backup-readiness + azure-resource-diagnostics. AGENTS.md
 §12.5 catalog stats updated.
@@ -1856,7 +1871,7 @@ Body skeleton:
 - **NEW: `azure-resource-diagnostics`** — peer skill auditing
   diagnostic-settings coverage. "Configured" means ANY destination
   (LAW / EventHubs / Storage). Optional `--kind` filter.
-- **Plugin** — MINOR bump (catalog 29 → 31).
+- **Plugin** — MINOR bump (catalog 33 → 35; version 4.21.0 → 4.22.0).
 - **AGENTS.md §12.5** — stats updated.
 - **CI** — 2 new pytest unit files (~13 tests). 2 new Copilot-CLI
   fixtures registered via `.github/skill-deps.yml` (auto-included in
@@ -1922,8 +1937,8 @@ commit list (~16 commits), test results.
 - [ ] `scripts/build-site.py CATEGORIES` updated for both.
 - [ ] ~~`skill-test.yml e2e-azure` matrix extended~~ — N/A; Task 3.3 dropped per drift pivot. Fixtures auto-enroll in `copilot-cli-matrix` via Task 3.1.
 - [ ] `plugin.json` + `marketplace.json` MINOR bumped in lockstep
-      (catalog 29 → 31, builds on Slice C's 27 → 29).
-- [ ] `AGENTS.md §12.5` stats accurate (31 / 27 / 25).
+      (catalog 33 → 35, builds on Slice C's landed 31 → 33).
+- [ ] `AGENTS.md §12.5` stats accurate (35 / 31 / 28).
 - [ ] Docs site rebuilt and committed.
 
 ---
