@@ -25,8 +25,10 @@ upstream:
     auto-refresh through this pin (only PyPI versions do). When upstream
     advances on the analysis math or the pricing catalog, a human
     re-vendors the files and bumps the SHA here in the same PATCH PR.
-    The weekly detector still polls the SHA so we get an unassigned
-    issue when upstream commits — that's the re-vendor trigger.
+    As of 2026-06-18 the upstream repo `aiappsgbb/ptu-paygo-mix` is
+    private/inaccessible (HTTP 404). SHA drift detection is suspended
+    until the repo is made public again. The vendored files remain
+    functional; all skill execution is PyPI-only.
 
 packages:
   - name: pandas
@@ -44,7 +46,7 @@ packages:
       `np.percentile`, `np.ceil`, vectorized math in run_analysis.
   - name: matplotlib
     source: pypi
-    version: "~=3.10.9"
+    version: "~=3.11.0"
     upstream_changelog: https://matplotlib.org/stable/users/release_notes.html
     notes: |
       Headless `Agg` backend (set explicitly in render_report.py before
@@ -64,9 +66,6 @@ packages:
       `LogsQueryClient.query_workspace`. Only exercised by `--workspace`.
 
 docs_to_revalidate:
-  - https://github.com/aiappsgbb/ptu-paygo-mix
-  - https://github.com/aiappsgbb/ptu-paygo-mix/blob/main/README.md
-  - https://github.com/aiappsgbb/ptu-paygo-mix/blob/main/docs/sample_kql_queries.md
   - https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding
   - https://learn.microsoft.com/azure/azure-monitor/reference/tables/azuremetrics
   - https://pypi.org/project/pandas/
@@ -83,7 +82,7 @@ known_issues:
     workaround_location: SKILL.md § "Pricing catalog" + § "Known caveats"
   - id: KI-002
     description: "data.py vendoring must strip `import streamlit as st` and `@st.cache_data*` decorators on every re-vendor"
-    upstream_url: https://github.com/aiappsgbb/ptu-paygo-mix/blob/main/src/paygo_ptu/data.py
+    upstream_url: https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding
     status: open
     workaround_location: SKILL.md § "Vendored layout"
   - id: KI-003
@@ -94,7 +93,6 @@ known_issues:
 
 validation:
   requires:
-    - github_only
     - pypi
   runnable: true
   script: |
@@ -106,7 +104,7 @@ validation:
     pip install --quiet \
       "pandas~=3.0.3" \
       "numpy~=2.4.6" \
-      "matplotlib~=3.10.9" \
+      "matplotlib~=3.11.0" \
       "azure-identity~=1.25.3" \
       "azure-monitor-query~=2.0.0"
     python - <<'PY'
@@ -158,12 +156,13 @@ validation:
     - "AttributeError"
     - "AssertionError"
 
-last_validated: "2026-05-29"
+last_validated: "2026-06-18"
 validated_by: copilot-bot
 known_issues_count: 3
 re_pin_log:
   - "2026-05-18: initial pin v1.0.0 (ricchi)"
   - "2026-05-18: v1.0.1 — also vendor active_tokens_backup.kql as queries/active_tokens.kql alternative (ricchi)"
+  - "2026-06-18: v1.0.6 — matplotlib ~=3.10.9 → ~=3.11.0 (MINOR); remove github_only from validation.requires (upstream repo aiappsgbb/ptu-paygo-mix is private/inaccessible); remove 3 dead docs_to_revalidate URLs; fix KI-002 upstream_url (copilot-bot)"
 ---
 
 # Upstream pin — `paygo-ptu-cost-analyzer` skill
@@ -205,10 +204,10 @@ If it has drifted, a human must re-vendor `analysis.py`, `data.py`,
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `pandas` | PyPI | `~=2.2.3` | Dataframe + datetime parsing |
-| `numpy` | PyPI | `~=2.1.0` | Vectorised math + percentile |
-| `matplotlib` | PyPI | `~=3.9.0` | Headless Agg backend |
-| `azure-identity` | PyPI | `~=1.22.0` | `DefaultAzureCredential` (KQL path only) |
+| `pandas` | PyPI | `~=3.0.3` | Dataframe + datetime parsing |
+| `numpy` | PyPI | `~=2.4.6` | Vectorised math + percentile |
+| `matplotlib` | PyPI | `~=3.11.0` | Headless Agg backend |
+| `azure-identity` | PyPI | `~=1.25.3` | `DefaultAzureCredential` (KQL path only) |
 | `azure-monitor-query` | PyPI | `~=2.0.0` | `LogsQueryClient` (KQL path only) |
 
 Cap pattern is PEP 440 compatible-release per AGENTS.md § 9.5. Patch
@@ -238,8 +237,8 @@ set -euo pipefail
 python -m venv .venv && . .venv/bin/activate
 pip install --quiet --upgrade pip
 pip install --quiet \
-  "pandas~=2.2.3" "numpy~=2.1.0" "matplotlib~=3.9.0" \
-  "azure-identity~=1.22.0" "azure-monitor-query~=2.0.0"
+  "pandas~=3.0.3" "numpy~=2.4.6" "matplotlib~=3.11.0" \
+  "azure-identity~=1.25.3" "azure-monitor-query~=2.0.0"
 python - <<'PY'
 import pandas as pd, numpy as np, matplotlib
 matplotlib.use("Agg")
@@ -366,7 +365,13 @@ quirk). The coalesce in the default query is the permanent fix.
 
 ## 6. Re-pin procedure
 
-When upstream `aiappsgbb/ptu-paygo-mix` advances:
+> **Note (2026-06-18):** The upstream repo `aiappsgbb/ptu-paygo-mix` is
+> currently private/inaccessible (HTTP 404). SHA-drift re-vendoring is
+> suspended until the repo is made public again. Steps 1–2 below require
+> repo access — skip them while the repo is private; resume from step 3
+> using only the PyPI version updates.
+
+When upstream `aiappsgbb/ptu-paygo-mix` is accessible and advances:
 
 1. **Capture new SHA**:
    ```bash
@@ -403,9 +408,11 @@ When upstream `aiappsgbb/ptu-paygo-mix` advances:
 The detector runs `curl --head` against each URL weekly; 4xx/5xx responses
 surface as a refresh issue.
 
-- <https://github.com/aiappsgbb/ptu-paygo-mix>
-- <https://github.com/aiappsgbb/ptu-paygo-mix/blob/main/README.md>
-- <https://github.com/aiappsgbb/ptu-paygo-mix/blob/main/docs/sample_kql_queries.md>
+> **Note (2026-06-18):** `https://github.com/aiappsgbb/ptu-paygo-mix`
+> and its sub-URLs were removed from this list because the upstream repo
+> is private/inaccessible (HTTP 404). They will be re-added if the repo
+> is made public.
+
 - <https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding>
 - <https://learn.microsoft.com/azure/azure-monitor/reference/tables/azuremetrics>
 - <https://pypi.org/project/pandas/>
