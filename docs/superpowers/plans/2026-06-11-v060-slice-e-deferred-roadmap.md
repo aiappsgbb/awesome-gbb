@@ -7,24 +7,46 @@
 
 ---
 
-## Reconciliation note (2026-06-18)
+## Reconciliation note (2026-06-18, re-grounded)
 
-This plan was drafted alongside the spec on 2026-06-11 and **reconciled against
-live `main` on 2026-06-18** while folding Slices A+B into the landing PR (#286).
-Two facts changed the realization of the spec's Q-E1 decision:
+This plan was drafted alongside the spec on 2026-06-11 and **re-grounded against
+the live threadlight `sibling-skills-map.md` (main) and live awesome-gbb `main`
+on 2026-06-18** while folding Slices A+B into the landing PR (#286). Three facts
+sharpened it:
 
-1. **No host-skill READMEs exist.** The spec §4.5 says "2 README **appends**" and
-   Q-E1 says "new Roadmap section just before See also." A live check shows
-   **only 4 of 33 skills have a `README.md`** (`azure-monitor-alert-baseline`,
-   `azure-sre-agent`, `citadel-hub-deploy`, `foundry-rbac-audit`) — and
-   **neither `foundry-iq` nor `foundry-hosted-agents` is among them.** There is
-   nothing to append to. The faithful realization is therefore to **CREATE a
-   minimal `README.md`** in each host skill containing only the Roadmap signpost,
-   modeled on the Slice C README convention. See Open Question E-2.
-2. **#270 host skill is still unresolved** (spec §4.5 point 4 — `foundry-hosted-agents`
-   vs `foundry-memory`). This plan defaults to `foundry-hosted-agents` per the
-   issue title but flags it as a threadlight-side contract decision. See Open
-   Question E-1.
+1. **No host-skill READMEs exist.** A live check shows **only 4 of 33 skills have
+   a `README.md`** (`azure-monitor-alert-baseline`, `azure-sre-agent`,
+   `citadel-hub-deploy`, `foundry-rbac-audit`) — and **neither `foundry-iq` nor
+   `foundry-hosted-agents` is among them.** There is nothing to append to, so the
+   faithful realization of the spec's "README append" is to **CREATE a minimal
+   `README.md`** in each host skill containing only the Roadmap signpost. See E-2.
+
+2. **Open Question E-1 is RESOLVED by threadlight's own contract.** The current
+   `threadlight-production-ready/references/sibling-skills-map.md` on `main` maps
+   **MDL-011 → `foundry-hosted-agents`** (input contract `subscription_id`,
+   `resource_group`, `retention_days`) — *not* `foundry-memory`. `foundry-memory`
+   exists (v1.1.0) but threadlight's map does not select it. The host-skill choice
+   is therefore decided upstream, not by us. README for #270 goes in
+   **`foundry-hosted-agents`** (v1.11.0). E-1 closed.
+
+3. **The deferred contracts are now exact** (sourced from the threadlight map, not
+   paraphrased), so the roadmap notes can name the precise signature v0.7.0 must
+   build:
+
+   | Finding | Host skill (live ver) | Threadlight input contract |
+   | --- | --- | --- |
+   | **MDL-010** (#269) | `foundry-iq` (v1.3.2; map note "≥ 0.3.0" satisfied) | `subscription_id`, `resource_group`, `private_endpoint_required: true` |
+   | **MDL-011** (#270) | `foundry-hosted-agents` (v1.11.0) | `subscription_id`, `resource_group`, `retention_days` |
+
+**⚠️ Discrepancy to flag (heads-up for the threadlight-side flip, NOT our change):**
+the threadlight map lists MDL-010 and MDL-011 in its **"Currently mapped"** table
+*without* the `(planned)` tag — i.e. it presents them as if the audit helpers
+already exist. **They do not** (#269/#270 are still open; `foundry-iq` and
+`foundry-hosted-agents` expose no such method today). Until v0.7.0 ships the
+helpers, threadlight should keep MDL-010/MDL-011 `kind: manual`, exactly like the
+four rows that ARE tagged `(planned)`. The roadmap notes below say this explicitly
+so a reader of the map doesn't flip the finding early and hit a missing-method
+failure. (Fixing the map tag is a threadlight-repo edit — out of our scope.)
 
 Everything else in the spec's Slice E scope holds: **no code, no SKILL.md edits,
 no pin updates, no version bumps, 1 commit.**
@@ -50,7 +72,7 @@ Two new minimal `README.md` files (one per host skill), each ≤ ~25 lines:
 
 ```
 skills/foundry-iq/README.md            (NEW)
-skills/foundry-hosted-agents/README.md (NEW)   ← OR skills/foundry-memory/ — see E-1
+skills/foundry-hosted-agents/README.md (NEW)   ← host confirmed via threadlight map (E-1 resolved)
 ```
 
 Each contains exactly:
@@ -82,11 +104,15 @@ query knowledge indexes backing agents and retrieval.
 
 **Planned for v0.7.0 — private-endpoint posture audit
 ([#269](https://github.com/aiappsgbb/awesome-gbb/issues/269)).**
-A `pe_posture_audit()` method that introspects each knowledge source's AI Search
-backing and reports private-endpoint / public-network-access state. Deferred from
-v0.6.0 because it intersects private-endpoint discovery (`foundry-vnet-deploy`,
-an `issue_only` manual-validation skill) and needs its own design conversation.
-This unblocks threadlight finding **MDL-010** (currently `kind: manual`).
+An `audit()` method that introspects each knowledge source's AI Search backing
+and reports private-endpoint / public-network-access state. Threadlight's
+`sibling-skills-map.md` already names the expected contract:
+`audit(subscription_id, resource_group, private_endpoint_required=True) -> dict`.
+Deferred from v0.6.0 because it intersects private-endpoint discovery
+(`foundry-vnet-deploy`, an `issue_only` manual-validation skill) and needs its own
+design conversation. This unblocks threadlight finding **MDL-010**, which **must
+stay `kind: manual` until this method ships** — the threadlight map currently lists
+MDL-010 without the `(planned)` tag, but no such method exists here yet.
 
 ## See also
 
@@ -94,7 +120,7 @@ This unblocks threadlight finding **MDL-010** (currently `kind: manual`).
 - [#269](https://github.com/aiappsgbb/awesome-gbb/issues/269) — the deferred work
 ```
 
-### `skills/foundry-hosted-agents/README.md`  *(host pending — see E-1)*
+### `skills/foundry-hosted-agents/README.md`  *(host confirmed — E-1 resolved)*
 
 ```markdown
 # foundry-hosted-agents
@@ -106,11 +132,14 @@ via `azd`, including identity/RBAC wiring and the FoundryChatClient bootstrap.
 
 **Planned for v0.7.0 — thread-retention reader
 ([#270](https://github.com/aiappsgbb/awesome-gbb/issues/270)).**
-A read-only method to enumerate a hosted agent's conversation threads and report
-retention/age so a pilot can prove data-lifecycle posture. Deferred from v0.6.0
-because the host-skill choice (`foundry-hosted-agents` vs `foundry-memory`) is an
-open threadlight contract decision (see issue body). This unblocks threadlight
-finding **MDL-011** (currently `kind: manual`).
+A read-only `audit()` method to enumerate a hosted agent's conversation threads
+and report oldest-thread age against a declared retention window so a pilot can
+prove data-lifecycle posture. Threadlight's `sibling-skills-map.md` names the
+expected contract: `audit(subscription_id, resource_group, retention_days) -> dict`,
+and maps the finding to **this skill** (not `foundry-memory`). This unblocks
+threadlight finding **MDL-011**, which **must stay `kind: manual` until this method
+ships** — the threadlight map currently lists MDL-011 without the `(planned)` tag,
+but no such method exists here yet.
 
 ## See also
 
@@ -139,10 +168,10 @@ link check." There is no code under test. Each task is one reviewable unit.
       must not trip frontmatter/structure checks — it shouldn't, READMEs are
       unvalidated, but confirm).
 
-### Task 2 — Create `foundry-hosted-agents/README.md` (or `foundry-memory`)
+### Task 2 — Create `foundry-hosted-agents/README.md`
 
-- [ ] **Resolve E-1 first** (or proceed with the `foundry-hosted-agents` default
-      and leave a one-line note in the commit body that the host is provisional).
+- [ ] E-1 is resolved: host is **`foundry-hosted-agents`** (threadlight map maps
+      MDL-011 here, not `foundry-memory`). No decision pending.
 - [ ] Confirm the target README does not already exist.
 - [ ] Source the one-line summary from the chosen skill's SKILL.md `description`.
 - [ ] Write the file from the template above.
@@ -165,8 +194,10 @@ link check." There is no code under test. Each task is one reviewable unit.
       Roadmap section pointing at the deferred issues. No code, no SKILL.md,
       no pin, no version bump.
 
-      Host skill for #270 is provisional (foundry-hosted-agents vs
-      foundry-memory) pending threadlight contract decision — see issue #270.
+      Host skill for #270 confirmed foundry-hosted-agents per the live
+      threadlight sibling-skills-map (MDL-011). Each note instructs the
+      threadlight side to keep MDL-010/011 kind: manual until v0.7.0 ships
+      the audit() helpers.
 
       Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
       ```
@@ -187,7 +218,7 @@ link check." There is no code under test. Each task is one reviewable unit.
 
 ## What this slice deliberately does NOT do
 
-- ❌ No `pe_posture_audit()` / thread-retention implementation (that IS v0.7.0).
+- ❌ No `audit()` implementation in either skill (that IS v0.7.0 — #269/#270).
 - ❌ No SKILL.md edits — keeps the gate quiet and avoids version churn.
 - ❌ No version bump on either skill or the plugin — READMEs are optional
    extended docs (AGENTS.md §1); a roadmap signpost is not a capability change.
@@ -201,15 +232,15 @@ link check." There is no code under test. Each task is one reviewable unit.
 
 ## Open questions
 
-### E-1 · #270 host skill — `foundry-hosted-agents` vs `foundry-memory` (BLOCKER for Task 2 wording, not for landing)
+### E-1 · #270 host skill — RESOLVED: `foundry-hosted-agents` (per live threadlight map)
 
-The spec §4.5 point 4 notes #270's issue body names **either** `foundry-hosted-agents`
-**or** `foundry-memory` as the host. This plan defaults to **`foundry-hosted-agents`**
-(matches the issue title and the tracker's item-8 label). **Recommendation:** ship
-the README in `foundry-hosted-agents` now with a provisional note; if threadlight
-later picks `foundry-memory`, moving a 25-line signpost README is trivial. **Needs
-Riccardo / threadlight confirmation before the v0.7.0 implementation slice — not
-before this docs slice lands.**
+~~The spec §4.5 point 4 notes #270's issue body names **either** `foundry-hosted-agents`
+**or** `foundry-memory`.~~ **Resolved 2026-06-18.** The current threadlight
+`sibling-skills-map.md` on `main` maps **MDL-011 → `foundry-hosted-agents`** with
+contract `audit(subscription_id, resource_group, retention_days)`. `foundry-memory`
+exists (v1.1.0) but the map does not select it. The host-skill choice is decided
+upstream; the README for #270 goes in **`foundry-hosted-agents`**. No further
+confirmation needed for either this docs slice or the v0.7.0 implementation slice.
 
 ### E-2 · Does creating a new README warrant a version bump?
 
