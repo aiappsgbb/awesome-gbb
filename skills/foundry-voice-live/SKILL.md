@@ -17,7 +17,7 @@ description: >
   ingestion (use foundry-observability), authoring an MCP server (use
   foundry-mcp-aca or ui-widget-developer).
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Foundry Voice Live
@@ -310,6 +310,19 @@ session config:
 }
 ```
 
+### Non-English semantic VAD
+
+`azure_semantic_vad` is English-tuned. For other languages, the endpointer can
+fire **mid-utterance** on natural hesitations ("uhm…", a pause before an ID),
+clipping the user. Two fixes:
+
+- Use the **multilingual** VAD variant and a **multilingual end-of-utterance**
+  detection model for non-English locales.
+- `silence_duration_ms` is the lever that **bridges mid-sentence pauses** —
+  `threshold` and `timeout_ms` alone don't. Raising it tolerates longer pauses at
+  the cost of a little latency per turn (≈ the extra silence you wait for), so tune
+  it to the locale's natural pausing, not lower.
+
 ### Feature comparison
 
 | Feature | Realtime | Voice Live |
@@ -321,6 +334,24 @@ session config:
 | Voice set | OpenAI only (10 voices) | Azure Neural HD + OpenAI (per locale) |
 | Voice format | bare string `"alloy"` | `{"name": "...", "type": "azure-standard"}` |
 | Filler word removal | ❌ | Optional (`remove_filler_words: true`) |
+
+### Cascade vs native realtime — latency facts
+
+A **native realtime** model (`gpt-realtime*`) speaks directly. A **text model on
+Voice Live** (`gpt-4o`, `gpt-5*`, …) runs as a **cascade**: the model emits text,
+then a managed Azure TTS overlay speaks it. Two consequences worth designing for:
+
+- **First-audio floor.** Audio can't start before the model's first token, so the
+  cascade has an inherent first-audio floor that no client tuning removes. Native
+  realtime has no overlay and starts sooner. Pick native realtime when first-audio
+  latency is the priority; pick the cascade when you need a specific text model's
+  reasoning or a managed model with no deployment.
+- **`reasoning_effort` is not monotonic for *perceived* latency.** Lower effort
+  can change behavior, not just speed: `minimal` may reduce orchestration quality
+  or make a model **skip** a preamble/acknowledgment turn. A middle setting is a
+  reasonable starting point, but the effect is model-, prompt-, and tool-flow-
+  dependent — **measure per scenario** with the two-track method in §7 rather than
+  assuming "lower effort = faster experience".
 
 ---
 
@@ -597,6 +628,61 @@ never single samples — LLM + PAYG latency is non-deterministic.
 > duration tracks text length more loosely. Compare TTFA/TTFT for the
 > closest apples-to-apples comparison with native realtime models.
 
+### Measuring a fair latency gap (native realtime vs cascade)
+
+When you compare a native realtime model against a text-model-on-Voice-Live
+cascade, measure **two separate tracks** — collapsing them is the most common
+benchmarking mistake:
+
+| Track | How | What it isolates |
+|-------|-----|------------------|
+| **Model-isolated** | text input, no mic/VAD/STT | the true model gap (model TTFB + first audio) |
+| **End-to-end** | real audio through each rung's native gate | the *experienced* latency, incl. endpointing |
+
+> **Symmetry trap:** if rung A uses `server_vad` and rung B uses
+> `azure_semantic_vad` with a longer silence window, an end-to-end comparison is
+> measuring **endpointing config**, not the models. Always report the
+> model-isolated track as the headline gap, and label the end-to-end track as
+> "experience (includes endpointing)".
+
+Decompose the perceived turn into **legs** so you know *which* stage to optimize:
+
+```
+[end of user speech] ─▶ speech_stopped ─▶ committed ─▶ first model token ─▶ first audio ─▶ response done
+        └──── endpointing/EOU ────┘   └─ model TTFB ─┘   └─ TTS overlay ─┘
+```
+
+Anchor each leg on **server events** (plus one client timestamp for the *known*
+end of user audio — server events alone can't see when the user actually stopped)
+and read the socket **concurrently** with sending audio — a sequential
+send-then-read collapses every event that fired during the trailing-silence send
+into one burst, zeroing the legs on the fast rung. Always aggregate **p50/p95 +
+CoV over ≥5 iterations** and count 429s; a single sample of a PAYG voice pipeline
+tells you nothing.
+
+> Tip: a text-model cascade has a **first-audio floor** — the managed TTS overlay
+> can't start before the model emits its first token, and that floor is **not
+> cuttable client-side**. Spend optimization effort on the legs you *can* move
+> (endpointing, retrieval, proactive acks), not on the TTS floor.
+
+### Proactive acknowledgment (perceived-latency lever)
+
+On a turn that triggers a slow tool call or an agent handoff, the model is often
+**silent** until the grounded answer is ready — which feels like multiple seconds
+of dead air even when total latency is fine. Have the model speak a short
+**verification bridge** *before* the slow call:
+
+> "One moment, let me check that." → `tool_call` → grounded answer.
+
+This cuts the **perceived** silence (time-to-first-audio) dramatically. Total
+grounded-answer latency is unchanged only if the slow work starts while the ack
+is being spoken — so kick off the tool call right after (or concurrently with)
+the bridge. It's a pure prompt technique (rung-agnostic). Two rules keep it clean:
+
+- **One filler per turn** — never stack ("One sec. Let me check. Looking now.").
+- **Don't ack right after another ack** — if an upstream agent already said it's
+  checking, the downstream agent should answer directly.
+
 ---
 
 ## 8 · UI Plumbing (Gradio + FastRTC)
@@ -705,6 +791,36 @@ async def handle_event(event):
 > are an SDK preview→GA migration shim. `openai ≥ 2.x` emits only the
 > GA names; the legacy names stay as a zero-cost safety net.
 
+### Backend-owned greeting (without polluting transcript history)
+
+To make the assistant greet **before** the user speaks, don't send the greeting
+prompt as a user message — that injects a synthetic user turn that leaks into
+transcript history and KB/context. Drive a response whose **per-response
+`instructions`** carry the greeting instead, so no user-role item is created:
+
+```python
+# Typed SDK
+await conn.response.create(
+    response={
+        "instructions": "Greet the caller and ask how you can help. Keep it short.",
+        "metadata": {"origin": "backend_initial_greeting"},
+    }
+)
+
+# Raw JSON (Rungs 2–3)
+await conn.send({
+    "type": "response.create",
+    "response": {
+        "instructions": "Greet the caller and ask how you can help. Keep it short.",
+        "metadata": {"origin": "backend_initial_greeting"},
+    },
+})
+```
+
+The model speaks the greeting, but no user-role item is ever added — the
+transcript starts clean with the assistant's turn. (Per-response `instructions`
+augment the session instructions for just that one response.)
+
 ---
 
 ## 10 · Prerequisites
@@ -764,6 +880,8 @@ dependencies = [
 | Voice quality dips in non-English | Multilingual Neural vs DragonHD | Expected — DragonHD (English) is newer. Try standard Neural voices for crisper output |
 | Sovereign cloud `401` | Wrong token scope | Set `AZURE_COGNITIVE_SERVICES_SCOPE` / `AZURE_AI_SCOPE` in `.env` |
 | `"Model … is not supported in this region"` | Region doesn't serve that managed model | Check the [Voice Live region/model matrix](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions) |
+| User gets cut off mid-sentence in a non-English call | English-tuned `azure_semantic_vad` ends the turn early on a hesitation/pause | Use the multilingual VAD + multilingual end-of-utterance model; raise `silence_duration_ms` to the locale's pausing (see §3) |
+| A tool/KB turn takes several seconds | The **agentic KB planner** (query decomposition / multi-hop reasoning LLM) can dominate — not necessarily the store | Measure the retrieval legs (planner vs search/store vs model vs TTS) separately first. For single-intent lookups, query the index **directly** (semantic search, no planner); reserve the agentic planner for genuine multi-hop |
 | `RuntimeError: aiohttp not installed` from `azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.2.0"` (async path requires it) |
 | `MCPToolApprovalRequest` event mid-turn but no approval reply | `require_approval` set on `MCPServer` | Send `mcp_tool_approval_response` event back; see §12.2 |
 
