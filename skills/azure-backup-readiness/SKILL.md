@@ -41,17 +41,27 @@ from azure_backup_readiness.probe import probe
 result = probe(
     subscription_id="<sub-id>",
     resource_group="<rg>",
+    # protected_item_types=["VM", "SQLDataBase"],  # optional REL-007 filter
 )
 # result["vaults"]                         → list of {kind, name, id, protected_item_count}
 # result["summary"]["total_vaults"]        → int
 # result["summary"]["rsv_count"]           → int  (RSV count)
 # result["summary"]["bv_count"]            → int  (BackupVault count)
-# result["summary"]["total_protected_items"] → int  (sum across vaults)
+# result["summary"]["total_protected_items"] → int  (sum across vaults, after type filter)
+# result["summary"]["protected_item_types_filter"] → list[str] | None (echo of applied filter)
 # result["summary"]["confidence"]          → 0.0..1.0
 # result["summary"]["probe_error"]         → str | None
 # result["findings"]                       → list of typed findings
 # result["manifest_path"]                  → path to JSON manifest on disk
 ```
+
+`protected_item_types` (the REL-007 sibling-contract input) is an
+**optional** list of workload/datasource type tokens. When provided,
+only protected items whose type matches one of the tokens
+(case-insensitive substring) count toward
+`total_protected_items` / per-vault `protected_item_count`. When
+omitted (default), every protected item counts. The applied filter is
+echoed back in `summary.protected_item_types_filter`.
 
 The probe **never raises**. If one vault API denies (e.g. RSV is
 forbidden but Backup Vault works), the probe still completes and
@@ -81,6 +91,8 @@ prefer either — both are reported in `result["vaults"]` with their
 
 ```bash
 python -m azure_backup_readiness --sub <sub-id> --rg <rg>
+# optional REL-007 type filter:
+python -m azure_backup_readiness --sub <sub-id> --rg <rg> --protected-item-types VM SQLDataBase
 ```
 
 Outputs JSON to stdout AND writes the same content to

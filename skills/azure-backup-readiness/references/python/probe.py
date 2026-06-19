@@ -89,6 +89,7 @@ def _empty_result(sub: str, rg: str, error: str | None = None) -> dict[str, Any]
             "rsv_count": 0,
             "bv_count": 0,
             "total_protected_items": 0,
+            "protected_item_types_filter": None,
             "confidence": 0.0 if error else 1.0,
             "probe_error": error,
         },
@@ -105,13 +106,49 @@ def _write_manifest(result: dict[str, Any]) -> str:
     return str(path.resolve())
 
 
+def _item_type(item: Any) -> str:
+    """Best-effort workload/datasource type string for a protected item.
+
+    RSV protected items expose ``properties.workload_type`` /
+    ``properties.protected_item_type``; DataProtection backup instances
+    expose ``properties.data_source_info.datasource_type``. Null-safe and
+    string-typed (a MagicMock auto-attribute is ignored), so an unfiltered
+    probe is unaffected.
+    """
+    props = getattr(item, "properties", None)
+    for attr in ("workload_type", "protected_item_type", "backup_management_type"):
+        val = getattr(props, attr, None)
+        if isinstance(val, str) and val:
+            return val
+    dsi = getattr(props, "data_source_info", None)
+    val = getattr(dsi, "datasource_type", None)
+    if isinstance(val, str) and val:
+        return val
+    return ""
+
+
+def _matches_types(item: Any, requested: list[str] | None) -> bool:
+    """True when ``requested`` is empty (no filter) or the item's type matches
+    any requested token (case-insensitive substring)."""
+    if not requested:
+        return True
+    itype = _item_type(item).lower()
+    return any(req.lower() in itype for req in requested if req)
+
+
 def probe(
     subscription_id: str,
     resource_group: str,
     *,
+    protected_item_types: list[str] | None = None,
     credential: Any = None,
 ) -> dict[str, Any]:
-    """Probe backup coverage at the RG scope. See module docstring."""
+    """Probe backup coverage at the RG scope. See module docstring.
+
+    ``protected_item_types`` (REL-007 sibling contract): when provided,
+    only protected items whose workload/datasource type matches one of
+    these tokens count toward coverage. When omitted, all items count.
+    """
     if credential is None:
         credential = DefaultAzureCredential()
 
@@ -125,7 +162,9 @@ def probe(
         return result
 
     result = _empty_result(subscription_id, resource_group)
-
+    result["summary"]["protected_item_types_filter"] = (
+        list(protected_item_types) if protected_item_types else None
+    )
     rsv_denied = False
     bv_denied = False
 
@@ -139,6 +178,7 @@ def probe(
             try:
                 items = list(rsvb_client.backup_protected_items.list(
                     vault_name=vault_name, resource_group_name=resource_group))
+                items = [i for i in items if _matches_types(i, protected_item_types)]
                 item_count = len(items)
             except Exception:
                 item_count = -1   # signal "we couldn't enumerate"
@@ -177,6 +217,7 @@ def probe(
             try:
                 items = list(bv_client.backup_instances.list(
                     resource_group_name=resource_group, vault_name=vault_name))
+                items = [i for i in items if _matches_types(i, protected_item_types)]
                 item_count = len(items)
             except Exception:
                 item_count = -1

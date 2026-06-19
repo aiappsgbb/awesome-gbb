@@ -70,7 +70,17 @@ class TestAzureBackupReadinessProbe(unittest.TestCase):
         self._rsvb_patcher.start()
         self._cred_patcher.start()
 
+        # Isolate manifest output so no test leaks into the repo ``out/`` dir.
+        self._outdir = tempfile.TemporaryDirectory()
+        self._prev_out = os.environ.get("AZURE_BACKUP_READINESS_OUT")
+        os.environ["AZURE_BACKUP_READINESS_OUT"] = self._outdir.name
+
     def tearDown(self):
+        if self._prev_out is None:
+            os.environ.pop("AZURE_BACKUP_READINESS_OUT", None)
+        else:
+            os.environ["AZURE_BACKUP_READINESS_OUT"] = self._prev_out
+        self._outdir.cleanup()
         self._cred_patcher.stop()
         self._rsvb_patcher.stop()
         self._bv_patcher.stop()
@@ -125,21 +135,18 @@ class TestAzureBackupReadinessProbe(unittest.TestCase):
         self.assertTrue(any(f["kind"] == "vault-empty" for f in result["findings"]))
 
     def test_manifest_written(self):
+        """Manifest is written to AZURE_BACKUP_READINESS_OUT and round-trips."""
         self.rsv.vaults.list_by_resource_group.return_value = []
         self.bv.backup_vaults.get_in_resource_group.return_value = []
 
-        saved_cwd = os.getcwd()
-        with tempfile.TemporaryDirectory(dir=saved_cwd) as tmp:
-            try:
-                os.chdir(tmp)
-                result = probe(subscription_id="sub", resource_group="rg")
-                manifest = Path(result["manifest_path"])
-                self.assertTrue(manifest.exists())
-                self.assertEqual(
-                    json.loads(manifest.read_text())["finding_id"],
-                    result["finding_id"])
-            finally:
-                os.chdir(saved_cwd)
+        result = probe(subscription_id="sub", resource_group="rg")
+
+        manifest = Path(result["manifest_path"])
+        self.assertTrue(manifest.exists())
+        self.assertEqual(manifest.parent, Path(self._outdir.name).resolve())
+        self.assertEqual(
+            json.loads(manifest.read_text())["finding_id"],
+            result["finding_id"])
 
     def test_never_raises_on_partial_denial(self):
         """RSV list 403 but Backup Vault listing succeeds → probes other surface."""
@@ -154,6 +161,43 @@ class TestAzureBackupReadinessProbe(unittest.TestCase):
         _shape(self, result)
         self.assertGreaterEqual(result["summary"]["confidence"], 0.0)
         self.assertLess(result["summary"]["confidence"], 1.0)
+
+    def test_protected_item_types_filters_counted_items(self):
+        """protected_item_types (REL-007 contract) filters counted items by workload type."""
+        self.rsv.vaults.list_by_resource_group.return_value = [
+            MagicMock(name="rsv1", id="/.../vaults/rsv1"),
+        ]
+        self.bv.backup_vaults.get_in_resource_group.return_value = []
+        self.rsvb.backup_protected_items.list.return_value = [
+            MagicMock(properties=MagicMock(workload_type="VM")),
+            MagicMock(properties=MagicMock(workload_type="VM")),
+            MagicMock(properties=MagicMock(workload_type="SQLDataBase")),
+        ]
+
+        result = probe(subscription_id="sub", resource_group="rg",
+                       protected_item_types=["VM"])
+
+        _shape(self, result)
+        # Only the two VM items count toward coverage; the SQL item is excluded.
+        self.assertEqual(result["summary"]["total_protected_items"], 2)
+        self.assertEqual(result["summary"]["protected_item_types_filter"], ["VM"])
+
+    def test_protected_item_types_none_counts_all(self):
+        """Omitting the filter counts every protected item (default behavior)."""
+        self.rsv.vaults.list_by_resource_group.return_value = [
+            MagicMock(name="rsv1", id="/.../vaults/rsv1"),
+        ]
+        self.bv.backup_vaults.get_in_resource_group.return_value = []
+        self.rsvb.backup_protected_items.list.return_value = [
+            MagicMock(properties=MagicMock(workload_type="VM")),
+            MagicMock(properties=MagicMock(workload_type="SQLDataBase")),
+        ]
+
+        result = probe(subscription_id="sub", resource_group="rg")
+
+        _shape(self, result)
+        self.assertEqual(result["summary"]["total_protected_items"], 2)
+        self.assertIsNone(result["summary"]["protected_item_types_filter"])
 
     def test_never_raises_on_full_denial(self):
         """Both vault APIs 403 → probe_error populated, never raises."""
