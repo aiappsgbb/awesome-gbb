@@ -54,13 +54,16 @@ print('shape OK')
 ### Step N — Write the result marker (MANDATORY)
 
 ```bash
-mkdir -p out
-printf 'SMOKE_RESULT=PASS\n' > out/azure-backup-readiness-smoke-result
+printf 'SMOKE_RESULT=PASS\n' > /tmp/azure-backup-readiness-smoke-result
 ```
 
 On failure:
 
 ```bash
-mkdir -p out
-printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > out/azure-backup-readiness-smoke-result
+printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/azure-backup-readiness-smoke-result
 ```
+
+The marker file is single-source-of-truth (Pattern 12). Do not print
+the marker token anywhere else in your reply — no echoes, no summaries,
+no fenced code blocks containing the literal string. The Bash tool
+`printf` is the only legitimate emission path.
