@@ -125,3 +125,20 @@ skills:
   # gate). No catalog-internal deps — independent peer skill.
   azure-monitor-alert-baseline:
     depends_on: []
+
+  # ── Slice D additions (v0.6.0 — threadlight sibling-skill peers) ────
+  # azure-backup-readiness — read-only backup-coverage probe over a
+  # resource group (RSV + Backup Vault). Wraps azure-mgmt-recoveryservices
+  # + azure-mgmt-recoveryservicesbackup + azure-mgmt-dataprotection +
+  # DefaultAzureCredential. Threadlight v0.5.x consumes it for the BAK-401
+  # / REL-007 sibling-skill flip. No catalog-internal deps — independent peer.
+  azure-backup-readiness:
+    depends_on: []
+
+  # azure-resource-diagnostics — read-only diagnostic-settings coverage
+  # probe over a resource group. Wraps azure-mgmt-monitor +
+  # azure-mgmt-resource + DefaultAzureCredential. Threadlight v0.5.x
+  # consumes it for the OBS-106 sibling-skill flip. No catalog-internal
+  # deps — independent peer skill.
+  azure-resource-diagnostics:
+    depends_on: []

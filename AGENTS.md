@@ -2875,13 +2875,13 @@ Consequences:
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 33 |
-| Skills with upstream pins | 29 |
-| Auto-tier (CI can refresh autonomously) | 26 |
+| Total skills | 35 |
+| Skills with upstream pins | 31 |
+| Auto-tier (CI can refresh autonomously) | 28 |
 | Issue-only (human / complex deploy) | 3 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 6 |
-| Unit tests | 119 (37 PR gate + 59 skill validation + 23 probe units) |
+| Unit tests | 135 (37 PR gate + 59 skill validation + 39 probe units) |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

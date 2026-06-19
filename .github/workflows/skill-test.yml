@@ -62,7 +62,7 @@ jobs:
         # them via patch.object — patch.object requires the symbol to
         # exist on the module. See AGENTS.md § 10.3 (skills that touch
         # Azure must ship unit-tests that exercise the probe contract).
-        run: pip install --quiet pyyaml azure-identity azure-mgmt-authorization azure-mgmt-monitor
+        run: pip install --quiet pyyaml azure-identity azure-mgmt-authorization azure-mgmt-monitor azure-mgmt-recoveryservices azure-mgmt-recoveryservicesbackup azure-mgmt-dataprotection azure-mgmt-resource
 
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v

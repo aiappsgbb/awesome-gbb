@@ -61,6 +61,7 @@ CATEGORIES: dict[str, list[str]] = {
     '🛠️ Cross-Cutting Helpers': [
         'azd-patterns', 'azure-tenant-isolation',
         'azure-monitor-alert-baseline',
+        'azure-backup-readiness', 'azure-resource-diagnostics',
         'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
         'ghcp-cli-config', 'paygo-ptu-cost-analyzer',

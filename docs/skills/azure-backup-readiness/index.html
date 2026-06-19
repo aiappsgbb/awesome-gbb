@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>azure-backup-readiness — awesome-gbb</title>
+<meta name="description" content="Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Foundry, and governance.">
+<meta name="theme-color" content="#4f6dff">
+<link rel="canonical" href="https://aiappsgbb.github.io/awesome-gbb/skills/azure-backup-readiness/">
+<link rel="stylesheet" href="/awesome-gbb/_styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/awesome-gbb/" class="brand"><span class="brand-mark"></span><span>awesome-gbb</span></a>
+    <div class="links">
+      <a href="/awesome-gbb/">Home</a>
+      <a href="/awesome-gbb/skills/" class="active">Skills</a>
+      <a href="/awesome-gbb/engineering/">Engineering</a>
+      <a href="https://aiappsgbb.github.io/threadlight-skills/">Threadlight</a>
+      <a href="https://aiappsgbb.github.io/zava-constellation/">Zava</a>
+      <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
+    </div>
+  </div>
+</nav>
+<main>
+<div class="detail-head"><h1>azure-backup-readiness</h1><div class="meta"><span class="badge ver">v1.0.0</span> <span class="badge cat">🛠️ Cross-Cutting Helpers</span></div></div><div class="detail-body"><p>Audit Azure backup coverage at resource-group scope. Checks BOTH Recovery Services Vaults (RSV, azure-mgmt-recoveryservices) AND Backup Vaults (DataProtection, azure-mgmt-dataprotection). For each vault found, counts protected items (azure-mgmt-recoveryservicesbackup). Flags no-vaults-in-rg, vault-empty (vault present but no protected items), and vault-list-denied (RBAC missing). Wraps the three SDKs with a never-raising probe() returning structured findings. Partial-denial (one vault class works, other doesn&#x27;t) returns confidence in (0,1). Writes manifest JSON to out/&lt;finding-id&gt;.json and returns equivalent dict. CLI: python -m azure_backup_readiness --sub &lt;sub-id&gt; --rg &lt;rg&gt;. USE FOR: backup readiness audit, RSV audit, Backup Vault audit, vault-empty detection, no-vaults-in-RG, Foundry RG backup posture, spoke backup posture, BAK-401 self-verify. DO NOT USE FOR: creating vaults, running on-demand backups, restoring, or backup policy authoring; use Azure Backup CLI/Portal workflows instead.</p><h2>Install</h2><pre><code>gh skill install aiappsgbb/awesome-gbb azure-backup-readiness</code></pre><p><a class="cta" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-backup-readiness/SKILL.md">Open SKILL.md on GitHub →</a></p><h2>Bundled in</h2><ul class="bundled-list"><li><a href="/awesome-gbb/plugins/awesome-gbb/">awesome-gbb</a></li></ul><h2>Freshness</h2><p><span class="badge fresh">last validated 2026-06-19 (0 days ago)</span></p></div>
+</main>
+<footer>
+  <div class="stats">35 skills · 1 plugins · MIT license</div>
+  <div>Built from <code>b9a854af</code> on 2026-06-19 · <a href="https://github.com/aiappsgbb/awesome-gbb">aiappsgbb/awesome-gbb</a> · <a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/AGENTS.md">Contributing</a> · MIT</div>
+</footer>
+</body>
+</html>
