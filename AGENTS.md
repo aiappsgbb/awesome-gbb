@@ -2613,6 +2613,54 @@ failure (otherwise the PR author would manually rerun, wait,
 rerun, etc.). Across the 14-leg matrix, even one retry-2 success
 per week is net positive on coordinator time.
 
+#### Pattern 28 — `transient_bad_request` is a classified-transient (Finding #29)
+
+**Provenance.** PR #303 (Slice D, `azure-backup-readiness` +
+`azure-resource-diagnostics`). Both new live-Azure legs failed
+simultaneously (jobs 82349042793 + 82349042795) with an identical
+signature distinct from the Pattern 19 TPM/RPM throttle:
+
+```
+● Request failed (transient_bad_request). Retrying...
+● Request failed (transient_bad_request). Retrying...
+Tokens     ↑ 55.6k (53.2k cached) • ↓ 295 (210 reasoning)
+##[error]Process completed with exit code 1.
+```
+
+Forensic markers that make this unambiguously a backing-model
+transient, NOT a fixture/skill bug:
+
+- **~4 s wall-clock** from agent start to exit — the agent never
+  reached a single probe tool call (it had only read `__main__.py`).
+- **Identical low token counts on both legs** (55.6k ↑, 53.2k cached) —
+  the prompt loaded fine; the failure is the model returning a
+  retryable bad-request, not anything the fixture did.
+- **Both legs died within ~90 s of each other** — an infra-wide CLI
+  backing-model hiccup, not two independent fixture regressions.
+
+The pre-existing classifier regex matched `CAPIError|Too Many
+Requests|Failed to get response from the AI model|...` but NOT the
+literal `transient_bad_request` the CLI surfaces here, so the leg
+fell through to "non-transient failure — not retrying" and the inline
+retry never fired.
+
+**The fix.** Add `transient_bad_request` to the retry classifier
+regex in `skill-test.yml`. The token is the CLI's own classification
+of a retryable backing-model 400; adding it lets the inline retry
+leg (with its jittered cooldown) absorb the flake automatically.
+
+**Cross-skill carry rule.** This is workflow-side and protects every
+Copilot-CLI fixture leg automatically — no fixture change needed. It
+composes with Pattern 19 (TPM throttle) and Pattern 26 (two-tier
+retry): all three are alternatives in the same classifier regex.
+
+**Diagnostic protocol.** If a leg fails fast (≤ ~10 s) with
+`Request failed (transient_bad_request)` and the agent never ran a
+tool: it's this pattern. Re-run the leg (or push an empty commit to
+re-trigger). If the SAME leg fails repeatedly across re-runs while
+sibling legs pass, THEN suspect a real fixture bug and diagnose the
+agent's tool-call sequence instead.
+
 ### 9.8 · Skill testing tiers
 
 | Tier | Name | What | When required | Enforced by |
@@ -2875,13 +2923,13 @@ Consequences:
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 33 |
-| Skills with upstream pins | 29 |
-| Auto-tier (CI can refresh autonomously) | 26 |
+| Total skills | 35 |
+| Skills with upstream pins | 31 |
+| Auto-tier (CI can refresh autonomously) | 28 |
 | Issue-only (human / complex deploy) | 3 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 6 |
-| Unit tests | 119 (37 PR gate + 59 skill validation + 23 probe units) |
+| Unit tests | 135 (37 PR gate + 59 skill validation + 39 probe units) |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

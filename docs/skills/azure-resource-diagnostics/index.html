@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>azure-resource-diagnostics — awesome-gbb</title>
+<meta name="description" content="Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Foundry, and governance.">
+<meta name="theme-color" content="#4f6dff">
+<link rel="canonical" href="https://aiappsgbb.github.io/awesome-gbb/skills/azure-resource-diagnostics/">
+<link rel="stylesheet" href="/awesome-gbb/_styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/awesome-gbb/" class="brand"><span class="brand-mark"></span><span>awesome-gbb</span></a>
+    <div class="links">
+      <a href="/awesome-gbb/">Home</a>
+      <a href="/awesome-gbb/skills/" class="active">Skills</a>
+      <a href="/awesome-gbb/engineering/">Engineering</a>
+      <a href="https://aiappsgbb.github.io/threadlight-skills/">Threadlight</a>
+      <a href="https://aiappsgbb.github.io/zava-constellation/">Zava</a>
+      <a href="https://github.com/aiappsgbb/awesome-gbb">GitHub</a>
+    </div>
+  </div>
+</nav>
+<main>
+<div class="detail-head"><h1>azure-resource-diagnostics</h1><div class="meta"><span class="badge ver">v1.0.0</span> <span class="badge cat">🛠️ Cross-Cutting Helpers</span></div></div><div class="detail-body"><p>Audit Azure diagnostic-settings coverage at resource-group scope. For each resource in the RG (optionally filtered by target_resource_types — ARM types or snake_case logical kinds like storage_account), queries Microsoft.Insights/diagnosticSettings and reports whether ANY destination is configured (Log Analytics, Event Hubs, or Storage). Flags no-diagnostic-settings resources. Wraps azure-mgmt-monitor + azure-mgmt-resource with a never-raising probe() returning structured findings; RG-list denial returns confidence 0.0 with probe_error rather than raising. Writes manifest JSON to out/&lt;finding-id&gt;.json and returns the equivalent dict. CLI: python -m azure_resource_diagnostics --sub &lt;sub-id&gt; --rg &lt;rg&gt;. USE FOR: diagnostic settings audit, log routing coverage, no-diagnostic-settings detection, Foundry RG diagnostics, OBS-106 self-verify. DO NOT USE FOR: creating diagnostic settings, log-category policy authoring, querying the logs themselves, or metric-alert coverage (use azure-monitor-alert-baseline).</p><h2>Install</h2><pre><code>gh skill install aiappsgbb/awesome-gbb azure-resource-diagnostics</code></pre><p><a class="cta" href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/azure-resource-diagnostics/SKILL.md">Open SKILL.md on GitHub →</a></p><h2>Bundled in</h2><ul class="bundled-list"><li><a href="/awesome-gbb/plugins/awesome-gbb/">awesome-gbb</a></li></ul><h2>Freshness</h2><p><span class="badge fresh">last validated 2026-06-19 (3 days ago)</span></p></div>
+</main>
+<footer>
+  <div class="stats">35 skills · 1 plugins · MIT license</div>
+  <div>Built from <code>0cf11ebf</code> on 2026-06-22 · <a href="https://github.com/aiappsgbb/awesome-gbb">aiappsgbb/awesome-gbb</a> · <a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/AGENTS.md">Contributing</a> · MIT</div>
+</footer>
+</body>
+</html>

@@ -62,7 +62,7 @@ jobs:
         # them via patch.object — patch.object requires the symbol to
         # exist on the module. See AGENTS.md § 10.3 (skills that touch
         # Azure must ship unit-tests that exercise the probe contract).
-        run: pip install --quiet pyyaml azure-identity azure-mgmt-authorization azure-mgmt-monitor
+        run: pip install --quiet pyyaml azure-identity azure-mgmt-authorization azure-mgmt-monitor "azure-mgmt-recoveryservices~=3.0.0" "azure-mgmt-recoveryservicesbackup~=9.1.0" "azure-mgmt-dataprotection~=2.0.1" "azure-mgmt-resource~=23.1.0"
 
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
@@ -444,7 +444,17 @@ jobs:
           # match — extend the classifier so a real provider throttle
           # is a classified-transient and gets the retry leg with a
           # cooldown.
-          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error" "$TRANSCRIPT"; then
+          #
+          # Pattern 28 (AGENTS.md § 9.7): the CLI also emits
+          # `Request failed (transient_bad_request). Retrying...` and then
+          # exits 1 after exhausting its own internal retries — a generic
+          # backing-model transient distinct from the TPM/RPM throttle
+          # above (it fires in ~4 s, before the agent runs any tool, with
+          # an identical low cached-token count). PR #303 saw BOTH new
+          # Slice-D legs die simultaneously on this exact signature with
+          # the agent never reaching the probe. Add `transient_bad_request`
+          # so it is a classified-transient and gets the retry leg.
+          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error|transient_bad_request" "$TRANSCRIPT"; then
             echo "classified-transient — retrying once"
             # Pattern 19: jittered cooldown BEFORE the retry. Azure
             # OpenAI throttle windows are typically measured in minutes,
