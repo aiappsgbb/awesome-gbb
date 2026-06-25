@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft/playwright-mcp
   ref: main
-  pinned_sha: b301c372ec741289eff1cf6aab9d3bec553f31e2
+  pinned_sha: 511320db60d6774557243a32b2ff201f14ca4188
   pinned_commit_message: |
     chore(deps-dev): bump fast-uri from 3.1.0 to 3.1.2 (#1616)
   license: Apache-2.0
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-b301c372ec741289eff1cf6aab9d3bec553f31e2}"
+    PINNED_SHA="${PINNED_SHA:-511320db60d6774557243a32b2ff201f14ca4188}"
     PINNED_VERSION="${PINNED_VERSION:-6.0.3}"
     WORK=".upstream-pin-smoke/ghcp-cli-config"
 
@@ -80,7 +80,7 @@ validation:
     - "canonical config URLs ok"
     - "sample config YAML parse ok"
   failure_signatures: []
-last_validated: 2026-06-18
+last_validated: 2026-06-25
 validated_by: copilot-bot
 known_issues_count: 0
 ---

@@ -17,7 +17,7 @@ description: >
   commands (runtime, not config), Cursor or Claude Code config (different
   runtimes).
 metadata:
-  version: "1.0.5"
+  version: "1.0.6"
 ---
 
 # GHCP CLI Config
