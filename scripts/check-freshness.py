@@ -577,58 +577,59 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
         # Skip non-critical packages unless it's a MAJOR bump
         if not is_major and not is_critical_pkg:
             continue
-            body = "\n".join(
-                [
-                    f"## 🔄 Refresh `{pin.skill}` — PyPI package `{name}` drift",
-                    "",
-                    f"- **Pinned**: `{name}~={pinned}` (cap window covers patch upgrades)",
-                    f"- **Latest**: `{name}=={latest}`",
-                    f"- **Changelog**: {pkg.get('upstream_changelog', '(none)')}",
-                    "",
-                    "Run the pin file's `validation.script` with "
-                    f"`PINNED_VERSION={latest}` to verify the skill still "
-                    "works against the new release.",
-                    "",
-                    "### ⚠️ Surgical edits only — no search-and-replace",
-                    "",
-                    "Edit ONLY these fields:",
-                    f"- `references/upstream-pin.md`: `packages[name={name}].version` → `{latest}`",
-                    "- `references/upstream-pin.md`: the matching cap in "
-                    "`validation.script` (e.g. bump `~=X.Y.Z` floor — keep "
-                    "the `~=` operator, never switch to bare `==`)",
-                    "- `references/upstream-pin.md`: `last_validated`, "
-                    "`validated_by: copilot-bot`",
-                    "- `SKILL.md`: `metadata.version` (PATCH bump)",
-                    "",
-                    "Do **NOT** run a global search-and-replace on the "
-                    "version number. SKILL.md body and pin-file prose "
-                    f"contain historical proof-of-validation text (e.g. "
-                    f"`verified against {name} {pinned}`); those are "
-                    "records, not refresh targets. The gate will reject "
-                    "any SKILL.md body change without `[skill-rewrite]`.",
-                    "",
-                    "### Acceptance criteria",
-                    "",
-                    "- [ ] PR touches ONLY `references/upstream-pin.md` and "
-                    "`SKILL.md` (frontmatter only)",
-                    "- [ ] `metadata.version` bumped PATCH only",
-                    "- [ ] All pip specifiers stay `~=X.Y.Z` (compatible release)",
-                    "- [ ] CI gate `automation-pr-gate.yml` passes",
-                    "- [ ] CI gate `skill-validation.yml` passes",
-                    "- [ ] CI gate `pin-validation.yml` passes "
-                    "(re-runs `validation.script` on the runner — proof, not claim)",
-                ]
+
+        body = "\n".join(
+            [
+                f"## 🔄 Refresh `{pin.skill}` — PyPI package `{name}` drift",
+                "",
+                f"- **Pinned**: `{name}~={pinned}` (cap window covers patch upgrades)",
+                f"- **Latest**: `{name}=={latest}`",
+                f"- **Changelog**: {pkg.get('upstream_changelog', '(none)')}",
+                "",
+                "Run the pin file's `validation.script` with "
+                f"`PINNED_VERSION={latest}` to verify the skill still "
+                "works against the new release.",
+                "",
+                "### ⚠️ Surgical edits only — no search-and-replace",
+                "",
+                "Edit ONLY these fields:",
+                f"- `references/upstream-pin.md`: `packages[name={name}].version` → `{latest}`",
+                "- `references/upstream-pin.md`: the matching cap in "
+                "`validation.script` (e.g. bump `~=X.Y.Z` floor — keep "
+                "the `~=` operator, never switch to bare `==`)",
+                "- `references/upstream-pin.md`: `last_validated`, "
+                "`validated_by: copilot-bot`",
+                "- `SKILL.md`: `metadata.version` (PATCH bump)",
+                "",
+                "Do **NOT** run a global search-and-replace on the "
+                "version number. SKILL.md body and pin-file prose "
+                f"contain historical proof-of-validation text (e.g. "
+                f"`verified against {name} {pinned}`); those are "
+                "records, not refresh targets. The gate will reject "
+                "any SKILL.md body change without `[skill-rewrite]`.",
+                "",
+                "### Acceptance criteria",
+                "",
+                "- [ ] PR touches ONLY `references/upstream-pin.md` and "
+                "`SKILL.md` (frontmatter only)",
+                "- [ ] `metadata.version` bumped PATCH only",
+                "- [ ] All pip specifiers stay `~=X.Y.Z` (compatible release)",
+                "- [ ] CI gate `automation-pr-gate.yml` passes",
+                "- [ ] CI gate `skill-validation.yml` passes",
+                "- [ ] CI gate `pin-validation.yml` passes "
+                "(re-runs `validation.script` on the runner — proof, not claim)",
+            ]
+        )
+        out.append(
+            Signal(
+                skill=pin.skill,
+                signal_type="pkg_drift",
+                severity="warn",
+                title=f"🔄 Refresh `{pin.skill}` — `{name}` {pinned} → {latest}",
+                body=body,
+                automation_tier=pin.automation_tier,
             )
-            out.append(
-                Signal(
-                    skill=pin.skill,
-                    signal_type="pkg_drift",
-                    severity="warn",
-                    title=f"🔄 Refresh `{pin.skill}` — `{name}` {pinned} → {latest}",
-                    body=body,
-                    automation_tier=pin.automation_tier,
-                )
-            )
+        )
     return out
 
 

@@ -41,8 +41,18 @@ validation:
     rm -rf "$WORK"
     mkdir -p "$WORK"
     remote="$(git ls-remote https://github.com/microsoft/agent-framework main | awk '{print $1}')"
-    test "$remote" = "$PINNED_SHA"
-    echo "pinned SHA verified: ${PINNED_SHA}"
+    # #302: informational drift check only — do NOT hard-fail on SHA drift.
+    # Upstream `main` moves continuously; a hard `test` flapped the
+    # validate-pins gate on unrelated/docs-only PRs and drove perpetual
+    # refresh-PR churn. SHA drift is detected + issue-filed by
+    # skill-freshness.yml, which is the correct mechanism. The hard gate
+    # for this pin is the import smoke + docs-link checks below.
+    if [ "$remote" = "$PINNED_SHA" ]; then
+      echo "upstream SHA in sync: ${PINNED_SHA}"
+    else
+      echo "upstream SHA drift (informational, non-fatal): pinned=${PINNED_SHA} remote=${remote}"
+    fi
+    echo "upstream SHA drift check ok"
 
     python -m venv "$WORK/.venv"
     . "$WORK/.venv/bin/activate"
@@ -61,7 +71,7 @@ validation:
     curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-retrieve" >/dev/null
     echo "Foundry IQ docs link check ok"
   expected_output:
-    - "pinned SHA verified"
+    - "upstream SHA drift check ok"
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
@@ -124,8 +134,18 @@ WORK=".upstream-pin-smoke/foundry-iq"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 remote="$(git ls-remote https://github.com/microsoft/agent-framework main | awk '{print $1}')"
-test "$remote" = "$PINNED_SHA"
-echo "pinned SHA verified: ${PINNED_SHA}"
+# #302: informational drift check only — do NOT hard-fail on SHA drift.
+# Upstream `main` moves continuously; a hard `test` flapped the
+# validate-pins gate on unrelated/docs-only PRs and drove perpetual
+# refresh-PR churn. SHA drift is detected + issue-filed by
+# skill-freshness.yml, which is the correct mechanism. The hard gate
+# for this pin is the import smoke + docs-link checks below.
+if [ "$remote" = "$PINNED_SHA" ]; then
+  echo "upstream SHA in sync: ${PINNED_SHA}"
+else
+  echo "upstream SHA drift (informational, non-fatal): pinned=${PINNED_SHA} remote=${remote}"
+fi
+echo "upstream SHA drift check ok"
 
 python -m venv "$WORK/.venv"
 . "$WORK/.venv/bin/activate"
@@ -147,7 +167,7 @@ echo "Foundry IQ docs link check ok"
 
 **Expected output** must contain (substring match):
 
-- `pinned SHA verified`
+- `upstream SHA drift check ok`
 - `azure-search-documents import smoke ok`
 - `Foundry IQ docs link check ok`
 
@@ -161,7 +181,7 @@ echo "Foundry IQ docs link check ok"
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| GitHub reference | ✅ | `pinned SHA verified` |
+| GitHub reference | ✅ | `upstream SHA drift check ok` |
 | SDK import smoke | ✅ | `azure-search-documents import smoke ok` |
 | Learn docs | ✅ | `Foundry IQ docs link check ok` |
 
