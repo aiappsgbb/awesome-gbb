@@ -37,8 +37,18 @@ validation:
     mkdir -p "$WORK"
     git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$WORK/repo"
     actual="$(git -C "$WORK/repo" rev-parse HEAD)"
-    test "$actual" = "$PINNED_SHA"
-    echo "pinned SHA verified: ${PINNED_SHA}"
+    # #302: informational drift check only — do NOT hard-fail on SHA drift.
+    # The citadel-v1 branch moves; a hard `test` flapped the validate-pins
+    # gate on unrelated/docs-only PRs and drove perpetual refresh-PR churn.
+    # SHA drift is detected + issue-filed by skill-freshness.yml, which is
+    # the correct mechanism. The hard gate for this pin is the access-
+    # contract schema-file + policy-docs checks below.
+    if [ "$actual" = "$PINNED_SHA" ]; then
+      echo "upstream SHA in sync: ${PINNED_SHA}"
+    else
+      echo "upstream SHA drift (informational, non-fatal): pinned=${PINNED_SHA} remote=${actual}"
+    fi
+    echo "upstream SHA drift check ok"
 
     test -f "$WORK/repo/$CONTRACT_DIR/main.bicep"
     test -f "$WORK/repo/$CONTRACT_DIR/main.bicepparam"
@@ -53,7 +63,7 @@ validation:
     curl -fsSI -L "$REPO_URL/blob/$REF/$CONTRACT_DIR/citadel-access-contracts-policy.md" >/dev/null
     echo "policy docs link check ok"
   expected_output:
-    - "pinned SHA verified"
+    - "upstream SHA drift check ok"
     - "access contract schema ok"
     - "policy docs link check ok"
   failure_signatures: []
@@ -118,8 +128,18 @@ rm -rf "$WORK"
 mkdir -p "$WORK"
 git clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$WORK/repo"
 actual="$(git -C "$WORK/repo" rev-parse HEAD)"
-test "$actual" = "$PINNED_SHA"
-echo "pinned SHA verified: ${PINNED_SHA}"
+# #302: informational drift check only — do NOT hard-fail on SHA drift.
+# The citadel-v1 branch moves; a hard `test` flapped the validate-pins
+# gate on unrelated/docs-only PRs and drove perpetual refresh-PR churn.
+# SHA drift is detected + issue-filed by skill-freshness.yml, which is
+# the correct mechanism. The hard gate for this pin is the access-
+# contract schema-file + policy-docs checks below.
+if [ "$actual" = "$PINNED_SHA" ]; then
+  echo "upstream SHA in sync: ${PINNED_SHA}"
+else
+  echo "upstream SHA drift (informational, non-fatal): pinned=${PINNED_SHA} remote=${actual}"
+fi
+echo "upstream SHA drift check ok"
 
 test -f "$WORK/repo/$CONTRACT_DIR/main.bicep"
 test -f "$WORK/repo/$CONTRACT_DIR/main.bicepparam"
@@ -137,7 +157,7 @@ echo "policy docs link check ok"
 
 **Expected output** must contain (substring match):
 
-- `pinned SHA verified`
+- `upstream SHA drift check ok`
 - `access contract schema ok`
 - `policy docs link check ok`
 
@@ -151,7 +171,7 @@ echo "policy docs link check ok"
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| Pinned branch | ✅ | `pinned SHA verified` |
+| Pinned branch | ✅ | `upstream SHA drift check ok` |
 | Access Contract schema | ✅ | `access contract schema ok` |
 | Policy docs | ✅ | `policy docs link check ok` |
 

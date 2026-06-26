@@ -454,7 +454,21 @@ jobs:
           # Slice-D legs die simultaneously on this exact signature with
           # the agent never reaching the probe. Add `transient_bad_request`
           # so it is a classified-transient and gets the retry leg.
-          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error|transient_bad_request" "$TRANSCRIPT"; then
+          #
+          # Pattern 29 (AGENTS.md § 9.7): the backing model intermittently
+          # trips its own content filter on otherwise-benign infra fixtures
+          # and replies "I'm sorry, but I cannot assist with that request"
+          # (issue #235). The agent then never emits the PASS marker → the
+          # leg fails the audit/marker check. Run 28159909360 hit this on
+          # foundry-mcp-aca AND ghcp-hosted-agents in the SAME run. The
+          # refusal is stochastic (a retry on the same prompt usually
+          # succeeds), so classify it as transient and give it the retry
+          # leg. Anchored on apostrophe-free substrings to survive
+          # ASCII-vs-Unicode-apostrophe variance in the model output. If a
+          # fixture deterministically trips the filter, the retry also
+          # refuses and the leg still fails (no worse than today) — fix the
+          # fixture wording in that case.
+          if grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error|transient_bad_request|cannot assist with that request|I cannot assist with" "$TRANSCRIPT"; then
             echo "classified-transient — retrying once"
             # Pattern 19: jittered cooldown BEFORE the retry. Azure
             # OpenAI throttle windows are typically measured in minutes,
@@ -511,6 +525,7 @@ jobs:
         run: |
           SKILL="${{ matrix.skill }}"
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
+          RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
           if [ ! -f "$TRANSCRIPT" ]; then
             echo "::error::No transcript file — cannot audit skill usage"
             exit 1
@@ -521,10 +536,17 @@ jobs:
           # Quotes around the skill name are optional — Copilot CLI renders
           # invocations as `skill(name)` (no quotes) in transcripts; the
           # quoted form was an artifact of an earlier CLI build.
-          if grep -qE "skill[(]\"?${SKILL}\"?|SKILL\.md|skills/${SKILL}/" "$TRANSCRIPT"; then
+          #
+          # Pattern 29 (AGENTS.md § 9.7): when the PRIMARY attempt tripped the
+          # content filter ("I cannot assist with that request") and the
+          # Pattern 29 retry leg recovered, the skill-usage evidence lives in
+          # the RETRY transcript, not the primary. Accept evidence from either.
+          EVID="skill[(]\"?${SKILL}\"?|SKILL\.md|skills/${SKILL}/"
+          if grep -qE "$EVID" "$TRANSCRIPT" \
+             || { [ -f "$RETRY_TRANSCRIPT" ] && grep -qE "$EVID" "$RETRY_TRANSCRIPT"; }; then
             echo "✅ Skill-usage evidence found in transcript"
           else
-            echo "::error::No evidence in transcript that agent loaded the '${SKILL}' skill — agent may have freelanced from training data. Review transcript: $TRANSCRIPT"
+            echo "::error::No evidence in transcript that agent loaded the '${SKILL}' skill — agent may have freelanced from training data, OR the transcript was clobbered by a recursive 'copilot' invocation in a Bash tool (AGENTS.md § 9.7 Pattern 27). Review transcript: $TRANSCRIPT"
             exit 1
           fi
 

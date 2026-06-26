@@ -243,60 +243,83 @@ choice.
    If `STATUS` is not `Succeeded` after the loop, emit FAIL with the
    observed status.
 
-5. **Step 4 — Verify HELLO in the execution console logs.** SKILL.md
-   L313 documents that `az containerapp job logs show` hangs
+5. **Step 4 — Verify HELLO in the execution console logs (BEST-EFFORT).**
+   ⚠️ **This entire step is best-effort verification, NOT a success
+   criterion.** Step 3's `STATUS=Succeeded` is the authoritative,
+   synchronous control-plane PASS signal — it is already proven before
+   you reach Step 4. NOTHING in Step 4 may emit FAIL. If ANY command in
+   this step errors — for ANY reason, including **AAD/OIDC token expiry**
+   (the federated credential has a short TTL and the deploy+execute phase
+   may have consumed most of it), LAW ingestion lag, a missing customer
+   ID, or a transient query error — you MUST soft-PASS per the contract
+   at the end of this step. Do NOT attempt to re-authenticate or refresh
+   the token (Pattern 25 — fixtures don't chase token refresh); just
+   soft-PASS.
+
+   SKILL.md L313 documents that `az containerapp job logs show` hangs
    indefinitely on some ACA Job runs — DO NOT use that command. Use
    the Log Analytics Workspace query instead (SKILL.md L351-357
-   pattern). The CAE's LAW customer ID is discoverable via:
+   pattern). Discover the CAE's LAW customer ID — note the `|| true`
+   guard so an expired-token error here does NOT abort the step:
 
    ```bash
    WS_CUSTOMER_ID="$(az containerapp env show \
      --resource-group "${RG}" \
      --name "${CAE_NAME}" \
      --query "properties.appLogsConfiguration.logAnalyticsConfiguration.customerId" \
-     -o tsv)"
+     -o tsv 2>/dev/null || true)"
    ```
+
+   If `WS_CUSTOMER_ID` is empty (token expired or env show failed),
+   SKIP the query loop entirely and go straight to the soft-PASS
+   contract below — do NOT FAIL.
 
    ACA Job console logs are routed through the LogAnalytics agent on
    the worker and then through LAW ingestion. Documented Azure
    ingestion p50 is ~2 min, p95 ~5 min, p99 ~10 min — the latency is
-   inherent to the LAW pipeline, NOT a bug in the ACA Job. The smoke's
-   PRIMARY success signal is Step 3's `STATUS=Succeeded` (control-plane
-   synchronous). The LAW probe verifies that the documented SKILL.md
-   L351-357 query pattern works **when ingestion has landed**, but
-   ingestion lag MUST NOT fail the smoke (Pattern 13 — Finding #18,
-   2026-05-31 azd-patterns run `26697996194`). Poll for up to 300 s:
+   inherent to the LAW pipeline, NOT a bug in the ACA Job. The LAW probe
+   verifies that the documented SKILL.md L351-357 query pattern works
+   **when ingestion has landed**, but ingestion lag (or token expiry on
+   the late best-effort probe) MUST NOT fail the smoke (Pattern 13/25 —
+   Finding #18, 2026-05-31 azd-patterns run `26697996194`; AAD-expiry
+   variant from run `28159909360`, 2026-06-25). Poll for up to 300 s
+   only if you have a customer ID:
 
    ```bash
    QUERY="ContainerAppConsoleLogs_CL | where ContainerJobName_s == '${JOB_NAME}' | where Log_s contains 'HELLO' | take 1 | project Log_s"
    FOUND=""
-   for i in $(seq 1 60); do
-     ROW="$(az monitor log-analytics query \
-       --workspace "${WS_CUSTOMER_ID}" \
-       --analytics-query "${QUERY}" \
-       --query "[0].Log_s" -o tsv 2>/dev/null || true)"
-     if [ -n "${ROW}" ] && echo "${ROW}" | grep -q "HELLO"; then
-       FOUND="yes"; break
-     fi
-     sleep 5
-   done
+   if [ -n "${WS_CUSTOMER_ID}" ]; then
+     for i in $(seq 1 60); do
+       ROW="$(az monitor log-analytics query \
+         --workspace "${WS_CUSTOMER_ID}" \
+         --analytics-query "${QUERY}" \
+         --query "[0].Log_s" -o tsv 2>/dev/null || true)"
+       if [ -n "${ROW}" ] && echo "${ROW}" | grep -q "HELLO"; then
+         FOUND="yes"; break
+       fi
+       sleep 5
+     done
+   fi
    ```
 
-   **Soft-PASS on LAW lag.** If `FOUND` is `yes`, both signals align —
-   proceed to Step 5. If `FOUND` is empty after 300 s AND Step 3 already
-   proved `STATUS=Succeeded`, the smoke STILL PASSes — emit a clear
-   NOTE line to your stdout (the transcript captures it for audit):
+   **Soft-PASS contract.** If `FOUND` is `yes`, both signals align —
+   proceed to Step 5. Otherwise (FOUND empty after 300 s, OR the query
+   was skipped because the customer ID was unavailable, OR any Step 4
+   command errored on token expiry) AND Step 3 already proved
+   `STATUS=Succeeded`, the smoke STILL PASSes — emit a clear NOTE line
+   to your stdout (the transcript captures it for audit), choosing the
+   wording that matches what you observed:
 
    ```
-   NOTE: LAW ingestion lag observed (300s budget exhausted, execution status Succeeded). Skill behavior verified via control-plane signal.
+   NOTE: LAW probe best-effort skipped (ingestion lag or AAD token expiry on late probe); execution status Succeeded. Skill behavior verified via control-plane signal.
    ```
 
    The marker file MUST remain byte-exact `SMOKE_RESULT=PASS\n` —
    qualifiers in the marker defeat the `cmp -s` PASS contract.
 
    ONLY emit FAIL if Step 3's `STATUS` was NOT `Succeeded` (that case
-   is already handled at Step 3 L233-234 — Step 4 should never reach
-   FAIL on its own).
+   is already handled at Step 3 L233-234 — Step 4 must never emit FAIL
+   on its own, no matter what error it encounters).
 
 6. **Step 5 — Cleanup (job-scoped only).** Delete the job resource.
    Do NOT `az group delete rg-awesome-gbb-ci` — that's shared CI

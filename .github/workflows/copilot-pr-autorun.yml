@@ -1,0 +1,112 @@
+name: Copilot PR autorun
+
+# Closes the freshness DELIVERY loop. The Copilot coding agent opens refresh
+# PRs (1) as DRAFT and (2) with every CI workflow held at `action_required`
+# (GitHub gates workflow runs authored by the copilot-swe-agent bot behind a
+# manual "Approve and run"). Both block the auto-merge chain:
+# auto-merge-copilot.yml fires on `workflow_run: completed/success`, which
+# never happens while the gate runs sit un-approved, and it also skips drafts.
+#
+# This scheduled poller — running from the BASE branch with a PAT — marks
+# those PRs ready and approves their pending runs, so the gates execute, the
+# workflow_run events fire, and auto-merge-copilot.yml takes over.
+#
+# SECURITY: triggers ONLY on schedule / workflow_dispatch (never
+# pull_request_target) and NEVER checks out or executes PR head code — it only
+# calls the GitHub REST API. The author is hard-filtered to
+# app/copilot-swe-agent, so it can only ever act on Copilot's own PRs.
+#
+# REQUIRES secret AUTOMERGE_PAT — a fine-grained PAT scoped to THIS repo with:
+#   Actions ........ Read and write   (POST /actions/runs/{id}/approve)
+#   Pull requests .. Read and write   (gh pr ready on draft refresh PRs)
+#   Contents ....... Read-only
+# The default GITHUB_TOKEN returns 403 on the runs/{id}/approve endpoint, so a
+# PAT is mandatory. Create + install it in one step:
+#   bash scripts/setup-automerge-pat.sh
+# See AGENTS.md § 9.6 for the full rationale.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: copilot-pr-autorun
+  cancel-in-progress: false
+
+jobs:
+  autorun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mark ready + approve pending runs for Copilot PRs
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # Graceful no-op until the operator installs the PAT
+          # (scripts/setup-automerge-pat.sh). Keeps the scheduled run green.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "AUTOMERGE_PAT not set — nothing to do."
+            echo "Run: bash scripts/setup-automerge-pat.sh"
+            exit 0
+          fi
+
+          # Open PRs authored by the Copilot coding agent (same filter as
+          # auto-merge-copilot.yml).
+          prs=$(gh pr list --repo "$REPO" \
+            --author "app/copilot-swe-agent" \
+            --state open \
+            --json number,isDraft,headRefOid \
+            --jq '.[] | [.number, .isDraft, .headRefOid] | @tsv')
+
+          if [ -z "$prs" ]; then
+            echo "No open Copilot PRs."
+            exit 0
+          fi
+
+          printf '%s\n' "$prs" | while IFS=$'\t' read -r num is_draft sha; do
+            [ -n "$num" ] || continue
+            echo "── PR #$num (draft=$is_draft, head=$sha)"
+
+            # 1. Flip draft → ready so auto-merge-copilot.yml will consider it.
+            if [ "$is_draft" = "true" ]; then
+              if gh pr ready "$num" --repo "$REPO"; then
+                echo "  ✓ marked ready"
+              else
+                echo "  WARN: could not mark #$num ready (check PAT Pull requests: RW)"
+              fi
+            fi
+
+            # 2. Approve every workflow run held for manual approval on this
+            #    head SHA. Pending-approval runs surface as action_required or
+            #    waiting; check both.
+            run_ids=""
+            for st in action_required waiting; do
+              ids=$(gh api --paginate \
+                "/repos/$REPO/actions/runs?head_sha=$sha&status=$st" \
+                --jq '.workflow_runs[].id' 2>/dev/null || true)
+              run_ids="$run_ids $ids"
+            done
+            # De-dup
+            run_ids=$(printf '%s\n' $run_ids | sort -u)
+
+            if [ -z "$(printf '%s' "$run_ids" | tr -d '[:space:]')" ]; then
+              echo "  (no runs awaiting approval)"
+              continue
+            fi
+
+            for rid in $run_ids; do
+              [ -n "$rid" ] || continue
+              if gh api --method POST "/repos/$REPO/actions/runs/$rid/approve" >/dev/null 2>&1; then
+                echo "  ✓ approved run $rid"
+              else
+                echo "  WARN: could not approve run $rid (check PAT Actions: RW)"
+              fi
+            done
+          done

@@ -20,7 +20,7 @@ description: >
   foundry-cross-resource); Citadel JWT 403 (use
   citadel-spoke-onboarding); SDK; quota; cost.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Foundry Network Runbook — Diagnose connectivity failures after the deploy succeeds

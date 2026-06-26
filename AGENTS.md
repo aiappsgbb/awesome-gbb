@@ -730,7 +730,7 @@ This policy is enforced both by the cap-aware
 [`pin-validation.yml`](.github/workflows/pin-validation.yml) gate (which
 re-runs the script on the runner) and by reviewer eyeball.
 
-### 9.6 · Six CI gates that protect the catalog
+### 9.6 · Seven workflows: six gates + the delivery loop
 
 | Gate | When | What it checks |
 |------|------|---------------|
@@ -740,11 +740,31 @@ re-runs the script on the runner) and by reviewer eyeball.
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Live execution suite**: unit tests, catalog lint, and `copilot-cli-matrix` (one runner per skill — a real Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources in `<ci-resource-group>`: deploys, API calls, model inference). Legacy pytest-based E2E + pin-import smoke were retired; see the header comment on the workflow. |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
+| [`copilot-pr-autorun.yml`](.github/workflows/copilot-pr-autorun.yml) | Every ~10 min (schedule) + on-demand | **Delivery un-blocker** (not a gate). Marks Copilot refresh PRs ready (they open as draft) and approves their `action_required` CI runs so the gates actually execute. Requires the `AUTOMERGE_PAT` secret. |
 
 The first three run on every PR. The fourth detects drift autonomously.
 The fifth runs on every PR (including Copilot's) and on push/schedule.
-The sixth closes the loop: when all checks pass on a Copilot PR, it
-auto-approves and squash-merges without waiting for human review.
+The sixth and seventh form the **delivery loop** that makes "zero human
+intervention" real:
+
+> **🔑 The delivery loop (and why `AUTOMERGE_PAT` exists).** GitHub gates
+> every workflow run authored by the `copilot-swe-agent` bot behind a manual
+> *"Approve and run"* (`conclusion: action_required`), and the coding agent
+> opens its refresh PRs as **draft**. Both block `auto-merge-copilot.yml`,
+> which fires on `workflow_run: success` (never reached while runs sit
+> un-approved) and skips drafts. `copilot-pr-autorun.yml` breaks the deadlock:
+> a scheduled poller, running from the base branch, marks those PRs ready
+> (`gh pr ready`) and approves their pending runs
+> (`POST /actions/runs/{id}/approve`). The default `GITHUB_TOKEN` returns 403
+> on the approve endpoint, so a **fine-grained PAT** is mandatory. Install it
+> in one guided step — `bash scripts/setup-automerge-pat.sh` — which opens the
+> pre-described creation page, validates the pasted token's scopes, and sets
+> the `AUTOMERGE_PAT` secret. Required PAT permissions on this repo:
+> **Actions: Read and write**, **Pull requests: Read and write**,
+> **Contents: Read-only**. Rotate by re-running the script.
+> `copilot-pr-autorun.yml` triggers ONLY on `schedule`/`workflow_dispatch`
+> (never `pull_request_target`) and NEVER checks out or executes PR head code
+> — it only calls the REST API, hard-filtered to `app/copilot-swe-agent`.
 
 > **🔒 Required-check invariant (path-filter-vs-required-check deadlock).**
 > The three PR gates above — `validate` (skill-validation), `gate`
@@ -2661,7 +2681,70 @@ re-trigger). If the SAME leg fails repeatedly across re-runs while
 sibling legs pass, THEN suspect a real fixture bug and diagnose the
 agent's tool-call sequence instead.
 
-### 9.8 · Skill testing tiers
+#### Pattern 29 — Content-filter refusals are classified-transients; audit must read the retry transcript (Finding #30)
+
+**Provenance.** Run [`28159909360`](https://github.com/aiappsgbb/awesome-gbb/actions/runs/28159909360)
+(2026-06-25) failed `foundry-mcp-aca` AND `ghcp-hosted-agents` in the
+SAME run with an identical signature: the backing model tripped its
+own content filter on an otherwise-benign infra fixture and replied
+
+```
+I'm sorry, but I cannot assist with that request.
+```
+
+The agent then never ran a tool, never emitted the PASS marker, and
+the post-hoc audit step (`Post-hoc audit — did the agent reach for
+the skill?`) failed the leg with `No evidence in transcript that agent
+loaded the '<skill>' skill`. This is issue #235. The refusal is
+**stochastic** — re-running the exact same prompt almost always
+succeeds — so it belongs in the retry classifier alongside the
+Pattern 19/28 backing-model transients.
+
+**Two-part fix** (both required — part 1 alone is silently undone by
+the audit step):
+
+1. **Retry classifier** (`skill-test.yml`, the `grep -qE` regex):
+   add `cannot assist with that request|I cannot assist with`. Anchored
+   on apostrophe-free substrings so the match survives ASCII-vs-Unicode
+   apostrophe variance (`I'm` vs `I'm`) in the model output. The refusal
+   now classifies as transient and gets the jittered-cooldown retry leg
+   (Pattern 19).
+
+2. **Audit step must read BOTH transcripts.** When the PRIMARY attempt
+   refused and the retry leg recovered, the skill-usage evidence lives
+   in the RETRY transcript (`/tmp/<skill>-retry.log`), NOT the primary
+   (`/tmp/<skill>-transcript.log`). The `Post-hoc audit` step runs
+   `if: always()` and originally grepped only the primary — so a
+   refusal-then-retry-PASS still failed the job at audit. The fix greps
+   the primary OR (if present) the retry transcript for the same
+   skill-usage evidence pattern. Without this, part 1 produces a green
+   smoke step that the audit step then turns red.
+
+**Boundary condition.** If a fixture **deterministically** trips the
+content filter (same refusal on every attempt), the retry also refuses
+and the leg still FAILs — no worse than before the fix, just slower by
+one cooldown. That case needs a fixture-wording change (rephrase
+whatever benign infra verb the filter is over-reading), not a
+classifier entry. The classifier only rescues stochastic refusals.
+
+**Cross-skill carry rule.** Both edits are workflow-side and protect
+every Copilot-CLI fixture leg automatically — no per-fixture change
+needed. Composes with Patterns 19/26/28 as another alternative in the
+shared classifier regex, and with Pattern 27's audit-step diagnostic
+message (which already mentions transcript-clobber as a cause).
+
+**Diagnostic protocol.** If a leg fails with the audit error
+`No evidence in transcript that agent loaded the '<skill>' skill`:
+
+1. Grep the primary transcript for `cannot assist`. If present →
+   Pattern 29 content refusal. Confirm the retry leg fired (look for
+   `transient — retrying` / a `/tmp/<skill>-retry.log`).
+2. If the retry leg PASSed but audit still failed, the audit step is
+   not reading the retry transcript — verify the part-2 fix is present.
+3. If BOTH primary and retry refused, it's a deterministic refusal →
+   rephrase the fixture (boundary condition above).
+
+
 
 | Tier | Name | What | When required | Enforced by |
 |------|------|------|---------------|-------------|
@@ -2928,7 +3011,7 @@ Consequences:
 | Auto-tier (CI can refresh autonomously) | 28 |
 | Issue-only (human / complex deploy) | 3 |
 | Internal IP (no upstream) | 4 |
-| CI workflows | 6 |
+| CI workflows | 7 (6 gates + 1 delivery un-blocker) |
 | Unit tests | 135 (37 PR gate + 59 skill validation + 39 probe units) |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

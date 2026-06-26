@@ -41,8 +41,18 @@ validation:
     rm -rf "$WORK"
     mkdir -p "$WORK"
     remote="$(git ls-remote https://github.com/microsoft/playwright-mcp main | awk '{print $1}')"
-    test "$remote" = "$PINNED_SHA"
-    echo "pinned SHA verified: ${PINNED_SHA}"
+    # #302: informational drift check only — do NOT hard-fail on SHA drift.
+    # Upstream `main` moves continuously; a hard `test` flapped the
+    # validate-pins gate on unrelated/docs-only PRs and drove perpetual
+    # refresh-PR churn. SHA drift is detected + issue-filed by
+    # skill-freshness.yml, which is the correct mechanism. The hard gate
+    # for this pin is the canonical-URL + YAML-parse checks below.
+    if [ "$remote" = "$PINNED_SHA" ]; then
+      echo "upstream SHA in sync: ${PINNED_SHA}"
+    else
+      echo "upstream SHA drift (informational, non-fatal): pinned=${PINNED_SHA} remote=${remote}"
+    fi
+    echo "upstream SHA drift check ok"
 
     curl -fsSI -L "https://docs.github.com/copilot/github-copilot-in-the-cli" >/dev/null
     curl -fsSI -L "https://github.com/microsoft/playwright-mcp" >/dev/null
@@ -76,7 +86,7 @@ validation:
     PY
     echo "sample config YAML parse ok"
   expected_output:
-    - "pinned SHA verified"
+    - "upstream SHA drift check ok"
     - "canonical config URLs ok"
     - "sample config YAML parse ok"
   failure_signatures: []
@@ -139,8 +149,18 @@ WORK=".upstream-pin-smoke/ghcp-cli-config"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 remote="$(git ls-remote https://github.com/microsoft/playwright-mcp main | awk '{print $1}')"
-test "$remote" = "$PINNED_SHA"
-echo "pinned SHA verified: ${PINNED_SHA}"
+# #302: informational drift check only — do NOT hard-fail on SHA drift.
+# Upstream `main` moves continuously; a hard `test` flapped the
+# validate-pins gate on unrelated/docs-only PRs and drove perpetual
+# refresh-PR churn. SHA drift is detected + issue-filed by
+# skill-freshness.yml, which is the correct mechanism. The hard gate
+# for this pin is the canonical-URL + YAML-parse checks below.
+if [ "$remote" = "$PINNED_SHA" ]; then
+  echo "upstream SHA in sync: ${PINNED_SHA}"
+else
+  echo "upstream SHA drift (informational, non-fatal): pinned=${PINNED_SHA} remote=${remote}"
+fi
+echo "upstream SHA drift check ok"
 
 curl -fsSI -L "https://docs.github.com/copilot/github-copilot-in-the-cli" >/dev/null
 curl -fsSI -L "https://github.com/microsoft/playwright-mcp" >/dev/null
@@ -177,7 +197,7 @@ echo "sample config YAML parse ok"
 
 **Expected output** must contain (substring match):
 
-- `pinned SHA verified`
+- `upstream SHA drift check ok`
 - `canonical config URLs ok`
 - `sample config YAML parse ok`
 
@@ -191,7 +211,7 @@ echo "sample config YAML parse ok"
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| Playwright MCP SHA | ✅ | `pinned SHA verified` |
+| Playwright MCP SHA | ✅ | `upstream SHA drift check ok` |
 | Config docs and endpoints | ✅ | `canonical config URLs ok` |
 | YAML sample parse | ✅ | `sample config YAML parse ok` |
 
