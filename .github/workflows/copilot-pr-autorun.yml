@@ -8,8 +8,21 @@ name: Copilot PR autorun
 # never happens while the gate runs sit un-approved, and it also skips drafts.
 #
 # This scheduled poller — running from the BASE branch with a PAT — marks
-# those PRs ready and approves their pending runs, so the gates execute, the
+# those PRs ready and RE-RUNS their held runs, so the gates execute, the
 # workflow_run events fire, and auto-merge-copilot.yml takes over.
+#
+# WHY rerun, NOT approve: the obvious-looking endpoint
+# `POST /actions/runs/{id}/approve` is FORK-PR-ONLY — it returns
+# 403 "This run is not from a fork pull request" for same-repo branches, even
+# with a full-admin token. Copilot coding-agent PRs live on same-repo branches
+# (copilot/*, author app/copilot-swe-agent), NOT forks, so /approve can never
+# release them. The held runs surface as `status=completed,
+# conclusion=action_required`; a maintainer-triggered
+# `POST /actions/runs/{id}/rerun` (actions:write) re-queues them and bypasses
+# the gate. Verified live on PR #307 (2026-06-27): action_required → in_progress
+# on rerun. A run that has already executed (success/failure) is no longer
+# action_required, so it is never re-run by this poller — no loop, and a
+# genuinely failing refresh PR is left for human attention.
 #
 # SECURITY: triggers ONLY on schedule / workflow_dispatch (never
 # pull_request_target) and NEVER checks out or executes PR head code — it only
@@ -17,11 +30,11 @@ name: Copilot PR autorun
 # app/copilot-swe-agent, so it can only ever act on Copilot's own PRs.
 #
 # REQUIRES secret AUTOMERGE_PAT — a fine-grained PAT scoped to THIS repo with:
-#   Actions ........ Read and write   (POST /actions/runs/{id}/approve)
+#   Actions ........ Read and write   (POST /actions/runs/{id}/rerun)
 #   Pull requests .. Read and write   (gh pr ready on draft refresh PRs)
 #   Contents ....... Read-only
-# The default GITHUB_TOKEN returns 403 on the runs/{id}/approve endpoint, so a
-# PAT is mandatory. Create + install it in one step:
+# The default GITHUB_TOKEN cannot re-run another actor's held runs, so a PAT is
+# mandatory. Create + install it in one step:
 #   bash scripts/setup-automerge-pat.sh
 # See AGENTS.md § 9.6 for the full rationale.
 
@@ -42,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Mark ready + approve pending runs for Copilot PRs
+      - name: Mark ready + re-run held runs for Copilot PRs
         env:
           GH_TOKEN: ${{ secrets.AUTOMERGE_PAT }}
           REPO: ${{ github.repository }}
@@ -83,9 +96,10 @@ jobs:
               fi
             fi
 
-            # 2. Approve every workflow run held for manual approval on this
-            #    head SHA. Pending-approval runs surface as action_required or
-            #    waiting; check both.
+            # 2. Re-run every workflow run held for manual approval on this
+            #    head SHA. Held runs surface as `completed/action_required`;
+            #    a maintainer rerun re-queues them past the gate. (`waiting`
+            #    is environment-protection — N/A here, but harmless to probe.)
             run_ids=""
             for st in action_required waiting; do
               ids=$(gh api --paginate \
@@ -103,10 +117,10 @@ jobs:
 
             for rid in $run_ids; do
               [ -n "$rid" ] || continue
-              if gh api --method POST "/repos/$REPO/actions/runs/$rid/approve" >/dev/null 2>&1; then
-                echo "  ✓ approved run $rid"
+              if gh api --method POST "/repos/$REPO/actions/runs/$rid/rerun" >/dev/null 2>&1; then
+                echo "  ✓ re-ran held run $rid"
               else
-                echo "  WARN: could not approve run $rid (check PAT Actions: RW)"
+                echo "  WARN: could not re-run run $rid (check PAT Actions: RW)"
               fi
             done
           done

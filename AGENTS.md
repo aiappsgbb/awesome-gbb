@@ -740,7 +740,7 @@ re-runs the script on the runner) and by reviewer eyeball.
 | [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Live execution suite**: unit tests, catalog lint, and `copilot-cli-matrix` (one runner per skill — a real Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources in `<ci-resource-group>`: deploys, API calls, model inference). Legacy pytest-based E2E + pin-import smoke were retired; see the header comment on the workflow. |
 | [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
-| [`copilot-pr-autorun.yml`](.github/workflows/copilot-pr-autorun.yml) | Every ~10 min (schedule) + on-demand | **Delivery un-blocker** (not a gate). Marks Copilot refresh PRs ready (they open as draft) and approves their `action_required` CI runs so the gates actually execute. Requires the `AUTOMERGE_PAT` secret. |
+| [`copilot-pr-autorun.yml`](.github/workflows/copilot-pr-autorun.yml) | Every ~10 min (schedule) + on-demand | **Delivery un-blocker** (not a gate). Marks Copilot refresh PRs ready (they open as draft) and **re-runs** their `action_required` CI runs so the gates actually execute. Requires the `AUTOMERGE_PAT` secret. |
 
 The first three run on every PR. The fourth detects drift autonomously.
 The fifth runs on every PR (including Copilot's) and on push/schedule.
@@ -752,11 +752,24 @@ intervention" real:
 > *"Approve and run"* (`conclusion: action_required`), and the coding agent
 > opens its refresh PRs as **draft**. Both block `auto-merge-copilot.yml`,
 > which fires on `workflow_run: success` (never reached while runs sit
-> un-approved) and skips drafts. `copilot-pr-autorun.yml` breaks the deadlock:
+> held) and skips drafts. `copilot-pr-autorun.yml` breaks the deadlock:
 > a scheduled poller, running from the base branch, marks those PRs ready
-> (`gh pr ready`) and approves their pending runs
-> (`POST /actions/runs/{id}/approve`). The default `GITHUB_TOKEN` returns 403
-> on the approve endpoint, so a **fine-grained PAT** is mandatory. Install it
+> (`gh pr ready`) and **re-runs** their held runs
+> (`POST /actions/runs/{id}/rerun`).
+>
+> **Why rerun, not approve.** The intuitive endpoint
+> `POST /actions/runs/{id}/approve` is **fork-PR-only** — it returns
+> `403 "This run is not from a fork pull request"` for same-repo branches,
+> even with a full-admin token (verified live, 2026-06-27). Copilot
+> coding-agent PRs live on **same-repo** branches (`copilot/*`, author
+> `app/copilot-swe-agent`), not forks, so `/approve` can never release them.
+> A maintainer-triggered **rerun** of the held `completed/action_required`
+> run re-queues it past the gate (verified: `action_required → in_progress`
+> on rerun of PR #307). A run that has already executed is no longer
+> `action_required`, so the poller never re-runs it twice — no loop, and a
+> genuinely failing refresh PR is left for human attention. The default
+> `GITHUB_TOKEN` cannot re-run another actor's held runs, so a
+> **fine-grained PAT** is mandatory. Install it
 > in one guided step — `bash scripts/setup-automerge-pat.sh` — which opens the
 > pre-described creation page, validates the pasted token's scopes, and sets
 > the `AUTOMERGE_PAT` secret. Required PAT permissions on this repo:
