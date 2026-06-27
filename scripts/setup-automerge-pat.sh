@@ -10,7 +10,7 @@
 # paste, and sets the repo secret. Re-run it any time to rotate the PAT.
 #
 # The PAT powers .github/workflows/copilot-pr-autorun.yml, which marks Copilot
-# refresh PRs ready and approves their gated CI runs so the freshness delivery
+# refresh PRs ready and re-runs their gated CI runs so the freshness delivery
 # loop self-closes. See AGENTS.md § 9.6.
 #
 # Usage:
@@ -46,7 +46,7 @@ cat <<EOF
   Expiration:        90 days (rotate by re-running this script)
   Repository access: Only select repositories → ${REPO}
   Repository permissions:
-    • Actions ............ Read and write   (approve action_required runs)
+    • Actions ............ Read and write   (re-run action_required runs)
     • Pull requests ...... Read and write   (mark draft refresh PRs ready)
     • Contents ........... Read-only
     • Metadata ........... Read-only (auto-selected)
@@ -107,7 +107,7 @@ cat <<EOF
 
 Done. The delivery loop is now armed:
   • copilot-pr-autorun.yml (every ~10 min) marks Copilot refresh PRs ready and
-    approves their gated CI runs.
+    re-runs their gated CI runs.
   • auto-merge-copilot.yml merges them once all gates pass.
 
 Trigger an immediate pass instead of waiting for the cron:
