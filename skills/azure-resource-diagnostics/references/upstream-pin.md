@@ -13,17 +13,17 @@ upstream:
 packages:
   - name: azure-mgmt-monitor
     source: pypi
-    version: "6.0.2"
+    version: "7.0.0"
     upstream_changelog: https://pypi.org/project/azure-mgmt-monitor/#history
     purpose: "Diagnostic settings enumeration"
   - name: azure-mgmt-resource
     source: pypi
-    version: "23.1.1"
+    version: "26.0.0"
     upstream_changelog: https://pypi.org/project/azure-mgmt-resource/#history
     purpose: "Resource listing by resource group"
   - name: azure-identity
     source: pypi
-    version: "1.19.0"
+    version: "1.25.3"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     purpose: "DefaultAzureCredential chain"
 
@@ -43,11 +43,11 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
-    pip install -q "azure-mgmt-monitor~=6.0.0" \
-                    "azure-mgmt-resource~=23.1.0" \
-                    "azure-identity~=1.19.0"
+    pip install -q "azure-mgmt-monitor~=7.0.0" \
+                    "azure-mgmt-resource~=26.0.0" \
+                    "azure-identity~=1.25.3"
     python -c "from azure.mgmt.monitor import MonitorManagementClient; print('MON OK')"
-    python -c "from azure.mgmt.resource import ResourceManagementClient; print('RES OK')"
+    python -c "from azure.mgmt.resource.resources import ResourceManagementClient; print('RES OK')"
     python -c "from azure.identity import DefaultAzureCredential; print('CRED OK')"
   expected_output:
     - "MON OK"
@@ -55,7 +55,7 @@ validation:
     - "CRED OK"
   failure_signatures: []
 
-last_validated: "2026-06-19"
+last_validated: "2026-06-29"
 validated_by: copilot-bot
 known_issues_count: 0
 ---

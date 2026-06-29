@@ -17,7 +17,7 @@ description: >
   diagnostic settings, log-category policy authoring, querying the logs
   themselves, or metric-alert coverage (use azure-monitor-alert-baseline).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # azure-resource-diagnostics
