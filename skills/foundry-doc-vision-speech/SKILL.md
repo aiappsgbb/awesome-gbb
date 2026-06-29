@@ -12,7 +12,7 @@ description: >
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq),
   real-time voice / Voice Live (use foundry-voice-live).
 metadata:
-  version: "1.2.2"
+  version: "1.2.3"
 ---
 
 # Foundry Doc / Vision / Speech
