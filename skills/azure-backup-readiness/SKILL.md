@@ -17,7 +17,7 @@ description: >
   FOR: creating vaults, running on-demand backups, restoring, or backup
   policy authoring; use Azure Backup CLI/Portal workflows instead.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # azure-backup-readiness
