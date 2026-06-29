@@ -9,20 +9,20 @@ upstream:
   pinned_sha: "ad612a644a60b041c37a3c98407e48f51a9e43cb"
 packages:
   - name: openai
-    version: "2.0.0"
-    specifier: "~=2.0.0"
+    version: "2.44.0"
+    specifier: "~=2.44.0"
     source: pypi
   - name: azure-identity
-    version: "1.24.0"
-    specifier: "~=1.24.0"
+    version: "1.25.3"
+    specifier: "~=1.25.3"
     source: pypi
   - name: fastrtc
     version: "0.0.34"
     specifier: "~=0.0.34"
     source: pypi
   - name: gradio
-    version: "5.42.0"
-    specifier: "~=5.42.0"
+    version: "5.50.0"
+    specifier: "~=5.50.0"
     source: pypi
   - name: azure-ai-voicelive
     version: "1.2.0"
@@ -53,10 +53,10 @@ validation:
 
     echo "=== Installing packages ==="
     pip install --quiet \
-      "openai~=2.0.0" \
-      "azure-identity~=1.24.0" \
+      "openai~=2.44.0" \
+      "azure-identity~=1.25.3" \
       "fastrtc~=0.0.34" \
-      "gradio~=5.42.0" \
+      "gradio~=5.50.0" \
       "azure-ai-voicelive[aiohttp]~=1.2.0"
 
     echo "=== Import smoke tests ==="
@@ -105,8 +105,8 @@ validation:
     - "voicelive-sdk-import-ok"
     - "AsyncAzureOpenAI.realtime + websocket_base_url OK"
     - "VALIDATION_PASSED"
-last_validated: "2026-06-11"
-validated_by: "ricchi"
+last_validated: "2026-06-29"
+validated_by: "copilot-bot"
 ---
 
 # Upstream Pin — foundry-voice-live
