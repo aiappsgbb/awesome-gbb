@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
