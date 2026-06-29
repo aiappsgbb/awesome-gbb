@@ -17,7 +17,7 @@ packages:
       SKILL.md mandates fastmcp>=2.0.0,<3.0.0 and records 2.14.7 as the known-good 2.x line before a 3.x path break.
   - name: mcp
     source: pypi
-    version: "1.27.1"
+    version: "1.28.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
     notes: |
       MCP protocol package; version pulled transitively by fastmcp (fastmcp~=2.14.7 requires mcp>=1.24.0,<2.0).
@@ -29,7 +29,7 @@ packages:
       Azure Container Apps management SDK used for ACA resource operations; import smoke only, no live deploy.
   - name: azure-cosmos
     source: pypi
-    version: "4.15.0"
+    version: "4.16.1"
     upstream_changelog: https://pypi.org/project/azure-cosmos/#history
     notes: |
       Async Cosmos MCP path requires the >=4.15 query_items signature discipline documented in SKILL.md.
@@ -73,8 +73,9 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "fastmcp~=3.3.1" \
+      "mcp~=1.28.1" \
       "azure-mgmt-appcontainers~=4.0.0" \
-      "azure-cosmos~=4.15.0" \
+      "azure-cosmos~=4.16.1" \
       "azure-identity~=1.25.3" \
       "aiohttp~=3.13.5"
     python - <<'PY'
@@ -89,7 +90,7 @@ validation:
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-05-29
+last_validated: 2026-06-29
 validated_by: copilot-bot
 known_issues_count: 1
 ---
