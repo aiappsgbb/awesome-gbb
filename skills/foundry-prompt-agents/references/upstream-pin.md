@@ -13,7 +13,7 @@ upstream:
 packages:
   - name: azure-ai-projects
     source: pypi
-    version: "2.1.0"
+    version: "2.2.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
     notes: |
       Core SDK for prompt agent lifecycle: create_version, tools, conversations.
@@ -69,7 +69,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-prompt-agents
     . .venv-prompt-agents/bin/activate
-    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.1.0}" "azure-identity~=1.25.3"
+    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.2.0}" "azure-identity~=1.25.3"
     python -c "
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import PromptAgentDefinition
@@ -87,7 +87,7 @@ validation:
     - "import ok: MCPTool"
     - "import ok: DefaultAzureCredential"
 
-last_validated: 2026-05-29
+last_validated: 2026-06-29
 validated_by: copilot-bot
 ---
 
