@@ -12,12 +12,12 @@ upstream:
 packages:
   - name: azure-mgmt-recoveryservices
     source: pypi
-    version: "3.0.0"
+    version: "4.0.1"
     upstream_changelog: https://pypi.org/project/azure-mgmt-recoveryservices/#history
     purpose: "RSV listing"
   - name: azure-mgmt-recoveryservicesbackup
     source: pypi
-    version: "9.1.0"
+    version: "10.0.0"
     upstream_changelog: https://pypi.org/project/azure-mgmt-recoveryservicesbackup/#history
     purpose: "Protected item enumeration"
   - name: azure-mgmt-dataprotection
@@ -27,13 +27,13 @@ packages:
     purpose: "Backup Vault (DataProtection) listing"
   - name: azure-identity
     source: pypi
-    version: "1.19.0"
+    version: "1.25.3"
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     purpose: "DefaultAzureCredential chain"
 
 docs_to_revalidate:
   - https://learn.microsoft.com/python/api/azure-mgmt-recoveryservices/azure.mgmt.recoveryservices.recoveryservicesclient
-  - https://learn.microsoft.com/python/api/azure-mgmt-recoveryservicesbackup/azure.mgmt.recoveryservicesbackup.activestamp.recoveryservicesbackupclient
+  - https://learn.microsoft.com/python/api/azure-mgmt-recoveryservicesbackup/azure.mgmt.recoveryservicesbackup?view=azure-python
   - https://learn.microsoft.com/python/api/azure-mgmt-dataprotection/azure.mgmt.dataprotection.dataprotectionmgmtclient
   - https://learn.microsoft.com/azure/backup/backup-overview
   - https://pypi.org/project/azure-mgmt-recoveryservices/
@@ -49,20 +49,20 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
-    pip install -q "azure-mgmt-recoveryservices~=3.0.0" \
-                    "azure-mgmt-recoveryservicesbackup~=9.1.0" \
+    pip install -q "azure-mgmt-recoveryservices~=4.0.1" \
+                    "azure-mgmt-recoveryservicesbackup~=10.0.0" \
                     "azure-mgmt-dataprotection~=2.0.1" \
-                    "azure-identity~=1.19.0"
+                    "azure-identity~=1.25.3"
     python -c "from azure.mgmt.recoveryservices import RecoveryServicesClient; print('RSV OK')"
     python -c "from azure.mgmt.dataprotection import DataProtectionMgmtClient; print('BV OK')"
-    python -c "from azure.mgmt.recoveryservicesbackup.activestamp import RecoveryServicesBackupClient; print('RSVB OK')"
+    python -c "from azure.mgmt.recoveryservicesbackup import RecoveryServicesBackupClient; print('RSVB OK')"
   expected_output:
     - "RSV OK"
     - "BV OK"
     - "RSVB OK"
   failure_signatures: []
 
-last_validated: "2026-06-19"
+last_validated: "2026-06-29"
 validated_by: copilot-bot
 known_issues_count: 0
 ---
