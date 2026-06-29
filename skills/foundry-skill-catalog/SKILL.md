@@ -17,7 +17,7 @@ description: >
   tools (use foundry-toolbox), file-system SkillsProvider wiring (use
   foundry-hosted-agents § Skill Loading), generic hosted-agent runtime.
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # Foundry Skills Catalog — Reference Guide
