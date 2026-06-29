@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Foundry Observability
@@ -574,6 +574,29 @@ If `exceptions` returns rows but `console` is empty, the cron initialized
 OTel before crashing — you have a stack trace in AppIn even though logs
 are silent. This is the single most useful query when an ACA Job is
 "failing without telemetry."
+
+### Resource Health — availability vs config/provisioning state
+
+When a workload is degraded but App Insights is silent, check
+**Resource Health** — the platform's own availability signal. Two CLI
+shapes look interchangeable but answer different questions; mixing them
+up is a common diagnostic dead-end:
+
+```bash
+# Current availability status (Available / Unavailable / Degraded) — what you want
+az rest --method get --url \
+  "https://management.azure.com/<RESOURCE_ID>/providers/Microsoft.ResourceHealth/availabilityStatuses/current?api-version=2025-05-01"
+
+# Config + provisioning state ONLY — NOT availability
+az resource show --ids <RESOURCE_ID>
+```
+
+`az resource show` returns ARM config and `provisioningState: Succeeded`
+even when the resource is unavailable — it never reports a platform
+outage. For "is it actually up right now?" use the
+`Microsoft.ResourceHealth/availabilityStatuses/current` data plane (GA
+`2025-05-01`). Pair with `az monitor activity-log list -g <rg>
+--max-events 20` for health-impacting control-plane events.
 
 ---
 
