@@ -11,20 +11,20 @@ upstream:
 packages:
   - name: azure-ai-projects
     source: pypi
-    version: "2.1.0"
+    version: "2.2.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
     notes: |
       SKILL.md verifies client.beta.toolboxes.create_version and related methods on azure-ai-projects 2.1.0.
   - name: agent-framework
     source: pypi
-    version: "1.7.0"
+    version: "1.9.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       MAF surface used for MCPStreamableHTTPTool and hosted-agent toolbox consumption patterns.
       get_toolbox, select_toolbox_tools removed in 1.3.0; SkillsProvider(skill_paths=...) removed in 1.4.0.
   - name: mcp
     source: pypi
-    version: "1.27.1"
+    version: "1.28.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
     notes: |
       Toolbox endpoints are consumed as Streamable HTTP MCP endpoints.
@@ -54,7 +54,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects~=2.1.0" "agent-framework~=1.7.0" "mcp~=1.27.0"
+    pip install --quiet "azure-ai-projects~=2.2.0" "agent-framework~=1.9.0" "mcp~=1.28.0"
     python - <<'PY'
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import MCPTool, WebSearchTool, AzureAISearchTool
@@ -89,7 +89,7 @@ validation:
     - "ok select_toolbox_tools removed"
     - "ok skill_paths constructor removed"
 
-last_validated: 2026-06-01
+last_validated: 2026-06-29
 validated_by: copilot-bot
 known_issues_count: 1
 ---
