@@ -17,7 +17,7 @@ description: >
   (use foundry-observability); gateway-only chargeback via x-app-id
   (use citadel-spoke-onboarding); fine-tuning cost estimates.
 metadata:
-  version: "1.0.3"
+  version: "1.0.4"
 ---
 
 # Foundry Cost Monitoring
@@ -515,6 +515,32 @@ The fixture **soft-passes** on 403 from the Cost Management REST call
 per AGENTS.md § 9.7 Pattern 25, so the CI run still emits PASS when this
 grant is pending — the role grant is tracked separately and does not
 block the catalog from shipping.
+
+---
+
+## §12 — Inference cost optimization levers (FinOps)
+
+§ 1–§ 9 tell you *what* you spend; these levers cut it. Inference cost
+turns on three knobs distinct from generic compute right-sizing: **token
+volume**, **deployment type** (Standard pay-per-token vs Provisioned/PTU),
+and **deployment SKU/region**. Apply in priority order:
+
+| Priority | Lever | Detection | Action | Savings |
+|----------|-------|-----------|--------|---------|
+| 🔴 Crit | Idle PTU deployment | `sku.name` Provisioned + sustained util below breakeven | PTU bills 24/7 — cut count or move to GlobalStandard | 30–70% |
+| 🔴 Crit | Flagship on simple tasks | `gpt-5.4` for classify/extract/route at scale | move to `-mini`/`-nano` | 50–95% |
+| 🟠 High | Sync endpoint for batchable work | offline evals/backfills on real-time endpoint | Batch API (24h window) | ~50% |
+| 🟠 High | Uncached repeated context | large static system prompt resent every call | enable prompt caching | 10–40% |
+| 🟠 High | Regional SKU where Global fits | `Standard`/`DataZoneStandard`, no residency need | switch to GlobalStandard | 5–30% |
+| 🟡 Med | Unbounded output | no `max_completion_tokens` cap | cap output (priced > input) | 10–30% |
+| 🟡 Med | Oversized embedding | `text-embedding-3-large` where small fits | `text-embedding-3-small` | 60–80% |
+
+**Deployment-type breakeven:** PTU only beats Standard once sustained
+throughput clears the per-token breakeven — model it from real volume
+(`paygo-ptu-cost-analyzer`) before reserving. Below breakeven, idle PTU
+is the single largest inference waste. **Per-app showback** needs
+token-level attribution Cost Management lacks — emit `gen_ai.usage.*`
+tagged by consumer (§ 4) and reconcile against deployment cost (§ 9).
 
 ---
 
