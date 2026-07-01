@@ -17,7 +17,7 @@ description: >
   tools (use foundry-toolbox), file-system SkillsProvider wiring (use
   foundry-hosted-agents § Skill Loading), generic hosted-agent runtime.
 metadata:
-  version: "1.1.3"
+  version: "1.2.0"
 ---
 
 # Foundry Skills Catalog — Reference Guide
@@ -510,6 +510,88 @@ source. For a TTL cache, wrap `_collect` with your own decorator.
 
 ---
 
+## Governing skill versions in production
+
+Patterns A/B tell you how to *publish* and *consume* skills. This section
+tells you how to **not break** the agents already consuming them when you
+ship a change.
+
+### Why this needs discipline
+
+Two failure modes, both silent:
+
+- **Floating pointer.** If every agent resolves a skill by a bare, reused
+  name, one re-import pushes a capability change to *all* agents at once
+  — no canary, no staged rollout.
+- **Destructive replace.** `delete` + re-import (or re-import over a live
+  name) mutates the bytes running agents depend on. Nothing fails loudly;
+  the next agent turn just behaves differently.
+
+### The API is name-addressed, not version-addressed
+
+Every operation in the REST surface keys on `{name}` — there is **no
+native `version` field**. `update` patches the **description only** (the
+instruction body cannot be patched in place), and `delete` is a hard
+`204` that makes the next `get` return `404` (see the *Update* / *Delete*
+rows above). So the **name is your version key**: govern versions by
+naming discipline, not by an API primitive.
+
+### 1 — Treat each published version as immutable, versioned bytes
+
+Encode the version in the skill name and publish via **ZIP mode**
+(JSON-mode skills are write-only — you can never read the body back):
+
+```
+report-writer@1.4.0     # not: report-writer  (a floating pointer)
+report-writer@1.5.0     # a new version = a new name = new bytes
+```
+
+A given versioned name always resolves to the same bytes. You never
+`update` the body of `report-writer@1.4.0`; you publish
+`report-writer@1.5.0` alongside it.
+
+### 2 — Pin in production
+
+Production agents bind to a **specific versioned name**
+(`report-writer@1.4.0`), never a floating alias. Then "which
+capabilities ran during the incident at 14:32?" has one auditable answer
+— the pinned name is in the deploy manifest, not inferred from whatever
+the shared name happened to point at.
+
+### 3 — Promote the default in stages
+
+Keep a **resolvable default pointer** — a deploy-time value (env var or
+config the agent's `SkillsSource` / Pattern-A sync reads), **not** a
+runtime mutation of the store. Promote it canary-first:
+
+- Point a small subset of agents' pointer at `report-writer@1.5.0`.
+- Observe (traces, eval scores) for hours-to-days.
+- Roll the pointer forward for the broad fleet.
+
+Because the pointer lives in each agent's deploy config, promotion is a
+redeploy of the canary subset — the store itself is never mutated, and
+rollback is re-pointing to `@1.4.0`.
+
+### 4 — Never destructively replace a live version
+
+To ship a change, **publish a new versioned name and re-point
+consumers.** Do **not** `delete` or re-import over a name that live
+agents pin. The *Update* (description-only) / *Delete* (`204` → `404`)
+rows above are the mechanical reason: you *cannot* patch bytes in place,
+and `delete` is irreversible — a pinned agent that resolves a deleted
+name gets a `404` mid-run.
+
+### 5 — Fetch at deploy, not at runtime
+
+Prefer downloading the pinned artifact at **deploy time** (Pattern A
+build-time bundle, or Pattern B's cached `FoundrySkillsSource` primed at
+startup) over cloning capability source into a running container. The
+pinned bytes become part of the immutable deployment, so a store change
+can't alter a running agent's behavior between turns. See **§ Caching**
+above for the Pattern-B TTL knobs.
+
+---
+
 ## Verified end-to-end
 
 This skill was verified against a live Foundry project on **2025-11-19**:
@@ -578,6 +660,10 @@ artifacts remaining).
 
 ## Catalog history
 
+- **1.2.0** — Added § *Governing skill versions in production*: naming-
+  convention discipline for the name-addressed Skills API (immutable
+  versioned names, pin-in-prod, staged default promotion, no destructive
+  replace, fetch-at-deploy). Closes #336.
 - **1.0.0** (initial) — REST API surface, JSON-mode write-only trap,
   quoted-frontmatter trap, ZIP layout findings, `FoundrySkillsSource`
   adapter for MAF `SkillsProvider`, build-time bundle alternative.
