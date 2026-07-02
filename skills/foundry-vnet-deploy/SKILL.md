@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.1.4"
+  version: "1.2.0"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -106,6 +106,53 @@ The deployment creates the following secure network architecture:
 
 Follow these steps IN ORDER. Use the `ask_user` tool for every question.
 
+### Step 0: Choose the template (Decision Guide)
+
+This skill vendors **two** Foundry network-isolation templates. Pick one before
+the interview — they share Steps 1-8b/12/13 but differ on BYO resources and DNS.
+
+| You need… | Template | `TEMPLATE_DIR` |
+|---|---|---|
+| **BYO** Azure AI Search + Storage + Cosmos wired as project connections (vector store, thread storage, file storage) | **standard-agent** (template 15) | `templates/standard-agent` |
+| **Platform-managed** storage — no BYO Search/Storage/Cosmos, smallest network surface, optional private ACR | **basic-vnet** (template 11) | `templates/basic-vnet` |
+
+Ask the user:
+
+1. **Do your agents need BYO Search / Storage / Cosmos connected to the project?**
+   - **Yes / not sure / need vector search + custom thread storage** → `standard-agent`.
+   - **No — platform-managed storage is fine** → `basic-vnet`.
+
+Set the working directory for every later deploy/verify command:
+
+```bash
+# standard:
+TEMPLATE_DIR="templates/standard-agent"
+# basic:
+TEMPLATE_DIR="templates/basic-vnet"
+```
+
+**What differs by fork** (both keep the four awesome-gbb integrations —
+hosted-agent developer RBAC, App Insights project-MI roles, Citadel spoke
+peering, APIM DNS link):
+
+| Aspect | standard-agent (15) | basic-vnet (11) |
+|---|---|---|
+| BYO resources | AI Search + Storage + Cosmos (create or reuse) | none (platform-managed) |
+| Project connections | CosmosDb, CognitiveSearch, AzureStorageAccount (+ appinsights) | appinsights only |
+| Private endpoints | AI Services, Search, Storage(blob), Cosmos(SQL) (4) | AI Services + Monitor PLS (2) + ACR (optional → 3) |
+| Private DNS zones | 6 (services.ai, openai, cognitiveservices, search, blob, documents) | 3 app (services.ai, openai, cognitiveservices) + `azurecr.io` (if ACR) + 4 monitor zones |
+| Optional private ACR | no | yes (`enableContainerRegistry`, default **true**; `developerIpCidr`) |
+| Account capability host | yes (`accountCapHost`) | project caphost only (`projectCapHost` = `caphostproj`) |
+| Role assignments | 6 (project-MI over BYO) + optional developer/telemetry | telemetry (LAW Reader + Azure AI User) + optional developer + ACR AcrPull |
+| Deploy time | 45-90 min | 30-60 min (no BYO wiring) |
+
+> Steps 7 (BYO existing resources) and 8 (6-zone DNS map) apply to
+> **standard-agent only**. On **basic-vnet**, skip Step 7 entirely; in Step 8
+> the DNS map uses the basic zone set (`existingDnsZones` = 3 app zones +
+> optional `azurecr.io`; `existingMonitorDnsZones` = 4 monitor zones), and you
+> additionally ask about the optional private ACR (`enableContainerRegistry`,
+> `developerIpCidr`).
+
 ### Step 1: Verify prerequisites
 
 Before starting, verify:
@@ -159,6 +206,29 @@ Ask:
 Ask the user:
 
 **Are you going to use an existing VNet or create a new one?**
+
+> **Subnet sizing (agent injection).** The agent subnet is delegated to
+> `Microsoft.App/environments` and consumes ~1 IP per ~10 running agent pods.
+> The platform caps concurrent agent sessions at **50 per subscription per
+> region** — that ceiling does **not** scale with a bigger subnet. A larger
+> subnet buys **project density** (~250 projects at low traffic, as few as ~25
+> at full scale) and **upgrade/scale headroom**, not more sessions.
+>
+> | Agent subnet CIDR | Usable IPs | Concurrent sessions | Use when |
+> |---|---|---|---|
+> | **/24** | 251 | 50 (platform cap) + upgrade buffer | **Production default** (Microsoft-recommended) |
+> | /25 | 123 | 50 (platform cap) | Buffer between /26 and /24 |
+> | /26 | 59 | ~50 — **minimum to reach the cap** | Smallest that supports the full 50 |
+> | /27 | 27 | ~17 | Dev/test only — **minimum, risky** |
+>
+> Rules: **RFC-1918 only** (10/8, 172.16/12, 192.168/16) — the CGNAT
+> `100.64.0.0/10` range is **not supported** (routing failures). Avoid
+> `172.17.0.0/16` (reserved by Docker bridge). Target **< 80 % utilization**.
+> Prompt-agent revisions do **not** consume subnet IPs; hosted-agent revisions
+> do (100 active / 1000 total per agent name; ~200 hosted agents per Foundry
+> instance). The PE subnet only needs one IP per private endpoint (a /27 is
+> plenty). Full IP math and exhaustion symptoms:
+> [`references/agent-networking.md`](references/agent-networking.md).
 
 ### Option A: New VNet
 Ask:
@@ -281,7 +351,13 @@ If all three pass, the Foundry account in this VNet can now reach the Citadel hu
 
 ### Step 9: Generate the .bicepparam file
 
-With all the data collected, generate the `main.bicepparam` file with the following format:
+With all the data collected, generate the `main.bicepparam` file. This skill vendors
+**two** templates (Step 0): the block below is for **standard-agent (template 15)**.
+When `TEMPLATE_DIR=templates/basic-vnet`, use the **basic-vnet fork** block after the
+IMPORTANT notes instead. The `deploy-{rg}.bicepparam` naming + the "never overwrite
+`main.bicepparam`" rule apply to both.
+
+**standard-agent (template 15) — BYO Search / Storage / Cosmos:**
 
 ```bicep
 using './main.bicep'
@@ -362,6 +438,71 @@ param apimDnsZoneLinkName = '{apimDnsZoneLinkName}' // default: 'foundry-spoke-l
 - **DO NOT include `deploymentTimestamp`** in the `.bicepparam` file. This parameter is always passed via CLI (`--parameters deploymentTimestamp=...`) so it can be reused on retries without modifying the file.
 - Use a descriptive name for the `.bicepparam` file (e.g. `deploy-{resourceGroup}.bicepparam`) so as not to overwrite the project's original `main.bicepparam`.
 
+> **basic-vnet fork.** When `TEMPLATE_DIR=templates/basic-vnet`, generate the
+> param file below **instead** of the standard block above (no BYO resource IDs,
+> no 6-zone `dnsZoneNames`). Before writing `existingDnsZones` /
+> `existingMonitorDnsZones` / `enableContainerRegistry` values, the key names
+> below are the vendored `templates/basic-vnet/main.bicep` defaults — match them
+> exactly; do not invent variants.
+
+**basic-vnet (template 11) — platform-managed storage, optional private ACR:**
+
+```bicep
+using './main.bicep'
+
+param location = '{location}'
+param aiServices = '{aiServices}'
+param modelName = '{modelName}'
+param modelFormat = '{modelFormat}'
+param modelVersion = '{modelVersion}'
+param modelSkuName = '{modelSkuName}'
+param modelCapacity = {modelCapacity}
+param firstProjectName = '{firstProjectName}'
+param projectDescription = '{projectDescription}'
+param displayName = '{displayName}'
+param projectCapHost = '{projectCapHost}'   // default 'caphostproj'
+
+// Network (new or existing VNet — same questions as Step 6)
+param existingVnetResourceId = '{existingVnetResourceId}'
+param vnetName = '{vnetName}'
+param agentSubnetName = '{agentSubnetName}'
+param peSubnetName = '{peSubnetName}'
+param vnetAddressPrefix = '{vnetAddressPrefix}'
+param agentSubnetPrefix = '{agentSubnetPrefix}'
+param peSubnetPrefix = '{peSubnetPrefix}'
+
+// Optional private Azure Container Registry (basic-vnet only; default enabled)
+param enableContainerRegistry = {true_or_false}
+param developerIpCidr = '{developer_ip_cidr_or_empty}'
+
+// DNS (basic zone set). Leave RG empty to create; set RG to reuse hub-owned zones.
+param dnsZonesSubscriptionId = '{dnsZonesSubscriptionId}'
+param existingDnsZones = {
+  'privatelink.services.ai.azure.com': '{rg_or_empty}'
+  'privatelink.openai.azure.com': '{rg_or_empty}'
+  'privatelink.cognitiveservices.azure.com': '{rg_or_empty}'
+  'privatelink.azurecr.io': '{rg_or_empty}'          // only relevant if enableContainerRegistry
+}
+param existingMonitorDnsZones = {
+  'privatelink.monitor.azure.com': '{rg_or_empty}'
+  'privatelink.oms.opinsights.azure.com': '{rg_or_empty}'
+  'privatelink.ods.opinsights.azure.com': '{rg_or_empty}'
+  'privatelink.agentsvc.azure-automation.net': '{rg_or_empty}'
+}
+
+// Hosted-agent developer RBAC (optional)
+param agentDeveloperPrincipalIds = [
+  // '00000000-0000-0000-0000-000000000000'
+]
+param agentDeveloperPrincipalType = 'User'
+
+// Citadel hub integration (optional — same semantics as standard-agent)
+param hubVnetResourceId = '{hubVnetResourceId}'
+param hubPeeringName = '{hubPeeringName}'            // default 'peering-to-hub'
+param apimDnsZoneResourceId = '{apimDnsZoneResourceId}'
+param apimDnsZoneLinkName = '{apimDnsZoneLinkName}'  // default 'foundry-spoke-link'
+```
+
 ### Step 10: Confirm and deploy
 
 1. Show a **complete summary** of the configuration to the user, including:
@@ -386,7 +527,7 @@ param apimDnsZoneLinkName = '{apimDnsZoneLinkName}' // default: 'foundry-spoke-l
    ```
    az deployment group create \
      --resource-group {resourceGroup} \
-     --template-file main.bicep \
+     --template-file "$TEMPLATE_DIR/main.bicep" \
      --parameters {bicepparam_file} \
      --parameters deploymentTimestamp={deployTimestamp} \
      --name "foundry-vnet-{deployTimestamp}"
@@ -460,7 +601,7 @@ follow these steps to retry without duplicating resources:
    ```
    az deployment group create \
      --resource-group {resourceGroup} \
-     --template-file main.bicep \
+     --template-file "$TEMPLATE_DIR/main.bicep" \
      --parameters {bicepparam_file} \
      --parameters deploymentTimestamp={deployTimestamp} \
      --name "foundry-vnet-retry-{deployTimestamp}"
@@ -474,6 +615,18 @@ follow these steps to retry without duplicating resources:
 
 After the deployment (successful or after completing the retry steps), run ALL these
 checks and present the results to the user as a status table.
+
+> **basic-vnet verification differences.** On `templates/basic-vnet`:
+> - **Private Endpoints:** expect **2** (AI Services + Monitor PLS) or **3**
+>   when `enableContainerRegistry=true` (adds the ACR PE). Not 4.
+> - **DNS VNet links:** 3 app zones + `azurecr.io` (if ACR) + 4 monitor zones.
+> - **Capability host:** project caphost only (`caphostproj`); there is **no**
+>   account capability host to verify (skip the account-caphost PUT check).
+> - **Project connections:** expect **appinsights** only (no CosmosDb /
+>   CognitiveSearch / AzureStorageAccount).
+> - **Role assignments:** project-MI **Log Analytics Reader** (LAW) + **Azure AI
+>   User** (account); **ACR AcrPull** (if ACR); **no** Storage/Cosmos/Search roles.
+> - Skip Steps 11.9 (BYO public-access) and 11.10 (BYO roles) — no BYO resources.
 
 ### 11.1 — AI Services Account
 
@@ -909,7 +1062,7 @@ After successful verification, remind the user:
 3. **Validate** Resource ID formats before continuing (they must start with `/subscriptions/`).
 4. **Do not** generate the .bicepparam until you have ALL parameters.
 5. **Save** the .bicepparam file with a descriptive name (e.g. `deploy-{rg}.bicepparam`) in the same directory as `main.bicep`, **never** overwrite `main.bicepparam`.
-6. The Bicep files (`main.bicep`, `main.bicepparam` and the `modules-network-secured/` folder) live in the **`templates/` subfolder of this skill**. Locate that path and use it as the working directory for the deployments — copy them out to a workspace folder first if you want to keep the originals pristine.
+6. The Bicep files live under the **`templates/` subfolder of this skill**, one directory per template: `templates/standard-agent/` (BYO Search/Storage/Cosmos — template 15) and `templates/basic-vnet/` (platform-managed storage — template 11). Step 0 selects which one; set `TEMPLATE_DIR` to that directory and use it (`main.bicep`, `main.bicepparam`, `modules-network-secured/`) as the deployment working directory — copy them out to a workspace folder first if you want to keep the originals pristine.
 7. If the user passed a one-line scenario hint when invoking the skill (see the **Goal** section), use it to pre-fill values whenever possible.
 8. **Always generate and store a fixed `deploymentTimestamp`** before the first deployment. Pass it as `--parameters deploymentTimestamp={timestamp}` on every attempt (including retries). This guarantees that `uniqueSuffix` is identical and resources are not duplicated.
 9. **On retries**, first verify whether the Account Capability Host completed internally (via REST API PUT → look for "Conflict" error with "Succeeded"). If it already exists, create the Project Capability Host directly via the REST API and then re-run the full deployment with the same timestamp to complete the role assignments.
@@ -920,6 +1073,8 @@ After successful verification, remind the user:
 ## 5. References
 
 - **Foundry Samples** — [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) — Bicep template set under `templates/` derives from this Foundry samples reference.
+- **Agent networking deep-dive** — hosted vs prompt agent traffic paths, the ~1-IP-per-10-pods allocation model, subnet sizing against the **50-session platform cap** (per subscription/region), hosted-vs-prompt revision IP behavior, and subnet-exhaustion signals: [`references/agent-networking.md`](references/agent-networking.md).
+- **Agent tools behind the VNet** — the tool-by-tool reachability matrix (through-subnet / through-PE / backbone / public / unsupported), isolation feature limits, the **public-ACR-for-hosted-agents** and **can't-change-the-delegated-subnet** gotchas, the firewall FQDN allowlist, and troubleshooting: [`references/agent-tools-network-isolation.md`](references/agent-tools-network-isolation.md).
 - **Original interview/automation logic** — Angel Sevillano (Microsoft), [`asevillano/foundry-vnet-deploy`](https://github.com/asevillano/foundry-vnet-deploy).
 - **Related skills** — `azure-tenant-isolation` (set up first), `foundry-hosted-agents` (deploy agents into the host this skill creates), `threadlight-deploy` (`azd`-based public-network alternative), `foundry-cross-resource` (APIM cross-resource model wiring on top), **`citadel-spoke-onboarding` — see Step 8d + Step 12D for the network plumbing this skill creates so the deployed Foundry can be onboarded as a Citadel hub spoke**, `foundry-observability` (App Insights wiring if Step 8c was opted in).
-- **Template fork notice** — the `templates/` set started as a clone of [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup); awesome-gbb adds three optional integration paths on top: (1) `modules-network-secured/spoke-hub-peering.bicep` and (2) `modules-network-secured/apim-dns-zone-link.bicep` are awesome-gbb-only modules wired into `main.bicep` behind the new `hubVnetResourceId` / `apimDnsZoneResourceId` parameters; (3) `main.bicep` emits a `hubReversePeeringCommand` deployment output. Future upstream syncs must diff against the original 23 modules and re-apply these additions.
+- **Template fork notice** — the `templates/` set vendors **two** Foundry samples references: `templates/standard-agent/` from [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) and `templates/basic-vnet/` from [`11-private-network-basic-vnet`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/11-private-network-basic-vnet). awesome-gbb adds the same four optional integrations on top of **each** template: (1) `modules-network-secured/spoke-hub-peering.bicep` and (2) `modules-network-secured/apim-dns-zone-link.bicep` behind the `hubVnetResourceId` / `apimDnsZoneResourceId` params; (3) a `hubReversePeeringCommand` output; (4) hosted-agent developer RBAC (`agent-developer-role-assignments.bicep` + `agent-developer-subnet-assignment.bicep`) and project-MI telemetry roles (`app-insights-role-assignments.bicep`). Note App Insights + Log Analytics + private trace ingestion (Monitor Private Link Scope) are **upstream-native in template 11** — only the project-MI role delta is awesome-gbb. Future upstream syncs must diff each vendored tree against its origin and re-apply these additions. Pinned SHA + revalidation contract: [`references/upstream-pin.md`](references/upstream-pin.md).
