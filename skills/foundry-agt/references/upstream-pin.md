@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-governance-toolkit
   ref: main
-  pinned_sha: 0d674bedf753eb4e368638b6321cc4ffdb8d5668
+  pinned_sha: b3c899675e8f76a263f3f1f22a7a29137d84fe03
   pinned_commit_message: |
     AGT 3.7.0 release — meta-package + 6 sub-packages
   license: MIT
@@ -20,13 +20,13 @@ upstream:
 packages:
   - name: agent-governance-toolkit
     source: pypi
-    version: "3.7.0"
+    version: "4.1.0"
     upstream_changelog: https://github.com/microsoft/agent-governance-toolkit/releases
     notes: |
       Meta-package; install with `[full]` extra to pull all 6 sub-packages.
   - name: agent-framework
     source: pypi
-    version: "1.9.0"
+    version: "1.10.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Required for the in-process middleware integration path.
@@ -76,7 +76,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-agt
     . .venv-agt/bin/activate
-    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-3.7.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.9.0}"
+    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-4.1.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.10.0}"
     agt --version
     agt doctor
     agt verify
@@ -85,7 +85,7 @@ validation:
     - "OWASP ASI 2026"
     - "factory ok"
 
-last_validated: 2026-06-18
+last_validated: 2026-07-02
 validated_by: copilot-bot
 known_issues_count: 3
 ---
