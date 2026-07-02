@@ -17,6 +17,7 @@ Recorded here so the executor understands why the plan differs from `docs/superp
 1. **`references/mcp.json` is DROPPED.** The interactive-client config is a small `.vscode/mcp.json` fragment (≤12 lines) shown in context — AGENTS.md §7 keeps such fragments inline. This also sidesteps the "JSON can't carry a `§` header" question. The client config now lives inline in the `### Connecting clients` subsection.
 2. **Audit layer stays on stdlib `logging`** (structured JSON → stdout → ACA → Log Analytics), cross-linking `foundry-observability` for the OTel upgrade. This avoids pulling in the heavy `azure-monitor-opentelemetry` dependency tree. **The only new pin is `azure-keyvault-secrets`.**
 3. **Workflow env passthrough added** (`.github/workflows/skill-test.yml`) so the CI auth proof activates the moment a maintainer creates the `MCP_AUTH_APP_CLIENT_ID` secret — inert (empty → graceful skip) until then.
+4. **Manifest version bump added (execution-time fix).** `scripts/validate-skills.py::validate_skill_plugin_version_consistency` treats a MINOR skill bump with an unchanged root `plugin.json` version as a HARD error. The plan originally omitted this. Fix: bump `plugin.json` and both `.github/plugin/marketplace.json` version fields `4.24.0 → 4.25.0` (MINOR, per AGENTS.md §5.1). Committed alongside Task 3.
 
 ## Files touched
 
