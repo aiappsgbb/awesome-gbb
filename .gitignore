@@ -37,3 +37,9 @@ skills/*.zip
 # $GITHUB_WORKSPACE, so Azure fixtures scaffold azd projects + Bicep
 # files under <workspace>/.scratch/<unique-name>/ instead of /tmp.
 .scratch/
+
+# Upstream-pin live-validation working dir (AGENTS.md § 9.5).
+# `validation.script` in references/upstream-pin.md clones the upstream
+# repo here (default WORKDIR=$ROOT_DIR/.upstream-pin-work/<skill>) to
+# diff/build against the pinned SHA. Transient — never commit the clone.
+.upstream-pin-work/
