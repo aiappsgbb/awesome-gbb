@@ -86,6 +86,20 @@ bug, not a skill bug. Emit `SMOKE_RESULT=FAIL auth context missing:
    echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER:+set}"
    ```
 
+   Then show the OPTIONAL auth-proof var (Pattern 17 — show-don't-assert;
+   an empty value here is EXPECTED and MUST NOT fail the run):
+
+   ```bash
+   echo "MCP_AUTH_APP_CLIENT_ID=${MCP_AUTH_APP_CLIENT_ID:+set}"
+   ```
+
+   `MCP_AUTH_APP_CLIENT_ID` is OPTIONAL. When set, it is the client id of a
+   standing pre-registered Entra app whose `api://<id>` audience this smoke
+   uses to prove the 401→200 Easy Auth contract (Step 5b). When unset, the
+   auth sub-test (Step 5b) is SKIPPED with a NOTE — that is expected and
+   MUST NOT fail the run; the base smoke (Steps 1–5) already proves the
+   server works.
+
 2. **Show-don't-assert on `az` cache** (Pattern 17). The copilot CLI
    subprocess MAY or MAY NOT inherit `~/.azure/` from the runner. Print
    for the audit log; do NOT gate flow on this:
@@ -521,9 +535,100 @@ is the GA surface.
 
 ---
 
+## Step 5b — Easy Auth 401→200 proof (HARD GATE only when `MCP_AUTH_APP_CLIENT_ID` is set)
+
+Layer 1 of the skill's security model is ACA built-in auth: the platform
+must return **401** to an unauthenticated caller and let a caller presenting
+a valid Entra bearer token for `api://$MCP_AUTH_APP_CLIENT_ID` through (not
+401). Steps 1–5 already proved the server works over the wire; this step
+proves the documented `## Securing your MCP server` § "Layer 1 — Identity
+perimeter" contract on the live app.
+
+**Gate:** if `MCP_AUTH_APP_CLIENT_ID` is empty, SKIP this entire step — echo
+exactly `NOTE: MCP_AUTH_APP_CLIENT_ID unset — skipping Easy Auth 401/200 proof`
+and proceed to Step 6. Do NOT write a FAIL marker for an unset client id.
+
+```bash
+if [ -z "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
+  echo "NOTE: MCP_AUTH_APP_CLIENT_ID unset — skipping Easy Auth 401/200 proof"
+fi
+```
+
+When `MCP_AUTH_APP_CLIENT_ID` IS set, run all of the following. Any failure
+here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
+`/tmp/foundry-mcp-aca-smoke-result` inline and stop.
+
+1. **Enable built-in auth on the app you deployed** (`$APP_NAME` from Step 1,
+   resource group `rg-awesome-gbb-ci`, tenant `$AZURE_TENANT_ID`):
+
+   ```bash
+   if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
+     az containerapp auth microsoft update -n "$APP_NAME" -g rg-awesome-gbb-ci \
+       --client-id "$MCP_AUTH_APP_CLIENT_ID" \
+       --issuer "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" \
+       --allowed-token-audiences "api://$MCP_AUTH_APP_CLIENT_ID" --yes
+     az containerapp auth update -n "$APP_NAME" -g rg-awesome-gbb-ci \
+       --unauthenticated-client-action Return401
+   fi
+   ```
+
+2. **Wait for the auth config to take effect and assert 401** (Easy Auth is a
+   control-plane change; poll up to 6× with a 10 s back-off, per the
+   ACA-control-plane race guidance in AGENTS.md § 9.7 Pattern 9):
+
+   ```bash
+   if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
+     CODE=""
+     for i in $(seq 1 6); do
+       CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+         -H 'Accept: application/json, text/event-stream' \
+         "https://${FQDN}/mcp/")
+       [ "$CODE" = "401" ] && break
+       sleep 10
+     done
+     echo "unauth status: $CODE"
+     if [ "$CODE" != "401" ]; then
+       printf 'SMOKE_RESULT=FAIL auth proof: expected 401 unauth, got %s\n' "$CODE" \
+         > /tmp/foundry-mcp-aca-smoke-result
+       exit 1
+     fi
+   fi
+   ```
+
+3. **Acquire a token and assert the authed call is NOT 401.** The CI managed
+   identity requests a token for the app's audience, then repeats the MCP
+   `initialize` round-trip WITH the bearer header:
+
+   ```bash
+   if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
+     TOKEN=$(az account get-access-token \
+       --resource "api://$MCP_AUTH_APP_CLIENT_ID" \
+       --query accessToken -o tsv)
+     AUTHED_CODE=$(curl -s -o /tmp/mcp-authed.json -w '%{http_code}' \
+       -X POST "https://${FQDN}/mcp/" \
+       -H 'Content-Type: application/json' \
+       -H 'Accept: application/json, text/event-stream' \
+       -H "Authorization: Bearer $TOKEN" \
+       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}')
+     echo "authed status: $AUTHED_CODE"
+     if [ "$AUTHED_CODE" = "401" ]; then
+       printf 'SMOKE_RESULT=FAIL auth proof: valid token still rejected (401) — CI MI likely not authorized for api://%s\n' "$MCP_AUTH_APP_CLIENT_ID" \
+         > /tmp/foundry-mcp-aca-smoke-result
+       exit 1
+     fi
+     echo "auth proof: 401 unauth / authed OK"
+   fi
+   ```
+
+When both assertions hold (or the step was SKIPPED), proceed to Step 6.
+
+---
+
 ## Step 6 — Write the PASS marker IMMEDIATELY (Pattern 12)
 
-The MOMENT both hard gates above succeed, write the deterministic PASS
+The MOMENT the Step 4 provision gate, the Step 5 MCP round-trip gate, AND
+the Step 5b auth gate (or its documented SKIP when `MCP_AUTH_APP_CLIENT_ID`
+is unset) have all succeeded, write the deterministic PASS
 marker file via the Bash tool. The file's literal byte content is what
 CI grades — NOT your assistant text reply. The workflow evaluator
 (`.github/workflows/skill-test.yml`) reads `/tmp/foundry-mcp-aca-smoke-result`
@@ -576,5 +681,8 @@ any circumstance.
 - MCP `tools/list` returned non-200 or returned 0 tools
 - JSON parse failed on either MCP response body
 - FQDN could not be resolved post-deploy
+- Step 5b auth proof: unauth call not 401, or valid-token call still 401
+  (only when `MCP_AUTH_APP_CLIENT_ID` is set; SKIPPED and never a FAIL when
+  unset)
 
 Teardown failure is NOT a FAIL condition (Pattern 25 — soft-PASS).
