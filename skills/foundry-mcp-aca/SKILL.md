@@ -671,7 +671,7 @@ value reaches the runtime via a Key Vault reference
 (`@Microsoft.KeyVault(SecretUri=...)`), not through the model. The
 `secret_status` tool in `secure_server.py` shows the pattern.
 
-**Allow-list tool inputs.** Any argument that becomes a path, key, or shell
+**Reject unsafe tool inputs.** Any argument that becomes a path, key, or shell
 fragment is a traversal/injection vector. The `safe_lookup` tool in
 `secure_server.py` rejects `..`, `/`, `\`, `;`, `|`, `` ` ``, and `$(` before
 use — reject-by-default beats sanitizing.

@@ -90,7 +90,7 @@ def caller_identity() -> str:
 
 
 def _reject_unsafe(value: str) -> None:
-    """Layer 3 input allow-list: raise on traversal / injection characters."""
+    """Layer 3 input deny-list: raise on traversal / injection characters."""
     if any(token in value for token in _UNSAFE):
         raise ValueError(f"rejected unsafe input: {value!r}")
 
@@ -125,7 +125,11 @@ async def safe_lookup(key: str) -> dict:
 async def secret_status(name: str) -> dict:
     """Return secret METADATA (never the value) via the server's MI (Layers 2+3)."""
     who = caller_identity()
-    _reject_unsafe(name)
+    try:
+        _reject_unsafe(name)
+    except ValueError as exc:
+        audit_event(who, "secret_status", "denied", str(exc))
+        raise
     vault_url = os.environ["KEY_VAULT_URL"]
     client = SecretClient(vault_url=vault_url, credential=_credential)
     props = client.get_secret(name).properties

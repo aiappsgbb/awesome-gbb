@@ -576,15 +576,21 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
 
    ```bash
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
-     # List BOTH audience forms: api://<id> (delegated) and the bare <id> a v2
-     # app-only token carries — else the CI MI's app-only token 401s on aud
-     # mismatch (SKILL.md § Securing your MCP server, app-only callout).
-     az containerapp auth microsoft update -n "$APP_NAME" -g rg-awesome-gbb-ci \
-       --client-id "$MCP_AUTH_APP_CLIENT_ID" \
-       --issuer "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" \
-       --allowed-token-audiences "api://$MCP_AUTH_APP_CLIENT_ID" "$MCP_AUTH_APP_CLIENT_ID" --yes
-     az containerapp auth update -n "$APP_NAME" -g rg-awesome-gbb-ci \
-       --unauthenticated-client-action Return401
+     # `--allowed-token-audiences` is a SINGLE-value flag (argparse nargs=None):
+     # two space-separated values fail at PARSE time ("unrecognized arguments").
+     # The only CLI-native way to list BOTH api://<id> (delegated / v1 aud) AND
+     # the bare <id> (app-only v2 aud) is a full authConfig PUT that mirrors
+     # references/bicep/mcp-aca-auth.bicep. That PUT also encodes Return401, so
+     # it REPLACES the separate `az containerapp auth update` call. Build the
+     # body with jq (no heredoc → robust to copy indentation), then az rest PUT.
+     SUB=$(az account show --query id -o tsv)
+     jq -n --arg cid "$MCP_AUTH_APP_CLIENT_ID" \
+       --arg iss "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" \
+       '{properties:{platform:{enabled:true},globalValidation:{unauthenticatedClientAction:"Return401"},identityProviders:{azureActiveDirectory:{enabled:true,registration:{clientId:$cid,openIdIssuer:$iss},validation:{allowedAudiences:["api://\($cid)",$cid]}}}}}' \
+       > /tmp/mcp-authconfig.json
+     az rest --method put \
+       --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.App/containerApps/$APP_NAME/authConfigs/current?api-version=2025-01-01" \
+       --body @/tmp/mcp-authconfig.json
    fi
    ```
 
