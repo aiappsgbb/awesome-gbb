@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "1.11.0"
+  version: "1.12.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -48,6 +48,8 @@ Production-tested patterns for deploying hosted agents on Microsoft Foundry
 - Configuring `agent.yaml`, `azure.yaml`, Bicep parameters
 - Understanding the refreshed preview changes (packages, identity, invocation)
 - **Migrating from MAF 1.3.x → 1.4.0** ([§ below](#maf-140-breaking-changes-may-2026))
+
+> **Choosing a model?** See [`references/model-selection.md`](references/model-selection.md) for the model / region / capacity / data-residency decision before you `azd provision`.
 
 ---
 
@@ -1293,6 +1295,8 @@ infra:
 
 Verify with: `az cognitiveservices account list-models --resource-group <rg> --name <account> -o table`
 
+> **Which** model/version/capacity/SKU to put in the block above → [`references/model-selection.md`](references/model-selection.md).
+
 ---
 
 ## Bicep Parameters
@@ -1559,6 +1563,8 @@ not available for this subscription"`, try a different region.
 **Known failing:** `eastus2`
 
 Check [Region availability](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#region-availability) for current list.
+
+> Region choice interacts with model + capacity availability and data residency — see [`references/model-selection.md`](references/model-selection.md) §§ 2–4.
 
 ---
 
