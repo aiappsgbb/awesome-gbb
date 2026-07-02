@@ -45,6 +45,12 @@ packages:
     upstream_changelog: https://pypi.org/project/aiohttp/#history
     notes: |
       Required async HTTP transport for azure-cosmos in the Python Cosmos MCP server.
+  - name: azure-keyvault-secrets
+    source: pypi
+    version: "4.11.0"
+    upstream_changelog: https://pypi.org/project/azure-keyvault-secrets/#history
+    notes: |
+      SecretClient — Layer 3 secret-metadata tool (secret_status) in secure_server.py; returns metadata only, never values.
 
 docs_to_revalidate:
   - https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging
@@ -54,6 +60,7 @@ docs_to_revalidate:
   - https://pypi.org/project/azure-mgmt-appcontainers/
   - https://pypi.org/project/azure-cosmos/
   - https://pypi.org/project/azure-identity/
+  - https://pypi.org/project/azure-keyvault-secrets/
   - https://pypi.org/project/aiohttp/
 
 known_issues:
@@ -76,6 +83,7 @@ validation:
       "azure-mgmt-appcontainers~=4.0.0" \
       "azure-cosmos~=4.15.0" \
       "azure-identity~=1.25.3" \
+      "azure-keyvault-secrets~=4.11.0" \
       "aiohttp~=3.13.5"
     python - <<'PY'
     from fastmcp import FastMCP
@@ -83,13 +91,14 @@ validation:
     from azure.mgmt.appcontainers import ContainerAppsAPIClient
     from azure.cosmos.aio import CosmosClient
     from azure.identity import DefaultAzureCredential
+    from azure.keyvault.secrets import SecretClient
     import aiohttp
     print("ok foundry-mcp-aca imports")
     PY
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-05-29
+last_validated: 2026-07-02
 validated_by: copilot-bot
 known_issues_count: 1
 ---
@@ -107,6 +116,7 @@ This Tier-B pin captures the MCP and Azure Container Apps package stack for impo
 | `azure-mgmt-appcontainers` | PyPI | **4.0.0** | ACA management SDK |
 | `azure-cosmos` | PyPI | **4.15.0** | Cosmos MCP async SDK floor |
 | `azure-identity` | PyPI | **1.19.0** | Keyless auth floor |
+| `azure-keyvault-secrets` | PyPI | **4.11.0** | SecretClient — Layer 3 secret-metadata tool |
 | `aiohttp` | PyPI | **3.9.0** | Async HTTP transport |
 
 ## Verification checklist
