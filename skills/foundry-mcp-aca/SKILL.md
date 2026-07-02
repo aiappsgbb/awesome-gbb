@@ -551,29 +551,168 @@ When the real system becomes available:
 
 ---
 
-## Authentication
+## Securing your MCP server
 
-| Pattern | When to Use | How |
-|---------|------------|-----|
-| **No auth (dev)** | Local dev, internal ACA | `DEV_BYPASS_AUTH=true` or no auth middleware |
-| **API key** | Simple production setups | Pass key in `Authorization: Bearer <key>` header via `mcp-config.json` |
-| **Managed identity** | Production, same Azure tenant | ACA system-assigned MI → Cosmos RBAC / API auth |
+> **The perimeter is yours to build.** A public survey found only **8.5% of
+> reachable MCP servers require OAuth** — the rest are unauthenticated remote
+> tool-execution endpoints, i.e. open RCE. A remote MCP server with no identity
+> check is not "internal-only by obscurity"; it is exploitable. This section
+> hardens the ACA deployment above with Entra-validated auth **in front of** the
+> container, managed identity for the hops behind it, and audit + input
+> defenses on the tools themselves.
+>
+> **This skill uses ACA built-in authentication ("Easy Auth for Container
+> Apps") — not Azure App Service.** The platform validates the caller's token
+> before a request reaches your code. Reference:
+> [Authentication and authorization in Azure Container Apps](https://learn.microsoft.com/azure/container-apps/authentication).
 
-For API key auth, store the key in ACA secrets and reference in `mcp-config.json`:
+### Threat model → defense mapping
+
+| Threat | Mitigating layer | Where it lives |
+|--------|------------------|----------------|
+| Unauthenticated tool invocation (open RCE) | **L1** ACA built-in auth + `Return401` | `references/bicep/mcp-aca-auth.bicep` / `az containerapp auth` |
+| Confused deputy — server replays the caller's token downstream | **L2** managed identity; never forward the inbound token | `references/python/secure_server.py` |
+| Over-broad RBAC → lateral movement | **L2** one least-privilege role assignment | `references/bicep/mcp-aca-auth.bicep` |
+| Secret exfiltration through a tool result | **L3** return secret *metadata*, never values; Key Vault refs | `references/python/secure_server.py` |
+| Path traversal / command injection in tool args | **L3** allow-list inputs; reject `..` `/` `\` `;` `\|` `` ` `` `$(` | `references/python/secure_server.py` |
+| Undetected abuse (invocation floods, probing) | **L5** one audit event per call → scheduled-query alert | `references/python/secure_server.py` + `foundry-observability` |
+
+Defense-in-depth: skipping **L1** makes everything else moot; **L2–L5** keep a
+breach from spreading.
+
+### Layer 1 — Identity perimeter: ACA built-in auth
+
+Put Entra in front of the container. ACA validates the JWT **before** it reaches
+your app and injects a trusted `X-MS-CLIENT-PRINCIPAL` header (base64 JSON the
+client cannot forge). Anonymous calls get `401` — they never touch your tools.
+
+**One-time app registration** (defines the audience clients request a token for):
+
+```bash
+TENANT_ID=$(az account show --query tenantId -o tsv)
+APP_ID=$(az ad app create --display-name "mcp-server-auth" \
+  --sign-in-audience AzureADMyOrg --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+# Expose api://<appId> as the resource callers request a token for:
+az ad app update --id "$APP_ID" --identifier-uris "api://$APP_ID"
+```
+
+**Enable built-in auth + reject anonymous callers:**
+
+```bash
+az containerapp auth microsoft update -n <app> -g <rg> \
+  --client-id "$APP_ID" \
+  --issuer "https://login.microsoftonline.com/$TENANT_ID/v2.0" \
+  --allowed-token-audiences "api://$APP_ID" --yes
+az containerapp auth update -n <app> -g <rg> \
+  --unauthenticated-client-action Return401
+```
+
+`Return401` is the API-server posture (reject), versus `RedirectToLoginPage`
+(browser apps) or `AllowAnonymous` (pass everything through — never for a remote
+MCP). The IaC-native equivalent — a `Microsoft.App/containerApps/authConfigs`
+child resource, validation-only so it needs **no client secret** — is
+[`references/bicep/mcp-aca-auth.bicep`](references/bicep/mcp-aca-auth.bicep).
+
+**Caveat — no Dynamic Client Registration.** Entra does not implement DCR, so
+interactive MCP clients must be **pre-registered**; ship a known client id
+rather than expecting the client to self-register.
+
+These options replace the old dev-only table:
+
+| Option | When | Posture |
+|--------|------|---------|
+| Built-in auth + `Return401` (**recommended**) | Any reachable deployment | Entra-validated bearer |
+| `AllowAnonymous` + a dev bypass flag | Local inner-loop only | No perimeter — never expose |
+
+### Layer 2 — Managed identity and the confused-deputy rule
+
+The server authenticates to Azure with its **own** managed identity, never the
+caller's token. `DefaultAzureCredential` resolves `az login` locally and the
+user-assigned MI in ACA — no secrets in code:
+
+> **MUST:** downstream Azure access uses the server's MI. Copy the credential +
+> secret-metadata pattern verbatim from
+> [`references/python/secure_server.py`](references/python/secure_server.py).
+
+**The confused-deputy rule:** the inbound token authorizes the caller to *your
+server only*. Do **not** replay it to Cosmos, Key Vault, or another API. Use the
+server's MI, or the On-Behalf-Of flow if you genuinely must act as the user.
+Grant that MI exactly one role (e.g. `Key Vault Secrets User`) — the role
+assignment is in
+[`references/bicep/mcp-aca-auth.bicep`](references/bicep/mcp-aca-auth.bicep).
+
+### Layer 3 — Secret hygiene and tool-input defense
+
+**Never return a secret value from a tool.** Return metadata (name, version,
+enabled) so the model can reason about a secret without exfiltrating it; the
+value reaches the runtime via a Key Vault reference
+(`@Microsoft.KeyVault(SecretUri=...)`), not through the model. The
+`secret_status` tool in `secure_server.py` shows the pattern.
+
+**Allow-list tool inputs.** Any argument that becomes a path, key, or shell
+fragment is a traversal/injection vector. The `safe_lookup` tool in
+`secure_server.py` rejects `..`, `/`, `\`, `;`, `|`, `` ` ``, and `$(` before
+use — reject-by-default beats sanitizing.
+
+### Layer 4 — Network hardening
+
+Easy Auth is an **identity** perimeter, not a **network** one. For regulated
+workloads add, in order: private endpoints + VNET injection, then an APIM front
+door running `validate-jwt` + `rate-limit-by-key`. That topology (and why
+Foundry hosted agents still require external ingress) is
+[`foundry-vnet-deploy`](../foundry-vnet-deploy/SKILL.md) — out of scope here.
+
+**External ingress is not "unauthenticated."** Foundry hosted agents run in
+Foundry's infrastructure, so the MCP needs `--ingress external` (see Gotchas).
+With Layer 1 in front, every external call still needs a valid token — external
+ingress + Easy Auth is the standard safe posture. Reach for VNET isolation only
+when a compliance boundary demands it.
+
+### Layer 5 — Audit and monitoring
+
+Emit one structured audit line per tool call (caller, tool, decision). ACA ships
+stdout to Log Analytics automatically, so a
+[`foundry-observability`](../foundry-observability/SKILL.md) scheduled-query
+alert can fire on invocation spikes or repeated `denied` events. The
+`audit_event` helper in `secure_server.py` is the emitter; upgrade to Azure
+Monitor OpenTelemetry spans via `foundry-observability` when you want
+distributed tracing.
+
+### Connecting clients
+
+| Client | How it authenticates | Notes |
+|--------|----------------------|-------|
+| **Server-to-server** (Foundry agent, any service) | Its MI requests a token for `api://<appId>`, sends `Authorization: Bearer <token>` | Platform-native; the CI fixture proves this 401→200 contract |
+| **Interactive — manual bearer** (VS Code / Claude / Copilot) | Paste a token into the client's MCP config | Simplest interactive path |
+| **Interactive — OAuth discovery** (advanced) | Server publishes PRM (RFC 9728); client follows `WWW-Authenticate` → user sign-in | Server's job on ACA — see below |
+
+**Manual bearer** — a VS Code `.vscode/mcp.json` fragment:
 
 ```json
 {
   "servers": {
-    "cosmos-tools": {
+    "my-mcp": {
       "type": "http",
-      "url": "${MCP_SERVER_URL}/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_API_KEY}"
-      }
+      "url": "https://<aca-fqdn>/mcp/",
+      "headers": { "Authorization": "Bearer ${input:mcpToken}" }
     }
   }
 }
 ```
+
+Get the token with
+`az account get-access-token --resource api://<appId> --query accessToken -o tsv`.
+
+**OAuth discovery (advanced).** Unlike Azure App Service (whose preview platform
+feature can auto-serve Protected Resource Metadata), **on ACA the MCP server
+itself must publish PRM** at `/.well-known/oauth-protected-resource` (RFC 9728)
+and emit a `WWW-Authenticate` challenge so a spec-compliant client can discover
+the authorization server and run the flow. FastMCP's auth provider implements
+this; see the
+[MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
+This path requires an interactive browser sign-in, so it is documented but not
+CI-tested.
 
 ---
 
@@ -590,7 +729,7 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 | Tools listed but calls fail | Tool call timeout (>100s) | Optimize tool implementation or increase ACA resources |
 | **`FastMCP` server starts but returns 000/timeout on port** | `MCP.run()` with no args defaults to `stdio` transport (reads stdin, never binds HTTP port). ACA health probe fails, container marked unhealthy. | **🛑 DO NOT use bare `MCP.run()` on ACA — it defaults to stdio.** **DO use** `MCP.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))`. Note: `transport="streamable-http"` (with the dash) matches the canonical examples elsewhere in this SKILL; the legacy bare `http` transport name is stale. |
 | **`TypeError: 'FunctionTool' object is not callable` inside a tool** | `@MCP.tool` wraps the function in a `FunctionTool` object. Calling it from Python (e.g., tool A calls tool B internally) raises `TypeError`. | **Extract shared logic into a plain `_helper()` function. Both `@MCP.tool` functions call the helper. Never call one `@MCP.tool`-decorated function from inside another.** |
-| **MCP ACA deployed but Foundry agent can't reach it (connection timeout)** | `az containerapp create --ingress internal` — only resources in the same VNET can reach it. Foundry hosted agents run in **Foundry's own infrastructure**, not your VNET. | **Use `--ingress external` for MCP ACA containers that Foundry agents call. Internal ingress only works for VNET-injected agents (private topology) where the agent subnet is peered/injected into the same VNET. See `foundry-vnet-deploy`.** |
+| **MCP ACA deployed but Foundry agent can't reach it (connection timeout)** | `az containerapp create --ingress internal` — only resources in the same VNET can reach it. Foundry hosted agents run in **Foundry's own infrastructure**, not your VNET. | **Use `--ingress external` for MCP ACA containers that Foundry agents call. Internal ingress only works for VNET-injected agents (private topology) where the agent subnet is peered/injected into the same VNET. See `foundry-vnet-deploy`.** External ingress is safe when fronted by ACA built-in auth (see § Securing your MCP server → Layer 1); it is not the same as "unauthenticated." |
 | `prompts/list` not implemented | Server doesn't handle this method | Return `{"prompts": []}` — agent-framework requires it |
 | MCP container `404` log noise after demo | MAF client occasionally fires 1-3 stray POSTs to `/mcp` after `DELETE` of the session — the server is gone, so they 404. Cosmos calls succeeded; this is post-mortem chatter, not a runtime problem. | Either accept the noise (no functional impact) or suppress in the FastMCP server with a no-op handler that returns 204 for any POST hitting an unknown session id. Document for whoever reads `az containerapp logs show` so they don't chase it as a real bug. |
 
@@ -603,6 +742,8 @@ For API key auth, store the key in ACA secrets and reference in `mcp-config.json
 | Consumer config points to wrong URL (env var not resolved at deploy time) | `${MCP_SERVER_URL}` expands to empty at agent-startup time, not deployment time | **DO NOT use unguarded `${VAR}` substitution in mcp-config.json** — if the var is undefined, the agent skips the server silently | **DO guard with validation:** `if not url or not url.startswith("http"): raise ValueError(f"Invalid MCP URL: {url}")` in agent startup. Fail fast + audit-log. |
 | Session ID stale after MCP redeploy | Foundry hosted agent caches the `mcp-session-id` token from the MCP server's `initialize` response. When MCP redeploys (new container), the session is wiped. Agent keeps sending stale session ID and gets 404. | **DO NOT redeploy MCP server without re-importing + pinning the agent version** — the in-memory client cache persists across requests even after MCP dies | **DO bump the agent version pin** (e.g., `version: "1.2.3"` → `"1.2.4"` in `agent-config.json`) or run `azd ai agent show <agent-id>` to force version refresh. See § Mandatory recovery sequence. |
 | Wrong mount path (404 on MCP calls) | FastMCP 3.x serves on `/mcp/` with trailing slash; consumer config or curl tests use `/` without slash | **DO NOT assume FastMCP mount path** — it changed between 2.x and 3.x; don't infer from version. Test explicitly. | **DO test with `curl https://<aca-fqdn>/mcp/ -H "Accept: application/json, text/event-stream"` (note trailing slash).** Returns `200 OK` if path is correct. For local: `curl http://localhost:8080/mcp/`. |
+| MCP call returns `401` after enabling built-in auth | Caller sent no token, or a token for the wrong resource | DO NOT switch to `AllowAnonymous` to "make it work" — that deletes the perimeter | Send `Authorization: Bearer $(az account get-access-token --resource api://<appId> --query accessToken -o tsv)`; confirm the token `aud` equals `api://<appId>` |
+| `401` even with a token attached | `allowedAudiences` / issuer mismatch, or a Graph token | DO NOT paste a Microsoft Graph token (`--resource https://graph.microsoft.com`) | Request the token for `api://<appId>`; verify `--allowed-token-audiences` includes exactly that value and issuer is `https://login.microsoftonline.com/<tenant>/v2.0` |
 
 ---
 
