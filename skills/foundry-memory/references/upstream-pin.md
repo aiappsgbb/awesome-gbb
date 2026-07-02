@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/skills
   ref: main
-  pinned_sha: 69e4442a24174cf097ea310332ef549f78cfeef0
+  pinned_sha: 5a6104bd49d8fd4e733a30952953fd1cf9f16e62
   pinned_commit_message: |
     Merge pull request #317 from LarryOsterman/larryo/updated_rust_skills
   license: MIT
@@ -57,7 +57,7 @@ validation:
     - "symlink stub: HTTP 200"
   failure_signatures: []
 
-last_validated: 2026-06-18
+last_validated: 2026-07-02
 validated_by: copilot-bot
 known_issues_count: 0
 ---
