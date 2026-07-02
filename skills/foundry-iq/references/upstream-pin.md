@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75
+  pinned_sha: e38592a23c10bf8e85318a4efed6e77874147ec2
   pinned_commit_message: |
     Bumped to SHA b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75
   license: MIT
@@ -34,7 +34,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75}"
+    PINNED_SHA="${PINNED_SHA:-e38592a23c10bf8e85318a4efed6e77874147ec2}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -75,7 +75,7 @@ validation:
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-06-18
+last_validated: 2026-07-02
 validated_by: copilot-bot
 field_test_scope: github_pypi_docs
 known_issues_count: 0
