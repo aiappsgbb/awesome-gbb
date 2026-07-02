@@ -15,7 +15,7 @@ upstream:
 packages:
   - name: azure-ai-projects
     source: pypi
-    version: "2.2.0"
+    version: "2.3.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
     notes: |
       First version that ships the routines surface (client.beta.routines)
@@ -88,7 +88,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-routines
     . .venv-routines/bin/activate
-    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.2.0}" "azure-identity~=1.25"
+    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.3.0}" "azure-identity~=1.25"
     python -c "
     import azure.ai.projects as _m
     print(f'azure-ai-projects=={_m.__version__}')
@@ -116,11 +116,11 @@ validation:
     print('routines-methods:', sorted(expected))
     "
   expected_output:
-    - "azure-ai-projects==2.2.0"
+    - "azure-ai-projects==2.3.0"
     - "routines-surface-ok"
     - "routines-methods:"
 
-last_validated: 2026-06-15
+last_validated: 2026-07-02
 validated_by: copilot-bot
 known_issues_count: 4
 ---
