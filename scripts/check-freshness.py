@@ -519,6 +519,43 @@ def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
     )
 
 
+def _package_hold(pin: PinFile, pkg: dict[str, Any], latest: str) -> str | None:
+    """Return the hold_reason iff an OPEN known_issue holds this package below
+    a ceiling that the latest release crosses; else None.
+
+    A skill can freeze a package below a known-breaking major by declaring
+    `hold_below: "<major>.0.0"` + `hold_reason: <KI id>` on the package. The
+    hold is honored ONLY while the referenced known_issue is `status: open`,
+    so it releases automatically when a human closes/revalidates the KI and
+    normal drift detection resumes.
+
+    Fail-open by design — a missing/unparseable ceiling, an unparseable latest
+    version, an absent `hold_reason`, or no matching OPEN known_issue all mean
+    "not held" (the drift signal fires normally). Over-flagging is recoverable;
+    a silent freeze on a typo'd hold is not.
+
+    Motivating regression: freshness auto-refresh PR #166 bumped
+    foundry-mcp-aca's fastmcp pin 2.14.7 → 3.3.1, ignoring KI-001's prose-only
+    `<3.0.0` ceiling. This makes that ceiling machine-enforced.
+    """
+    ceiling_raw = pkg.get("hold_below")
+    if not ceiling_raw:
+        return None
+    ceiling = parse_semver(str(ceiling_raw))
+    latest_v = parse_semver(str(latest))
+    if not ceiling or not latest_v:
+        return None
+    if latest_v < ceiling:
+        return None  # latest has not crossed the ceiling — normal drift applies
+    reason = pkg.get("hold_reason")
+    if not reason:
+        return None  # ceiling with no backing KI reference → fail-open
+    for ki in pin.known_issues:
+        if ki.get("id") == reason and ki.get("status", "open") == "open":
+            return str(reason)
+    return None  # referenced KI missing or not open → fail-open
+
+
 def detect_pkg_drift(pin: PinFile) -> list[Signal]:
     """Detect meaningful PyPI package drift.
 
@@ -573,6 +610,13 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
         new_v = parse_semver(latest)
         is_major = old_v and new_v and old_v[0] != new_v[0]
         is_critical_pkg = any(name.lower().startswith(p) for p in CRITICAL_PREFIXES)
+
+        # A skill-declared, KI-backed version hold keeps this package below a
+        # known-breaking major (e.g. fastmcp<3.0.0 / KI-001). Suppress the drift
+        # signal so the weekly auto-refresh can't re-bump past the ceiling while
+        # the KI is open — the hold releases automatically when the KI closes.
+        if _package_hold(pin, pkg, latest):
+            continue
 
         # Skip non-critical packages unless it's a MAJOR bump
         if not is_major and not is_critical_pkg:
