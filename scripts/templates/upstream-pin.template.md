@@ -59,6 +59,15 @@ packages:
     source: pypi
     version: "<X.Y.Z>"
     upstream_changelog: https://github.com/<repo>/releases
+    # OPTIONAL — KI-backed major-version hold. Use when a skill must stay below
+    # a known-breaking major until a documented gotcha is revalidated. While the
+    # referenced known_issue is `status: open`, the freshness detector suppresses
+    # drift signals for releases that reach/cross `hold_below`, so the weekly
+    # auto-refresh cannot re-bump past the ceiling. The hold releases
+    # automatically when the KI is closed. Fail-open: if hold_reason names no
+    # OPEN known_issue, the hold is ignored and drift fires normally.
+    # hold_below: "<next-major>.0.0"   # e.g. "3.0.0" to hold below 3.x
+    # hold_reason: KI-00N              # id of the OPEN known_issue below
     notes: |
       <optional — preview status, version-skew quirks, etc.>
 

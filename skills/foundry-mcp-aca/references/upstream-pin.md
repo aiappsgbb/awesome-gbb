@@ -11,10 +11,13 @@ upstream:
 packages:
   - name: fastmcp
     source: pypi
-    version: "3.3.1"
+    version: "2.14.7"
     upstream_changelog: https://pypi.org/project/fastmcp/#history
+    hold_below: "3.0.0"
+    hold_reason: KI-001
     notes: |
       SKILL.md mandates fastmcp>=2.0.0,<3.0.0 and records 2.14.7 as the known-good 2.x line before a 3.x path break.
+      Machine-enforced hold: hold_below + hold_reason make the freshness detector suppress 3.x drift signals while KI-001 is open, so the weekly auto-refresh cannot re-bump past 3.0.0 (regression PR #166). The hold releases automatically when KI-001 is closed/revalidated.
   - name: mcp
     source: pypi
     version: "1.27.1"
@@ -65,7 +68,7 @@ docs_to_revalidate:
 
 known_issues:
   - id: KI-001
-    description: Keep FastMCP pinned below 3.0.0 until the streamable-http mount-path change is explicitly revalidated.
+    description: Keep FastMCP pinned below 3.0.0 until the streamable-http mount-path change is explicitly revalidated. While this KI is open, packages[fastmcp].hold_below (3.0.0) makes the freshness detector suppress 3.x drift; closing/revalidating this KI releases the hold and re-enables 3.x drift detection.
     upstream_url: https://pypi.org/project/fastmcp/
     status: open
     workaround_location: SKILL.md § "Pin `fastmcp<3.0.0`"
@@ -79,7 +82,7 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "fastmcp~=3.3.1" \
+      "fastmcp~=2.14.7" \
       "azure-mgmt-appcontainers~=4.0.0" \
       "azure-cosmos~=4.15.0" \
       "azure-identity~=1.25.3" \
@@ -99,7 +102,7 @@ validation:
     - "ok foundry-mcp-aca imports"
 
 last_validated: 2026-07-02
-validated_by: copilot-bot
+validated_by: copilot
 known_issues_count: 1
 ---
 
