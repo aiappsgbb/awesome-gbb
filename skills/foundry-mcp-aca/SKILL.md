@@ -3,14 +3,16 @@ name: foundry-mcp-aca
 description: >
   Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with
   Foundry hosted agents. Covers Cosmos DB MCPToolKit, Playwright MCP, custom MCP servers,
-  protocol requirements, ACA configuration, and authentication patterns.
+  protocol requirements, ACA configuration, and authentication + hardening
+  (ACA built-in auth / Easy Auth, OAuth, managed identity).
   USE FOR: deploy MCP server, MCP on ACA, Cosmos MCP, Playwright MCP in Foundry,
   custom MCP server, Azure Functions MCP, MCP ACA deployment, remote MCP endpoint,
-  MCP for hosted agent, connect hosted agent to MCP.
+  MCP for hosted agent, connect hosted agent to MCP, secure MCP server,
+  harden MCP server, MCP authentication, MCP OAuth, ACA Easy Auth for MCP.
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP.
 
