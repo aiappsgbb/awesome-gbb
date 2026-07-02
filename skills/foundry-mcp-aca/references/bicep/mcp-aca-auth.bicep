@@ -21,6 +21,11 @@ param containerAppName string
 @description('Entra app (client) ID whose api://<clientId> audience callers request')
 param authClientId string
 
+@description('Client IDs of the app-only callers (server-to-server / MI bearer) allowed to invoke the server. App-only tokens are rejected with 403 unless their client id is listed here — often the CALLER MI/SP, which may differ from authClientId. Empty array = no app-only caller allowed.')
+param allowedCallerClientIds array = [
+  authClientId
+]
+
 @description('Entra tenant ID that issues the tokens')
 param tenantId string = subscription().tenantId
 
@@ -56,10 +61,23 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
           // No clientSecretSettingName: validation-only (bearer JWT check).
         }
         validation: {
-          // The token's `aud` MUST equal this value or ACA returns 401.
+          // A token's `aud` MUST match one of these or ACA returns 401. Delegated
+          // (user) and app-only (server/MI) tokens carry DIFFERENT audiences:
+          //   - Delegated   (api://<appId>/<scope>): aud = 'api://<appId>'
+          //   - App-only v2  (client-credentials/MI, .default): aud = bare '<appId>'
+          // List both so either consumer model passes audience validation.
           allowedAudiences: [
             'api://${authClientId}'
+            authClientId
           ]
+          // App-only tokens (server-to-server / MI bearer — this skill's PRIMARY
+          // consumer model) are REJECTED with 403 unless the caller's client id is
+          // listed here, EVEN WHEN the audience matches. Empty [] = deny all
+          // app-only callers. NOTE: editing this after deploy needs a revision
+          // restart (auth-sidecar reload) to take effect.
+          defaultAuthorizationPolicy: {
+            allowedApplications: allowedCallerClientIds
+          }
         }
       }
     }

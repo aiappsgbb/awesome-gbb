@@ -614,6 +614,19 @@ MCP). The IaC-native equivalent — a `Microsoft.App/containerApps/authConfigs`
 child resource, validation-only so it needs **no client secret** — is
 [`references/bicep/mcp-aca-auth.bicep`](references/bicep/mcp-aca-auth.bicep).
 
+> **App-only callers need explicit allow-listing — a mismatch is `403`, not
+> `401`.** A server-to-server / MI bearer token (this skill's primary consumer
+> model) clears the anonymous check but is still **denied `403`** unless its
+> client id is in `defaultAuthorizationPolicy.allowedApplications`. Two more
+> app-only quirks the reference Bicep encodes (all three verified against a live
+> ACA Easy Auth deployment):
+> - a **v2 app-only token's `aud` is the bare client GUID**, not `api://<appId>`
+>   — list **both** forms in `allowedAudiences` so delegated *and* app-only
+>   callers pass audience validation;
+> - **auth-config edits need an auth-sidecar reload** — run `az containerapp
+>   revision restart` after changing `authConfig`, or the old policy silently
+>   sticks and every authed call keeps returning the stale result.
+
 **Caveat — no Dynamic Client Registration.** Entra does not implement DCR, so
 interactive MCP clients must be **pre-registered**; ship a known client id
 rather than expecting the client to self-register.
