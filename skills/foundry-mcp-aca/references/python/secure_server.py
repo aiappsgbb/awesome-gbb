@@ -5,9 +5,11 @@ server`. This is the hardened sibling of `server.py`; keep `server.py` minimal
 and copy the hardening patterns from here.
 
 Layers demonstrated (full threat model in SKILL.md):
-    L1  whoami() reads the ACA-injected X-MS-CLIENT-PRINCIPAL header. ACA sets
-        it only AFTER validating the JWT at the platform edge, so the header
-        identity is trustworthy and cannot be forged by the client.
+    L1  whoami() reads the ACA-injected X-MS-CLIENT-PRINCIPAL header SERVER-SIDE
+        via get_http_headers() — NEVER as a tool argument the MCP client could
+        forge. ACA sets the header only AFTER validating the JWT at the platform
+        edge (and strips any client-supplied copy), so the identity is
+        trustworthy and cannot be forged by the client.
     L2  DefaultAzureCredential uses the container's managed identity for
         downstream Azure — NEVER the caller's inbound token (confused deputy).
     L3  secret_status() returns secret METADATA, never the value.
@@ -31,6 +33,7 @@ import os
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
 
 mcp = FastMCP("secure-tools")
 
@@ -61,11 +64,17 @@ def audit_event(caller: str, tool: str, decision: str, detail: str = "") -> None
     )
 
 
-def caller_identity(client_principal_b64: str | None) -> str:
-    """Decode the ACA-injected X-MS-CLIENT-PRINCIPAL header (base64 JSON).
+def caller_identity() -> str:
+    """Return the caller id from the ACA-injected X-MS-CLIENT-PRINCIPAL header.
 
-    ACA populates this header only after it has validated the token, so the
-    claims here are trustworthy. Returns a stable caller id for auditing."""
+    Read the header SERVER-SIDE via FastMCP's get_http_headers() — never accept
+    it as a tool argument, which the MCP client controls and can forge. ACA's
+    auth sidecar validates the JWT and sets this header (stripping any
+    client-supplied copy) only after Layer 1 passes, so the claims are
+    trustworthy. Header keys arrive lowercased. No header (local stdio / dev)
+    -> "anonymous"; behind Easy Auth with Return401 an unauthenticated request
+    never reaches the app."""
+    client_principal_b64 = (get_http_headers() or {}).get("x-ms-client-principal")
     if not client_principal_b64:
         return "anonymous"
     try:
@@ -92,17 +101,17 @@ def _lookup_backend(key: str) -> dict:
 
 
 @mcp.tool()
-async def whoami(client_principal: str | None = None) -> dict:
+async def whoami() -> dict:
     """Return the validated caller identity from the Easy Auth header (Layer 1)."""
-    who = caller_identity(client_principal)
+    who = caller_identity()
     audit_event(who, "whoami", "allowed")
     return {"caller": who}
 
 
 @mcp.tool()
-async def safe_lookup(key: str, client_principal: str | None = None) -> dict:
+async def safe_lookup(key: str) -> dict:
     """Look up a record by key, rejecting traversal / injection first (Layer 3)."""
-    who = caller_identity(client_principal)
+    who = caller_identity()
     try:
         _reject_unsafe(key)
     except ValueError as exc:
@@ -113,9 +122,9 @@ async def safe_lookup(key: str, client_principal: str | None = None) -> dict:
 
 
 @mcp.tool()
-async def secret_status(name: str, client_principal: str | None = None) -> dict:
+async def secret_status(name: str) -> dict:
     """Return secret METADATA (never the value) via the server's MI (Layers 2+3)."""
-    who = caller_identity(client_principal)
+    who = caller_identity()
     _reject_unsafe(name)
     vault_url = os.environ["KEY_VAULT_URL"]
     client = SecretClient(vault_url=vault_url, credential=_credential)

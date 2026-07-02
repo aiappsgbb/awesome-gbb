@@ -576,10 +576,13 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
 
    ```bash
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
+     # List BOTH audience forms: api://<id> (delegated) and the bare <id> a v2
+     # app-only token carries — else the CI MI's app-only token 401s on aud
+     # mismatch (SKILL.md § Securing your MCP server, app-only callout).
      az containerapp auth microsoft update -n "$APP_NAME" -g rg-awesome-gbb-ci \
        --client-id "$MCP_AUTH_APP_CLIENT_ID" \
        --issuer "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" \
-       --allowed-token-audiences "api://$MCP_AUTH_APP_CLIENT_ID" --yes
+       --allowed-token-audiences "api://$MCP_AUTH_APP_CLIENT_ID" "$MCP_AUTH_APP_CLIENT_ID" --yes
      az containerapp auth update -n "$APP_NAME" -g rg-awesome-gbb-ci \
        --unauthenticated-client-action Return401
    fi
@@ -624,12 +627,14 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
        -H "Authorization: Bearer $TOKEN" \
        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}')
      echo "authed status: $AUTHED_CODE"
-     if [ "$AUTHED_CODE" = "401" ]; then
-       printf 'SMOKE_RESULT=FAIL auth proof: valid token still rejected (401) — CI MI likely not authorized for api://%s\n' "$MCP_AUTH_APP_CLIENT_ID" \
-         > /tmp/foundry-mcp-aca-smoke-result
-       exit 1
-     fi
-     echo "auth proof: 401 unauth / authed OK"
+     case "$AUTHED_CODE" in
+       2*) echo "auth proof: 401 unauth / authed $AUTHED_CODE OK" ;;
+       *)
+         printf 'SMOKE_RESULT=FAIL auth proof: valid token expected 2xx, got %s (401=aud/authz mismatch for api://%s or bare %s; 403=caller not in allowedApplications)\n' \
+           "$AUTHED_CODE" "$MCP_AUTH_APP_CLIENT_ID" "$MCP_AUTH_APP_CLIENT_ID" \
+           > /tmp/foundry-mcp-aca-smoke-result
+         exit 1 ;;
+     esac
    fi
    ```
 

@@ -585,6 +585,9 @@ breach from spreading.
 Put Entra in front of the container. ACA validates the JWT **before** it reaches
 your app and injects a trusted `X-MS-CLIENT-PRINCIPAL` header (base64 JSON the
 client cannot forge). Anonymous calls get `401` — they never touch your tools.
+Read that header **server-side** (FastMCP's `get_http_headers()` — see
+[`secure_server.py`](references/python/secure_server.py)); never accept the
+principal as a tool argument, which the client controls and can forge.
 
 **One-time app registration** (defines the audience clients request a token for):
 
@@ -607,6 +610,11 @@ az containerapp auth microsoft update -n <app> -g <rg> \
 az containerapp auth update -n <app> -g <rg> \
   --unauthenticated-client-action Return401
 ```
+
+> **⚠️ Audience-scoped only.** These two commands validate audience + issuer —
+> enough for delegated / interactive callers. The **app-only server-to-server**
+> model (this skill's primary consumer) needs two more adjustments: see the
+> callout below, or use the Bicep reference, which encodes both.
 
 `Return401` is the API-server posture (reject), versus `RedirectToLoginPage`
 (browser apps) or `AllowAnonymous` (pass everything through — never for a remote
@@ -696,7 +704,7 @@ distributed tracing.
 
 | Client | How it authenticates | Notes |
 |--------|----------------------|-------|
-| **Server-to-server** (Foundry agent, any service) | Its MI requests a token for `api://<appId>`, sends `Authorization: Bearer <token>` | Platform-native; the CI fixture proves this 401→200 contract |
+| **Server-to-server** (Foundry agent, any service) | Its MI requests a token for `api://<appId>`, sends `Authorization: Bearer <token>` | Platform-native; the CI fixture proves this 401→200 contract when the standing `MCP_AUTH_APP_CLIENT_ID` secret is configured (else that step is skipped) |
 | **Interactive — manual bearer** (VS Code / Claude / Copilot) | Paste a token into the client's MCP config | Simplest interactive path |
 | **Interactive — OAuth discovery** (advanced) | Server publishes PRM (RFC 9728); client follows `WWW-Authenticate` → user sign-in | Server's job on ACA — see below |
 
