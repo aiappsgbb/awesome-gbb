@@ -287,6 +287,11 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # Optional standing Entra app client id for the foundry-mcp-aca
+          # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
+          # creates the secret; the fixture skips the auth sub-test when
+          # unset, so this is inert by default (AGENTS.md § 2.8).
+          MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           # Foundry project endpoint + model deployment exposed to the
           # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
           # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
@@ -405,6 +410,11 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # Optional standing Entra app client id for the foundry-mcp-aca
+          # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
+          # creates the secret; the fixture skips the auth sub-test when
+          # unset, so this is inert by default (AGENTS.md § 2.8).
+          MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 — mirror the initial-run env block per Pattern 11
