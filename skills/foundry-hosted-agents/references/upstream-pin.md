@@ -11,25 +11,25 @@ upstream:
 packages:
   - name: agent-framework-core
     source: pypi
-    version: "1.8.0"
+    version: "1.10.0"
     upstream_changelog: https://pypi.org/project/agent-framework-core/#history
   - name: agent-framework-foundry
     source: pypi
-    version: "1.8.0"
+    version: "1.10.0"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0a260528"
+    version: "1.0.0a260630"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
     notes: |
       Alpha pre-release pinned EXACT per AGENTS.md § 9.5. PEP 440 treats
       ~=1.0.0aN as >=1.0.0aN, <1.1 — pip drifts to later alphas
-      (a260609, a260612, …). Held on a260528 pending EPIC #261 validation;
-      a future refresh agent should NOT change the specifier shape from
+      (a260609, a260612, …). Pinned EXACT on a260630 (latest alpha as of
+      2026-07-03); a future refresh agent should NOT change the specifier shape from
       ==1.0.0aN to ~= without a corresponding AGENTS.md § 9.5 amendment.
   - name: azure-ai-projects
     source: pypi
-    version: "2.1.0"
+    version: "2.3.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
   - name: azure-identity
     source: pypi
@@ -37,7 +37,7 @@ packages:
     upstream_changelog: https://pypi.org/project/azure-identity/#history
   - name: mcp
     source: pypi
-    version: "1.27.1"
+    version: "1.28.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
   - name: python-dotenv
     source: pypi
@@ -151,7 +151,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "agent-framework-core~=1.8.0" "agent-framework-foundry~=1.8.0" "agent-framework-foundry-hosting==1.0.0a260528" "azure-ai-projects~=2.1.0" "azure-identity~=1.25.3" "mcp~=1.27.1" "python-dotenv~=1.2.2"
+    pip install --quiet "agent-framework-core~=1.10.0" "agent-framework-foundry~=1.10.0" "agent-framework-foundry-hosting==1.0.0a260630" "azure-ai-projects~=2.3.0" "azure-identity~=1.25.3" "mcp~=1.28.1" "python-dotenv~=1.2.2"
     python -c "
     from agent_framework import Agent, SkillsProvider, tool, MCPStreamableHTTPTool
     from agent_framework.foundry import FoundryChatClient
@@ -178,8 +178,8 @@ validation:
     - "ok microsoft-opentelemetry bundled via agentserver-core"
     - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
-last_validated: 2026-06-11
-validated_by: m5-hosted-agents-maf-1-8
+last_validated: 2026-07-03
+validated_by: unsafecode-fha-pin-refresh
 known_issues_count: 8
 ---
 
