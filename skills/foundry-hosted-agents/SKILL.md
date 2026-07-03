@@ -1,11 +1,11 @@
 ---
 name: foundry-hosted-agents
 description: >
-  Deploy + manage Foundry hosted agents — GA June 2026: MAF 1.8.0,
-  --deploy-mode code, agent.manifest.yaml, WS invocations, Foundry User
-  + Project Manager roles. Read the body for SDK patterns, identity
-  wiring, runtime selection, version rollout patterns, troubleshooting
-  — do not deploy from this summary alone. USE FOR: deploy foundry
+  Deploy + manage Foundry hosted agents — container deploy is GA (Jul
+  2026); source-code --deploy-mode code + WS invocations still preview.
+  MAF 1.8.0, agent.manifest.yaml, Foundry User + Project Manager roles.
+  Read the body for patterns, identity, runtime, rollout,
+  troubleshooting — don't deploy from this alone. USE FOR: deploy foundry
   agent, hosted agent, container agent, agent.yaml, agent manifest,
   code-mode deploy, FoundryChatClient, ResponsesHostServer, MAF, ACR
   push, batch eval, agent identity, Foundry User role, azd ai agent,
@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "1.12.0"
+  version: "1.12.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -339,15 +339,35 @@ pre-release discipline.
 
 ---
 
-## Build 2026 deltas (GA June 2026)
+## Build 2026 deltas (container GA Jul 2026; source-code + WS still preview)
 
-> **GA target: ~30 days from Microsoft Build 2026.** This section
-> captures the deltas the GA wave introduces over the May 2026
-> preview. Sources: `aka.ms/Build2026HostedAgents`,
-> `learn.microsoft.com/en-us/azure/ai-foundry/agents/quickstarts/quickstart-hosted-agent`.
-> Until GA ships, treat these as forward-looking guidance — pin to the
-> preview behavior documented in the rest of this skill for code you
-> are deploying today.
+> **Status (verified against Microsoft Learn, Jul 2026).**
+> **Container-based** hosted agent deploy reached **GA in early July
+> 2026** — that is the stable path documented throughout the rest of
+> this skill (Bicep + Dockerfile + `azd up`). The deltas in THIS
+> section are the **source-code / VNext** surface, which **shipped as
+> preview**, NOT GA:
+>
+> - `--deploy-mode code`, the platform-managed runtimes,
+>   `--dep-resolution`, and the `invocations_ws` WebSocket are all
+>   **preview**. Source-code deploy is explicitly labelled preview:
+>   *"Functionality, region availability, and APIs might change before
+>   general availability."*
+> - Mutating REST calls (Create/Update/Delete) on the source-code path
+>   require the preview feature header
+>   `Foundry-Features: CodeAgents=V1Preview,HostedAgents=V1Preview`.
+> - The Python hosting SDK `agent-framework-foundry-hosting` is still
+>   **alpha** (no stable `1.0.0`) — pin exact per the pin file.
+>
+> For production today, prefer the **container** (GA) path. Adopt the
+> preview deltas below only with the preview caveat in mind.
+>
+> Sources:
+> [container deploy — GA](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent),
+> [source-code deploy — preview](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code),
+> [quickstart](https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent),
+> [Build 2026 devblog](https://devblogs.microsoft.com/foundry/hosted-agents-build26/)
+> (`aka.ms/Build2026HostedAgents`).
 
 ### 1. `--deploy-mode code` (Bicep generation skip)
 
@@ -356,7 +376,7 @@ The `azd ai agent init` extension gains a new `--deploy-mode` flag:
 | Mode | Behavior |
 |------|----------|
 | `container` (existing) | You author Bicep + Dockerfile. `azd up` builds + pushes + deploys per the SDK Patterns section above. |
-| `code` (new at GA) | Platform builds the image with BuildKit + a pinned base image. You ship source + manifest only — no Dockerfile, no Bicep. |
+| `code` (new — **preview**) | Platform builds the image with BuildKit + a pinned base image. You ship source + manifest only — no Dockerfile, no Bicep. |
 
 Use `code` mode for new greenfield deploys where you want the
 platform-managed base image and CVE patching cadence. Stay on
@@ -369,16 +389,26 @@ azd ai agent init -m ./manifest --project-id $PROJECT_ID \
   --entry-point main.py --dep-resolution remote_build -e my-env
 ```
 
+> **Preview header (REST).** Source-code deploy is a **preview**
+> feature. On mutating REST calls (Create/Update/Delete) send
+> `Foundry-Features: CodeAgents=V1Preview,HostedAgents=V1Preview`.
+> `azd ai agent` adds this for you; raw REST / custom tooling must set
+> it explicitly. GET works without it today, but include it to be safe
+> — the header gates preview behaviour and may be enforced more
+> strictly before GA.
+
 ### 2. Runtime selection: `python_3_13` / `python_3_14` / `dotnet_10`
 
-Hosted agents at GA support **only** these runtimes via the
+Hosted agents' platform-managed `code` runtime (**preview**) supports
+**only** these runtimes via the
 `--runtime` flag:
 
 - `python_3_13`
 - `python_3_14`
 - `dotnet_10`
 
-**Python 3.11 and 3.12 are NOT supported for hosted agents at GA.**
+**Python 3.11 and 3.12 are NOT supported for the platform-managed
+`code` runtime (preview).**
 If your container today targets 3.11/3.12, you must bump to 3.13+
 before adopting `--deploy-mode code`. Container-mode deploys with a
 custom Dockerfile can keep whatever Python the base image ships —
@@ -419,10 +449,11 @@ Responses HTTP endpoint:
 | Protocol | Endpoint | Use for |
 |----------|----------|---------|
 | Responses (HTTP) | `POST https://{account}.services.ai.azure.com/api/projects/agents/endpoint/protocols/responses?project_name={p}&agent_name={a}` | Stateless request/response. Existing pattern. |
-| Invocations-WS (NCUS only at GA) | `wss://{account}.services.ai.azure.com/api/projects/agents/endpoint/protocols/invocations_ws?project_name={p}&agent_name={a}` | Full-duplex streaming, server-initiated events, long-running multi-turn interactions. |
+| Invocations-WS (**preview**, NCUS-only) | `wss://{account}.services.ai.azure.com/api/projects/agents/endpoint/protocols/invocations_ws?project_name={p}&agent_name={a}` | Full-duplex streaming, server-initiated events, long-running multi-turn interactions. |
 | Activity (auto-bridge) | Bot Framework Activity endpoint registered automatically | Teams + M365 Copilot channels. No code change — the platform translates Activity ↔ Responses. |
 
-**WS regional constraint:** `invocations_ws` is **NCUS-only at GA**.
+**WS regional constraint:** `invocations_ws` is **preview and
+NCUS-only**.
 Other Foundry regions (including Sweden Central) get HTTP Responses
 + Activity bridge only. If your topology requires WS in another
 region, pin the WS endpoint deploy to NCUS and call across regions
@@ -500,7 +531,7 @@ azd deploy   -e my-env
 azd ai agent invoke --new-session "hello" --timeout 120
 ```
 
-### Hosting SDK matrix (Python, at GA)
+### Hosting SDK matrix (Python)
 
 | Framework | Hosting package | Server class |
 |-----------|-----------------|--------------|
@@ -1832,9 +1863,9 @@ unique build stamp.
   in non-prod gateways first.** Preview headers can change behaviour
   between SDK rolls. Production agents that have already passed
   promotion should stay on the implicit-default routing path until the
-  feature exits preview (target: Build 2026 GA was June 2026 for
-  hosted agents; the `AgentEndpoints` preview is the layer above —
-  expect GA mid-2026).
+  feature exits preview (container hosted agents GA'd early July 2026,
+  but the `AgentEndpoints` traffic-routing surface is the layer above
+  and remains preview).
 - **Keep prior version for ≥ 24 h** after promotion to 100 %. That's
   enough for instant rollback without re-provisioning. Idle versions
   cost nothing — see [§ Compute Lifecycle](#compute-lifecycle) (auto-
