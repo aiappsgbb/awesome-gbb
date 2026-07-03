@@ -122,7 +122,7 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "github-copilot-sdk~=1.0.0" \
-      "azure-ai-agentserver-invocations~=${PINNED_VERSION:-1.0.0b6}" \
+      "azure-ai-agentserver-invocations==${PINNED_VERSION:-1.0.0b6}" \
       "azure-identity~=1.25.3" \
       "python-dotenv~=1.2.2"
     python -c "
@@ -181,7 +181,7 @@ coordinated:
   `CopilotClient.__init__` (see KI-006). Existing skill code using
   `CopilotClient(SubprocessConfig(...), auto_start=False)` was updated to
   the flat `CopilotClient(github_token=...)` shape.
-- `azure-ai-agentserver-invocations` — `1.0.0b4` is the latest public
+- `azure-ai-agentserver-invocations` — `1.0.0b6` is the latest public
   beta (no GA release yet); pinned exact (`==`) because the cap pattern
   doesn't apply across pre-release boundaries.
 
