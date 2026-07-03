@@ -7,9 +7,9 @@ upstream:
   type: github_repo
   repo: Azure-Samples/ai-hub-gateway-solution-accelerator
   ref: citadel-v1
-  pinned_sha: f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4
+  pinned_sha: 08294f09a70833e282776a07fe7f97a6aead55b1
   pinned_commit_message: |
-    Merge pull request #117 from mohamedsaif/citadel-v1
+    Merge pull request #133 from mohamedsaif/citadel-v1
   license: MIT
   notes: |
     The Citadel Governance Hub — Layer 1 of the AI Citadel Platform.
@@ -78,7 +78,7 @@ validation:
   expected_output:
     - "Bicep build OK"
 
-last_validated: 2026-05-15
+last_validated: 2026-07-03
 validated_by: ricchi
 known_issues_count: 4
 ---
@@ -89,13 +89,42 @@ known_issues_count: 4
 |-------|-------|
 | **Repo** | `Azure-Samples/ai-hub-gateway-solution-accelerator` |
 | **Branch** | `citadel-v1` |
-| **Pinned commit SHA** | `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4` |
-| **Pinned commit message** | `Merge pull request #117 from mohamedsaif/citadel-v1` |
+| **Pinned commit SHA** | `08294f09a70833e282776a07fe7f97a6aead55b1` |
+| **Pinned commit message** | `Merge pull request #133 from mohamedsaif/citadel-v1` |
 | **License** | MIT (Microsoft) |
 | **azd template name** | `ai-citadel-governance-hub` |
 | **Bicep entry** | `bicep/infra/main.bicep` (~55 KB) |
 | **Bicep param entry** | `bicep/infra/main.bicepparam` (~17 KB, ~80 envs) |
 | **Single azd service** | `usageProcessingLogicApp` (Logic App / Function, JS) |
+
+## Re-pin validation — 2026-07-03 → `08294f09` (PR #133) [PARTIAL: `azd up` pending]
+
+Re-pin from `f2702b49` (PR #117) → `08294f09` (PR #133) — **48 commits**.
+
+- **Offline bicep build** (`az bicep build --file bicep/infra/main.bicep`,
+  Bicep CLI 0.43.8) at `08294f09`: **exit 0**, ARM JSON ~4.6 MB, **0 errors**,
+  100 warnings — BCP318 ×56 (nullable-module conditional pattern), BCP037 ×25
+  (preview-RP type advisories), no-unused-params ×5, no-unnecessary-dependson
+  ×5, no-hardcoded-env-urls ×4, +BCP187/BCP081/BCP036/prefer-unquoted-property-names/no-unused-vars
+  ×1 each. Warnings-only; the multi-cloud routing revamp added the extra
+  BCP037/BCP318 advisories — no deployment blockers.
+- **Env-var surface diff** (`bicep/infra/main.bicepparam`, `f2702b49..08294f09`):
+  exactly one change — `FOUNDRY_NETWORK_INJECTION_ENABLED` **removed** upstream
+  (no additions). Dropped from all 3 `references/profiles/*.env`.
+  `ENABLE_API_CENTER` still defaults `false`.
+- **Partial live evidence**: API Center enabled out-of-band on the audit hub
+  `rg-citadel-hub-01` — service `apic-codfa4k4hph2q` (Free, Sweden Central),
+  8 APIs + 4 environments registered — via the upstream `apic.bicep` +
+  `api-center-onboarding-all.bicep` modules. `what-if` was clean (13 create,
+  72 ignore, 0 modify/delete); both deployments Succeeded.
+- **Pending for full sign-off**: `azd up` re-audit at `08294f09`. The upstream
+  Foundry default model list changed (DeepSeek-R1 removed; gpt-5.2 + image
+  models added), so a full provision would reconcile model deployments. This
+  is why the skill stays `automation_tier: issue_only` / `runnable: false` —
+  a human must run the live validation before this pin is considered fully
+  validated.
+
+---
 
 ## Validated as of 2026-05 against pinned SHA
 

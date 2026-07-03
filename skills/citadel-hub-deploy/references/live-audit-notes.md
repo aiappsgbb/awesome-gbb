@@ -10,6 +10,20 @@ This file is **shipped with the skill as record** so future contributors
 can re-validate the same checks against a different deployed hub
 (or re-pin upstream).
 
+> **Update 2026-07-03 (skill re-pin `f2702b49` → `08294f09`, PR #133).**
+> Two changes since this May audit: **(1)** API Center is now **live** on
+> this hub — `apic-codfa4k4hph2q` (Free, Sweden Central) with 8 APIs + 4
+> environments, deployed out-of-band via the upstream `apic.bicep` +
+> `api-center-onboarding-all.bicep` modules (the env dump below still shows
+> `ENABLE_API_CENTER=false`, because the enable was a surgical `az deployment`
+> and not a full `azd up`). **(2)** Upstream **removed
+> `FOUNDRY_NETWORK_INJECTION_ENABLED`** at the new pin — it still appears in
+> the env dump below (the live hub was deployed at the old pin) but is now a
+> no-op and has been dropped from the shipped profiles. The Foundry default
+> model list also changed upstream (DeepSeek-R1 removed; gpt-5.2 + image
+> models added); the live hub keeps its May model set until a full `azd up`
+> at the new pin.
+
 ---
 
 ## Phase 1 — Pin upstream + bicep build
