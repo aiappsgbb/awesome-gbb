@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: RAG/knowledge retrieval (use foundry-iq), document grounding,
   vector search over documents.
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Foundry Memory
