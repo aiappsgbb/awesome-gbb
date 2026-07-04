@@ -20,7 +20,7 @@ packages:
       Machine-enforced hold: hold_below + hold_reason make the freshness detector suppress 3.x drift signals while KI-001 is open, so the weekly auto-refresh cannot re-bump past 3.0.0 (regression PR #166). The hold releases automatically when KI-001 is closed/revalidated.
   - name: mcp
     source: pypi
-    version: "1.27.1"
+    version: "1.28.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
     notes: |
       MCP protocol package; version pulled transitively by fastmcp (fastmcp~=2.14.7 requires mcp>=1.24.0,<2.0).
@@ -101,8 +101,8 @@ validation:
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-07-02
-validated_by: copilot
+last_validated: 2026-07-04
+validated_by: copilot-bot
 known_issues_count: 1
 ---
 
@@ -115,7 +115,7 @@ This Tier-B pin captures the MCP and Azure Container Apps package stack for impo
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
 | `fastmcp` | PyPI | **2.14.7** | Known-good 2.x line; keep `<3.0.0` |
-| `mcp` | PyPI | **1.27.1** | Transitive via fastmcp (>=1.24.0,<2.0) |
+| `mcp` | PyPI | **1.28.1** | Transitive via fastmcp (>=1.24.0,<2.0) |
 | `azure-mgmt-appcontainers` | PyPI | **4.0.0** | ACA management SDK |
 | `azure-cosmos` | PyPI | **4.15.0** | Cosmos MCP async SDK floor |
 | `azure-identity` | PyPI | **1.19.0** | Keyless auth floor |
