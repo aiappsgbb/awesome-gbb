@@ -92,7 +92,7 @@ validation:
     - "ModuleNotFoundError"
     - "is not in the 'cognitiveservices' command group"
 
-last_validated: 2026-06-09
+last_validated: 2026-06-29
 validated_by: copilot-bot
 known_issues_count: 0
 ---
