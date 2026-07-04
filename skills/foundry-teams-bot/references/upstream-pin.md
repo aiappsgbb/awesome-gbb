@@ -41,7 +41,7 @@ packages:
       Teams-specific hosting helpers from the template requirements.
   - name: azure-ai-projects
     source: pypi
-    version: "2.2.0"
+    version: "2.3.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
     notes: |
       Foundry project SDK floor used by the bot-to-agent invocation patterns.
@@ -95,7 +95,7 @@ validation:
       "microsoft-agents-hosting-aiohttp~=1.1.0" \
       "microsoft-agents-hosting-core~=1.1.0" \
       "microsoft-agents-hosting-teams~=1.1.0" \
-      "azure-ai-projects~=2.2.0" \
+      "azure-ai-projects~=2.3.0" \
       "azure-identity~=1.25.3" \
       "aiohttp~=3.13.5" \
       "python-dotenv~=1.2.2"
@@ -118,7 +118,7 @@ validation:
   expected_output:
     - "ok foundry-teams-bot imports and manifest parse"
 
-last_validated: 2026-06-29
+last_validated: 2026-07-04
 validated_by: copilot-bot
 known_issues_count: 1
 ---
