@@ -19,7 +19,7 @@ description: >
   foundry-hosted-agents), cross-resource models (use
   foundry-cross-resource).
 metadata:
-  version: "1.6.2"
+  version: "1.6.3"
   validated: 2026-06-01
 ---
 
