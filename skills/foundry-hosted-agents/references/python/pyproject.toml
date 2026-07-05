@@ -15,7 +15,7 @@
 #      wired. Surfaces as `session_not_ready` after 60s timeout — high
 #      diagnosis cost. Pin `mcp` in EVERY hosted-agent pyproject.toml.
 #
-# Verified May 2026 fruocco pilot runs on linux/amd64.
+# Verified May 2026 pilot runs on linux/amd64.
 
 [project]
 name = "my-agent"

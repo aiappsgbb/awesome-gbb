@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "1.12.2"
+  version: "1.12.3"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1198,7 +1198,7 @@ version conflicts.
   tools. The platform surfaces this as `session_not_ready` after a ~60 s timeout (not as an
   import error), so the diagnosis cost is high — pin `mcp>=1.10.0` in **every** hosted-agent
   `pyproject.toml`. Verified on `agent-framework-foundry-hosting==1.0.0a260528`
-  (May 2026, fruocco pilot).
+  (May 2026 pilot).
 - **Do NOT write `agent-framework-core[mcp]`.** The `[mcp]` extra does NOT exist in
   `agent-framework-core` 1.6.0/1.7.0 (PEP 503 / `setup.cfg` of the published wheel has no
   `[project.optional-dependencies] mcp = […]` entry). `MCPStreamableHTTPTool` /
@@ -1350,7 +1350,7 @@ it will deploy a hosted agent. Wire them as `output`s from your
 | `AZURE_TENANT_ID` | constant, set with `azd env set` before provision | GUID | Required for the postdeploy hook's auto-RBAC assignment to the per-agent identities |
 | `AZURE_RESOURCE_GROUP` | Bicep output | string | Used to scope agent CLI ops |
 | `AZURE_AI_PROJECT_ENDPOINT` | Bicep output | `https://<acct>.services.ai.azure.com/api/projects/<proj>` | Used by `azd ai agent invoke` and the data-plane Responses calls (LEGACY key — see drift note below) |
-| `FOUNDRY_PROJECT_ENDPOINT` | same value as `AZURE_AI_PROJECT_ENDPOINT` | same | **Required by `azure.ai.agents@0.1.31-preview+` (extension contract drifted from `AZURE_AI_*` to `FOUNDRY_*` between pin SHA `7cb89c2` and current `--allow-prerelease`). Always set BOTH keys to the same endpoint URL** |
+| `FOUNDRY_PROJECT_ENDPOINT` | same value as `AZURE_AI_PROJECT_ENDPOINT` | same | **Required by `azure.ai.agents@1.0.0-beta.4` (extension contract drifted from `AZURE_AI_*` to `FOUNDRY_*` between pin SHA `7cb89c2` and current `--allow-prerelease`). Always set BOTH keys to the same endpoint URL** |
 | `AZURE_CONTAINER_REGISTRY_ENDPOINT` | Bicep output (`acr.properties.loginServer`) | `<acr-name>.azurecr.io` | Required by `azd deploy` ACR push stage. Symptom when missing: extension attempts a Docker push to an empty / unset registry FQDN and fails with a clearly mis-targeted host error |
 
 > **Drift advisory (May 2026):** The preview extension changed which
@@ -1372,7 +1372,7 @@ output AZURE_AI_PROJECT_ENDPOINT string = '${foundryAccount.endpoints['AI Foundr
 
 `azd provision` writes these into `.azure/<env>/.env`; the extension picks
 them up on the next `azd deploy <hosted-agent-service>`. Verified gap on
-`azure.ai.agents@0.1.31-preview` (May 2026 fruocco pilot).
+`azure.ai.agents@0.1.31-preview`, still CI-validated at `1.0.0-beta.4` (2026 pilot).
 
 ---
 
@@ -1460,7 +1460,7 @@ View them with `azd ai agent show`.
 > account MI alone causes `[ImageError] Failed to pull container image`
 > at first invoke (`session_not_ready` after agent registration appears
 > to succeed). Verified on `eastus2` + `aif-weather-dev` + `proj-weather-dev`,
-> May 2026 fruocco pilot.
+> May 2026 pilot.
 >
 > **Look up the project MI principal id:**
 >
@@ -1999,29 +1999,42 @@ curl -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" \
 ```
 
 Returns SSE events with `{"stream":"stderr","message":"..."}` — shows startup logs, tracebacks.
-Also: `azd ai agent monitor --session-id $SID`
+Also: `azd ai agent monitor` (session auto-resolves from the last invoke; `--session-id` optional)
 
 ### Useful Commands
 
 ```bash
-azd ai agent show                    # Agent status, identities, version, endpoints (JSON)
-azd ai agent monitor --session-id $S # Stream container logs for one session (--session-id REQUIRED)
-azd ai agent invoke "Hello!"         # Quick test (creates a new session each time unless --session-id passed)
-azd ai agent sessions                # List recent sessions
+azd ai agent show                    # Agent status, identities, version, endpoints (--output json|table)
+azd ai agent monitor                 # Stream logs; session auto-resolves from last invoke (--follow to tail, --session-id optional)
+azd ai agent invoke "Hello!"         # Quick test; consecutive invokes REUSE the session (--new-session to reset)
+azd ai agent sessions                # Manage sessions (list / show / stop / delete)
 azd deploy <service> --no-prompt     # Redeploy a service without reprovisioning
 ```
 
-> **CLI shape gotchas (verified `azure.ai.agents@0.1.31-preview`, May 2026):**
+> **CLI shape gotchas (verified live against `azure.ai.agents@1.0.0-beta.4`, July 2026):**
 >
-> - **No `--service` flag** on `azd ai agent show / invoke / monitor` — the
->   extension assumes one hosted-agent service per repo. If you have more
->   than one `host: azure.ai.agent` entry in `azure.yaml`, you must `cd`
->   into that service's directory or specify `--cwd`.
-> - **`azd ai agent monitor` requires `--session-id`** — there is no
->   "tail-all-sessions" mode. Run `azd ai agent invoke` first (it prints
->   the session id), then pipe it into `monitor`.
-> - **`azd ai agent invoke` only works from the azd project root** (where
->   `azure.yaml` is). Otherwise it errors with "no project exists".
+> - **Multiple hosted-agent services: pass the service name positionally.**
+>   `azd ai agent show / invoke / monitor [name]` — name and version
+>   auto-resolve from `azure.yaml` + the current azd environment when there's
+>   a single service. With more than one `host: azure.ai.agent` entry, give
+>   the service name (from `azure.yaml`) as the first positional argument, or
+>   scope with the global `-C/--cwd`. (`azd ai agent sessions` uses
+>   `--agent-name` instead of a positional for the same purpose.)
+> - **`azd ai agent monitor` does NOT require `--session-id`.** The session
+>   auto-resolves from the last invocation; `--session-id` is optional (use it
+>   to target a specific session). Add `--follow/-f` to tail in real-time,
+>   `--type system` for system events, `--tail N` (1-300) for recent lines.
+> - **`azd ai agent invoke` reuses the session by default.** Sessions are
+>   persisted per-agent — consecutive invokes reuse the same session
+>   automatically; pass `--new-session` to force a reset. One positional arg
+>   is the message (name auto-detected from `azure.yaml`); two args are
+>   `[name] [message]`. `--input-file/-f` sends a file as the request body,
+>   `--local` targets a locally-running agent (`azd ai agent run`), and
+>   `--output raw` dumps the verbatim server response (status line + headers +
+>   body) for debugging.
+> - **Run agent commands from the azd project root** (where `azure.yaml` is),
+>   or scope with the global `-C/--cwd`; otherwise the extension can't resolve
+>   the project and errors out.
 
 #### `azd ai agent show` output shape (for postdeploy hooks)
 
