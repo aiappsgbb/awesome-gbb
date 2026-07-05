@@ -22,6 +22,18 @@ packages:
     source: pypi
     version: "1.0.0b6"
     upstream_changelog: https://pypi.org/project/azure-ai-agentserver-invocations/#history
+  - name: azure-ai-agentserver-core
+    source: pypi
+    version: "2.0.0b7"
+    upstream_changelog: https://pypi.org/project/azure-ai-agentserver-core/#history
+    notes: |
+      Transitive dep of azure-ai-agentserver-invocations (which declares
+      `azure-ai-agentserver-core>=2.0.0b7`, UNBOUNDED-UPPER). Pinned EXACTLY to
+      `==2.0.0b7` in references/pyproject.toml to stop a future core b8+ from
+      silently breaking fresh container builds. Grounded: a stale probe on
+      invocations b4 + core b7 crash-looped with
+      `ImportError: cannot import name 'CHAT_ISOLATION_KEY'` (2026-07-04). The
+      current b6 + b7 combo is proven healthy live.
   - name: azure-identity
     source: pypi
     version: "1.25.3"
@@ -55,12 +67,16 @@ known_issues:
 
   - id: KI-002
     description: |
-      `azd ai agent invoke` (azure.ai.agents extension 0.1.31-preview) sends a
-      body the official Microsoft container template rejects with HTTP 400
-      "Request body must be a JSON object with a non-empty \"input\" string".
-      The CLI does NOT wrap user input in `{"input": "<text>"}` before posting.
-      Workaround: invoke via curl/Python with the correct body shape — see
-      SKILL.md § "Invoking the Agent".
+      `azd ai agent invoke` (azure.ai.agents extension, reproduced live through
+      1.0.0-beta.4 on 2026-07-04) sends a body the official Microsoft container
+      template rejects with HTTP 400 "Request body must be a JSON object with a
+      non-empty \"input\" string". The CLI does NOT wrap user input in
+      `{"input": "<text>"}` before posting. Verified against a HEALTHY b6
+      container: a direct `{"input": "..."}` curl returns HTTP 200 SSE
+      (assistant answered "Paris."), while the SAME container returns HTTP 400
+      for `azd ai agent invoke` — proving the defect is the CLI body shape, not
+      the container. Workaround: invoke via curl/Python with the correct body
+      shape — see SKILL.md § "Invoking the Agent".
     upstream_url: https://github.com/Azure/azure-dev/issues
     status: open
     workaround_location: SKILL.md § "Invoking the Agent" -> curl recipe
@@ -159,8 +175,8 @@ validation:
     - "ok ProviderConfig type=azure accepted"
     - "ok CopilotClient(github_token=...)"
 
-last_validated: 2026-06-29
-validated_by: copilot-bot
+last_validated: 2026-07-04
+validated_by: ricchi
 known_issues_count: 6
 ---
 
@@ -184,8 +200,25 @@ coordinated:
 - `azure-ai-agentserver-invocations` — `1.0.0b6` is the latest public
   beta (no GA release yet); pinned exact (`==`) because the cap pattern
   doesn't apply across pre-release boundaries.
+- `azure-ai-agentserver-core` — transitive dep of `-invocations`, which
+  declares `azure-ai-agentserver-core>=2.0.0b7` (UNBOUNDED-UPPER). The
+  reference `pyproject.toml` now pins it EXACT (`==2.0.0b7`) so a future
+  core `b8+` that renames a symbol cannot silently break fresh container
+  builds. Grounded 2026-07-04: a stale `invocations b4 + core b7` probe
+  crash-looped with `ImportError: cannot import name 'CHAT_ISOLATION_KEY'`
+  (HTTP 424 before body-parse); the current `b6 + b7` combo is proven
+  healthy live.
 
 ## Last validation
+
+`2026-07-04` (ricchi) — live re-grounding on a real Foundry deploy at
+`azure.ai.agents` ext `1.0.0-beta.4`: rebuilt the container on the skill's
+exact pins (`invocations b6` + `core b7`), confirmed the container is 100%
+healthy (direct `{"input":...}` curl → HTTP 200 SSE, assistant answered
+"Paris." on `gpt-5.4-mini`), and confirmed **KI-002 is STILL BROKEN**
+(`azd ai agent invoke` → HTTP 400 against the same healthy agent). Added
+`azure-ai-agentserver-core==2.0.0b7` as an EXACT container pin +
+freshness-tracked package to close the unbounded-upper landmine.
 
 `2026-06-10` (ricchi) — `github-copilot-sdk==1.0.1` adversarially diff'd
 against `0.3.0` API surface on a clean Python 3.14 venv; every import in
@@ -202,4 +235,7 @@ Prior end-to-end was `2026-05-17` (ricchi) on a Foundry test project:
 - `azd up` -> Foundry account + project + ACR + ManagedAgentIdentityBlueprint
 - Added Foundry User at ACCOUNT scope to both agent identities (KI-001)
 - `curl -X POST .../invocations -d '{"input":"..."}'` -> assistant.message in 7.4s
-- `azd ai agent invoke` confirmed broken with HTTP 400 (KI-002)
+- `azd ai agent invoke` confirmed broken with HTTP 400 (KI-002) — re-verified
+  live 2026-07-04 on ext `1.0.0-beta.4`: healthy `b6` container returned
+  HTTP 200 SSE ("Paris.") to a direct `{"input":...}` curl, while
+  `azd ai agent invoke` against the SAME agent returned HTTP 400
