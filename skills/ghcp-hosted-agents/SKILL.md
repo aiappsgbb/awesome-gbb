@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "1.2.1"
+  version: "1.2.2"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -159,6 +159,7 @@ events flow throughout.
 **Notes:**
 - `github-copilot-sdk` provides `CopilotClient`, session management, event types
 - `azure-ai-agentserver-invocations` provides `InvocationAgentServerHost`
+- `azure-ai-agentserver-core` pinned EXACT (`==2.0.0b7`) — it's a transitive dep of `-invocations` declared as `>=2.0.0b7` (unbounded upper); the exact pin stops a future core `b8+` from silently breaking fresh container builds
 - `azure-identity` pinned to avoid pulling beta versions
 - `prerelease = "if-necessary-or-explicit"` needed for beta agentserver package
 
@@ -292,9 +293,13 @@ session = await client.create_session(
 
 ## Invoking the Agent
 
-> ⚠️ **`azd ai agent invoke` is broken in `azure.ai.agents` 0.1.31-preview** —
-> it does NOT wrap user input in `{"input": "<text>"}`, so the official
-> Microsoft container template rejects it with `HTTP 400`. Use the curl
+> ⚠️ **`azd ai agent invoke` is broken** — it does NOT wrap user input in
+> `{"input": "<text>"}`, so the official Microsoft container template rejects
+> it with `HTTP 400` (`Request body must be a JSON object with a non-empty
+> "input" string`). **Reproduced live on `azure.ai.agents` 1.0.0-beta.4
+> (2026-07):** a healthy container that answers a direct `{"input": "..."}`
+> curl with `HTTP 200` SSE still returns `HTTP 400` for `azd ai agent invoke`.
+> The defect is in the CLI's body shape, not the container. Use the curl
 > recipe below until the CLI is fixed.
 
 ### Via curl (SSE streaming)
@@ -409,7 +414,7 @@ Task Completion) are stable across both judge models.
 | **`azd deploy` says "deployed in <1s" and nothing ships** | `azure.yaml` has no `services:` block — `azd ai agent init` creates the manifest but does NOT wire up a service for `azd deploy` | Add a `services:` entry pointing at the project root with `host: azure.ai.agent`, `language: docker`, `docker.remoteBuild: true`. See § "azure.yaml (required for `azd deploy`)" |
 | **`azd deploy` postdeploy fails: "AZURE_TENANT_ID is not set"** | The postdeploy RBAC hook reads `AZURE_TENANT_ID` from the azd environment, but `azd env new` does not populate it | `azd env set AZURE_TENANT_ID $(az account show --query tenantId -o tsv)` once after `azd env new`, then re-run `azd deploy` |
 | **Silent SSE error event: "Authentication failed with provider ... (HTTP 401)"** | `azd ai agent` postdeploy only assigns `Foundry User` at PROJECT scope. Container BYOK call to the Foundry model deployment needs Foundry User at ACCOUNT scope too | Grant `Foundry User` (GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) at the CognitiveServices account scope to BOTH `instance_identity.principal_id` AND `blueprint.principal_id` (visible via `azd ai agent show`). See § "Identity & RBAC for hosted agents" |
-| **`azd ai agent invoke` returns HTTP 400 "missing input"** | `azure.ai.agents` 0.1.31-preview does NOT wrap user input in `{"input": "<text>"}` before POSTing | Invoke via curl/Python with the correct body shape — see § "Invoking the Agent" |
+| **`azd ai agent invoke` returns HTTP 400 "missing input"** | `azure.ai.agents` (reproduced live through `1.0.0-beta.4`, 2026-07) does NOT wrap user input in `{"input": "<text>"}` before POSTing | Invoke via curl/Python with the correct body shape — see § "Invoking the Agent" |
 
 ---
 
