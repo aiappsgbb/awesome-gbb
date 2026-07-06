@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: e38592a23c10bf8e85318a4efed6e77874147ec2
+  pinned_sha: 329d59eff464833c70954ad5a81b89f17a266f67
   pinned_commit_message: |
     Bumped to SHA b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75
   license: MIT
@@ -75,7 +75,7 @@ validation:
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-07-02
+last_validated: 2026-07-06
 validated_by: copilot-bot
 field_test_scope: github_pypi_docs
 known_issues_count: 0
