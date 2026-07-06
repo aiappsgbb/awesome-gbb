@@ -17,7 +17,7 @@ description: >
   ingestion (use foundry-observability), authoring an MCP server (use
   foundry-mcp-aca or ui-widget-developer).
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # Foundry Voice Live
