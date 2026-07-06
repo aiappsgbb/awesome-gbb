@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/azure-skills
   ref: main
-  pinned_sha: f20a78d73325bea31410d7dd818850e36ad9e07f
+  pinned_sha: 8f8c72bb9e22aee4366e07aadfd5766ef9add8f4
   license: MIT
   notes: |
     azd-patterns is mostly internal IP (tier C), but v1.1.3 borrowed three
@@ -74,11 +74,22 @@ validation:
     - "azure-skills/entra-agent-id: HTTP 200"
     - "VALIDATION_PASSED"
 
-last_validated: 2026-07-02
+last_validated: 2026-07-06
 validated_by: copilot-bot
 ---
 
 ## Audit trail
+
+### 2026-07-06 — freshness-cycle re-pin (copilot-bot)
+
+- Bumped `upstream.pinned_sha` from `f20a78d73325bea31410d7dd818850e36ad9e07f`
+  to `8f8c72bb9e22aee4366e07aadfd5766ef9add8f4` (HEAD of `microsoft/azure-skills@main`
+  as of 2026-07-06).
+- Validation script passed: `azure-deploy` HTTP 200, `azure-prepare` HTTP 200,
+  `entra-agent-id` HTTP 200, `VALIDATION_PASSED`.
+- No upstream content changes affecting borrowed patterns (AcrPull retry loops,
+  allowUserIdentityPrincipal RBAC fix, docker.context traps); drift is commits-only.
+- `last_validated` updated to 2026-07-06.
 
 ### 2026-07-02 — freshness-cycle re-pin (copilot-bot)
 
