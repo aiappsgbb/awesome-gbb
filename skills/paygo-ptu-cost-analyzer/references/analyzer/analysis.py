@@ -8,7 +8,7 @@ def run_analysis(
     df: pd.DataFrame,
     percentiles: list[int],
     *,
-    ptu_output_weight: float,
+    ptu_output_weight: int,
     ptu_capacity_tpm: float,
     ptu_min_deployment: float,
     ptu_increment: float,
@@ -27,6 +27,9 @@ def run_analysis(
 
     # Global metrics
     percentile_values = {p: np.percentile(df["total_tpm"], p) for p in percentiles}
+    ptu_percentile_values = {
+        p: np.percentile(df["ptu_billable_tpm"], p) for p in percentiles
+    }
     time_period_minutes = len(df)
     time_period_months = (time_period_minutes / 60 / 24) / 30
 
@@ -34,9 +37,7 @@ def run_analysis(
     total_non_cached_input = df["non_cached_input"].sum()
     total_cached = df["cached_tokens_sum"].sum()
     total_output = df["output_tokens_sum"].sum()
-    total_ptu_tokens = (
-        total_non_cached_input + total_cached + total_output
-    )
+    total_ptu_tokens = total_non_cached_input + total_cached + total_output
 
     paygo_non_cached_input_cost_monthly = (
         total_non_cached_input / 1e6 * effective_paygo_input_per_m
@@ -70,6 +71,16 @@ def run_analysis(
 
         spillover_tpm = df["ptu_billable_tpm"].apply(lambda x: max(0, x - ptu_capacity))
         spillover_ratio = spillover_tpm / df["ptu_billable_tpm"].replace(0, 1)
+
+        total_ptu_billable_tpm = df["ptu_billable_tpm"].sum()
+        if total_ptu_billable_tpm > 0:
+            ptu_demand_spillover_pct = min(
+                100.0, max(0.0, 100 * spillover_tpm.sum() / total_ptu_billable_tpm)
+            )
+            ptu_demand_covered_pct = 100.0 - ptu_demand_spillover_pct
+        else:
+            ptu_demand_spillover_pct = 0.0
+            ptu_demand_covered_pct = 0.0
 
         spill_input = (df["non_cached_input"] * spillover_ratio).sum()
         spill_output = (df["output_tokens_sum"] * spillover_ratio).sum()
@@ -106,6 +117,8 @@ def run_analysis(
             "ptus": ptus,
             "ptu_capacity": ptu_capacity,
             "spillover_pct": 100 * (spillover_tpm > 0).sum() / len(df),
+            "ptu_demand_covered_pct": ptu_demand_covered_pct,
+            "ptu_demand_spillover_pct": ptu_demand_spillover_pct,
             "ptu_covered_token_pct": ptu_covered_token_pct,
             "spillover_token_pct": spillover_token_pct,
             "ptu_monthly_cost": ptus * effective_ptu_monthly_price,
@@ -122,6 +135,7 @@ def run_analysis(
 
     return {
         "percentile_values": percentile_values,
+        "ptu_percentile_values": ptu_percentile_values,
         "time_period_months": time_period_months,
         "paygo_monthly": paygo_monthly,
         "paygo_breakdown": paygo_breakdown,

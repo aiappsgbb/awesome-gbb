@@ -17,7 +17,7 @@ description: >
   monitoring (use azure-monitor-query directly), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.0.6"
+  version: "1.1.0"
 ---
 
 # PAYGO vs PTU Cost Analyzer
@@ -140,7 +140,7 @@ The markdown report always contains the substrings `"PTU Sizing"`,
 | `--tier` | `global` | `global` or `data_zone` (per the catalog). |
 | `--ptu-term` | `monthly` | `monthly` or `yearly`. Switches the cost columns + recommendation. |
 | `--percentiles` | `50,75,90,95,99` | Comma-separated, in `(0,100)`. |
-| `--ptu-output-weight` | `1.0` | Multiplier on output-token TPM when sizing PTUs. |
+| `--ptu-output-weight` | model's `ptu.output_weight` | Multiplier on output-token TPM when sizing PTUs. Defaults to the selected model's catalog `ptu.output_weight` (e.g. `6` for gpt-5.4); pass a value to override (e.g. `1.0` for the old flat behaviour). Falls back to `1` if the model has no `output_weight`. |
 | `--out-dir` | `./paygo-ptu-report` | Created if absent. |
 
 ---
@@ -149,9 +149,15 @@ The markdown report always contains the substrings `"PTU Sizing"`,
 
 Vendored from the upstream repo. Each model entry carries:
 
-- `paygo.global` + optional `paygo.data_zone` → `input_per_m`, `cached_input_per_m`, `output_per_m`
-- `ptu.capacity_tpm`, `ptu.min_deployment`, `ptu.increment`
+- `paygo.global` + optional `paygo.data_zone` → `input_per_m`, `cached_input_per_m`, `output_per_m`, plus optional `priority_processing` rates
+- `ptu.capacity_tpm`, `ptu.min_deployment`, `ptu.increment`, `ptu.output_weight`
 - `ptu.global` + optional `ptu.data_zone` → `monthly_price`, `yearly_price`
+
+`ptu.output_weight` (typically 4–8) scales output-token TPM when sizing
+PTUs; `--ptu-output-weight` defaults to it (see the CLI table). As of the
+`2636464` re-vendor the catalog also ships **gpt-5.5** and **gpt-5.4-mini**,
+and **gpt-5.4** now carries `data_zone` pricing (so `--tier data_zone`
+resolves for it).
 
 To use a custom catalog: edit `models.json` in place (it's a vendored
 file — not auto-refreshed). The upstream-pin tracks the SHA of the
@@ -169,10 +175,10 @@ upstream repo so the catalog can be re-vendored when prices drift.
 
 ```
 references/
-├── analyzer/                      # Vendored from aiappsgbb/ptu-paygo-mix @ e1786f8
+├── analyzer/                      # Analysis core vendored from aiappsgbb/ptu-paygo-mix @ 2636464
 │   ├── __init__.py                # Re-exports the public API
 │   ├── analysis.py                # run_analysis() — pure pandas/numpy
-│   ├── data.py                    # load/normalize/KQL helpers (Streamlit stripped)
+│   ├── data.py                    # load/normalize/KQL helpers (frozen @ e1786f8, Streamlit stripped)
 │   ├── formatting.py              # fmt_num / fmt_cost
 │   └── models.json                # PTU + PAYGO pricing catalog
 ├── queries/
@@ -184,15 +190,23 @@ references/
 └── upstream-pin.md                # Tier-B freshness contract
 ```
 
-Only **two** files (`data.py` and `__init__.py`) deviate from upstream:
+`analysis.py`, `formatting.py`, and `models.json` are byte-identical to
+upstream `@ 2636464`. Three files **intentionally diverge**:
 
-- `data.py` — the `import streamlit as st` line and both `@st.cache_data`
-  / `@st.cache_data(ttl=300)` decorators are removed so the module runs
-  outside a Streamlit context. Everything else is byte-identical.
-- `__init__.py` — exported names match upstream plus `REQUIRED_COLUMNS`,
-  `MODELS_CONFIG_PATH`, `time_range_to_timedelta`.
+- `data.py` — **frozen at the `e1786f8` shape** (Streamlit stripped: the
+  `import streamlit as st` line and both `@st.cache_data` /
+  `@st.cache_data(ttl=300)` decorators removed). Upstream **deleted** its
+  live Log-Analytics / KQL path at commit `14a5bec`; this skill keeps it
+  to power `--workspace` mode, so `data.py` is **not** re-vendored from
+  newer SHAs. See `upstream-pin.md` KI-002.
+- `queries/*.kql` — **retained**; upstream deleted the `kql/` directory at
+  `14a5bec`. These drive the `--workspace` path.
+- `__init__.py` — exported names match the `e1786f8` upstream plus
+  `REQUIRED_COLUMNS`, `MODELS_CONFIG_PATH`, `time_range_to_timedelta`.
 
-Re-vendoring is a manual chore signalled by SHA drift in `upstream-pin.md`.
+Re-vendoring the analysis core is a manual chore signalled by SHA drift in
+`upstream-pin.md` (the upstream repo is private — a token with read access
+is needed to clone it).
 
 ---
 
@@ -244,9 +258,13 @@ utilisation, error analysis).
   synth produces realistic business-hours + weekend + burst patterns
   starting from that fixed timestamp — useful for reproducible demos,
   but obvious if you ship a customer report without disclosing it.
-- **Streamlit decorators stripped from `data.py`** — re-vendoring must
-  redo this surgery. The validation script catches any reintroduction
-  because the import would fail outside a Streamlit context.
+- **`data.py` + `queries/*.kql` are frozen at `e1786f8`** — upstream
+  removed the live Log-Analytics / KQL path (commit `14a5bec`); this skill
+  keeps it for `--workspace` mode, so those files are **not** re-vendored
+  from newer SHAs (only `analysis.py` / `formatting.py` / `models.json`
+  are). The `data.py` Streamlit strip is part of that frozen baseline; the
+  validation script catches any reintroduction because the import would
+  fail outside a Streamlit context. See `upstream-pin.md` KI-002.
 
 ---
 
