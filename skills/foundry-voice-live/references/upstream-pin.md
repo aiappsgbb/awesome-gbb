@@ -24,11 +24,24 @@ packages:
     version: "5.50.0"
     specifier: "~=5.50.0"
     source: pypi
+    hold_below: "6.0.0"
+    hold_reason: KI-001
+    notes: |
+      fastrtc 0.0.34 requires gradio>=4.0,<6.0 — gradio 6.x cannot be
+      installed alongside fastrtc until fastrtc publishes a release that
+      removes the <6.0 upper bound. 5.50.0 is the highest compatible 5.x
+      release. The hold_below + hold_reason make the freshness detector
+      suppress 6.x drift signals while KI-001 is open.
   - name: azure-ai-voicelive
     version: "1.2.0"
     specifier: "~=1.2.0"
     source: pypi
-known_issues: []
+known_issues:
+  - id: KI-001
+    description: "fastrtc 0.0.34 requires gradio<6.0; gradio 6.x cannot be installed until fastrtc publishes a release without the <6.0 upper bound"
+    upstream_url: https://pypi.org/project/fastrtc/
+    status: open
+    workaround_location: "packages[gradio].hold_below=6.0.0 suppresses 6.x drift"
 docs_to_revalidate:
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live"
   - "https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to"
@@ -105,7 +118,7 @@ validation:
     - "voicelive-sdk-import-ok"
     - "AsyncAzureOpenAI.realtime + websocket_base_url OK"
     - "VALIDATION_PASSED"
-last_validated: "2026-06-29"
+last_validated: "2026-07-06"
 validated_by: "copilot-bot"
 ---
 
