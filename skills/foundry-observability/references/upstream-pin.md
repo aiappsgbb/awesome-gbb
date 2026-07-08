@@ -11,7 +11,7 @@ upstream:
 packages:
   - name: azure-monitor-opentelemetry
     source: pypi
-    version: "1.8.8"
+    version: "1.8.9"
     upstream_changelog: https://pypi.org/project/azure-monitor-opentelemetry/#history
     notes: |
       Single dependency recorded in SKILL.md; it transitively pins compatible opentelemetry-* packages and Azure Monitor exporters.
@@ -57,7 +57,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-monitor-opentelemetry~=1.8.8" "azure-monitor-query~=2.0.0"
+    pip install --quiet "azure-monitor-opentelemetry~=1.8.9" "azure-monitor-query~=2.0.0"
     python - <<'PY'
     from azure.monitor.opentelemetry import configure_azure_monitor
     from azure.monitor.query import LogsQueryClient
@@ -67,7 +67,7 @@ validation:
   expected_output:
     - "ok foundry-observability imports"
 
-last_validated: 2026-06-29
+last_validated: 2026-07-06
 validated_by: copilot-bot
 known_issues_count: 1
 ---
