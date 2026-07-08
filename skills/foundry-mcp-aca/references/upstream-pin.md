@@ -32,7 +32,7 @@ packages:
       Azure Container Apps management SDK used for ACA resource operations; import smoke only, no live deploy.
   - name: azure-cosmos
     source: pypi
-    version: "4.15.0"
+    version: "4.16.1"
     upstream_changelog: https://pypi.org/project/azure-cosmos/#history
     notes: |
       Async Cosmos MCP path requires the >=4.15 query_items signature discipline documented in SKILL.md.
@@ -84,7 +84,7 @@ validation:
     pip install --quiet \
       "fastmcp~=2.14.7" \
       "azure-mgmt-appcontainers~=4.0.0" \
-      "azure-cosmos~=4.15.0" \
+      "azure-cosmos~=4.16.1" \
       "azure-identity~=1.25.3" \
       "azure-keyvault-secrets~=4.11.0" \
       "aiohttp~=3.13.5"
@@ -101,7 +101,7 @@ validation:
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-07-04
+last_validated: 2026-07-06
 validated_by: copilot-bot
 known_issues_count: 1
 ---
