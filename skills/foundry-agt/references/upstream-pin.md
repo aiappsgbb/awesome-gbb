@@ -7,7 +7,7 @@ upstream:
   type: github_repo
   repo: microsoft/agent-governance-toolkit
   ref: main
-  pinned_sha: b3c899675e8f76a263f3f1f22a7a29137d84fe03
+  pinned_sha: 54a2c5227817530d400200601f647b7f71ace298
   pinned_commit_message: |
     AGT 3.7.0 release — meta-package + 6 sub-packages
   license: MIT
@@ -85,7 +85,7 @@ validation:
     - "OWASP ASI 2026"
     - "factory ok"
 
-last_validated: 2026-07-02
+last_validated: 2026-07-06
 validated_by: copilot-bot
 known_issues_count: 3
 ---

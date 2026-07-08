@@ -17,7 +17,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
