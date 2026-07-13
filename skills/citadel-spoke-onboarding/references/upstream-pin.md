@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: Azure-Samples/ai-hub-gateway-solution-accelerator
   ref: citadel-v1
-  pinned_sha: 08294f09a70833e282776a07fe7f97a6aead55b1
+  pinned_sha: 6820ddb822730162858dfd6dc30eaab9e811a062
   pinned_commit_message: |
     Merge pull request #133 from mohamedsaif/citadel-v1
   license: MIT
@@ -67,7 +67,7 @@ validation:
     - "access contract schema ok"
     - "policy docs link check ok"
   failure_signatures: []
-last_validated: 2026-07-03
+last_validated: 2026-07-13
 validated_by: copilot-bot
 known_issues_count: 0
 ---
