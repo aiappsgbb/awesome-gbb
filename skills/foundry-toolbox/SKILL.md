@@ -317,75 +317,32 @@ until you call `update(default_version=...)`.
 
 ## Step 2 — Wire into a hosted agent
 
-### Pattern A — MAF (Agent + ResponsesHostServer + MCPStreamableHTTPTool)
+### Pattern A - Microsoft Agent Framework `FoundryToolbox`
 
-The doc-recommended pattern. The httpx `Auth` subclass keeps the bearer
-token fresh on every transport-level request (avoiding the static-headers
-1-hour expiry trap documented in `foundry-hosted-agents` SKILL § MCP).
+`agent_framework_foundry_hosting.FoundryToolbox` is the high-level Toolbox
+consumer for hosted MAF agents. It:
 
-```python
-import os
-import httpx
-from agent_framework import MCPStreamableHTTPTool
-from agent_framework.openai import OpenAIChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+- resolves `TOOLBOX_ENDPOINT`, or `FOUNDRY_PROJECT_ENDPOINT` plus
+  `TOOLBOX_NAME`;
+- requests `https://ai.azure.com/.default` tokens per outbound request;
+- forwards the request-scoped `x-agent-foundry-call-id`; and
+- connects and closes with the Agent lifecycle.
 
-# --- httpx.Auth subclass that mints a fresh AAD bearer per request ---
-class _ToolboxAuth(httpx.Auth):
-    requires_request_body = False
-    def __init__(self, token_provider):
-        self._tp = token_provider
-    def auth_flow(self, request):
-        request.headers["Authorization"] = f"Bearer {self._tp()}"
-        yield request
+> **MUST:** Copy the complete composition from
+> [`references/python/toolbox_wiring.py`](references/python/toolbox_wiring.py).
+> Do not redefine it inline. Pass the resulting `FoundryToolbox` directly in
+> the Agent's `tools` list.
 
-# --- Trap-proof MCP tool subclass (no-op ping) ---
-class ToolboxMCPTool(MCPStreamableHTTPTool):
-    async def _ensure_connected(self):
-        if self._client is None:
-            await self.connect()
+### Pattern B - direct non-Toolbox MCP
 
-credential = DefaultAzureCredential()
-token_provider = get_bearer_token_provider(
-    credential, "https://ai.azure.com/.default"
-)
-http_client = httpx.AsyncClient(
-    auth=_ToolboxAuth(token_provider),
-    timeout=120.0,
-)
-
-# Read platform-injected URL — never hard-code
-TOOLBOX_ENDPOINT = os.environ["TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT"]
-
-mcp_tool = ToolboxMCPTool(
-    name="toolbox",
-    url=TOOLBOX_ENDPOINT,
-    http_client=http_client,
-    load_prompts=False,           # 🔑 trap 2
-    request_timeout=120,
-)
-
-chat_client = OpenAIChatClient(
-    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-    model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-    credential=credential,
-)
-
-agent = chat_client.as_agent(
-    name="my-toolbox-agent",
-    instructions="You are a helpful assistant with access to Foundry toolbox tools.",
-    tools=[mcp_tool],
-)
-ResponsesHostServer(agent).run()
-```
+Use `MCPStreamableHTTPTool` directly for an MCP server that is not managed
+through a Foundry Toolbox. This remains a separate pattern; do not manually
+rebuild `FoundryToolbox` authentication for a Toolbox endpoint.
 
 > **MUST:** Always pass `parse_tool_results=` when using `MCPStreamableHTTPTool`. Without it, the agent sees raw MCP JSON instead of text content, causing confabulated responses.
 
 > **MUST:** Use [`references/python/mcp_text_extractor.py`](references/python/mcp_text_extractor.py) as the canonical extractor (exports `extract_mcp_text` and the backward-compat alias `_mcp_text_extractor`). Do NOT redefine inline — the validator enforces single-source-of-truth.
 >
-> **MUST:** For the full 3-pattern wiring example (toolbox + direct MCP + local function tools composed into one agent), copy verbatim from [`references/python/toolbox_wiring.py`](references/python/toolbox_wiring.py). It is the canonical SDK-level wiring (high-level `AzureAIToolbox`), complementing the trap-aware low-level pattern shown above (`ToolboxMCPTool` subclass).
-
 ```python
 from references.python.mcp_text_extractor import extract_mcp_text
 
@@ -475,21 +432,12 @@ This is the canonical no-auth remote-MCP shape; any other public MCP
 (GitHub MCP for unauthenticated requests, generic knowledge MCPs) drops
 into the same pattern by swapping the `url`.
 
-### Pattern B — ~~MAF convenience helper~~ **REMOVED in MAF 1.3.0**
+### Removed Agent Framework convenience helpers
 
-> **`client.get_toolbox()` and `select_toolbox_tools` were removed in
-> `agent-framework-foundry` 1.3.0** ([PR #5671](https://github.com/microsoft/agent-framework/pull/5671) — external repo link; for offline / agent context, key claims summarised in `foundry-hosted-agents` § MAF 1.6.0 update if relevant).
-> The MAF team standardized on MCP for all toolbox consumption.
-> **Use Pattern A (`MCPStreamableHTTPTool`) instead.**
->
-> If you find old code using `client.get_toolbox()`, migrate it to
-> Pattern A — the MCP endpoint is the same one `get_toolbox()` was
-> calling under the hood.
->
-> MAF 1.6.0 added per-tool factory methods (`get_azure_ai_search_tool`,
-> `get_sharepoint_tool`, etc.) on `FoundryChatClient` for specific
-> hosted tools — but there is no whole-toolbox convenience replacement.
-> Use `MCPStreamableHTTPTool` with `allowed_tools` for tool filtering.
+Preview-era Toolbox convenience helpers are not current APIs. Use the migration
+table above, move whole-Toolbox consumption to `FoundryToolbox`, and keep
+per-tool `FoundryChatClient` factories only for agents that intentionally
+attach one hosted tool rather than a Toolbox bundle.
 
 ### Pattern C — LangGraph
 
@@ -597,91 +545,78 @@ What to check:
 
 ---
 
-## Step 4 — Declarative deploy with `azd ai agent init`
+## Deploy with Azure Developer CLI
 
-Skip the SDK / REST create call entirely — declare toolboxes + connections
-in `agent.yaml` and let `azd` handle provisioning, secret injection, and
-container deployment. See `foundry-hosted-agents` SKILL § "azure.yaml (azd
-ai agent Extension)" for the full scaffold.
+| Component | Minimum/pin | Status |
+|---|---|---|
+| Azure Developer CLI | `azd >= 1.27.0` | GA CLI |
+| `azure.ai.toolboxes` extension | `1.0.0-beta.2` | Beta extension calling the GA Toolbox API |
 
-```yaml
-# agent.yaml — manifest directory
-name: my-toolbox-agent
-description: MAF agent wired for Foundry toolbox.
-metadata:
-  tags: ["AI Agent Hosting", "MAF"]
-template:
-  kind: hosted
-  protocols:
-    - protocol: responses
-      version: 1.0.0
-  environment_variables:
-    # FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_AGENT_TOOLBOX_* are
-    # injected automatically by the platform — do NOT declare them here
-    # (Trap 4: FOUNDRY_* is reserved).
-    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-      value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-5.4}
-    - name: TOOLBOX_NAME
-      value: ${TOOLBOX_NAME=agent-tools}
+Source: [`azure.ai.toolboxes` release
+history](https://github.com/Azure/azure-dev/blob/main/cli/azd/extensions/azure.ai.toolboxes/CHANGELOG.md).
 
-parameters:
-  github_pat:
-    secret: true
-    description: GitHub PAT for the GitHub MCP connection
-
-resources:
-  - kind: connection
-    name: github-mcp-conn
-    target: https://api.githubcopilot.com/mcp
-    category: RemoteTool
-    authType: CustomKeys
-    credentials:
-      keys:
-        Authorization: "Bearer {{ github_pat }}"
-
-  - kind: toolbox
-    name: agent-tools
-    description: Web search + GitHub MCP
-    tools:
-      - type: web_search
-      - type: mcp
-        server_label: github
-        server_url: https://api.githubcopilot.com/mcp
-        project_connection_id: github-mcp-conn
-        require_approval: never
-```
-
-Deploy:
+Install the bounded extension:
 
 ```bash
-# 1. Manifest dir contains agent.yaml + main.py + Dockerfile + requirements.txt
-mkdir my-agent/manifest
-# ... copy files ...
-
-# 2. Init — `-m` REQUIRED; do NOT use --no-prompt (Trap: empties {{ param }} secrets)
-cd my-agent
-PROJECT_ID="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<acct>/projects/<proj>"
-azd ai agent init -m manifest/ --project-id $PROJECT_ID -e dev
-# ↑ prompts for github_pat HERE — only safe time to provide secrets
-
-# 3. Required env flags
-azd env set enableHostedAgentVNext "true" -e dev
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-5.4" -e dev
-
-# 4. Provision (creates connections via Bicep)
-azd provision -e dev
-
-# 5. Deploy (creates toolbox versions, container image, agent)
-azd deploy -e dev
-
-# 6. Smoke test
-azd ai agent invoke --new-session "What tools do you have?" --timeout 120
+azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
 ```
 
-> **`-m` is required.** Without it, `azd ai agent init` errors out. `-m`
-> can point to a specific `agent.yaml` file or a folder containing one;
-> all files in the manifest dir get copied verbatim into
-> `src/<agent-name>/`.
+Version `1.0.0-beta.2` no longer sends the retired
+`Foundry-Features: Toolboxes=V1Preview` header.
+
+### Canonical azd service target
+
+Declare a Toolbox as its own `host: azure.ai.toolbox` service. The service key
+is the Toolbox name. Each `azd up` or `azd deploy` creates a new immutable
+version and publishes its MCP endpoint to the active azd environment.
+
+```yaml
+# azure.yaml
+name: toolbox-app
+services:
+  ai-project:
+    host: azure.ai.project
+
+  agent-tools:
+    host: azure.ai.toolbox
+    uses:
+      - ai-project
+    description: Shared tools for hosted agents.
+    tools:
+      - type: web_search
+      - type: code_interpreter
+```
+
+```bash
+azd up
+# Later, after changing the Toolbox service:
+azd deploy agent-tools
+```
+
+### Standalone CLI against an existing project
+
+For imperative management, the input file contains `description`,
+`connections`, `skills`, `tools`, and optional `policies`; it is not an Agent
+manifest and therefore has no `kind: toolbox` field.
+
+```yaml
+# toolbox.yaml
+description: Shared tools for hosted agents.
+tools:
+  - type: web_search
+  - type: code_interpreter
+```
+
+```bash
+azd ai toolbox create agent-tools \
+  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
+  --from-file ./toolbox.yaml
+```
+
+> **Do not conflate manifest shapes:** `host: azure.ai.toolbox` is the canonical
+> `azure.yaml` service target. `toolbox.yaml` above is the standalone
+> `azd ai toolbox create --from-file` input. A `kind: toolbox` block belongs to
+> the separate Agent manifest path and is not interchangeable with either.
 
 ---
 
@@ -737,6 +672,87 @@ Numeric version strings are returned and rendered under
 
 ---
 
+## Tool Search (preview)
+
+Tool Search is a preview capability inside the GA Toolbox resource. Add
+`ToolboxSearchPreviewToolboxTool()` to activate it:
+
+```python
+from azure.ai.projects.models import (
+    MCPToolboxTool,
+    ToolboxSearchPreviewToolboxTool,
+    ToolConfig,
+)
+
+tools = [
+    ToolboxSearchPreviewToolboxTool(),
+    MCPToolboxTool(
+        server_label="analytics",
+        server_url="https://analytics.example.com/mcp",
+        tool_configs={
+            "execute_query": ToolConfig(pin=True),
+            "list_tables": ToolConfig(
+                additional_search_text=(
+                    "schema columns metadata table structure discover"
+                ),
+            ),
+        },
+    ),
+]
+```
+
+When enabled, the initial tool list exposes `tool_search` and `call_tool`
+instead of every full schema. Instruct the model to search for the capability
+it needs and then call the discovered tool. Pin critical tools with
+`ToolConfig(pin=True)`; add `additional_search_text` when tool descriptions do
+not match user vocabulary.
+
+Microsoft showed one side-by-side trace with 467 input tokens versus roughly
+4,700 without Tool Search, a 90.1% arithmetic reduction for that trace. Treat
+this as an illustrative demo, not a benchmark, SLA, quality guarantee, or
+universal savings claim. Source:
+[Tokenomics - The new AI currency and your options
+explained](https://techcommunity.microsoft.com/blog/microsoftmechanicsblog/tokenomics--the-new-ai-currency--your-options-explained/4535040).
+
+### Preview Prompt Agent bridge
+
+Prompt Agents do not yet accept a Toolbox resource directly. For preview-only
+Prompt Agent scenarios, expose the versioned Toolbox endpoint as an `MCPTool`
+and pass one short-lived `https://ai.azure.com/.default` token. This is a
+structural excerpt that uses the `toolbox_version` returned by the preceding
+create call; the full create/invoke/delete lifecycle is in the
+[official Toolbox sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/agents/tools/sample_toolboxes_with_search_preview.py):
+
+```python
+import os
+
+from azure.ai.projects.models import MCPTool
+from azure.identity import DefaultAzureCredential
+
+project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
+toolbox_mcp_url = (
+    f"{project_endpoint}/toolboxes/{toolbox_version.name}"
+    f"/versions/{toolbox_version.version}/mcp?api-version=v1"
+)
+with DefaultAzureCredential() as credential:
+    token = credential.get_token("https://ai.azure.com/.default").token
+    toolbox_mcp = MCPTool(
+        server_label="agent-tools",
+        server_url=toolbox_mcp_url,
+        authorization=token,
+        require_approval="never",
+    )
+```
+
+Do not copy that static-token bridge into long-running hosted MAF agents. Use
+`FoundryToolbox` there so each outbound request obtains a fresh token.
+
+The inspected 2.3.0 generated models serialize these constructors as
+`{"pin": true}` and `{"additional_search_text": "..."}`. Keep the typed
+`ToolConfig` objects; do not replace them with untyped dictionaries.
+
+---
+
 ## MCP auth flavors (deeper)
 
 The toolbox uses Foundry's connection registry to resolve MCP credentials.
@@ -753,14 +769,9 @@ Pick the connection `authType` that matches your MCP server.
   credentials:
     keys:
       Authorization: "Bearer {{ mcp_api_key }}"
-- kind: toolbox
-  name: tools
-  tools:
-    - type: mcp
-      server_label: myserver
-      server_url: https://your-mcp-server.example.com
-      project_connection_id: mcp-conn
 ```
+
+Reference `mcp-conn` from the matching `MCPToolboxTool`.
 
 ### OAuth — managed connector (Foundry Tools Catalog)
 
@@ -771,13 +782,9 @@ Pick the connection `authType` that matches your MCP server.
   authType: OAuth2
   target: https://api.githubcopilot.com/mcp
   connectorName: foundrygithubmcp     # name from Foundry Tools Catalog
-- kind: toolbox
-  name: oauth-tools
-  tools:
-    - type: mcp
-      server_label: github
-      project_connection_id: github-oauth-conn
 ```
+
+Reference `github-oauth-conn` from the matching `MCPToolboxTool`.
 
 ### OAuth — custom app registration (BYO)
 
@@ -835,12 +842,11 @@ files):
 > complete the OAuth flow, then retry. Subsequent calls succeed
 > silently.
 
-### ARM REST equivalents (when not using `azd ai agent init`)
+### ARM REST equivalents for connection resources
 
-Everything above is the **declarative DSL** that `azd ai agent init` /
-`azd ai agent provision` consumes. When you provision the same
-`RemoteTool` connection imperatively (ARM REST PUT, Bicep, or any
-non-azd path — common in BYOC / Bicep-only pilots), the ARM API
+Everything above uses the declarative connection-resource DSL. When you
+provision the same `RemoteTool` connection imperatively (ARM REST PUT, Bicep,
+or any non-azd path — common in BYOC / Bicep-only pilots), the ARM API
 **rejects** `authType: AgenticIdentity` AND `authType: AAD` with:
 
 ```
@@ -898,7 +904,7 @@ PMI to `https://search.azure.com/.default`.
 
 > **Cross-skill ownership note:** For producing a KB-MCP server on ACA, see `foundry-mcp-aca`. For consuming a KB via the IQ-style pattern, see `foundry-iq`. **THIS SKILL covers the toolbox WRAPPER pattern for a KB-MCP** — i.e. exposing it as a managed multi-tool through the toolbox endpoint.
 
-**Declarative example (azd ai agent init):**
+**Declarative connection excerpt:**
 
 ```yaml
 - kind: connection
@@ -907,21 +913,16 @@ PMI to `https://search.azure.com/.default`.
   authType: AgenticIdentity
   audience: https://search.azure.com
   target: https://<search>.search.windows.net/knowledgebases/<kb-name>/mcp?api-version=2025-11-01-preview
-- kind: toolbox
-  name: tools
-  tools:
-    - type: mcp
-      server_label: kb
-      project_connection_id: kb-mcp
 ```
 
-The trade-off: extra hop through Toolbox, inherits the `ping` trap, but
-the Toolbox handles centralized token refresh. See `foundry-iq` SKILL §
-"KB access from a hosted MAF agent — three routes" for the direct-wire alternative.
+Pass `kb-mcp` as the `project_connection_id` of an `MCPToolboxTool`. The
+trade-off is an extra hop through Toolbox, while the Toolbox handles
+centralized token refresh. See `foundry-iq` SKILL § "KB access from a hosted
+MAF agent — three routes" for the direct-wire alternative.
 
-**Imperative provisioning (ARM REST + SDK):** When `azd ai agent init`'s
-declarative pipeline is not available (Bicep-only / IaC-only pilots),
-provision the connection via ARM REST and the toolbox via the SDK:
+**Imperative provisioning (ARM REST + SDK):** When the declarative connection
+pipeline is not available (Bicep-only / IaC-only pilots), provision the
+connection via ARM REST and the Toolbox via the SDK:
 
 ```python
 import os
@@ -1085,10 +1086,14 @@ discover early during design (`threadlight-design` SPEC § 7c).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `server_error` on every invoke, hosted MAF agent | `MCPStreamableHTTPTool._ensure_connected()` ping (Trap 1) | Override `_ensure_connected` with no-op (see Trap 1) |
-| `500` on agent startup | Client called `prompts/list` (Trap 2) | `load_prompts=False` |
-| `500` on `tools/call` with no streaming | `stream=False` (Trap 3) | Use `stream=True` (default) |
-| Custom env var disappeared at runtime | `FOUNDRY_*` reserved (Trap 4) | Rename to `TOOLBOX_*` |
+| `server_error` on every hosted MAF invoke | Preview-era custom Toolbox MCP wrapper still probes `ping` | Use `FoundryToolbox`; it treats MCP method-not-found from `ping` as a supported capability boundary |
+| `500` on agent startup | Direct MCP client called `prompts/list` against a tools-only server | Set `load_prompts=False` |
+| `500` on `tools/call` with no streaming | Direct MCP client set `stream=False` | Keep Streamable HTTP tool calls in streaming mode |
+| Custom env var disappeared at runtime | Hosted Foundry reserves the `FOUNDRY_*` prefix | Rename custom values to `TOOLBOX_*` |
+| `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.3 | Use `project.toolboxes` |
+| Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
+| `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
+| Only `tool_search` and `call_tool` are listed | Tool Search preview is active | Search first, then call the discovered tool; pin critical tools |
 | `tools/list` returns 0 tools (MCP / A2A) | Bad connection creds, missing `audience`, MI lacks RBAC | Verify `project_connection_id` exists; `UserEntraToken` / `AgenticIdentity` need `audience`; check RBAC on target |
 | `tools/list` returns 0 tools (OpenAPI) | Malformed OpenAPI spec | Validate spec is OpenAPI 3.0 / 3.1 with `paths`, `operationId`, parameter schemas |
 | `tools/list` returns 0 tools (built-in) | Toolbox not provisioned yet, or tool unsupported in region | Wait 10s and retry; check region compatibility table |
@@ -1096,7 +1101,6 @@ discover early during design (`threadlight-design` SPEC § 7c).
 | `400 Multiple tools without identifiers` | Two unnamed instances of same type | Add unique `name` field |
 | `CONSENT_REQUIRED` (`-32006`) | First-time OAuth flow | Open URL from `error.message`, complete consent, retry |
 | `401` on MCP calls | Expired token or wrong scope | Use `https://ai.azure.com/.default`; refresh token |
-| `400` / `404` with no detail | Missing `Foundry-Features: Toolboxes=V1Preview` header | Add the header to every request |
 | Tool name not found | MCP names are prefixed with `server_label` | Use `{server_label}.{tool_name}` (or `_` for Copilot SDK) |
 | `--no-prompt` left `{{ param }}` empty | `azd ai agent init --no-prompt` skips secret prompts | Re-run init WITHOUT `--no-prompt`; supply secrets interactively |
 
@@ -1104,25 +1108,26 @@ discover early during design (`threadlight-design` SPEC § 7c).
 
 ## Cross-skill references
 
-| If you need to… | Go to |
+| If you need to... | Go to |
 |---|---|
-| Build a custom MCP server, then bundle it into a toolbox | `foundry-mcp-aca` (build) → wire into `kind: toolbox` (this skill) |
-| Wire a hosted MAF agent (runtime, RBAC, identity, SkillsProvider) | `foundry-hosted-agents` |
-| Use `MCPStreamableHTTPTool + header_provider` (per-call AAD) | `foundry-hosted-agents` § "MCP with per-call AAD bearer" |
-| Understand the MCP `ping` trap broadly | `foundry-hosted-agents` § "MCP `ping` trap on Foundry-hosted MCP servers" |
-| Get KB-grade RAG (planning, multi-hop, citations) | `foundry-iq` (NOT Toolbox `azure_ai_search`) |
-| Wrap a KB MCP behind a Toolbox | `foundry-iq` § Common Errors (`/knowledgebases/<n>/mcp` rows) + this skill § "azure_ai_search — INDEX, not KB" |
-| Deploy with `azd ai agent` extension | `foundry-hosted-agents` § azure.yaml (azd ai agent Extension) |
-| Compose toolbox into a full Threadlight pipeline | `threadlight-deploy` § Foundry Toolbox Setup (uses this skill as the deep dive) |
-| Network-isolated deploy (VNet) | `foundry-vnet-deploy` (and check the VNet matrix above for `file_search` gap) |
-| HITL approval gating UI | `threadlight-hitl-patterns` |
-| Vision / DocIntel / Speech tools wrapped via Toolbox | `foundry-doc-vision-speech` patterns + `openapi` or `mcp` tool type |
+| Build a custom MCP server, then add it to a Toolbox | `foundry-mcp-aca` for the server, then this skill's `host: azure.ai.toolbox` or `MCPToolboxTool` path |
+| Deploy and operate the hosted MAF agent runtime | `foundry-hosted-agents`; use this skill's `FoundryToolbox` reference for the Toolbox consumer |
+| Get KB-grade RAG with planning, multi-hop retrieval, and citations | `foundry-iq` (not Toolbox `azure_ai_search`) |
+| Wrap a knowledge-base MCP endpoint behind a Toolbox | `foundry-iq` for the KB endpoint, then this skill's `MCPToolboxTool` connection pattern |
+| Apply shared `azd` hooks, Bicep, and environment conventions | `azd-patterns`; the Toolbox service itself remains `host: azure.ai.toolbox` |
+| Deploy behind private networking | `foundry-vnet-deploy`, then check this skill's per-tool VNet matrix |
+| Add human approval UX around tool execution | [`threadlight-hitl-patterns`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns) |
+| Wrap Vision, Document Intelligence, or Speech behind a Toolbox | `foundry-doc-vision-speech` plus this skill's `openapi` or `mcp` tool model |
 
 ---
 
 ## Catalog history
 
-- `1.0.0` — initial skill. Covers all 7 tool types, the 4 silent traps,
+- `2.0.0` - migrated the core Toolbox contract to GA:
+  `AIProjectClient.toolboxes`, Toolbox-specific SDK models, no preview feature
+  header, `FoundryToolbox` consumption, and an explicit preview boundary for
+  Tool Search and preview-only tool types.
+- `1.0.0` — initial skill. Covers all 7 tool types, preview-era MCP compatibility guidance,
   MAF / LangGraph / Copilot SDK / azd wire-up, versioning workflow, MCP
   auth flavors, VNet matrix, and cross-references to existing
   `foundry-hosted-agents` and `foundry-iq` Toolbox callouts.

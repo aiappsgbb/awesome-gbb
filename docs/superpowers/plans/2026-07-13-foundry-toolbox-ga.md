@@ -1687,9 +1687,15 @@ Keep the extension labeled beta even though it now calls the GA Toolbox API.
 
 - [ ] **Step 6: Update troubleshooting**
 
-Delete the row that says a generic `400` or `404` means the preview header is missing. Add:
+Delete the row that says a generic `400` or `404` means the preview header is
+missing. Replace the first four dangling Trap rows with these self-contained
+rows, then add the four new rows:
 
 ```markdown
+| `server_error` on every hosted MAF invoke | Preview-era custom Toolbox MCP wrapper still probes `ping` | Use `FoundryToolbox`; it treats MCP method-not-found from `ping` as a supported capability boundary |
+| `500` on agent startup | Direct MCP client called `prompts/list` against a tools-only server | Set `load_prompts=False` |
+| `500` on `tools/call` with no streaming | Direct MCP client set `stream=False` | Keep Streamable HTTP tool calls in streaming mode |
+| Custom env var disappeared at runtime | Hosted Foundry reserves the `FOUNDRY_*` prefix | Rename custom values to `TOOLBOX_*` |
 | `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.3 | Use `project.toolboxes` |
 | Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
 | `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
@@ -1723,6 +1729,10 @@ Prepend:
   header, `FoundryToolbox` consumption, and an explicit preview boundary for
   Tool Search and preview-only tool types.
 ```
+
+Also replace the old `1.0.0` history phrase `the 4 silent traps` with
+`preview-era MCP compatibility guidance` so it no longer names a deleted
+section.
 
 - [ ] **Step 9: Run the source-of-truth and migration scans**
 
