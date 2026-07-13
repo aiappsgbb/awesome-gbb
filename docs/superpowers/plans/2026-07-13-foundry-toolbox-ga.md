@@ -343,7 +343,7 @@ git add skills/foundry-toolbox/references/upstream-pin.md
 git commit \
   -m "foundry-toolbox: pin GA Toolbox SDK contract" \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 - [ ] **Step 9: Re-run the official changed-pin runner**
@@ -521,7 +521,7 @@ git add skills/foundry-toolbox/references/python/toolbox_wiring.py
 git commit \
   -m "foundry-toolbox: migrate canonical wiring to FoundryToolbox" \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 ---
@@ -869,7 +869,7 @@ git add skills/foundry-toolbox/test-fixture/consumer_prompt.md
 git commit \
   -m "foundry-toolbox: test stable Toolbox CRUD and consumption" \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 ---
@@ -1158,7 +1158,7 @@ git commit \
   -m "foundry-toolbox: migrate GA contract (MAJOR) [skill-rewrite]" \
   -m "Catalog plugin: 4.27.0 -> 4.28.0 (MINOR)." \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 ---
@@ -1460,7 +1460,7 @@ git add skills/foundry-toolbox/SKILL.md
 git commit \
   -m "foundry-toolbox: migrate management examples to stable SDK [skill-rewrite]" \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 ---
@@ -1793,7 +1793,7 @@ git add skills/foundry-toolbox/SKILL.md
 git commit \
   -m "foundry-toolbox: document GA consumption and preview Tool Search [skill-rewrite]" \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 ---
@@ -1853,7 +1853,7 @@ git add README.md docs/
 git commit \
   -m "catalog: publish foundry-toolbox GA documentation" \
   -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
-  -m "Copilot-Session: b8ba4803-ab93-424f-a812-94b4d7c70841"
+  -m "Copilot-Session: <copilot-session-id>"
 ```
 
 ---
@@ -1867,8 +1867,9 @@ git commit \
 
 Run the Task 1 Step 4 command again.
 
-Expected: exit `0`. Any remaining obsolete token is prose-only migration,
-status, or closed-issue history, never fixture/reference/canonical code.
+Expected: exit `0`. Every token in the probe's explicit `(token, text)` pairs
+is absent from its scoped fenced skill code, fixture, or canonical reference.
+Step 6 separately classifies legacy-name residue outside those exact scopes.
 
 - [ ] **Step 2: Run T0 and structural validation**
 
@@ -1947,9 +1948,11 @@ rg -n \
   skills/foundry-toolbox README.md
 ```
 
-Expected: intentional matches remain only in `SKILL.md` migration/status prose
-and the pin's closed KI/removal probe. There must be no match in the fixture,
-canonical Python reference, README row, or fenced canonical code.
+Expected: intentional matches remain only in `SKILL.md` migration/status prose,
+the pin's closed KI/removal probe, and exactly one prose-only negative guard in
+the fixture saying not to use `create_toolbox_version`. That fixture guard must
+be outside executable fenced code. No legacy token may appear in any other
+fixture text, canonical Python reference, README row, or fenced canonical code.
 
 - [ ] **Step 7: Confirm no second skill source changed**
 
