@@ -1687,9 +1687,10 @@ Keep the extension labeled beta even though it now calls the GA Toolbox API.
 
 - [ ] **Step 6: Update troubleshooting**
 
-Delete the row that says a generic `400` or `404` means the preview header is
-missing. Replace the first four dangling Trap rows with these self-contained
-rows, then add the four new rows:
+Delete both the row that says a generic `400` or `404` means the preview header
+is missing and the orphaned `azd ai agent init --no-prompt` row. Replace the
+first four dangling Trap rows with these self-contained rows, then add the four
+new rows:
 
 ```markdown
 | `server_error` on every hosted MAF invoke | Preview-era custom Toolbox MCP wrapper still probes `ping` | Use `FoundryToolbox`; it treats MCP method-not-found from `ping` as a supported capability boundary |

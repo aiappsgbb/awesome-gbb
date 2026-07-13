@@ -341,7 +341,7 @@ rebuild `FoundryToolbox` authentication for a Toolbox endpoint.
 
 > **MUST:** Always pass `parse_tool_results=` when using `MCPStreamableHTTPTool`. Without it, the agent sees raw MCP JSON instead of text content, causing confabulated responses.
 
-> **MUST:** Use [`references/python/mcp_text_extractor.py`](references/python/mcp_text_extractor.py) as the canonical extractor (exports `extract_mcp_text` and the backward-compat alias `_mcp_text_extractor`). Do NOT redefine inline — the validator enforces single-source-of-truth.
+> **MUST:** Use [`references/python/mcp_text_extractor.py`](references/python/mcp_text_extractor.py) as the canonical extractor (exports `extract_mcp_text`). Do NOT redefine inline — the validator enforces single-source-of-truth.
 >
 ```python
 from references.python.mcp_text_extractor import extract_mcp_text
@@ -424,7 +424,7 @@ Why this works without extra plumbing:
   bearer token, no API key, no rate-limit ceiling for casual usage.
 - **ACA egress is open by default** — no `egressPolicies` required for
   `*.microsoft.com` in standard ACA environments.
-- **`parse_tool_results=_mcp_text_extractor` is mandatory** to surface the
+- **`parse_tool_results=extract_mcp_text` is mandatory** to surface the
   Learn knowledge service's text payloads cleanly — without it, the model
   sees the raw `{"content": [...]}` envelope and citation quality collapses.
 
@@ -1060,7 +1060,8 @@ In MAF / LangGraph, query at startup, build the approval map, then either:
 - inject a system-prompt constraint listing the tools that require user
   confirmation, OR
 - use a tool-execution interceptor that pauses for human approval (see
-  `threadlight-hitl-patterns` SKILL for the Adaptive Card 1.5 wrapper)
+  [`threadlight-hitl-patterns`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns)
+  for the Adaptive Card 1.5 wrapper)
 
 ---
 
@@ -1078,7 +1079,9 @@ In MAF / LangGraph, query at startup, build the approval map, then either:
 
 Pair this with `foundry-vnet-deploy` SKILL when the customer mandates
 network isolation. The `file_search` gap is the most common gotcha —
-discover early during design (`threadlight-design` SPEC § 7c).
+discover early during design
+([`threadlight-design`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design)
+SPEC § 7c).
 
 ---
 
@@ -1102,7 +1105,6 @@ discover early during design (`threadlight-design` SPEC § 7c).
 | `CONSENT_REQUIRED` (`-32006`) | First-time OAuth flow | Open URL from `error.message`, complete consent, retry |
 | `401` on MCP calls | Expired token or wrong scope | Use `https://ai.azure.com/.default`; refresh token |
 | Tool name not found | MCP names are prefixed with `server_label` | Use `{server_label}.{tool_name}` (or `_` for Copilot SDK) |
-| `--no-prompt` left `{{ param }}` empty | `azd ai agent init --no-prompt` skips secret prompts | Re-run init WITHOUT `--no-prompt`; supply secrets interactively |
 
 ---
 
