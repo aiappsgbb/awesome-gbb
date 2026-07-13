@@ -249,62 +249,64 @@ When integrating tools into a toolbox or wiring them to an agent, watch for thes
 Python SDK (azure-ai-projects):
 
 ```python
-from azure.identity import DefaultAzureCredential
+import os
+
 from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import MCPTool, WebSearchTool, AzureAISearchTool
-
-project = AIProjectClient(
-    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    credential=DefaultAzureCredential(),
+from azure.ai.projects.models import (
+    AzureAISearchToolResource,
+    AzureAISearchToolboxTool,
+    MCPToolboxTool,
+    WebSearchToolboxTool,
 )
+from azure.identity import DefaultAzureCredential
 
-toolbox_version = project.beta.toolboxes.create_version(
-    name="agent-tools",
-    description="Web search + product index + GitHub MCP",
-    tools=[
-        WebSearchTool(),
-        AzureAISearchTool(
-            index_name="products",
-            project_connection_id="aisearch-conn",
-        ),
-        MCPTool(
-            server_label="github",
-            server_url="https://api.githubcopilot.com/mcp",
-            require_approval="never",
-            project_connection_id="github-mcp-conn",
-        ),
-    ],
-)
-print(f"Created {toolbox_version.name} v{toolbox_version.version}")
+with (
+    DefaultAzureCredential() as credential,
+    AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=credential,
+    ) as project,
+):
+    toolbox_version = project.toolboxes.create_version(
+        name="agent-tools",
+        description="Web search + product index + Microsoft Learn MCP",
+        tools=[
+            WebSearchToolboxTool(),
+            AzureAISearchToolboxTool(
+                azure_ai_search=AzureAISearchToolResource(
+                    index_name="products",
+                    project_connection_id="aisearch-conn",
+                ),
+            ),
+            MCPToolboxTool(
+                server_label="mslearn",
+                server_url="https://learn.microsoft.com/api/mcp",
+                require_approval="never",
+            ),
+        ],
+    )
+    print(
+        f"Created {toolbox_version.name} "
+        f"version {toolbox_version.version}"
+    )
 ```
 
-> **SDK signature note:** the actual method on `azure-ai-projects` 2.1.0
-> is `client.beta.toolboxes.create_version(name=..., tools=[...])`. The
-> Microsoft Learn doc shows `create_toolbox_version(toolbox_name=...)` —
-> that's an older name kept in some samples. The SDK exposes
-> `create_version`, `get`, `list`, `delete`, `update`, `get_version`,
-> `list_versions`, and `delete_version` on `client.beta.toolboxes`.
+`project.toolboxes` exposes `create_version`, `get`, `list`, `delete`,
+`update`, `get_version`, `list_versions`, `delete_version`; stable management
+does not require `allow_preview=True`.
 
-> **Current API matrix (validated 2026-05-28):**
+> **Current API matrix (validated 2026-07-13):**
 >
 > | Package | Validated version | Notes |
 > |---|---|---|
-> | agent-framework-core | 1.7.0 | MAF core runtime |
-> | agent-framework-foundry | 1.7.0 | Foundry integration; 1.3.0+ removed `get_toolbox()` |
-> | agent-framework-foundry-hosting | 1.0.0a260521 | Alpha; ResponsesHostServer (contains May-2026 fixes) |
-> | azure-ai-projects | latest GA | SDK toolbox CRUD methods |
-> | mcp | 1.10+ | Streamable HTTP transport |
-> | httpx | latest | HTTP client for auth flow |
-> | Pre-1.6 agent-framework versions | **legacy — not validated for current pilots** | Migrate to 1.6.0+ for production |
+> | azure-ai-projects | 2.3.0 | Stable Toolbox management and Toolbox models |
+> | agent-framework | 1.11.0 | Agent, chat client, and direct MCP composition |
+> | agent-framework-foundry-hosting | 1.0.0a260709 | High-level FoundryToolbox consumer |
+> | mcp | 1.28.1 | Streamable HTTP MCP primitives |
 
-The first call creates the toolbox AND its `v1`, auto-promoted to
+The first call creates the toolbox AND version `1`, auto-promoted to
 default. Subsequent calls create new versions that stay un-promoted
 until you call `update(default_version=...)`.
-
-`AIProjectClient` must be constructed with **`allow_preview=True`** for
-the `client.get_openai_client(agent_name=...)` agent-scoped helper used
-in Pattern A below to be available; the toolbox CRUD methods on
-`client.beta.toolboxes` work without it.
 
 ---
 
@@ -345,7 +347,6 @@ token_provider = get_bearer_token_provider(
 )
 http_client = httpx.AsyncClient(
     auth=_ToolboxAuth(token_provider),
-    headers={"Foundry-Features": "Toolboxes=V1Preview"},  # 🔑 mandatory
     timeout=120.0,
 )
 
@@ -541,31 +542,41 @@ Before pointing an agent at a new version, sanity-check it with the raw
 MCP client. Use the **versioned endpoint** to validate before promoting:
 
 ```python
-import asyncio, os
+import asyncio
+import os
+
 from azure.identity import DefaultAzureCredential
-from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
-url = (
-    f"{os.environ['FOUNDRY_PROJECT_ENDPOINT']}/toolboxes/agent-tools"
-    f"/versions/v3/mcp?api-version=v1"
-)
-token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Foundry-Features": "Toolboxes=V1Preview",
-}
 
-async def verify():
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
+async def verify(url: str, headers: dict[str, str]) -> None:
+    async with streamablehttp_client(
+        url,
+        headers=headers,
+    ) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools_result = await session.list_tools()
             print(f"Tools found: {len(tools_result.tools)}")
-            for t in tools_result.tools:
-                print(f"  - {t.name}: {(t.description or '')[:80]}")
+            for toolbox_tool in tools_result.tools:
+                description = (toolbox_tool.description or "")[:80]
+                print(f"  - {toolbox_tool.name}: {description}")
 
-asyncio.run(verify())
+
+project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
+toolbox_version = "3"
+url = (
+    f"{project_endpoint}/toolboxes/agent-tools"
+    f"/versions/{toolbox_version}/mcp?api-version=v1"
+)
+
+with DefaultAzureCredential() as credential:
+    token = credential.get_token("https://ai.azure.com/.default").token
+    headers = {
+        "Authorization": " ".join(("Bearer", token)),
+    }
+    asyncio.run(verify(url, headers))
 ```
 
 What to check:
@@ -678,20 +689,20 @@ controls which version the consumer endpoint serves.
 ### Create + test + promote
 
 ```python
-# 1. Create new version (does NOT auto-promote, except for the very first)
-new_v = project.beta.toolboxes.create_version(
-    name="agent-tools",
-    description="v4 — added file_search",
-    tools=[...new_tool_list...],
+from azure.ai.projects.models import (
+    CodeInterpreterToolboxTool,
+    WebSearchToolboxTool,
 )
 
-# 2. Test against the version-specific endpoint (Step 3 verify pattern)
-#    OR run a staging agent with the version-specific URL
+new_version = project.toolboxes.create_version(
+    name="agent-tools",
+    description="Added code interpreter",
+    tools=[WebSearchToolboxTool(), CodeInterpreterToolboxTool()],
+)
 
-# 3. Promote — atomically updates default_version
-toolbox = project.beta.toolboxes.update(
-    toolbox_name="agent-tools",
-    default_version=new_v.version,
+toolbox = project.toolboxes.update(
+    name="agent-tools",
+    default_version=new_version.version,
 )
 print(f"Active: {toolbox.default_version}")
 ```
@@ -699,11 +710,7 @@ print(f"Active: {toolbox.default_version}")
 ### Rollback
 
 ```python
-# Promote a previous version back to default
-project.beta.toolboxes.update(
-    toolbox_name="agent-tools",
-    default_version="v2",
-)
+project.toolboxes.update(name="agent-tools", default_version="2")
 ```
 
 `default_version` cannot be empty — to "remove" a version, promote
@@ -712,12 +719,13 @@ something else first, then `delete_version` the unwanted one.
 ### List + delete
 
 ```python
-versions = list(project.beta.toolboxes.list_versions("agent-tools"))
-for v in versions:
-    print(f"{v.version}  created {v.created_at}")
-
-project.beta.toolboxes.delete_version("agent-tools", "v1")
+for version in project.toolboxes.list_versions("agent-tools"):
+    print(f"{version.version} created {version.created_at}")
+project.toolboxes.delete_version("agent-tools", "1")
 ```
+
+Numeric version strings are returned and rendered under
+`/versions/{version}`.
 
 > **`azd` only supports CREATE** during deployment. Use the SDK or REST
 > for list / get / promote / delete.
@@ -862,14 +870,11 @@ PUT /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServic
 }
 ```
 
-> **SDK split-ownership trap.** `azure-ai-projects==2.1.0` exposes
-> `client.beta.toolboxes.create_version / update / get / list / delete`
-> (✅ writeable) BUT `client.connections` is **read-only**
-> (`get / list / get_default` only — no `.create()`). So Toolbox can
-> be SDK-provisioned end-to-end, but the `RemoteTool` connection MUST
-> go via ARM REST PUT (above) or Bicep. This split is undocumented
-> upstream and reliably traps anyone porting an `azd ai agent init`
-> pilot to a Bicep-only / IaC-only deployment shape.
+> **SDK split ownership:** `azure-ai-projects` 2.3.0 provides writable
+> `project.toolboxes`, while `project.connections` remains read-only for
+> project connection discovery. Provision new `RemoteTool` connections with
+> Bicep or the documented ARM connection API, then reference the connection
+> ID from the Toolbox model.
 
 ---
 
@@ -914,40 +919,64 @@ declarative pipeline is not available (Bicep-only / IaC-only pilots),
 provision the connection via ARM REST and the toolbox via the SDK:
 
 ```python
-import os, requests
+import os
+
+import requests
 from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import MCPTool
+from azure.ai.projects.models import MCPToolboxTool
 from azure.identity import DefaultAzureCredential
 
-cred = DefaultAzureCredential()
-arm_token = cred.get_token("https://management.azure.com/.default").token
 
-# 1. Connection — ARM REST PUT (SDK client.connections is read-only)
-requests.put(
-    f"https://management.azure.com/subscriptions/{os.environ['SUB']}"
-    f"/resourceGroups/{os.environ['RG']}/providers"
-    f"/Microsoft.CognitiveServices/accounts/{os.environ['ACCT']}"
-    f"/projects/{os.environ['PROJ']}/connections/kb-mcp"
-    f"?api-version=2025-10-01-preview",
-    headers={"Authorization": f"Bearer {arm_token}",
-             "Content-Type": "application/json"},
-    json={"properties": {
-        "category": "RemoteTool",
-        "target": os.environ["KB_MCP_URL"],
-        "authType": "ProjectManagedIdentity",
-        "isSharedToAll": True,
-        "metadata": {"audience": "https://search.azure.com"},
-    }},
-).raise_for_status()
+with DefaultAzureCredential() as credential:
+    arm_token = credential.get_token(
+        "https://management.azure.com/.default"
+    ).token
+    connection_url = (
+        f"https://management.azure.com/subscriptions/{os.environ['SUB']}"
+        f"/resourceGroups/{os.environ['RG']}/providers"
+        f"/Microsoft.CognitiveServices/accounts/{os.environ['ACCT']}"
+        f"/projects/{os.environ['PROJ']}/connections/kb-mcp"
+        f"?api-version=2025-10-01-preview"
+    )
+    response = requests.put(
+        connection_url,
+        headers={
+            "Authorization": " ".join(("Bearer", arm_token)),
+            "Content-Type": "application/json",
+        },
+        json={
+            "properties": {
+                "category": "RemoteTool",
+                "target": os.environ["KB_MCP_URL"],
+                "authType": "ProjectManagedIdentity",
+                "isSharedToAll": True,
+                "metadata": {"audience": "https://search.azure.com"},
+            },
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
 
-# 2. Toolbox + version — SDK
-project = AIProjectClient(endpoint=os.environ["FOUNDRY_ENDPOINT"],
-                          credential=cred, allow_preview=True)
-project.beta.toolboxes.create_version(
-    name="agent-tools",
-    tools=[MCPTool(server_label="kb", project_connection_id="kb-mcp")],
-)
-project.beta.toolboxes.update(name="agent-tools", default_version=1)
+    with AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=credential,
+    ) as project:
+        connection = project.connections.get("kb-mcp")
+        toolbox_version = project.toolboxes.create_version(
+            name="agent-tools",
+            tools=[
+                MCPToolboxTool(
+                    server_label="kb",
+                    server_url=os.environ["KB_MCP_URL"],
+                    project_connection_id=connection.id,
+                    require_approval="never",
+                ),
+            ],
+        )
+        project.toolboxes.update(
+            name="agent-tools",
+            default_version=toolbox_version.version,
+        )
 ```
 
 Consumer endpoint the agent binds to:
