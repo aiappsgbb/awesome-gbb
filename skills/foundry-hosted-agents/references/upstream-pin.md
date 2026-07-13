@@ -11,15 +11,15 @@ upstream:
 packages:
   - name: agent-framework-core
     source: pypi
-    version: "1.10.0"
+    version: "1.11.0"
     upstream_changelog: https://pypi.org/project/agent-framework-core/#history
   - name: agent-framework-foundry
     source: pypi
-    version: "1.10.0"
+    version: "1.10.1"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0a260630"
+    version: "1.0.0a260709"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
     notes: |
       Alpha pre-release pinned EXACT per AGENTS.md § 9.5. PEP 440 treats
@@ -151,7 +151,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "agent-framework-core~=1.10.0" "agent-framework-foundry~=1.10.0" "agent-framework-foundry-hosting==1.0.0a260630" "azure-ai-projects~=2.3.0" "azure-identity~=1.25.3" "mcp~=1.28.1" "python-dotenv~=1.2.2"
+    pip install --quiet "agent-framework-core~=1.11.0" "agent-framework-foundry~=1.10.1" "agent-framework-foundry-hosting~=1.0.0a260709" "azure-ai-projects~=2.3.0" "azure-identity~=1.25.3" "mcp~=1.28.1" "python-dotenv~=1.2.2"
     python -c "
     from agent_framework import Agent, SkillsProvider, tool, MCPStreamableHTTPTool
     from agent_framework.foundry import FoundryChatClient
@@ -178,8 +178,8 @@ validation:
     - "ok microsoft-opentelemetry bundled via agentserver-core"
     - "ok opentelemetry-instrumentation-openai-v2 bundled"
 
-last_validated: 2026-07-03
-validated_by: unsafecode-fha-pin-refresh
+last_validated: 2026-07-13
+validated_by: copilot-bot
 known_issues_count: 8
 ---
 
