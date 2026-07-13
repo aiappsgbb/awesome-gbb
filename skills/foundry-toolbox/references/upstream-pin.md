@@ -17,7 +17,7 @@ packages:
       SKILL.md verifies client.beta.toolboxes.create_version and related methods on azure-ai-projects 2.1.0.
   - name: agent-framework
     source: pypi
-    version: "1.10.0"
+    version: "1.11.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       MAF surface used for MCPStreamableHTTPTool and hosted-agent toolbox consumption patterns.
@@ -54,7 +54,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.10.0" "mcp~=1.28.0"
+    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.11.0" "mcp~=1.28.0"
     python - <<'PY'
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import MCPTool, WebSearchTool, AzureAISearchTool
@@ -89,7 +89,7 @@ validation:
     - "ok select_toolbox_tools removed"
     - "ok skill_paths constructor removed"
 
-last_validated: 2026-07-04
+last_validated: 2026-07-13
 validated_by: copilot-bot
 known_issues_count: 1
 ---
