@@ -1,129 +1,108 @@
 ---
 name: foundry-toolbox
 description: >
-  Wire the Microsoft Foundry Toolbox into hosted agents — a managed
-  multi-tool bundle (mcp, web_search, azure_ai_search, code_interpreter,
-  file_search, openapi, a2a_preview) behind a single MCP endpoint with
-  centralized credentials, token refresh, and versioning. Documents the
-  mandatory `Foundry-Features: Toolboxes=V1Preview` header, the four
-  silent traps (ping, prompts/list, non-streaming tools/call, reserved
-  FOUNDRY_* env vars), the azure_ai_search-is-INDEX-not-KB nuance, and
-  the `azd ai agent init` declarative path with `kind: toolbox` +
-  `{{ param }}` secrets.
-  USE FOR: foundry toolbox, toolbox MCP endpoint, Foundry-Features
-  Toolboxes V1Preview, kind toolbox agent.yaml, project_connection_id,
-  toolbox version promote, multi-tool MCP endpoint, MCPStreamableHTTPTool,
-  AzureAIProjectToolbox.
-  DO NOT USE FOR: building MCP servers (use foundry-mcp-aca), KB-only
-  RAG (use foundry-iq), generic hosted-agent runtime (use
-  foundry-hosted-agents), cross-resource models (use
-  foundry-cross-resource).
+  Use Microsoft Foundry Toolbox GA to manage versioned multi-tool bundles
+  behind a single MCP endpoint and connect them to hosted agents. Covers
+  stable AIProjectClient.toolboxes CRUD, Toolbox-specific SDK models,
+  agent_framework_foundry_hosting.FoundryToolbox, authentication,
+  immutable-version promotion and rollback, the azd ai toolbox declarative
+  path, and preview Tool Search. Distinguishes the GA Toolbox core from
+  preview A2A, Work IQ, Fabric IQ, Browser Automation, Reminder, skills, and
+  Tool Search; explains that azure_ai_search wraps an index, not a Foundry IQ
+  knowledge base. USE FOR: foundry toolbox, toolbox MCP endpoint,
+  AIProjectClient toolboxes, FoundryToolbox, toolbox version promote,
+  multi-tool MCP endpoint, ToolboxSearchPreviewToolboxTool, kind toolbox,
+  host azure.ai.toolbox, toolbox.yaml. DO NOT USE FOR: building MCP servers
+  (use foundry-mcp-aca),
+  KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
+  foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "1.6.3"
-  validated: 2026-06-01
+  version: "2.0.0"
+  validated: 2026-07-13
 ---
 
-# Microsoft Foundry Toolbox — Reference Guide
+# Microsoft Foundry Toolbox GA - Reference Guide
 
-The **Foundry Toolbox** is a managed Foundry resource that bundles multiple
-tools (MCP servers, web search, AI Search indexes, code interpreter, file
-search, OpenAPI specs, agent-to-agent calls) behind a **single MCP
-endpoint** — agents connect to one URL, and the platform handles credential
-injection, token refresh, policy enforcement, and version pinning.
+The [Foundry Toolbox](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox)
+is a GA managed resource that bundles versioned tools behind one MCP endpoint.
+The platform centralizes connection references, credentials, token refresh,
+policy, and immutable-version promotion while the agent connects to one URL.
 
-Use this skill when an agent needs more than one tool, when you want to
-swap or reconfigure tools without redeploying the agent, or when you need
-the platform's centralized credential vault for OAuth/Entra/key auth.
-Wire-up patterns are documented for **MAF**, **LangGraph**, the **GitHub
-Copilot SDK**, and **`azd ai agent init`** declarative deployment.
+Use a Toolbox when an agent needs several managed tools, when tool composition
+must change without redeploying agent code, or when credentials belong in the
+Foundry project rather than the agent container. Stable management uses
+`AIProjectClient.toolboxes`. Preview capabilities, including
+[Tool Search](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search)
+and skills in Toolboxes, retain their preview support terms even though the
+parent Toolbox resource is GA.
+
+## Status boundary
+
+| Surface | Status | Canonical contract |
+|---|---|---|
+| Toolbox resource, versions, promotion, CRUD, and MCP `v1` endpoints | **GA** | `AIProjectClient.toolboxes`; no preview feature header |
+| MCP, Web Search, Azure AI Search, Code Interpreter, File Search, OpenAPI | **GA Toolbox tool types** | Toolbox-specific SDK model classes |
+| A2A, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
+| Tool Search and skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
+| `agent_framework_foundry_hosting.FoundryToolbox` | **Prerelease client package** | High-level consumer for the GA Toolbox MCP endpoint |
+| `azure.ai.toolboxes` azd extension `1.0.0-beta.2` | **Beta client extension** | Calls the GA service API without the removed header |
+
+Do not infer a subfeature's status from the Toolbox resource's GA status. A
+GA Toolbox can contain a preview tool, but that tool keeps its preview support
+and SLA terms.
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│           Foundry Project (managed namespace)                 │
-│                                                                │
-│  ┌──────────────────────────────────────────────────┐         │
-│  │  Toolbox: my-toolbox                             │         │
-│  │   ├─ default_version → v3                        │         │
-│  │   ├─ v1, v2, v3 (immutable ToolboxVersionObject) │         │
-│  │   └─ tools[]:                                    │         │
-│  │      ├─ web_search                               │         │
-│  │      ├─ azure_ai_search (INDEX, not KB)          │         │
-│  │      ├─ mcp (server_label, project_connection_id)│         │
-│  │      ├─ code_interpreter                         │         │
-│  │      ├─ file_search (vector_store_ids)           │         │
-│  │      ├─ openapi (spec + auth)                    │         │
-│  │      └─ a2a_preview (base_url + connection)      │         │
-│  └────────────────────┬─────────────────────────────┘         │
-│                       │                                        │
-│         exposed via:  │                                        │
-│   {project}/toolboxes/my-toolbox/mcp?api-version=v1            │
-│         (consumer endpoint — always serves default_version)    │
-│                       │                                        │
-│   {project}/toolboxes/my-toolbox/versions/v3/mcp?...           │
-│         (developer endpoint — pin a specific version)          │
-└───────────────────────┼────────────────────────────────────────┘
-                        │
-                        ▼  every request MUST carry:
-                  Authorization: Bearer <AAD token, scope https://ai.azure.com/.default>
-                  Foundry-Features: Toolboxes=V1Preview
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-   MAF Agent      LangGraph Agent   Copilot SDK Agent
-  (MCPStreamable  (AzureAIProject   (MCP bridge with
-   HTTPTool +      Toolbox          dots→underscores
-   httpx.Auth)     one-liner)       in tool names)
+Foundry project
+└── Toolbox: agent-tools
+    ├── default_version -> 3
+    ├── immutable versions: 1, 2, 3
+    ├── GA tool models
+    │   ├── MCPToolboxTool
+    │   ├── WebSearchToolboxTool
+    │   ├── AzureAISearchToolboxTool
+    │   ├── CodeInterpreterToolboxTool
+    │   ├── FileSearchToolboxTool
+    │   └── OpenApiToolboxTool
+    └── preview tool models
+        ├── A2APreviewToolboxTool
+        ├── WorkIQPreviewToolboxTool
+        ├── FabricIQPreviewToolboxTool
+        ├── BrowserAutomationPreviewToolboxTool
+        ├── ReminderPreviewToolboxTool
+        └── ToolboxSearchPreviewToolboxTool
+
+Version-specific MCP endpoint:
+  {project}/toolboxes/agent-tools/versions/3/mcp?api-version=v1
+
+Default-version MCP endpoint:
+  {project}/toolboxes/agent-tools/mcp?api-version=v1
+
+Every request:
+  Entra bearer token scoped to https://ai.azure.com/.default
+  No preview feature header
+
+Consumers:
+  Hosted MAF -> FoundryToolbox
+  Direct non-Toolbox MCP -> MCPStreamableHTTPTool
+  LangGraph / other frameworks -> authenticated Streamable HTTP MCP client
+  Prompt Agent Tool Search -> preview MCPTool bridge
 ```
 
----
+## Consumption boundary
 
-## ⚠️ Toolbox is for code-based agents only (no Prompt / Declarative wiring)
+The GA Toolbox resource exposes authenticated Streamable HTTP MCP endpoints; it
+is not itself an Agent `tools[].type`. Use the consumer that matches the host:
 
-> **Verified end-to-end against a live Foundry project (May 2026):**
-> Toolboxes are consumed by an **MCP client running inside the agent's
-> code** — MAF (`MCPStreamableHTTPTool`), LangGraph (`AzureAIProjectToolbox`),
-> Copilot SDK (custom `McpBridge`), or any framework that speaks
-> Streamable-HTTP MCP. **There is no declarative `tools=[{type: "toolbox",
-> toolbox_name: ...}]` shape on a Foundry Prompt agent.** The Foundry agent
-> runtime accepts only this fixed list of `tools[].type` values:
-> `code_interpreter`, `function`, `namespace`, `tool_search`, `file_search`,
-> `web_search_preview`, `web_search_preview_2025_03_11`, `image_generation`,
-> `mcp`, `custom`, `computer`, `computer_use_preview`, `shell`, `apply_patch`.
-> No `toolbox` type.
+| Host | Toolbox consumer | Status |
+|---|---|---|
+| Hosted Microsoft Agent Framework code | `FoundryToolbox` in the Agent `tools` list | GA Toolbox path through a prerelease hosting wrapper |
+| LangGraph or another code framework | Its authenticated Streamable HTTP MCP client | Framework-specific |
+| Prompt Agent | `MCPTool` pointing at the Toolbox endpoint with Tool Search enabled | Tool Search preview |
 
-Why this matters: a Prompt agent can wire *individual* tools (code_interpreter,
-mcp pointing at a server, etc.) directly via its `tools` array, but it
-**cannot** delegate the bundle-of-tools fan-out to a toolbox endpoint at
-the runtime layer. The bundling lives one layer up — in the agent's code.
-
-What about wiring `tools=[{type: "mcp", server_url: <toolbox_mcp_endpoint>}]`?
-**Don't.** It passes shape validation at create time, but at invoke time
-the agent runtime calls the toolbox MCP endpoint **without** any `Authorization`
-header (no project-managed-identity injection), so it gets `401
-PermissionDenied` from the toolbox endpoint regardless of what RBAC you
-grant the agent's `instance_identity`. Toolboxes need an MCP client that
-mints its own bearer token per request — exactly what
-`MCPStreamableHTTPTool` + `httpx.Auth` does in Pattern A below.
-
-Other dead ends ruled out by direct testing (May 2026):
-
-- `type: "namespace"` — exists, but `tools[]` inside a namespace only
-  accepts `function` and `custom` types. It's a way to group developer
-  functions, not a wrapper for toolboxes.
-- `type: "tool_search"` — newer OpenAI feature unsupported on
-  `gpt-4.1-mini` and has no `toolbox_name` / `namespaces` / `sources` /
-  `toolboxes` fields. It's not the toolbox consumer.
-- `type: "mcp"` + `project_connection_id` — the runtime DOES resolve the
-  connection (proven via a deliberate "not found" error path), but
-  toolbox endpoints require a fresh AAD bearer per request. Foundry
-  connections that hold static API keys can't authenticate to a toolbox
-  endpoint, so this path is blocked at the auth layer.
-
-If you want a Prompt-only agent (no code container) and you need just one
-or two tools, wire those tools directly into the Prompt agent's `tools`
-array — skip the toolbox abstraction entirely.
-
----
+Do not invent `tools=[{"type": "toolbox"}]`; that Agent tool type does not
+exist. A Prompt Agent can use the documented Tool Search preview bridge, where
+the Toolbox endpoint exposes only `tool_search` and `call_tool`. For stable
+hosted production composition, use `FoundryToolbox` in code.
 
 ## When to use Toolbox vs alternatives
 
@@ -141,19 +120,24 @@ array — skip the toolbox abstraction entirely.
 
 ## Tool type reference
 
-7 tool types. Each can appear at most **once without a `name` field** per
-toolbox; for multiple instances of the same type, set a unique `name` on
-each. Always add a `description` so the model picks the right tool.
+`ToolboxTool` is the abstract base. Use the concrete subclasses below for
+Toolbox versions. Generic Agent models such as `MCPTool` and `WebSearchTool`
+belong to Agent definitions and are not the canonical Toolbox 2.3 models.
 
-| Type | Required fields | Auth | VNet | Quirks |
-|---|---|---|---|---|
-| `mcp` | `server_label`, `server_url` | None / Key / OAuth-managed / OAuth-custom / AgenticIdentity (Entra) / UserEntraToken (1P OBO) — via `project_connection_id` | ✅ via VNet subnet | Tool names prefixed `{server_label}.{tool_name}` from the MCP server side; **when wrapped via MAF `MCPStreamableHTTPTool` with `tool_name_prefix=X`, the agent-visible name FLATTENS to `X_{tool_name}` and `server_label` is dropped** (validated MAF 1.3.0 + Toolbox v1, May 2026). `UserEntraToken` requires `audience` field or `tools/list` returns 0 |
-| `web_search` | (none) | Bing Grounding (no project conn) or `web_search.custom_search_configuration.project_connection_id` | ✅ public endpoint | Uses Grounding with Bing — first-party, billed separately, **no DPA**. Citations in `content[].resource._meta.annotations[]` |
-| `azure_ai_search` | `index_name`, `project_connection_id` | API key or MI via connection | ✅ private endpoint | **Wraps an INDEX, not a Knowledge Base** — no agentic query planning. For KB → use `mcp` tool type pointing at `/knowledgebases/<n>/mcp` (see `foundry-iq`). Defaults `top_k=5`, `query_type=vector_semantic_hybrid` |
-| `code_interpreter` | (none); optional `container.file_ids[]` | (none) | ✅ Microsoft backbone | **User isolation NOT supported in hosted agents** — all users share the same container context |
-| `file_search` | `vector_store_ids[]` | (none) | ❌ **Not supported in VNet** | **User isolation NOT supported in hosted agents**. Vector stores created via `{project}/openai/v1/vector_stores` |
-| `openapi` | `spec`, `auth.type` | `anonymous` / `connection` / `managed_identity` (Foundry project MI) | ✅ depends on target | MI auth requires RBAC on target. Spec must be OpenAPI 3.0 / 3.1 with `paths` + `operationId` |
-| `a2a_preview` | `base_url`, `project_connection_id` | Connection-driven (e.g. `RemoteA2A`) | ✅ private endpoint | Calls another agent as a tool |
+| SDK model | Wire type | Status | Required configuration |
+|---|---|---|---|
+| `MCPToolboxTool` | `mcp` | GA | `server_label` plus `server_url` or `connector_id`; optional project connection |
+| `WebSearchToolboxTool` | `web_search` | GA | No required fields; optional filters and search context |
+| `AzureAISearchToolboxTool` | `azure_ai_search` | GA | `azure_ai_search=AzureAISearchToolResource(...)` |
+| `CodeInterpreterToolboxTool` | `code_interpreter` | GA | No required fields; optional container/files |
+| `FileSearchToolboxTool` | `file_search` | GA | Vector-store configuration |
+| `OpenApiToolboxTool` | `openapi` | GA | `openapi=OpenApiFunctionDefinition(...)` |
+| `A2APreviewToolboxTool` | `a2a_preview` | Preview | Remote agent URL and project connection as needed |
+| `WorkIQPreviewToolboxTool` | `work_iq_preview` | Preview | Work IQ project connection |
+| `FabricIQPreviewToolboxTool` | `fabric_iq_preview` | Preview | Fabric IQ project connection and target server details |
+| `BrowserAutomationPreviewToolboxTool` | `browser_automation_preview` | Preview | Browser Automation connection parameters |
+| `ReminderPreviewToolboxTool` | `reminder_preview` | Preview | No required fields |
+| `ToolboxSearchPreviewToolboxTool` | `toolbox_search_preview` | Preview | No required fields; activates `tool_search` and `call_tool` |
 
 ### Per-tool anti-patterns
 
@@ -164,23 +148,36 @@ each. Always add a `description` so the model picks the right tool.
 
 ---
 
-## The mandatory `Foundry-Features` header
+## Stable Toolbox request contract
 
-> **🛑 EVERY request to the toolbox MCP endpoint MUST include the header
-> `Foundry-Features: Toolboxes=V1Preview`. Calls that omit this header
-> fail.** Include it in HTTP clients, MCP transports, and any SDK wrapper
-> that calls the toolbox endpoint.
+The GA request shape is:
 
 | Element | Value |
 |---|---|
-| **HTTP header** | `Foundry-Features: Toolboxes=V1Preview` |
-| **AAD token scope** | `https://ai.azure.com/.default` |
-| **Bearer header** | `Authorization: Bearer <token>` |
-| **API version query** | `?api-version=v1` |
+| AAD token scope | `https://ai.azure.com/.default` |
+| Authorization | OAuth 2.0 bearer token minted for the Toolbox scope |
+| MCP API version | `?api-version=v1` |
+| Preview feature header | **None** |
 
-If you forget the `Foundry-Features` header you get a generic 400 / 404
-with no useful signal — debug the symptom by curling the endpoint with
-`-v` and inspecting your headers FIRST.
+`azure-ai-projects` 2.3.0 and `FoundryToolbox` apply this contract without
+`Foundry-Features: Toolboxes=V1Preview`. Remove that header when migrating
+preview-era clients; do not make correctness depend on a retired feature gate.
+
+### Preview-to-GA migration
+
+| Preview-era contract | GA contract |
+|---|---|
+| `project.beta.toolboxes` | `project.toolboxes` |
+| `client.get_toolbox(...)` | `project.toolboxes.get(name)` for the latest version, or `project.toolboxes.get_version(name, version)` for an explicit immutable version |
+| `select_toolbox_tools(...)` | Define the exact `tools=[...]` set in a Toolbox version, then consume that version through `FoundryToolbox` |
+| Generic `MCPTool`, `WebSearchTool`, `AzureAISearchTool` | `MCPToolboxTool`, `WebSearchToolboxTool`, `AzureAISearchToolboxTool` |
+| `Foundry-Features: Toolboxes=V1Preview` | Remove the feature header |
+| `AzureAIToolbox` | `agent_framework_foundry_hosting.FoundryToolbox` |
+| `create_toolbox_version(...)` in stale examples | `create_version(...)` in SDK 2.3.0 |
+
+This table is the only place presenting obsolete APIs as migration mapping;
+status/troubleshooting may name retired header, but fenced canonical code must
+not contain preview-era API.
 
 ---
 
@@ -215,88 +212,23 @@ applies:
 
 ---
 
-## The 4 silent traps (CRITICAL — read before wiring)
+## Low-level MCP compatibility notes
 
-These are documented in the Microsoft Learn troubleshooting table, but
-they're buried at the bottom and they all surface as opaque `500` /
-`server_error` responses with no useful log signal.
+`FoundryToolbox` is the canonical MAF consumer. On MAF 1.11 it handles
+per-request Entra authorization, defaults `load_prompts=False`, treats MCP
+method-not-found from `ping` as a supported server capability boundary, and
+owns connection cleanup.
 
-### Trap 1 — `500` on `send_ping()`
+Custom MCP clients still need these protocol rules:
 
-The Foundry Toolbox MCP server **does not implement the optional MCP
-`ping` method**. MAF's `MCPStreamableHTTPTool._ensure_connected()` calls
-`send_ping()` automatically during agent registration. When it fires, the
-agent fails to register and **every invoke returns `server_error` from
-the responses endpoint**.
+- do not require `prompts/list`; Toolboxes expose tools;
+- keep Streamable HTTP tool calls in streaming mode;
+- request tokens for `https://ai.azure.com/.default`; and
+- do not add the removed preview feature header.
 
-**Fix:** override `_ensure_connected` with a no-op subclass:
-
-```python
-from agent_framework import MCPStreamableHTTPTool
-
-class ToolboxMCPTool(MCPStreamableHTTPTool):
-    """MCPStreamableHTTPTool that skips the ping-on-connect probe.
-    Foundry Toolbox endpoint returns HTTP 500 on `ping`."""
-    async def _ensure_connected(self) -> None:  # noqa: D401
-        # Skip the ping; assume the transport is healthy.
-        if self._client is None:
-            await self.connect()
-```
-
-This is the **same trap** documented in `foundry-hosted-agents` SKILL §
-"MCP `ping` trap on Foundry-hosted MCP servers" — the cross-link is
-deliberate: the hosted-agents skill treats it generically (any
-Foundry-hosted MCP), this skill treats it specifically (every Toolbox
-endpoint by design).
-
-### Trap 2 — `500` on `prompts/list`
-
-The Foundry MCP server does not implement `prompts/list`. Many MCP
-clients (including MAF's) call it on init by default.
-
-**Fix:** pass `load_prompts=False` (or framework equivalent):
-
-```python
-mcp_tool = ToolboxMCPTool(
-    name="toolbox",
-    url=TOOLBOX_ENDPOINT,
-    http_client=http_client,
-    load_prompts=False,           # 🔑 do not call prompts/list
-)
-```
-
-### Trap 3 — `500` on non-streaming `tools/call`
-
-Non-streaming mode (`stream=False`) is **not supported** for Toolbox MCP
-endpoints. Most MCP client SDKs default to streaming — but if you've
-explicitly disabled it for debugging, every call will fail.
-
-**Fix:** keep `stream=True` (the default for `streamablehttp_client` and
-`MCPStreamableHTTPTool`).
-
-### Trap 4 — `FOUNDRY_*` env-var overwrite
-
-The platform **reserves all environment variables prefixed with
-`FOUNDRY_`** and may silently overwrite user-defined values at runtime.
-If you name your custom env var `FOUNDRY_TOOLBOX_ENDPOINT`, the runtime
-will overwrite it with whatever it injects, and your code will read the
-wrong URL with no warning.
-
-**Fix:** rename custom env vars to avoid the `FOUNDRY_` prefix. The
-catalog convention is `TOOLBOX_*` (e.g. `TOOLBOX_MCP_ENDPOINT`,
-`TOOLBOX_NAME`).
-
-Platform-injected variables you can safely depend on:
-
-| Variable | Set by | Value |
-|---|---|---|
-| `FOUNDRY_PROJECT_ENDPOINT` | Platform | `{project}` base URL |
-| `FOUNDRY_AGENT_TOOLBOX_ENDPOINT` | Platform | Toolbox base URL (without `/{toolbox}/mcp` suffix) |
-| `TOOLBOX_{NAME}_MCP_ENDPOINT` | Platform | Full per-toolbox endpoint — for toolbox `agent-tools` → `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT` |
-
-Read these in `main.py` / `container.py` instead of hard-coding URLs.
-
----
+The hosted platform reserves `FOUNDRY_*` environment variables. Use the
+platform-provided `FOUNDRY_PROJECT_ENDPOINT`, and use `TOOLBOX_ENDPOINT` plus
+`TOOLBOX_NAME` only when overriding `FoundryToolbox` endpoint discovery.
 
 ## Tool-authoring failure modes
 
