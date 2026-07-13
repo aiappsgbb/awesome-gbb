@@ -45,13 +45,20 @@ authentication gate; if it fails, use the matching final-step marker.
 
 ## Step 1 - execute the azd and GA SDK Toolbox contracts
 
-First, install the bounded Toolbox extension and run the exact service-target
-and standalone-file shapes documented by the skill. Use a Bash heredoc to
+First, install the bounded unified Foundry bundle and run the exact
+service-target and standalone-file shapes documented by the skill. Use a Bash heredoc to
 write this script to `/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+
+evidence="/tmp/foundry-toolbox-smoke-evidence"
+: >"$evidence"
+
+record() {
+  printf '%s\n' "$1" | tee -a "$evidence"
+}
 
 suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 service_name="ci-smoke-azdsvc-${suffix}"
@@ -81,13 +88,12 @@ cleanup() {
   for toolbox_name in "$cli_name" "$service_name"; do
     delete_log="/tmp/${toolbox_name}-delete.log"
     azd ai toolbox delete "$toolbox_name" \
-      --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
       --force \
       --no-prompt >"$delete_log" 2>&1
     delete_status=$?
     if [[ $delete_status -eq 0 ]]; then
-      echo "AZD_TOOLBOX_DELETED name=${toolbox_name}"
-    elif ! grep -qi "not found" "$delete_log"; then
+      record "AZD_TOOLBOX_DELETED name=${toolbox_name}"
+    else
       cat "$delete_log"
       if [[ $status -eq 0 ]]; then
         status=$delete_status
@@ -100,7 +106,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
+azd extension install microsoft.foundry --version 1.0.0-beta.1
+azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt
+azd ai project show
 
 (
   cd "$work_dir"
@@ -108,19 +116,15 @@ azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
   azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
   azd deploy "$service_name" --no-prompt
 )
-azd ai toolbox show "$service_name" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --output json
-echo "AZD_SERVICE_CREATED name=${service_name}"
+azd ai toolbox show "$service_name" --output json
+record "AZD_SERVICE_CREATED name=${service_name}"
 
 azd ai toolbox create "$cli_name" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
   --from-file "$work_dir/toolbox.yaml" \
+  --no-prompt \
   --output json
-azd ai toolbox show "$cli_name" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --output json
-echo "AZD_CLI_CREATED name=${cli_name}"
+azd ai toolbox show "$cli_name" --output json
+record "AZD_CLI_CREATED name=${cli_name}"
 ```
 
 ```bash
@@ -155,6 +159,15 @@ from azure.ai.projects.models import CodeInterpreterToolboxTool
 from azure.identity import DefaultAzureCredential
 
 
+evidence_path = "/tmp/foundry-toolbox-smoke-evidence"
+
+
+def record(message: str) -> None:
+    print(message)
+    with open(evidence_path, "a", encoding="utf-8") as evidence:
+        evidence.write(f"{message}\n")
+
+
 async def verify_functions(
     credential: DefaultAzureCredential,
     toolbox_url: str,
@@ -167,7 +180,7 @@ async def verify_functions(
     ) as toolbox:
         function_count = len(toolbox.functions)
         assert function_count > 0
-        print(f"TOOLBOX_FUNCTIONS count={function_count}")
+        record(f"TOOLBOX_FUNCTIONS count={function_count}")
 
 
 project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
@@ -188,7 +201,7 @@ with (
     try:
         assert created.name == toolbox_name
         assert created.version
-        print(
+        record(
             f"TOOLBOX_CREATED name={created.name} "
             f"version={created.version}"
         )
@@ -199,7 +212,7 @@ with (
         )
         assert fetched.name == created.name
         assert fetched.version == created.version
-        print(
+        record(
             f"TOOLBOX_RETRIEVED name={fetched.name} "
             f"version={fetched.version}"
         )
@@ -217,7 +230,7 @@ with (
         )
     finally:
         project.toolboxes.delete(toolbox_name)
-        print(f"TOOLBOX_DELETED name={toolbox_name}")
+        record(f"TOOLBOX_DELETED name={toolbox_name}")
 ```
 
 Do not use the beta toolbox namespace, generic Agent tool classes, a
@@ -227,8 +240,37 @@ Toolbox is the direct resource under test; the `finally` block must remain.
 
 ## Step 2 - write the deterministic result marker
 
-After all eight azd and SDK audit lines have been printed and all three
-Toolboxes have been deleted, your final Bash action is:
+After all three Toolboxes have been deleted, verify that the fresh sidecar
+contains exactly the eight required success records:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+lines = Path("/tmp/foundry-toolbox-smoke-evidence").read_text(
+    encoding="utf-8"
+).splitlines()
+patterns = (
+    r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"TOOLBOX_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_FUNCTIONS count=[1-9][0-9]*",
+    r"TOOLBOX_DELETED name=ci-smoke-tbx-[0-9a-f]{8}",
+)
+assert len(lines) == len(patterns), lines
+for pattern in patterns:
+    assert sum(re.fullmatch(pattern, line) is not None for line in lines) == 1, (
+        pattern,
+        lines,
+    )
+PY
+```
+
+Only after that check succeeds, your final Bash action is:
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-toolbox-smoke-result
@@ -250,6 +292,7 @@ printf 'SMOKE_RESULT=FAIL get_version failed\n' > /tmp/foundry-toolbox-smoke-res
 printf 'SMOKE_RESULT=FAIL FoundryToolbox connect failed\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL Toolbox functions empty\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL Toolbox delete failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/foundry-toolbox-smoke-result
 ```
 
 The marker file is authoritative. Do not invoke more tools after writing it.

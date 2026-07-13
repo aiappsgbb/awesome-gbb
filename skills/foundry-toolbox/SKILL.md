@@ -45,7 +45,7 @@ parent Toolbox resource is GA.
 | A2A, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
 | Tool Search and skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
 | `agent_framework_foundry_hosting.FoundryToolbox` | **Prerelease client package** | High-level consumer for the GA Toolbox MCP endpoint |
-| `azure.ai.toolboxes` azd extension `1.0.0-beta.2` | **Beta client extension** | Calls the GA service API without the removed header |
+| `microsoft.foundry` azd bundle `1.0.0-beta.1` | **Beta client bundle** | Recommended CLI install; currently bundles Toolbox component `azure.ai.toolboxes` `1.0.0-beta.2` |
 
 Do not infer a subfeature's status from the Toolbox resource's GA status. A
 GA Toolbox can contain a preview tool, but that tool keeps its preview support
@@ -550,18 +550,25 @@ What to check:
 | Component | Minimum/pin | Status |
 |---|---|---|
 | Azure Developer CLI | `azd >= 1.27.0` | GA CLI |
-| `azure.ai.toolboxes` extension | `1.0.0-beta.2` | Beta extension calling the GA Toolbox API |
+| `microsoft.foundry` extension bundle | `1.0.0-beta.1` | Beta bundle; official install for Foundry CLI workflows |
+| Bundled `azure.ai.toolboxes` component | `1.0.0-beta.2` | Beta component calling the GA Toolbox API |
 
-Source: [`azure.ai.toolboxes` release
+Sources: [install Foundry
+extensions](https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions),
+[CLI project
+context](https://learn.microsoft.com/azure/foundry/agents/how-to/cli-project-context),
+and [`azure.ai.toolboxes` release
 history](https://github.com/Azure/azure-dev/blob/main/cli/azd/extensions/azure.ai.toolboxes/CHANGELOG.md).
 
-Install the bounded extension:
+Install the bounded unified bundle:
 
 ```bash
-azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
+azd extension install microsoft.foundry --version 1.0.0-beta.1
 ```
 
-Version `1.0.0-beta.2` no longer sends the retired
+Bundle `1.0.0-beta.1` currently brings Toolbox component
+`azure.ai.toolboxes` `1.0.0-beta.2`. Both remain Beta clients even though
+the Toolbox service/API is GA. The bundled Toolbox component no longer sends the retired
 `Foundry-Features: Toolboxes=V1Preview` header.
 
 ### Canonical azd service target
@@ -608,9 +615,12 @@ tools:
 ```
 
 ```bash
+azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt
+azd ai project show
 azd ai toolbox create agent-tools \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --from-file ./toolbox.yaml
+  --from-file ./toolbox.yaml \
+  --no-prompt
+azd ai toolbox show agent-tools --output json
 ```
 
 > **Do not conflate manifest shapes:** `host: azure.ai.toolbox` is the canonical
@@ -1095,6 +1105,7 @@ SPEC § 7c).
 | Custom env var disappeared at runtime | Hosted Foundry reserves the `FOUNDRY_*` prefix | Rename custom values to `TOOLBOX_*` |
 | `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.3 | Use `project.toolboxes` |
 | Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
+| Standalone `azd ai toolbox` command reports no project context | Component-only install or no active Foundry project | Install pinned `microsoft.foundry`, then run `azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt`; inspect with `azd ai project show` |
 | `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
 | Only `tool_search` and `call_tool` are listed | Tool Search preview is active | Search first, then call the discovered tool; pin critical tools |
 | `tools/list` returns 0 tools (MCP / A2A) | Bad connection creds, missing `audience`, MI lacks RBAC | Verify `project_connection_id` exists; `UserEntraToken` / `AgenticIdentity` need `audience`; check RBAC on target |

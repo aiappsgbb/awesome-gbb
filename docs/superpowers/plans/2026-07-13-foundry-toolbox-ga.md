@@ -4,9 +4,9 @@
 
 **Goal:** Replace the `foundry-toolbox` preview-era contract with the GA Toolbox management and consumption contract, then prove stable CRUD and `FoundryToolbox` connectivity against a live Foundry project.
 
-**Architecture:** `azure-ai-projects~=2.3.0` owns stable Toolbox management through `AIProjectClient.toolboxes` and Toolbox-specific model classes. `agent-framework-foundry-hosting==1.0.0a260709` owns the high-level `FoundryToolbox` MCP consumer, while the existing direct `MCPStreamableHTTPTool` reference remains the non-Toolbox MCP pattern. The Copilot-CLI fixture first exercises the pinned `azure.ai.toolboxes` service target and standalone CLI against the CI project, then creates a separate UUID-named Toolbox with the stable SDK, retrieves it, connects through the GA wrapper without the preview header, verifies functions, and deletes every resource.
+**Architecture:** `azure-ai-projects~=2.3.0` owns stable Toolbox management through `AIProjectClient.toolboxes` and Toolbox-specific model classes. `agent-framework-foundry-hosting==1.0.0a260709` owns the high-level `FoundryToolbox` MCP consumer, while the existing direct `MCPStreamableHTTPTool` reference remains the non-Toolbox MCP pattern. The Copilot-CLI fixture first installs the pinned `microsoft.foundry` bundle, exercises its bundled Toolbox component through the service target and official existing-project context flow, then creates a separate UUID-named Toolbox with the stable SDK, retrieves it, connects through the GA wrapper without the preview header, verifies functions, and deletes every resource. Every successful operation is mirrored to a deterministic sidecar that the workflow prints and uploads.
 
-**Tech Stack:** Python 3.12+, `azure-ai-projects~=2.3.0`, `azure-identity`, `agent-framework~=1.11.0`, `agent-framework-foundry-hosting==1.0.0a260709`, `mcp~=1.28.1`, `azd>=1.27.0`, `azure.ai.toolboxes==1.0.0-beta.2`, Microsoft Foundry Toolbox MCP API `v1`, Copilot-CLI Azure E2E fixture, static catalog generator.
+**Tech Stack:** Python 3.12+, `azure-ai-projects~=2.3.0`, `azure-identity`, `agent-framework~=1.11.0`, `agent-framework-foundry-hosting==1.0.0a260709`, `mcp~=1.28.1`, `azd>=1.27.0`, `microsoft.foundry==1.0.0-beta.1` (bundling `azure.ai.toolboxes==1.0.0-beta.2`), Microsoft Foundry Toolbox MCP API `v1`, Copilot-CLI Azure E2E fixture, static catalog generator.
 
 ---
 
@@ -16,7 +16,8 @@
 2. **Reference compilation remains in T0 instead of the pin script.** `scripts/run-pin-validation.py` deliberately executes pin scripts in an isolated temporary directory with a minimal environment and no repository-root variable. `scripts/validate-skills.py` already parses or compiles all reference files. Do not weaken the pin sandbox or duplicate reference source inside the pin merely to re-run the same syntax check.
 3. **The fixture is self-contained and token-efficient.** It emits `skills/foundry-toolbox/SKILL.md` with one `echo` for the post-hoc audit instead of loading the 1,100-line skill into model context. It includes the mandatory anti-recursive-`copilot` guard from AGENTS.md Pattern 27 and executes the stable API contract directly.
 4. **Current package source wins over stale Learn snippets.** Some indexed Learn samples still show generic Agent tool classes or `create_toolbox_version`. The installed `azure-ai-projects` 2.3.0 operation surface is `project.toolboxes.create_version(...)` and accepts `list[ToolboxTool]`; the plan uses that inspected package contract.
-5. **The changed azd samples also receive live coverage.** The approved design's T3 list covered only SDK CRUD and `FoundryToolbox`, but AGENTS.md section 2.9 requires every changed CLI or `azure.yaml` sample to run against Azure. The fixture therefore authenticates azd explicitly, deploys a UUID-named `host: azure.ai.toolbox` service, creates a second Toolbox through `azd ai toolbox create --from-file`, verifies both, and deletes both before it runs the SDK smoke.
+5. **The changed azd samples also receive live coverage.** The approved design's T3 list covered only SDK CRUD and `FoundryToolbox`, but AGENTS.md section 2.9 requires every changed CLI or `azure.yaml` sample to run against Azure. The fixture therefore authenticates azd explicitly, installs the unified bundle, sets the Foundry project context, deploys a UUID-named `host: azure.ai.toolbox` service, creates a second Toolbox through `azd ai toolbox create --from-file`, verifies both, and deletes both before it runs the SDK smoke.
+6. **Live audit evidence uses a sidecar, not rendered tool output.** Run `29267005825` proved Copilot CLI collapses multi-line Bash results to `└ N lines...`; a passing byte-exact marker therefore does not guarantee the eight audit records appear in `gh run view --log`. The fixture writes each successful operation to stdout and `/tmp/foundry-toolbox-smoke-evidence`; primary and retry workflow steps clean and print that file, and the forensics artifact uploads it with the transcript.
 
 ## File map
 
@@ -27,6 +28,7 @@
 | `skills/foundry-toolbox/references/python/mcp_text_extractor.py` | Verify only | Existing direct-MCP result parser; no source change unless the pinned import probe fails |
 | `skills/foundry-toolbox/test-fixture/consumer_prompt.md` | Modify | Live azd service-target/CLI coverage, stable SDK CRUD, high-level Toolbox connection, deletion, and deterministic result marker |
 | `skills/foundry-toolbox/SKILL.md` | Modify | GA status boundary, stable CRUD/models/request contract, MAF wrapper, preview Tool Search, migration and troubleshooting |
+| `.github/workflows/skill-test.yml` | Modify | Clean, print, retry, and upload per-attempt deterministic evidence sidecars |
 | `README.md` | Modify | Replace the stale preview-header catalog row |
 | `plugin.json` | Modify | Required catalog MINOR version bump `4.27.0 -> 4.28.0` |
 | `.github/plugin/marketplace.json` | Modify | Keep metadata and plugin entry versions synchronized at `4.28.0` |
@@ -595,13 +597,20 @@ Use:
 ````markdown
 ## Step 1 - execute the azd and GA SDK Toolbox contracts
 
-First, install the bounded Toolbox extension and run the exact service-target
-and standalone-file shapes documented by the skill. Use a Bash heredoc to
+First, install the bounded unified Foundry bundle and run the exact
+service-target and standalone-file shapes documented by the skill. Use a Bash heredoc to
 write this script to `/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+
+evidence="/tmp/foundry-toolbox-smoke-evidence"
+: >"$evidence"
+
+record() {
+  printf '%s\n' "$1" | tee -a "$evidence"
+}
 
 suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 service_name="ci-smoke-azdsvc-${suffix}"
@@ -631,13 +640,12 @@ cleanup() {
   for toolbox_name in "$cli_name" "$service_name"; do
     delete_log="/tmp/${toolbox_name}-delete.log"
     azd ai toolbox delete "$toolbox_name" \
-      --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
       --force \
       --no-prompt >"$delete_log" 2>&1
     delete_status=$?
     if [[ $delete_status -eq 0 ]]; then
-      echo "AZD_TOOLBOX_DELETED name=${toolbox_name}"
-    elif ! grep -qi "not found" "$delete_log"; then
+      record "AZD_TOOLBOX_DELETED name=${toolbox_name}"
+    else
       cat "$delete_log"
       if [[ $status -eq 0 ]]; then
         status=$delete_status
@@ -650,7 +658,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
+azd extension install microsoft.foundry --version 1.0.0-beta.1
+azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt
+azd ai project show
 
 (
   cd "$work_dir"
@@ -658,19 +668,15 @@ azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
   azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
   azd deploy "$service_name" --no-prompt
 )
-azd ai toolbox show "$service_name" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --output json
-echo "AZD_SERVICE_CREATED name=${service_name}"
+azd ai toolbox show "$service_name" --output json
+record "AZD_SERVICE_CREATED name=${service_name}"
 
 azd ai toolbox create "$cli_name" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
   --from-file "$work_dir/toolbox.yaml" \
+  --no-prompt \
   --output json
-azd ai toolbox show "$cli_name" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --output json
-echo "AZD_CLI_CREATED name=${cli_name}"
+azd ai toolbox show "$cli_name" --output json
+record "AZD_CLI_CREATED name=${cli_name}"
 ```
 
 ```bash
@@ -705,6 +711,15 @@ from azure.ai.projects.models import CodeInterpreterToolboxTool
 from azure.identity import DefaultAzureCredential
 
 
+evidence_path = "/tmp/foundry-toolbox-smoke-evidence"
+
+
+def record(message: str) -> None:
+    print(message)
+    with open(evidence_path, "a", encoding="utf-8") as evidence:
+        evidence.write(f"{message}\n")
+
+
 async def verify_functions(
     credential: DefaultAzureCredential,
     toolbox_url: str,
@@ -717,7 +732,7 @@ async def verify_functions(
     ) as toolbox:
         function_count = len(toolbox.functions)
         assert function_count > 0
-        print(f"TOOLBOX_FUNCTIONS count={function_count}")
+        record(f"TOOLBOX_FUNCTIONS count={function_count}")
 
 
 project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
@@ -738,7 +753,7 @@ with (
     try:
         assert created.name == toolbox_name
         assert created.version
-        print(
+        record(
             f"TOOLBOX_CREATED name={created.name} "
             f"version={created.version}"
         )
@@ -749,7 +764,7 @@ with (
         )
         assert fetched.name == created.name
         assert fetched.version == created.version
-        print(
+        record(
             f"TOOLBOX_RETRIEVED name={fetched.name} "
             f"version={fetched.version}"
         )
@@ -767,7 +782,7 @@ with (
         )
     finally:
         project.toolboxes.delete(toolbox_name)
-        print(f"TOOLBOX_DELETED name={toolbox_name}")
+        record(f"TOOLBOX_DELETED name={toolbox_name}")
 ```
 
 Do not use `project.beta.toolboxes`, generic Agent tool classes, a
@@ -783,8 +798,37 @@ Use:
 ````markdown
 ## Step 2 - write the deterministic result marker
 
-After all eight azd and SDK audit lines have been printed and all three
-Toolboxes have been deleted, your final Bash action is:
+After all three Toolboxes have been deleted, verify that the fresh sidecar
+contains exactly the eight required success records:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+lines = Path("/tmp/foundry-toolbox-smoke-evidence").read_text(
+    encoding="utf-8"
+).splitlines()
+patterns = (
+    r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"TOOLBOX_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_FUNCTIONS count=[1-9][0-9]*",
+    r"TOOLBOX_DELETED name=ci-smoke-tbx-[0-9a-f]{8}",
+)
+assert len(lines) == len(patterns), lines
+for pattern in patterns:
+    assert sum(re.fullmatch(pattern, line) is not None for line in lines) == 1, (
+        pattern,
+        lines,
+    )
+PY
+```
+
+Only after that check succeeds, your final Bash action is:
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-toolbox-smoke-result
@@ -806,6 +850,7 @@ printf 'SMOKE_RESULT=FAIL get_version failed\n' > /tmp/foundry-toolbox-smoke-res
 printf 'SMOKE_RESULT=FAIL FoundryToolbox connect failed\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL Toolbox functions empty\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL Toolbox delete failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/foundry-toolbox-smoke-result
 ```
 
 The marker file is authoritative. Do not invoke more tools after writing it.
@@ -828,13 +873,16 @@ required = (
     "FOUNDRY_PROJECT_ENDPOINT",
     "/usr/local/bin/azd",
     "--federated-credential-provider github",
-    "azure.ai.toolboxes --version 1.0.0-beta.2",
+    "microsoft.foundry --version 1.0.0-beta.1",
+    "azd ai project set",
+    "azd ai project show",
     "host: azure.ai.toolbox",
     'azd deploy "$service_name"',
     'azd ai toolbox create "$cli_name"',
     "AZD_SERVICE_CREATED",
     "AZD_CLI_CREATED",
     "AZD_TOOLBOX_DELETED",
+    "/tmp/foundry-toolbox-smoke-evidence",
     "azure-ai-projects~=2.3.0",
     "project.toolboxes.create_version",
     "CodeInterpreterToolboxTool",
@@ -852,6 +900,7 @@ forbidden = (
     "Toolboxes=V1Preview",
     "Foundry-Features",
     "AZURE_AI_ENDPOINT",
+    "--project-endpoint",
 )
 for token in forbidden:
     assert token not in text, token
@@ -950,7 +999,7 @@ Add:
 | A2A, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
 | Tool Search and skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
 | `agent_framework_foundry_hosting.FoundryToolbox` | **Prerelease client package** | High-level consumer for the GA Toolbox MCP endpoint |
-| `azure.ai.toolboxes` azd extension `1.0.0-beta.2` | **Beta client extension** | Calls the GA service API without the removed header |
+| `microsoft.foundry` azd bundle `1.0.0-beta.1` | **Beta client bundle** | Recommended CLI install; currently bundles Toolbox component `azure.ai.toolboxes` `1.0.0-beta.2` |
 
 Do not infer a subfeature's status from the Toolbox resource's GA status. A
 GA Toolbox can contain a preview tool, but that tool keeps its preview support
@@ -1614,18 +1663,25 @@ Replace the current `azd` block with:
 | Component | Minimum/pin | Status |
 |---|---|---|
 | Azure Developer CLI | `azd >= 1.27.0` | GA CLI |
-| `azure.ai.toolboxes` extension | `1.0.0-beta.2` | Beta extension calling the GA Toolbox API |
+| `microsoft.foundry` extension bundle | `1.0.0-beta.1` | Beta bundle; official install for Foundry CLI workflows |
+| Bundled `azure.ai.toolboxes` component | `1.0.0-beta.2` | Beta component calling the GA Toolbox API |
 
-Source: [`azure.ai.toolboxes` release
+Sources: [install Foundry
+extensions](https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions),
+[CLI project
+context](https://learn.microsoft.com/azure/foundry/agents/how-to/cli-project-context),
+and [`azure.ai.toolboxes` release
 history](https://github.com/Azure/azure-dev/blob/main/cli/azd/extensions/azure.ai.toolboxes/CHANGELOG.md).
 
-Install the bounded extension:
+Install the bounded unified bundle:
 
 ```bash
-azd extension install azure.ai.toolboxes --version 1.0.0-beta.2
+azd extension install microsoft.foundry --version 1.0.0-beta.1
 ```
 
-Version `1.0.0-beta.2` no longer sends the retired
+Bundle `1.0.0-beta.1` currently brings Toolbox component
+`azure.ai.toolboxes` `1.0.0-beta.2`. Both remain Beta clients even though
+the Toolbox service/API is GA. The bundled Toolbox component no longer sends the retired
 `Foundry-Features: Toolboxes=V1Preview` header.
 
 ### Canonical azd service target
@@ -1672,9 +1728,12 @@ tools:
 ```
 
 ```bash
+azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt
+azd ai project show
 azd ai toolbox create agent-tools \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --from-file ./toolbox.yaml
+  --from-file ./toolbox.yaml \
+  --no-prompt
+azd ai toolbox show agent-tools --output json
 ```
 
 > **Do not conflate manifest shapes:** `host: azure.ai.toolbox` is the canonical
@@ -1683,7 +1742,8 @@ azd ai toolbox create agent-tools \
 > the separate Agent manifest path and is not interchangeable with either.
 ````
 
-Keep the extension labeled beta even though it now calls the GA Toolbox API.
+Keep the bundle and component labeled Beta even though they call the GA
+Toolbox API.
 
 - [ ] **Step 6: Update troubleshooting**
 
@@ -1699,6 +1759,7 @@ new rows:
 | Custom env var disappeared at runtime | Hosted Foundry reserves the `FOUNDRY_*` prefix | Rename custom values to `TOOLBOX_*` |
 | `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.3 | Use `project.toolboxes` |
 | Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
+| Standalone `azd ai toolbox` command reports no project context | Component-only install or no active Foundry project | Install pinned `microsoft.foundry`, then run `azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt`; inspect with `azd ai project show` |
 | `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
 | Only `tool_search` and `call_tool` are listed | Tool Search preview is active | Search first, then call the discovered tool; pin critical tools |
 ```
@@ -1756,9 +1817,11 @@ assert "FoundryToolbox" in skill
 assert "ToolboxSearchPreviewToolboxTool" in skill
 assert "467 input tokens" in skill
 assert "not a benchmark" in skill
-assert "azure.ai.toolboxes --version 1.0.0-beta.2" in code
+assert "microsoft.foundry --version 1.0.0-beta.1" in code
+assert "azure.ai.toolboxes" in skill
 assert "host: azure.ai.toolbox" in code
-assert "--project-endpoint" in code
+assert "azd ai project set" in code
+assert "azd ai project show" in code
 assert "techcommunity.microsoft.com/blog/microsoftmechanicsblog/" in skill
 assert "AzureAIToolbox" not in code
 assert "project.beta.toolboxes" not in code
@@ -2002,10 +2065,41 @@ Expected: no output.
 ### Task 10: Obtain live Azure evidence and update the pull request
 
 **Files:**
-- No additional repository source expected
+- Modify: `.github/workflows/skill-test.yml`
 - Update: pull-request body with CI evidence
 
-- [ ] **Step 1: Push the implementation branch**
+- [ ] **Step 1: Make evidence capture deterministic in primary, retry, and artifacts**
+
+In both Copilot invocation steps, define the per-skill sidecar with the
+transcript and marker:
+
+```bash
+EVIDENCE="/tmp/${SKILL}-smoke-evidence"
+```
+
+The primary attempt removes it with its transcript and marker; the retry removes
+it with the retry transcript and marker. Immediately after each Copilot
+invocation and before marker evaluation, print the fresh sidecar when present:
+
+```bash
+if [ -f "$EVIDENCE" ]; then
+  cat "$EVIDENCE"
+fi
+```
+
+Do not require the sidecar for unrelated fixtures. Update the forensics artifact
+to preserve the primary transcript, optional retry transcript, and optional
+sidecar:
+
+```yaml
+path: |
+  /tmp/${{ matrix.skill }}-transcript.log
+  /tmp/${{ matrix.skill }}-retry.log
+  /tmp/${{ matrix.skill }}-smoke-evidence
+if-no-files-found: warn
+```
+
+- [ ] **Step 2: Push the implementation branch**
 
 Run:
 
@@ -2016,7 +2110,7 @@ git push -u origin "$BRANCH"
 
 Expected: branch push succeeds.
 
-- [ ] **Step 2: Open a draft PR that explicitly blocks merge on T3**
+- [ ] **Step 3: Open a draft PR that explicitly blocks merge on T3**
 
 Call `create_pull_request` with `draft: true` and this title:
 
@@ -2032,7 +2126,8 @@ Use this initial body:
 - migrate `foundry-toolbox` from preview Toolbox contracts to the GA API
 - use stable `AIProjectClient.toolboxes` and Toolbox-specific models
 - replace `AzureAIToolbox` with the hosted `FoundryToolbox` wrapper
-- document and live-test `host: azure.ai.toolbox` plus standalone azd create
+- install pinned `microsoft.foundry`, then live-test `host: azure.ai.toolbox`
+  plus standalone azd create after `azd ai project set`
 - keep Tool Search and preview-only tool types explicitly labeled preview
 
 ## Local validation
@@ -2049,10 +2144,11 @@ This PR is intentionally draft. Do not mark ready or merge until the
 `foundry-toolbox` Copilot-CLI matrix leg proves azd service-target deployment,
 standalone azd create, stable SDK create/retrieve, `FoundryToolbox` connect,
 non-empty functions, deletion of all three resources, and the byte-exact PASS
-marker against the CI Foundry project.
+marker against the CI Foundry project. The workflow must also print and upload
+the deterministic eight-record sidecar.
 ```
 
-- [ ] **Step 3: Capture and watch the PR-triggered skill-test run**
+- [ ] **Step 4: Capture and watch the PR-triggered skill-test run**
 
 Run:
 
@@ -2079,7 +2175,7 @@ gh run watch "$RUN_ID" --exit-status
 
 Expected: the workflow completes successfully.
 
-- [ ] **Step 4: Verify the specific Toolbox matrix leg**
+- [ ] **Step 5: Verify the specific Toolbox matrix leg**
 
 Run:
 
@@ -2091,45 +2187,52 @@ gh run view "$RUN_ID" \
 
 Expected: the `foundry-toolbox` matrix job reports `success`.
 
-- [ ] **Step 5: Verify the live acceptance evidence in logs**
+- [ ] **Step 6: Verify the live acceptance evidence in logs and artifact**
 
 Run:
 
 ```bash
-LOG_FILE="/tmp/foundry-toolbox-${RUN_ID}.log"
+ARTIFACT_DIR=".scratch/foundry-toolbox-${RUN_ID}"
+LOG_FILE="${ARTIFACT_DIR}/run.log"
+mkdir -p "$ARTIFACT_DIR"
 gh run view "$RUN_ID" --log > "$LOG_FILE"
-python3 - "$LOG_FILE" <<'PY'
+gh run download "$RUN_ID" \
+  --name transcript-foundry-toolbox \
+  --dir "$ARTIFACT_DIR"
+python3 - "$LOG_FILE" \
+  "$ARTIFACT_DIR/foundry-toolbox-smoke-evidence" <<'PY'
 from pathlib import Path
 import re
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-required = (
+log_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+evidence_lines = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+evidence_patterns = (
     r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
     r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdsvc-[0-9a-f]{8}",
     r"TOOLBOX_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
     r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
     r"TOOLBOX_FUNCTIONS count=[1-9][0-9]*",
     r"TOOLBOX_DELETED name=ci-smoke-tbx-[0-9a-f]{8}",
-    r"PASS via marker file",
 )
-for pattern in required:
-    assert re.search(pattern, text), pattern
+for pattern in evidence_patterns:
+    assert re.search(pattern, log_text), pattern
+    assert sum(re.fullmatch(pattern, line) is not None for line in evidence_lines) == 1, pattern
 
-deleted = re.findall(
-    r"AZD_TOOLBOX_DELETED name=ci-smoke-azd(?:svc|cli)-[0-9a-f]{8}",
-    text,
-)
-assert len(set(deleted)) == 2, deleted
+assert len(evidence_lines) == 8, evidence_lines
+assert "PASS via marker file" in log_text
 print("ok complete live Toolbox evidence")
 PY
 ```
 
-Expected: `ok complete live Toolbox evidence`. Both azd resources and the SDK
-resource were deleted, the functions count is greater than zero, and the
+Expected: `ok complete live Toolbox evidence`. The same eight records appear in
+the workflow log and byte-preserved sidecar artifact; both azd resources and the
+SDK resource were deleted, the functions count is greater than zero, and the
 workflow reported deterministic marker-file PASS.
 
-- [ ] **Step 6: Update the PR body with the real run URL**
+- [ ] **Step 7: Update the PR body with the real run URL**
 
 Run:
 
@@ -2145,6 +2248,7 @@ Use `update_pull_request` for the current PR. Preserve the summary and local-val
 
 - Successful `skill-test.yml` run: ${RUN_URL}
 - `foundry-toolbox` matrix leg: success
+- pinned `microsoft.foundry` bundle installed and project context set
 - `host: azure.ai.toolbox` service-target deployment succeeded
 - standalone `azd ai toolbox create --from-file` succeeded
 - both azd-created Toolboxes were deleted
@@ -2153,6 +2257,7 @@ Use `update_pull_request` for the current PR. Preserve the summary and local-val
 - `FoundryToolbox` connected without the retired preview header
 - `functions` was non-empty
 - Toolbox deletion succeeded
+- all eight success records appeared in logs and the uploaded sidecar
 - marker evaluation reported deterministic PASS
 ```
 
@@ -2160,7 +2265,7 @@ Replace `${RUN_URL}` with the shell variable's value before calling
 `update_pull_request`; do not put the literal variable name in the PR body.
 Do not mark the PR ready if any evidence line is missing.
 
-- [ ] **Step 7: Mark the PR ready only after all required checks pass**
+- [ ] **Step 8: Mark the PR ready only after all required checks pass**
 
 Run:
 
@@ -2181,6 +2286,8 @@ Expected: required checks are green and the PR is no longer draft.
 - Canonical MAF code imports `agent_framework_foundry_hosting.FoundryToolbox`.
 - `host: azure.ai.toolbox` and standalone `toolbox.yaml` remain distinct,
   live-tested azd shapes.
+- The Beta `microsoft.foundry` bundle is pinned separately from the GA Toolbox
+  service, and standalone CLI guidance sets project context once.
 - The preview feature header is absent from canonical code, fixture, README, and generated guidance.
 - Tool Search and every preview-only Toolbox type remain visibly labeled preview.
 - The 467-vs-approximately-4,700 example is labeled one demo trace, not a benchmark.
@@ -2188,5 +2295,5 @@ Expected: required checks are green and the PR is no longer draft.
 - T0, T1, T2, unit tests, plugin validation, and docs validation pass.
 - The live matrix proves both azd paths plus stable SDK create, retrieve,
   connect, non-empty functions, deletion of all resources, and deterministic
-  PASS.
+  PASS; the eight success records are printed and uploaded from a fresh sidecar.
 - The PR body contains the successful Azure CI run URL before review.

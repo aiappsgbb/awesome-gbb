@@ -6,7 +6,7 @@ automation_tier: auto
 upstream:
   type: pypi
   notes: |
-    Wrapper around Microsoft Foundry Toolbox GA API, stable Python management SDK, Agent Framework hosted Toolbox consumer; preview Toolbox subfeatures separately labeled.
+    Wrapper around Microsoft Foundry Toolbox GA API, stable Python management SDK, Agent Framework hosted Toolbox consumer; preview Toolbox subfeatures separately labeled. Official CLI setup uses Beta microsoft.foundry 1.0.0-beta.1, which currently bundles Beta azure.ai.toolboxes 1.0.0-beta.2.
 
 packages:
   - name: azure-ai-projects
@@ -35,6 +35,8 @@ packages:
       Streamable HTTP MCP primitives.
 
 docs_to_revalidate:
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/cli-project-context
   - https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox
   - https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search
   - https://learn.microsoft.com/azure/foundry/agents/concepts/tool-catalog
@@ -133,6 +135,12 @@ known_issues_count: 1
 # Upstream pin — `foundry-toolbox` skill
 
 This Tier-B pin captures the PyPI package stack and GA Toolbox API contract for the Foundry Toolbox wrapper.
+
+The stable Python pins below are independent of the CLI distribution. For
+standalone CLI workflows, install Beta `microsoft.foundry` `1.0.0-beta.1`;
+its registry metadata currently bundles Beta `azure.ai.toolboxes`
+`1.0.0-beta.2`, and existing-project commands require `azd ai project set`
+before `azd ai toolbox create --from-file`.
 
 ## Pinned packages
 
