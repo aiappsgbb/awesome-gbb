@@ -17,13 +17,13 @@ packages:
       Toolbox preview floor is recorded as >=2.1.0; direct Foundry client patterns require >=2.0.0.
   - name: agent-framework
     source: pypi
-    version: "1.10.0"
+    version: "1.11.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       MAF package family used by the FoundryChatClient vision path.
   - name: agent-framework-foundry
     source: pypi
-    version: "1.10.0"
+    version: "1.10.1"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
     notes: |
       FoundryChatClient import surface for standalone vision agents.
@@ -67,8 +67,8 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "azure-ai-projects~=2.3.0" \
-      "agent-framework~=1.10.0" \
-      "agent-framework-foundry~=1.10.0" \
+      "agent-framework~=1.11.0" \
+      "agent-framework-foundry~=1.10.1" \
       "azure-ai-documentintelligence~=1.0.2" \
       "azure-cognitiveservices-speech~=1.50.0"
     python - <<'PY'
@@ -82,7 +82,7 @@ validation:
     - "manual validation required"
     - "ok foundry-doc-vision-speech imports"
 
-last_validated: 2026-07-04
+last_validated: 2026-07-13
 validated_by: copilot-bot
 known_issues_count: 1
 ---
