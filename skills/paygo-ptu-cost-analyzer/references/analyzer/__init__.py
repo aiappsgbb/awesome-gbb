@@ -1,8 +1,12 @@
 """Vendored PAYGO vs PTU cost analysis library.
 
-Sourced from aiappsgbb/ptu-paygo-mix @ e1786f89 (2026-04-07).
-Stripped of Streamlit cache decorators and the `import streamlit as st`
-in data.py so the module runs headless.
+Sourced from aiappsgbb/ptu-paygo-mix @ 2636464 (2026-07-06).
+`analysis.py`, `formatting.py`, and `models.json` are byte-identical to
+upstream. `data.py` intentionally DIVERGES: upstream removed its live
+Log-Analytics / KQL path (commit 14a5bec), but this skill retains those
+helpers to power the CLI's `--workspace` mode. `data.py` is also stripped
+of the `import streamlit as st` line and `@st.cache_data` decorators so
+the module runs headless.
 
 Pure pandas/numpy math; no Azure/PyPI side effects on import.
 """

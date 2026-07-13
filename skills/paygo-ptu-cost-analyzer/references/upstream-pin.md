@@ -9,26 +9,31 @@ upstream:
   type: github_repo
   repo: aiappsgbb/ptu-paygo-mix
   ref: main
-  pinned_sha: e1786f89329859b2f801c1b240538b4bbe649139
+  pinned_sha: 2636464b3604ec417771b4d96337c87c50d34c9f
   pinned_commit_message: |
     Merge branch 'charendt:main' into main
   license: MIT
   notes: |
     Tier B because the **execution surface** of this skill is its 5 PyPI
     dependencies (pandas, numpy, matplotlib, azure-identity,
-    azure-monitor-query). The upstream repo itself is vendored verbatim:
-    - `analysis.py`, `formatting.py`, `models.json` — byte-identical
-    - `kql/default_log_analytics_query.kql` → `queries/default.kql`
-    - `kql/default_log_analytics_query.active_tokens_backup.kql` → `queries/active_tokens.kql`
-    - `data.py` — Streamlit-stripped (see KI-002)
+    azure-monitor-query). The upstream analysis core is vendored:
+    - `analysis.py`, `formatting.py`, `models.json` — byte-identical @ 2636464
+    - `data.py` — **intentionally NOT re-vendored** past e1786f8: upstream
+      deleted its live Log-Analytics / KQL path at 14a5bec, but this skill
+      keeps it to power the CLI `--workspace` mode. Our `data.py` is the
+      e1786f8 upstream module with the Streamlit lines stripped (see KI-002).
+    - `queries/default.kql`, `queries/active_tokens.kql` — **retained**;
+      upstream deleted the `kql/` directory at 14a5bec.
     The `pinned_sha` above is the **last-vendored marker** — it does NOT
     auto-refresh through this pin (only PyPI versions do). When upstream
     advances on the analysis math or the pricing catalog, a human
-    re-vendors the files and bumps the SHA here in the same PATCH PR.
-    As of 2026-06-18 the upstream repo `aiappsgbb/ptu-paygo-mix` is
-    private/inaccessible (HTTP 404). SHA drift detection is suspended
-    until the repo is made public again. The vendored files remain
-    functional; all skill execution is PyPI-only.
+    re-vendors `analysis.py` / `formatting.py` / `models.json` and bumps
+    the SHA here.
+    As of 2026-07-06 the upstream repo `aiappsgbb/ptu-paygo-mix` is
+    accessible again but **private** — SHA-drift re-vendoring is a manual
+    chore (a token with repo read access is required; public CI cannot
+    poll it, so the GitHub URLs stay out of `docs_to_revalidate`). All
+    automated skill validation remains PyPI-only.
 
 packages:
   - name: pandas
@@ -81,7 +86,7 @@ known_issues:
     status: open
     workaround_location: SKILL.md § "Pricing catalog" + § "Known caveats"
   - id: KI-002
-    description: "data.py vendoring must strip `import streamlit as st` and `@st.cache_data*` decorators on every re-vendor"
+    description: "data.py + queries/*.kql intentionally diverge from upstream: upstream deleted the live Log-Analytics/KQL path at 14a5bec, so this skill freezes data.py at e1786f8 (Streamlit lines stripped) and retains the .kql files to keep the CLI --workspace mode working"
     upstream_url: https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding
     status: open
     workaround_location: SKILL.md § "Vendored layout"
@@ -156,13 +161,14 @@ validation:
     - "AttributeError"
     - "AssertionError"
 
-last_validated: "2026-06-18"
-validated_by: copilot-bot
+last_validated: "2026-07-06"
+validated_by: ricchi
 known_issues_count: 3
 re_pin_log:
   - "2026-05-18: initial pin v1.0.0 (ricchi)"
   - "2026-05-18: v1.0.1 — also vendor active_tokens_backup.kql as queries/active_tokens.kql alternative (ricchi)"
   - "2026-06-18: v1.0.6 — matplotlib ~=3.10.9 → ~=3.11.0 (MINOR); remove github_only from validation.requires (upstream repo aiappsgbb/ptu-paygo-mix is private/inaccessible); remove 3 dead docs_to_revalidate URLs; fix KI-002 upstream_url (copilot-bot)"
+  - "2026-07-06: v1.1.0 — re-vendor upstream e1786f8 → 2636464: models.json adds gpt-5.5 + gpt-5.4-mini, data_zone pricing for gpt-5.4, priority_processing PAYGO rates, and ptu.output_weight (4/6/8); analysis.py + formatting.py byte-identical; wire run_report.py --ptu-output-weight to default from the model's catalog output_weight; KEEP skill-specific data.py + queries/*.kql --workspace path that upstream deleted at 14a5bec (repo accessible again but private) (ricchi)"
 ---
 
 # Upstream pin — `paygo-ptu-cost-analyzer` skill
@@ -180,11 +186,11 @@ trail. Keep them in sync.
 |-------|-------|
 | **Upstream** | `aiappsgbb/ptu-paygo-mix` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `e1786f89329859b2f801c1b240538b4bbe649139` |
+| **Pinned SHA** | `2636464b3604ec417771b4d96337c87c50d34c9f` |
 | **Pinned commit subject** | `Merge branch 'charendt:main' into main` |
 | **License** | MIT |
 | **First authored against** | 2026-05-18 |
-| **Last re-validated** | 2026-05-18 |
+| **Last re-validated** | 2026-07-06 |
 
 The SHA above is a **last-vendored marker**, not an auto-refreshing pin.
 Re-validate by:
@@ -194,9 +200,11 @@ git ls-remote https://github.com/aiappsgbb/ptu-paygo-mix main
 # Compare first column to pinned_sha
 ```
 
-If it has drifted, a human must re-vendor `analysis.py`, `data.py`,
-`formatting.py`, `models.json`, and `default_log_analytics_query.kql`
-(see § 5 for the surgical edits applied to `data.py`).
+If it has drifted, a human re-vendors the **pure analysis core** —
+`analysis.py`, `formatting.py`, and `models.json` — byte-identical from
+the new SHA. `data.py` and `queries/*.kql` are **deliberately frozen**
+(upstream deleted the live Log-Analytics/KQL path at 14a5bec; this skill
+keeps it for `--workspace` mode — see § 5, KI-002).
 
 ---
 
@@ -287,13 +295,18 @@ gate for vendored-file correctness; this pin is the gate for dep drift.
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| `pip install` 5 capped deps | ✅ | "imports OK" |
+| `pip install` 5 capped deps | ✅ | imports OK |
 | `--synthetic --days 3 --model gpt-5.4` | ✅ | 4 output files written |
 | `report.md` contains "PTU Sizing" / "PAYGO Baseline" / "p95" | ✅ | All three substrings present |
 | `--csv references/sample_input.csv --ptu-term yearly` | ✅ | Yearly columns rendered correctly |
+| `--synthetic --model gpt-5.4 --tier data_zone` (was broken pre-re-vendor) | ✅ | data_zone pricing now resolves (models.json gained the block) |
+| `--synthetic --model gpt-5.5` (new catalog entry) | ✅ | New model prices + sizes render |
+| `--synthetic --model gpt-5.4-mini` (new catalog entry) | ✅ | New model prices + sizes render |
+| `--ptu-output-weight` defaults from catalog `ptu.output_weight` | ✅ | gpt-5.4 defaults to 6; explicit `--ptu-output-weight 1.0` still overrides |
 
-Captured at `last_validated: 2026-05-18` by `ricchi` (macOS Darwin 25.5.0
-+ Python 3.13.5).
+Captured at `last_validated: 2026-07-06` by `ricchi` (macOS Darwin 25.5.0
++ Python 3.13.5). Re-vendor of upstream e1786f8 → 2636464 (Option C:
+pure analysis core + pricing catalog; `--workspace`/KQL path retained).
 
 ---
 
@@ -317,30 +330,42 @@ is to re-vendor from upstream when upstream itself updates the catalog.
 **When upstream fixes this:** never fully — pricing drift is intrinsic.
 Re-vendoring `models.json` on each upstream SHA bump keeps the gap small.
 
-### KI-002 — Streamlit-strip surgery on re-vendor
+### KI-002 — data.py + KQL intentionally diverge from upstream
 
-**Upstream tracker:** <https://github.com/aiappsgbb/ptu-paygo-mix/blob/main/src/paygo_ptu/data.py>
-**Status:** open
+**Upstream tracker:** <https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding>
+**Status:** open (permanent design divergence)
 
-The vendored `references/analyzer/data.py` differs from upstream by
-**exactly three line removals**:
+At the pinned SHA `2636464`, upstream has **removed** the live
+Log-Analytics path from `data.py` (the `query_log_analytics`,
+`build_default_kql_query`, `load_kql_template`, `time_range_to_timedelta`
+helpers and the `KQL_TEMPLATE_PATH` constant) and **deleted** the entire
+`kql/` directory — all at commit `14a5bec`. That capability is what this
+skill's CLI `--workspace` mode is built on.
+
+Rather than lose `--workspace`, this skill **freezes** its own
+`references/analyzer/data.py` and `references/queries/*.kql` at the
+`e1786f8` shape. The only delta from that `e1786f8` upstream `data.py`
+is the Streamlit strip — **three line removals**:
 
 1. `import streamlit as st`
 2. `@st.cache_data` (the bare decorator above `load_models_config`)
 3. `@st.cache_data(ttl=300)` (the parametrised decorator above
    `query_log_analytics`)
 
-Without this surgery the module fails to import outside a Streamlit
-context. The validation script's `--synthetic` smoke would catch a
-reintroduction because `from analyzer import generate_synthetic_data`
-would fail.
+Without that strip the module fails to import outside a Streamlit
+context; the validation smoke catches any reintroduction because the
+import would fail.
 
-**Workaround:** on every re-vendor, diff `data.py` against upstream;
-the only allowed delta is the three removals above. Everything else
-must be byte-identical.
+**Consequence for re-vendoring:** `data.py` and `queries/*.kql` are
+**NOT** copied from newer upstream SHAs. Only `analysis.py`,
+`formatting.py`, and `models.json` are re-vendored byte-identical. If a
+future refresh wants to adopt upstream's model-autodetect / JSON-parse
+path, that is a **separate, deliberate decision** (it would drop the live
+`--workspace` query capability) — not a routine re-vendor.
 
-**When upstream fixes this:** the day upstream splits caching out of
-`data.py` (e.g. into a `cache.py` shim), we drop this surgery.
+**When upstream fixes this:** N/A — upstream removed the capability on
+purpose (the Streamlit app now expects the caller to paste JSON). This
+divergence is permanent unless the skill's `--workspace` mode is retired.
 
 ### KI-003 — AzureMetrics dimension shape variance
 
@@ -365,41 +390,45 @@ quirk). The coalesce in the default query is the permanent fix.
 
 ## 6. Re-pin procedure
 
-> **Note (2026-06-18):** The upstream repo `aiappsgbb/ptu-paygo-mix` is
-> currently private/inaccessible (HTTP 404). SHA-drift re-vendoring is
-> suspended until the repo is made public again. Steps 1–2 below require
-> repo access — skip them while the repo is private; resume from step 3
-> using only the PyPI version updates.
+> **Note (2026-07-06):** The upstream repo `aiappsgbb/ptu-paygo-mix` is
+> accessible again but **private** — a token with repo read access is
+> required to clone it, and public CI cannot poll it. SHA-drift
+> re-vendoring is therefore a **manual chore**, not an automated one.
+> Only the **pure analysis core** is re-vendored; `data.py` and
+> `queries/*.kql` are frozen (see § 5, KI-002).
 
-When upstream `aiappsgbb/ptu-paygo-mix` is accessible and advances:
+When upstream `aiappsgbb/ptu-paygo-mix` advances (checked manually):
 
-1. **Capture new SHA**:
+1. **Capture new SHA** (needs repo read access):
    ```bash
    git ls-remote https://github.com/aiappsgbb/ptu-paygo-mix main
    ```
-2. **Re-vendor the files**:
+2. **Re-vendor ONLY the pure analysis core** (byte-identical):
    ```bash
    git clone https://github.com/aiappsgbb/ptu-paygo-mix /tmp/ptu-upstream
    cd /tmp/ptu-upstream && git checkout <new-sha>
-   cp src/paygo_ptu/analysis.py     <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
-   cp src/paygo_ptu/formatting.py   <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
-   cp src/paygo_ptu/models.json     <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
-   cp src/paygo_ptu/kql/default_log_analytics_query.kql \
-      <repo>/skills/paygo-ptu-cost-analyzer/references/queries/default.kql
-   cp src/paygo_ptu/kql/default_log_analytics_query.active_tokens_backup.kql \
-      <repo>/skills/paygo-ptu-cost-analyzer/references/queries/active_tokens.kql
-   # data.py: copy then strip streamlit (see KI-002 for exact 3 line removals)
+   cp src/paygo_ptu/analysis.py   <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
+   cp src/paygo_ptu/formatting.py <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
+   cp src/paygo_ptu/models.json   <repo>/skills/paygo-ptu-cost-analyzer/references/analyzer/
+   # DO NOT copy data.py or the kql/ files — they are frozen (KI-002).
+   # Upstream deleted the live Log-Analytics path at 14a5bec; this skill
+   # keeps its e1786f8 data.py + queries/*.kql to power --workspace mode.
    ```
+   Then re-check any CLI wiring that reads new catalog fields (e.g. the
+   `--ptu-output-weight` default now falls back to `ptu.output_weight`).
 3. **Re-run validation script** (front-matter `validation.script`) — must
-   pass all 3 `expected_output` substrings.
+   pass all 3 `expected_output` substrings — AND run the SKILL.md
+   Quickstart end-to-end (`--synthetic`, `--csv sample_input.csv`) as the
+   § 2.9 live-test evidence.
 4. **Update front-matter**: `upstream.pinned_sha`, `pinned_commit_message`,
-   `last_validated`, `validated_by`. Bump `known_issues_count` if a new
-   workaround was introduced.
-5. **Bump SKILL.md `metadata.version` PATCH** (e.g., `1.0.0` → `1.0.1`)
-   per AGENTS.md § 5.
+   `last_validated`, `validated_by`, and append a `re_pin_log` entry. Bump
+   `known_issues_count` if a new workaround was introduced.
+5. **Bump SKILL.md `metadata.version`** — PATCH for a like-for-like
+   re-vendor, MINOR if the catalog gains new models or a CLI default
+   changes (per AGENTS.md § 5).
 6. **Open PR**: title `chore(paygo-ptu-cost-analyzer): re-pin upstream → <short-sha>`.
-   Touches the 5 vendored files + `references/upstream-pin.md` + `SKILL.md`
-   frontmatter. Body changes require `[skill-rewrite]` per AGENTS.md § 4.
+   Touches the 3 analysis-core files + `references/upstream-pin.md` +
+   `SKILL.md`. Body changes require `[skill-rewrite]` per AGENTS.md § 4.
 
 ---
 
@@ -408,10 +437,10 @@ When upstream `aiappsgbb/ptu-paygo-mix` is accessible and advances:
 The detector runs `curl --head` against each URL weekly; 4xx/5xx responses
 surface as a refresh issue.
 
-> **Note (2026-06-18):** `https://github.com/aiappsgbb/ptu-paygo-mix`
-> and its sub-URLs were removed from this list because the upstream repo
-> is private/inaccessible (HTTP 404). They will be re-added if the repo
-> is made public.
+> **Note (2026-07-06):** `https://github.com/aiappsgbb/ptu-paygo-mix`
+> and its sub-URLs stay **out** of this list: the repo is accessible
+> again but **private**, so an unauthenticated `curl --head` from CI
+> still gets 404. Re-add them only if the repo is made public.
 
 - <https://learn.microsoft.com/azure/ai-services/openai/how-to/provisioned-throughput-onboarding>
 - <https://learn.microsoft.com/azure/azure-monitor/reference/tables/azuremetrics>
@@ -425,12 +454,13 @@ surface as a refresh issue.
 
 ## 8. Cross-references worth bookmarking
 
-- `src/paygo_ptu/analysis.py` — the math (vendored verbatim)
-- `src/paygo_ptu/data.py` — schema + KQL ingest (vendored with surgery)
-- `src/paygo_ptu/models.json` — pricing catalog (vendored verbatim)
-- `src/paygo_ptu/kql/default_log_analytics_query.kql` — default query
+- `src/paygo_ptu/analysis.py` — the math (vendored verbatim @ 2636464)
+- `src/paygo_ptu/formatting.py` — number formatting (vendored verbatim @ 2636464)
+- `src/paygo_ptu/models.json` — pricing catalog (vendored verbatim @ 2636464)
+- `src/paygo_ptu/data.py` — **upstream removed the KQL path at 14a5bec**;
+  our `data.py` is frozen at the `e1786f8` shape (Streamlit-stripped)
 - `docs/sample_kql_queries.md` — alternative KQL shapes for customers
-  whose workspaces don't fit the default
+  whose workspaces don't fit the default (still a useful reference)
 
 ---
 
@@ -439,12 +469,14 @@ surface as a refresh issue.
 > If you're GHCP picking up a refresh issue for this skill:
 >
 > 1. The `validation.script` in the front-matter is your spec. Run it.
-> 2. If it passes AND the SHA has drifted, follow § 6 to re-vendor the 5
->    files. The Streamlit-strip surgery on `data.py` (KI-002) is exactly
->    three line removals — preserve everything else byte-for-byte.
-> 3. If it passes WITHOUT a SHA drift (e.g. weekly PyPI patch refresh),
->    just update `last_validated` and `validated_by: copilot-bot`, then
->    bump SKILL.md `metadata.version` PATCH. Touch nothing else.
+> 2. This skill's SHA-drift re-vendor is a **manual chore** — the upstream
+>    repo is private, so you (public CI) cannot clone it. Do NOT attempt a
+>    SHA re-vendor. Only `analysis.py` / `formatting.py` / `models.json`
+>    are ever re-vendored, and `data.py` + `queries/*.kql` are frozen
+>    (KI-002) — never copy newer upstream versions of those.
+> 3. If the smoke passes (weekly PyPI patch refresh), just update
+>    `last_validated` and `validated_by: copilot-bot`, then bump SKILL.md
+>    `metadata.version` PATCH. Touch nothing else.
 > 4. If it fails, comment on the issue with the failure output and
 >    **do NOT open a PR**.
 > 5. Re-vendoring touches files outside `references/upstream-pin.md` and

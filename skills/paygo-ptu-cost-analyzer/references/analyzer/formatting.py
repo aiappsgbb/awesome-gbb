@@ -1,6 +1,10 @@
 def fmt_num(n: float, prefix: str = "", suffix: str = "") -> str:
-    """Format large numbers compactly: 1234567 -> 1.2M, 12345 -> 12.3K"""
+    """Format large numbers compactly: 1.2K, 3.4M, 5.6B, 7.8T."""
     abs_n = abs(n)
+    if abs_n >= 1_000_000_000_000:
+        return f"{prefix}{n / 1_000_000_000_000:.2f}T{suffix}"
+    if abs_n >= 1_000_000_000:
+        return f"{prefix}{n / 1_000_000_000:.2f}B{suffix}"
     if abs_n >= 1_000_000:
         return f"{prefix}{n / 1_000_000:.1f}M{suffix}"
     if abs_n >= 1_000:
@@ -9,8 +13,12 @@ def fmt_num(n: float, prefix: str = "", suffix: str = "") -> str:
 
 
 def fmt_cost(n: float, suffix: str = "") -> str:
-    """Format cost values with full precision under $100K: $12,345 vs $1.2M"""
+    """Format cost values: full digits under $1M, then $1.2M / $3.4B / $5.6T."""
     abs_n = abs(n)
+    if abs_n >= 1_000_000_000_000:
+        return f"${n / 1_000_000_000_000:.2f}T{suffix}"
+    if abs_n >= 1_000_000_000:
+        return f"${n / 1_000_000_000:.2f}B{suffix}"
     if abs_n >= 1_000_000:
         return f"${n / 1_000_000:.1f}M{suffix}"
     if abs_n >= 1_000:

@@ -127,8 +127,12 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--ptu-output-weight",
         type=float,
-        default=1.0,
-        help="Output-token weight applied to PTU billable TPM (default: 1.0).",
+        default=None,
+        help=(
+            "Output-token weight applied to PTU billable TPM. When omitted, "
+            "defaults to the model's ptu.output_weight from models.json "
+            "(falls back to 1 if the catalog entry lacks it)."
+        ),
     )
     p.add_argument(
         "--out-dir",
@@ -160,6 +164,7 @@ def _resolve_pricing(models: dict, model_slug: str, tier: str) -> dict:
         "ptu_capacity_tpm": entry["ptu"]["capacity_tpm"],
         "ptu_min_deployment": entry["ptu"]["min_deployment"],
         "ptu_increment": entry["ptu"]["increment"],
+        "ptu_output_weight": entry["ptu"].get("output_weight", 1),
     }
 
 
@@ -187,10 +192,16 @@ def main(argv: list[str] | None = None) -> int:
 
     df, source = _load_input(args)
 
+    ptu_output_weight = (
+        args.ptu_output_weight
+        if args.ptu_output_weight is not None
+        else pricing["ptu_output_weight"]
+    )
+
     result = run_analysis(
         df,
         percentiles=args.percentiles,
-        ptu_output_weight=args.ptu_output_weight,
+        ptu_output_weight=ptu_output_weight,
         ptu_capacity_tpm=pricing["ptu_capacity_tpm"],
         ptu_min_deployment=pricing["ptu_min_deployment"],
         ptu_increment=pricing["ptu_increment"],
@@ -207,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         "tier": args.tier,
         "ptu_term": args.ptu_term,
         "percentiles": args.percentiles,
-        "ptu_output_weight": args.ptu_output_weight,
+        "ptu_output_weight": ptu_output_weight,
         "source": source,
         "pricing_snapshot": {
             "paygo": pricing["paygo"],

@@ -1,16 +1,59 @@
 {
+  "gpt-5.5": {
+    "display_name": "GPT-5.5",
+    "paygo": {
+      "global": { "input_per_m": 5, "cached_input_per_m": 0.5, "output_per_m": 30.00 },
+      "data_zone": { "input_per_m": 5.50, "cached_input_per_m": 0.55, "output_per_m": 33.00 }
+    },
+    "priority_processing": {
+      "global": { "input_per_m": 12.50, "cached_input_per_m": 1.25, "output_per_m": 75.00 },
+      "data_zone": { "input_per_m": 13.75, "cached_input_per_m": 1.375, "output_per_m": 82.50 }
+    },
+    "ptu": {
+      "capacity_tpm": 1200,
+      "min_deployment": 15,
+      "increment": 5,
+      "output_weight": 6,
+      "global": { "monthly_price": 260, "yearly_price": 221 },
+      "data_zone": { "monthly_price": 286, "yearly_price": 243 }
+    }
+  },
   "gpt-5.4": {
     "display_name": "GPT-5.4",
     "paygo": {
       "global": { "input_per_m": 2.50, "cached_input_per_m": 0.25, "output_per_m": 15.00 },
-      "data_zone": null
+      "data_zone": { "input_per_m": 2.75, "cached_input_per_m": 0.28, "output_per_m": 16.50 }
+    },
+    "priority_processing": {
+      "global": { "input_per_m": 5.00, "cached_input_per_m": 0.50, "output_per_m": 30.00 },
+      "data_zone": { "input_per_m": 5.50, "cached_input_per_m": 0.55, "output_per_m": 33.00 }
     },
     "ptu": {
       "capacity_tpm": 2400,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 6,
       "global": { "monthly_price": 260, "yearly_price": 221 },
-      "data_zone": null
+      "data_zone": { "monthly_price": 286, "yearly_price": 243 }
+    }
+  },
+  "gpt-5.4-mini": {
+    "display_name": "GPT-5.4-Mini",
+    "paygo": {
+      "global": { "input_per_m": 0.75, "cached_input_per_m": 0.08, "output_per_m": 4.50 },
+      "data_zone": { "input_per_m": 0.83, "cached_input_per_m": 0.09, "output_per_m": 4.95 }
+    },
+    "priority_processing": {
+      "global": { "input_per_m": 1.50, "cached_input_per_m": 0.15, "output_per_m": 9.00 },
+      "data_zone": { "input_per_m": 1.65, "cached_input_per_m": 0.165, "output_per_m": 9.90 }
+    },
+    "ptu": {
+      "capacity_tpm": 7900,
+      "min_deployment": 15,
+      "increment": 5,
+      "output_weight": 6,
+      "global": { "monthly_price": 260, "yearly_price": 221 },
+      "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
   },
   "gpt-5.2": {
@@ -19,10 +62,15 @@
       "global": { "input_per_m": 1.75, "cached_input_per_m": 0.18, "output_per_m": 14.00 },
       "data_zone": { "input_per_m": 1.93, "cached_input_per_m": 0.20, "output_per_m": 15.40 }
     },
+    "priority_processing": {
+      "global": { "input_per_m": 3.50, "cached_input_per_m": 0.35, "output_per_m": 28.00 },
+      "data_zone": { "input_per_m": 3.85, "cached_input_per_m": 0.385, "output_per_m": 30.80 }
+    },
     "ptu": {
       "capacity_tpm": 3400,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 8,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -37,6 +85,7 @@
       "capacity_tpm": 3400,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 8,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": null
     }
@@ -47,10 +96,15 @@
       "global": { "input_per_m": 1.25, "cached_input_per_m": 0.13, "output_per_m": 10.00 },
       "data_zone": { "input_per_m": 1.38, "cached_input_per_m": 0.14, "output_per_m": 11.00 }
     },
+    "priority_processing": {
+      "global": { "input_per_m": 2.50, "cached_input_per_m": 0.25, "output_per_m": 20.00 },
+      "data_zone": { "input_per_m": 2.75, "cached_input_per_m": 0.275, "output_per_m": 22.00 }
+    },
     "ptu": {
       "capacity_tpm": 4750,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 8,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -65,6 +119,7 @@
       "capacity_tpm": 4750,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 8,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": null
     }
@@ -79,6 +134,7 @@
       "capacity_tpm": 4750,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 8,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -93,6 +149,7 @@
       "capacity_tpm": 23750,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 8,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -103,10 +160,15 @@
       "global": { "input_per_m": 2.00, "cached_input_per_m": 0.50, "output_per_m": 8.00 },
       "data_zone": { "input_per_m": 2.20, "cached_input_per_m": 0.55, "output_per_m": 8.80 }
     },
+    "priority_processing": {
+      "global": { "input_per_m": 3.50, "cached_input_per_m": 0.875, "output_per_m": 14.00 },
+      "data_zone": { "input_per_m": 3.85, "cached_input_per_m": 0.963, "output_per_m": 15.40 }
+    },
     "ptu": {
       "capacity_tpm": 3000,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 4,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -121,6 +183,7 @@
       "capacity_tpm": 14900,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 4,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -135,6 +198,7 @@
       "capacity_tpm": 59400,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 4,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -149,6 +213,7 @@
       "capacity_tpm": 3000,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 4,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
@@ -163,6 +228,7 @@
       "capacity_tpm": 5400,
       "min_deployment": 15,
       "increment": 5,
+      "output_weight": 4,
       "global": { "monthly_price": 260, "yearly_price": 221 },
       "data_zone": { "monthly_price": 286, "yearly_price": 243 }
     }
