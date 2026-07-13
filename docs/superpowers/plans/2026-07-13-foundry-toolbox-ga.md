@@ -1181,6 +1181,7 @@ import os
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import (
+    AISearchIndexResource,
     AzureAISearchToolResource,
     AzureAISearchToolboxTool,
     MCPToolboxTool,
@@ -1202,8 +1203,12 @@ with (
             WebSearchToolboxTool(),
             AzureAISearchToolboxTool(
                 azure_ai_search=AzureAISearchToolResource(
-                    index_name="products",
-                    project_connection_id="aisearch-conn",
+                    indexes=[
+                        AISearchIndexResource(
+                            index_name="products",
+                            project_connection_id="aisearch-conn",
+                        ),
+                    ],
                 ),
             ),
             MCPToolboxTool(
@@ -1436,6 +1441,7 @@ for token in (
 for token in (
     "project.toolboxes.create_version",
     "MCPToolboxTool",
+    "AISearchIndexResource",
     "AzureAISearchToolboxTool",
     "project.toolboxes.update",
 ):
