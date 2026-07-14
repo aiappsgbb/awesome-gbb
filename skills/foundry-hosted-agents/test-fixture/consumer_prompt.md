@@ -131,39 +131,6 @@ services:
         memory: 2Gi
 YAML
 
-cleanup() {
-  status=$?
-  set +e
-  # Best-effort teardown only - a failure here does NOT fail the smoke.
-  # Cap: this whole function must not run longer than 5 minutes wall-clock.
-  timeout 300 python3 - "$agent_name" <<'PY' >>"$evidence" 2>&1
-import sys
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
-
-agent_name = sys.argv[1]
-endpoint = __import__("os").environ["FOUNDRY_PROJECT_ENDPOINT"]
-try:
-    with DefaultAzureCredential() as credential, AIProjectClient(
-        endpoint=endpoint, credential=credential
-    ) as project:
-        project.agents.delete(agent_name=agent_name)
-        print(f"AGENT_DELETED name={agent_name}")
-except Exception as exc:  # noqa: BLE001 - teardown is best-effort
-    print(f"NOTE agent delete best-effort failure: {exc}")
-PY
-  az acr repository delete \
-    --name "${ACR_LOGIN_SERVER%%.*}" \
-    --repository "${agent_name}" \
-    --yes >>"$evidence" 2>&1 \
-    && record "ACR_REPO_DELETED name=${agent_name}" \
-    || record "NOTE ACR repository delete best-effort failure (may not have been pushed under this name)"
-  rm -rf "$work_dir"
-  trap - EXIT
-  exit "$status"
-}
-trap cleanup EXIT
-
 (
   cd "$work_dir"
   azd env new "$agent_name" --no-prompt
@@ -303,7 +270,80 @@ A permission error at any step (`PermissionDenied`, 403) is a hard FAIL -
 do not retry it as if it were a transient cold-start error, and do not
 attempt a manual role assignment to work around it.
 
-## Step 4 - write the deterministic result marker
+## Step 4 - best-effort teardown
+
+Read the agent name persisted in Step 2 and perform teardown in a bounded
+5-minute window. A failure or timeout here does NOT affect the PASS marker -
+print one NOTE to stdout and continue to Step 5. The CI resource group is
+periodically pruned of orphaned hosted-agent versions and ACR repositories
+by a separate janitor.
+
+Write the following teardown script to `/tmp/foundry-hosted-agents-teardown.py`:
+
+```python
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+evidence = Path("/tmp/foundry-hosted-agents-smoke-evidence")
+agent_name_file = Path("/tmp/foundry-hosted-agents-agent-name")
+
+
+def note(message: str) -> None:
+    print(message)
+    with evidence.open("a", encoding="utf-8") as fp:
+        fp.write(f"{message}\n")
+
+
+if not agent_name_file.exists():
+    note("NOTE teardown skipped: agent name file not found")
+    sys.exit(0)
+
+agent_name = agent_name_file.read_text(encoding="utf-8").strip()
+
+# Best-effort agent delete using stable SDK with force=True.
+try:
+    from azure.ai.projects import AIProjectClient
+    from azure.identity import DefaultAzureCredential
+
+    with DefaultAzureCredential() as credential, AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
+    ) as project:
+        project.agents.delete(agent_name=agent_name, force=True)
+        note(f"AGENT_DELETED name={agent_name}")
+except Exception as exc:  # noqa: BLE001 - teardown is best-effort
+    note(f"NOTE agent delete best-effort failure: {exc}")
+
+# Best-effort ACR repository delete.
+try:
+    acr_name = os.environ["ACR_LOGIN_SERVER"].split(".")[0]
+    result = subprocess.run(
+        ["az", "acr", "repository", "delete",
+         "--name", acr_name,
+         "--repository", agent_name,
+         "--yes"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        note(f"ACR_REPO_DELETED name={agent_name}")
+    else:
+        note(f"NOTE ACR repository delete best-effort failure: {result.stderr.strip()}")
+except Exception as exc:  # noqa: BLE001 - teardown is best-effort
+    note(f"NOTE ACR repository delete best-effort failure: {exc}")
+```
+
+Then run it with a 5-minute cap:
+
+```bash
+timeout 300 /tmp/foundry-hosted-agents-venv/bin/python3 /tmp/foundry-hosted-agents-teardown.py \
+  || echo "NOTE best-effort teardown exceeded 5-minute cap or encountered an error; CI janitor will prune orphaned resources"
+```
+
+## Step 5 - Marker contract
 
 After the invoke check passes, verify the evidence file contains exactly
 the four required success records (teardown records are best-effort and
@@ -334,7 +374,7 @@ Only after that check succeeds, your final Bash action is:
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result
 ```
 
-If teardown (Step 2's `cleanup` trap) left a `NOTE` line in the evidence
+If teardown (Step 4) left a `NOTE` line in the evidence
 file, that does NOT block PASS - teardown is best-effort (5-minute cap).
 The CI resource group is periodically pruned of orphaned hosted-agent
 versions and ACR repositories by a separate janitor.
