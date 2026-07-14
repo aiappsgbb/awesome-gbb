@@ -250,15 +250,10 @@ jobs:
       - name: Resolve Foundry project context
         id: resolve-foundry-project
         env:
-          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          if [[ -z "$AZURE_AI_ENDPOINT" ]]; then
-            echo "::error::AZURE_AI_ENDPOINT secret is required"
-            exit 1
-          fi
           if [[ -z "$FOUNDRY_PROJECT_ENDPOINT" ]]; then
             echo "::error::FOUNDRY_PROJECT_ENDPOINT secret is required"
             exit 1
@@ -275,7 +270,6 @@ jobs:
             --only-show-errors)"
           project_id="$(
             python3 scripts/resolve-foundry-project.py \
-              --account-endpoint "$AZURE_AI_ENDPOINT" \
               --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
               --subscription-id "$AZURE_SUBSCRIPTION_ID" \
               <<<"$projects_json"

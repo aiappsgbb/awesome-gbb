@@ -33,8 +33,6 @@ class ResolveFoundryProjectTests(unittest.TestCase):
             [
                 sys.executable,
                 str(SCRIPT),
-                "--account-endpoint",
-                "https://ci-account.cognitiveservices.azure.com/",
                 "--project-endpoint",
                 "https://ci-account.services.ai.azure.com/api/projects/target",
                 "--subscription-id",

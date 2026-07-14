@@ -11,39 +11,25 @@ from urllib.parse import urlparse
 
 def resolve_foundry_project(
     *,
-    account_endpoint: str,
     project_endpoint: str,
     subscription_id: str,
     resources: object,
 ) -> str:
     """Return the sole ARM ID matching the configured account and project."""
-    account_url = urlparse(account_endpoint)
-    account_host = (account_url.hostname or "").casefold()
-    account_suffix = ".cognitiveservices.azure.com"
-    if (
-        account_url.scheme.casefold() != "https"
-        or not account_host.endswith(account_suffix)
-        or account_host == account_suffix.removeprefix(".")
-        or account_url.path not in ("", "/")
-        or account_url.query
-        or account_url.fragment
-    ):
-        raise ValueError("invalid Azure AI account endpoint")
-    account_name = account_host[: -len(account_suffix)]
-
     project_url = urlparse(project_endpoint)
+    project_host = (project_url.hostname or "").casefold()
+    project_host_suffix = ".services.ai.azure.com"
     project_match = re.fullmatch(r"/api/projects/([^/]+)/?", project_url.path)
     if (
         project_url.scheme.casefold() != "https"
-        or (project_url.hostname or "").casefold()
-        != f"{account_name}.services.ai.azure.com"
+        or not project_host.endswith(project_host_suffix)
+        or project_host == project_host_suffix.removeprefix(".")
         or project_match is None
         or project_url.query
         or project_url.fragment
     ):
-        raise ValueError(
-            "configured Foundry project endpoint does not match the account"
-        )
+        raise ValueError("invalid configured Foundry project endpoint")
+    account_name = project_host[: -len(project_host_suffix)]
     project_name = project_match.group(1)
 
     subscription_id = subscription_id.strip()
@@ -80,7 +66,6 @@ def resolve_foundry_project(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--account-endpoint", required=True)
     parser.add_argument("--project-endpoint", required=True)
     parser.add_argument("--subscription-id", required=True)
     args = parser.parse_args()
@@ -88,7 +73,6 @@ def main() -> int:
     try:
         resources = json.load(sys.stdin)
         project_id = resolve_foundry_project(
-            account_endpoint=args.account_endpoint,
             project_endpoint=args.project_endpoint,
             subscription_id=args.subscription_id,
             resources=resources,
