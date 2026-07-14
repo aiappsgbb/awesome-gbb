@@ -1130,7 +1130,7 @@ No `override-dependencies` needed — the hosting package pins its own transitiv
 
 - Port 8088 is the standard Foundry agent port
 - `--platform linux/amd64` only needed for local builds
-- `azd deploy` builds remotely in Azure Container Registry by default — no local Docker needed (set `docker.remoteBuild: false` in `azure.yaml` to force a local build; requires Docker Desktop)
+- `azd deploy` builds remotely in Azure Container Registry by default — no local Docker needed. Use `azd ai agent run` when you intentionally want to build and run the agent locally.
 
 ---
 
@@ -1382,7 +1382,7 @@ azd up
   │   default; use ejected Bicep/Terraform if you materialized infra
   ├── postprovision hooks (if any)
   ├── azd ai agent extension →
-  │   ├── Build container remotely via ACR (docker.remoteBuild: true, default)
+  │   ├── Build container remotely via ACR (default)
   │   ├── Push image + create hosted agent version
   │   └── Agent gets a dedicated Entra identity with implicit access
   │       to model inferencing + session storage — no RBAC grant step
@@ -1589,9 +1589,12 @@ one call". Same SDK surface end to end.
 
 1. **Create v2** with `project.agents.create_version(agent_name=...,
    definition=HostedAgentDefinition(kind="hosted", cpu=..., memory=...,
-   environment_variables={...}, container_configuration=ContainerConfiguration(image=...),
+   environment_variables={"AZURE_AI_MODEL_DEPLOYMENT_NAME": _env("AZURE_AI_MODEL_DEPLOYMENT_NAME"), "_BUILD_TS": ...},
+   container_configuration=ContainerConfiguration(image=...),
    protocol_versions=[ProtocolVersionRecord(protocol=AgentEndpointProtocol.RESPONSES, version="2.0.0")]))`.
-   Returns immediately with `status: "creating"`.
+   Returns immediately with `status: "creating"`. A new immutable version
+   does not inherit omitted definition fields, so carry every required
+   runtime variable forward; `_BUILD_TS` is additive, not a replacement.
 2. **Poll** the version via `project.agents.get_version(agent_name,
    agent_version)` until `status == "active"` (typically 2-5 min;
    `failed` is terminal — read the `error` field for cause).
@@ -1713,8 +1716,9 @@ visible when you're moving versions around:
   "v2 deploy" is then your v1, and the canary appears stuck at 100 % v1
   even though the `update_details` call succeeded. **Always bump a
   `_BUILD_TS` or `_GIT_SHA` environment variable** on every
-  `create_version` call to defeat the dedup. The canonical reference
-  script does this.
+  `create_version` call to defeat the dedup, while also carrying required
+  runtime variables such as `AZURE_AI_MODEL_DEPLOYMENT_NAME` into the new
+  complete definition. The canonical reference script does both.
 - **[ACR layer-cache trap](#acr-layer-cache-trap-per-job-images-built-via-dockerbuildrequest)**
   — if you tag both versions `:latest` and ACR caches a stale layer, v2
   may pull v1's image bits. **Pin by digest (`@sha256:...`) for canary

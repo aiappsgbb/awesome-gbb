@@ -18,12 +18,14 @@ covers `AgentsOptimization` operations now) — do not reintroduce it.
 Requires:
 - azure-ai-projects ~= 2.3.0
 - azure-identity ~= 1.25.3
-- Environment variables: FOUNDRY_PROJECT_ENDPOINT, AGENT_NAME, NEW_IMAGE
+- Environment variables: FOUNDRY_PROJECT_ENDPOINT, AGENT_NAME, NEW_IMAGE,
+  AZURE_AI_MODEL_DEPLOYMENT_NAME
 
 Usage:
     export FOUNDRY_PROJECT_ENDPOINT=https://<acct>.services.ai.azure.com/api/projects/<proj>
     export AGENT_NAME=my-agent
     export NEW_IMAGE=myregistry.azurecr.io/my-agent@sha256:def...
+    export AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-5.4-mini
     python version_rollout.py blue-green
     python version_rollout.py canary 1            # prior version is "1"
     python version_rollout.py rollback 1          # revert to version "1"
@@ -127,13 +129,15 @@ def create_new_version(
 ) -> str:
     """Create a new agent version. Returns the version id (e.g. '2').
 
-    Always bumps a `_BUILD_TS` env var to defeat the `create_version`
-    deduplication trap documented in SKILL.md §
-    `create_version deduplication trap`. Without it, the platform may
-    silently return an existing version with identical inputs. Versions
-    are immutable once created — this is how you ship a change, not
-    `update_details` (that call only ever touches endpoint/routing
-    config, never the version's own definition).
+    Carries the required `AZURE_AI_MODEL_DEPLOYMENT_NAME` runtime setting
+    into the complete immutable definition and bumps `_BUILD_TS` to defeat
+    the `create_version` deduplication trap documented in SKILL.md §
+    `create_version deduplication trap`. Without the model setting, the new
+    version does not inherit it and the container fails at startup. Without
+    the build stamp, the platform may silently return an existing version
+    with identical inputs. Versions are immutable once created — this is how
+    you ship a change, not `update_details` (that call only ever touches
+    endpoint/routing config, never the version's own definition).
     """
     v = project.agents.create_version(
         agent_name=agent_name,
@@ -148,7 +152,12 @@ def create_new_version(
                     version=RESPONSES_PROTOCOL_VERSION,
                 ),
             ],
-            environment_variables={"_BUILD_TS": str(int(time.time()))},
+            environment_variables={
+                "AZURE_AI_MODEL_DEPLOYMENT_NAME": _env(
+                    "AZURE_AI_MODEL_DEPLOYMENT_NAME"
+                ),
+                "_BUILD_TS": str(int(time.time())),
+            },
         ),
     )
     print(f"  created v{v.version} (status: {v['status']})")

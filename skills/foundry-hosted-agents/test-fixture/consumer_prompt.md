@@ -27,11 +27,15 @@ The workflow has already installed `azd` at `/usr/local/bin/azd`. Do not search
 the filesystem, run `command -v azd`, or install a replacement. Run:
 
 ```bash
+rm -f /tmp/foundry-hosted-agents-smoke-result
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
 echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
 echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER:+set}"
+if [[ -z "${ACR_LOGIN_SERVER:-}" ]]; then
+  echo "NOTE ACR_LOGIN_SERVER is not set; best-effort ACR cleanup will be skipped"
+fi
 az account show --output table || echo "(az cache not inherited - relying on DefaultAzureCredential)"
 azd auth login \
   --federated-credential-provider github \
@@ -39,16 +43,21 @@ azd auth login \
   --tenant-id "$AZURE_TENANT_ID"
 ```
 
-Only assert that the five environment variables are non-empty. Do not compare
-subscription IDs, decode tokens, or gate on Azure CLI cache visibility. If an
-environment variable is empty, write the FAIL marker from the final step with
-the exact missing variable name and stop. `azd auth login` is the explicit azd
+Only assert that the four auth/deploy variables (`AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and
+`FOUNDRY_PROJECT_ENDPOINT`) are non-empty. Do not compare subscription IDs,
+decode tokens, or gate on Azure CLI cache visibility. `ACR_LOGIN_SERVER` is
+an optional cleanup hint, not a deploy input. If a required environment
+variable is empty, write the FAIL marker from the final step with the exact
+missing variable name and stop. `azd auth login` is the explicit azd
 authentication gate; if it fails, use the matching final-step marker.
 
 **Pre-provisioned, do NOT create:** the Foundry project at
-`FOUNDRY_PROJECT_ENDPOINT` and the container registry at `ACR_LOGIN_SERVER`
-already exist. Do not run `azd provision`, `az group create`, or anything
-that provisions a new Foundry project or registry. Hosted agents run on
+`FOUNDRY_PROJECT_ENDPOINT` already exists. The `microsoft.foundry` provider
+resolves the project's configured container registry for remote build and
+deploy; `ACR_LOGIN_SERVER` is used only to attempt best-effort repository
+cleanup. Do not run `azd provision`, `az group create`, or anything that
+provisions a new Foundry project or registry. Hosted agents run on
 Foundry-managed, per-session sandboxes - there is no Container Apps
 environment, no ACA app, and nothing else to provision for this fixture.
 
@@ -85,7 +94,8 @@ evidence="/tmp/foundry-hosted-agents-smoke-evidence"
 : >"$evidence"
 
 record() {
-  printf '%s\n' "$1" | tee -a "$evidence"
+  printf '%s\n' "$1" >>"$evidence"
+  printf '%s\n' "$1"
 }
 
 suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
@@ -101,43 +111,55 @@ skill_refs="$repo_root/skills/foundry-hosted-agents/references"
 cp "$skill_refs/docker/Dockerfile" "$work_dir/Dockerfile"
 cp "$skill_refs/python/container.py" "$work_dir/container.py"
 cp "$skill_refs/python/pyproject.toml" "$work_dir/pyproject.toml"
+cp "$skill_refs/yaml/azure.yaml" "$work_dir/azure.yaml"
 printf 'You are a customer-support triage assistant.\n' > "$work_dir/copilot-instructions.md"
 
-cat >"$work_dir/azure.yaml" <<YAML
-name: foundry-hosted-agents-smoke
-requiredVersions:
-  extensions:
-    azure.ai.agents: '>=1.0.0-beta.4'
-services:
-  ai-project:
-    host: azure.ai.project
-    endpoint: \${FOUNDRY_PROJECT_ENDPOINT}
-  ${agent_name}:
-    host: azure.ai.agent
-    project: .
-    language: docker
-    uses:
-      - ai-project
-    kind: hosted
-    name: ${agent_name}
-    protocols:
-      - protocol: responses
-        version: 2.0.0
-    environmentVariables:
-      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-        value: \${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-    container:
-      resources:
-        cpu: "1"
-        memory: 2Gi
-infra:
-  provider: microsoft.foundry
-YAML
+# Preserve the canonical YAML byte-for-byte except for the two exact
+# UUID-bearing agent identifiers. Count each source token before replacing so
+# an upstream reference change fails loudly instead of altering prose/comments.
+AGENT_NAME="$agent_name" AZURE_YAML_PATH="$work_dir/azure.yaml" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["AZURE_YAML_PATH"])
+agent_name = os.environ["AGENT_NAME"]
+text = path.read_text(encoding="utf-8")
+replacements = (
+    ("  my-agent:\n", f"  {agent_name}:\n"),
+    ("    name: my-agent\n", f"    name: {agent_name}\n"),
+)
+for old, new in replacements:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"expected exactly one canonical token {old!r}, found {count}")
+    text = text.replace(old, new, 1)
+path.write_text(text, encoding="utf-8")
+PY
+
+# Show and prove the exact canonical shape before deployment.
+sed -n '1,160p' "$work_dir/azure.yaml"
+AGENT_NAME="$agent_name" CANONICAL_YAML="$skill_refs/yaml/azure.yaml" \
+  RENDERED_YAML="$work_dir/azure.yaml" python3 - <<'PY'
+import os
+from pathlib import Path
+
+agent_name = os.environ["AGENT_NAME"]
+canonical = Path(os.environ["CANONICAL_YAML"]).read_text(encoding="utf-8")
+rendered = Path(os.environ["RENDERED_YAML"]).read_text(encoding="utf-8")
+restored = rendered.replace(f"  {agent_name}:\n", "  my-agent:\n", 1)
+restored = restored.replace(f"    name: {agent_name}\n", "    name: my-agent\n", 1)
+assert restored == canonical, "rendered azure.yaml differs beyond agent identifiers"
+assert "version: 2.0.0" in rendered
+assert "environmentVariables:" in rendered
+assert "provider: microsoft.foundry" in rendered
+assert "endpoint: ${AZURE_AI_PROJECT_ENDPOINT}" in rendered
+print(f"CANONICAL_AZURE_YAML_OK service={agent_name}")
+PY
 
 (
   cd "$work_dir"
   azd env new "$agent_name" --no-prompt
-  azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
+  azd env set AZURE_AI_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
   azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-5.4-mini"
   azd deploy "$agent_name" --no-prompt
 )
@@ -319,24 +341,29 @@ try:
 except Exception as exc:  # noqa: BLE001 - teardown is best-effort
     note(f"NOTE agent delete best-effort failure: {exc}")
 
-# Best-effort ACR repository delete.
-try:
-    acr_name = os.environ["ACR_LOGIN_SERVER"].split(".")[0]
-    result = subprocess.run(
-        ["az", "acr", "repository", "delete",
-         "--name", acr_name,
-         "--repository", agent_name,
-         "--yes"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode == 0:
-        note(f"ACR_REPO_DELETED name={agent_name}")
-    else:
-        note(f"NOTE ACR repository delete best-effort failure: {result.stderr.strip()}")
-except Exception as exc:  # noqa: BLE001 - teardown is best-effort
-    note(f"NOTE ACR repository delete best-effort failure: {exc}")
+# Best-effort ACR repository delete. The provider resolves the registry for
+# deploy; ACR_LOGIN_SERVER is only an optional cleanup hint.
+acr_login_server = os.environ.get("ACR_LOGIN_SERVER", "").strip()
+if not acr_login_server:
+    note("NOTE ACR repository cleanup skipped: ACR_LOGIN_SERVER not set")
+else:
+    try:
+        acr_name = acr_login_server.split(".")[0]
+        result = subprocess.run(
+            ["az", "acr", "repository", "delete",
+             "--name", acr_name,
+             "--repository", agent_name,
+             "--yes"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            note(f"ACR_REPO_DELETED name={agent_name}")
+        else:
+            note(f"NOTE ACR repository delete best-effort failure: {result.stderr.strip()}")
+    except Exception as exc:  # noqa: BLE001 - teardown is best-effort
+        note(f"NOTE ACR repository delete best-effort failure: {exc}")
 ```
 
 Then run it with a 5-minute cap:
@@ -390,7 +417,6 @@ printf 'SMOKE_RESULT=FAIL missing AZURE_CLIENT_ID\n' > /tmp/foundry-hosted-agent
 printf 'SMOKE_RESULT=FAIL missing AZURE_TENANT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL missing AZURE_SUBSCRIPTION_ID\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL missing FOUNDRY_PROJECT_ENDPOINT\n' > /tmp/foundry-hosted-agents-smoke-result
-printf 'SMOKE_RESULT=FAIL missing ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL microsoft.foundry or azure.ai.agents extension not installed\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd deploy failed\n' > /tmp/foundry-hosted-agents-smoke-result
