@@ -1,0 +1,2299 @@
+# Foundry Toolbox GA Migration Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the `foundry-toolbox` preview-era contract with the GA Toolbox management and consumption contract, then prove stable CRUD and `FoundryToolbox` connectivity against a live Foundry project.
+
+**Architecture:** `azure-ai-projects~=2.3.0` owns stable Toolbox management through `AIProjectClient.toolboxes` and Toolbox-specific model classes. `agent-framework-foundry-hosting==1.0.0a260709` owns the high-level `FoundryToolbox` MCP consumer, while the existing direct `MCPStreamableHTTPTool` reference remains the non-Toolbox MCP pattern. The Copilot-CLI fixture first installs the pinned `microsoft.foundry` bundle, exercises its bundled Toolbox component through the service target and official existing-project context flow, then creates a separate UUID-named Toolbox with the stable SDK, retrieves it, connects through the GA wrapper without the preview header, verifies functions, and deletes every resource. Every successful operation is mirrored to a deterministic sidecar that the workflow prints and uploads.
+
+**Tech Stack:** Python 3.12+, `azure-ai-projects~=2.3.0`, `azure-identity`, `agent-framework~=1.11.0`, `agent-framework-foundry-hosting==1.0.0a260709`, `mcp~=1.28.1`, `azd>=1.27.0`, `microsoft.foundry==1.0.0-beta.1` (bundling `azure.ai.toolboxes==1.0.0-beta.2`), Microsoft Foundry Toolbox MCP API `v1`, Copilot-CLI Azure E2E fixture, static catalog generator.
+
+---
+
+## Plan-time refinements to the approved design
+
+1. **The root plugin must move from `4.27.0` to `4.28.0`.** The approved design listed a plugin bump as a non-goal, but `scripts/validate-skills.py::validate_skill_plugin_version_consistency` rejects every MAJOR or MINOR skill bump when `plugin.json` is unchanged. Use a MINOR catalog bump and keep both marketplace version fields synchronized. This does not add, remove, or rename a plugin.
+2. **Reference compilation remains in T0 instead of the pin script.** `scripts/run-pin-validation.py` deliberately executes pin scripts in an isolated temporary directory with a minimal environment and no repository-root variable. `scripts/validate-skills.py` already parses or compiles all reference files. Do not weaken the pin sandbox or duplicate reference source inside the pin merely to re-run the same syntax check.
+3. **The fixture is self-contained and token-efficient.** It emits `skills/foundry-toolbox/SKILL.md` with one `echo` for the post-hoc audit instead of loading the 1,100-line skill into model context. It includes the mandatory anti-recursive-`copilot` guard from AGENTS.md Pattern 27 and executes the stable API contract directly.
+4. **Current package source wins over stale Learn snippets.** Some indexed Learn samples still show generic Agent tool classes or `create_toolbox_version`. The installed `azure-ai-projects` 2.3.0 operation surface is `project.toolboxes.create_version(...)` and accepts `list[ToolboxTool]`; the plan uses that inspected package contract.
+5. **The changed azd samples also receive live coverage.** The approved design's T3 list covered only SDK CRUD and `FoundryToolbox`, but AGENTS.md section 2.9 requires every changed CLI or `azure.yaml` sample to run against Azure. The fixture therefore authenticates azd explicitly, installs the unified bundle, sets the Foundry project context, deploys a UUID-named `host: azure.ai.toolbox` service, creates a second Toolbox through `azd ai toolbox create --from-file`, verifies both, and deletes both before it runs the SDK smoke.
+6. **Live audit evidence uses a sidecar, not rendered tool output.** Run `29267005825` proved Copilot CLI collapses multi-line Bash results to `└ N lines...`; a passing byte-exact marker therefore does not guarantee the eight audit records appear in `gh run view --log`. The fixture writes each successful operation to stdout and `/tmp/foundry-toolbox-smoke-evidence`; primary and retry workflow steps clean and print that file, and the forensics artifact uploads it with the transcript.
+
+## File map
+
+| File | Action | Responsibility |
+|---|---|---|
+| `skills/foundry-toolbox/references/upstream-pin.md` | Modify | Pin the GA SDK stack, close the preview-header issue, and test stable imports/client operations |
+| `skills/foundry-toolbox/references/python/toolbox_wiring.py` | Modify | Canonical MAF 1.11 `FoundryToolbox` composition plus direct Learn MCP example |
+| `skills/foundry-toolbox/references/python/mcp_text_extractor.py` | Verify only | Existing direct-MCP result parser; no source change unless the pinned import probe fails |
+| `skills/foundry-toolbox/test-fixture/consumer_prompt.md` | Modify | Live azd service-target/CLI coverage, stable SDK CRUD, high-level Toolbox connection, deletion, and deterministic result marker |
+| `skills/foundry-toolbox/SKILL.md` | Modify | GA status boundary, stable CRUD/models/request contract, MAF wrapper, preview Tool Search, migration and troubleshooting |
+| `.github/workflows/skill-test.yml` | Modify | Clean, print, retry, and upload per-attempt deterministic evidence sidecars |
+| `README.md` | Modify | Replace the stale preview-header catalog row |
+| `plugin.json` | Modify | Required catalog MINOR version bump `4.27.0 -> 4.28.0` |
+| `.github/plugin/marketplace.json` | Modify | Keep metadata and plugin entry versions synchronized at `4.28.0` |
+| `docs/` | Regenerate | Static catalog output generated by `scripts/build-site.py` |
+
+**Explicitly unchanged:** `.github/workflows/skill-test.yml`, `.github/skill-deps.yml`, every other `skills/*/SKILL.md`, and `skills/foundry-toolbox/references/python/mcp_text_extractor.py`.
+
+---
+
+### Task 1: Establish the clean baseline and failing migration probes
+
+**Files:**
+- Verify only: repository state and existing test suites
+
+- [ ] **Step 1: Confirm the branch contains the approved design and plan commits**
+
+Run:
+
+```bash
+git status --short
+git --no-pager log -3 --oneline
+```
+
+Expected: `git status --short` prints nothing; the newest commit is this
+implementation plan and the preceding commit is the approved Toolbox GA design.
+
+- [ ] **Step 2: Run the existing catalog baseline**
+
+Run:
+
+```bash
+set -euo pipefail
+python3 scripts/validate-skills.py
+python3 scripts/build-plugins.py --check
+SITE_TMP="$(mktemp -d)"
+trap 'rm -rf "$SITE_TMP"' EXIT
+python3 scripts/build-site.py --out "$SITE_TMP" --validate
+```
+
+Expected:
+
+```text
+Validated 35 SKILL.md files + 31 pin files + 167 reference files + plugin.json + marketplace.json
+All checks passed.
+Single-plugin structure valid
+```
+
+The exact success decoration can differ by terminal encoding; every command must exit `0`.
+
+- [ ] **Step 3: Run the existing unit-test baseline**
+
+Run:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+```
+
+Expected: all existing tests pass.
+
+- [ ] **Step 4: Run the GA contract probe and verify that the current source fails it**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+
+import re
+
+skill = Path("skills/foundry-toolbox/SKILL.md").read_text(encoding="utf-8")
+skill_code = "\n".join(
+    re.findall(r"^```[^\n]*\n(.*?)^```", skill, re.MULTILINE | re.DOTALL)
+)
+fixture = Path(
+    "skills/foundry-toolbox/test-fixture/consumer_prompt.md"
+).read_text(encoding="utf-8")
+reference = Path(
+    "skills/foundry-toolbox/references/python/toolbox_wiring.py"
+).read_text(encoding="utf-8")
+
+failures = []
+for token, text in (
+    ("project.beta.toolboxes", skill_code),
+    ("Toolboxes=V1Preview", skill_code),
+    ("project.beta.toolboxes", fixture),
+    ("Toolboxes=V1Preview", fixture),
+    ("AzureAIToolbox", reference),
+):
+    if token in text:
+        failures.append(token)
+
+assert not failures, f"preview-era contract remains: {sorted(set(failures))}"
+PY
+```
+
+Expected: FAIL with `AssertionError: preview-era contract remains`. This is the red test for the migration.
+
+---
+
+### Task 2: Re-pin the stable SDK and wrapper contract
+
+**Files:**
+- Modify: `skills/foundry-toolbox/references/upstream-pin.md:1-118`
+
+- [ ] **Step 1: Replace the upstream summary, package list, and package notes**
+
+Use these exact frontmatter values:
+
+```yaml
+upstream:
+  type: pypi
+  notes: |
+    Wrapper around the Microsoft Foundry Toolbox GA API, stable Python management SDK, and Agent Framework hosted Toolbox consumer. Preview Toolbox subfeatures remain labeled separately.
+
+packages:
+  - name: azure-ai-projects
+    source: pypi
+    version: "2.3.0"
+    upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
+    notes: |
+      Stable Toolbox management is exposed through AIProjectClient.toolboxes and Toolbox-specific model classes.
+  - name: agent-framework
+    source: pypi
+    version: "1.11.0"
+    upstream_changelog: https://pypi.org/project/agent-framework/#history
+    notes: |
+      MAF core surface used for Agent, FoundryChatClient, MCPStreamableHTTPTool, and local function-tool composition.
+  - name: agent-framework-foundry-hosting
+    source: pypi
+    version: "1.0.0a260709"
+    upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
+    notes: |
+      Exact prerelease containing FoundryToolbox, the high-level authenticated Toolbox MCP consumer for hosted agents.
+  - name: mcp
+    source: pypi
+    version: "1.28.1"
+    upstream_changelog: https://pypi.org/project/mcp/#history
+    notes: |
+      Streamable HTTP MCP client primitives used by direct non-Toolbox MCP examples and Toolbox connectivity.
+```
+
+- [ ] **Step 2: Add the Tool Search page to the revalidation list**
+
+Add this URL immediately after the Toolbox how-to URL:
+
+```yaml
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search
+```
+
+- [ ] **Step 3: Close KI-001 without deleting its audit history**
+
+Replace the existing `known_issues` entry with:
+
+```yaml
+known_issues:
+  - id: KI-001
+    description: |
+      Preview-era Toolbox requests required `Foundry-Features: Toolboxes=V1Preview`. The GA Toolbox API removed that feature gate; stable clients must not depend on the header.
+    upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox
+    status: closed_upstream_fixed
+    workaround_location: removed in foundry-toolbox v2.0.0
+```
+
+Keep `known_issues_count: 1`; closed entries still count in the audit trail.
+
+- [ ] **Step 4: Replace `validation.script` with stable import and operation probes**
+
+Use this exact script and output contract:
+
+```yaml
+validation:
+  requires: [pypi]
+  runnable: true
+  script: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python -m venv .venv
+    . .venv/bin/activate
+    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.11.0" "agent-framework-foundry-hosting==1.0.0a260709" "mcp~=1.28.1"
+    python - <<'PY'
+    from agent_framework import MCPStreamableHTTPTool, SkillsProvider
+    from agent_framework_foundry_hosting import FoundryToolbox
+    from azure.ai.projects import AIProjectClient
+    from azure.ai.projects.models import (
+        CodeInterpreterToolboxTool,
+        MCPToolboxTool,
+        ToolboxSearchPreviewToolboxTool,
+        ToolboxTool,
+    )
+    from mcp import ClientSession
+
+    class OfflineCredential:
+        def get_token(self, *scopes, **kwargs):
+            raise RuntimeError("network access is not part of the import smoke")
+
+        def close(self):
+            return None
+
+    client = AIProjectClient(
+        endpoint="https://example.services.ai.azure.com/api/projects/example",
+        credential=OfflineCredential(),
+    )
+    assert client.toolboxes is not None
+    assert callable(client.toolboxes.create_version)
+    assert callable(client.toolboxes.get_version)
+    assert callable(client.toolboxes.delete)
+    client.close()
+    print("ok stable toolbox client")
+
+    for model in (
+        ToolboxTool,
+        CodeInterpreterToolboxTool,
+        MCPToolboxTool,
+        ToolboxSearchPreviewToolboxTool,
+    ):
+        assert model is not None
+    print("ok toolbox-specific models")
+
+    assert FoundryToolbox is not None
+    assert MCPStreamableHTTPTool is not None
+    assert ClientSession is not None
+    print("ok FoundryToolbox imports")
+
+    try:
+        from agent_framework.foundry import AzureAIToolbox
+    except (ImportError, ModuleNotFoundError):
+        print("ok AzureAIToolbox removed")
+    else:
+        raise SystemExit("AzureAIToolbox unexpectedly remains importable")
+
+    try:
+        SkillsProvider(skill_paths=".")
+    except TypeError:
+        print("ok skill_paths constructor removed")
+    else:
+        raise SystemExit("SkillsProvider(skill_paths=...) unexpectedly accepted")
+    PY
+  expected_output:
+    - "ok stable toolbox client"
+    - "ok toolbox-specific models"
+    - "ok FoundryToolbox imports"
+    - "ok AzureAIToolbox removed"
+    - "ok skill_paths constructor removed"
+```
+
+- [ ] **Step 5: Synchronize validation metadata and human-readable package table**
+
+Set:
+
+```yaml
+last_validated: 2026-07-13
+validated_by: copilot-bot
+known_issues_count: 1
+```
+
+Replace the prose package table with:
+
+```markdown
+| Package | Source | Pinned version | Notes |
+|---------|--------|----------------|-------|
+| `azure-ai-projects` | PyPI | **2.3.0** | Stable `AIProjectClient.toolboxes` CRUD and Toolbox-specific models |
+| `agent-framework` | PyPI | **1.11.0** | Agent, FoundryChatClient, and direct MCP composition |
+| `agent-framework-foundry-hosting` | PyPI | **1.0.0a260709** | Exact prerelease containing `FoundryToolbox` |
+| `mcp` | PyPI | **1.28.1** | Streamable HTTP MCP client primitives |
+```
+
+Replace the KI prose with:
+
+```markdown
+### KI-001 - preview Toolbox feature header
+
+Closed upstream. The GA Toolbox API no longer requires `Foundry-Features: Toolboxes=V1Preview`; v2.0.0 removes the workaround from canonical requests.
+```
+
+- [ ] **Step 6: Execute the edited pin script before committing**
+
+Run:
+
+```bash
+TMP_DIR="$(mktemp -d)"
+python3 - "$TMP_DIR/validate.sh" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+pin = Path("skills/foundry-toolbox/references/upstream-pin.md")
+frontmatter = yaml.safe_load(pin.read_text(encoding="utf-8").split("---", 2)[1])
+Path(sys.argv[1]).write_text(
+    frontmatter["validation"]["script"],
+    encoding="utf-8",
+)
+PY
+chmod +x "$TMP_DIR/validate.sh"
+(cd "$TMP_DIR" && ./validate.sh)
+rm -rf "$TMP_DIR"
+```
+
+Expected: all five `ok ...` lines appear and the command exits `0`.
+
+- [ ] **Step 7: Validate the pin schema**
+
+Run:
+
+```bash
+python3 scripts/validate-skills.py
+```
+
+Expected: all checks pass.
+
+- [ ] **Step 8: Commit the pin refresh**
+
+```bash
+git add skills/foundry-toolbox/references/upstream-pin.md
+git commit \
+  -m "foundry-toolbox: pin GA Toolbox SDK contract" \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+- [ ] **Step 9: Re-run the official changed-pin runner**
+
+Run:
+
+```bash
+python3 scripts/run-pin-validation.py --base=HEAD^
+```
+
+Expected: only `foundry-toolbox` runs; every declared expected-output string is found.
+
+---
+
+### Task 3: Replace the canonical MAF Toolbox reference
+
+**Files:**
+- Modify: `skills/foundry-toolbox/references/python/toolbox_wiring.py:1-92`
+- Verify only: `skills/foundry-toolbox/references/python/mcp_text_extractor.py`
+
+- [ ] **Step 1: Verify the old reference fails the stable wrapper assertion**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+
+text = Path(
+    "skills/foundry-toolbox/references/python/toolbox_wiring.py"
+).read_text(encoding="utf-8")
+assert "from agent_framework_foundry_hosting import FoundryToolbox" in text
+assert "AzureAIToolbox" not in text
+PY
+```
+
+Expected: FAIL on the missing `FoundryToolbox` import.
+
+- [ ] **Step 2: Replace the reference with the GA wrapper composition**
+
+Use this complete file:
+
+```python
+"""Canonical toolbox wiring sample - MAF 1.11 + Foundry Toolbox GA.
+
+Source of truth for the prose example in `../../SKILL.md § Step 2 —
+Wire into a hosted agent`.
+
+Validates the cross-skill ownership rule: this file shows Toolbox-to-Agent
+wiring, which is owned by the `foundry-toolbox` skill. The hosted runtime
+construction is owned by `foundry-hosted-agents`.
+
+Demonstrates three patterns:
+    1. FoundryToolbox - resolves the Toolbox MCP endpoint, authenticates each
+       request, and forwards the hosted request call ID.
+    2. Direct MCPStreamableHTTPTool - for non-Toolbox MCP servers such as
+       Microsoft Learn. Always pass parse_tool_results=extract_mcp_text.
+    3. Composition - Toolbox, direct MCP, and local function tools on one Agent.
+
+Validated against agent-framework 1.11.0, agent-framework-foundry-hosting
+1.0.0a260709, and azure-ai-projects 2.3.0 in July 2026.
+"""
+
+from __future__ import annotations
+
+import os
+
+from agent_framework import Agent, MCPStreamableHTTPTool, tool
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import FoundryToolbox
+from azure.identity import DefaultAzureCredential
+
+from references.python.mcp_text_extractor import extract_mcp_text
+
+
+def _build_foundry_toolbox(
+    credential: DefaultAzureCredential,
+) -> FoundryToolbox:
+    """Build the GA Toolbox consumer from the hosting environment contract."""
+    return FoundryToolbox(credential)
+
+
+def _build_learn_mcp() -> MCPStreamableHTTPTool:
+    """Wire a public non-Toolbox MCP server directly."""
+    return MCPStreamableHTTPTool(
+        name="microsoft-learn",
+        url="https://learn.microsoft.com/api/mcp",
+        parse_tool_results=extract_mcp_text,
+    )
+
+
+@tool(approval_mode="never_require")
+def echo(message: str) -> str:
+    """Return the supplied message for a local-tool composition example."""
+    return f"echo: {message}"
+
+
+def main() -> Agent:
+    """Compose a Foundry Toolbox, direct MCP, and local function."""
+    credential = DefaultAzureCredential()
+    toolbox = _build_foundry_toolbox(credential)
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
+
+    return Agent(
+        client=client,
+        instructions=(
+            "You are a helpful assistant. Use the available tools to ground "
+            "your answers."
+        ),
+        tools=[toolbox, _build_learn_mcp(), echo],
+        default_options={"store": False},
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The `FoundryToolbox` constructor intentionally receives no URL or name. The wrapper resolves `TOOLBOX_ENDPOINT`, or `FOUNDRY_PROJECT_ENDPOINT` plus `TOOLBOX_NAME`, and defaults the token scope to `https://ai.azure.com/.default`.
+
+- [ ] **Step 3: Compile both references**
+
+Run:
+
+```bash
+python3 -m py_compile \
+  skills/foundry-toolbox/references/python/toolbox_wiring.py \
+  skills/foundry-toolbox/references/python/mcp_text_extractor.py
+```
+
+Expected: no output and exit `0`.
+
+- [ ] **Step 4: Import the canonical reference against the pinned stack**
+
+Run:
+
+```bash
+TMP_VENV="$(mktemp -d)"
+python3 -m venv "$TMP_VENV"
+"$TMP_VENV/bin/pip" install --quiet \
+  "azure-ai-projects~=2.3.0" \
+  "azure-identity~=1.25.3" \
+  "agent-framework~=1.11.0" \
+  "agent-framework-foundry-hosting==1.0.0a260709" \
+  "mcp~=1.28.1"
+PYTHONPATH=skills/foundry-toolbox "$TMP_VENV/bin/python" - <<'PY'
+from references.python.toolbox_wiring import main
+
+assert callable(main)
+print("ok canonical Toolbox reference imports")
+PY
+rm -rf "$TMP_VENV"
+```
+
+Expected: `ok canonical Toolbox reference imports`.
+
+- [ ] **Step 5: Run the catalog validator**
+
+Run:
+
+```bash
+python3 scripts/validate-skills.py
+```
+
+Expected: reference headers resolve and all checks pass.
+
+- [ ] **Step 6: Commit the canonical reference**
+
+```bash
+git add skills/foundry-toolbox/references/python/toolbox_wiring.py
+git commit \
+  -m "foundry-toolbox: migrate canonical wiring to FoundryToolbox" \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+---
+
+### Task 4: Rewrite the live fixture around stable CRUD and consumption
+
+**Files:**
+- Modify: `skills/foundry-toolbox/test-fixture/consumer_prompt.md:1-92`
+
+- [ ] **Step 1: Replace the fixture introduction with a self-contained execution contract**
+
+Start the fixture with:
+
+````markdown
+# Customer goal - `foundry-toolbox` GA smoke
+
+Execute a live Microsoft Foundry Toolbox smoke against the CI project. This is
+an execution test, not a catalog-inspection task. Follow the exact API contract
+below; do not browse the repository or load the full SKILL.md into context.
+
+## Step -1 - acknowledge the skill contract
+
+Your first Bash action must be:
+
+```bash
+echo "skills/foundry-toolbox/SKILL.md"
+```
+
+This lightweight line is the workflow's skill-usage audit evidence. Do not
+open the whole file.
+
+**CRITICAL - never invoke `copilot` recursively from a Bash tool.** You are
+the running Copilot CLI process. Do not run `copilot -p`, `copilot --version`,
+install Copilot, or invoke any other `copilot` command. The workflow already
+captures output through its outer `tee`; execute the smoke steps directly.
+````
+
+- [ ] **Step 2: Replace Step 0 with the project-endpoint inventory**
+
+Use:
+
+````markdown
+## Step 0 - auth context
+
+The workflow has already installed `azd` at `/usr/local/bin/azd`. Do not search
+the filesystem, run `command -v azd`, or install a replacement. Run:
+
+```bash
+echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
+echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
+echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
+echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
+az account show --output table || echo "(az cache not inherited - relying on DefaultAzureCredential)"
+azd auth login \
+  --federated-credential-provider github \
+  --client-id "$AZURE_CLIENT_ID" \
+  --tenant-id "$AZURE_TENANT_ID"
+```
+
+Only assert that the four environment variables are non-empty. Do not compare
+subscription IDs, decode tokens, or gate on Azure CLI cache visibility. If an
+environment variable is empty, write the FAIL marker from the final step with
+the exact missing variable name and stop. `azd auth login` is the explicit azd
+authentication gate; if it fails, use the matching final-step marker.
+````
+
+- [ ] **Step 3: Replace the goal with exact stable operations**
+
+Use:
+
+````markdown
+## Step 1 - execute the azd and GA SDK Toolbox contracts
+
+First, install the bounded unified Foundry bundle and run the exact
+service-target and standalone-file shapes documented by the skill. Use a Bash heredoc to
+write this script to `/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+evidence="/tmp/foundry-toolbox-smoke-evidence"
+: >"$evidence"
+
+record() {
+  printf '%s\n' "$1" | tee -a "$evidence"
+}
+
+suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
+service_name="ci-smoke-azdsvc-${suffix}"
+cli_name="ci-smoke-azdcli-${suffix}"
+work_dir="/tmp/foundry-toolbox-azd-${suffix}"
+mkdir -p "$work_dir"
+
+cat >"$work_dir/azure.yaml" <<YAML
+name: foundry-toolbox-smoke
+services:
+  ${service_name}:
+    host: azure.ai.toolbox
+    description: CI azd service-target smoke.
+    tools:
+      - type: code_interpreter
+YAML
+
+cat >"$work_dir/toolbox.yaml" <<'YAML'
+description: CI standalone CLI smoke.
+tools:
+  - type: code_interpreter
+YAML
+
+cleanup() {
+  status=$?
+  set +e
+  for toolbox_name in "$cli_name" "$service_name"; do
+    delete_log="/tmp/${toolbox_name}-delete.log"
+    azd ai toolbox delete "$toolbox_name" \
+      --force \
+      --no-prompt >"$delete_log" 2>&1
+    delete_status=$?
+    if [[ $delete_status -eq 0 ]]; then
+      record "AZD_TOOLBOX_DELETED name=${toolbox_name}"
+    else
+      cat "$delete_log"
+      if [[ $status -eq 0 ]]; then
+        status=$delete_status
+      fi
+    fi
+  done
+  rm -rf "$work_dir"
+  trap - EXIT
+  exit "$status"
+}
+trap cleanup EXIT
+
+azd extension install microsoft.foundry --version 1.0.0-beta.1
+azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt
+azd ai project show
+
+(
+  cd "$work_dir"
+  azd env new "$service_name" --no-prompt
+  azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
+  azd deploy "$service_name" --no-prompt
+)
+azd ai toolbox show "$service_name" --output json
+record "AZD_SERVICE_CREATED name=${service_name}"
+
+azd ai toolbox create "$cli_name" \
+  --from-file "$work_dir/toolbox.yaml" \
+  --no-prompt \
+  --output json
+azd ai toolbox show "$cli_name" --output json
+record "AZD_CLI_CREATED name=${cli_name}"
+```
+
+```bash
+bash /tmp/foundry-toolbox-azd-smoke.sh
+```
+
+After that script exits `0` and confirms deletion of both Toolbox resources,
+create an isolated virtual environment and install the bounded Python stack:
+
+```bash
+python3 -m venv /tmp/foundry-toolbox-venv
+/tmp/foundry-toolbox-venv/bin/pip install --quiet \
+  "azure-ai-projects~=2.3.0" \
+  "azure-identity~=1.25.3" \
+  "agent-framework~=1.11.0" \
+  "agent-framework-foundry-hosting==1.0.0a260709" \
+  "mcp~=1.28.1"
+```
+
+Use a Bash heredoc to write the following program to
+`/tmp/foundry-toolbox-smoke.py`, then run it once with
+`/tmp/foundry-toolbox-venv/bin/python`:
+
+```python
+import asyncio
+import os
+import uuid
+
+from agent_framework_foundry_hosting import FoundryToolbox
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import CodeInterpreterToolboxTool
+from azure.identity import DefaultAzureCredential
+
+
+evidence_path = "/tmp/foundry-toolbox-smoke-evidence"
+
+
+def record(message: str) -> None:
+    print(message)
+    with open(evidence_path, "a", encoding="utf-8") as evidence:
+        evidence.write(f"{message}\n")
+
+
+async def verify_functions(
+    credential: DefaultAzureCredential,
+    toolbox_url: str,
+    toolbox_name: str,
+) -> None:
+    async with FoundryToolbox(
+        credential,
+        url=toolbox_url,
+        name=toolbox_name,
+    ) as toolbox:
+        function_count = len(toolbox.functions)
+        assert function_count > 0
+        record(f"TOOLBOX_FUNCTIONS count={function_count}")
+
+
+project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+toolbox_name = f"ci-smoke-tbx-{uuid.uuid4().hex[:8]}"
+
+with (
+    DefaultAzureCredential() as credential,
+    AIProjectClient(
+        endpoint=project_endpoint,
+        credential=credential,
+    ) as project,
+):
+    created = project.toolboxes.create_version(
+        name=toolbox_name,
+        description="CI GA Toolbox smoke",
+        tools=[CodeInterpreterToolboxTool()],
+    )
+    try:
+        assert created.name == toolbox_name
+        assert created.version
+        record(
+            f"TOOLBOX_CREATED name={created.name} "
+            f"version={created.version}"
+        )
+
+        fetched = project.toolboxes.get_version(
+            toolbox_name,
+            created.version,
+        )
+        assert fetched.name == created.name
+        assert fetched.version == created.version
+        record(
+            f"TOOLBOX_RETRIEVED name={fetched.name} "
+            f"version={fetched.version}"
+        )
+
+        toolbox_url = (
+            f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}"
+            f"/versions/{created.version}/mcp?api-version=v1"
+        )
+        asyncio.run(
+            verify_functions(
+                credential,
+                toolbox_url,
+                toolbox_name,
+            )
+        )
+    finally:
+        project.toolboxes.delete(toolbox_name)
+        record(f"TOOLBOX_DELETED name={toolbox_name}")
+```
+
+Do not use `project.beta.toolboxes`, generic Agent tool classes, a
+`create_toolbox_version` method, `allow_preview=True`, raw REST, or any
+preview feature header. Deletion is a hard success criterion because the
+Toolbox is the direct resource under test; the `finally` block must remain.
+````
+
+- [ ] **Step 4: Keep the deterministic marker as the final numbered step**
+
+Use:
+
+````markdown
+## Step 2 - write the deterministic result marker
+
+After all three Toolboxes have been deleted, verify that the fresh sidecar
+contains exactly the eight required success records:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+lines = Path("/tmp/foundry-toolbox-smoke-evidence").read_text(
+    encoding="utf-8"
+).splitlines()
+patterns = (
+    r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"TOOLBOX_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_FUNCTIONS count=[1-9][0-9]*",
+    r"TOOLBOX_DELETED name=ci-smoke-tbx-[0-9a-f]{8}",
+)
+assert len(lines) == len(patterns), lines
+for pattern in patterns:
+    assert sum(re.fullmatch(pattern, line) is not None for line in lines) == 1, (
+        pattern,
+        lines,
+    )
+PY
+```
+
+Only after that check succeeds, your final Bash action is:
+
+```bash
+printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-toolbox-smoke-result
+```
+
+If a required step fails, choose exactly one matching command below as your
+final Bash action:
+
+```bash
+printf 'SMOKE_RESULT=FAIL missing AZURE_CLIENT_ID\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL missing AZURE_TENANT_ID\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL missing AZURE_SUBSCRIPTION_ID\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL missing FOUNDRY_PROJECT_ENDPOINT\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL azd Toolbox smoke failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL package install failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL create_version failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL get_version failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL FoundryToolbox connect failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL Toolbox functions empty\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL Toolbox delete failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/foundry-toolbox-smoke-result
+```
+
+The marker file is authoritative. Do not invoke more tools after writing it.
+````
+
+- [ ] **Step 5: Run fixture static assertions**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path("skills/foundry-toolbox/test-fixture/consumer_prompt.md")
+text = path.read_text(encoding="utf-8")
+
+required = (
+    'echo "skills/foundry-toolbox/SKILL.md"',
+    "never invoke `copilot` recursively",
+    "FOUNDRY_PROJECT_ENDPOINT",
+    "/usr/local/bin/azd",
+    "--federated-credential-provider github",
+    "microsoft.foundry --version 1.0.0-beta.1",
+    "azd ai project set",
+    "azd ai project show",
+    "host: azure.ai.toolbox",
+    'azd deploy "$service_name"',
+    'azd ai toolbox create "$cli_name"',
+    "AZD_SERVICE_CREATED",
+    "AZD_CLI_CREATED",
+    "AZD_TOOLBOX_DELETED",
+    "/tmp/foundry-toolbox-smoke-evidence",
+    "azure-ai-projects~=2.3.0",
+    "project.toolboxes.create_version",
+    "CodeInterpreterToolboxTool",
+    "async with FoundryToolbox",
+    "TOOLBOX_FUNCTIONS",
+    "project.toolboxes.delete",
+    "finally:",
+    "/tmp/foundry-toolbox-smoke-result",
+)
+for token in required:
+    assert token in text, token
+
+forbidden = (
+    "project.beta.toolboxes",
+    "Toolboxes=V1Preview",
+    "Foundry-Features",
+    "AZURE_AI_ENDPOINT",
+    "--project-endpoint",
+)
+for token in forbidden:
+    assert token not in text, token
+
+print("ok stable Toolbox fixture contract")
+PY
+```
+
+Expected: `ok stable Toolbox fixture contract`.
+
+- [ ] **Step 6: Commit the fixture rewrite**
+
+```bash
+git add skills/foundry-toolbox/test-fixture/consumer_prompt.md
+git commit \
+  -m "foundry-toolbox: test stable Toolbox CRUD and consumption" \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+---
+
+### Task 5: Establish GA status, discovery triggers, and the Toolbox model matrix
+
+**Files:**
+- Modify: `skills/foundry-toolbox/SKILL.md:1-198`
+- Modify: `plugin.json:3`
+- Modify: `.github/plugin/marketplace.json:9,15`
+
+- [ ] **Step 1: Replace frontmatter and bump the skill to `2.0.0`**
+
+Use:
+
+```yaml
+---
+name: foundry-toolbox
+description: >
+  Use Microsoft Foundry Toolbox GA to manage versioned multi-tool bundles
+  behind a single MCP endpoint and connect them to hosted agents. Covers
+  stable AIProjectClient.toolboxes CRUD, Toolbox-specific SDK models,
+  agent_framework_foundry_hosting.FoundryToolbox, authentication,
+  immutable-version promotion and rollback, the azd ai toolbox declarative
+  path, and preview Tool Search. Distinguishes the GA Toolbox core from
+  preview A2A, Work IQ, Fabric IQ, Browser Automation, Reminder, skills, and
+  Tool Search; explains that azure_ai_search wraps an index, not a Foundry IQ
+  knowledge base. USE FOR: foundry toolbox, toolbox MCP endpoint,
+  AIProjectClient toolboxes, FoundryToolbox, toolbox version promote,
+  multi-tool MCP endpoint, ToolboxSearchPreviewToolboxTool, kind toolbox,
+  host azure.ai.toolbox, toolbox.yaml. DO NOT USE FOR: building MCP servers
+  (use foundry-mcp-aca),
+  KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
+  foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
+metadata:
+  version: "2.0.0"
+  validated: 2026-07-13
+---
+```
+
+In the same change set, set `plugin.json` and both version fields in
+`.github/plugin/marketplace.json` to `4.28.0`. Do not change any other manifest
+field. Keeping the root manifests in this task prevents the catalog validator
+from entering a known-red state when it sees the skill's MAJOR bump.
+
+- [ ] **Step 2: Replace the title and opening overview with the GA boundary**
+
+Use:
+
+```markdown
+# Microsoft Foundry Toolbox GA - Reference Guide
+
+The [Foundry Toolbox](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox)
+is a GA managed resource that bundles versioned tools behind one MCP endpoint.
+The platform centralizes connection references, credentials, token refresh,
+policy, and immutable-version promotion while the agent connects to one URL.
+
+Use a Toolbox when an agent needs several managed tools, when tool composition
+must change without redeploying agent code, or when credentials belong in the
+Foundry project rather than the agent container. Stable management uses
+`AIProjectClient.toolboxes`. Preview capabilities, including
+[Tool Search](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search)
+and skills in Toolboxes, retain their preview support terms even though the
+parent Toolbox resource is GA.
+```
+
+- [ ] **Step 3: Insert a status matrix immediately after the overview**
+
+Add:
+
+```markdown
+## Status boundary
+
+| Surface | Status | Canonical contract |
+|---|---|---|
+| Toolbox resource, versions, promotion, CRUD, and MCP `v1` endpoints | **GA** | `AIProjectClient.toolboxes`; no preview feature header |
+| MCP, Web Search, Azure AI Search, Code Interpreter, File Search, OpenAPI | **GA Toolbox tool types** | Toolbox-specific SDK model classes |
+| A2A, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
+| Tool Search and skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
+| `agent_framework_foundry_hosting.FoundryToolbox` | **Prerelease client package** | High-level consumer for the GA Toolbox MCP endpoint |
+| `microsoft.foundry` azd bundle `1.0.0-beta.1` | **Beta client bundle** | Recommended CLI install; currently bundles Toolbox component `azure.ai.toolboxes` `1.0.0-beta.2` |
+
+Do not infer a subfeature's status from the Toolbox resource's GA status. A
+GA Toolbox can contain a preview tool, but that tool keeps its preview support
+and SLA terms.
+```
+
+- [ ] **Step 4: Replace the architecture diagram**
+
+Use:
+
+```text
+Foundry project
+└── Toolbox: agent-tools
+    ├── default_version -> 3
+    ├── immutable versions: 1, 2, 3
+    ├── GA tool models
+    │   ├── MCPToolboxTool
+    │   ├── WebSearchToolboxTool
+    │   ├── AzureAISearchToolboxTool
+    │   ├── CodeInterpreterToolboxTool
+    │   ├── FileSearchToolboxTool
+    │   └── OpenApiToolboxTool
+    └── preview tool models
+        ├── A2APreviewToolboxTool
+        ├── WorkIQPreviewToolboxTool
+        ├── FabricIQPreviewToolboxTool
+        ├── BrowserAutomationPreviewToolboxTool
+        ├── ReminderPreviewToolboxTool
+        └── ToolboxSearchPreviewToolboxTool
+
+Version-specific MCP endpoint:
+  {project}/toolboxes/agent-tools/versions/3/mcp?api-version=v1
+
+Default-version MCP endpoint:
+  {project}/toolboxes/agent-tools/mcp?api-version=v1
+
+Every request:
+  Entra bearer token scoped to https://ai.azure.com/.default
+  No preview feature header
+
+Consumers:
+  Hosted MAF -> FoundryToolbox
+  Direct non-Toolbox MCP -> MCPStreamableHTTPTool
+  LangGraph / other frameworks -> authenticated Streamable HTTP MCP client
+  Prompt Agent Tool Search -> preview MCPTool bridge
+```
+
+The diagram must not contain a real tenant, subscription, project, or resource ID.
+
+- [ ] **Step 5: Replace the obsolete code-only warning with the consumption boundary**
+
+Replace the entire current section from `## Toolbox is for code-based agents
+only` through the divider before `## When to use Toolbox vs alternatives` with:
+
+```markdown
+## Consumption boundary
+
+The GA Toolbox resource exposes authenticated Streamable HTTP MCP endpoints; it
+is not itself an Agent `tools[].type`. Use the consumer that matches the host:
+
+| Host | Toolbox consumer | Status |
+|---|---|---|
+| Hosted Microsoft Agent Framework code | `FoundryToolbox` in the Agent `tools` list | GA Toolbox path through a prerelease hosting wrapper |
+| LangGraph or another code framework | Its authenticated Streamable HTTP MCP client | Framework-specific |
+| Prompt Agent | `MCPTool` pointing at the Toolbox endpoint with Tool Search enabled | Tool Search preview |
+
+Do not invent `tools=[{"type": "toolbox"}]`; that Agent tool type does not
+exist. A Prompt Agent can use the documented Tool Search preview bridge, where
+the Toolbox endpoint exposes only `tool_search` and `call_tool`. For stable
+hosted production composition, use `FoundryToolbox` in code.
+```
+
+- [ ] **Step 6: Replace the seven-row tool table with the SDK 2.3 class matrix**
+
+Use:
+
+```markdown
+| SDK model | Wire type | Status | Required configuration |
+|---|---|---|---|
+| `MCPToolboxTool` | `mcp` | GA | `server_label` plus `server_url` or `connector_id`; optional project connection |
+| `WebSearchToolboxTool` | `web_search` | GA | No required fields; optional filters and search context |
+| `AzureAISearchToolboxTool` | `azure_ai_search` | GA | `azure_ai_search=AzureAISearchToolResource(...)` |
+| `CodeInterpreterToolboxTool` | `code_interpreter` | GA | No required fields; optional container/files |
+| `FileSearchToolboxTool` | `file_search` | GA | Vector-store configuration |
+| `OpenApiToolboxTool` | `openapi` | GA | `openapi=OpenApiFunctionDefinition(...)` |
+| `A2APreviewToolboxTool` | `a2a_preview` | Preview | Remote agent URL and project connection as needed |
+| `WorkIQPreviewToolboxTool` | `work_iq_preview` | Preview | Work IQ project connection |
+| `FabricIQPreviewToolboxTool` | `fabric_iq_preview` | Preview | Fabric IQ project connection and target server details |
+| `BrowserAutomationPreviewToolboxTool` | `browser_automation_preview` | Preview | Browser Automation connection parameters |
+| `ReminderPreviewToolboxTool` | `reminder_preview` | Preview | No required fields |
+| `ToolboxSearchPreviewToolboxTool` | `toolbox_search_preview` | Preview | No required fields; activates `tool_search` and `call_tool` |
+```
+
+Precede the table with:
+
+```markdown
+`ToolboxTool` is the abstract base. Use the concrete subclasses below for
+Toolbox versions. Generic Agent models such as `MCPTool` and `WebSearchTool`
+belong to Agent definitions and are not the canonical Toolbox 2.3 models.
+```
+
+- [ ] **Step 7: Replace the mandatory-header section with the GA request contract**
+
+Use:
+
+```markdown
+## Stable Toolbox request contract
+
+The GA request shape is:
+
+| Element | Value |
+|---|---|
+| AAD token scope | `https://ai.azure.com/.default` |
+| Authorization | OAuth 2.0 bearer token minted for the Toolbox scope |
+| MCP API version | `?api-version=v1` |
+| Preview feature header | **None** |
+
+`azure-ai-projects` 2.3.0 and `FoundryToolbox` apply this contract without
+`Foundry-Features: Toolboxes=V1Preview`. Remove that header when migrating
+preview-era clients; do not make correctness depend on a retired feature gate.
+```
+
+- [ ] **Step 8: Add the compact migration table**
+
+Add immediately after the request contract:
+
+```markdown
+### Preview-to-GA migration
+
+| Preview-era contract | GA contract |
+|---|---|
+| `project.beta.toolboxes` | `project.toolboxes` |
+| `client.get_toolbox(...)` | `project.toolboxes.get(name)` for the latest version, or `project.toolboxes.get_version(name, version)` for an explicit immutable version |
+| `select_toolbox_tools(...)` | Define the exact `tools=[...]` set in a Toolbox version, then consume that version through `FoundryToolbox` |
+| Generic `MCPTool`, `WebSearchTool`, `AzureAISearchTool` | `MCPToolboxTool`, `WebSearchToolboxTool`, `AzureAISearchToolboxTool` |
+| `Foundry-Features: Toolboxes=V1Preview` | Remove the feature header |
+| `AzureAIToolbox` | `agent_framework_foundry_hosting.FoundryToolbox` |
+| `create_toolbox_version(...)` in stale examples | `create_version(...)` in SDK 2.3.0 |
+```
+
+This table is the only place that presents obsolete APIs as a migration
+mapping. Status and troubleshooting prose may name the retired header, but
+fenced canonical code must not contain any preview-era API.
+
+- [ ] **Step 9: Replace obsolete low-level MCP traps**
+
+Replace `## The 4 silent traps` through the divider before
+`## Tool-authoring failure modes` with:
+
+```markdown
+## Low-level MCP compatibility notes
+
+`FoundryToolbox` is the canonical MAF consumer. On MAF 1.11 it handles
+per-request Entra authorization, defaults `load_prompts=False`, treats MCP
+method-not-found from `ping` as a supported server capability boundary, and
+owns connection cleanup.
+
+Custom MCP clients still need these protocol rules:
+
+- do not require `prompts/list`; Toolboxes expose tools;
+- keep Streamable HTTP tool calls in streaming mode;
+- request tokens for `https://ai.azure.com/.default`; and
+- do not add the removed preview feature header.
+
+The hosted platform reserves `FOUNDRY_*` environment variables. Use the
+platform-provided `FOUNDRY_PROJECT_ENDPOINT`, and use `TOOLBOX_ENDPOINT` plus
+`TOOLBOX_NAME` only when overriding `FoundryToolbox` endpoint discovery.
+```
+
+- [ ] **Step 10: Verify frontmatter, manifests, and section shape**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import yaml
+
+text = Path("skills/foundry-toolbox/SKILL.md").read_text(encoding="utf-8")
+fm = yaml.safe_load(text.split("---", 2)[1])
+assert fm["metadata"]["version"] == "2.0.0"
+assert fm["metadata"]["validated"].isoformat() == "2026-07-13"
+assert len(fm["description"]) <= 1024, len(fm["description"])
+assert "## Status boundary" in text
+assert "## Consumption boundary" in text
+assert "## Stable Toolbox request contract" in text
+assert "## Low-level MCP compatibility notes" in text
+assert "ToolboxSearchPreviewToolboxTool" in text
+print(f"description chars: {len(fm['description'])}")
+PY
+python3 scripts/validate-skills.py
+python3 scripts/build-plugins.py --check
+```
+
+Expected: description length is at most `1024`; both validators pass.
+
+- [ ] **Step 11: Commit the GA status, model matrix, and required catalog bump**
+
+```bash
+git add \
+  skills/foundry-toolbox/SKILL.md \
+  plugin.json \
+  .github/plugin/marketplace.json
+git commit \
+  -m "foundry-toolbox: migrate GA contract (MAJOR) [skill-rewrite]" \
+  -m "Catalog plugin: 4.27.0 -> 4.28.0 (MINOR)." \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+---
+
+### Task 6: Migrate every management and verification example to stable SDK operations
+
+**Files:**
+- Modify: `skills/foundry-toolbox/SKILL.md:315-377`
+- Modify: `skills/foundry-toolbox/SKILL.md:606-637`
+- Modify: `skills/foundry-toolbox/SKILL.md:740-791`
+- Modify: `skills/foundry-toolbox/SKILL.md:933-940`
+- Modify: `skills/foundry-toolbox/SKILL.md:980-1019`
+
+- [ ] **Step 1: Replace Step 1 with the stable CRUD example**
+
+Use:
+
+```python
+import os
+
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import (
+    AISearchIndexResource,
+    AzureAISearchToolResource,
+    AzureAISearchToolboxTool,
+    MCPToolboxTool,
+    WebSearchToolboxTool,
+)
+from azure.identity import DefaultAzureCredential
+
+with (
+    DefaultAzureCredential() as credential,
+    AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=credential,
+    ) as project,
+):
+    toolbox_version = project.toolboxes.create_version(
+        name="agent-tools",
+        description="Web search + product index + Microsoft Learn MCP",
+        tools=[
+            WebSearchToolboxTool(),
+            AzureAISearchToolboxTool(
+                azure_ai_search=AzureAISearchToolResource(
+                    indexes=[
+                        AISearchIndexResource(
+                            index_name="products",
+                            project_connection_id="aisearch-conn",
+                        ),
+                    ],
+                ),
+            ),
+            MCPToolboxTool(
+                server_label="mslearn",
+                server_url="https://learn.microsoft.com/api/mcp",
+                require_approval="never",
+            ),
+        ],
+    )
+    print(
+        f"Created {toolbox_version.name} "
+        f"version {toolbox_version.version}"
+    )
+```
+
+Follow it with this operation list, matching inspected 2.3.0 signatures:
+
+```markdown
+`project.toolboxes` exposes `create_version`, `get`, `list`, `delete`,
+`update`, `get_version`, `list_versions`, and `delete_version`. Stable
+Toolbox management does not require `allow_preview=True`.
+```
+
+- [ ] **Step 2: Update the package matrix**
+
+Use:
+
+```markdown
+| Package | Validated version | Responsibility |
+|---|---|---|
+| `azure-ai-projects` | 2.3.0 | Stable Toolbox management and Toolbox models |
+| `agent-framework` | 1.11.0 | Agent, chat client, and direct MCP composition |
+| `agent-framework-foundry-hosting` | 1.0.0a260709 | High-level `FoundryToolbox` consumer |
+| `mcp` | 1.28.1 | Streamable HTTP MCP primitives |
+```
+
+Delete the obsolete `allow_preview=True` paragraph.
+
+- [ ] **Step 3: Remove the preview header from the raw MCP verification example**
+
+Replace the whole verification block with:
+
+```python
+import asyncio
+import os
+
+from azure.identity import DefaultAzureCredential
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+
+async def verify(url: str, headers: dict[str, str]) -> None:
+    async with streamablehttp_client(
+        url,
+        headers=headers,
+    ) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools_result = await session.list_tools()
+            print(f"Tools found: {len(tools_result.tools)}")
+            for toolbox_tool in tools_result.tools:
+                description = (toolbox_tool.description or "")[:80]
+                print(f"  - {toolbox_tool.name}: {description}")
+
+
+project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
+toolbox_version = "3"
+url = (
+    f"{project_endpoint}/toolboxes/agent-tools"
+    f"/versions/{toolbox_version}/mcp?api-version=v1"
+)
+
+with DefaultAzureCredential() as credential:
+    token = credential.get_token("https://ai.azure.com/.default").token
+    headers = {
+        "Authorization": " ".join(("Bearer", token)),
+    }
+    asyncio.run(verify(url, headers))
+```
+
+- [ ] **Step 4: Replace the versioning workflow with stable operations**
+
+Inside the `project` context created in Step 1, use:
+
+```python
+from azure.ai.projects.models import (
+    CodeInterpreterToolboxTool,
+    WebSearchToolboxTool,
+)
+
+new_version = project.toolboxes.create_version(
+    name="agent-tools",
+    description="Added code interpreter",
+    tools=[
+        WebSearchToolboxTool(),
+        CodeInterpreterToolboxTool(),
+    ],
+)
+
+toolbox = project.toolboxes.update(
+    name="agent-tools",
+    default_version=new_version.version,
+)
+print(f"Active: {toolbox.default_version}")
+```
+
+Rollback:
+
+```python
+project.toolboxes.update(
+    name="agent-tools",
+    default_version="2",
+)
+```
+
+List and delete:
+
+```python
+for version in project.toolboxes.list_versions("agent-tools"):
+    print(f"{version.version} created {version.created_at}")
+
+project.toolboxes.delete_version("agent-tools", "1")
+```
+
+Use numeric version strings because current GA endpoints return `1`, `2`, and so on; URLs render them under `/versions/{version}`.
+
+- [ ] **Step 5: Update the SDK split-ownership note**
+
+Use:
+
+```markdown
+> **SDK split ownership:** `azure-ai-projects` 2.3.0 provides writable
+> `project.toolboxes`, while `project.connections` remains read-only for
+> project connection discovery. Provision new `RemoteTool` connections with
+> Bicep or the documented ARM connection API, then reference the connection
+> ID from the Toolbox model.
+```
+
+- [ ] **Step 6: Migrate the Knowledge Base MCP wrapper example**
+
+Replace the complete imperative ARM-plus-SDK example with:
+
+```python
+import os
+
+import requests
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import MCPToolboxTool
+from azure.identity import DefaultAzureCredential
+
+
+with DefaultAzureCredential() as credential:
+    arm_token = credential.get_token(
+        "https://management.azure.com/.default"
+    ).token
+    connection_url = (
+        f"https://management.azure.com/subscriptions/{os.environ['SUB']}"
+        f"/resourceGroups/{os.environ['RG']}/providers"
+        f"/Microsoft.CognitiveServices/accounts/{os.environ['ACCT']}"
+        f"/projects/{os.environ['PROJ']}/connections/kb-mcp"
+        f"?api-version=2025-10-01-preview"
+    )
+    response = requests.put(
+        connection_url,
+        headers={
+            "Authorization": " ".join(("Bearer", arm_token)),
+            "Content-Type": "application/json",
+        },
+        json={
+            "properties": {
+                "category": "RemoteTool",
+                "target": os.environ["KB_MCP_URL"],
+                "authType": "ProjectManagedIdentity",
+                "isSharedToAll": True,
+                "metadata": {
+                    "audience": "https://search.azure.com",
+                },
+            },
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+
+    with AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=credential,
+    ) as project:
+        connection = project.connections.get("kb-mcp")
+        toolbox_version = project.toolboxes.create_version(
+            name="agent-tools",
+            tools=[
+                MCPToolboxTool(
+                    server_label="kb",
+                    server_url=os.environ["KB_MCP_URL"],
+                    project_connection_id=connection.id,
+                    require_approval="never",
+                ),
+            ],
+        )
+        project.toolboxes.update(
+            name="agent-tools",
+            default_version=toolbox_version.version,
+        )
+```
+
+Keep the ARM resource components environment-driven as shown; do not insert
+real resource IDs.
+
+- [ ] **Step 7: Assert obsolete APIs are absent from fenced code**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+text = Path("skills/foundry-toolbox/SKILL.md").read_text(encoding="utf-8")
+code = "\n".join(
+    re.findall(r"^```[^\n]*\n(.*?)^```", text, re.MULTILINE | re.DOTALL)
+)
+for token in (
+    "project.beta.toolboxes",
+    "Foundry-Features",
+    "AzureAIToolbox",
+    "create_toolbox_version(",
+):
+    assert token not in code, token
+
+for token in (
+    "project.toolboxes.create_version",
+    "MCPToolboxTool",
+    "AISearchIndexResource",
+    "AzureAISearchToolboxTool",
+    "project.toolboxes.update",
+):
+    assert token in code, token
+
+print("ok stable management code")
+PY
+```
+
+Expected: `ok stable management code`.
+
+- [ ] **Step 8: Commit management migration**
+
+```bash
+git add skills/foundry-toolbox/SKILL.md
+git commit \
+  -m "foundry-toolbox: migrate management examples to stable SDK [skill-rewrite]" \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+---
+
+### Task 7: Replace MAF preview wiring, add Tool Search preview guidance, and finish migration prose
+
+**Files:**
+- Modify: `skills/foundry-toolbox/SKILL.md:379-604`
+- Modify: `skills/foundry-toolbox/SKILL.md:652-738`
+- Modify: `skills/foundry-toolbox/SKILL.md:1118-1162`
+
+- [ ] **Step 1: Replace MAF Pattern A with the canonical `FoundryToolbox` handoff**
+
+Delete the inline `_ToolboxAuth`, `ToolboxMCPTool`, manual `httpx.AsyncClient`, preview header, and static URL wiring. Replace that block with:
+
+```markdown
+### Pattern A - Microsoft Agent Framework `FoundryToolbox`
+
+`agent_framework_foundry_hosting.FoundryToolbox` is the high-level Toolbox
+consumer for hosted MAF agents. It:
+
+- resolves `TOOLBOX_ENDPOINT`, or `FOUNDRY_PROJECT_ENDPOINT` plus
+  `TOOLBOX_NAME`;
+- requests `https://ai.azure.com/.default` tokens per outbound request;
+- forwards the request-scoped `x-agent-foundry-call-id`; and
+- connects and closes with the Agent lifecycle.
+
+> **MUST:** Copy the complete composition from
+> [`references/python/toolbox_wiring.py`](references/python/toolbox_wiring.py).
+> Do not redefine it inline. Pass the resulting `FoundryToolbox` directly in
+> the Agent's `tools` list.
+```
+
+- [ ] **Step 2: Keep direct MCP guidance explicitly outside the Toolbox path**
+
+Retain the Microsoft Learn `MCPStreamableHTTPTool` example and the canonical `extract_mcp_text` cross-link. Change its introduction to:
+
+```markdown
+### Pattern B - direct non-Toolbox MCP
+
+Use `MCPStreamableHTTPTool` directly for an MCP server that is not managed
+through a Foundry Toolbox. This remains a separate pattern; do not manually
+rebuild `FoundryToolbox` authentication for a Toolbox endpoint.
+```
+
+- [ ] **Step 3: Replace the removed-helper section**
+
+Use:
+
+```markdown
+### Removed Agent Framework convenience helpers
+
+Preview-era Toolbox convenience helpers are not current APIs. Use the migration
+table above, move whole-Toolbox consumption to `FoundryToolbox`, and keep
+per-tool `FoundryChatClient` factories only for agents that intentionally
+attach one hosted tool rather than a Toolbox bundle.
+```
+
+- [ ] **Step 4: Add the optional Tool Search preview section**
+
+Add after the versioning workflow:
+
+````markdown
+## Tool Search (preview)
+
+Tool Search is a preview capability inside the GA Toolbox resource. Add
+`ToolboxSearchPreviewToolboxTool()` to activate it:
+
+```python
+from azure.ai.projects.models import (
+    MCPToolboxTool,
+    ToolboxSearchPreviewToolboxTool,
+    ToolConfig,
+)
+
+tools = [
+    ToolboxSearchPreviewToolboxTool(),
+    MCPToolboxTool(
+        server_label="analytics",
+        server_url="https://analytics.example.com/mcp",
+        tool_configs={
+            "execute_query": ToolConfig(pin=True),
+            "list_tables": ToolConfig(
+                additional_search_text=(
+                    "schema columns metadata table structure discover"
+                ),
+            ),
+        },
+    ),
+]
+```
+
+When enabled, the initial tool list exposes `tool_search` and `call_tool`
+instead of every full schema. Instruct the model to search for the capability
+it needs and then call the discovered tool. Pin critical tools with
+`ToolConfig(pin=True)`; add `additional_search_text` when tool descriptions do
+not match user vocabulary.
+
+Microsoft showed one side-by-side trace with 467 input tokens versus roughly
+4,700 without Tool Search, a 90.1% arithmetic reduction for that trace. Treat
+this as an illustrative demo, not a benchmark, SLA, quality guarantee, or
+universal savings claim. Source:
+[Tokenomics - The new AI currency and your options
+explained](https://techcommunity.microsoft.com/blog/microsoftmechanicsblog/tokenomics--the-new-ai-currency--your-options-explained/4535040).
+
+### Preview Prompt Agent bridge
+
+Prompt Agents do not yet accept a Toolbox resource directly. For preview-only
+Prompt Agent scenarios, expose the versioned Toolbox endpoint as an `MCPTool`
+and pass one short-lived `https://ai.azure.com/.default` token. This is a
+structural excerpt that uses the `toolbox_version` returned by the preceding
+create call; the full create/invoke/delete lifecycle is in the
+[official Toolbox sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/agents/tools/sample_toolboxes_with_search_preview.py):
+
+```python
+import os
+
+from azure.ai.projects.models import MCPTool
+from azure.identity import DefaultAzureCredential
+
+project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
+toolbox_mcp_url = (
+    f"{project_endpoint}/toolboxes/{toolbox_version.name}"
+    f"/versions/{toolbox_version.version}/mcp?api-version=v1"
+)
+with DefaultAzureCredential() as credential:
+    token = credential.get_token("https://ai.azure.com/.default").token
+    toolbox_mcp = MCPTool(
+        server_label="agent-tools",
+        server_url=toolbox_mcp_url,
+        authorization=token,
+        require_approval="never",
+    )
+```
+
+Do not copy that static-token bridge into long-running hosted MAF agents. Use
+`FoundryToolbox` there so each outbound request obtains a fresh token.
+````
+
+The inspected 2.3.0 generated models serialize these constructors as
+`{"pin": true}` and `{"additional_search_text": "..."}`. Keep the typed
+`ToolConfig` objects; do not replace them with untyped dictionaries.
+
+- [ ] **Step 5: Update the azd section to the current extension boundary**
+
+Replace the current `azd` block with:
+
+````markdown
+## Deploy with Azure Developer CLI
+
+| Component | Minimum/pin | Status |
+|---|---|---|
+| Azure Developer CLI | `azd >= 1.27.0` | GA CLI |
+| `microsoft.foundry` extension bundle | `1.0.0-beta.1` | Beta bundle; official install for Foundry CLI workflows |
+| Bundled `azure.ai.toolboxes` component | `1.0.0-beta.2` | Beta component calling the GA Toolbox API |
+
+Sources: [install Foundry
+extensions](https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions),
+[CLI project
+context](https://learn.microsoft.com/azure/foundry/agents/how-to/cli-project-context),
+and [`azure.ai.toolboxes` release
+history](https://github.com/Azure/azure-dev/blob/main/cli/azd/extensions/azure.ai.toolboxes/CHANGELOG.md).
+
+Install the bounded unified bundle:
+
+```bash
+azd extension install microsoft.foundry --version 1.0.0-beta.1
+```
+
+Bundle `1.0.0-beta.1` currently brings Toolbox component
+`azure.ai.toolboxes` `1.0.0-beta.2`. Both remain Beta clients even though
+the Toolbox service/API is GA. The bundled Toolbox component no longer sends the retired
+`Foundry-Features: Toolboxes=V1Preview` header.
+
+### Canonical azd service target
+
+Declare a Toolbox as its own `host: azure.ai.toolbox` service. The service key
+is the Toolbox name. Each `azd up` or `azd deploy` creates a new immutable
+version and publishes its MCP endpoint to the active azd environment.
+
+```yaml
+# azure.yaml
+name: toolbox-app
+services:
+  ai-project:
+    host: azure.ai.project
+
+  agent-tools:
+    host: azure.ai.toolbox
+    uses:
+      - ai-project
+    description: Shared tools for hosted agents.
+    tools:
+      - type: web_search
+      - type: code_interpreter
+```
+
+```bash
+azd up
+# Later, after changing the Toolbox service:
+azd deploy agent-tools
+```
+
+### Standalone CLI against an existing project
+
+For imperative management, the input file contains `description`,
+`connections`, `skills`, `tools`, and optional `policies`; it is not an Agent
+manifest and therefore has no `kind: toolbox` field.
+
+```yaml
+# toolbox.yaml
+description: Shared tools for hosted agents.
+tools:
+  - type: web_search
+  - type: code_interpreter
+```
+
+```bash
+azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt
+azd ai project show
+azd ai toolbox create agent-tools \
+  --from-file ./toolbox.yaml \
+  --no-prompt
+azd ai toolbox show agent-tools --output json
+```
+
+> **Do not conflate manifest shapes:** `host: azure.ai.toolbox` is the canonical
+> `azure.yaml` service target. `toolbox.yaml` above is the standalone
+> `azd ai toolbox create --from-file` input. A `kind: toolbox` block belongs to
+> the separate Agent manifest path and is not interchangeable with either.
+````
+
+Keep the bundle and component labeled Beta even though they call the GA
+Toolbox API.
+
+- [ ] **Step 6: Update troubleshooting**
+
+Delete both the row that says a generic `400` or `404` means the preview header
+is missing and the orphaned `azd ai agent init --no-prompt` row. Replace the
+first four dangling Trap rows with these self-contained rows, then add the four
+new rows:
+
+```markdown
+| `server_error` on every hosted MAF invoke | Preview-era custom Toolbox MCP wrapper still probes `ping` | Use `FoundryToolbox`; it treats MCP method-not-found from `ping` as a supported capability boundary |
+| `500` on agent startup | Direct MCP client called `prompts/list` against a tools-only server | Set `load_prompts=False` |
+| `500` on `tools/call` with no streaming | Direct MCP client set `stream=False` | Keep Streamable HTTP tool calls in streaming mode |
+| Custom env var disappeared at runtime | Hosted Foundry reserves the `FOUNDRY_*` prefix | Rename custom values to `TOOLBOX_*` |
+| `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.3 | Use `project.toolboxes` |
+| Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
+| Standalone `azd ai toolbox` command reports no project context | Component-only install or no active Foundry project | Install pinned `microsoft.foundry`, then run `azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt`; inspect with `azd ai project show` |
+| `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
+| Only `tool_search` and `call_tool` are listed | Tool Search preview is active | Search first, then call the discovered tool; pin critical tools |
+```
+
+- [ ] **Step 7: Replace stale cross-skill routing**
+
+Replace the complete cross-reference table with:
+
+```markdown
+| If you need to... | Go to |
+|---|---|
+| Build a custom MCP server, then add it to a Toolbox | `foundry-mcp-aca` for the server, then this skill's `host: azure.ai.toolbox` or `MCPToolboxTool` path |
+| Deploy and operate the hosted MAF agent runtime | `foundry-hosted-agents`; use this skill's `FoundryToolbox` reference for the Toolbox consumer |
+| Get KB-grade RAG with planning, multi-hop retrieval, and citations | `foundry-iq` (not Toolbox `azure_ai_search`) |
+| Wrap a knowledge-base MCP endpoint behind a Toolbox | `foundry-iq` for the KB endpoint, then this skill's `MCPToolboxTool` connection pattern |
+| Apply shared `azd` hooks, Bicep, and environment conventions | `azd-patterns`; the Toolbox service itself remains `host: azure.ai.toolbox` |
+| Deploy behind private networking | `foundry-vnet-deploy`, then check this skill's per-tool VNet matrix |
+| Add human approval UX around tool execution | [`threadlight-hitl-patterns`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns) |
+| Wrap Vision, Document Intelligence, or Speech behind a Toolbox | `foundry-doc-vision-speech` plus this skill's `openapi` or `mcp` tool model |
+```
+
+- [ ] **Step 8: Add the 2.0.0 history entry**
+
+Prepend:
+
+```markdown
+- `2.0.0` - migrated the core Toolbox contract to GA:
+  `AIProjectClient.toolboxes`, Toolbox-specific SDK models, no preview feature
+  header, `FoundryToolbox` consumption, and an explicit preview boundary for
+  Tool Search and preview-only tool types.
+```
+
+Also replace the old `1.0.0` history phrase `the 4 silent traps` with
+`preview-era MCP compatibility guidance` so it no longer names a deleted
+section.
+
+- [ ] **Step 9: Run the source-of-truth and migration scans**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+skill = Path("skills/foundry-toolbox/SKILL.md").read_text(encoding="utf-8")
+reference = Path(
+    "skills/foundry-toolbox/references/python/toolbox_wiring.py"
+).read_text(encoding="utf-8")
+code = "\n".join(
+    re.findall(r"^```[^\n]*\n(.*?)^```", skill, re.MULTILINE | re.DOTALL)
+)
+
+assert "FoundryToolbox" in skill
+assert "ToolboxSearchPreviewToolboxTool" in skill
+assert "467 input tokens" in skill
+assert "not a benchmark" in skill
+assert "microsoft.foundry --version 1.0.0-beta.1" in code
+assert "azure.ai.toolboxes" in skill
+assert "host: azure.ai.toolbox" in code
+assert "azd ai project set" in code
+assert "azd ai project show" in code
+assert "techcommunity.microsoft.com/blog/microsoftmechanicsblog/" in skill
+assert "AzureAIToolbox" not in code
+assert "project.beta.toolboxes" not in code
+assert "Foundry-Features" not in code
+assert "azd ai agent init" not in code
+assert "kind: toolbox" not in code
+assert skill.count("def _build_foundry_toolbox") == 0
+assert reference.count("def _build_foundry_toolbox") == 1
+print("ok GA consumption and Tool Search boundary")
+PY
+```
+
+Expected: `ok GA consumption and Tool Search boundary`.
+
+- [ ] **Step 10: Run reference and catalog checks**
+
+Run:
+
+```bash
+python3 -m py_compile \
+  skills/foundry-toolbox/references/python/toolbox_wiring.py \
+  skills/foundry-toolbox/references/python/mcp_text_extractor.py
+python3 scripts/validate-skills.py
+```
+
+Expected: reference compilation succeeds and the catalog validator exits `0`.
+
+- [ ] **Step 11: Commit the consumption and preview-boundary rewrite**
+
+```bash
+git add skills/foundry-toolbox/SKILL.md
+git commit \
+  -m "foundry-toolbox: document GA consumption and preview Tool Search [skill-rewrite]" \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+---
+
+### Task 8: Update the README and generated site
+
+**Files:**
+- Modify: `README.md:131`
+- Regenerate: `docs/`
+
+- [ ] **Step 1: Replace the Toolbox catalog row**
+
+Use:
+
+```markdown
+| [**foundry-toolbox**](skills/foundry-toolbox/) | Use Foundry Toolbox GA with stable `AIProjectClient.toolboxes` CRUD, Toolbox-specific SDK models, authenticated `FoundryToolbox` hosted-agent wiring, immutable version promotion/rollback, the `azure_ai_search`-is-INDEX-not-KB boundary, and explicitly preview Tool Search (`tool_search` + `call_tool`) without the retired preview feature header |
+```
+
+- [ ] **Step 2: Run manifest and catalog validation**
+
+Run:
+
+```bash
+python3 scripts/validate-skills.py
+python3 scripts/build-plugins.py --check
+```
+
+Expected: both commands pass and the root/marketplace versions remain
+synchronized.
+
+- [ ] **Step 3: Rebuild the static site**
+
+Run:
+
+```bash
+python3 scripts/build-site.py --out docs/ --validate
+```
+
+Expected: generation and link validation pass. Do not hand-edit any generated HTML.
+
+- [ ] **Step 4: Verify generated Toolbox pages contain the stable contract**
+
+Run:
+
+```bash
+rg -n \
+  'AIProjectClient\.toolboxes|FoundryToolbox|ToolboxSearchPreviewToolboxTool' \
+  docs/skills/foundry-toolbox/index.html docs/llms.txt
+```
+
+Expected: all three terms appear in generated output.
+
+- [ ] **Step 5: Commit catalog and generated output**
+
+```bash
+git add README.md docs/
+git commit \
+  -m "catalog: publish foundry-toolbox GA documentation" \
+  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>" \
+  -m "Copilot-Session: <copilot-session-id>"
+```
+
+---
+
+### Task 9: Run the complete local acceptance suite and inspect scope
+
+**Files:**
+- Verify all modified files
+
+- [ ] **Step 1: Re-run the original red probe as the green migration test**
+
+Run the Task 1 Step 4 command again.
+
+Expected: exit `0`. Every token in the probe's explicit `(token, text)` pairs
+is absent from its scoped fenced skill code, fixture, or canonical reference.
+Step 6 separately classifies legacy-name residue outside those exact scopes.
+
+- [ ] **Step 2: Run T0 and structural validation**
+
+Run:
+
+```bash
+set -euo pipefail
+python3 scripts/validate-skills.py
+python3 scripts/build-plugins.py --check
+SITE_TMP="$(mktemp -d)"
+trap 'rm -rf "$SITE_TMP"' EXIT
+python3 scripts/build-site.py --out "$SITE_TMP" --validate
+```
+
+Expected: all commands exit `0`.
+
+- [ ] **Step 3: Run the complete unit suite**
+
+Run:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 4: Run changed-skill T1/T2 pin validation**
+
+Run:
+
+```bash
+BASE="$(git merge-base HEAD origin/main)"
+python3 scripts/run-pin-validation.py --base="$BASE"
+```
+
+Expected: `foundry-toolbox` runs, the five expected-output strings appear, and no unrelated pin fails.
+
+- [ ] **Step 5: Verify exact frontmatter and manifest versions**
+
+Run:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import json
+import yaml
+
+skill = yaml.safe_load(
+    Path("skills/foundry-toolbox/SKILL.md")
+    .read_text(encoding="utf-8")
+    .split("---", 2)[1]
+)
+plugin = json.loads(Path("plugin.json").read_text(encoding="utf-8"))
+market = json.loads(
+    Path(".github/plugin/marketplace.json").read_text(encoding="utf-8")
+)
+
+assert skill["metadata"]["version"] == "2.0.0"
+assert len(skill["description"]) <= 1024
+assert plugin["version"] == "4.28.0"
+assert market["metadata"]["version"] == "4.28.0"
+assert market["plugins"][0]["version"] == "4.28.0"
+print("ok versions and description")
+PY
+```
+
+Expected: `ok versions and description`.
+
+- [ ] **Step 6: Inspect legacy-name residue**
+
+Run:
+
+```bash
+rg -n \
+  'Toolboxes=V1Preview|project\.beta\.toolboxes|AzureAIToolbox|create_toolbox_version' \
+  skills/foundry-toolbox README.md
+```
+
+Expected: intentional matches remain only in `SKILL.md` migration/status prose,
+the pin's closed KI/removal probe, and exactly one prose-only negative guard in
+the fixture saying not to use `create_toolbox_version`. That fixture guard must
+be outside executable fenced code. No legacy token may appear in any other
+fixture text, canonical Python reference, README row, or fenced canonical code.
+
+- [ ] **Step 7: Confirm no second skill source changed**
+
+Run:
+
+```bash
+BASE="$(git merge-base HEAD origin/main)"
+git --no-pager diff --name-only "$BASE"...HEAD -- skills/ \
+  | awk -F/ '$1 == "skills" {print $2}' \
+  | sort -u
+```
+
+Expected:
+
+```text
+foundry-toolbox
+```
+
+- [ ] **Step 8: Force-text inspect every source change**
+
+Run:
+
+```bash
+BASE="$(git merge-base HEAD origin/main)"
+git --no-pager diff -a "$BASE"...HEAD -- \
+  skills/foundry-toolbox \
+  README.md \
+  plugin.json \
+  .github/plugin/marketplace.json \
+  docs/
+```
+
+Expected: every source edit implements this plan; generated files contain generator-owned changes only. No real GUID, subscription ID, tenant ID, ARM resource ID, customer name, or unrelated normalization appears.
+
+- [ ] **Step 9: Confirm a clean worktree**
+
+Run:
+
+```bash
+git status --short
+```
+
+Expected: no output.
+
+---
+
+### Task 10: Obtain live Azure evidence and update the pull request
+
+**Files:**
+- Modify: `.github/workflows/skill-test.yml`
+- Update: pull-request body with CI evidence
+
+- [ ] **Step 1: Make evidence capture deterministic in primary, retry, and artifacts**
+
+In both Copilot invocation steps, define the per-skill sidecar with the
+transcript and marker:
+
+```bash
+EVIDENCE="/tmp/${SKILL}-smoke-evidence"
+```
+
+The primary attempt removes it with its transcript and marker; the retry removes
+it with the retry transcript and marker. Immediately after each Copilot
+invocation and before marker evaluation, print the fresh sidecar when present:
+
+```bash
+if [ -f "$EVIDENCE" ]; then
+  cat "$EVIDENCE"
+fi
+```
+
+Do not require the sidecar for unrelated fixtures. Update the forensics artifact
+to preserve the primary transcript, optional retry transcript, and optional
+sidecar:
+
+```yaml
+path: |
+  /tmp/${{ matrix.skill }}-transcript.log
+  /tmp/${{ matrix.skill }}-retry.log
+  /tmp/${{ matrix.skill }}-smoke-evidence
+if-no-files-found: warn
+```
+
+- [ ] **Step 2: Push the implementation branch**
+
+Run:
+
+```bash
+BRANCH="$(git branch --show-current)"
+git push -u origin "$BRANCH"
+```
+
+Expected: branch push succeeds.
+
+- [ ] **Step 3: Open a draft PR that explicitly blocks merge on T3**
+
+Call `create_pull_request` with `draft: true` and this title:
+
+```text
+foundry-toolbox: migrate Toolbox contract to GA
+```
+
+Use this initial body:
+
+```markdown
+## Summary
+
+- migrate `foundry-toolbox` from preview Toolbox contracts to the GA API
+- use stable `AIProjectClient.toolboxes` and Toolbox-specific models
+- replace `AzureAIToolbox` with the hosted `FoundryToolbox` wrapper
+- install pinned `microsoft.foundry`, then live-test `host: azure.ai.toolbox`
+  plus standalone azd create after `azd ai project set`
+- keep Tool Search and preview-only tool types explicitly labeled preview
+
+## Local validation
+
+- catalog validation
+- plugin structure validation
+- docs link validation
+- unit suite
+- changed-skill pin validation
+
+## Live Azure evidence
+
+This PR is intentionally draft. Do not mark ready or merge until the
+`foundry-toolbox` Copilot-CLI matrix leg proves azd service-target deployment,
+standalone azd create, stable SDK create/retrieve, `FoundryToolbox` connect,
+non-empty functions, deletion of all three resources, and the byte-exact PASS
+marker against the CI Foundry project. The workflow must also print and upload
+the deterministic eight-record sidecar.
+```
+
+- [ ] **Step 4: Capture and watch the PR-triggered skill-test run**
+
+Run:
+
+```bash
+BRANCH="$(git branch --show-current)"
+for attempt in 1 2 3 4 5 6; do
+  RUN_ID="$(
+    gh run list \
+      --workflow skill-test.yml \
+      --branch "$BRANCH" \
+      --event pull_request \
+      --limit 1 \
+      --json databaseId \
+      --jq '.[0].databaseId // empty'
+  )"
+  if [ -n "$RUN_ID" ]; then
+    break
+  fi
+  sleep 10
+done
+test -n "$RUN_ID"
+gh run watch "$RUN_ID" --exit-status
+```
+
+Expected: the workflow completes successfully.
+
+- [ ] **Step 5: Verify the specific Toolbox matrix leg**
+
+Run:
+
+```bash
+gh run view "$RUN_ID" \
+  --json jobs \
+  --jq '.jobs[] | select(.name | contains("foundry-toolbox")) | [.name, .conclusion] | @tsv'
+```
+
+Expected: the `foundry-toolbox` matrix job reports `success`.
+
+- [ ] **Step 6: Verify the live acceptance evidence in logs and artifact**
+
+Run:
+
+```bash
+ARTIFACT_DIR=".scratch/foundry-toolbox-${RUN_ID}"
+LOG_FILE="${ARTIFACT_DIR}/run.log"
+mkdir -p "$ARTIFACT_DIR"
+gh run view "$RUN_ID" --log > "$LOG_FILE"
+gh run download "$RUN_ID" \
+  --name transcript-foundry-toolbox \
+  --dir "$ARTIFACT_DIR"
+python3 - "$LOG_FILE" \
+  "$ARTIFACT_DIR/foundry-toolbox-smoke-evidence" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+log_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+evidence_lines = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+evidence_patterns = (
+    r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdcli-[0-9a-f]{8}",
+    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdsvc-[0-9a-f]{8}",
+    r"TOOLBOX_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOLBOX_FUNCTIONS count=[1-9][0-9]*",
+    r"TOOLBOX_DELETED name=ci-smoke-tbx-[0-9a-f]{8}",
+)
+for pattern in evidence_patterns:
+    assert re.search(pattern, log_text), pattern
+    assert sum(re.fullmatch(pattern, line) is not None for line in evidence_lines) == 1, pattern
+
+assert len(evidence_lines) == 8, evidence_lines
+assert "PASS via marker file" in log_text
+print("ok complete live Toolbox evidence")
+PY
+```
+
+Expected: `ok complete live Toolbox evidence`. The same eight records appear in
+the workflow log and byte-preserved sidecar artifact; both azd resources and the
+SDK resource were deleted, the functions count is greater than zero, and the
+workflow reported deterministic marker-file PASS.
+
+- [ ] **Step 7: Update the PR body with the real run URL**
+
+Run:
+
+```bash
+RUN_URL="$(gh run view "$RUN_ID" --json url --jq .url)"
+printf '%s\n' "$RUN_URL"
+```
+
+Use `update_pull_request` for the current PR. Preserve the summary and local-validation sections, then replace the live-evidence section with:
+
+```markdown
+## Live Azure evidence
+
+- Successful `skill-test.yml` run: ${RUN_URL}
+- `foundry-toolbox` matrix leg: success
+- pinned `microsoft.foundry` bundle installed and project context set
+- `host: azure.ai.toolbox` service-target deployment succeeded
+- standalone `azd ai toolbox create --from-file` succeeded
+- both azd-created Toolboxes were deleted
+- stable `.toolboxes` create returned a UUID-suffixed name and version
+- `get_version` returned the same name and version
+- `FoundryToolbox` connected without the retired preview header
+- `functions` was non-empty
+- Toolbox deletion succeeded
+- all eight success records appeared in logs and the uploaded sidecar
+- marker evaluation reported deterministic PASS
+```
+
+Replace `${RUN_URL}` with the shell variable's value before calling
+`update_pull_request`; do not put the literal variable name in the PR body.
+Do not mark the PR ready if any evidence line is missing.
+
+- [ ] **Step 8: Mark the PR ready only after all required checks pass**
+
+Run:
+
+```bash
+gh pr checks --watch
+gh pr ready
+```
+
+Expected: required checks are green and the PR is no longer draft.
+
+---
+
+## Completion criteria
+
+- `foundry-toolbox` is version `2.0.0`.
+- `plugin.json` and both marketplace versions are `4.28.0`.
+- Stable code uses `AIProjectClient.toolboxes` and concrete `*ToolboxTool` models.
+- Canonical MAF code imports `agent_framework_foundry_hosting.FoundryToolbox`.
+- `host: azure.ai.toolbox` and standalone `toolbox.yaml` remain distinct,
+  live-tested azd shapes.
+- The Beta `microsoft.foundry` bundle is pinned separately from the GA Toolbox
+  service, and standalone CLI guidance sets project context once.
+- The preview feature header is absent from canonical code, fixture, README, and generated guidance.
+- Tool Search and every preview-only Toolbox type remain visibly labeled preview.
+- The 467-vs-approximately-4,700 example is labeled one demo trace, not a benchmark.
+- Only `skills/foundry-toolbox/` changes under `skills/`.
+- T0, T1, T2, unit tests, plugin validation, and docs validation pass.
+- The live matrix proves both azd paths plus stable SDK create, retrieve,
+  connect, non-empty functions, deletion of all resources, and deterministic
+  PASS; the eight success records are printed and uploaded from a fresh sidecar.
+- The PR body contains the successful Azure CI run URL before review.

@@ -1,23 +1,21 @@
-"""Canonical toolbox wiring sample — MAF 1.7 + Foundry Toolbox.
+"""Canonical toolbox wiring sample - MAF 1.11 + Foundry Toolbox GA.
 
 Source of truth for the prose example in `../../SKILL.md § Step 2 —
 Wire into a hosted agent`.
 
-Validates the cross-skill ownership rule: this file shows the toolbox-
-to-Agent wiring, which is owned by `foundry-toolbox` SKILL. The Agent
-runtime construction itself (Agent + FoundryChatClient + ResponsesHostServer)
-is owned by `foundry-hosted-agents` SKILL — see
-`../../foundry-hosted-agents/references/python/main.py` for that side.
+Validates the cross-skill ownership rule: this file shows Toolbox-to-Agent
+wiring, which is owned by the `foundry-toolbox` skill. The hosted runtime
+construction is owned by `foundry-hosted-agents`.
 
-Demonstrates 3 patterns:
-    1. AzureAIToolbox — reads a Foundry toolbox version, returns
-       MCPStreamableHTTPTool instances ready to plug into Agent(tools=[...]).
-    2. Direct MCPStreamableHTTPTool — for non-toolbox MCPs (Microsoft Learn,
-       GitHub MCP, etc.). Always pass `parse_tool_results=extract_mcp_text`.
-    3. Composing both — toolbox tools + a couple of direct MCP tools
-       alongside local @tool-decorated functions.
+Demonstrates three patterns:
+    1. FoundryToolbox - resolves the Toolbox MCP endpoint, authenticates each
+       request, and forwards the hosted request call ID.
+    2. Direct MCPStreamableHTTPTool - for non-Toolbox MCP servers such as
+       Microsoft Learn. Always pass parse_tool_results=extract_mcp_text.
+    3. Composition - Toolbox, direct MCP, and local function tools on one Agent.
 
-Verified against MAF 1.7.0 + azure-ai-projects 2.1.0 on May 2026 pilots.
+Validated against agent-framework 1.11.0, agent-framework-foundry-hosting
+1.0.0a260709, and azure-ai-projects 2.3.0 in July 2026.
 """
 
 from __future__ import annotations
@@ -25,67 +23,54 @@ from __future__ import annotations
 import os
 
 from agent_framework import Agent, MCPStreamableHTTPTool, tool
-from agent_framework.foundry import AzureAIToolbox, FoundryChatClient
-# Async azure.identity — FoundryChatClient (and AzureAIToolbox, same
-# `agent_framework.foundry` namespace) with sync DefaultAzureCredential
-# hangs 60s then raises `session_not_ready`. See foundry-hosted-agents (MID-I).
-from azure.identity.aio import DefaultAzureCredential
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import FoundryToolbox
+from azure.identity import DefaultAzureCredential
 
 from references.python.mcp_text_extractor import extract_mcp_text
 
 
-def _build_toolbox_tools() -> list:
-    """Pattern 1 — pull tools from a Foundry toolbox version.
-
-    The toolbox is created server-side via `client.beta.toolboxes.create_version(...)`
-    (see SKILL.md § Step 1). AzureAIToolbox.from_paths_or_names fetches the
-    latest version's tools and returns them ready to wire.
-    """
-    toolbox = AzureAIToolbox(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        toolbox_name="agent-tools",
-        credential=DefaultAzureCredential(),
-    )
-    return toolbox.get_tools()
+def _build_foundry_toolbox(
+    credential: DefaultAzureCredential,
+) -> FoundryToolbox:
+    """Build the GA Toolbox consumer from the hosting environment contract."""
+    return FoundryToolbox(credential)
 
 
 def _build_learn_mcp() -> MCPStreamableHTTPTool:
-    """Pattern 2 — wire a public MCP directly (no toolbox needed)."""
+    """Wire a public non-Toolbox MCP server directly."""
     return MCPStreamableHTTPTool(
         name="microsoft-learn",
         url="https://learn.microsoft.com/api/mcp",
-        parse_tool_results=extract_mcp_text,  # MUST include — see TB2
+        parse_tool_results=extract_mcp_text,
     )
 
 
 @tool(approval_mode="never_require")
 def echo(message: str) -> str:
-    """Local function tool — for demo purposes only."""
+    """Return the supplied message for a local-tool composition example."""
     return f"echo: {message}"
 
 
-def main() -> None:
-    """Pattern 3 — compose toolbox tools + direct MCP + local function."""
+def main() -> Agent:
+    """Compose a Foundry Toolbox, direct MCP, and local function."""
+    credential = DefaultAzureCredential()
+    toolbox = _build_foundry_toolbox(credential)
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=credential,
     )
 
-    tools = []
-    tools.extend(_build_toolbox_tools())
-    tools.append(_build_learn_mcp())
-    tools.append(echo)
-
-    agent = Agent(
+    return Agent(
         client=client,
-        instructions="You are a helpful assistant. Use the tools to ground your answers.",
-        tools=tools,
+        instructions=(
+            "You are a helpful assistant. Use the available tools to ground "
+            "your answers."
+        ),
+        tools=[toolbox, _build_learn_mcp(), echo],
         default_options={"store": False},
     )
-
-    # Hand off to ResponsesHostServer in container.py — see foundry-hosted-agents.
-    return agent
 
 
 if __name__ == "__main__":

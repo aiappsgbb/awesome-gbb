@@ -6,7 +6,7 @@ automation_tier: auto
 upstream:
   type: pypi
   notes: |
-    Wrapper around the Microsoft Foundry Toolbox preview API and its Python SDK helpers — version-pinned, no git SHA tracking.
+    Wrapper around Microsoft Foundry Toolbox GA API, stable Python management SDK, Agent Framework hosted Toolbox consumer; preview Toolbox subfeatures separately labeled. Official CLI setup uses Beta microsoft.foundry 1.0.0-beta.1, which currently bundles Beta azure.ai.toolboxes 1.0.0-beta.2.
 
 packages:
   - name: azure-ai-projects
@@ -14,24 +14,31 @@ packages:
     version: "2.3.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
     notes: |
-      SKILL.md verifies client.beta.toolboxes.create_version and related methods on azure-ai-projects 2.1.0.
+      Stable management uses AIProjectClient.toolboxes and Toolbox-specific models.
   - name: agent-framework
     source: pypi
     version: "1.11.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
-      MAF surface used for MCPStreamableHTTPTool and hosted-agent toolbox consumption patterns.
-      get_toolbox, select_toolbox_tools removed in 1.3.0; SkillsProvider(skill_paths=...) removed in 1.4.0.
+      Agent, FoundryChatClient, MCPStreamableHTTPTool, local function-tool composition.
+  - name: agent-framework-foundry-hosting
+    source: pypi
+    version: "1.0.0a260709"
+    upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
+    notes: |
+      Exact prerelease containing FoundryToolbox.
   - name: mcp
     source: pypi
     version: "1.28.1"
     upstream_changelog: https://pypi.org/project/mcp/#history
     notes: |
-      Toolbox endpoints are consumed as Streamable HTTP MCP endpoints.
-      agent-framework 1.6.0 requires mcp>=1.24.0.
+      Streamable HTTP MCP primitives.
 
 docs_to_revalidate:
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/cli-project-context
   - https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search
   - https://learn.microsoft.com/azure/foundry/agents/concepts/tool-catalog
   - https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions
   - https://pypi.org/project/azure-ai-projects/
@@ -41,10 +48,10 @@ docs_to_revalidate:
 known_issues:
   - id: KI-001
     description: |
-      Toolbox calls require the preview opt-in header `Foundry-Features: Toolboxes=V1Preview`; remove this workaround only after upstream replaces the preview gate.
+      Preview-era Toolbox requests required `Foundry-Features: Toolboxes=V1Preview`. The GA Toolbox API removed that feature gate; stable clients must not depend on the header.
     upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox
-    status: open
-    workaround_location: SKILL.md § "Step 2 — Wire into a hosted agent"
+    status: closed_upstream_fixed
+    workaround_location: removed in foundry-toolbox v2.0.0
 
 validation:
   requires: [pypi]
@@ -54,39 +61,70 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.11.0" "mcp~=1.28.0"
+    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.11.0" "agent-framework-foundry-hosting==1.0.0a260709" "mcp~=1.28.1"
     python - <<'PY'
+    from agent_framework import MCPStreamableHTTPTool, SkillsProvider
+    from agent_framework_foundry_hosting import FoundryToolbox
     from azure.ai.projects import AIProjectClient
-    from azure.ai.projects.models import MCPTool, WebSearchTool, AzureAISearchTool
-    from agent_framework import MCPStreamableHTTPTool
+    from azure.ai.projects.models import (
+        CodeInterpreterToolboxTool,
+        MCPToolboxTool,
+        ToolboxSearchPreviewToolboxTool,
+        ToolboxTool,
+    )
     from mcp import ClientSession
-    print("ok foundry-toolbox imports")
 
-    # Negative assertions — prove removed APIs stay removed
-    import importlib
-    ok = True
+    class OfflineCredential:
+        def get_token(self, *scopes, **kwargs):
+            raise RuntimeError("network access is not part of the import smoke")
+
+        def close(self):
+            return None
+
+    client = AIProjectClient(
+        endpoint="https://example.services.ai.azure.com/api/projects/example",
+        credential=OfflineCredential(),
+    )
+    assert client.toolboxes is not None
+    assert callable(client.toolboxes.create_version)
+    assert callable(client.toolboxes.get_version)
+    assert callable(client.toolboxes.delete)
+    client.close()
+    print("ok stable toolbox client")
+
+    for model in (
+        ToolboxTool,
+        CodeInterpreterToolboxTool,
+        MCPToolboxTool,
+        ToolboxSearchPreviewToolboxTool,
+    ):
+        assert model is not None
+    print("ok toolbox-specific models")
+
+    assert FoundryToolbox is not None
+    assert MCPStreamableHTTPTool is not None
+    assert ClientSession is not None
+    print("ok FoundryToolbox imports")
+
     try:
-        from agent_framework.foundry import select_toolbox_tools
-        print("FAIL select_toolbox_tools still importable")
-        ok = False
+        from agent_framework.foundry import AzureAIToolbox
     except (ImportError, ModuleNotFoundError):
-        print("ok select_toolbox_tools removed")
+        print("ok AzureAIToolbox removed")
+    else:
+        raise SystemExit("AzureAIToolbox unexpectedly remains importable")
 
-    from agent_framework import SkillsProvider
-    from pathlib import Path
     try:
-        SkillsProvider(skill_paths=Path('.'))
-        print("FAIL SkillsProvider(skill_paths=...) still accepted")
-        ok = False
+        SkillsProvider(skill_paths=".")
     except TypeError:
         print("ok skill_paths constructor removed")
-
-    if not ok:
-        raise SystemExit(1)
+    else:
+        raise SystemExit("SkillsProvider(skill_paths=...) unexpectedly accepted")
     PY
   expected_output:
-    - "ok foundry-toolbox imports"
-    - "ok select_toolbox_tools removed"
+    - "ok stable toolbox client"
+    - "ok toolbox-specific models"
+    - "ok FoundryToolbox imports"
+    - "ok AzureAIToolbox removed"
     - "ok skill_paths constructor removed"
 
 last_validated: 2026-07-13
@@ -96,22 +134,29 @@ known_issues_count: 1
 
 # Upstream pin — `foundry-toolbox` skill
 
-This Tier-B pin captures the PyPI package stack and preview-header dependency for the Foundry Toolbox API wrapper.
+This Tier-B pin captures the PyPI package stack and GA Toolbox API contract for the Foundry Toolbox wrapper.
+
+The stable Python pins below are independent of the CLI distribution. For
+standalone CLI workflows, install Beta `microsoft.foundry` `1.0.0-beta.1`;
+its registry metadata currently bundles Beta `azure.ai.toolboxes`
+`1.0.0-beta.2`, and existing-project commands require `azd ai project set`
+before `azd ai toolbox create --from-file`.
 
 ## Pinned packages
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `azure-ai-projects` | PyPI | **2.1.0** | Toolbox beta client surface |
-| `agent-framework` | PyPI | **1.7.0** | MAF MCP consumer surface |
-| `mcp` | PyPI | **1.27.1** | Streamable HTTP MCP client primitives |
+| `azure-ai-projects` | PyPI | **2.3.0** | Stable management via `AIProjectClient.toolboxes` and Toolbox-specific models |
+| `agent-framework` | PyPI | **1.11.0** | `Agent`, `FoundryChatClient`, `MCPStreamableHTTPTool`, local function-tool composition |
+| `agent-framework-foundry-hosting` | PyPI | **1.0.0a260709** | Exact prerelease containing `FoundryToolbox` |
+| `mcp` | PyPI | **1.28.1** | Streamable HTTP MCP primitives |
 
 ## Verification checklist
 
-Run the `validation.script` front-matter block. Expected output contains `ok foundry-toolbox imports`.
+Run the `validation.script` front-matter block. Expected output contains all five `ok ...` lines.
 
 ## Known issues
 
-### KI-001 — Toolboxes=V1Preview header
+### KI-001 - preview Toolbox feature header
 
-Every toolbox call currently requires `Foundry-Features: Toolboxes=V1Preview`. Keep this entry open until upstream removes or renames the preview opt-in header.
+Closed upstream. The GA Toolbox API no longer requires `Foundry-Features: Toolboxes=V1Preview`; v2.0.0 removes the workaround from canonical requests.
