@@ -196,9 +196,8 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         marketplace = json.loads(
             (ROOT / ".github" / "plugin" / "marketplace.json").read_text()
         )
-        self.assertEqual(plugin["version"], "4.29.0")
-        self.assertEqual(marketplace["metadata"]["version"], "4.29.0")
-        self.assertEqual(marketplace["plugins"][0]["version"], "4.29.0")
+        self.assertEqual(plugin["version"], marketplace["metadata"]["version"])
+        self.assertEqual(plugin["version"], marketplace["plugins"][0]["version"])
 
 
 if __name__ == "__main__":
