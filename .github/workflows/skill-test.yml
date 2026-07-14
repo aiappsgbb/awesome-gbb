@@ -21,6 +21,7 @@ on:
       - ".github/quarantine.yml"
       - ".github/ci-shared-preamble.md"
       - "scripts/build-test-matrix.py"
+      - "scripts/resolve-foundry-project.py"
       - "plugin.json"
       - ".github/plugin/**"
   push:
@@ -250,46 +251,38 @@ jobs:
         id: resolve-foundry-project
         env:
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          account_host="${AZURE_AI_ENDPOINT#https://}"
-          account_host="${account_host%%/*}"
-          if [[ -z "$account_host" || "$account_host" == "$AZURE_AI_ENDPOINT" ]]; then
-            echo "::error::AZURE_AI_ENDPOINT is not an https URL"
+          if [[ -z "$AZURE_AI_ENDPOINT" ]]; then
+            echo "::error::AZURE_AI_ENDPOINT secret is required"
             exit 1
           fi
-          account_name="${account_host%%.*}"
-          if [[ -z "$account_name" ]]; then
-            echo "::error::Could not derive the Foundry account name"
+          if [[ -z "$FOUNDRY_PROJECT_ENDPOINT" ]]; then
+            echo "::error::FOUNDRY_PROJECT_ENDPOINT secret is required"
+            exit 1
+          fi
+          if [[ -z "$AZURE_SUBSCRIPTION_ID" ]]; then
+            echo "::error::AZURE_SUBSCRIPTION_ID secret is required"
             exit 1
           fi
 
           projects_json="$(az resource list \
             --subscription "$AZURE_SUBSCRIPTION_ID" \
             --resource-type "Microsoft.CognitiveServices/accounts/projects" \
-            --output json)"
-          matches="$(jq -c --arg account "$account_name" \
-            '[.[] | select(.id | test("/accounts/" + $account + "/projects/"; "i"))]' \
-            <<<"$projects_json")"
-          match_count="$(jq 'length' <<<"$matches")"
-          if [[ "$match_count" -ne 1 ]]; then
-            echo "::error::Expected exactly one Foundry project for the CI account; found $match_count"
-            exit 1
-          fi
-
-          project_id="$(jq -er '.[0].id' <<<"$matches")"
-          project_name="${project_id##*/}"
-          project_endpoint="https://${account_name}.services.ai.azure.com/api/projects/${project_name}"
-          if [[ -z "$project_name" || "$project_id" != "/subscriptions/${AZURE_SUBSCRIPTION_ID}/"* ]]; then
-            echo "::error::Resolved Foundry project context is malformed"
-            exit 1
-          fi
+            --output json \
+            --only-show-errors)"
+          project_id="$(
+            python3 scripts/resolve-foundry-project.py \
+              --account-endpoint "$AZURE_AI_ENDPOINT" \
+              --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
+              --subscription-id "$AZURE_SUBSCRIPTION_ID" \
+              <<<"$projects_json"
+          )"
 
           echo "::add-mask::$project_id"
-          echo "::add-mask::$project_endpoint"
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
-          echo "project_endpoint=$project_endpoint" >> "$GITHUB_OUTPUT"
 
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
@@ -325,7 +318,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          FOUNDRY_PROJECT_ENDPOINT: ${{ steps.resolve-foundry-project.outputs.project_endpoint }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
           # Optional standing Entra app client id for the foundry-mcp-aca
           # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
@@ -444,7 +437,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          FOUNDRY_PROJECT_ENDPOINT: ${{ steps.resolve-foundry-project.outputs.project_endpoint }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
           # Optional standing Entra app client id for the foundry-mcp-aca
           # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
