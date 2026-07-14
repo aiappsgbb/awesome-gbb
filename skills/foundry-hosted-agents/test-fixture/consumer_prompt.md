@@ -99,7 +99,7 @@ mkdir -p "$work_dir"
 repo_root="${GITHUB_WORKSPACE:-$PWD}"
 skill_refs="$repo_root/skills/foundry-hosted-agents/references"
 cp "$skill_refs/docker/Dockerfile" "$work_dir/Dockerfile"
-cp "$skill_refs/python/main.py" "$work_dir/main.py"
+cp "$skill_refs/python/container.py" "$work_dir/container.py"
 cp "$skill_refs/python/pyproject.toml" "$work_dir/pyproject.toml"
 printf 'You are a customer-support triage assistant.\n' > "$work_dir/copilot-instructions.md"
 
