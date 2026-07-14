@@ -14,12 +14,13 @@
 # IMPORTANT: this YAML is necessary but not sufficient for direct-copy
 # brownfield deployment. If you copy these files and run `azd deploy`
 # without first running `azd ai agent init`, the active azd environment
-# must also contain FOUNDRY_PROJECT_ENDPOINT, the full
-# AZURE_AI_PROJECT_ID ARM ID, and the bare
-# AZURE_CONTAINER_REGISTRY_ENDPOINT hostname. The guided init command
-# wires those values for you. Omit `endpoint:` and add a `deployments:`
-# list under `ai-project` only when `azd provision` should create a fresh
-# project + model deployment.
+# must also contain AZURE_SUBSCRIPTION_ID, FOUNDRY_PROJECT_ENDPOINT,
+# the full AZURE_AI_PROJECT_ID ARM ID, the bare
+# AZURE_CONTAINER_REGISTRY_ENDPOINT hostname, and
+# AZURE_AI_MODEL_DEPLOYMENT_NAME. The guided init command wires those
+# values for you. Omit `endpoint:` and add a `deployments:` list under
+# `ai-project` only when `azd provision` should create a fresh project
+# + model deployment.
 name: my-agent-project
 
 requiredVersions:

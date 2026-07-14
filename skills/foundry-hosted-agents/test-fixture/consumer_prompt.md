@@ -409,8 +409,9 @@ try:
 except Exception as exc:  # noqa: BLE001 - teardown is best-effort
     note(f"NOTE agent delete best-effort failure: {exc}")
 
-# Best-effort ACR repository delete. The provider resolves the registry for
-# deploy; ACR_LOGIN_SERVER is only an optional cleanup hint.
+# Best-effort ACR repository delete. ACR_LOGIN_SERVER was required above for
+# deploy-time AZURE_CONTAINER_REGISTRY_ENDPOINT and is reused here only to
+# derive the registry name; deletion itself remains best-effort.
 acr_login_server = os.environ.get("ACR_LOGIN_SERVER", "").strip()
 if not acr_login_server:
     note("NOTE ACR repository cleanup skipped: ACR_LOGIN_SERVER not set")
