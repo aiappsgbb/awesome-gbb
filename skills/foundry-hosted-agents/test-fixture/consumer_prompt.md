@@ -123,12 +123,15 @@ services:
     protocols:
       - protocol: responses
         version: 2.0.0
-    env:
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: \${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: \${AZURE_AI_MODEL_DEPLOYMENT_NAME}
     container:
       resources:
         cpu: "1"
         memory: 2Gi
+infra:
+  provider: microsoft.foundry
 YAML
 
 (

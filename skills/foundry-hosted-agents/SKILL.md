@@ -1171,12 +1171,16 @@ services:
     protocols:
       - protocol: responses
         version: 2.0.0
-    env:
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
     container:
       resources:
         cpu: "1"
         memory: 2Gi
+
+infra:
+  provider: microsoft.foundry
 ```
 
 ### Critical rules
@@ -1186,9 +1190,10 @@ services:
 | `kind: hosted` on the `azure.ai.agent` service | Marks it as a containerized/source-built hosted agent (as opposed to a Foundry Agent Service prompt agent) |
 | Protocol version `2.0.0` | Current GA protocol version. `"v1"` and `"1.0.0"` are historical preview values from before the two-file contract was retired — see [§ Migration from Initial Preview](#migration-from-initial-preview-pre-april-2026) |
 | `container.resources` nested object | NOT a top-level `resources:` list |
-| NO `FOUNDRY_PROJECT_ENDPOINT` in `env` | Reserved — the platform injects it automatically, along with `FOUNDRY_PROJECT_ARM_ID`, `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION`, `FOUNDRY_AGENT_SESSION_ID`, and `APPLICATIONINSIGHTS_CONNECTION_STRING`. Declaring any of them yourself is redundant at best and risks shadowing the platform value |
+| NO `FOUNDRY_PROJECT_ENDPOINT` in `environmentVariables` | Reserved — the platform injects it automatically, along with `FOUNDRY_PROJECT_ARM_ID`, `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION`, `FOUNDRY_AGENT_SESSION_ID`, and `APPLICATIONINSIGHTS_CONNECTION_STRING`. Declaring any of them yourself is redundant at best and risks shadowing the platform value |
 | `uses: [ai-project]` on the agent service | Forms the dependency graph `azd` resolves at provision/deploy time — the agent can't reference the project's model deployment without it |
 | Connect to an existing project via `endpoint:` | Set `services.ai-project.endpoint` to the project's endpoint URL to reuse a pre-provisioned Foundry project instead of having `azd` provision a new one; omit `deployments:` you don't want `azd` to manage |
+| `infra.provider: microsoft.foundry` | Selects the Foundry extension's bicep-less provisioning provider for the unified services graph; it does not rename or replace the `azure.ai.agents` extension |
 
 > **One schema, no scaffold-time mustache.** Unlike the old two-file
 > contract, there is no separate `{{VAR}}`-templated companion file.
@@ -1200,13 +1205,13 @@ services:
 > for the full field list, including `azure.ai.connection` and
 > `azure.ai.toolbox` services this skill doesn't otherwise cover.
 
-> **Infra is bicep-less by default.** `azd` synthesizes infrastructure
-> from the `services` graph above at `azd provision` time — there's no
-> `infra/` directory unless you explicitly eject one with `azd ai agent
-> init --infra` (Bicep) or `--infra=terraform`. When an `infra:` block
-> is present, `azd` uses those files instead of synthesizing; `infra.provider`
-> is `bicep` or `terraform` — there is no `microsoft.foundry` infra
-> provider value.
+> **Foundry provider is bicep-less.** `infra.provider:
+> microsoft.foundry` selects the Foundry extension's provisioning
+> provider, which synthesizes infrastructure from the `services` graph
+> at `azd provision` time; there is no local `infra/` directory. If you
+> explicitly eject infrastructure with `azd ai agent init --infra` or
+> `--infra=terraform`, the generated project switches the provider to
+> `bicep` or `terraform` and uses those local files instead.
 
 ### Installing the `azd` Foundry extensions
 
@@ -1271,7 +1276,7 @@ variables you actually set by hand are small:
 | Env var | Set via | Format | Why it matters |
 |---------|---------|--------|-----------------|
 | `AZURE_AI_PROJECT_ENDPOINT` | `azd env set` (when connecting to a pre-provisioned project) | `https://<acct>.services.ai.azure.com/api/projects/<proj>` | Referenced by `services.ai-project.endpoint` in `azure.yaml` to connect to an existing Foundry project instead of provisioning a new one |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | `azd ai agent init` records it automatically from the deployment you select; change later with `azd env set` | deployment name (e.g. `gpt-5.4-mini`) | Read by the agent via `env.AZURE_AI_MODEL_DEPLOYMENT_NAME` in `azure.yaml`, and by `container.py` / `main.py` as `os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]` |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | `azd ai agent init` records it automatically from the deployment you select; change later with `azd env set` | deployment name (e.g. `gpt-5.4-mini`) | Projected through the agent service's `environmentVariables` entry in `azure.yaml`, and read by `container.py` / `main.py` as `os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]` |
 
 `azd provision` writes these into `.azure/<env>/.env`. If you eject
 Bicep (`azd ai agent init --infra`), the generated `main.bicep` exposes
@@ -1282,7 +1287,7 @@ the equivalent `output`s and you rarely need to hand-wire them.
 > `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION`,
 > `FOUNDRY_AGENT_SESSION_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`.
 > The platform injects all of these into the running container
-> automatically; declaring them in `azure.yaml`'s `env` map is
+> automatically; declaring them in `azure.yaml`'s `environmentVariables` list is
 > redundant and risks shadowing the platform value.
 
 ---
@@ -1826,7 +1831,7 @@ deployment update --capacity <N>` — no agent redeploy needed.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `FOUNDRY_PROJECT_ENDPOINT is reserved` | Declared in `azure.yaml` `env` map | Remove it — platform injects automatically |
+| `FOUNDRY_PROJECT_ENDPOINT is reserved` | Declared in `azure.yaml` `environmentVariables` | Remove it — platform injects automatically |
 | `AGENT_* env var is reserved` | All `FOUNDRY_*` and `AGENT_*` prefixed vars are reserved | Use a different prefix (e.g. `TL_SUB_AGENTS`) |
 | `session_not_ready` (424) | Container crashed before readiness probe | Check logstream: `curl ...sessions/{sid}:logstream`. Common causes: import error, sync/async mismatch, missing dep |
 | Sub-agent tool calls return "Function failed" | `FoundryAgent` uses old `agent_reference` pattern | Use the client-swap pattern: `sub_client.client = project_client.get_openai_client(agent_name=...)` |
@@ -1843,7 +1848,7 @@ deployment update --capacity <N>` — no agent redeploy needed.
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
 | Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. Recent strict-smoke runs showed low reproducibility with mini + permissive MCP and high reproducibility with gpt-5.4 + validate-or-reject. |
 | `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `azure.yaml` `env` map OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Observed in hosted-agent validation |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `azure.yaml` `environmentVariables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Observed in hosted-agent validation |
 | Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` (GUID `3913510d-...`) OR AppInsights connection missing on account. **IMPORTANT:** GUID `f526a384-...` is "Azure Event Hubs Data Owner" — a completely wrong role despite being mislabeled in some references. When `DisableLocalAuth: false`, RBAC is not required — ikey auth works | Assign `Monitoring Metrics Publisher` RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; `azd ai agent show` reports active** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null`), the SDK raises `ValueError`. Container crashes before `ResponsesHostServer` binds. Foundry runtime sees no agent. **The agent itself is fine — telemetry init is what killed it.** | Wrap telemetry init in `_init_telemetry()` (no-ops on missing env / SDK ImportError / any SDK exception). Never call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` gap row O-011 |
 | **AppInsights connection PUT 400 ValidationError "AuthType for AppInsights Connection can only be ApiKey"** | Account-RP scope `2025-10-01-preview` in some regions rejects `authType: AAD` despite skill guidance (correlation IDs available) | Use `authType: ApiKey` with `credentials.key` in body. **BUT:** the key is silently dropped server-side — GET returns `credentials: null` and platform never injects the env var. There is no working workaround at the platform layer. File a support ticket; ship with guarded `_init_telemetry()` so the agent functions without telemetry; consider region pivot |

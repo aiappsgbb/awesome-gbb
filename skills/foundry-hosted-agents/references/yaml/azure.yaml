@@ -37,16 +37,17 @@ services:
     protocols:
       - protocol: responses
         version: 2.0.0
-    env:
+    environmentVariables:
       # NEVER declare FOUNDRY_PROJECT_ENDPOINT (or any other FOUNDRY_*
       # var) here — the platform injects it automatically.
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
     container:
       resources:
         cpu: "1"
         memory: 2Gi
 
-# No `infra:` block — azd synthesizes infrastructure from the services
-# graph above at `azd provision` time (bicep-less by default). Add an
-# `infra:` block only if you've explicitly ejected Bicep or Terraform
-# with `azd ai agent init --infra` / `--infra=terraform`.
+infra:
+  # Extension-backed, bicep-less provisioning from the services graph.
+  # This is the provider used by the current official Hosted Agent samples.
+  provider: microsoft.foundry

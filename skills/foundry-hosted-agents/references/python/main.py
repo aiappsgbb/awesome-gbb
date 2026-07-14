@@ -7,7 +7,7 @@
 #
 # Pre-conditions consumed from the platform-injected environment:
 #   FOUNDRY_PROJECT_ENDPOINT          (platform-injected at container start; NEVER declare in azure.yaml)
-#   AZURE_AI_MODEL_DEPLOYMENT_NAME     (declared in azure.yaml's env map — see ../yaml/azure.yaml)
+#   AZURE_AI_MODEL_DEPLOYMENT_NAME     (declared in azure.yaml's environmentVariables list — see ../yaml/azure.yaml)
 #
 # Why each line matters:
 #   - `model=` MUST be passed explicitly to FoundryChatClient. The runtime
