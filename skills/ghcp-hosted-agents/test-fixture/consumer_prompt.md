@@ -30,7 +30,8 @@ the filesystem, run `command -v azd`, or install a replacement. Run:
 rm -f \
   /tmp/ghcp-hosted-agents-smoke-result \
   /tmp/ghcp-hosted-agents-smoke-evidence \
-  /tmp/ghcp-hosted-agents-agent-name
+  /tmp/ghcp-hosted-agents-agent-name \
+  /tmp/ghcp-hosted-agents-invoke.log
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
@@ -320,10 +321,26 @@ already captures the full transcript):
 ```bash
 work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
 agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
+invoke_log="/tmp/ghcp-hosted-agents-invoke.log"
 cd "$work_dir"
-invoke_output="$(timeout 300 azd ai agent invoke "$agent_name" '{"input":"Say hello in one short sentence."}' --protocol invocations --output raw --timeout 180 2>&1)"
-printf '%s\n' "$invoke_output"
-if printf '%s' "$invoke_output" | grep -qE 'assistant\.message(_delta)?'; then
+rm -f "$invoke_log"
+set +e
+timeout 300 azd ai agent invoke "$agent_name" \
+  '{"input":"Say hello in one short sentence."}' \
+  --protocol invocations \
+  --output raw \
+  --timeout 180 >"$invoke_log" 2>&1
+invoke_status=$?
+set -e
+cat "$invoke_log"
+printf 'INVOKE_EXIT_STATUS status=%s\n' "$invoke_status" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+if (( invoke_status != 0 )); then
+  printf 'SMOKE_RESULT=FAIL invoke command exited with status %s\n' "$invoke_status" \
+    > /tmp/ghcp-hosted-agents-smoke-result
+  exit 1
+fi
+if grep -qE 'assistant\.message(_delta)?' "$invoke_log"; then
   printf 'INVOKE_OK name=%s\n' "$agent_name" >> /tmp/ghcp-hosted-agents-smoke-evidence
   printf 'INVOKE_OK name=%s\n' "$agent_name"
 else
@@ -337,7 +354,9 @@ Do not use `curl`, a hand-rolled REST call, or `references/invoke_agent.py`
 here - `azd ai agent invoke` is the single documented path for this fixture
 (Pattern 16, AGENTS.md § 9.7). Do not retry the invoke on failure; a single
 attempt that does not contain `assistant.message` or `assistant.message_delta`
-is a hard FAIL.
+is a hard FAIL. The exact raw response is persisted to
+`/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it under an
+attempt-specific filename before any retry and uploads both attempts.
 
 ## Step 5 - best-effort teardown
 
@@ -381,6 +400,7 @@ required_patterns = (
     r"AZD_DEPLOY_ATTEMPT count=1",
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ghcp-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ghcp-[0-9a-f]{8} protocol=invocations/2\.0\.0",
+    r"INVOKE_EXIT_STATUS status=0",
     r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8}",
 )
 for pattern in required_patterns:
@@ -419,6 +439,7 @@ printf 'SMOKE_RESULT=FAIL azd deploy failed\n' > /tmp/ghcp-hosted-agents-smoke-r
 printf 'SMOKE_RESULT=FAIL permission denied - agent identity should have implicit access by default\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL agent version never reached active\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL protocol version mismatch - expected invocations 2.0.0\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL invoke command exited non-zero\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL invoke did not return assistant.message or assistant.message_delta\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/ghcp-hosted-agents-smoke-result
 ```

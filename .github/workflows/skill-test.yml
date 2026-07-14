@@ -334,13 +334,26 @@ jobs:
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
           MARKER="/tmp/${SKILL}-smoke-result"
           EVIDENCE="/tmp/${SKILL}-smoke-evidence"
+          INVOKE_LOG="/tmp/${SKILL}-invoke.log"
+          PRIMARY_EVIDENCE="/tmp/${SKILL}-primary-smoke-evidence"
+          PRIMARY_INVOKE_LOG="/tmp/${SKILL}-primary-invoke.log"
+          RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"
+          RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"
           test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
           # Pattern 12 (AGENTS.md § 9.7): the fixture writes its result
           # marker to MARKER via a deterministic Bash-tool printf. The
           # transcript grep is a legacy fallback only — see eval block
           # below. Clean stale state BEFORE the run so a leftover marker
           # can't false-PASS and old evidence can't contaminate forensics.
-          rm -f "$TRANSCRIPT" "$MARKER" "$EVIDENCE"
+          rm -f \
+            "$TRANSCRIPT" \
+            "$MARKER" \
+            "$EVIDENCE" \
+            "$INVOKE_LOG" \
+            "$PRIMARY_EVIDENCE" \
+            "$PRIMARY_INVOKE_LOG" \
+            "$RETRY_EVIDENCE" \
+            "$RETRY_INVOKE_LOG"
           # `-p` is the released CLI's one-shot prompt form. `copilot run`
           # does not exist; `--prompt-file` does not exist. Inline the
           # fixture body with $(cat …). `--disable-builtin-mcps` drops the
@@ -372,7 +385,11 @@ jobs:
           set -e
           echo "copilot exit status: $COPILOT_STATUS"
           if [ -f "$EVIDENCE" ]; then
+            cp "$EVIDENCE" "$PRIMARY_EVIDENCE"
             cat "$EVIDENCE"
+          fi
+          if [ -f "$INVOKE_LOG" ]; then
+            cp "$INVOKE_LOG" "$PRIMARY_INVOKE_LOG"
           fi
           # === Result evaluation (Pattern 12, AGENTS.md § 9.7) ===
           # Marker file is AUTHORITATIVE when present — its bytes were
@@ -451,6 +468,9 @@ jobs:
           RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
           MARKER="/tmp/${SKILL}-smoke-result"
           EVIDENCE="/tmp/${SKILL}-smoke-evidence"
+          INVOKE_LOG="/tmp/${SKILL}-invoke.log"
+          RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"
+          RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"
           # Pattern 18 (AGENTS.md § 9.7): expand the retry-classifier
           # regex to include known ARM/ACA control-plane transients that
           # a real Azure deployment hits even when the target resource
@@ -513,7 +533,13 @@ jobs:
             sleep "${COOLDOWN}"
             # Pattern 12: clear marker, evidence, AND retry transcript before
             # the second attempt so retry-leg evaluation is hermetic.
-            rm -f "$RETRY_TRANSCRIPT" "$MARKER" "$EVIDENCE"
+            rm -f \
+              "$RETRY_TRANSCRIPT" \
+              "$MARKER" \
+              "$EVIDENCE" \
+              "$INVOKE_LOG" \
+              "$RETRY_EVIDENCE" \
+              "$RETRY_INVOKE_LOG"
             # Same shared-CI hardening preamble as the initial run
             # (Pattern 11 byte-identical contract between initial and
             # retry steps applies here too).
@@ -529,7 +555,11 @@ jobs:
             set -e
             echo "copilot retry exit status: $COPILOT_STATUS"
             if [ -f "$EVIDENCE" ]; then
+              cp "$EVIDENCE" "$RETRY_EVIDENCE"
               cat "$EVIDENCE"
+            fi
+            if [ -f "$INVOKE_LOG" ]; then
+              cp "$INVOKE_LOG" "$RETRY_INVOKE_LOG"
             fi
             # Same Pattern 12 eval ladder as the primary step
             if [ -f "$MARKER" ]; then
@@ -595,5 +625,9 @@ jobs:
             /tmp/${{ matrix.skill }}-transcript.log
             /tmp/${{ matrix.skill }}-retry.log
             /tmp/${{ matrix.skill }}-smoke-evidence
+            /tmp/${{ matrix.skill }}-primary-smoke-evidence
+            /tmp/${{ matrix.skill }}-retry-smoke-evidence
+            /tmp/${{ matrix.skill }}-primary-invoke.log
+            /tmp/${{ matrix.skill }}-retry-invoke.log
           if-no-files-found: warn
           retention-days: 7

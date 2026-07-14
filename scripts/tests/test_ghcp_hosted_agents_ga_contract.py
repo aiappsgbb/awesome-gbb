@@ -13,6 +13,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "skills" / "ghcp-hosted-agents"
+WORKFLOW = ROOT / ".github" / "workflows" / "skill-test.yml"
 
 
 class GhcpHostedAgentsGaContractTests(unittest.TestCase):
@@ -28,6 +29,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         cls.pin = (SKILL_DIR / "references" / "upstream-pin.md").read_text(
             encoding="utf-8"
         )
+        cls.workflow = WORKFLOW.read_text(encoding="utf-8")
 
     def test_obsolete_agent_yaml_is_removed(self) -> None:
         self.assertFalse((SKILL_DIR / "references" / "agent.yaml").exists())
@@ -35,7 +37,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.0")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.1")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -163,6 +165,48 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertIn(
             "printf 'SMOKE_RESULT=PASS\\n' > /tmp/ghcp-hosted-agents-smoke-result",
             self.fixture,
+        )
+
+    def test_fixture_persists_raw_invoke_forensics(self) -> None:
+        required = (
+            'invoke_log="/tmp/ghcp-hosted-agents-invoke.log"',
+            'rm -f "$invoke_log"',
+            '>"$invoke_log" 2>&1',
+            "invoke_status=$?",
+            'cat "$invoke_log"',
+            'grep -qE \'assistant\\.message(_delta)?\' "$invoke_log"',
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, self.fixture)
+
+    def test_workflow_snapshots_attempt_scoped_forensics(self) -> None:
+        required = (
+            'INVOKE_LOG="/tmp/${SKILL}-invoke.log"',
+            'PRIMARY_EVIDENCE="/tmp/${SKILL}-primary-smoke-evidence"',
+            'PRIMARY_INVOKE_LOG="/tmp/${SKILL}-primary-invoke.log"',
+            'RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"',
+            'RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"',
+            'cp "$EVIDENCE" "$PRIMARY_EVIDENCE"',
+            'cp "$INVOKE_LOG" "$PRIMARY_INVOKE_LOG"',
+            'cp "$EVIDENCE" "$RETRY_EVIDENCE"',
+            'cp "$INVOKE_LOG" "$RETRY_INVOKE_LOG"',
+            "/tmp/${{ matrix.skill }}-primary-smoke-evidence",
+            "/tmp/${{ matrix.skill }}-retry-smoke-evidence",
+            "/tmp/${{ matrix.skill }}-primary-invoke.log",
+            "/tmp/${{ matrix.skill }}-retry-invoke.log",
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
+        self.assertLess(
+            self.workflow.index('cp "$INVOKE_LOG" "$PRIMARY_INVOKE_LOG"'),
+            self.workflow.index("# === Result evaluation"),
+        )
+        self.assertLess(
+            self.workflow.index('cp "$INVOKE_LOG" "$RETRY_INVOKE_LOG"'),
+            self.workflow.index("# Same Pattern 12 eval ladder"),
         )
 
     def test_container_uses_pinned_public_imports(self) -> None:
