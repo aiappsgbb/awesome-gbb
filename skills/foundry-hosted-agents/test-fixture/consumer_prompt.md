@@ -62,14 +62,14 @@ route around with an ad hoc role grant.
 ## Step 1 - install and verify the azd Foundry extensions
 
 ```bash
-azd extension install microsoft.foundry
-azd extension list --output json
+azd ext install microsoft.foundry
+azd ext list --output json
 ```
 
-From the `azd extension list --output json` output, confirm **both**
+From the `azd ext list --output json` output, confirm **both**
 `microsoft.foundry` and `azure.ai.agents` are present and installed. Do
 NOT rely on `azd ai agent version` or any other version-probing command -
-`azd extension list --output json` is the only supported way to verify
+`azd ext list --output json` is the only supported way to verify
 this in the fixture.
 
 ## Step 2 - deploy the canonical container agent
