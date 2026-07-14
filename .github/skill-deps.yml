@@ -40,13 +40,21 @@ skills:
   foundry-toolbox:
     depends_on: []
   # ghcp-hosted-agents — alternative GHCP-SDK + Invocations protocol
-  # hosted-agent path. Stand-alone fixture (BYOK to Foundry model via
-  # MI, no GITHUB_TOKEN). Same azd ai agent + ACA + ACR shape as
-  # foundry-hosted-agents but does NOT depend on its container source
-  # — references/container.py is a different SDK surface
-  # (github-copilot-sdk, not Microsoft Agent Framework).
+  # hosted-agent path, now on the same GA unified azure.yaml deploy
+  # shape (single-file services graph, azd ai agent init/deploy,
+  # implicit-access identity model) that foundry-hosted-agents uses —
+  # see skills/ghcp-hosted-agents/SKILL.md § "azure.yaml (unified GA
+  # deployment)". A shared-transport change there (Bicep-less
+  # provisioning behavior, azd env brownfield wiring, identity/RBAC
+  # defaults) can break this fixture's deploy step even though the
+  # in-container runtime is distinct: this skill's
+  # references/container.py runs the GitHub Copilot SDK
+  # (CopilotClient + InvocationAgentServerHost, Invocations protocol),
+  # not foundry-hosted-agents' Microsoft Agent Framework runtime
+  # (FoundryChatClient + ResponsesHostServer, Responses protocol).
   ghcp-hosted-agents:
-    depends_on: []
+    depends_on:
+      - foundry-hosted-agents
 
   # ── Cross-skill deps ────────────────────────────────────────────────
   # foundry-evals fixture creates a prompt agent (via PA's

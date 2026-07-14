@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Contract tests for the GHCP hosted-agent GA deployment migration."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import unittest
+
+import yaml
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SKILL_DIR = ROOT / "skills" / "ghcp-hosted-agents"
+
+
+class GhcpHostedAgentsGaContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        cls.fixture = (SKILL_DIR / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        cls.container = (SKILL_DIR / "references" / "container.py").read_text(
+            encoding="utf-8"
+        )
+        cls.pin = (SKILL_DIR / "references" / "upstream-pin.md").read_text(
+            encoding="utf-8"
+        )
+
+    def test_obsolete_agent_yaml_is_removed(self) -> None:
+        self.assertFalse((SKILL_DIR / "references" / "agent.yaml").exists())
+        self.assertTrue((SKILL_DIR / "references" / "yaml" / "azure.yaml").exists())
+
+    def test_skill_version_and_legacy_deploy_contract(self) -> None:
+        frontmatter = yaml.safe_load(self.skill.split("---")[1])
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.0")
+        self.assertLessEqual(len(frontmatter["description"]), 1024)
+        for stale in (
+            "## agent.yaml",
+            "references/agent.yaml",
+            "azd up",
+            "azd provision",
+            "remoteBuild",
+            "az role assignment create",
+            "2025-11-15-preview",
+            "Manual account-scope assignment",
+            "ACA app",
+            "postdeploy hook",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, self.skill)
+
+    def test_canonical_azure_yaml_uses_unified_invocations_shape(self) -> None:
+        path = SKILL_DIR / "references" / "yaml" / "azure.yaml"
+        text = path.read_text(encoding="utf-8")
+        data = yaml.safe_load(text)
+        self.assertIn(
+            "Source of truth for the prose example in",
+            text,
+        )
+        self.assertIn("§ azure.yaml (unified GA deployment)", text)
+        self.assertEqual(
+            data["requiredVersions"]["extensions"]["azure.ai.agents"],
+            ">=1.0.0-beta.4",
+        )
+        self.assertEqual(
+            data["services"]["ai-project"]["endpoint"],
+            "${FOUNDRY_PROJECT_ENDPOINT}",
+        )
+        agent = data["services"]["my-agent"]
+        self.assertEqual(agent["host"], "azure.ai.agent")
+        self.assertEqual(agent["kind"], "hosted")
+        self.assertEqual(agent["language"], "docker")
+        self.assertEqual(agent["uses"], ["ai-project"])
+        self.assertEqual(
+            agent["protocols"],
+            [{"protocol": "invocations", "version": "2.0.0"}],
+        )
+        self.assertEqual(
+            agent["environmentVariables"],
+            [
+                {
+                    "name": "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+                    "value": "${AZURE_AI_MODEL_DEPLOYMENT_NAME}",
+                }
+            ],
+        )
+        self.assertEqual(data["infra"]["provider"], "microsoft.foundry")
+        self.assertNotIn("env", agent)
+
+    def test_direct_copy_env_and_permission_contract(self) -> None:
+        for name in (
+            "AZURE_SUBSCRIPTION_ID",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "AZURE_AI_PROJECT_ID",
+            "AZURE_CONTAINER_REGISTRY_ENDPOINT",
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        ):
+            self.assertIn(name, self.skill)
+        self.assertIn("guided", self.skill.lower())
+        self.assertIn("direct-copy", self.skill.lower())
+        self.assertNotIn("az role assignment create", self.skill)
+        self.assertNotIn("az role assignment create", self.fixture)
+
+    def test_fixture_is_canonical_single_attempt_smoke(self) -> None:
+        required = (
+            'echo "skills/ghcp-hosted-agents/SKILL.md"',
+            "never invoke `copilot` recursively",
+            "rm -f",
+            "AZURE_AI_PROJECT_ID=${AZURE_AI_PROJECT_ID:+set}",
+            "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER:+set}",
+            "AZD_EXTENSION_VERSION id=microsoft.foundry",
+            "AZD_EXTENSION_VERSION id=azure.ai.agents",
+            'cp "$skill_refs/yaml/azure.yaml" "$work_dir/azure.yaml"',
+            "expected exactly one canonical token",
+            "rendered azure.yaml differs beyond agent identifiers",
+            'azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID"',
+            'azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"',
+            'azd env set AZURE_AI_PROJECT_ID "$AZURE_AI_PROJECT_ID"',
+            'azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$ACR_LOGIN_SERVER"',
+            "azd env get-value",
+            "AZD_ENV_CONTRACT_OK",
+            "AZD_DEPLOY_ATTEMPT count=1",
+            "AGENT_VERSION_ACTIVE",
+            "protocol=invocations/2.0.0",
+            "azd ai agent invoke",
+            '{"input":',
+            "--output raw",
+            "assistant.message",
+            "assistant.message_delta",
+            "SMOKE_RESULT=PASS",
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, self.fixture)
+
+        deploys = re.findall(
+            r'^\s*azd deploy "\$agent_name" --no-prompt$',
+            self.fixture,
+            re.MULTILINE,
+        )
+        self.assertEqual(deploys, ['  azd deploy "$agent_name" --no-prompt'])
+        for forbidden in (
+            "azd up",
+            "azd provision",
+            "azd down",
+            "az role assignment create",
+            "az containerapp",
+            "az acr repository delete",
+            "2025-11-15-preview",
+            "curl -",
+            "| tee",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.fixture)
+
+    def test_fixture_teardown_is_bounded_and_soft_pass(self) -> None:
+        self.assertIn("azd ai agent delete", self.fixture)
+        self.assertRegex(self.fixture, r"timeout\s+(?:[1-9]\d?|[12]\d{2}|300)\s")
+        self.assertIn("best-effort", self.fixture.lower())
+        self.assertIn(
+            "printf 'SMOKE_RESULT=PASS\\n' > /tmp/ghcp-hosted-agents-smoke-result",
+            self.fixture,
+        )
+
+    def test_container_uses_pinned_public_imports(self) -> None:
+        self.assertIn(
+            "from copilot import CopilotClient, PermissionHandler, ProviderConfig",
+            self.container,
+        )
+        self.assertIn(
+            "from copilot.session_events import SessionEventType",
+            self.container,
+        )
+        self.assertNotIn("copilot.generated.session_events", self.container)
+        self.assertNotIn("from copilot.session import", self.container)
+
+    def test_upstream_pin_retires_legacy_known_issues(self) -> None:
+        pin_frontmatter = yaml.safe_load(self.pin.split("---")[1])
+        known = {item["id"]: item for item in pin_frontmatter["known_issues"]}
+        for retired in ("KI-001", "KI-002", "KI-003", "KI-004"):
+            self.assertNotIn(retired, known)
+        self.assertEqual(pin_frontmatter["known_issues_count"], len(known))
+        self.assertIn("22b2c89c676bddb107ea370330d6341e25ff674b", self.pin)
+        self.assertIn("9efebd953104414cf58eb78098729519b184bb6b", self.pin)
+
+    def test_dependency_and_plugin_contract(self) -> None:
+        deps = yaml.safe_load((ROOT / ".github" / "skill-deps.yml").read_text())
+        self.assertIn(
+            "foundry-hosted-agents",
+            deps["skills"]["ghcp-hosted-agents"]["depends_on"],
+        )
+        plugin = json.loads((ROOT / "plugin.json").read_text())
+        marketplace = json.loads(
+            (ROOT / ".github" / "plugin" / "marketplace.json").read_text()
+        )
+        self.assertEqual(plugin["version"], "4.29.0")
+        self.assertEqual(marketplace["metadata"]["version"], "4.29.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.29.0")
+
+
+if __name__ == "__main__":
+    unittest.main()
