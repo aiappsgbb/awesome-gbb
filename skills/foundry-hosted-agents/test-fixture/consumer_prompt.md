@@ -27,14 +27,45 @@ The workflow has already installed `azd` at `/usr/local/bin/azd`. Do not search
 the filesystem, run `command -v azd`, or install a replacement. Run:
 
 ```bash
-rm -f /tmp/foundry-hosted-agents-smoke-result
+rm -f \
+  /tmp/foundry-hosted-agents-smoke-result \
+  /tmp/foundry-hosted-agents-smoke-evidence \
+  /tmp/foundry-hosted-agents-agent-name
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
 echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
+echo "AZURE_AI_PROJECT_ID=${AZURE_AI_PROJECT_ID:+set}"
 echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER:+set}"
-if [[ -z "${ACR_LOGIN_SERVER:-}" ]]; then
-  echo "NOTE ACR_LOGIN_SERVER is not set; best-effort ACR cleanup will be skipped"
+test -n "${AZURE_CLIENT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_CLIENT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
+}
+test -n "${AZURE_TENANT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_TENANT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
+}
+test -n "${AZURE_SUBSCRIPTION_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_SUBSCRIPTION_ID\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
+}
+test -n "${FOUNDRY_PROJECT_ENDPOINT:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing FOUNDRY_PROJECT_ENDPOINT\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
+}
+test -n "${AZURE_AI_PROJECT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_AI_PROJECT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
+}
+test -n "${ACR_LOGIN_SERVER:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
+}
+if [[ "$ACR_LOGIN_SERVER" == *"://"* \
+   || "$ACR_LOGIN_SERVER" == */* \
+   || "$ACR_LOGIN_SERVER" != *.azurecr.io ]]; then
+  printf 'SMOKE_RESULT=FAIL malformed ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit 1
 fi
 az account show --output table || echo "(az cache not inherited - relying on DefaultAzureCredential)"
 azd auth login \
@@ -43,21 +74,20 @@ azd auth login \
   --tenant-id "$AZURE_TENANT_ID"
 ```
 
-Only assert that the four auth/deploy variables (`AZURE_CLIENT_ID`,
-`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and
-`FOUNDRY_PROJECT_ENDPOINT`) are non-empty. Do not compare subscription IDs,
-decode tokens, or gate on Azure CLI cache visibility. `ACR_LOGIN_SERVER` is
-an optional cleanup hint, not a deploy input. If a required environment
-variable is empty, write the FAIL marker from the final step with the exact
-missing variable name and stop. `azd auth login` is the explicit azd
-authentication gate; if it fails, use the matching final-step marker.
+Assert that all six auth/deploy variables above are non-empty. Do not compare
+subscription IDs, decode tokens, or gate on Azure CLI cache visibility.
+`ACR_LOGIN_SERVER` must be a bare `<registry>.azurecr.io` hostname — no
+scheme, path, or trailing slash. If a required environment variable is empty
+or the registry host is malformed, write the matching FAIL marker and stop.
+`azd auth login` is the explicit azd authentication gate; if it fails, use
+the matching final-step marker.
 
 **Pre-provisioned, do NOT create:** the Foundry project at
-`FOUNDRY_PROJECT_ENDPOINT` already exists. The `microsoft.foundry` provider
-resolves the project's configured container registry for remote build and
-deploy; `ACR_LOGIN_SERVER` is used only to attempt best-effort repository
-cleanup. Do not run `azd provision`, `az group create`, or anything that
-provisions a new Foundry project or registry. Hosted agents run on
+`FOUNDRY_PROJECT_ENDPOINT` and the container registry at `ACR_LOGIN_SERVER`
+already exist. Direct-copy container deploy requires that registry hostname
+for build/push, while deletion remains best-effort during teardown. Do not
+run `azd provision`, `az group create`, or anything that provisions a new
+Foundry project or registry. Hosted agents run on
 Foundry-managed, per-session sandboxes - there is no Container Apps
 environment, no ACA app, and nothing else to provision for this fixture.
 
@@ -72,14 +102,30 @@ route around with an ad hoc role grant.
 
 ```bash
 azd ext install microsoft.foundry
-azd ext list --output json
+extensions_json="$(azd ext list --output json)"
+microsoft_foundry_version="$(jq -er \
+  '[.[] | select(.id == "microsoft.foundry") | .installedVersion | select(type == "string" and length > 0)]
+   | if length == 1 then .[0] else error("expected one installed microsoft.foundry extension") end' \
+  <<<"$extensions_json")"
+agents_extension_version="$(jq -er \
+  '[.[] | select(.id == "azure.ai.agents") | .installedVersion | select(type == "string" and length > 0)]
+   | if length == 1 then .[0] else error("expected one installed azure.ai.agents extension") end' \
+  <<<"$extensions_json")"
+printf 'AZD_EXTENSION_VERSION id=microsoft.foundry installedVersion=%s\n' \
+  "$microsoft_foundry_version" >> /tmp/foundry-hosted-agents-smoke-evidence
+printf 'AZD_EXTENSION_VERSION id=microsoft.foundry installedVersion=%s\n' \
+  "$microsoft_foundry_version"
+printf 'AZD_EXTENSION_VERSION id=azure.ai.agents installedVersion=%s\n' \
+  "$agents_extension_version" >> /tmp/foundry-hosted-agents-smoke-evidence
+printf 'AZD_EXTENSION_VERSION id=azure.ai.agents installedVersion=%s\n' \
+  "$agents_extension_version"
 ```
 
-From the `azd ext list --output json` output, confirm **both**
-`microsoft.foundry` and `azure.ai.agents` are present and installed. Do
-NOT rely on `azd ai agent version` or any other version-probing command -
-`azd ext list --output json` is the only supported way to verify
-this in the fixture.
+The commands require exactly one installed version for both
+`microsoft.foundry` and `azure.ai.agents`, then persist the non-sensitive
+version values to smoke evidence. Do NOT rely on `azd ai agent version` or
+any other version-probing command — `azd ext list --output json` is the only
+supported way to verify this in the fixture.
 
 ## Step 2 - deploy the canonical container agent
 
@@ -91,7 +137,6 @@ Use a Bash heredoc to write the following script to
 set -euo pipefail
 
 evidence="/tmp/foundry-hosted-agents-smoke-evidence"
-: >"$evidence"
 
 record() {
   printf '%s\n' "$1" >>"$evidence"
@@ -152,15 +197,35 @@ assert restored == canonical, "rendered azure.yaml differs beyond agent identifi
 assert "version: 2.0.0" in rendered
 assert "environmentVariables:" in rendered
 assert "provider: microsoft.foundry" in rendered
-assert "endpoint: ${AZURE_AI_PROJECT_ENDPOINT}" in rendered
+assert "endpoint: ${FOUNDRY_PROJECT_ENDPOINT}" in rendered
 print(f"CANONICAL_AZURE_YAML_OK service={agent_name}")
 PY
 
 (
   cd "$work_dir"
   azd env new "$agent_name" --no-prompt
-  azd env set AZURE_AI_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
+  azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID"
+  azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT"
+  azd env set AZURE_AI_PROJECT_ID "$AZURE_AI_PROJECT_ID"
+  azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$ACR_LOGIN_SERVER"
   azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-5.4-mini"
+
+  verify_azd_value() {
+    local key="$1"
+    local value
+    if ! value="$(azd env get-value "$key" 2>/dev/null)" || [[ -z "$value" ]]; then
+      printf 'SMOKE_RESULT=FAIL azd env contract missing %s\n' "$key" \
+        > /tmp/foundry-hosted-agents-smoke-result
+      exit 1
+    fi
+  }
+  verify_azd_value AZURE_SUBSCRIPTION_ID
+  verify_azd_value FOUNDRY_PROJECT_ENDPOINT
+  verify_azd_value AZURE_AI_PROJECT_ID
+  verify_azd_value AZURE_CONTAINER_REGISTRY_ENDPOINT
+  verify_azd_value AZURE_AI_MODEL_DEPLOYMENT_NAME
+  record "AZD_ENV_CONTRACT_OK"
+  record "AZD_DEPLOY_ATTEMPT count=1"
   azd deploy "$agent_name" --no-prompt
 )
 record "AZD_DEPLOY_SUCCEEDED name=${agent_name}"
@@ -173,7 +238,10 @@ bash /tmp/foundry-hosted-agents-ga-smoke.sh
 
 If `azd deploy` fails with a permission/authorization error, that is a hard
 FAIL (see the "No agent role grant" note above) - do not attempt to work
-around it with a manual role assignment.
+around it with a manual role assignment. **The deploy command above is the
+only deploy attempt.** On any failure, do not rerun deploy, query Azure to
+discover replacement values, hardcode inventory, or modify the azd env.
+Write the matching FAIL marker and stop.
 
 ## Step 3 - GA SDK hard checks (deterministic, no preview surfaces)
 
@@ -375,9 +443,9 @@ timeout 300 /tmp/foundry-hosted-agents-venv/bin/python3 /tmp/foundry-hosted-agen
 
 ## Step 5 - Marker contract
 
-After the invoke check passes, verify the evidence file contains exactly
-the four required success records (teardown records are best-effort and
-not checked here):
+After the invoke check passes, verify the evidence file contains every
+required success record below (teardown records are best-effort and not
+checked here):
 
 ```bash
 python3 - <<'PY'
@@ -388,6 +456,10 @@ lines = Path("/tmp/foundry-hosted-agents-smoke-evidence").read_text(
     encoding="utf-8"
 ).splitlines()
 required_patterns = (
+    r"AZD_EXTENSION_VERSION id=microsoft\.foundry installedVersion=\S+",
+    r"AZD_EXTENSION_VERSION id=azure\.ai\.agents installedVersion=\S+",
+    r"AZD_ENV_CONTRACT_OK",
+    r"AZD_DEPLOY_ATTEMPT count=1",
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ha-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ha-[0-9a-f]{8} protocol=responses/2\.0\.0",
     r"UPDATE_DETAILS_OK name=ci-smoke-ha-[0-9a-f]{8} version=1 traffic=100",
@@ -395,6 +467,8 @@ required_patterns = (
 )
 for pattern in required_patterns:
     assert any(re.fullmatch(pattern, line) for line in lines), (pattern, lines)
+attempts = [line for line in lines if line.startswith("AZD_DEPLOY_ATTEMPT ")]
+assert attempts == ["AZD_DEPLOY_ATTEMPT count=1"], attempts
 PY
 ```
 
@@ -417,8 +491,12 @@ printf 'SMOKE_RESULT=FAIL missing AZURE_CLIENT_ID\n' > /tmp/foundry-hosted-agent
 printf 'SMOKE_RESULT=FAIL missing AZURE_TENANT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL missing AZURE_SUBSCRIPTION_ID\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL missing FOUNDRY_PROJECT_ENDPOINT\n' > /tmp/foundry-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL missing AZURE_AI_PROJECT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL missing ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL malformed ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL microsoft.foundry or azure.ai.agents extension not installed\n' > /tmp/foundry-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL azd env contract incomplete\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd deploy failed\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL permission denied - agent identity should have implicit access by default\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL agent version never reached active\n' > /tmp/foundry-hosted-agents-smoke-result

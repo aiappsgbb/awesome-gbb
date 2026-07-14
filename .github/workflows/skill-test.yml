@@ -246,6 +246,51 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
+      - name: Resolve Foundry project context
+        id: resolve-foundry-project
+        env:
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          account_host="${AZURE_AI_ENDPOINT#https://}"
+          account_host="${account_host%%/*}"
+          if [[ -z "$account_host" || "$account_host" == "$AZURE_AI_ENDPOINT" ]]; then
+            echo "::error::AZURE_AI_ENDPOINT is not an https URL"
+            exit 1
+          fi
+          account_name="${account_host%%.*}"
+          if [[ -z "$account_name" ]]; then
+            echo "::error::Could not derive the Foundry account name"
+            exit 1
+          fi
+
+          projects_json="$(az resource list \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --resource-type "Microsoft.CognitiveServices/accounts/projects" \
+            --output json)"
+          matches="$(jq -c --arg account "$account_name" \
+            '[.[] | select(.id | test("/accounts/" + $account + "/projects/"; "i"))]' \
+            <<<"$projects_json")"
+          match_count="$(jq 'length' <<<"$matches")"
+          if [[ "$match_count" -ne 1 ]]; then
+            echo "::error::Expected exactly one Foundry project for the CI account; found $match_count"
+            exit 1
+          fi
+
+          project_id="$(jq -er '.[0].id' <<<"$matches")"
+          project_name="${project_id##*/}"
+          project_endpoint="https://${account_name}.services.ai.azure.com/api/projects/${project_name}"
+          if [[ -z "$project_name" || "$project_id" != "/subscriptions/${AZURE_SUBSCRIPTION_ID}/"* ]]; then
+            echo "::error::Resolved Foundry project context is malformed"
+            exit 1
+          fi
+
+          echo "::add-mask::$project_id"
+          echo "::add-mask::$project_endpoint"
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+          echo "project_endpoint=$project_endpoint" >> "$GITHUB_OUTPUT"
+
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
         # Pattern 21 (AGENTS.md § 9.7): suppress this step's exit code
@@ -274,31 +319,19 @@ jobs:
           COPILOT_PROVIDER_WIRE_API: responses
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
+          # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          # Explicit OIDC identity vars for the consumer fixture's
-          # subshells. `azure/login@v2` (above) authenticates the Azure
-          # CLI cache, but bash subprocesses spawned by Copilot CLI tool
-          # calls only inherit env-block vars, not the CLI cache. Without
-          # these, fixtures that reference `$AZURE_CLIENT_ID` / `_TENANT_ID`
-          # / `_SUBSCRIPTION_ID` (e.g. `azd auth login`, `azd env set`)
-          # get empty strings → silent auth failures or paranoid
-          # printenv-and-bail (see AGENTS.md § 9.7 Pattern 11).
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ steps.resolve-foundry-project.outputs.project_endpoint }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
           # Optional standing Entra app client id for the foundry-mcp-aca
           # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
           # creates the secret; the fixture skips the auth sub-test when
           # unset, so this is inert by default (AGENTS.md § 2.8).
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
-          # Foundry project endpoint + model deployment exposed to the
-          # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
-          # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
-          # the per-project URL on the services.ai.azure.com host that
-          # `AIProjectClient(endpoint=…)` requires. These are CI
-          # infrastructure URLs/names, not secrets.
-          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 (AGENTS.md § 9.7 Pattern 11): App Insights + LAW
           # context exposed to consumer fixtures that emit traces and
@@ -405,21 +438,19 @@ jobs:
           COPILOT_PROVIDER_WIRE_API: responses
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
+          # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          # See "Run consumer prompt" step above for the rationale on
-          # the explicit AZURE_CLIENT_ID/_TENANT_ID/_SUBSCRIPTION_ID
-          # exports; the retry step must mirror it or the second attempt
-          # runs with a different env contract than the first.
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ steps.resolve-foundry-project.outputs.project_endpoint }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
           # Optional standing Entra app client id for the foundry-mcp-aca
           # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
           # creates the secret; the fixture skips the auth sub-test when
           # unset, so this is inert by default (AGENTS.md § 2.8).
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
-          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 — mirror the initial-run env block per Pattern 11
           # (byte-identical auth/observability contract on retry).

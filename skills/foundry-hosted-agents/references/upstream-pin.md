@@ -11,6 +11,11 @@ upstream:
     (Dockerfile + unified azure.yaml + azd) is GA; source-code
     (--deploy-mode code) deploy remains a separate preview surface,
     documented in isolation in SKILL.md's preview appendix.
+    Direct-copy brownfield `azd deploy` requires the active azd environment
+    to carry FOUNDRY_PROJECT_ENDPOINT, the full AZURE_AI_PROJECT_ID ARM ID,
+    and bare AZURE_CONTAINER_REGISTRY_ENDPOINT. Azure/azure-dev PR #8981
+    wires the registry during `azd ai agent init -m <azure.yaml>
+    --deploy-mode container`; copying files and skipping init does not.
 
 packages:
   - name: agent-framework-core
@@ -67,6 +72,7 @@ docs_to_revalidate:
   - https://learn.microsoft.com/azure/foundry/agents/concepts/azure-yaml-reference
   - https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions
   - https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions
+  - https://github.com/Azure/azure-dev/pull/8981
   - https://learn.microsoft.com/en-us/agent-framework/agents/skills?pivots=programming-language-python
   - https://pypi.org/project/agent-framework-core/
   - https://pypi.org/project/agent-framework-foundry/

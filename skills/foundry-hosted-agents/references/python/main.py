@@ -6,7 +6,7 @@
 # prose drifts from this file (or vice-versa), update both in the same commit.
 #
 # Pre-conditions consumed from the platform-injected environment:
-#   FOUNDRY_PROJECT_ENDPOINT          (platform-injected at container start; NEVER declare in azure.yaml)
+#   FOUNDRY_PROJECT_ENDPOINT          (platform-injected at container start; set in azd env for direct-copy deploy, NEVER project through environmentVariables)
 #   AZURE_AI_MODEL_DEPLOYMENT_NAME     (declared in azure.yaml's environmentVariables list — see ../yaml/azure.yaml)
 #
 # Why each line matters:

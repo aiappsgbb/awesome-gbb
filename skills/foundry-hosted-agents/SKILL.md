@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1158,7 +1158,7 @@ services:
     # Point at an EXISTING project instead of provisioning a new one.
     # Omit `endpoint` (and add `deployments:`) to let azd provision a
     # fresh project + model deployment instead.
-    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
 
   my-agent:
     host: azure.ai.agent
@@ -1192,7 +1192,7 @@ infra:
 | `container.resources` nested object | NOT a top-level `resources:` list |
 | NO `FOUNDRY_PROJECT_ENDPOINT` in `environmentVariables` | Reserved — the platform injects it automatically, along with `FOUNDRY_PROJECT_ARM_ID`, `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION`, `FOUNDRY_AGENT_SESSION_ID`, and `APPLICATIONINSIGHTS_CONNECTION_STRING`. Declaring any of them yourself is redundant at best and risks shadowing the platform value |
 | `uses: [ai-project]` on the agent service | Forms the dependency graph `azd` resolves at provision/deploy time — the agent can't reference the project's model deployment without it |
-| Connect to an existing project via `endpoint:` | Set `services.ai-project.endpoint` to the project's endpoint URL to reuse a pre-provisioned Foundry project instead of having `azd` provision a new one; omit `deployments:` you don't want `azd` to manage |
+| Connect to an existing project via `endpoint:` | Set `services.ai-project.endpoint` from `${FOUNDRY_PROJECT_ENDPOINT}` to reuse a pre-provisioned Foundry project instead of having `azd` provision a new one; omit `deployments:` you don't want `azd` to manage |
 | `infra.provider: microsoft.foundry` | Selects the Foundry extension's bicep-less provisioning provider for the unified services graph; it does not rename or replace the `azure.ai.agents` extension |
 
 > **One schema, no scaffold-time mustache.** Unlike the old two-file
@@ -1212,6 +1212,42 @@ infra:
 > explicitly eject infrastructure with `azd ai agent init --infra` or
 > `--infra=terraform`, the generated project switches the provider to
 > `bicep` or `terraform` and uses those local files instead.
+
+### Guided init vs. direct-copy brownfield deploy
+
+The **recommended guided path** adopts the manifest and wires the existing
+project/registry context into the active azd environment:
+
+```bash
+PROJECT_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>"
+azd ai agent init -m ./azure.yaml \
+  --project-id "$PROJECT_ID" \
+  --deploy-mode container
+```
+
+If you instead copy the canonical files into an existing repository and run
+`azd deploy` directly, `azure.yaml` alone is insufficient. The
+`azure.ai.agents` service target requires the full project ARM ID, project
+endpoint, subscription, and bare ACR login server in the **active azd
+environment**:
+
+```bash
+azd env set AZURE_SUBSCRIPTION_ID "<sub-id>"
+azd env set FOUNDRY_PROJECT_ENDPOINT \
+  "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_PROJECT_ID \
+  "/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>"
+azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "<registry>.azurecr.io"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment>"
+azd deploy my-agent --no-prompt
+```
+
+`AZURE_CONTAINER_REGISTRY_ENDPOINT` is a **bare hostname** — no
+`https://` scheme and no trailing slash. This direct-copy limitation is
+the adoption wiring covered by
+[Azure/azure-dev #8981](https://github.com/Azure/azure-dev/pull/8981):
+`azd ai agent init ... --deploy-mode container` wires it automatically;
+plain `azd deploy` cannot infer the omitted brownfield values.
 
 ### Installing the `azd` Foundry extensions
 
@@ -1270,25 +1306,30 @@ Verify with: `az cognitiveservices account list-models --resource-group <rg> --n
 
 `azd ai agent init` is **bicep-less by default** — it doesn't write an
 `infra/` directory; `azd` synthesizes infrastructure from the
-`services` graph in `azure.yaml` at `azd provision` time. The `azd env`
-variables you actually set by hand are small:
+`services` graph in `azure.yaml` at `azd provision` time. Guided init
+writes the brownfield values below. A direct-copy deploy must set them
+explicitly before `azd deploy`:
 
 | Env var | Set via | Format | Why it matters |
 |---------|---------|--------|-----------------|
-| `AZURE_AI_PROJECT_ENDPOINT` | `azd env set` (when connecting to a pre-provisioned project) | `https://<acct>.services.ai.azure.com/api/projects/<proj>` | Referenced by `services.ai-project.endpoint` in `azure.yaml` to connect to an existing Foundry project instead of provisioning a new one |
+| `AZURE_SUBSCRIPTION_ID` | `azd env set` or guided init | subscription GUID | Selects the subscription containing the existing project and registry |
+| `FOUNDRY_PROJECT_ENDPOINT` | `azd env set` or guided init | `https://<account>.services.ai.azure.com/api/projects/<project>` | Deploy-time project lookup for direct-copy brownfield deploy; also injected by Foundry into the running container, but MUST NOT be listed under `environmentVariables` |
+| `AZURE_AI_PROJECT_ID` | `azd env set` or guided init | `/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>` | Full ARM ID required by `ensureFoundryProject`; an endpoint alone is insufficient |
+| `AZURE_CONTAINER_REGISTRY_ENDPOINT` | `azd env set` or guided init | `<registry>.azurecr.io` | Bare ACR login server used for container build/push; no scheme or trailing slash |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | `azd ai agent init` records it automatically from the deployment you select; change later with `azd env set` | deployment name (e.g. `gpt-5.4-mini`) | Projected through the agent service's `environmentVariables` entry in `azure.yaml`, and read by `container.py` / `main.py` as `os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]` |
 
 `azd provision` writes these into `.azure/<env>/.env`. If you eject
 Bicep (`azd ai agent init --infra`), the generated `main.bicep` exposes
 the equivalent `output`s and you rarely need to hand-wire them.
 
-> **Reserved, platform-injected — never set these yourself:**
-> `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_PROJECT_ARM_ID`,
-> `FOUNDRY_AGENT_NAME`, `FOUNDRY_AGENT_VERSION`,
-> `FOUNDRY_AGENT_SESSION_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`.
-> The platform injects all of these into the running container
-> automatically; declaring them in `azure.yaml`'s `environmentVariables` list is
-> redundant and risks shadowing the platform value.
+> **Deploy-time azd env vs. runtime container env.**
+> `FOUNDRY_PROJECT_ENDPOINT` MUST be set in the active azd environment for
+> direct-copy brownfield deploy, but MUST NOT be projected through the
+> agent's `environmentVariables` list. Foundry injects it into the running
+> container. The same container-only prohibition applies to
+> `FOUNDRY_PROJECT_ARM_ID`, `FOUNDRY_AGENT_NAME`,
+> `FOUNDRY_AGENT_VERSION`, `FOUNDRY_AGENT_SESSION_ID`, and
+> `APPLICATIONINSIGHTS_CONNECTION_STRING`.
 
 ---
 

@@ -9,10 +9,17 @@
 # `agent.yaml` + `agent.manifest.yaml` split. Connects to a
 # PRE-PROVISIONED Foundry project (via `endpoint:`) rather than
 # provisioning a new one — the common shape when a project + ACR
-# already exist and you're only shipping an agent into them. Omit
-# `endpoint:` and add a `deployments:` list under `ai-project` instead
-# if you want `azd provision` to create a fresh project + model
-# deployment for you.
+# already exist and you're only shipping an agent into them.
+#
+# IMPORTANT: this YAML is necessary but not sufficient for direct-copy
+# brownfield deployment. If you copy these files and run `azd deploy`
+# without first running `azd ai agent init`, the active azd environment
+# must also contain FOUNDRY_PROJECT_ENDPOINT, the full
+# AZURE_AI_PROJECT_ID ARM ID, and the bare
+# AZURE_CONTAINER_REGISTRY_ENDPOINT hostname. The guided init command
+# wires those values for you. Omit `endpoint:` and add a `deployments:`
+# list under `ai-project` only when `azd provision` should create a fresh
+# project + model deployment.
 name: my-agent-project
 
 requiredVersions:
@@ -23,7 +30,7 @@ services:
   ai-project:
     host: azure.ai.project
     # Connect to an existing project instead of provisioning a new one.
-    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
 
   my-agent:
     host: azure.ai.agent
