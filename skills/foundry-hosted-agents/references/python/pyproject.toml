@@ -5,28 +5,29 @@
 # patch from PR #180 (DO NOT install the meta-package).
 #
 # Three pyproject mistakes this file prevents:
-#   1. `agent-framework>=1.7.0` meta-package — non-deterministic transitive
+#   1. `agent-framework>=1.11.0` meta-package — non-deterministic transitive
 #      resolution across uv versions. We pin individual sub-packages instead.
-#   2. `agent-framework-core[mcp]` extra — does NOT exist in 1.6.0/1.7.0. MCP tools
+#   2. `agent-framework-core[mcp]` extra — does NOT exist. MCP tools
 #      are top-level exports of agent_framework; the bare pin already covers them.
-#   3. Missing `mcp>=1.10.0` — agent_framework_foundry_hosting imports `from mcp
+#   3. Missing `mcp` — agent_framework_foundry_hosting imports `from mcp
 #      import McpError` at module-load time; container crashes at startup with
 #      `ModuleNotFoundError: No module named 'mcp'` even when no MCP tool is
 #      wired. Surfaces as `session_not_ready` after 60s timeout — high
 #      diagnosis cost. Pin `mcp` in EVERY hosted-agent pyproject.toml.
 #
-# Verified May 2026 pilot runs on linux/amd64.
+# Container GA. Pins current as of this skill's last_validated date in
+# references/upstream-pin.md.
 
 [project]
 name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core~=1.7.0",
-    "agent-framework-foundry~=1.7.0",
-    "agent-framework-foundry-hosting==1.0.0a260528",
-    "azure-identity>=1.19.0,<1.26.0a0",
-    "mcp~=1.27.1",
+    "agent-framework-core~=1.11.0",
+    "agent-framework-foundry~=1.10.1",
+    "agent-framework-foundry-hosting==1.0.0a260709",
+    "azure-identity~=1.25.3",
+    "mcp~=1.28.1",
     "python-dotenv~=1.2.2",
     # OTel + gen_ai instrumentors are bundled via hosting → microsoft-opentelemetry.
     # Do NOT add explicit azure-monitor-opentelemetry or opentelemetry-* lines.

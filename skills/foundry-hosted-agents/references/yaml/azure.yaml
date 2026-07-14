@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+#
+# Canonical unified hosted-agent azure.yaml — GA container-deploy shape.
+#
+# Source of truth for the prose example in
+# `../../SKILL.md § azure.yaml (unified hosted-agent configuration)`.
+#
+# This is the single-file contract that replaces the old two-file
+# `agent.yaml` + `agent.manifest.yaml` split. Connects to a
+# PRE-PROVISIONED Foundry project (via `endpoint:`) rather than
+# provisioning a new one — the common shape when a project + ACR
+# already exist and you're only shipping an agent into them. Omit
+# `endpoint:` and add a `deployments:` list under `ai-project` instead
+# if you want `azd provision` to create a fresh project + model
+# deployment for you.
+name: my-agent-project
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.4'
+
+services:
+  ai-project:
+    host: azure.ai.project
+    # Connect to an existing project instead of provisioning a new one.
+    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+
+  my-agent:
+    host: azure.ai.agent
+    project: .
+    language: docker
+    uses:
+      - ai-project
+    kind: hosted
+    name: my-agent
+    description: A hosted agent built with the Microsoft Agent Framework.
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    env:
+      # NEVER declare FOUNDRY_PROJECT_ENDPOINT (or any other FOUNDRY_*
+      # var) here — the platform injects it automatically.
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    container:
+      resources:
+        cpu: "1"
+        memory: 2Gi
+
+# No `infra:` block — azd synthesizes infrastructure from the services
+# graph above at `azd provision` time (bicep-less by default). Add an
+# `infra:` block only if you've explicitly ejected Bicep or Terraform
+# with `azd ai agent init --infra` / `--infra=terraform`.

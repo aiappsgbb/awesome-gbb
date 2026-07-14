@@ -17,9 +17,9 @@ directly and does NOT accept `timeout=` in 1.8.0 — apply HTTP-layer
 transport timeouts on the underlying client instead.
 
 Requires:
-- agent-framework-core ~= 1.8.0
-- agent-framework-foundry ~= 1.8.0
-- azure-ai-projects ~= 2.1.0
+- agent-framework-core ~= 1.11.0
+- agent-framework-foundry ~= 1.10.1
+- azure-ai-projects ~= 2.3.0
 - azure-identity ~= 1.25.3
 - Environment variables: FOUNDRY_PROJECT_ENDPOINT, AGENT_NAME
 
