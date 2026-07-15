@@ -139,19 +139,17 @@ class KnowledgeAgentManager:
                     "indexName": idx_name
                 })
 
-        # Knowledge Base wire format on stable 2026-04-01 and expanded
-        # 2026-05-01-preview is top-level `retrievalReasoningEffort` plus
-        # `outputConfiguration.modality`, not a nested `configuration`.
-        # The legacy /agents/ endpoint on 2025-01-01-preview is a separate
-        # contract. Callers must migrate endpoint, payload, and API version
-        # together rather than changing only the version string.
+        # Keep the legacy API version, /agents path, and payload shape together.
+        # Knowledge Base versions use different paths and wire contracts.
         agent_config = {
             "name": agent_name,
             "description": description or f"Knowledge Agent for {index_name}",
             "knowledgeSources": knowledge_sources,
             "targetIndexes": [index_name] + (target_indexes or []),
-            "retrievalReasoningEffort": reasoning_effort,
-            "outputConfiguration": {"modality": output_mode},
+            "configuration": {
+                "reasoningEffort": reasoning_effort,
+                "outputMode": output_mode,
+            },
         }
 
         return self._make_request("PUT", f"/agents/{agent_name}", agent_config)

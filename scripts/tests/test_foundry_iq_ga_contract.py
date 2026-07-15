@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -23,6 +25,14 @@ FIXTURE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "consumer_prompt.md"
 LIVE_SMOKE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "live_smoke.py"
 AZURE_YAML = ROOT / "skills" / "foundry-iq" / "test-fixture" / "azure.yaml"
 INFRA = ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "main.bicep"
+INFRA_PARAMETERS = (
+    ROOT
+    / "skills"
+    / "foundry-iq"
+    / "test-fixture"
+    / "infra"
+    / "main.parameters.json"
+)
 SEARCH_MODULE = (
     ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "search.bicep"
 )
@@ -62,6 +72,18 @@ def _availability_rows(skill: str) -> dict[str, str]:
         if len(cells) >= 3 and cells[0] not in {"Wire kind", "---"}:
             rows[cells[0]] = cells[1]
     return rows
+
+
+def _load_knowledge_agent_manager():
+    spec = importlib.util.spec_from_file_location(
+        "foundry_iq_knowledge_agent_manager",
+        KNOWLEDGE_AGENT_MANAGER,
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load knowledge_agent_manager.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class FoundryIqGaContractTests(unittest.TestCase):
@@ -130,10 +152,54 @@ class FoundryIqGaContractTests(unittest.TestCase):
         )
         self.assertIn(f"| **Pinned SHA** | `{pinned_sha}` |", self.pin)
 
+    def test_legacy_agent_default_version_path_and_body_stay_together(self) -> None:
+        module = _load_knowledge_agent_manager()
+        with patch.object(
+            module,
+            "_get_search_headers",
+            return_value={"Content-Type": "application/json"},
+        ):
+            manager = module.KnowledgeAgentManager(
+                endpoint="https://example.search.windows.net"
+            )
+
+        expected_body = {
+            "name": "policy-agent",
+            "description": "Knowledge Agent for policy-documents",
+            "knowledgeSources": [
+                {
+                    "name": "policy-documents-source",
+                    "kind": "searchIndex",
+                    "indexName": "policy-documents",
+                }
+            ],
+            "targetIndexes": ["policy-documents"],
+            "configuration": {
+                "reasoningEffort": "medium",
+                "outputMode": "extractiveData",
+            },
+        }
+
+        with patch.object(manager, "_make_request", return_value={}) as request:
+            manager.create_agent(
+                agent_name="policy-agent",
+                index_name="policy-documents",
+            )
+
+        self.assertEqual(manager.api_version, "2025-01-01-preview")
+        request.assert_called_once_with(
+            "PUT",
+            "/agents/policy-agent",
+            expected_body,
+        )
+
     def test_live_fixture_exercises_only_a_ga_kind(self) -> None:
         fixture = FIXTURE.read_text(encoding="utf-8")
         self.assertIn("api-version=2026-04-01", fixture)
         self.assertIn('"kind": "searchIndex"', self.live_smoke)
+        self.assertIn('"exercised_ga_kind": returned["kind"]', self.live_smoke)
+        self.assertNotIn("preview_kinds_treated_as_ga", fixture)
+        self.assertNotIn("preview_kinds_treated_as_ga", self.live_smoke)
         self.assertIn("preview-only", fixture)
         self.assertIn("/tmp/foundry-iq-smoke-result", fixture)
         self.assertIn(
@@ -144,6 +210,10 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertIn(
             'echo "Loading skill contract: skills/foundry-iq/SKILL.md',
             step_zero,
+        )
+        self.assertNotRegex(
+            fixture,
+            r"(?:cat|head|tail|sed|view)\s+.*skills/foundry-iq/SKILL\.md",
         )
 
         deps = yaml.safe_load(DEPS.read_text(encoding="utf-8"))
@@ -177,6 +247,45 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertIn("Reader permits tag-based Resource Graph discovery", infra)
         self.assertIn("Microsoft.Search/searchServices@2026-03-01-preview", infra)
         self.assertIn("knowledgeRetrieval: 'standard'", infra)
+
+    def test_subscription_deploy_uses_dedicated_foundry_iq_resource_group(self) -> None:
+        parameters = INFRA_PARAMETERS.read_text(encoding="utf-8")
+        ci_env = CI_ENV_SAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn('"${FOUNDRY_IQ_RESOURCE_GROUP}"', parameters)
+        self.assertNotIn('"${AZURE_RESOURCE_GROUP}"', parameters)
+        self.assertIn('"${AZURE_TENANT_ID}"', parameters)
+        self.assertIn('"${AZURE_SUBSCRIPTION_ID}"', parameters)
+        self.assertIn(
+            "FOUNDRY_IQ_RESOURCE_GROUP=rg-foundry-iq-<suffix>",
+            ci_env,
+        )
+
+    def test_subscription_deploy_rejects_shared_rg_and_context_drift(self) -> None:
+        infra = INFRA.read_text(encoding="utf-8")
+
+        self.assertIn("var deploymentContextIsSafe =", infra)
+        self.assertIn("resourceGroupName != 'rg-awesome-gbb-ci'", infra)
+        self.assertIn("startsWith(resourceGroupName, 'rg-foundry-iq-')", infra)
+        self.assertIn(
+            "length(resourceGroupName) > length('rg-foundry-iq-')",
+            infra,
+        )
+        self.assertIn("tenant().tenantId == expectedTenantId", infra)
+        self.assertIn(
+            "subscription().subscriptionId == expectedSubscriptionId",
+            infra,
+        )
+        self.assertIn("module deploymentSafetyGuard", infra)
+        self.assertIn(
+            "name: deploymentContextIsSafe ? 'foundry-iq-deployment-safety' : ''",
+            infra,
+        )
+        self.assertRegex(
+            infra,
+            r"resource smokeResourceGroup[\s\S]+?dependsOn:\s*\[\s*"
+            r"deploymentSafetyGuard\s*\]",
+        )
 
     def test_live_fixture_enforces_rest_response_contract(self) -> None:
         fixture = self.live_smoke
@@ -226,8 +335,21 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.skill,
         )
 
-    def test_minor_version_records_new_availability_contract(self) -> None:
-        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "1.4.0")
+    def test_reference_source_data_is_stable_retrieve_time_control(self) -> None:
+        self.assertRegex(
+            self.skill,
+            r"stable\s+`2026-04-01` retrieve-time "
+            r"`knowledgeSourceParams` control",
+        )
+        self.assertIn("include_reference_source_data=True", self.skill)
+        self.assertNotIn("This option is preview-only", self.skill)
+        self.assertNotIn(
+            'set `"includeReferenceSourceData": true` when provisioning',
+            self.skill,
+        )
+
+    def test_patch_version_records_post_merge_corrections(self) -> None:
+        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "1.4.1")
 
 
 if __name__ == "__main__":

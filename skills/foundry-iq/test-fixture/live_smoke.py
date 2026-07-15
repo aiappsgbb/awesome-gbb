@@ -156,13 +156,12 @@ Resources
 
         evidence = {
             "api_version": API_VERSION,
-            "ga_kind": returned["kind"],
+            "exercised_ga_kind": returned["kind"],
             "index_name": index_name,
             "knowledge_source_name": source_name,
             "index_status": index_status,
             "knowledge_source_status": create_status,
             "get_status": response.status_code,
-            "preview_kinds_treated_as_ga": [],
         }
         with open(EVIDENCE_PATH, "w", encoding="utf-8") as handle:
             json.dump(evidence, handle, indent=2, sort_keys=True)

@@ -65,8 +65,7 @@ Success requires exit code 0, output containing
 `foundry-iq-ga-searchIndex-ok`, and `/tmp/foundry-iq-smoke-evidence` showing:
 
 - `api_version` is exactly `2026-04-01`
-- `ga_kind` is exactly `searchIndex`
-- `preview_kinds_treated_as_ga` is an empty list
+- `exercised_ga_kind` is exactly `searchIndex`
 - index PUT and knowledge-source PUT returned `201`
 - knowledge-source GET returned `200`
 

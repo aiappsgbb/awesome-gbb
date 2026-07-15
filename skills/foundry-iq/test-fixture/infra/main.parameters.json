@@ -3,7 +3,13 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "resourceGroupName": {
-      "value": "${AZURE_RESOURCE_GROUP}"
+      "value": "${FOUNDRY_IQ_RESOURCE_GROUP}"
+    },
+    "expectedTenantId": {
+      "value": "${AZURE_TENANT_ID}"
+    },
+    "expectedSubscriptionId": {
+      "value": "${AZURE_SUBSCRIPTION_ID}"
     },
     "location": {
       "value": "${AZURE_LOCATION}"

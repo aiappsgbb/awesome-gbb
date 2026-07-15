@@ -13,7 +13,7 @@ description: >
   standalone Work IQ, Fabric IQ, or Web IQ workloads, MCP server deployment (use
   foundry-mcp-aca), agent runtime (use foundry-hosted-agents).
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
@@ -491,6 +491,7 @@ from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
 from azure.search.documents.knowledgebases.models import (
     KnowledgeBaseRetrievalRequest,
     KnowledgeRetrievalSemanticIntent,
+    SearchIndexKnowledgeSourceParams,
 )
 
 _credential = DefaultAzureCredential()
@@ -505,7 +506,14 @@ _kb_client = KnowledgeBaseRetrievalClient(
 def my_kb_tool(query: str) -> dict:
     """Retrieve a grounded answer with citations from the knowledge base."""
     request = KnowledgeBaseRetrievalRequest(
-        intents=[KnowledgeRetrievalSemanticIntent(search=query)]
+        intents=[KnowledgeRetrievalSemanticIntent(search=query)],
+        knowledge_source_params=[
+            SearchIndexKnowledgeSourceParams(
+                knowledge_source_name=os.environ["KNOWLEDGE_SOURCE_NAME"],
+                include_references=True,
+                include_reference_source_data=True,
+            )
+        ],
     )
     result = _kb_client.retrieve(request)
     return {
@@ -514,6 +522,11 @@ def my_kb_tool(query: str) -> dict:
         "references": result.references,
     }
 ```
+
+`include_reference_source_data=True` is the SDK spelling of the stable
+`2026-04-01` retrieve-time `knowledgeSourceParams` control
+`includeReferenceSourceData`. Set it per retrieval request, not on the
+persisted knowledge-source definition.
 
 ### Route B — Direct KB MCP via `httpx.Auth`
 
@@ -1018,7 +1031,7 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 | `Field 'content' contains a term that is too large to process. The max length for UTF-8 encoded terms is 32766 bytes.` | Source doc has a long unbroken token (URL, base64 blob, no whitespace) > 32k bytes | Chunk content > ~25k chars at paragraph / sentence / whitespace boundaries with a hard-cap fallback. Don't rely on `[:60000]` truncation — that doesn't fix the term length, only the field length. |
 | Hosted MAF agent returns `server_error` after wiring `MCPStreamableHTTPTool` against `/knowledgebases/<n>/mcp` | **Confirmed (May 2026):** MAF's `MCPStreamableHTTPTool._ensure_connected()` issues an MCP `ping` request during agent registration. KB MCP returns HTTP 500 on `ping`. The agent fails to register and every invoke returns `server_error` with no useful log signal. On MAF 1.6.0, overriding `_ensure_connected` with a `self._client` reference causes `AttributeError` (attribute renamed to `self.client`) — container starts, readiness passes, but every request returns empty `output: []` / `model: ""` | **Recommended (MAF 1.6.0+):** subclass with `_ping_available = False` in `__init__` — MAF's base respects this flag natively: `class _PingSkipMCPTool(MCPStreamableHTTPTool): def __init__(self, **kwargs): super().__init__(**kwargs); self._ping_available = False`. This is cleaner than overriding `_ensure_connected` and survives internal attribute renames. See `foundry-hosted-agents` SKILL § "MCP `ping` trap". |
 | `401` from KB MCP endpoint on hosted MAF agent (despite agent identity having `Search Index Data Reader`) | `MCPStreamableHTTPTool(header_provider=...)` does NOT cover the MCP bootstrap exchange. The `_mcp_call_headers` ContextVar is only set inside `call_tool()` (`agent_framework/_mcp.py` ~line 1589); `_ensure_connected` runs `initialize` + `tools/list` BEFORE the first `call_tool`, with the ContextVar still empty → no `Authorization` header → 401 → agent boot fails. The `server_error` surfaced to the responses endpoint has no useful log signal. | **Use `httpx.AsyncClient(auth=httpx.Auth)` via `http_client=`** instead of `header_provider=`. The `auth.auth_flow()` method runs on EVERY outbound request including bootstrap. See `foundry-hosted-agents` SKILL § "MCP with per-call AAD bearer (`header_provider`)" → ⚠️ Bootstrap caveat for the worked `httpx.Auth` example, and § KB access from a hosted MAF agent → Route B above. |
-| `references[].source_data` is `null` on KB MCP / SDK responses | Default `KnowledgeSource` definition omits `includeReferenceSourceData: true`; the KB returns reference IDs only — no title / version / effective_date / source_type metadata for programmatic citation rendering | This option is preview-only. On `2026-05-01-preview`, set `"includeReferenceSourceData": true` when provisioning the `searchIndex` knowledge source. Do not add the property to a stable `2026-04-01` request unless the stable reference documents it. |
+| `references[].source_data` is `null` on KB MCP / SDK responses | The retrieve request omits `includeReferenceSourceData: true`; the KB returns reference IDs without structured source data | On stable `2026-04-01`, set `"includeReferenceSourceData": true` on the matching entry in retrieve-time `knowledgeSourceParams`. In Python SDK 12, use `SearchIndexKnowledgeSourceParams(..., include_reference_source_data=True)`. Do not place this request control on the persisted knowledge-source definition. |
 | `client.get_mcp_tool()` accepts only static `headers: dict[str, str]` — no `header_provider` | The hosted-MCP shape is designed for static API keys / unauthenticated MCPs; the static dict is pinned at agent build time | For MCP servers that need short-lived AAD tokens (e.g. KB MCP, Storage MCP behind PMI), do NOT use `client.get_mcp_tool()` — switch to `MCPStreamableHTTPTool + header_provider`. Static `Bearer` tokens in the dict will expire after ~1h and break the agent until container restart. Bug-009/014 itself is FIXED in `agent-framework-core` 1.3.0 ([PR #5581](https://github.com/microsoft/agent-framework/pull/5581)) — the static-headers limitation is a separate design constraint. |
 | Foundry Toolbox `azure_ai_search` tool type wraps an INDEX, not a Knowledge Base | The built-in Toolbox tool only exposes `index_name` + `query_type=vector_semantic_hybrid` — no agentic query planning or answer synthesis | The Foundry Agent Service / Toolbox MCP integration is preview. Use `server_url=<search>/knowledgebases/<n>/mcp?api-version=2026-05-01-preview` with a project connection only when preview terms are acceptable; otherwise call stable Route A directly. |
 | No results | Empty index | Index sample documents first |
