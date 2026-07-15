@@ -308,7 +308,6 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
           # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-          AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -445,7 +444,6 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
           # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
-          AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

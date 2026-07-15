@@ -8,6 +8,10 @@ var searchServiceContributorRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
 )
+var readerRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'acdd72a7-3385-48ef-bd42-f606fba81ae7'
+)
 
 // The preview management API is required only to set knowledgeRetrieval
 // billing. The live fixture itself uses the stable 2026-04-01 data plane.
@@ -35,6 +39,16 @@ resource ciSearchServiceContributor 'Microsoft.Authorization/roleAssignments@202
   properties: {
     principalId: ciPrincipalId
     roleDefinitionId: searchServiceContributorRoleId
+  }
+}
+
+// Reader permits tag-based Resource Graph discovery without exposing the endpoint.
+resource ciReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, ciPrincipalId, readerRoleId)
+  properties: {
+    principalId: ciPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: readerRoleId
   }
 }
 

@@ -36,12 +36,12 @@ echo "Fixture path: skills/foundry-iq/test-fixture/consumer_prompt.md"
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
-echo "AZURE_SEARCH_ENDPOINT=${AZURE_SEARCH_ENDPOINT:+set}"
 ```
 
 If any variable is empty, write the FAIL marker from Step 3 with reason
 `auth context missing: <var-name>` and stop. This fixture doesn't use `az`
-or `azd`; the real Search data-plane call is the authentication gate.
+or `azd`; Resource Graph discovery and the real Search data-plane call are
+the authentication gates.
 
 The workflow already provides `python3` and `pip`. Do not hunt for or install
 OS-level tooling.
@@ -81,14 +81,39 @@ import uuid
 import requests
 from azure.identity import DefaultAzureCredential
 
-endpoint = os.environ["AZURE_SEARCH_ENDPOINT"].rstrip("/")
+credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+management_token = credential.get_token(
+    "https://management.azure.com/.default"
+).token
+resource_graph = requests.post(
+    "https://management.azure.com/providers/Microsoft.ResourceGraph/resources"
+    "?api-version=2024-04-01",
+    headers={
+        "Authorization": f"Bearer {management_token}",
+        "Content-Type": "application/json",
+    },
+    json={
+        "subscriptions": [os.environ["AZURE_SUBSCRIPTION_ID"]],
+        "query": """
+Resources
+| where type =~ 'microsoft.search/searchservices'
+| where tags.workload =~ 'foundry-iq'
+| where tags.lifecycle =~ 'persistent-ci'
+| project name, resourceGroup, id
+""",
+    },
+    timeout=90,
+)
+resource_graph.raise_for_status()
+matches = resource_graph.json()["data"]
+assert len(matches) == 1, f"expected one tagged Foundry IQ Search service: {matches}"
+endpoint = f"https://{matches[0]['name']}.search.windows.net"
 api_version = "2026-04-01"
 suffix = uuid.uuid4().hex[:8]
 index_name = f"ci-iq-{suffix}"
 source_name = f"{index_name}-ks"
 index_url = f"{endpoint}/indexes('{index_name}')?api-version={api_version}"
 source_url = f"{endpoint}/knowledgesources('{source_name}')?api-version={api_version}"
-credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
 token = credential.get_token("https://search.azure.com/.default").token
 headers = {
     "Authorization": f"Bearer {token}",
