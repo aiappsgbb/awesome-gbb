@@ -69,10 +69,9 @@ class TestAgtDenialRateKql(unittest.TestCase):
 
     def test_divide_by_zero_guard(self) -> None:
         # Must filter out zero-total bins before dividing
-        # Acceptable patterns: "where total > 0" or "where isnotempty" etc.
         self.assertTrue(
-            "total > 0" in self.content or "count() > 0" in self.content,
-            "agt-denial-rate.kql must guard against divide-by-zero (e.g. 'where total > 0')"
+            "total > 0" in self.content,
+            "agt-denial-rate.kql must guard against divide-by-zero ('where total > 0')"
         )
 
     def test_safe_float_division(self) -> None:
@@ -82,6 +81,51 @@ class TestAgtDenialRateKql(unittest.TestCase):
     def test_denial_rate_threshold_present(self) -> None:
         # The default 0.20 threshold must be declared
         self.assertIn("0.20", self.content)
+
+    # Task 2: metric-value aggregation — reject row-count operators ----------------
+
+    def test_uses_sum_Sum_for_total(self) -> None:
+        """total must aggregate metric values via sum(Sum), not row counts."""
+        self.assertRegex(
+            self.content,
+            r'total\s*=\s*sum\s*\(\s*Sum\s*\)',
+            "agt-denial-rate.kql must use sum(Sum) for total, not count()",
+        )
+
+    def test_uses_sumif_for_denied(self) -> None:
+        """denied must aggregate metric values via sumif(Sum, ...), not countif."""
+        self.assertRegex(
+            self.content,
+            r'denied\s*=\s*sumif\s*\(\s*Sum\s*,',
+            "agt-denial-rate.kql must use sumif(Sum, ...) for denied, not countif(...)",
+        )
+
+    def test_does_not_use_count_row_aggregation(self) -> None:
+        """count() row-count aggregation must not appear in the summarize block."""
+        # Remove comment lines before checking to avoid false positives in comments.
+        non_comment_lines = [
+            ln for ln in self.content.splitlines()
+            if not ln.lstrip().startswith("//")
+        ]
+        non_comment = "\n".join(non_comment_lines)
+        self.assertNotRegex(
+            non_comment,
+            r'\bcount\s*\(\s*\)',
+            "agt-denial-rate.kql must not use count() — use sum(Sum) instead",
+        )
+
+    def test_does_not_use_countif_row_aggregation(self) -> None:
+        """countif() row-count aggregation must not appear in the summarize block."""
+        non_comment_lines = [
+            ln for ln in self.content.splitlines()
+            if not ln.lstrip().startswith("//")
+        ]
+        non_comment = "\n".join(non_comment_lines)
+        self.assertNotRegex(
+            non_comment,
+            r'\bcountif\s*\(',
+            "agt-denial-rate.kql must not use countif() — use sumif(Sum, ...) instead",
+        )
 
 
 # ===========================================================================
@@ -122,8 +166,7 @@ class TestEvalQualityDriftKql(unittest.TestCase):
         self.assertIn("isfinite", self.content)
 
     def test_no_division_without_count_guard(self) -> None:
-        # Any division (/) must be guarded by a Count > 0 filter upstream.
-        # Check that every division is accompanied by a count guard in the file.
+        # Every division must be guarded by Count > 0 upstream.
         has_division = "/" in self.content
         has_count_guard = "Count > 0" in self.content or "count() > 0" in self.content.lower()
         if has_division:
@@ -131,6 +174,39 @@ class TestEvalQualityDriftKql(unittest.TestCase):
                 has_count_guard,
                 "eval-quality-drift.kql divides but lacks a Count > 0 guard"
             )
+
+    def test_two_independent_count_guards(self) -> None:
+        """Both recent and baseline sub-queries must have independent Count > 0 guards.
+
+        A single Count > 0 is insufficient — the guard must appear in BOTH the
+        recent window and the baseline window sub-queries so that each is
+        individually protected against empty aggregation buckets.
+        """
+        count_guard_occurrences = self.content.count("Count > 0")
+        self.assertGreaterEqual(
+            count_guard_occurrences,
+            2,
+            f"eval-quality-drift.kql must contain at least 2 independent 'Count > 0' "
+            f"guards (one for recent, one for baseline); found {count_guard_occurrences}",
+        )
+
+    def test_division_operator_is_real_not_comment_slash(self) -> None:
+        """The division operator must be a genuine KQL operator, not a comment double-slash.
+
+        Strip comment lines (starting with //) and verify that at least one real
+        division expression remains (sum(Sum) / sum(Count) pattern).
+        """
+        non_comment_lines = [
+            ln for ln in self.content.splitlines()
+            if not ln.lstrip().startswith("//")
+        ]
+        non_comment = "\n".join(non_comment_lines)
+        self.assertRegex(
+            non_comment,
+            r'sum\s*\(\s*Sum\s*\)\s*/\s*sum\s*\(\s*Count\s*\)',
+            "eval-quality-drift.kql must contain a real division expression "
+            "'sum(Sum) / sum(Count)' outside of comment lines",
+        )
 
 
 # ===========================================================================
@@ -214,6 +290,51 @@ class TestAgentAlertsBicepCategories(unittest.TestCase):
 
     def test_quality_safety_uses_8d_baseline(self) -> None:
         self.assertIn("ago(8d)", self.content)
+
+    # Task 1: token alert must not double-count metrics ----------------------------
+
+    def test_token_cost_uses_conditional_fallback(self) -> None:
+        """Token KQL must use iff() to choose combined vs split — never sums all three."""
+        self.assertRegex(
+            self.content,
+            r'\biff\s*\(\s*combined\s*>\s*0\s*,\s*combined\s*,\s*split\s*\)',
+            "kqlTokenCost must use iff(combined > 0, combined, split) to avoid double-counting",
+        )
+
+    def test_token_cost_uses_sumif_for_combined_metric(self) -> None:
+        """combined must aggregate only gen_ai.client.token.usage via sumif."""
+        self.assertRegex(
+            self.content,
+            r"combined\s*=\s*sumif\s*\(\s*Sum\s*,\s*Name\s*==\s*'gen_ai\.client\.token\.usage'\s*\)",
+            "kqlTokenCost must assign combined = sumif(Sum, Name == 'gen_ai.client.token.usage')",
+        )
+
+    def test_token_cost_uses_sumif_for_split_metrics(self) -> None:
+        """split must aggregate only input+output metrics via sumif."""
+        self.assertRegex(
+            self.content,
+            r"split\s*=\s*sumif\s*\(\s*Sum\s*,\s*Name\s*in\s*\(",
+            "kqlTokenCost must assign split = sumif(Sum, Name in (...))",
+        )
+
+    def test_token_cost_does_not_sum_all_three_at_once(self) -> None:
+        """A naked sum(Sum) over all three metric names must not appear in kqlTokenCost.
+
+        Summing all three at once double-counts when combined and split metrics coexist.
+        """
+        # Locate the kqlTokenCost variable block in the bicep file.
+        # The var block starts at 'var kqlTokenCost' and ends before the next 'var kql'.
+        start = self.content.find("var kqlTokenCost")
+        self.assertGreater(start, 0, "kqlTokenCost var not found")
+        # Find the next 'var kql' occurrence after kqlTokenCost to delimit the block.
+        next_var = self.content.find("var kql", start + len("var kqlTokenCost"))
+        token_block = self.content[start:next_var] if next_var > 0 else self.content[start:]
+        self.assertNotRegex(
+            token_block,
+            r"\|\s*summarize\s+total_tokens\s*=\s*sum\s*\(\s*Sum\s*\)",
+            "kqlTokenCost must not use a single sum(Sum) over all metric names — "
+            "that double-counts when combined and split metrics coexist",
+        )
 
 
 class TestAgentAlertsBicepOutputs(unittest.TestCase):
@@ -300,6 +421,113 @@ class TestAgentAlertsBicepParameters(unittest.TestCase):
 
     def test_token_budget_has_min_value_decorator(self) -> None:
         self.assertIn("@minValue(1)\nparam tokenBudgetThreshold", self.content)
+
+
+# ===========================================================================
+# agent-alerts.bicep — windowSize >= evaluationFrequency invariant (Task 3)
+# ===========================================================================
+
+
+def _iso8601_to_seconds(duration: str) -> int:
+    """Parse a subset of ISO 8601 duration strings to seconds.
+
+    Supports: P<n>D, PT<n>H, PT<n>M, and combinations such as 'PT5M', 'P9D'.
+    Sufficient for the allowed values in agent-alerts.bicep.
+    """
+    pattern = re.compile(
+        r'^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$'
+    )
+    m = pattern.match(duration)
+    if not m:
+        raise ValueError(f"Unsupported ISO 8601 duration: {duration!r}")
+    days    = int(m.group(1) or 0)
+    hours   = int(m.group(2) or 0)
+    minutes = int(m.group(3) or 0)
+    seconds = int(m.group(4) or 0)
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+class TestAgentAlertsBicepWindowInvariant(unittest.TestCase):
+    """Azure invariant: windowSize >= evaluationFrequency for scheduled query alerts.
+
+    Azure rejects deployments where windowSize < evaluationFrequency at the API
+    level.  These tests parse the default parameter values from the Bicep source
+    and assert that both parameter pairs (standard and quality) satisfy the
+    invariant so that a deployment with all defaults is guaranteed to succeed.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.content = _AGENT_ALERTS_BICEP.read_text(encoding="utf-8")
+
+    def _extract_default(self, param_name: str) -> str:
+        """Return the default value string for a Bicep param (e.g. 'PT15M')."""
+        m = re.search(
+            rf"param\s+{re.escape(param_name)}\s+string\s*=\s*'([^']+)'",
+            self.content,
+        )
+        self.assertIsNotNone(m, f"Could not find default for param {param_name!r}")
+        return m.group(1)  # type: ignore[union-attr]
+
+    def test_parse_iso8601_pt5m(self) -> None:
+        self.assertEqual(_iso8601_to_seconds("PT5M"), 300)
+
+    def test_parse_iso8601_pt15m(self) -> None:
+        self.assertEqual(_iso8601_to_seconds("PT15M"), 900)
+
+    def test_parse_iso8601_pt1h(self) -> None:
+        self.assertEqual(_iso8601_to_seconds("PT1H"), 3600)
+
+    def test_parse_iso8601_p9d(self) -> None:
+        self.assertEqual(_iso8601_to_seconds("P9D"), 9 * 86400)
+
+    def test_default_evaluation_frequency_extractable(self) -> None:
+        default = self._extract_default("evaluationFrequency")
+        self.assertIsNotNone(_iso8601_to_seconds(default))
+
+    def test_default_window_size_extractable(self) -> None:
+        default = self._extract_default("windowSize")
+        self.assertIsNotNone(_iso8601_to_seconds(default))
+
+    def test_default_window_size_ge_evaluation_frequency(self) -> None:
+        """Default windowSize must be >= default evaluationFrequency."""
+        window_s = _iso8601_to_seconds(self._extract_default("windowSize"))
+        freq_s   = _iso8601_to_seconds(self._extract_default("evaluationFrequency"))
+        self.assertGreaterEqual(
+            window_s,
+            freq_s,
+            f"Default windowSize ({self._extract_default('windowSize')}) must be "
+            f">= evaluationFrequency ({self._extract_default('evaluationFrequency')}) "
+            "— Azure enforces this invariant at deployment time",
+        )
+
+    def test_default_quality_window_size_ge_quality_evaluation_frequency(self) -> None:
+        """Default qualityWindowSize must be >= default qualityEvaluationFrequency."""
+        window_s = _iso8601_to_seconds(self._extract_default("qualityWindowSize"))
+        freq_s   = _iso8601_to_seconds(self._extract_default("qualityEvaluationFrequency"))
+        self.assertGreaterEqual(
+            window_s,
+            freq_s,
+            f"Default qualityWindowSize ({self._extract_default('qualityWindowSize')}) must be "
+            f">= qualityEvaluationFrequency ({self._extract_default('qualityEvaluationFrequency')}) "
+            "— Azure enforces this invariant at deployment time",
+        )
+
+    def test_invariant_documented_adjacent_to_window_size_param(self) -> None:
+        """The Azure windowSize >= evaluationFrequency invariant must be documented
+        adjacent to the windowSize parameter in the Bicep file."""
+        self.assertIn(
+            "windowSize",
+            self.content,
+            "windowSize param must be present",
+        )
+        # Check that the invariant comment appears in the bicep near the param block.
+        self.assertRegex(
+            self.content,
+            r"windowSize\s*>=\s*evaluationFrequency",
+            "agent-alerts.bicep must document the Azure invariant "
+            "'windowSize >= evaluationFrequency' adjacent to the params",
+        )
 
 
 if __name__ == "__main__":

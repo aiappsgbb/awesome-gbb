@@ -52,7 +52,10 @@ param severity int = 2
 @allowed(['PT1M', 'PT5M', 'PT15M', 'PT30M', 'PT1H'])
 param evaluationFrequency string = 'PT5M'
 
-@description('Query window size for failure / latency / token_cost alerts (ISO 8601 duration).')
+// Azure invariant: windowSize >= evaluationFrequency for scheduled query alert rules.
+// Azure will reject deployments where windowSize < evaluationFrequency at the API level.
+// Defaults: windowSize='PT15M' >= evaluationFrequency='PT5M' ✓
+@description('Query window size for failure / latency / token_cost alerts (ISO 8601 duration). Must be >= evaluationFrequency — Azure enforces this at deployment time.')
 @allowed(['PT5M', 'PT15M', 'PT30M', 'PT1H', 'PT6H', 'P1D'])
 param windowSize string = 'PT15M'
 
@@ -73,13 +76,14 @@ and Sum = token count.''')
 @minValue(1)
 param tokenBudgetThreshold int = 100000
 
-// Quality / safety alert has a long window to capture the 8-day baseline ----
-
+// Quality / safety alert has a long window to capture the 8-day baseline.
+// Azure invariant: qualityWindowSize >= qualityEvaluationFrequency.
+// Defaults: qualityWindowSize='P9D' >= qualityEvaluationFrequency='PT1H' ✓
 @description('Evaluation frequency for the quality_safety alert (ISO 8601 duration).')
 @allowed(['PT15M', 'PT30M', 'PT1H', 'PT6H'])
 param qualityEvaluationFrequency string = 'PT1H'
 
-@description('Query window size for the quality_safety alert — must cover the full 8-day baseline lookback (ISO 8601 duration).')
+@description('Query window size for the quality_safety alert — must cover the full 8-day baseline lookback and be >= qualityEvaluationFrequency (ISO 8601 duration).')
 @allowed(['P9D', 'P14D', 'P30D'])
 param qualityWindowSize string = 'P9D'
 
@@ -112,12 +116,17 @@ var kqlFailure = '''AppRequests
 var kqlLatency = '''AppDependencies
 | summarize p95_ms = percentile(DurationMs, 95)'''
 
-// token_cost: sum token metrics across the window; alert when total exceeds
-// tokenBudgetThreshold.  Empty window → sum returns 0 → 0 < threshold → no alert.
-// @minValue(1) on tokenBudgetThreshold prevents false alerts on zero-traffic windows.
+// token_cost: KQL compatibility rule — aggregate per metric name, then choose:
+//   combined (gen_ai.client.token.usage) when nonzero, else split (input+output).
+// This prevents double-counting when both combined and split metrics are emitted.
+// Never sums all three together.  Empty window → combined=0, split=0 → total=0
+// → 0 < tokenBudgetThreshold → no alert (@minValue(1) prevents zero-threshold alerts).
 var kqlTokenCost = '''AppMetrics
 | where Name in ('gen_ai.client.token.usage', 'gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens')
-| summarize total_tokens = sum(Sum)'''
+| summarize
+    combined = sumif(Sum, Name == 'gen_ai.client.token.usage'),
+    split    = sumif(Sum, Name in ('gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens'))
+| extend total_tokens = iff(combined > 0, combined, split)'''
 
 // quality_safety: eval pass-rate drift vs 8-day rolling baseline.
 // Semantically identical to references/queries/eval-quality-drift.kql.
