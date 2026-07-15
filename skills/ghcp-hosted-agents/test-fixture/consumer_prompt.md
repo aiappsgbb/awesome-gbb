@@ -314,36 +314,104 @@ a manual role assignment to work around it.
 ## Step 4 - invoke via `azd ai agent invoke` (single documented path)
 
 Per SKILL.md § "Invoking the Agent", `azd ai agent invoke` is the primary
-documented path on GA. Use it exactly once, wrapped in an outer bounded
-timeout, and capture its stdout without a fixture-local `tee` (the workflow
-already captures the full transcript):
+documented path on GA. Use only this path, with a bounded retry for the exact
+post-deploy implicit-permission readiness envelope observed in live CI. Capture
+stdout without a fixture-local `tee` (the workflow already captures the full
+transcript):
 
 ```bash
 work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
 agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
 invoke_log="/tmp/ghcp-hosted-agents-invoke.log"
 cd "$work_dir"
-rm -f "$invoke_log"
-set +e
-timeout 300 azd ai agent invoke "$agent_name" \
-  '{"input":"Say hello in one short sentence."}' \
-  --protocol invocations \
-  --output raw \
-  --timeout 180 >"$invoke_log" 2>&1
-invoke_status=$?
-set -e
-cat "$invoke_log"
-printf 'INVOKE_EXIT_STATUS status=%s\n' "$invoke_status" \
-  >> /tmp/ghcp-hosted-agents-smoke-evidence
-if (( invoke_status != 0 )); then
-  printf 'SMOKE_RESULT=FAIL invoke command exited with status %s\n' "$invoke_status" \
+invoke_ok=0
+for attempt in 1 2 3 4 5 6; do
+  rm -f "$invoke_log"
+  set +e
+  timeout 300 azd ai agent invoke "$agent_name" \
+    '{"input":"Say hello in one short sentence."}' \
+    --protocol invocations \
+    --output raw \
+    --timeout 180 >"$invoke_log" 2>&1
+  invoke_status=$?
+  set -e
+  cat "$invoke_log"
+  printf 'INVOKE_ATTEMPT count=%s exitStatus=%s\n' "$attempt" "$invoke_status" \
+    >> /tmp/ghcp-hosted-agents-smoke-evidence
+
+  if (( invoke_status != 0 )); then
+    printf 'SMOKE_RESULT=FAIL invoke command exited with status %s\n' "$invoke_status" \
+      > /tmp/ghcp-hosted-agents-smoke-result
+    exit 1
+  fi
+
+  set +e
+  python3 - "$invoke_log" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+success = False
+transient_auth_error = False
+for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
+    if not line.startswith("data: "):
+        continue
+    try:
+        event = json.loads(line[6:])
+    except json.JSONDecodeError:
+        continue
+    event_type = event.get("type")
+    if event_type in {"assistant.message", "assistant.message_delta"}:
+        success = True
+    elif event_type == "model.call_failure":
+        data = event.get("data") or {}
+        # Live envelope: `model.call_failure` with `"statusCode": 401` and
+        # PermissionDenied while Foundry's implicit access finishes propagating.
+        if data.get("statusCode") == 401 and "PermissionDenied" in str(
+            data.get("errorMessage", "")
+        ):
+            transient_auth_error = True
+    elif event_type == "session.info":
+        if "transient_auth_error" in str((event.get("data") or {}).get("message", "")):
+            transient_auth_error = True
+    elif event_type == "error":
+        if "Authentication failed with provider" in str(event.get("message", "")):
+            transient_auth_error = True
+
+if success:
+    raise SystemExit(0)
+if transient_auth_error:
+    raise SystemExit(10)
+raise SystemExit(20)
+PY
+  envelope_status=$?
+  set -e
+
+  if (( envelope_status == 0 )); then
+    printf 'INVOKE_OK name=%s attempt=%s\n' "$agent_name" "$attempt" \
+      >> /tmp/ghcp-hosted-agents-smoke-evidence
+    printf 'INVOKE_OK name=%s attempt=%s\n' "$agent_name" "$attempt"
+    invoke_ok=1
+    break
+  fi
+  if (( envelope_status == 10 )); then
+    printf 'INVOKE_TRANSIENT_AUTH attempt=%s\n' "$attempt" \
+      >> /tmp/ghcp-hosted-agents-smoke-evidence
+    if (( attempt < 6 )); then
+      sleep 15
+      continue
+    fi
+    printf 'SMOKE_RESULT=FAIL implicit permission not ready after 6 invoke attempts\n' \
+      > /tmp/ghcp-hosted-agents-smoke-result
+    exit 1
+  fi
+
+  printf 'SMOKE_RESULT=FAIL invoke returned terminal SSE error without assistant event\n' \
     > /tmp/ghcp-hosted-agents-smoke-result
   exit 1
-fi
-if grep -qE 'assistant\.message(_delta)?' "$invoke_log"; then
-  printf 'INVOKE_OK name=%s\n' "$agent_name" >> /tmp/ghcp-hosted-agents-smoke-evidence
-  printf 'INVOKE_OK name=%s\n' "$agent_name"
-else
+done
+
+if (( invoke_ok != 1 )); then
   printf 'SMOKE_RESULT=FAIL invoke did not return assistant.message or assistant.message_delta\n' \
     > /tmp/ghcp-hosted-agents-smoke-result
   exit 1
@@ -352,9 +420,11 @@ fi
 
 Do not use `curl`, a hand-rolled REST call, or `references/invoke_agent.py`
 here - `azd ai agent invoke` is the single documented path for this fixture
-(Pattern 16, AGENTS.md § 9.7). Do not retry the invoke on failure; a single
-attempt that does not contain `assistant.message` or `assistant.message_delta`
-is a hard FAIL. The exact raw response is persisted to
+(Pattern 16, AGENTS.md § 9.7). Retry only the confirmed HTTP-200 SSE
+readiness envelope (`model.call_failure`, status 401, `PermissionDenied` /
+`transient_auth_error`) with six attempts and 15-second backoff. A nonzero
+CLI exit or any other terminal envelope is a hard FAIL. Do not add a role
+grant. The last exact raw response is persisted to
 `/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it under an
 attempt-specific filename before any retry and uploads both attempts.
 
@@ -400,13 +470,16 @@ required_patterns = (
     r"AZD_DEPLOY_ATTEMPT count=1",
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ghcp-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ghcp-[0-9a-f]{8} protocol=invocations/2\.0\.0",
-    r"INVOKE_EXIT_STATUS status=0",
-    r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8}",
+    r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8} attempt=[1-6]",
 )
 for pattern in required_patterns:
     assert any(re.fullmatch(pattern, line) for line in lines), (pattern, lines)
 attempts = [line for line in lines if line.startswith("AZD_DEPLOY_ATTEMPT ")]
 assert attempts == ["AZD_DEPLOY_ATTEMPT count=1"], attempts
+invoke_attempts = [line for line in lines if line.startswith("INVOKE_ATTEMPT ")]
+assert 1 <= len(invoke_attempts) <= 6, invoke_attempts
+for expected, line in enumerate(invoke_attempts, start=1):
+    assert line.startswith(f"INVOKE_ATTEMPT count={expected} "), invoke_attempts
 PY
 ```
 
@@ -441,6 +514,8 @@ printf 'SMOKE_RESULT=FAIL agent version never reached active\n' > /tmp/ghcp-host
 printf 'SMOKE_RESULT=FAIL protocol version mismatch - expected invocations 2.0.0\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL invoke command exited non-zero\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL invoke did not return assistant.message or assistant.message_delta\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL implicit permission not ready after 6 invoke attempts\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL invoke returned terminal SSE error without assistant event\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/ghcp-hosted-agents-smoke-result
 ```
 

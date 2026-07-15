@@ -37,7 +37,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.1")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.2")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -167,6 +167,22 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             self.fixture,
         )
 
+    def test_fixture_retries_only_confirmed_sse_auth_readiness(self) -> None:
+        for token in (
+            "model.call_failure",
+            'data.get("statusCode") == 401',
+            "PermissionDenied",
+            "transient_auth_error",
+            "INVOKE_ATTEMPT",
+            "INVOKE_TRANSIENT_AUTH",
+            "sleep 15",
+            "INVOKE_OK name=%s attempt=%s",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.fixture)
+        self.assertIn("for attempt in 1 2 3 4 5 6", self.fixture)
+        self.assertNotIn("az role assignment create", self.fixture)
+
     def test_fixture_persists_raw_invoke_forensics(self) -> None:
         required = (
             'invoke_log="/tmp/ghcp-hosted-agents-invoke.log"',
@@ -174,7 +190,9 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             '>"$invoke_log" 2>&1',
             "invoke_status=$?",
             'cat "$invoke_log"',
-            'grep -qE \'assistant\\.message(_delta)?\' "$invoke_log"',
+            'python3 - "$invoke_log"',
+            'event = json.loads(line[6:])',
+            'event_type in {"assistant.message", "assistant.message_delta"}',
         )
         for token in required:
             with self.subTest(token=token):

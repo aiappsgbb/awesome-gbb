@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.1"
+  version: "2.0.2"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -319,6 +319,15 @@ azd ai agent invoke "<agent-name>" '{"input": "Say hello in one short sentence."
 - `--timeout <seconds>` (or `-t`) bounds the request; the CLI default is
   1800s, which is far longer than most smoke/CI budgets need
 
+Immediately after a new version becomes `active`, the first model call can
+briefly return an HTTP-200 SSE stream containing `model.call_failure` with
+`statusCode: 401`, `PermissionDenied`, and `transient_auth_error` while the
+platform's implicit agent permission finishes propagating. Retry the **same
+JSON positional invoke path** with bounded backoff (six attempts, 15 seconds
+between attempts). Do not switch invocation methods and do not add a role
+grant. A nonzero CLI exit or a different terminal SSE error remains a hard
+failure.
+
 > The older claim that `azd ai agent invoke` "does not wrap user input" was
 > a pre-GA defect specific to earlier preview builds. It does not reproduce
 > against the current GA CLI and is retired from this skill — do not carry
@@ -618,6 +627,7 @@ Reader** on the project's managed identity) automatically as part of
 | **CognitiveServices API version wrong** | Using old `2024-10-01` | Use `2025-10-01-preview` for agent management APIs |
 | **Hooks fail on Windows** | `shell: sh` in a custom azd hook | Use `shell: pwsh` for cross-platform |
 | **Permission error on deploy or invoke** | Attempting to work around it with a manual role grant | It's a hard FAIL by design — see § "Identity & RBAC for hosted agents". Investigate the real cause instead |
+| **Immediate post-deploy SSE `model.call_failure` 401 / `transient_auth_error`** | Agent version is active but implicit model permission has not finished propagating | Retry the same JSON positional `azd ai agent invoke` path with bounded 15-second backoff (max six); do not grant roles. Any different permission envelope remains a hard FAIL |
 | **"responses protocol not declared" (bot 400)** | `azure.yaml`'s agent service only declares `invocations` but bot/CLI calls via Responses API (`oai.responses.create()`) | **Dual protocols don't work** — `InvocationAgentServerHost` only serves `/invocations`; the `/responses` path returns 404 even if a second protocol entry is declared. **Fix:** Rewrite the bot to POST directly to the Invocations SSE endpoint (or use `azd ai agent invoke --protocol invocations`) and parse `assistant.message` + `assistant.message_delta` events. **Alternative:** Use MAF runtime (ResponsesHostServer) which natively serves responses. |
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use the guided `azd ai agent init --deploy-mode container` path, which wires the registry automatically (Azure/azure-dev #8981) |
 | **Evals show no telemetry** | AppInsights not connected to Foundry account | Create `AppInsights` connection on the **account** (not project). Category: `AppInsights`, target: ARM resource ID, metadata: `ApiType: Azure`. `APPLICATIONINSIGHTS_CONNECTION_STRING` is reserved — platform injects it. |

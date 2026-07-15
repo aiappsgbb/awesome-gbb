@@ -1,5 +1,16 @@
 # azd-patterns — CI verification fixture
 
+## Step -1 - acknowledge the skill contract
+
+Your first Bash action must be:
+
+```bash
+echo "skills/azd-patterns/SKILL.md"
+```
+
+This lightweight line is the workflow's deterministic skill-usage audit
+evidence. Do not load the whole SKILL.md into context.
+
 Context: this prompt is fed to the `copilot-cli-matrix` job in the
 awesome-gbb repo to verify that the `azd-patterns` skill (at
 `skills/azd-patterns/SKILL.md` in the current working directory) still
