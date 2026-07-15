@@ -20,6 +20,7 @@ KNOWLEDGE_AGENT_MANAGER = (
     ROOT / "skills" / "foundry-iq" / "scripts" / "knowledge_agent_manager.py"
 )
 FIXTURE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "consumer_prompt.md"
+LIVE_SMOKE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "live_smoke.py"
 AZURE_YAML = ROOT / "skills" / "foundry-iq" / "test-fixture" / "azure.yaml"
 INFRA = ROOT / "skills" / "foundry-iq" / "test-fixture" / "infra" / "main.bicep"
 SEARCH_MODULE = (
@@ -71,6 +72,7 @@ class FoundryIqGaContractTests(unittest.TestCase):
         cls.env_sample = ENV_SAMPLE.read_text(encoding="utf-8")
         cls.requirements = REQUIREMENTS.read_text(encoding="utf-8")
         cls.pin = PIN.read_text(encoding="utf-8")
+        cls.live_smoke = LIVE_SMOKE.read_text(encoding="utf-8") if LIVE_SMOKE.exists() else ""
 
     def test_skill_declares_stable_api_and_exact_ga_kinds(self) -> None:
         rows = _availability_rows(self.skill)
@@ -114,7 +116,7 @@ class FoundryIqGaContractTests(unittest.TestCase):
             "2025-11-01-preview",
             KNOWLEDGE_AGENT_MANAGER.read_text(encoding="utf-8"),
         )
-        self.assertIn("Bearer {token}", FIXTURE.read_text(encoding="utf-8"))
+        self.assertIn("Bearer {token}", self.live_smoke)
         self.assertIn(
             "Bearer {token}",
             KNOWLEDGE_AGENT_MANAGER.read_text(encoding="utf-8"),
@@ -131,9 +133,13 @@ class FoundryIqGaContractTests(unittest.TestCase):
     def test_live_fixture_exercises_only_a_ga_kind(self) -> None:
         fixture = FIXTURE.read_text(encoding="utf-8")
         self.assertIn("api-version=2026-04-01", fixture)
-        self.assertIn('"kind": "searchIndex"', fixture)
+        self.assertIn('"kind": "searchIndex"', self.live_smoke)
         self.assertIn("preview-only", fixture)
         self.assertIn("/tmp/foundry-iq-smoke-result", fixture)
+        self.assertIn(
+            "python3 skills/foundry-iq/test-fixture/live_smoke.py",
+            fixture,
+        )
         step_zero = fixture.split("## Step 0", 1)[1].split("---", 1)[0]
         self.assertIn(
             'echo "Loading skill contract: skills/foundry-iq/SKILL.md',
@@ -158,8 +164,8 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertNotIn("azd provision", fixture)
         self.assertNotIn("azd down", fixture)
         self.assertNotIn("az search service create", fixture)
-        self.assertIn("Microsoft.ResourceGraph/resources", fixture)
-        self.assertIn("tags.workload =~ 'foundry-iq'", fixture)
+        self.assertIn("Microsoft.ResourceGraph/resources", self.live_smoke)
+        self.assertIn("tags.workload =~ 'foundry-iq'", self.live_smoke)
         self.assertNotIn("AZURE_SEARCH_ENDPOINT:", workflow)
         ci_env = CI_ENV_SAMPLE.read_text(encoding="utf-8")
         self.assertIn("AZURE_PRINCIPAL_ID=<provisioner-object-id>", ci_env)
@@ -173,14 +179,17 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertIn("knowledgeRetrieval: 'standard'", infra)
 
     def test_live_fixture_enforces_rest_response_contract(self) -> None:
-        fixture = FIXTURE.read_text(encoding="utf-8")
+        fixture = self.live_smoke
         self.assertIn(
-            'f"{endpoint}/indexes(\'{index_name}\')?api-version={api_version}"',
+            'f"{endpoint}/indexes(\'{index_name}\')?api-version={API_VERSION}"',
             fixture,
         )
         self.assertIn(
-            'f"{endpoint}/knowledgesources(\'{source_name}\')'
-            '?api-version={api_version}"',
+            'f"{endpoint}/knowledgesources(\'{source_name}\')"',
+            fixture,
+        )
+        self.assertIn(
+            'f"?api-version={API_VERSION}"',
             fixture,
         )
         self.assertIn('"Prefer": "return=representation"', fixture)
