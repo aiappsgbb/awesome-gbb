@@ -189,17 +189,8 @@ for entry in audit_log.entries:          # AGT internal list
 evidence = build_evidence(
     safe_events,
     policy_version="<semver-or-date-stamp>",
-    redaction_policy={
-        "mode": "strip-sensitive",
-        "fields": ["prompt", "response", "arguments", "credentials"],
-    },
-    retention_policy={
-        "mode": "retained",
-        "days": 90,
-        "throughput_scaling": "per-session",
-        "backpressure": "drop-oldest",
-        "lifecycle": "auto-expire-after-days",
-    },
+    redaction_policy="skills/foundry-agt/references/policies/redaction.md",
+    retention_policy="skills/foundry-agt/references/policies/retention.md",
     integrity_verified=ok,
     captured_at=datetime.now(tz=timezone.utc).isoformat(),
 )
@@ -218,17 +209,25 @@ sorted JSON. The file is safe to commit — it contains no sensitive data.
 
 ---
 
-## Retention policy
+## Policy path contract
 
-The `retention_policy` object in the committed evidence record MUST declare:
+Both `redaction_policy` and `retention_policy` MUST be **non-empty
+repo-relative path strings** — never dicts or inline objects. Passing a
+dict raises `ValueError` immediately.
 
-| Key | Purpose |
-|-----|---------|
-| `mode` | `"retained"` — evidence is kept, not auto-deleted |
-| `days` | Maximum age before expiry (operator-controlled) |
-| `throughput_scaling` | How the sink scales under load (e.g. `"per-session"`, `"per-tenant"`) |
-| `backpressure` | What happens when the queue is full (e.g. `"drop-oldest"`, `"block"`) |
-| `lifecycle` | Expiry mechanism (e.g. `"auto-expire-after-days"`, `"manual"`) |
+| Field | Type | Example value |
+|-------|------|---------------|
+| `redaction_policy` | `str` — repo-relative path | `"skills/foundry-agt/references/policies/redaction.md"` |
+| `retention_policy` | `str` — repo-relative path | `"skills/foundry-agt/references/policies/retention.md"` |
+
+The referenced documents define the operational detail (fields stripped,
+retention duration, backpressure strategy, etc.) without embedding that
+detail in the emitted evidence JSON. See:
+
+- [`policies/redaction.md`](policies/redaction.md) — what fields are
+  stripped and why.
+- [`policies/retention.md`](policies/retention.md) — retention duration,
+  throughput scaling, backpressure strategy, and expiry mechanism.
 
 ---
 

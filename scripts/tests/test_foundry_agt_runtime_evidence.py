@@ -412,5 +412,168 @@ class TestSkillFixtureContract(unittest.TestCase):
                       "runtime_evidence.py docstring does not reference '§ Runtime audit evidence'")
 
 
+RUNBOOK_PATH = REF_DIR / "runtime-audit-export.md"
+
+
+class TestRunbookStringPathContract(unittest.TestCase):
+    """CI-discovered contract: build_evidence() must receive string paths, not dicts.
+
+    These tests catch regressions where the runbook or a consumer passes a dict
+    for redaction_policy or retention_policy instead of a repo-relative path string.
+    """
+
+    # ── runtime_evidence.py rejects dict-style args ────────────────────────
+
+    def test_build_evidence_rejects_dict_redaction_policy(self) -> None:
+        """redaction_policy={...} must raise ValueError immediately."""
+        events = [
+            _event(session_id="s-001", decision="allow"),
+            _event(session_id="s-002", decision="deny"),
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            build_evidence(
+                events,
+                policy_version="2026.07",
+                redaction_policy={  # type: ignore[arg-type]  # deliberate wrong type
+                    "mode": "strip-sensitive",
+                    "fields": ["prompt", "response", "arguments", "credentials"],
+                },
+                retention_policy="policies/retention.md",
+                integrity_verified=True,
+                captured_at="2026-07-15T12:34:56Z",
+            )
+        self.assertIn("redaction_policy", str(ctx.exception))
+        self.assertIn("path", str(ctx.exception).lower())
+
+    def test_build_evidence_rejects_dict_retention_policy(self) -> None:
+        """retention_policy={...} must raise ValueError immediately."""
+        events = [
+            _event(session_id="s-001", decision="allow"),
+            _event(session_id="s-002", decision="deny"),
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            build_evidence(
+                events,
+                policy_version="2026.07",
+                redaction_policy="policies/redaction.md",
+                retention_policy={  # type: ignore[arg-type]  # deliberate wrong type
+                    "mode": "retained",
+                    "days": 90,
+                    "backpressure": "drop-oldest",
+                },
+                integrity_verified=True,
+                captured_at="2026-07-15T12:34:56Z",
+            )
+        self.assertIn("retention_policy", str(ctx.exception))
+        self.assertIn("path", str(ctx.exception).lower())
+
+    def test_build_evidence_rejects_empty_string_redaction_policy(self) -> None:
+        """An empty or whitespace-only redaction_policy string must raise ValueError."""
+        events = [
+            _event(session_id="s-001", decision="allow"),
+            _event(session_id="s-002", decision="deny"),
+        ]
+        for bad in ("", "   "):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaises(ValueError) as ctx:
+                    build_evidence(
+                        events,
+                        policy_version="2026.07",
+                        redaction_policy=bad,
+                        retention_policy="policies/retention.md",
+                        integrity_verified=True,
+                        captured_at="2026-07-15T12:34:56Z",
+                    )
+                self.assertIn("redaction_policy", str(ctx.exception))
+
+    def test_build_evidence_rejects_empty_string_retention_policy(self) -> None:
+        """An empty or whitespace-only retention_policy string must raise ValueError."""
+        events = [
+            _event(session_id="s-001", decision="allow"),
+            _event(session_id="s-002", decision="deny"),
+        ]
+        for bad in ("", "   "):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaises(ValueError) as ctx:
+                    build_evidence(
+                        events,
+                        policy_version="2026.07",
+                        redaction_policy="policies/redaction.md",
+                        retention_policy=bad,
+                        integrity_verified=True,
+                        captured_at="2026-07-15T12:34:56Z",
+                    )
+                self.assertIn("retention_policy", str(ctx.exception))
+
+    def test_build_evidence_accepts_string_paths(self) -> None:
+        """Confirm that well-formed string paths are accepted without error."""
+        events = [
+            _event(session_id="s-001", decision="allow"),
+            _event(session_id="s-002", decision="deny"),
+        ]
+        evidence = build_evidence(
+            events,
+            policy_version="2026.07",
+            redaction_policy="skills/foundry-agt/references/policies/redaction.md",
+            retention_policy="skills/foundry-agt/references/policies/retention.md",
+            integrity_verified=True,
+            captured_at="2026-07-15T12:34:56Z",
+        )
+        self.assertIsInstance(evidence["redaction_policy"], str)
+        self.assertIsInstance(evidence["retention_policy"], str)
+
+    # ── runbook text must not contain the stale dict-style patterns ────────
+
+    def test_runbook_step5_no_dict_redaction_policy(self) -> None:
+        """runtime-audit-export.md must not contain `redaction_policy={`."""
+        runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "redaction_policy={",
+            runbook,
+            "runtime-audit-export.md still passes a dict for redaction_policy — "
+            "use a repo-relative path string instead.",
+        )
+
+    def test_runbook_step5_no_dict_retention_policy(self) -> None:
+        """runtime-audit-export.md must not contain `retention_policy={`."""
+        runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "retention_policy={",
+            runbook,
+            "runtime-audit-export.md still passes a dict for retention_policy — "
+            "use a repo-relative path string instead.",
+        )
+
+    def test_runbook_step5_redaction_policy_is_string_assignment(self) -> None:
+        """runtime-audit-export.md Step 5 must pass redaction_policy as a string literal."""
+        runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'redaction_policy="',
+            runbook,
+            "runtime-audit-export.md Step 5 does not assign redaction_policy a string literal.",
+        )
+
+    def test_runbook_step5_retention_policy_is_string_assignment(self) -> None:
+        """runtime-audit-export.md Step 5 must pass retention_policy as a string literal."""
+        runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'retention_policy="',
+            runbook,
+            "runtime-audit-export.md Step 5 does not assign retention_policy a string literal.",
+        )
+
+    def test_runbook_policy_docs_exist(self) -> None:
+        """The policy markdown files referenced by the runbook must exist in the repo."""
+        policies_dir = REF_DIR / "policies"
+        self.assertTrue(
+            (policies_dir / "redaction.md").exists(),
+            "skills/foundry-agt/references/policies/redaction.md does not exist",
+        )
+        self.assertTrue(
+            (policies_dir / "retention.md").exists(),
+            "skills/foundry-agt/references/policies/retention.md does not exist",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
