@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import pathlib
 import re
@@ -40,7 +41,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.3")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.4")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -259,6 +260,53 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 ),
             },
         }
+        malformed_terminal_fields: list[tuple[str, tuple[dict, ...]]] = []
+        for field_type, value in (
+            (
+                "object",
+                {
+                    "code": "PermissionDenied",
+                    "message": (
+                        "Microsoft.CognitiveServices/accounts/OpenAI/responses/write "
+                        "POST /openai/v1/responses"
+                    ),
+                },
+            ),
+            (
+                "list",
+                [
+                    "PermissionDenied",
+                    "Microsoft.CognitiveServices/accounts/OpenAI/responses/write",
+                    "POST /openai/v1/responses",
+                ],
+            ),
+        ):
+            events = copy.deepcopy(self._exact_readiness_events())
+            events[0]["data"]["errorMessage"] = value
+            malformed_terminal_fields.append(
+                (f"{field_type} model errorMessage", events)
+            )
+        for field_type, value in (
+            ("object", {"detail": "transient_auth_error"}),
+            ("list", ["transient_auth_error"]),
+        ):
+            events = copy.deepcopy(self._exact_readiness_events())
+            events[2]["data"]["message"] = value
+            malformed_terminal_fields.append(
+                (f"{field_type} session message", events)
+            )
+        for field_type, value in (
+            (
+                "object",
+                {"detail": "Authentication failed with provider HTTP 401"},
+            ),
+            ("list", ["Authentication failed with provider", "HTTP 401"]),
+        ):
+            events = copy.deepcopy(self._exact_readiness_events())
+            events[3]["message"] = value
+            malformed_terminal_fields.append(
+                (f"{field_type} provider error message", events)
+            )
 
         cases = (
             ("assistant only", (assistant,), (), 0),
@@ -341,6 +389,8 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 (),
                 20,
             ),
+        ) + tuple(
+            (name, events, (), 20) for name, events in malformed_terminal_fields
         )
         for name, events, raw_lines, expected in cases:
             with self.subTest(name=name):

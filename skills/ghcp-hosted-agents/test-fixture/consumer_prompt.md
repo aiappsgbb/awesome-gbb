@@ -381,7 +381,10 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
         if not isinstance(data, dict):
             malformed_data = True
             continue
-        error_message = str(data.get("errorMessage", ""))
+        error_message = data.get("errorMessage")
+        if not isinstance(error_message, str):
+            malformed_data = True
+            continue
         if data.get("statusCode") == 401 and "PermissionDenied" in error_message:
             # The first event in the exact live readiness envelope names the
             # missing project-scoped Responses action and request path.
@@ -405,13 +408,20 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
         if not isinstance(data, dict):
             malformed_data = True
             continue
-        if "transient_auth_error" in str(data.get("message", "")):
+        message = data.get("message")
+        if not isinstance(message, str):
+            malformed_data = True
+            continue
+        if "transient_auth_error" in message:
             if not success and readiness_state in {1, 2, 3}:
                 readiness_state = 3
             else:
                 unrelated_terminal_error = True
     elif event_type == "error":
-        message = str(event.get("message", ""))
+        message = event.get("message")
+        if not isinstance(message, str):
+            malformed_data = True
+            continue
         if (
             "Authentication failed with provider" in message
             and "HTTP 401" in message
