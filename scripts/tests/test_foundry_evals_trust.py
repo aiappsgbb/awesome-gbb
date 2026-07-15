@@ -243,6 +243,13 @@ class TestProfileValidationStdlib(unittest.TestCase):
             self._validate(_p(evaluators=evs))
         self.assertIn("threshold", str(ctx.exception))
 
+    def test_bool_threshold_raises_typeerror(self) -> None:
+        evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
+        evs[0]["threshold"] = True
+        with self.assertRaises(TypeError) as ctx:
+            self._validate(_p(evaluators=evs))
+        self.assertIn("threshold", str(ctx.exception))
+
     def test_evaluator_version_not_string_raises_typeerror(self) -> None:
         evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
         evs[0]["evaluator_version"] = 100
@@ -594,6 +601,13 @@ class TestBuildTrustEvidence(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._build(_p(evaluators=evs), _VALID_CALIBRATION)
 
+    def test_bool_threshold_rejects_build_trust_evidence(self) -> None:
+        p = _p()
+        p["evaluators"][0]["threshold"] = True
+        with self.assertRaises(TypeError) as ctx:
+            self._build(p, _VALID_CALIBRATION)
+        self.assertIn("threshold", str(ctx.exception))
+
     def test_whitespace_only_pin_fields_reject_build_trust_evidence(self) -> None:
         cases = (
             ("evaluator_version", lambda ev: ev.__setitem__("evaluator_version", "   ")),
@@ -747,6 +761,22 @@ class TestFixtures(unittest.TestCase):
         with self.assertRaises(_jsonschema.ValidationError):
             _jsonschema.validate(instance=data, schema=schema)
 
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_whitespace_only_pins(self) -> None:
+        schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        cases = (
+            ("evaluator_version", lambda p: p["evaluators"][0].__setitem__("evaluator_version", "   ")),
+            ("judge.deployment", lambda p: p["evaluators"][0]["judge"].__setitem__("deployment", " \t")),
+            ("judge.model", lambda p: p["evaluators"][0]["judge"].__setitem__("model", "\n")),
+            ("judge.version", lambda p: p["evaluators"][0]["judge"].__setitem__("version", "  ")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                data = copy.deepcopy(_VALID_PROFILE)
+                mutate(data)
+                with self.assertRaises(_jsonschema.ValidationError):
+                    _jsonschema.validate(instance=data, schema=schema)
+
 
 # ===========================================================================
 # Schema file shape
@@ -795,6 +825,18 @@ class TestSchemaShape(unittest.TestCase):
     def test_schema_sampling_sla_enum(self) -> None:
         sampling_def = self._schema["definitions"]["Sampling"]
         self.assertEqual(sampling_def["properties"]["sla"]["enum"], ["uniform"])
+
+    def test_schema_pin_patterns_reject_whitespace_only_strings(self) -> None:
+        evaluator_props = self._schema["definitions"]["Evaluator"]["properties"]
+        judge_props = self._schema["definitions"]["Judge"]["properties"]
+        for field, props in (
+            ("evaluator_version", evaluator_props),
+            ("deployment", judge_props),
+            ("model", judge_props),
+            ("version", judge_props),
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(props[field]["pattern"], ".*\\S.*")
 
 
 # ===========================================================================
@@ -848,6 +890,17 @@ class TestStdlibFallback(unittest.TestCase):
                     with self.assertRaises(ValueError) as ctx:
                         validate_profile_with_schema(bad)
                 self.assertIn("non-empty", str(ctx.exception))
+
+    def test_validate_profile_with_schema_rejects_bool_threshold_without_jsonschema(self) -> None:
+        import eval_trust
+        from eval_trust import validate_profile_with_schema
+
+        bad = _p()
+        bad["evaluators"][0]["threshold"] = True
+        with mock.patch.object(eval_trust, "_HAS_JSONSCHEMA", False):
+            with self.assertRaises(TypeError) as ctx:
+                validate_profile_with_schema(bad)
+        self.assertIn("threshold", str(ctx.exception))
 
 
 if __name__ == "__main__":

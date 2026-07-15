@@ -108,7 +108,7 @@ def _validate_profile_stdlib(profile: dict) -> None:
                     f"evaluators[{i}].judge.{field} must be a non-empty string"
                 )
 
-        if not isinstance(ev["threshold"], (int, float)):
+        if not isinstance(ev["threshold"], (int, float)) or isinstance(ev["threshold"], bool):
             raise TypeError(
                 f"evaluators[{i}].threshold must be a number, got {type(ev['threshold']).__name__}"
             )
