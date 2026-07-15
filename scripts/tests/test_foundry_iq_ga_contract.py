@@ -521,6 +521,28 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.skill,
         )
 
+    def test_pin_smokes_stable_knowledgebases_sdk_symbols(self) -> None:
+        self.assertIn(
+            "from azure.search.documents.knowledgebases import "
+            "KnowledgeBaseRetrievalClient",
+            self.pin,
+        )
+        self.assertIn(
+            "from azure.search.documents.knowledgebases.models import (",
+            self.pin,
+        )
+        for symbol in (
+            "KnowledgeBaseRetrievalRequest",
+            "KnowledgeRetrievalSemanticIntent",
+            "SearchIndexKnowledgeSourceParams",
+        ):
+            self.assertIn(symbol, self.pin)
+        self.assertIn(
+            'echo "knowledgebases import smoke ok: ${PINNED_VERSION}"',
+            self.pin,
+        )
+        self.assertIn('- "knowledgebases import smoke ok"', self.pin)
+
     def test_legacy_api_reference_uses_the_published_rest_helper(self) -> None:
         api_reference = self.skill.split("## API Reference", 1)[1]
         legacy_reference = api_reference.split(

@@ -68,6 +68,12 @@ validation:
         SearchIndexKnowledgeSource,
         SearchIndexKnowledgeSourceParameters,
     )
+    from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeBaseRetrievalRequest,
+        KnowledgeRetrievalSemanticIntent,
+        SearchIndexKnowledgeSourceParams,
+    )
     from azure.search.documents.models import VectorizedQuery
     assert all((
         SearchClient,
@@ -75,10 +81,15 @@ validation:
         SearchIndexFieldReference,
         SearchIndexKnowledgeSource,
         SearchIndexKnowledgeSourceParameters,
+        KnowledgeBaseRetrievalClient,
+        KnowledgeBaseRetrievalRequest,
+        KnowledgeRetrievalSemanticIntent,
+        SearchIndexKnowledgeSourceParams,
         VectorizedQuery,
     ))
     PY
     echo "azure-search-documents import smoke ok: ${PINNED_VERSION}"
+    echo "knowledgebases import smoke ok: ${PINNED_VERSION}"
 
     curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq" >/dev/null
     curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview" >/dev/null
@@ -89,6 +100,7 @@ validation:
   expected_output:
     - "upstream SHA drift check ok"
     - "azure-search-documents import smoke ok"
+    - "knowledgebases import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
 last_validated: 2026-07-15
@@ -175,6 +187,12 @@ from azure.search.documents.indexes.models import (
     SearchIndexKnowledgeSource,
     SearchIndexKnowledgeSourceParameters,
 )
+from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
+from azure.search.documents.knowledgebases.models import (
+    KnowledgeBaseRetrievalRequest,
+    KnowledgeRetrievalSemanticIntent,
+    SearchIndexKnowledgeSourceParams,
+)
 from azure.search.documents.models import VectorizedQuery
 assert all((
     SearchClient,
@@ -182,10 +200,15 @@ assert all((
     SearchIndexFieldReference,
     SearchIndexKnowledgeSource,
     SearchIndexKnowledgeSourceParameters,
+    KnowledgeBaseRetrievalClient,
+    KnowledgeBaseRetrievalRequest,
+    KnowledgeRetrievalSemanticIntent,
+    SearchIndexKnowledgeSourceParams,
     VectorizedQuery,
 ))
 PY
 echo "azure-search-documents import smoke ok: ${PINNED_VERSION}"
+echo "knowledgebases import smoke ok: ${PINNED_VERSION}"
 
 curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq" >/dev/null
 curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview" >/dev/null
@@ -199,6 +222,7 @@ echo "Foundry IQ docs link check ok"
 
 - `upstream SHA drift check ok`
 - `azure-search-documents import smoke ok`
+- `knowledgebases import smoke ok`
 - `Foundry IQ docs link check ok`
 
 **Failure signatures** (treat as upstream regression — report distinctly):
