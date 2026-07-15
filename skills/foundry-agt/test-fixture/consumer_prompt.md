@@ -124,8 +124,8 @@ prove all of the following:
       argument values, credentials, or personal data.
 
    f. Call `build_evidence(safe_events, ...)` and assert:
-      - `evidence["allow_count"] >= 1`
-      - `evidence["deny_count"] >= 1`
+      - `evidence["events_observed"]["allow"] >= 1`
+      - `evidence["events_observed"]["deny"] >= 1`
       - `evidence["integrity_verified"] is True`
       - `evidence["schema"] == "foundry-agt-runtime-evidence/v1"`
 
@@ -135,7 +135,7 @@ prove all of the following:
       pass all four checks in (f) above.
 
    i. Assert that the file's raw JSON does NOT contain any of these
-      sentinel strings: `"DROP TABLE"`, `"credential-leak-sentinel-7f9c"`,
+      sentinel strings: `"DROP TABLE"`, `"password="`, `"Bearer "`,
       `"api_key="`. These sentinels are the canonical negative test for
       accidental sensitive-data leakage into the committed artifact.
 
@@ -167,7 +167,7 @@ parameter assertion held, the factory returned a list of length ≥ 2,
 `load_policies` did not raise, both policy evaluations matched the
 expected text, the AuditLog round-trip held, the runtime audit evidence
 record was written to `specs/agt-runtime-evidence.json` with
-`allow_count >= 1`, `deny_count >= 1`, `integrity_verified true`, and no
+`events_observed` `"allow"` >= 1, `"deny"` >= 1, `integrity_verified true`, and no
 sentinel secrets present):
 
 ```bash

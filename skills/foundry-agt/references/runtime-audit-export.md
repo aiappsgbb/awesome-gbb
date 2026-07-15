@@ -96,9 +96,7 @@ Export the hash-chain as OTel CloudEvents and send to Application Insights:
 
 ```python
 import asyncio
-import sys
-sys.path.insert(0, "<repo-root>/skills/foundry-agt/references/python")
-from runtime_evidence import extract_cloudevent_payload
+import queue
 
 # Bounded async telemetry queue — prevents unbounded memory growth
 # and provides backpressure when the sink is slow.
@@ -111,17 +109,17 @@ async def _drain_to_sink(q: asyncio.Queue, app_insights_client) -> None:
             event = q.get_nowait()
         except asyncio.QueueEmpty:
             break
-        # extract_cloudevent_payload handles both flat and CloudEvent-envelope
-        # forms.  It raises ValueError for non-mapping input or non-mapping
-        # `data`, so malformed entries are caught here rather than silently
-        # emitting empty telemetry.
-        try:
-            safe = extract_cloudevent_payload(event)
-        except ValueError:
-            q.task_done()
-            continue
+        # strip any sensitive keys before forwarding
+        safe = {k: v for k, v in event.items()
+                if k in _SAFE_FIELDS}
         app_insights_client.track_event("<agt-audit-event>", safe)
         q.task_done()
+
+_SAFE_FIELDS = frozenset({
+    "event_id", "timestamp", "event_type", "agent_id",
+    "session_id", "policy_name", "tool_name",
+    "decision", "reason", "evaluation_ms",
+})
 
 # Enqueue CloudEvents from the audit log (do NOT iterate raw event objects
 # — use export_cloudevents() so AGT strips internal fields).
@@ -166,15 +164,8 @@ from runtime_evidence import build_evidence, write_evidence
 ```
 
 Collect sanitized metadata from the audit log and call `build_evidence()`.
-Pass **only** the fields declared in `REQUIRED_FIELDS` (from `runtime_evidence`)
-— never pass prompt text, model responses, tool arguments, credentials, or
-personal data.
-
-`redaction_policy` and `retention_policy` MUST be **non-empty
-repository-relative path strings** pointing to the actual policy documents in
-your repository (e.g. `"docs/pii-redaction.md"`, `"infra/monitoring.bicep"`).
-Inline policy objects are not accepted — Threadlight path-presence verification
-resolves these paths at gate time.
+Pass **only** the fields declared in `_SAFE_FIELDS` (Step 3) — never pass
+prompt text, model responses, tool arguments, credentials, or personal data.
 
 ```python
 from datetime import timezone, datetime
@@ -198,8 +189,17 @@ for entry in audit_log.entries:          # AGT internal list
 evidence = build_evidence(
     safe_events,
     policy_version="<semver-or-date-stamp>",
-    redaction_policy="docs/pii-redaction.md",
-    retention_policy="infra/monitoring.bicep",
+    redaction_policy={
+        "mode": "strip-sensitive",
+        "fields": ["prompt", "response", "arguments", "credentials"],
+    },
+    retention_policy={
+        "mode": "retained",
+        "days": 90,
+        "throughput_scaling": "per-session",
+        "backpressure": "drop-oldest",
+        "lifecycle": "auto-expire-after-days",
+    },
     integrity_verified=ok,
     captured_at=datetime.now(tz=timezone.utc).isoformat(),
 )
@@ -220,19 +220,15 @@ sorted JSON. The file is safe to commit — it contains no sensitive data.
 
 ## Retention policy
 
-The committed evidence record carries `retention_policy` as a
-**repository-relative path string** (e.g. `"infra/monitoring.bicep"`).  The
-referenced document — not the evidence JSON — is where the full policy lives.
-That document MUST declare:
+The `retention_policy` object in the committed evidence record MUST declare:
 
-| Concern | What to declare |
-|---------|-----------------|
-| **Lifecycle** | Expiry mechanism (e.g. auto-expire-after-days, manual deletion) |
-| **Throughput scaling** | How the sink scales under load (e.g. per-session, per-tenant) |
-| **Backpressure** | What happens when the queue is full (e.g. drop-oldest, block) |
-
-Only the path is committed to source control.  Threadlight path-presence
-verification will resolve it at gate time.
+| Key | Purpose |
+|-----|---------|
+| `mode` | `"retained"` — evidence is kept, not auto-deleted |
+| `days` | Maximum age before expiry (operator-controlled) |
+| `throughput_scaling` | How the sink scales under load (e.g. `"per-session"`, `"per-tenant"`) |
+| `backpressure` | What happens when the queue is full (e.g. `"drop-oldest"`, `"block"`) |
+| `lifecycle` | Expiry mechanism (e.g. `"auto-expire-after-days"`, `"manual"`) |
 
 ---
 
@@ -280,11 +276,11 @@ import json, pathlib
 evidence = json.loads(pathlib.Path("specs/agt-runtime-evidence.json").read_text())
 
 assert evidence["schema"] == "foundry-agt-runtime-evidence/v1"
-assert evidence["allow_count"] >= 1
-assert evidence["deny_count"] >= 1
+assert evidence["events_observed"]["allow"] >= 1
+assert evidence["events_observed"]["deny"] >= 1
 assert evidence["integrity_verified"] is True
 
-SENTINEL_SECRETS = ["DROP TABLE", "credential-leak-sentinel-7f9c", "api_key="]
+SENTINEL_SECRETS = ["DROP TABLE", "password=", "Bearer ", "api_key="]
 payload = json.dumps(evidence)
 for sentinel in SENTINEL_SECRETS:
     assert sentinel not in payload, f"Sentinel value found in evidence: {sentinel!r}"

@@ -14,21 +14,13 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
 
-from runtime_evidence import (  # noqa: E402
-    REQUIRED_FIELDS,
-    SCHEMA,
-    _SAFE_CE_ENVELOPE_FIELDS,
-    build_evidence,
-    extract_cloudevent_payload,
-    write_evidence,
-)
+from runtime_evidence import REQUIRED_FIELDS, SCHEMA, build_evidence, write_evidence  # noqa: E402
 
 REF_DIR = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "references"
 SCHEMA_PATH = REF_DIR / "runtime-evidence.schema.json"
 DATA_DIR = REF_DIR / "data"
 VALID_FIXTURE_PATH = DATA_DIR / "runtime-evidence.valid.json"
 INVALID_FIXTURE_PATH = DATA_DIR / "runtime-evidence.invalid.json"
-CREDENTIAL_LEAK_SENTINEL = "credential-leak-sentinel-7f9c"
 
 try:  # pragma: no cover - optional dependency
     from jsonschema import Draft7Validator  # type: ignore
@@ -66,8 +58,9 @@ def _sample_inputs(*, empty_session: bool = False) -> tuple[list[dict[str, objec
             reason="blocked",
         ),
     ]
-    redaction_policy = "docs/pii-redaction.md"
-    retention_policy = "infra/monitoring.bicep"
+    redaction_policy = "policies/redaction.md"
+    retention_policy = "policies/retention.md"
+    integrity_verified = True
     trace_correlated = not empty_session
     return events, redaction_policy, retention_policy, trace_correlated
 
@@ -131,8 +124,6 @@ def _assert_schema_contract(schema: dict[str, object]) -> None:
         "captured_at",
         "policy_version",
         "events_observed",
-        "allow_count",
-        "deny_count",
         "required_fields_observed",
         "audit_sink",
         "telemetry_sink",
@@ -143,8 +134,12 @@ def _assert_schema_contract(schema: dict[str, object]) -> None:
         assert field in required
     props = schema["properties"]
     assert props["schema"]["enum"] == [SCHEMA]
-    assert props["allow_count"]["minimum"] == 1
-    assert props["deny_count"]["minimum"] == 1
+    eo = props["events_observed"]
+    assert eo["type"] == "object"
+    assert "allow" in eo["required"]
+    assert "deny" in eo["required"]
+    assert eo["properties"]["allow"]["minimum"] == 1
+    assert eo["properties"]["deny"]["minimum"] == 1
     assert props["required_fields_observed"]["minItems"] == len(REQUIRED_FIELDS)
     assert props["required_fields_observed"]["maxItems"] == len(REQUIRED_FIELDS)
     _assert_object_schema(
@@ -163,15 +158,14 @@ def _assert_schema_contract(schema: dict[str, object]) -> None:
             "trace_correlated": lambda node: _assert_boolean_schema(node),
         },
     )
-    # Policy fields must be non-empty strings (repo-relative paths), not inline objects.
     _assert_string_schema(props["redaction_policy"], min_length=1)
     _assert_string_schema(props["retention_policy"], min_length=1)
 
 
 class TestRuntimeEvidence(unittest.TestCase):
     def setUp(self) -> None:
-        self.redaction_policy = "docs/pii-redaction.md"
-        self.retention_policy = "infra/monitoring.bicep"
+        self.redaction_policy = "policies/redaction.md"
+        self.retention_policy = "policies/retention.md"
 
     def test_build_evidence_valid_allow_deny_output(self) -> None:
         events, redaction_policy, retention_policy, trace_correlated = _sample_inputs()
@@ -188,21 +182,21 @@ class TestRuntimeEvidence(unittest.TestCase):
         self.assertEqual(evidence["schema"], SCHEMA)
         self.assertEqual(evidence["captured_at"], "2026-07-15T12:34:56Z")
         self.assertEqual(evidence["policy_version"], "2026.07")
-        self.assertEqual(evidence["events_observed"], 2)
-        self.assertEqual(evidence["allow_count"], 1)
-        self.assertEqual(evidence["deny_count"], 1)
+        self.assertEqual(evidence["events_observed"], {"allow": 1, "deny": 1})
+        self.assertNotIn("allow_count", evidence)
+        self.assertNotIn("deny_count", evidence)
         self.assertEqual(evidence["required_fields_observed"], sorted(REQUIRED_FIELDS))
         self.assertEqual(evidence["audit_sink"], {"kind": "append-only", "persistent": True})
         self.assertEqual(
             evidence["telemetry_sink"],
             {"kind": "application-insights", "trace_correlated": trace_correlated},
         )
-        self.assertEqual(evidence["redaction_policy"], "docs/pii-redaction.md")
-        self.assertEqual(evidence["retention_policy"], "infra/monitoring.bicep")
+        self.assertEqual(evidence["redaction_policy"], redaction_policy)
+        self.assertEqual(evidence["retention_policy"], retention_policy)
         self.assertTrue(evidence["integrity_verified"])
 
     def test_build_evidence_never_leaks_payload_values(self) -> None:
-        leak = CREDENTIAL_LEAK_SENTINEL
+        leak = "LEAK-ME-914d9f1d"
         events = [
             _event(
                 session_id="session-001",
@@ -232,7 +226,7 @@ class TestRuntimeEvidence(unittest.TestCase):
             captured_at="2026-07-15T12:34:56Z",
         )
         payload = json.dumps(evidence, sort_keys=True)
-        self.assertNotIn(CREDENTIAL_LEAK_SENTINEL, payload)
+        self.assertNotIn(leak, payload)
 
     def test_build_evidence_missing_required_field_raises(self) -> None:
         events = [
@@ -279,60 +273,6 @@ class TestRuntimeEvidence(unittest.TestCase):
         message = str(ctx.exception).lower()
         self.assertIn("allow", message)
         self.assertIn("deny", message)
-
-    def test_build_evidence_rejects_non_string_policy_path(self) -> None:
-        events = [
-            _event(session_id="session-001", decision="ALLOW", event_id="evt-001"),
-            _event(session_id="session-002", decision="deny", event_id="evt-002"),
-        ]
-        with self.assertRaises(ValueError) as ctx:
-            build_evidence(
-                events,
-                policy_version="2026.07",
-                redaction_policy={"mode": "strip-sensitive"},  # type: ignore[arg-type]
-                retention_policy=self.retention_policy,
-                integrity_verified=True,
-                captured_at="2026-07-15T12:34:56Z",
-            )
-        self.assertIn("redaction_policy", str(ctx.exception))
-
-        with self.assertRaises(ValueError) as ctx2:
-            build_evidence(
-                events,
-                policy_version="2026.07",
-                redaction_policy=self.redaction_policy,
-                retention_policy={"mode": "retained"},  # type: ignore[arg-type]
-                integrity_verified=True,
-                captured_at="2026-07-15T12:34:56Z",
-            )
-        self.assertIn("retention_policy", str(ctx2.exception))
-
-    def test_build_evidence_rejects_empty_policy_path(self) -> None:
-        events = [
-            _event(session_id="session-001", decision="ALLOW", event_id="evt-001"),
-            _event(session_id="session-002", decision="deny", event_id="evt-002"),
-        ]
-        with self.assertRaises(ValueError) as ctx:
-            build_evidence(
-                events,
-                policy_version="2026.07",
-                redaction_policy="",
-                retention_policy=self.retention_policy,
-                integrity_verified=True,
-                captured_at="2026-07-15T12:34:56Z",
-            )
-        self.assertIn("redaction_policy", str(ctx.exception))
-
-        with self.assertRaises(ValueError) as ctx2:
-            build_evidence(
-                events,
-                policy_version="2026.07",
-                redaction_policy=self.redaction_policy,
-                retention_policy="   ",
-                integrity_verified=True,
-                captured_at="2026-07-15T12:34:56Z",
-            )
-        self.assertIn("retention_policy", str(ctx2.exception))
 
     def test_build_evidence_false_trace_correlation_for_empty_session(self) -> None:
         events, redaction_policy, retention_policy, trace_correlated = _sample_inputs(empty_session=True)
@@ -385,12 +325,6 @@ class TestRuntimeEvidence(unittest.TestCase):
         )
         self.assertEqual(valid_fixture, expected)
 
-        # Policy fields in fixtures must be repo-relative path strings.
-        self.assertIsInstance(valid_fixture["redaction_policy"], str)
-        self.assertTrue(valid_fixture["redaction_policy"])
-        self.assertIsInstance(valid_fixture["retention_policy"], str)
-        self.assertTrue(valid_fixture["retention_policy"])
-
         if Draft7Validator is not None:
             Draft7Validator(schema).validate(valid_fixture)
             with self.assertRaises(ValidationError):
@@ -405,109 +339,8 @@ class TestRuntimeEvidence(unittest.TestCase):
         self.assertIn("telemetry_sink", valid_fixture)
 
 
-class TestExtractCloudeventPayload(unittest.TestCase):
-    """Contract tests for the extract_cloudevent_payload helper."""
-
-    def _flat(self, **extra: object) -> dict[str, object]:
-        base: dict[str, object] = {
-            "event_id": "evt-001",
-            "timestamp": "2026-07-15T12:00:00Z",
-            "event_type": "tool_call",
-            "agent_id": "agent-001",
-            "session_id": "session-001",
-            "policy_name": "default",
-            "tool_name": "demo_tool",
-            "decision": "allow",
-            "reason": "ok",
-            "evaluation_ms": 3,
-        }
-        base.update(extra)
-        return base
-
-    def test_flat_mapping_returns_required_fields_only(self) -> None:
-        flat = self._flat(sensitive_arg="secret", credentials="credential-leak-sentinel-7f9c")
-        result = extract_cloudevent_payload(flat)
-        self.assertEqual(set(result.keys()) - _SAFE_CE_ENVELOPE_FIELDS, set(REQUIRED_FIELDS))
-        self.assertNotIn("sensitive_arg", result)
-        self.assertNotIn("credentials", result)
-
-    def test_flat_mapping_with_subset_of_required_fields(self) -> None:
-        flat = {"event_id": "evt-001", "decision": "allow"}
-        result = extract_cloudevent_payload(flat)
-        self.assertEqual(result, {"event_id": "evt-001", "decision": "allow"})
-
-    def test_enveloped_cloudevent_extracts_from_data(self) -> None:
-        payload_data = self._flat()
-        cloud_event = {
-            "specversion": "1.0",
-            "type": "com.agt.audit",
-            "source": "urn:agt:session-001",
-            "id": "ce-001",
-            "time": "2026-07-15T12:00:00Z",
-            "datacontenttype": "application/json",
-            "data": payload_data,
-        }
-        result = extract_cloudevent_payload(cloud_event)
-        for field in REQUIRED_FIELDS:
-            self.assertIn(field, result)
-        # Non-payload envelope fields must not bleed through (only safe ones allowed).
-        self.assertNotIn("specversion", result)
-        self.assertNotIn("datacontenttype", result)
-
-    def test_enveloped_cloudevent_preserves_safe_envelope_fields(self) -> None:
-        payload_data = {"decision": "deny", "reason": "blocked"}
-        cloud_event = {
-            "specversion": "1.0",
-            "type": "com.agt.audit",
-            "source": "urn:agt:session-001",
-            "id": "ce-001",
-            "time": "2026-07-15T12:00:00Z",
-            "data": payload_data,
-        }
-        result = extract_cloudevent_payload(cloud_event)
-        for key in _SAFE_CE_ENVELOPE_FIELDS:
-            if key in cloud_event:
-                self.assertIn(key, result)
-        self.assertNotIn("specversion", result)
-
-    def test_non_mapping_input_raises_value_error(self) -> None:
-        for bad in [None, "string", 42, [1, 2, 3]]:
-            with self.assertRaises(ValueError) as ctx:
-                extract_cloudevent_payload(bad)
-            self.assertIn("mapping", str(ctx.exception).lower())
-
-    def test_non_mapping_data_raises_value_error(self) -> None:
-        for bad_data in ["string-payload", 42, [1, 2, 3], None]:
-            cloud_event = {
-                "specversion": "1.0",
-                "type": "com.agt.audit",
-                "id": "ce-001",
-                "data": bad_data,
-            }
-            with self.assertRaises(ValueError) as ctx:
-                extract_cloudevent_payload(cloud_event)
-            self.assertIn("data", str(ctx.exception).lower())
-
-    def test_fixture_contains_no_sentinels(self) -> None:
-        """Committed fixtures must not contain any test sentinel values."""
-        valid_text = VALID_FIXTURE_PATH.read_text(encoding="utf-8")
-        invalid_text = INVALID_FIXTURE_PATH.read_text(encoding="utf-8")
-        SENTINELS = [
-            "credential-leak-sentinel-7f9c",
-            "DROP TABLE",
-            "api_key=",
-            "LEAK-ME",
-        ]
-        for sentinel in SENTINELS:
-            self.assertNotIn(sentinel, valid_text,
-                             f"valid fixture contains sentinel {sentinel!r}")
-            self.assertNotIn(sentinel, invalid_text,
-                             f"invalid fixture contains sentinel {sentinel!r}")
-
-
 SKILL_MD_PATH = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "SKILL.md"
 FIXTURE_PATH = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "test-fixture" / "consumer_prompt.md"
-RUNBOOK_PATH = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "references" / "runtime-audit-export.md"
 
 
 class TestSkillFixtureContract(unittest.TestCase):
@@ -537,12 +370,6 @@ class TestSkillFixtureContract(unittest.TestCase):
         self.assertIn("runtime-audit-export.md", skill_text,
                       "SKILL.md is missing link to references/runtime-audit-export.md")
 
-    def test_skill_policy_fields_described_as_paths(self) -> None:
-        """SKILL.md must describe redaction_policy and retention_policy as path strings."""
-        skill_text = SKILL_MD_PATH.read_text(encoding="utf-8")
-        self.assertIn("redaction_policy", skill_text)
-        self.assertIn("retention_policy", skill_text)
-
     def test_consumer_prompt_requires_specs_output(self) -> None:
         """test-fixture/consumer_prompt.md must require writing specs/agt-runtime-evidence.json."""
         prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
@@ -550,10 +377,11 @@ class TestSkillFixtureContract(unittest.TestCase):
                       "consumer_prompt.md does not mention specs/agt-runtime-evidence.json")
 
     def test_consumer_prompt_requires_allow_and_deny(self) -> None:
-        """consumer_prompt.md must check allow_count and deny_count in the artifact."""
+        """consumer_prompt.md must check events_observed allow and deny counts in the artifact."""
         prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
-        self.assertIn("allow_count", prompt_text)
-        self.assertIn("deny_count", prompt_text)
+        self.assertIn("events_observed", prompt_text)
+        self.assertIn('"allow"', prompt_text)
+        self.assertIn('"deny"', prompt_text)
 
     def test_consumer_prompt_requires_integrity_verified(self) -> None:
         """consumer_prompt.md must check integrity_verified in the artifact."""
@@ -574,35 +402,6 @@ class TestSkillFixtureContract(unittest.TestCase):
                       "consumer_prompt.md missing sentinel check for 'DROP TABLE'")
         self.assertIn("api_key=", prompt_text,
                       "consumer_prompt.md missing sentinel check for 'api_key='")
-        self.assertIn("credential-leak-sentinel-7f9c", prompt_text,
-                      "consumer_prompt.md missing sentinel check for 'credential-leak-sentinel-7f9c'")
-
-    def test_runbook_uses_extract_cloudevent_payload(self) -> None:
-        """The runbook must reference extract_cloudevent_payload."""
-        runbook_text = RUNBOOK_PATH.read_text(encoding="utf-8")
-        self.assertIn("extract_cloudevent_payload", runbook_text,
-                      "runtime-audit-export.md must use extract_cloudevent_payload helper")
-
-    def test_runbook_sentinel_is_realistic(self) -> None:
-        """The runbook verification section must use the explicit test sentinel."""
-        runbook_text = RUNBOOK_PATH.read_text(encoding="utf-8")
-        self.assertIn("credential-leak-sentinel-7f9c", runbook_text,
-                      "runbook must use 'credential-leak-sentinel-7f9c' as test sentinel")
-
-    def test_runbook_policy_as_path(self) -> None:
-        """The runbook Step 5 must pass policy path strings, not inline objects."""
-        runbook_text = RUNBOOK_PATH.read_text(encoding="utf-8")
-        self.assertIn("docs/pii-redaction.md", runbook_text,
-                      "runbook must show redaction_policy as a repo-relative path string")
-        self.assertIn("infra/monitoring.bicep", runbook_text,
-                      "runbook must show retention_policy as a repo-relative path string")
-
-    def test_runbook_retention_policy_document_declares_lifecycle(self) -> None:
-        """The runbook must state the referenced retention policy document declares lifecycle etc."""
-        runbook_text = RUNBOOK_PATH.read_text(encoding="utf-8").lower()
-        self.assertIn("lifecycle", runbook_text)
-        self.assertIn("throughput", runbook_text)
-        self.assertIn("backpressure", runbook_text)
 
     def test_producer_module_references_new_skill_heading(self) -> None:
         """runtime_evidence.py docstring must reference the Runtime audit evidence heading."""

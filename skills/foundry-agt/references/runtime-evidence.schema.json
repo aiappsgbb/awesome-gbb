@@ -8,8 +8,6 @@
     "captured_at",
     "policy_version",
     "events_observed",
-    "allow_count",
-    "deny_count",
     "required_fields_observed",
     "audit_sink",
     "telemetry_sink",
@@ -33,16 +31,22 @@
       "minLength": 1
     },
     "events_observed": {
-      "type": "integer",
-      "minimum": 2
-    },
-    "allow_count": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "deny_count": {
-      "type": "integer",
-      "minimum": 1
+      "type": "object",
+      "required": [
+        "allow",
+        "deny"
+      ],
+      "properties": {
+        "allow": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "deny": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
     },
     "required_fields_observed": {
       "type": "array",
@@ -73,13 +77,11 @@
     },
     "redaction_policy": {
       "type": "string",
-      "minLength": 1,
-      "description": "Repository-relative path to the redaction policy document (e.g. docs/pii-redaction.md)"
+      "minLength": 1
     },
     "retention_policy": {
       "type": "string",
-      "minLength": 1,
-      "description": "Repository-relative path to the retention policy document (e.g. infra/monitoring.bicep)"
+      "minLength": 1
     },
     "integrity_verified": {
       "type": "boolean"

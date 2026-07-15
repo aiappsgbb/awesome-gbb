@@ -1,15 +1,16 @@
 {
-  "allow_count": 1,
   "audit_sink": {
     "kind": "append-only",
     "persistent": true
   },
   "captured_at": "2026-07-15T12:34:56Z",
-  "deny_count": 1,
-  "events_observed": 2,
+  "events_observed": {
+    "allow": 1,
+    "deny": 1
+  },
   "integrity_verified": true,
   "policy_version": "2026.07",
-  "redaction_policy": "docs/pii-redaction.md",
+  "redaction_policy": "policies/redaction.md",
   "required_fields_observed": [
     "agent_id",
     "decision",
@@ -22,6 +23,6 @@
     "timestamp",
     "tool_name"
   ],
-  "retention_policy": "infra/monitoring.bicep",
+  "retention_policy": "policies/retention.md",
   "schema": "foundry-agt-runtime-evidence/v0"
 }
