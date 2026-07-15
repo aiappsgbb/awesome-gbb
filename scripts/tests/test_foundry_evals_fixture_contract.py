@@ -13,10 +13,9 @@ FIXTURE = ROOT / "skills" / "foundry-evals" / "test-fixture" / "consumer_prompt.
 SKILL_MD = ROOT / "skills" / "foundry-evals" / "SKILL.md"
 WORKFLOW_MD = ROOT / "skills" / "foundry-evals" / "references" / "eval-trust-workflow.md"
 
-# Matches write_trust_evidence calls whose second argument targets evals/runs/
-_CLOBBER_RE = re.compile(
-    r'write_trust_evidence\s*\([^,]+,\s*["\']evals/runs/[^"\']*["\']'
-)
+# Matches write_trust_evidence calls that target a -calibration.json path.
+# Uses [^)]* so the pattern covers both plain strings and f-strings.
+_CLOBBER_RE = re.compile(r'write_trust_evidence\s*\([^)]*-calibration\.json')
 
 
 class FoundryEvalsFixtureContractTests(unittest.TestCase):
@@ -43,29 +42,34 @@ class FoundryEvalsFixtureContractTests(unittest.TestCase):
 
 
 class TrustEvidenceOutputContractTests(unittest.TestCase):
-    """Assert that docs never direct write_trust_evidence at evals/runs/ targets.
+    """Guard against write_trust_evidence clobbering the calibration input.
 
-    The calibration record in evals/runs/ is a read-only input artifact.
-    Normalized trust evidence must only be written to specs/evals-trust-evidence.json.
+    The calibration record evals/runs/<timestamp>-calibration.json is a
+    read-only input artifact.  Neither SKILL.md nor the final workflow
+    emission snippet may call write_trust_evidence with a path that ends in
+    -calibration.json.  Per-run intermediate evidence files with unique names
+    (e.g. evals/runs/run-N-evidence.json written via f-string) are intentional
+    and must not be prohibited.  The sole canonical output is
+    specs/evals-trust-evidence.json.
     """
 
-    def _check_no_clobber(self, path: pathlib.Path) -> None:
+    def _assert_no_calibration_clobber(self, path: pathlib.Path) -> None:
         text = path.read_text(encoding="utf-8")
         match = _CLOBBER_RE.search(text)
         found = match.group(0) if match else ""
         self.assertIsNone(
             match,
             f"{path.relative_to(ROOT)}: write_trust_evidence must not target "
-            f"evals/runs/ (found: {found!r}). "
-            "The calibration record is a read-only input; normalized output must "
-            "go to specs/evals-trust-evidence.json.",
+            f"the calibration input path (*-calibration.json) (found: {found!r}). "
+            "The calibration record is a read-only input; the sole canonical "
+            "output is specs/evals-trust-evidence.json.",
         )
 
-    def test_skill_md_no_evals_runs_write(self) -> None:
-        self._check_no_clobber(SKILL_MD)
+    def test_skill_md_no_calibration_clobber(self) -> None:
+        self._assert_no_calibration_clobber(SKILL_MD)
 
-    def test_workflow_md_no_evals_runs_write(self) -> None:
-        self._check_no_clobber(WORKFLOW_MD)
+    def test_workflow_md_no_calibration_clobber(self) -> None:
+        self._assert_no_calibration_clobber(WORKFLOW_MD)
 
     def test_skill_md_canonical_output_present(self) -> None:
         text = SKILL_MD.read_text(encoding="utf-8")
