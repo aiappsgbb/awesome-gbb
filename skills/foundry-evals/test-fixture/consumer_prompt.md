@@ -130,6 +130,8 @@ continue with a FAIL marker in Step 2.
 
 
 
+## Step 1 — The goal
+
 Using the `foundry-evals` skill, score one real assistant response with one
 Foundry built-in evaluator and prove a numeric score came back.
 
