@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "foundry-evals-trust-profile/v1",
+  "title": "Foundry Evals Trust Profile",
+  "description": "Declares the evaluator stack, calibration contract, and sampling design for a Foundry hosted-agent trust evaluation.",
+  "type": "object",
+  "required": [
+    "unit_of_analysis",
+    "evaluators",
+    "threshold_rationale",
+    "last_calibrated_at",
+    "sampling"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "unit_of_analysis": {
+      "type": "string",
+      "enum": ["session"],
+      "description": "Granularity of a single evaluation record; must be 'session'."
+    },
+    "evaluators": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/Evaluator"
+      },
+      "description": "Non-empty list of evaluator declarations."
+    },
+    "threshold_rationale": {
+      "type": "string",
+      "description": "Human-readable explanation of how thresholds were chosen."
+    },
+    "last_calibrated_at": {
+      "type": "string",
+      "description": "ISO-8601 timestamp of the most recent calibration run."
+    },
+    "sampling": {
+      "$ref": "#/definitions/Sampling"
+    },
+    "evaluation_design": {
+      "type": "string",
+      "description": "Optional description of the sampling and evaluation design."
+    },
+    "task_rubric": {
+      "type": "object",
+      "description": "Optional reviewed task rubric describing evaluation criteria.",
+      "additionalProperties": true
+    },
+    "simulator": {
+      "type": "object",
+      "description": "Optional simulator configuration.",
+      "additionalProperties": true
+    },
+    "benchmark": {
+      "type": "object",
+      "description": "Optional pinned benchmark reference with delta.",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "Evaluator": {
+      "type": "object",
+      "required": ["name", "role", "evaluator_version", "judge", "threshold"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": ["gate", "trend", "human_review"],
+          "description": "Evaluator gate role: gate (hard threshold), trend (tracking only), or human_review (manual triage)."
+        },
+        "evaluator_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "judge": {
+          "$ref": "#/definitions/Judge"
+        },
+        "threshold": {
+          "type": "number"
+        }
+      }
+    },
+    "Judge": {
+      "type": "object",
+      "required": ["deployment", "model", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "deployment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Sampling": {
+      "type": "object",
+      "required": ["evaluation", "sla"],
+      "additionalProperties": true,
+      "properties": {
+        "evaluation": {
+          "type": "string",
+          "enum": ["diversity"],
+          "description": "Sampling strategy for evaluation sessions."
+        },
+        "sla": {
+          "type": "string",
+          "enum": ["uniform"],
+          "description": "SLA distribution strategy across evaluation slots."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "foundry-evals-trust-profile/v1",
+  "unit_of_analysis": "session",
+  "evaluators": [
+    {
+      "name": "task_completion",
+      "role": "gate",
+      "evaluator_version": "1.2.0",
+      "judge": {
+        "deployment": "gpt-4o-mini-eval",
+        "model": "gpt-4o-mini-2024-07-18",
+        "version": "2024-07-18"
+      },
+      "threshold": 0.80
+    },
+    {
+      "name": "csat",
+      "role": "gate",
+      "evaluator_version": "1.0.1",
+      "judge": {
+        "deployment": "gpt-4o-mini-eval",
+        "model": "gpt-4o-mini-2024-07-18",
+        "version": "2024-07-18"
+      },
+      "threshold": 0.75
+    },
+    {
+      "name": "groundedness",
+      "role": "human_review",
+      "evaluator_version": "1.1.0",
+      "judge": {
+        "deployment": "gpt-4o-eval",
+        "model": "gpt-4o-2024-11-20",
+        "version": "2024-11-20"
+      },
+      "threshold": 0.85
+    },
+    {
+      "name": "coherence",
+      "role": "trend",
+      "evaluator_version": "1.0.0",
+      "judge": {
+        "deployment": "gpt-4o-mini-eval",
+        "model": "gpt-4o-mini-2024-07-18",
+        "version": "2024-07-18"
+      },
+      "threshold": 0.70
+    }
+  ],
+  "threshold_rationale": "Thresholds set from calibration run on 2025-01-10 against 50 known-good and 20 known-bad sessions; agreement 0.92 across 5 repeated runs.",
+  "last_calibrated_at": "2025-01-10T14:00:00Z",
+  "sampling": {
+    "evaluation": "diversity",
+    "sla": "uniform"
+  },
+  "evaluation_design": "Stratified sample of 100 sessions per deployment cycle, covering all task types in the task rubric.",
+  "task_rubric": {
+    "reviewed": true,
+    "version": "2.1",
+    "criteria": [
+      "Agent completes the primary requested task",
+      "Response is grounded in retrieved context",
+      "Coherence score reflects conversational flow across session turns"
+    ]
+  },
+  "simulator": {
+    "used": false,
+    "usr8": null
+  },
+  "benchmark": {
+    "name": "foundry-evals-baseline-2025Q1",
+    "version": "1.0.0",
+    "pinned": true,
+    "delta": 0.03,
+    "direction": "improvement"
+  }
+}

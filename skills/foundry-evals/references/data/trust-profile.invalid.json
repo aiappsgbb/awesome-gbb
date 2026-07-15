@@ -1,0 +1,10 @@
+{
+  "$schema": "foundry-evals-trust-profile/v1",
+  "unit_of_analysis": "tenant",
+  "evaluators": [],
+  "threshold_rationale": 42,
+  "sampling": {
+    "evaluation": "random",
+    "sla": "best-effort"
+  }
+}
