@@ -4,7 +4,7 @@
 | Field | Value |
 |-------|-------|
 | Skill Name | Foundry IQ |
-| Version | 1.1 |
+| Version | 1.2 |
 | Last Updated | July 2026 |
 | Status | Building Block |
 
@@ -48,7 +48,7 @@ This skill covers:
 | FR-6 | Citation Tracking | P1 | Maintain source references in responses |
 | FR-7 | Query Decomposition | P1 | Break complex questions into sub-queries |
 | FR-8 | Multi-turn Conversations | P1 | Track conversation history for context |
-| FR-9 | Configurable Reasoning | P2 | Adjust reasoning effort (minimal/low/medium) |
+| FR-9 | API-specific Retrieval Controls | P2 | Use only controls published for the selected API generation |
 | FR-10 | Stable Knowledge Sources | P0 | Use only `searchIndex`, `azureBlob`, `indexedOneLake`, or `web` on stable REST `2026-04-01` |
 
 ### 2.2 Retrieval Modes
@@ -113,7 +113,7 @@ This skill covers:
 |---------|---------|--------|
 | Azure AI Search Knowledge Sources / Knowledge Bases | `2026-04-01` | GA programmatic slice |
 | Azure AI Search expanded source kinds and options | `2026-05-01-preview` | Preview |
-| Legacy Knowledge Agents used by bundled scripts | `2025-01-01-preview` | Preview compatibility path |
+| First-generation Knowledge Agents used by bundled scripts | `2025-05-01-preview` | Preview compatibility path |
 | Azure OpenAI | `2024-12-01-preview` | Existing sample dependency |
 
 ### 4.3 Chunking Constraints
@@ -182,13 +182,14 @@ your-app/
 - [ ] Azure OpenAI service with embedding model deployed
 - [ ] Document corpus identified and prepared
 - [ ] Index schema designed for your domain
+- [ ] Supported Knowledge Agent planning model deployed and its resource URI, deployment ID, and model name recorded
 
 ### 7.2 During Integration
 
 - [ ] Environment variables configured (see `.env.sample`)
 - [ ] Index created with appropriate fields
 - [ ] Documents chunked and indexed
-- [ ] Knowledge Agent created with reasoning settings
+- [ ] Knowledge Agent created with explicit model configuration and object-valued target indexes
 - [ ] API endpoints implemented
 
 ### 7.3 Testing
@@ -208,7 +209,7 @@ your-app/
 | Limitation | Impact | Workaround |
 |------------|--------|------------|
 | Agentic retrieval latency | 1-3s per query | Use semantic mode for simple queries |
-| Reasoning effort cost | Higher effort = more tokens | Match effort to query complexity |
+| Preview reasoning and answer synthesis | Not supported by the bundled `2025-05-01-preview` helper | Use only published 2025-05 request fields, or migrate the complete workload to a newer Knowledge Base API |
 | API version requirements | Stable and preview capabilities differ | Use `2026-04-01` for the four GA kinds; opt into `2026-05-01-preview` only for explicitly preview features |
 | Regional availability | Knowledge Agents limited regions | Deploy in supported regions |
 
@@ -225,13 +226,15 @@ The following are NOT provided by this skill:
 
 ## 9. Configuration Guidelines
 
-### 9.1 Reasoning Effort Selection
+### 9.1 Knowledge Agent Model Selection
 
-| Query Type | Recommended Effort | Example |
-|------------|-------------------|---------|
-| Factual lookup | minimal | "What is the PTO policy?" |
-| Comparison | low | "Compare expense limits for travel vs supplies" |
-| Multi-hop | medium | "Can I work remotely while using PTO?" |
+The bundled `2025-05-01-preview` helper requires an explicit Azure OpenAI
+resource URI, deployment ID, and supported model name. Supported
+query-planning model names are `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
+`gpt-4.1-mini`, and `gpt-4.1-nano`. Omit `apiKey` and `authIdentity` from
+the model definition to use the Azure AI Search system-assigned managed
+identity; grant that identity access out of band rather than embedding a key.
+The Knowledge Agent PUT also requires `Prefer: return=representation`.
 
 ### 9.2 Chunking Strategy
 

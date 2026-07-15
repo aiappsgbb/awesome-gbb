@@ -270,11 +270,10 @@ IMPORTANT:
 
         # Extract source files from retrieval
         sources = []
-        if "citations" in retrieval_result:
-            for citation in retrieval_result["citations"]:
-                source = citation.get("sourceFile", citation.get("title", "unknown"))
-                if source not in sources:
-                    sources.append(source)
+        for reference in retrieval_result.get("references", []):
+            source = reference.get("docKey")
+            if source and source not in sources:
+                sources.append(source)
 
         return {
             "answer": response,
