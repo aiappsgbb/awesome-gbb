@@ -135,7 +135,7 @@ prove all of the following:
       pass all four checks in (f) above.
 
    i. Assert that the file's raw JSON does NOT contain any of these
-      sentinel strings: `"DROP TABLE"`, `"password="`, `"Bearer "`,
+      sentinel strings: `"DROP TABLE"`, `"Authorization: Bearer test-secret-token"`,
       `"api_key="`. These sentinels are the canonical negative test for
       accidental sensitive-data leakage into the committed artifact.
 

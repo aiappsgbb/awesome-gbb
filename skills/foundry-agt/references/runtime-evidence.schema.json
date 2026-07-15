@@ -72,20 +72,20 @@
       "$ref": "#/definitions/telemetry_sink"
     },
     "redaction_policy": {
-      "$ref": "#/definitions/policy_object"
+      "type": "string",
+      "minLength": 1,
+      "description": "Repository-relative path to the redaction policy document (e.g. docs/pii-redaction.md)"
     },
     "retention_policy": {
-      "$ref": "#/definitions/policy_object"
+      "type": "string",
+      "minLength": 1,
+      "description": "Repository-relative path to the retention policy document (e.g. infra/monitoring.bicep)"
     },
     "integrity_verified": {
       "type": "boolean"
     }
   },
   "definitions": {
-    "policy_object": {
-      "type": "object",
-      "additionalProperties": true
-    },
     "audit_sink": {
       "type": "object",
       "required": [

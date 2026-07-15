@@ -9,14 +9,7 @@
   "events_observed": 2,
   "integrity_verified": true,
   "policy_version": "2026.07",
-  "redaction_policy": {
-    "fields": [
-      "prompt",
-      "response",
-      "arguments"
-    ],
-    "mode": "strip-sensitive"
-  },
+  "redaction_policy": "docs/pii-redaction.md",
   "required_fields_observed": [
     "agent_id",
     "decision",
@@ -29,9 +22,6 @@
     "timestamp",
     "tool_name"
   ],
-  "retention_policy": {
-    "days": 30,
-    "mode": "retained"
-  },
+  "retention_policy": "infra/monitoring.bicep",
   "schema": "foundry-agt-runtime-evidence/v0"
 }

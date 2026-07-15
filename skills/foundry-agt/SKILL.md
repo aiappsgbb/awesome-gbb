@@ -474,7 +474,7 @@ evidence record.
 | Resource | Role |
 |----------|------|
 | [`references/runtime-evidence.schema.json`](references/runtime-evidence.schema.json) | JSON Schema (Draft 7) — SSOT for the evidence envelope shape |
-| [`references/python/runtime_evidence.py`](references/python/runtime_evidence.py) | Producer module — `build_evidence()` / `write_evidence()` — copy verbatim; do NOT redefine inline |
+| [`references/python/runtime_evidence.py`](references/python/runtime_evidence.py) | Producer module — `build_evidence()` / `write_evidence()` / `extract_cloudevent_payload()` — copy verbatim; do NOT redefine inline |
 | [`references/data/runtime-evidence.valid.json`](references/data/runtime-evidence.valid.json) | Contract fixture — valid evidence record (tested in CI) |
 | [`references/data/runtime-evidence.invalid.json`](references/data/runtime-evidence.invalid.json) | Contract fixture — deliberately invalid (schema reject test) |
 | [`references/runtime-audit-export.md`](references/runtime-audit-export.md) | Operator run-book — full export flow, bounded telemetry queue, retention policy |
@@ -495,11 +495,19 @@ session_id (trace-correlated)  ·  policy_name  ·  tool_name
 decision  ·  reason  ·  evaluation_ms
 ```
 
+**Policy fields** (`redaction_policy`, `retention_policy`) are
+**non-empty repository-relative path strings** — e.g.
+`"docs/pii-redaction.md"`, `"infra/monitoring.bicep"`.  The referenced
+retention policy document must declare lifecycle, throughput scaling, and
+backpressure.  Only the path is committed; Threadlight path-presence
+verification resolves it at gate time.
+
 A valid evidence record MUST have `allow_count >= 1`, `deny_count >= 1`,
 and `integrity_verified: true`. The full field contract is in
 [`references/runtime-evidence.schema.json`](references/runtime-evidence.schema.json).
 
-> **MUST:** Copy `build_evidence()` and `write_evidence()` verbatim from
+> **MUST:** Copy `build_evidence()`, `write_evidence()`, and
+> `extract_cloudevent_payload()` verbatim from
 > [`references/python/runtime_evidence.py`](references/python/runtime_evidence.py).
 > Do NOT inline or redefine — the validator enforces single-source-of-truth.
 > See [`references/runtime-audit-export.md`](references/runtime-audit-export.md)
