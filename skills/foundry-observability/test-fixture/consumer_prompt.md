@@ -10,7 +10,7 @@ every Bash code block below in order. Do NOT inspect repo files, do NOT
 run `validate-skills.py`, do NOT rebuild docs, do NOT `git status` —
 those are catalog-author concerns, not consumer-smoke concerns. Your only
 acceptable terminal state is a Bash tool call that writes a marker file
-to `/tmp/foundry-observability-smoke-result` (Step 3). If you find
+to `/tmp/foundry-observability-smoke-result` (Step 6). If you find
 yourself reading `skill-deps.yml`, `upstream-pin.md`, or anything under
 `docs/`, you are off-script — stop and execute Step 0.
 
@@ -25,7 +25,7 @@ information found" and (b) overwrite this run's transcript at
 `/tmp/foundry-observability-transcript.log`, defeating the workflow's
 retry classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow
 ALREADY captures your output via the outer `tee` — your job is to
-EXECUTE Steps 0-3 directly in Bash tool calls, not to "run the smoke".
+EXECUTE Steps 0-6 directly in Bash tool calls, not to "run the smoke".
 
 Do whatever the skill's `SKILL.md` tells you to do, but do NOT improvise
 from training-data knowledge of OpenTelemetry or Azure Monitor — read
@@ -53,7 +53,7 @@ az account show --output table || echo "(az cache not inherited — relying on S
 If `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
 `APPLICATIONINSIGHTS_CONNECTION_STRING`, or `LAW_WORKSPACE_ID` prints
 empty, the workflow's `env:` block is broken (Pattern 11). That is a
-workflow bug, not a skill bug. Write the FAIL marker (Step 3) with
+workflow bug, not a skill bug. Write the FAIL marker (Step 6) with
 reason `auth context missing: <var-name>` and stop.
 
 Do NOT run `command -v`, `find /`, or `curl -fsSL` to hunt for tooling
@@ -94,7 +94,7 @@ test -n "$PROBE_ID" || { echo "PROBE_ID file empty"; exit 2; }
 
 pip install --quiet azure-monitor-opentelemetry~=1.8.8 azure-identity opentelemetry-api
 
-python - <<'PY'
+python3 - <<'PY'
 import os, sys
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace
@@ -159,7 +159,7 @@ for i in $(seq 1 12); do
     -w "$LAW_WORKSPACE_ID" \
     --analytics-query "$KQL" \
     -o json 2>&1 || echo "[]")
-  COUNT=$(echo "$RESULT" | python -c "import sys, json; d = json.load(sys.stdin); print(len(d) if isinstance(d, list) else 0)" 2>/dev/null || echo "0")
+  COUNT=$(echo "$RESULT" | python3 -c "import sys, json; d = json.load(sys.stdin); print(len(d) if isinstance(d, list) else 0)" 2>/dev/null || echo "0")
   if [ "$COUNT" -gt 0 ]; then
     echo "LAW probe HIT on iteration $i (after $((i*30))s)"
     LAW_HIT="true"
@@ -174,7 +174,7 @@ if [ "$LAW_HIT" != "true" ]; then
 fi
 ```
 
-This step is a SOFT gate per Pattern 13. The marker file in Step 3
+This step is a SOFT gate per Pattern 13. The marker file in Step 6
 remains `SMOKE_RESULT=PASS` regardless of `LAW_HIT` — the NOTE above
 captures the lag observation for the audit trail without false-FAILing
 on physics we don't control. Do NOT write `SMOKE_RESULT=FAIL` because
@@ -182,7 +182,147 @@ of an empty KQL result; only write FAIL if Step 0 or Step 1 failed.
 
 ---
 
-## Step 3 — Marker contract (deterministic, MANDATORY)
+## Step 3 — Install normaliser dependencies
+
+Install PyYAML so the normaliser can load the YAML operating profile.
+`observability_evidence.py` has no CLI flags — do not invent any.
+
+```bash
+pip install --quiet pyyaml
+```
+
+---
+
+## Step 4 — Emit operating-evidence document
+
+Load `references/observability-profile.yaml` with PyYAML, build evidence
+with a timezone-aware UTC `captured_at`, and write
+`specs/observability-evidence.json`.  The normaliser library is
+`skills/foundry-observability/references/python/observability_evidence.py`
+— import `build_evidence` and `write_evidence` directly; there is no CLI.
+
+```bash
+python3 - <<'PY'
+import sys, json
+from datetime import datetime, timezone
+
+sys.path.insert(0, 'skills/foundry-observability/references/python')
+from observability_evidence import build_evidence, write_evidence
+import yaml
+
+profile = yaml.safe_load(open('skills/foundry-observability/references/observability-profile.yaml'))
+captured_at = datetime.now(timezone.utc).isoformat()
+evidence = build_evidence(profile, captured_at=captured_at)
+write_evidence(evidence, 'specs/observability-evidence.json')
+print('Written specs/observability-evidence.json')
+print(json.dumps(evidence, indent=2, sort_keys=True))
+PY
+```
+
+If the script exits non-zero for any reason, write the FAIL marker with
+reason `evidence emission failed: <reason>` and stop.
+
+---
+
+## Step 5 — Assert evidence contract (HARD GATE)
+
+Read `specs/observability-evidence.json` and assert all required fields.
+Every assertion must pass before the PASS marker is written.
+
+```bash
+python3 - <<'PY'
+import json, sys
+
+evidence = json.loads(open('specs/observability-evidence.json').read())
+failures = []
+
+# --- four alert categories ---
+required_alerts = {"failure", "latency", "token_cost", "quality_safety"}
+got_alerts = set(evidence.get("alert_categories", []))
+if not required_alerts.issubset(got_alerts):
+    failures.append(f"alert_categories missing: {required_alerts - got_alerts}")
+
+# --- action group owner and resource_id ---
+ag = evidence.get("action_group", {})
+if not ag.get("owner", "").strip():
+    failures.append("action_group.owner is empty")
+if not ag.get("resource_id", "").strip():
+    failures.append("action_group.resource_id is empty")
+
+# --- evaluator parity and environments ---
+if not evidence.get("evaluator_parity", False):
+    failures.append("evaluator_parity is not True")
+ev_envs = set(evidence.get("evaluator_definition", {}).get("environments", []))
+expected_envs = {"dev", "ci", "production"}
+if ev_envs != expected_envs:
+    failures.append(f"evaluator environments {ev_envs} != {expected_envs}")
+
+# --- evaluator name and version ---
+ev_def = evidence.get("evaluator_definition", {})
+if not ev_def.get("name", "").strip():
+    failures.append("evaluator_definition.name is empty")
+if not ev_def.get("version", "").strip():
+    failures.append("evaluator_definition.version is empty")
+
+# --- bounded sampling (both in [0, 1]) ---
+sampling = evidence.get("sampling", {})
+for key in ("traces", "continuous_evaluation"):
+    val = sampling.get(key)
+    if val is None:
+        failures.append(f"sampling.{key} missing")
+    elif not (0.0 <= val <= 1.0):
+        failures.append(f"sampling.{key}={val} out of [0, 1]")
+
+# --- trace policy ---
+tp = evidence.get("trace_policy", {})
+if not isinstance(tp.get("content_recording"), bool):
+    failures.append("trace_policy.content_recording is not a bool")
+if not tp.get("redaction_policy", "").strip():
+    failures.append("trace_policy.redaction_policy is empty")
+if not tp.get("readers_group", "").strip():
+    failures.append("trace_policy.readers_group is empty")
+
+# --- retention >= 30 ---
+ret = evidence.get("retention_days")
+if not isinstance(ret, int) or isinstance(ret, bool):
+    failures.append(f"retention_days must be a strict int, got {type(ret).__name__}")
+elif ret < 30:
+    failures.append(f"retention_days={ret} < 30")
+
+# --- positive budget ---
+budget = evidence.get("monthly_budget_usd")
+if budget is None:
+    failures.append("monthly_budget_usd missing")
+elif not isinstance(budget, (int, float)) or isinstance(budget, bool):
+    failures.append("monthly_budget_usd must be a number")
+elif budget <= 0:
+    failures.append(f"monthly_budget_usd={budget} must be > 0")
+
+if failures:
+    for f in failures:
+        print(f"ASSERT FAIL: {f}", file=sys.stderr)
+    sys.exit(3)
+
+print("All evidence contract assertions PASSED")
+print(f"  alert_categories : {sorted(got_alerts)}")
+print(f"  action_group.owner : {ag['owner']}")
+print(f"  action_group.resource_id : {ag['resource_id'][:60]}...")
+print(f"  evaluator_parity : {evidence['evaluator_parity']}")
+print(f"  evaluator_environments : {sorted(ev_envs)}")
+print(f"  sampling.traces : {sampling.get('traces')}")
+print(f"  sampling.continuous_evaluation : {sampling.get('continuous_evaluation')}")
+print(f"  trace_policy.content_recording : {tp.get('content_recording')}")
+print(f"  retention_days : {ret}")
+print(f"  monthly_budget_usd : {budget}")
+PY
+```
+
+This is the HARD GATE: if any assertion fails, write the FAIL marker
+with reason `evidence assertions failed: <first failure>` and stop.
+
+---
+
+## Step 6 — Marker contract (deterministic, MANDATORY)
 
 No teardown — the probe span is ephemeral telemetry and there are no
 Azure resources to delete (Pattern 25 N/A for this fixture).
@@ -192,13 +332,14 @@ The file's literal byte content is what CI grades; your assistant-text
 reply is NOT graded.
 
 On success (Step 0 auth context complete AND Step 1 `configure_azure_monitor`
-+ span emission succeeded — Step 2 outcome does NOT affect the marker):
++ span emission succeeded AND Step 4 evidence emission succeeded AND
+Step 5 assertions passed — Step 2 outcome does NOT affect the marker):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-observability-smoke-result
 ```
 
-On Step 0 or Step 1 failure ONLY:
+On Step 0, Step 1, Step 4, or Step 5 failure ONLY:
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-observability-smoke-result
@@ -208,3 +349,4 @@ The marker file is single-source-of-truth. Do not print the marker token
 anywhere else in your reply — no echoes, no summaries, no fenced code
 blocks containing the literal string. The Bash tool write is the only
 legitimate emission path.
+

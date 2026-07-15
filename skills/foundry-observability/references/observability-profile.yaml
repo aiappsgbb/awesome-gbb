@@ -1,0 +1,74 @@
+# Foundry Observability — Production Operating Profile
+# Schema: foundry-observability-profile/v1
+# Normaliser: skills/foundry-observability/references/python/observability_evidence.py
+# JSON Schema: skills/foundry-observability/references/observability-profile.schema.json
+#
+# This file is the canonical human-authored operating profile for a Foundry
+# agent pilot.  It is semantically equivalent to references/data/observability-
+# profile.valid.json and is the preferred YAML form for operator-managed
+# configuration under version control.  Run the normaliser to produce
+# specs/observability-evidence.json (advisory evidence, not proof alerts fired).
+#
+# Ownership: agent-sre — see action_group.owner below.
+
+"$schema": "foundry-observability-profile/v1"
+schema: "foundry-observability-profile/v1"
+
+# ---------------------------------------------------------------------------
+# Action group — all four alert categories route here.
+# Owner: agent-sre team.  Replace with your pilot's action group ARM ID.
+# ---------------------------------------------------------------------------
+action_group:
+  resource_id: "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Insights/actionGroups/agent-oncall"
+  owner: "agent-sre"
+
+# ---------------------------------------------------------------------------
+# Alert rules — one named rule per required category.
+# Deploy via references/bicep/agent-alerts.bicep (actionGroupResourceId =
+# action_group.resource_id above).
+# ---------------------------------------------------------------------------
+alerts:
+  failure: "agent-5xx"
+  latency: "tool-p95"
+  token_cost: "token-anomaly"
+  quality_safety: "eval-quality-drift"
+
+# ---------------------------------------------------------------------------
+# Evaluator definition — pinned across dev / CI / production.
+# evaluator_parity = True in evidence iff environments is exactly
+# [dev, ci, production].  Extra environments invalidate parity.
+# ---------------------------------------------------------------------------
+evaluator_definition:
+  name: "agent-quality-v3"
+  version: "3.0.0"
+  environments:
+    - "dev"
+    - "ci"
+    - "production"
+
+# ---------------------------------------------------------------------------
+# Trace content policy.
+# content_recording: false — metadata only (no prompt/completion content).
+# readers_group: AAD group with read access to traces in Log Analytics.
+# ---------------------------------------------------------------------------
+trace_policy:
+  content_recording: false
+  redaction_policy: "docs/pii-redaction.md"
+  readers_group: "agent-observability-readers"
+
+# ---------------------------------------------------------------------------
+# Sampling fractions — both must be in [0, 1].
+# traces: 0.1 = 10 % of all spans captured.
+# continuous_evaluation: 0.05 = 5 % of sessions submitted to eval.
+# ---------------------------------------------------------------------------
+sampling:
+  traces: 0.1
+  continuous_evaluation: 0.05
+
+# ---------------------------------------------------------------------------
+# Retention and budget.
+# retention_days >= 30 (LAW retentionInDays in log-analytics.bicep).
+# monthly_budget_usd > 0 (telemetry + evaluation combined).
+# ---------------------------------------------------------------------------
+retention_days: 90
+monthly_budget_usd: 500
