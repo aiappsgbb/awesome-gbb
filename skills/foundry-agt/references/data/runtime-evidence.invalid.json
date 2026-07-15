@@ -1,0 +1,37 @@
+{
+  "allow_count": 1,
+  "audit_sink": {
+    "kind": "append-only",
+    "persistent": true
+  },
+  "captured_at": "2026-07-15T12:34:56Z",
+  "deny_count": 1,
+  "events_observed": 2,
+  "integrity_verified": true,
+  "policy_version": "2026.07",
+  "redaction_policy": {
+    "fields": [
+      "prompt",
+      "response",
+      "arguments"
+    ],
+    "mode": "strip-sensitive"
+  },
+  "required_fields_observed": [
+    "agent_id",
+    "decision",
+    "evaluation_ms",
+    "event_id",
+    "event_type",
+    "policy_name",
+    "reason",
+    "session_id",
+    "timestamp",
+    "tool_name"
+  ],
+  "retention_policy": {
+    "days": 30,
+    "mode": "retained"
+  },
+  "schema": "foundry-agt-runtime-evidence/v0"
+}

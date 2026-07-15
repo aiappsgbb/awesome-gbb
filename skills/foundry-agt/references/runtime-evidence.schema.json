@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/aiappsgbb/awesome-gbb/skills/foundry-agt/references/runtime-evidence.schema.json",
+  "title": "foundry-agt runtime evidence",
+  "type": "object",
+  "required": [
+    "schema",
+    "captured_at",
+    "policy_version",
+    "events_observed",
+    "allow_count",
+    "deny_count",
+    "required_fields_observed",
+    "audit_sink",
+    "telemetry_sink",
+    "redaction_policy",
+    "retention_policy",
+    "integrity_verified"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": [
+        "foundry-agt-runtime-evidence/v1"
+      ]
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "events_observed": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "allow_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "deny_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "required_fields_observed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "event_id",
+          "timestamp",
+          "event_type",
+          "agent_id",
+          "session_id",
+          "policy_name",
+          "tool_name",
+          "decision",
+          "reason",
+          "evaluation_ms"
+        ]
+      },
+      "minItems": 10,
+      "maxItems": 10,
+      "uniqueItems": true
+    },
+    "audit_sink": {
+      "$ref": "#/definitions/audit_sink"
+    },
+    "telemetry_sink": {
+      "$ref": "#/definitions/telemetry_sink"
+    },
+    "redaction_policy": {
+      "$ref": "#/definitions/policy_object"
+    },
+    "retention_policy": {
+      "$ref": "#/definitions/policy_object"
+    },
+    "integrity_verified": {
+      "type": "boolean"
+    }
+  },
+  "definitions": {
+    "policy_object": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "audit_sink": {
+      "type": "object",
+      "required": [
+        "kind",
+        "persistent"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "append-only"
+          ]
+        },
+        "persistent": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "telemetry_sink": {
+      "type": "object",
+      "required": [
+        "kind",
+        "trace_correlated"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "application-insights"
+          ]
+        },
+        "trace_correlated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
