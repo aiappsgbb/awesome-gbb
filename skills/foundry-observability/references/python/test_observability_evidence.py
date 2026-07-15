@@ -273,6 +273,34 @@ class TestAlertValidation(unittest.TestCase):
         with self.assertRaises(TypeError):
             self._build(_p(alerts=["failure", "latency"]), captured_at=_CAPTURED_AT)
 
+    def test_rejects_extra_alert_int_value(self) -> None:
+        """Extra alert category with int value must be rejected (stdlib parity with additionalProperties)."""
+        p = _p()
+        p["alerts"]["availability"] = 42
+        with self.assertRaises(TypeError):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_rejects_extra_alert_dict_value(self) -> None:
+        """Extra alert category with dict value must be rejected."""
+        p = _p()
+        p["alerts"]["availability"] = {"rule": "avail-rule"}
+        with self.assertRaises(TypeError):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_rejects_extra_alert_blank_string_value(self) -> None:
+        """Extra alert category with blank string value must be rejected."""
+        p = _p()
+        p["alerts"]["availability"] = "   "
+        with self.assertRaises(ValueError):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_rejects_extra_alert_empty_string_value(self) -> None:
+        """Extra alert category with empty string value must be rejected."""
+        p = _p()
+        p["alerts"]["availability"] = ""
+        with self.assertRaises(ValueError):
+            self._build(p, captured_at=_CAPTURED_AT)
+
 
 # ===========================================================================
 # Action group validation
@@ -766,6 +794,51 @@ class TestSchemaValidation(unittest.TestCase):
 
     def test_schema_file_exists(self) -> None:
         self.assertTrue(_SCHEMA_PATH.exists(), f"Missing schema: {_SCHEMA_PATH}")
+
+    def test_stdlib_rejects_extra_alert_int_parity(self) -> None:
+        """stdlib rejects extra alert int value — mirrors JSON Schema additionalProperties."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["alerts"]["availability"] = 42
+        with self.assertRaises((ValueError, TypeError)):
+            self._validate(p)
+
+    def test_stdlib_rejects_extra_alert_dict_parity(self) -> None:
+        """stdlib rejects extra alert dict value — mirrors JSON Schema additionalProperties."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["alerts"]["availability"] = {"rule": "avail-rule"}
+        with self.assertRaises((ValueError, TypeError)):
+            self._validate(p)
+
+    def test_stdlib_rejects_extra_alert_blank_parity(self) -> None:
+        """stdlib rejects extra alert blank string — mirrors JSON Schema minLength:1."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["alerts"]["availability"] = "  "
+        with self.assertRaises((ValueError, TypeError)):
+            self._validate(p)
+
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_extra_alert_int(self) -> None:
+        """jsonschema rejects extra alert int value via additionalProperties."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["alerts"]["availability"] = 42
+        with self.assertRaises(Exception):
+            self._validate(p)
+
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_extra_alert_dict(self) -> None:
+        """jsonschema rejects extra alert dict value via additionalProperties."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["alerts"]["availability"] = {"rule": "avail-rule"}
+        with self.assertRaises(Exception):
+            self._validate(p)
+
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_extra_alert_blank(self) -> None:
+        """jsonschema rejects extra alert blank string via minLength:1."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["alerts"]["availability"] = "  "
+        with self.assertRaises(Exception):
+            self._validate(p)
 
 
 # ===========================================================================

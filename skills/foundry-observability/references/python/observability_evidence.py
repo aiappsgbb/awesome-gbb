@@ -169,8 +169,8 @@ def _validate_profile_stdlib(profile: dict) -> None:
     missing_alerts = _REQUIRED_ALERTS - set(alerts.keys())
     if missing_alerts:
         raise ValueError(f"missing alert categories: {', '.join(sorted(missing_alerts))}")
-    for category in _REQUIRED_ALERTS:
-        _require_non_blank_string(alerts[category], f"alerts.{category}")
+    for category, value in alerts.items():
+        _require_non_blank_string(value, f"alerts.{category}")
 
     # evaluator_definition
     ev = profile["evaluator_definition"]
