@@ -234,6 +234,7 @@ query-planning model names are `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
 `gpt-4.1-mini`, and `gpt-4.1-nano`. Omit `apiKey` and `authIdentity` from
 the model definition to use the Azure AI Search system-assigned managed
 identity; grant that identity access out of band rather than embedding a key.
+The Knowledge Agent PUT also requires `Prefer: return=representation`.
 
 ### 9.2 Chunking Strategy
 

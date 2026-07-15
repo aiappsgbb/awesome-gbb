@@ -249,10 +249,54 @@ class FoundryIqGaContractTests(unittest.TestCase):
             )
 
         self.assertEqual(manager.api_version, "2025-05-01-preview")
+        self.assertIn("`Prefer: return=representation`", self.skill)
+        self.assertIn("`Prefer: return=representation`", self.prd)
         request.assert_called_once_with(
             "PUT",
             "/agents('policy-agent')",
             expected_body,
+            headers={"Prefer": "return=representation"},
+        )
+
+    def test_legacy_agent_put_merges_required_prefer_header(self) -> None:
+        module = _load_knowledge_agent_manager()
+        with patch.object(
+            module,
+            "_get_search_headers",
+            return_value={"Content-Type": "application/json"},
+        ):
+            manager = module.KnowledgeAgentManager(
+                endpoint="https://example.search.windows.net"
+            )
+        response = SimpleNamespace(
+            status_code=200,
+            text="",
+            json=lambda: {"name": "policy-agent"},
+        )
+
+        with patch.object(
+            module.requests,
+            "request",
+            return_value=response,
+        ) as send:
+            manager._make_request(
+                "PUT",
+                "/agents('policy-agent')",
+                {"name": "policy-agent"},
+                headers={"Prefer": "return=representation"},
+            )
+
+        send.assert_called_once_with(
+            method="PUT",
+            url=(
+                "https://example.search.windows.net/"
+                "agents('policy-agent')?api-version=2025-05-01-preview"
+            ),
+            headers={
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+            json={"name": "policy-agent"},
         )
 
     def test_published_2025_05_agent_lifecycle_and_retrieve_tuple(self) -> None:

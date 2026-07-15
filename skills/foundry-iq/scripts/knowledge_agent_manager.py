@@ -75,16 +75,18 @@ class KnowledgeAgentManager:
         self,
         method: str,
         path: str,
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Make an HTTP request to the Azure AI Search API."""
         url = f"{self.endpoint}{path}?api-version={self.api_version}"
+        request_headers = {**self.headers, **(headers or {})}
 
         response = requests.request(
             method=method,
             url=url,
-            headers=self.headers,
-            json=data
+            headers=request_headers,
+            json=data,
         )
 
         if response.status_code == 204:
@@ -178,6 +180,7 @@ class KnowledgeAgentManager:
             "PUT",
             _knowledge_agent_path(agent_name),
             agent_config,
+            headers={"Prefer": "return=representation"},
         )
 
     def delete_agent(self, agent_name: str) -> Dict[str, Any]:
