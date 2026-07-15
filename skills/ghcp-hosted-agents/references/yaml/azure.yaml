@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+#
+# Canonical unified GHCP SDK hosted-agent azure.yaml — GA container-deploy shape.
+#
+# Source of truth for the prose example in
+# `../../SKILL.md § azure.yaml (unified GA deployment)`.
+#
+# Matches the official Microsoft sample
+# (microsoft-foundry/foundry-samples commit
+# 22b2c89c676bddb107ea370330d6341e25ff674b,
+# samples/python/hosted-agents/bring-your-own/invocations/github-copilot),
+# rewritten as a `language: docker` container-build service (brownfield
+# direct-copy shape) instead of the sample's `codeConfiguration`
+# source-build shape. This is the single-file contract — there is no
+# separate `agent.yaml`.
+#
+# IMPORTANT: this YAML is necessary but not sufficient for direct-copy
+# brownfield deployment. If you copy these files and run `azd deploy`
+# without first running `azd ai agent init`, the active azd environment
+# must also contain AZURE_SUBSCRIPTION_ID, FOUNDRY_PROJECT_ENDPOINT, the
+# full AZURE_AI_PROJECT_ID ARM ID, the bare
+# AZURE_CONTAINER_REGISTRY_ENDPOINT hostname, and
+# AZURE_AI_MODEL_DEPLOYMENT_NAME. The guided init command wires those
+# values for you. Omit `endpoint:` and add a `deployments:` list under
+# `ai-project` only when `azd provision` should create a fresh project +
+# model deployment.
+name: my-agent-project
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.4'
+
+services:
+  ai-project:
+    host: azure.ai.project
+    # Connect to an existing project instead of provisioning a new one.
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
+
+  my-agent:
+    host: azure.ai.agent
+    project: .
+    language: docker
+    uses:
+      - ai-project
+    kind: hosted
+    name: my-agent
+    description: A hosted agent built with the GitHub Copilot SDK (CopilotClient) and the Invocations protocol.
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    environmentVariables:
+      # NEVER declare FOUNDRY_PROJECT_ENDPOINT (or any other FOUNDRY_*
+      # var) here — the platform injects it automatically.
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    container:
+      resources:
+        cpu: "1"
+        memory: 2Gi
+
+infra:
+  # Extension-backed, bicep-less provisioning from the services graph.
+  # This is the provider used by the current official Hosted Agent samples.
+  provider: microsoft.foundry

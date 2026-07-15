@@ -1,4 +1,10 @@
-"""Invoke a GHCP SDK hosted agent via Invocations SSE endpoint.
+"""Invoke a GHCP SDK hosted agent via Invocations SSE endpoint (advanced/optional).
+
+The PRIMARY invoke path is `azd ai agent invoke <name> '{"input": "..."}'
+--protocol invocations --output raw` — see SKILL.md § "Invoking the Agent".
+This script is an optional SDK-level alternative for callers that need to
+parse the raw SSE stream directly (e.g. a bot integration), not the
+recommended first path.
 
 Parses both assistant.message and assistant.message_delta events.
 Use as a library or run directly to test an agent.
@@ -31,6 +37,9 @@ def invoke_invocations(
       - assistant.message: full final message (preferred)
       - assistant.message_delta: streaming content chunks (fallback)
     """
+    # GA endpoint — no `Foundry-Features: *=V1Preview` header (removed for
+    # GA, Azure/azure-dev PR #8866). `api-version=v1` is the current GA
+    # literal for this endpoint.
     url = f"{endpoint}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
     resp = requests.post(
         url,
@@ -38,7 +47,6 @@ def invoke_invocations(
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "Foundry-Features": "HostedAgents=V1Preview",
         },
         stream=True,
         timeout=timeout,
