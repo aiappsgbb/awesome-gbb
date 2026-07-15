@@ -3,7 +3,8 @@
 Covers: module import (TDD missing-first), valid normalization, evaluator roles,
 version-pin flag, reliable/unreliable calibration, groundedness hard-gate rejection,
 missing/invalid roles, malformed types, deterministic write, valid/invalid fixtures,
-schema shape, and stdlib-fallback path.
+schema shape, stdlib-fallback path, and trust-profile.yaml / calibration-run.json
+contract pins.
 
 Written as ``unittest.TestCase`` (NOT pytest fixtures) because
 ``.github/workflows/skill-test.yml::unit-tests`` invokes::
@@ -17,6 +18,7 @@ from __future__ import annotations
 import copy
 import importlib
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -39,6 +41,16 @@ _SCHEMA_PATH = _REFS_DIR / "trust-profile.schema.json"
 
 if str(_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(_SKILL_DIR))
+
+# ---------------------------------------------------------------------------
+# Optional yaml import — used by trust-profile.yaml contract tests.
+# ---------------------------------------------------------------------------
+try:
+    import yaml as _yaml  # type: ignore[import]
+    _HAS_YAML = True
+except ImportError:
+    _yaml = None  # type: ignore[assignment]
+    _HAS_YAML = False
 
 # ---------------------------------------------------------------------------
 # Optional jsonschema import — mirrored from the module under test.
@@ -901,6 +913,245 @@ class TestStdlibFallback(unittest.TestCase):
             with self.assertRaises(TypeError) as ctx:
                 validate_profile_with_schema(bad)
         self.assertIn("threshold", str(ctx.exception))
+
+
+# ===========================================================================
+# trust-profile.yaml contract pins
+# ===========================================================================
+
+
+@unittest.skipUnless(_HAS_YAML, "pyyaml not installed")
+class TestTrustProfileYAML(unittest.TestCase):
+    """Pin tests for skills/foundry-evals/references/data/trust-profile.yaml.
+
+    These tests document the expected structure of the YAML sample so any
+    accidental edit is caught immediately.
+    """
+
+    _YAML_PATH = _DATA_DIR / "trust-profile.yaml"
+
+    def setUp(self) -> None:
+        from eval_trust import _validate_profile_stdlib, _compute_pins
+        self._validate_stdlib = _validate_profile_stdlib
+        self._compute_pins = _compute_pins
+        self._profile: dict = _yaml.safe_load(
+            self._YAML_PATH.read_text(encoding="utf-8")
+        )
+
+    def test_file_exists(self) -> None:
+        self.assertTrue(self._YAML_PATH.exists(), "trust-profile.yaml must exist")
+
+    def test_parses_as_yaml(self) -> None:
+        data = _yaml.safe_load(self._YAML_PATH.read_text(encoding="utf-8"))
+        self.assertIsInstance(data, dict)
+
+    def test_passes_stdlib_validation(self) -> None:
+        self._validate_stdlib(self._profile)  # must not raise
+
+    def test_unit_of_analysis_is_session(self) -> None:
+        self.assertEqual(self._profile["unit_of_analysis"], "session")
+
+    def test_task_completion_is_gate(self) -> None:
+        roles = {e["name"]: e["role"] for e in self._profile["evaluators"]}
+        self.assertEqual(roles.get("task_completion"), "gate")
+
+    def test_csat_is_gate(self) -> None:
+        roles = {e["name"]: e["role"] for e in self._profile["evaluators"]}
+        self.assertEqual(roles.get("csat"), "gate")
+
+    def test_groundedness_is_human_review(self) -> None:
+        roles = {e["name"]: e["role"] for e in self._profile["evaluators"]}
+        self.assertEqual(roles.get("groundedness"), "human_review")
+
+    def test_groundedness_not_gate(self) -> None:
+        """groundedness must never be gate in the sample — enforces the default rule."""
+        roles = {e["name"]: e["role"] for e in self._profile["evaluators"]}
+        self.assertNotEqual(roles.get("groundedness"), "gate")
+
+    def test_coherence_is_trend(self) -> None:
+        roles = {e["name"]: e["role"] for e in self._profile["evaluators"]}
+        self.assertEqual(roles.get("coherence"), "trend")
+
+    def test_all_pins_set(self) -> None:
+        self.assertTrue(self._compute_pins(self._profile["evaluators"]))
+
+    def test_has_p1_task_rubric(self) -> None:
+        self.assertIn("task_rubric", self._profile)
+        self.assertIn("reviewed", self._profile["task_rubric"])
+
+    def test_has_p1_simulator_with_usr8(self) -> None:
+        self.assertIn("simulator", self._profile)
+        sim = self._profile["simulator"]
+        self.assertIn("used", sim)
+        self.assertIn("usr8", sim)
+
+    def test_has_p1_benchmark(self) -> None:
+        self.assertIn("benchmark", self._profile)
+        bm = self._profile["benchmark"]
+        for field in ("name", "version", "judge", "agent_config"):
+            self.assertIn(field, bm, f"benchmark.{field} missing")
+        self.assertIn("delta", bm)
+
+    def test_sampling_diversity_and_uniform(self) -> None:
+        s = self._profile["sampling"]
+        self.assertEqual(s["evaluation"], "diversity")
+        self.assertEqual(s["sla"], "uniform")
+
+    def test_threshold_rationale_is_string(self) -> None:
+        self.assertIsInstance(self._profile["threshold_rationale"], str)
+        self.assertGreater(len(self._profile["threshold_rationale"].strip()), 0)
+
+    def test_last_calibrated_at_is_string(self) -> None:
+        # yaml.safe_load must NOT parse it as a datetime — must remain a string
+        self.assertIsInstance(self._profile["last_calibrated_at"], str)
+
+    def test_no_real_arm_subscription_ids(self) -> None:
+        text = self._YAML_PATH.read_text(encoding="utf-8")
+        arm_re = re.compile(
+            r"subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            re.I,
+        )
+        self.assertIsNone(arm_re.search(text), "trust-profile.yaml must not contain real ARM IDs")
+
+    def test_no_real_tenant_ids_in_judge_fields(self) -> None:
+        text = self._YAML_PATH.read_text(encoding="utf-8")
+        # Tenant IDs appear as 8-4-4-4-12 UUID not adjacent to a resource-path keyword
+        # Check judge deployment names don't look like real GUIDs
+        uuid_re = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+        matches = uuid_re.findall(text)
+        self.assertEqual(matches, [], f"Unexpected UUID-shaped values in trust-profile.yaml: {matches}")
+
+
+# ===========================================================================
+# calibration-run.json contract pins
+# ===========================================================================
+
+
+class TestCalibrationRunJSON(unittest.TestCase):
+    """Pin tests for skills/foundry-evals/references/data/calibration-run.json."""
+
+    _JSON_PATH = _DATA_DIR / "calibration-run.json"
+
+    def setUp(self) -> None:
+        from eval_trust import _validate_calibration
+        self._validate = _validate_calibration
+        self._data: dict = json.loads(self._JSON_PATH.read_text(encoding="utf-8"))
+
+    def test_file_exists(self) -> None:
+        self.assertTrue(self._JSON_PATH.exists(), "calibration-run.json must exist")
+
+    def test_parses_as_json(self) -> None:
+        data = json.loads(self._JSON_PATH.read_text(encoding="utf-8"))
+        self.assertIsInstance(data, dict)
+
+    def test_schema_id(self) -> None:
+        self.assertEqual(self._data["$schema"], "foundry-evals-calibration/v1")
+
+    def test_passes_calibration_validation(self) -> None:
+        self._validate(self._data)  # must not raise
+
+    def test_repeated_runs_ge_four(self) -> None:
+        self.assertGreaterEqual(self._data["repeated_runs"], 4)
+
+    def test_agreement_reliable(self) -> None:
+        self.assertGreaterEqual(self._data["agreement"], 0.80)
+
+    def test_flip_rate_reliable(self) -> None:
+        self.assertLessEqual(self._data["flip_rate"], 0.10)
+
+    def test_known_good_positive(self) -> None:
+        self.assertGreater(self._data["known_good"], 0)
+
+    def test_known_bad_positive(self) -> None:
+        self.assertGreater(self._data["known_bad"], 0)
+
+    def test_captured_at_is_string(self) -> None:
+        self.assertIsInstance(self._data["captured_at"], str)
+
+    def test_runs_array_matches_repeated_runs_count(self) -> None:
+        runs = self._data.get("runs", [])
+        self.assertEqual(
+            len(runs),
+            self._data["repeated_runs"],
+            "runs array length must equal repeated_runs",
+        )
+
+    def test_each_run_has_agreement_and_flip_rate(self) -> None:
+        for i, run in enumerate(self._data.get("runs", [])):
+            with self.subTest(run_index=i):
+                self.assertIn("agreement", run)
+                self.assertIn("flip_rate", run)
+                self.assertIsInstance(run["agreement"], float)
+                self.assertIsInstance(run["flip_rate"], float)
+
+
+# ===========================================================================
+# Trust evidence integration: YAML profile + JSON calibration → evidence doc
+# ===========================================================================
+
+
+@unittest.skipUnless(_HAS_YAML, "pyyaml not installed")
+class TestTrustEvidenceIntegration(unittest.TestCase):
+    """End-to-end contract: load YAML profile + JSON calibration, build evidence."""
+
+    def setUp(self) -> None:
+        from eval_trust import build_trust_evidence, write_trust_evidence
+        self._build = build_trust_evidence
+        self._write = write_trust_evidence
+
+        self._profile: dict = _yaml.safe_load(
+            (_DATA_DIR / "trust-profile.yaml").read_text(encoding="utf-8")
+        )
+        self._calibration: dict = json.loads(
+            (_DATA_DIR / "calibration-run.json").read_text(encoding="utf-8")
+        )
+        self._evidence: dict = self._build(self._profile, self._calibration)
+
+    def test_evidence_schema_id(self) -> None:
+        self.assertEqual(self._evidence["$schema"], "foundry-evals-trust-evidence/v1")
+
+    def test_evidence_session_field(self) -> None:
+        self.assertEqual(self._evidence["session"], "session")
+
+    def test_evidence_groundedness_not_gate(self) -> None:
+        roles = self._evidence["evaluator_roles"]
+        self.assertNotEqual(roles.get("groundedness"), "gate")
+
+    def test_evidence_pins_set(self) -> None:
+        self.assertTrue(self._evidence["judge_and_evaluator_versions_pinned"])
+
+    def test_evidence_calibration_reliable(self) -> None:
+        self.assertTrue(self._evidence["evaluator_reliability_ok"])
+
+    def test_evidence_calibration_summary_present(self) -> None:
+        cal = self._evidence["calibration"]
+        for field in ("captured_at", "known_good", "known_bad", "repeated_runs", "agreement", "flip_rate", "reliable"):
+            self.assertIn(field, cal, f"calibration.{field} missing from evidence")
+
+    def test_write_evidence_deterministic(self) -> None:
+        """write_trust_evidence produces byte-identical output on repeated calls."""
+        import os
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            path1 = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            path2 = f.name
+        try:
+            self._write(self._evidence, path1)
+            self._write(self._evidence, path2)
+            self.assertEqual(
+                Path(path1).read_bytes(),
+                Path(path2).read_bytes(),
+                "write_trust_evidence output must be deterministic",
+            )
+        finally:
+            os.unlink(path1)
+            os.unlink(path2)
+
+    def test_evidence_has_sampling_passthrough(self) -> None:
+        self.assertIn("sampling", self._evidence)
+        self.assertEqual(self._evidence["sampling"]["evaluation"], "diversity")
+        self.assertEqual(self._evidence["sampling"]["sla"], "uniform")
 
 
 if __name__ == "__main__":

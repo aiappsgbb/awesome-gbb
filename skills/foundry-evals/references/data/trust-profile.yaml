@@ -1,0 +1,94 @@
+# Human-editable YAML trust profile.
+# Equivalent to trust-profile.valid.json — author prefers YAML for review.
+# Edit evaluators, thresholds, and P1 fields to match your deployed stack.
+#
+# Schema: foundry-evals-trust-profile/v1
+# See: ../../SKILL.md § Trustworthy Evaluation Workflow
+
+$schema: foundry-evals-trust-profile/v1
+unit_of_analysis: session
+
+evaluators:
+  - name: task_completion
+    role: gate
+    evaluator_version: "1.2.0"
+    judge:
+      deployment: gpt-4o-mini-eval
+      model: gpt-4o-mini-2024-07-18
+      version: "2024-07-18"
+    threshold: 0.80
+
+  - name: csat
+    role: gate
+    evaluator_version: "1.0.1"
+    judge:
+      deployment: gpt-4o-mini-eval
+      model: gpt-4o-mini-2024-07-18
+      version: "2024-07-18"
+    threshold: 0.75
+
+  - name: groundedness
+    role: human_review
+    evaluator_version: "1.1.0"
+    judge:
+      deployment: gpt-4o-eval
+      model: gpt-4o-2024-11-20
+      version: "2024-11-20"
+    threshold: 0.85
+
+  - name: coherence
+    role: trend
+    evaluator_version: "1.0.0"
+    judge:
+      deployment: gpt-4o-mini-eval
+      model: gpt-4o-mini-2024-07-18
+      version: "2024-07-18"
+    threshold: 0.70
+
+threshold_rationale: >
+  task_completion and csat gates calibrated from 50 known-good / 20 known-bad sessions
+  (agreement 0.92, flip_rate 0.05, 5 repeated runs on the held-out set). groundedness
+  is human_review until a second calibration pass confirms agreement >= 0.80.
+  coherence is trend-only — no gate assigned until a release-to-release delta baseline
+  is established.
+last_calibrated_at: "2025-01-10T14:00:00Z"
+
+sampling:
+  evaluation: diversity
+  sla: uniform
+
+evaluation_design: >
+  Stratified sample of 100 sessions per deployment cycle covering all task types in the
+  task rubric. Diversity sampling selects sessions across intent categories, time-of-day
+  bands, and agent versions. SLA (production gate) draws a uniform random sample.
+
+task_rubric:
+  reviewed: true
+  version: "2.1"
+  reviewed_against_known_good_bad: true
+  criteria:
+    - Agent completes the primary requested task
+    - Response is grounded in retrieved context
+    - Coherence score reflects conversational flow across session turns
+
+simulator:
+  used: false
+  usr8: null
+  note: >
+    USR-8 (Unified Scenario Rating 8-point scale) ratings MUST be collected from real
+    human sessions before simulator-generated conversations are accepted as evaluation
+    evidence. Do not use simulator output as ground-truth until USR-8 baseline is
+    established and documented here.
+
+benchmark:
+  name: foundry-evals-baseline-2025Q1
+  version: "1.0.0"
+  judge: gpt-4o-mini-eval
+  agent_config: hosted-agent-v2
+  run_metadata:
+    date: "2025-01-10"
+    sessions: 100
+    task_types: [inquiry, escalation, lookup, multi-turn]
+  delta: 0.03
+  direction: improvement
+  applicable: true

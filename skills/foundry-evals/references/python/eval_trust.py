@@ -1,6 +1,6 @@
 """Canonical evaluator-trust contract helper for foundry-evals.
 
-Source of truth for the evaluator-trust contract in `../../SKILL.md § Interpreting Results`.
+Source of truth for the evaluator-trust contract in `../../SKILL.md § Trustworthy Evaluation Workflow`.
 
 Builds normalised trust-evidence documents from a trust profile and a calibration
 snapshot, encoding the reliability and pin checks that pilots require before promoting

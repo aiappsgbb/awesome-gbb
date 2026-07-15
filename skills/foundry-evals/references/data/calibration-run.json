@@ -1,0 +1,17 @@
+{
+  "$schema": "foundry-evals-calibration/v1",
+  "captured_at": "2025-01-10T14:00:00Z",
+  "known_good": 50,
+  "known_bad": 20,
+  "repeated_runs": 5,
+  "agreement": 0.92,
+  "flip_rate": 0.05,
+  "runs": [
+    {"run_index": 1, "agreement": 0.90, "flip_rate": 0.06},
+    {"run_index": 2, "agreement": 0.93, "flip_rate": 0.05},
+    {"run_index": 3, "agreement": 0.91, "flip_rate": 0.05},
+    {"run_index": 4, "agreement": 0.92, "flip_rate": 0.05},
+    {"run_index": 5, "agreement": 0.94, "flip_rate": 0.04}
+  ],
+  "notes": "Five independent scoring passes of the same 70-session held-out set (50 known-good, 20 known-bad). Agreement and flip_rate are computed across all run pairs. All five runs exceed the reliability gate (agreement >= 0.80, flip_rate <= 0.10)."
+}
