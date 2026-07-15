@@ -6,8 +6,10 @@ import importlib.util
 import inspect
 import json
 import re
+import sys
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
 import yaml
@@ -101,7 +103,10 @@ def _load_azure_openai_client():
     if spec is None or spec.loader is None:
         raise AssertionError("could not load azure_openai_client.py")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    openai_stub = ModuleType("openai")
+    openai_stub.AzureOpenAI = object
+    with patch.dict(sys.modules, {"openai": openai_stub}):
+        spec.loader.exec_module(module)
     return module
 
 
