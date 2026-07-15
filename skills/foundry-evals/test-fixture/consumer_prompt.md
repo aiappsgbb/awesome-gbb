@@ -39,7 +39,7 @@ Read `foundry-evals` `SKILL.md § Trustworthy Evaluation Workflow`. Then:
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-python3 -S -c "
+python3 -c "
 import sys, json, pathlib
 
 # ---- path setup ----

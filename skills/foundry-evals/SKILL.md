@@ -973,22 +973,22 @@ is cleared — the canonical helper enforces this as a hard check.
 
 ### P1 Requirements Before Gate Assignment
 
-1. **Task-specific weighted rubric** — author a rubric in `task_rubric` with
+1. **Task-specific weighted rubric** — author a rubric in `task_specific_rubric` with
    per-criterion weights; review it against your known-good and known-bad
    session set before adopting thresholds.
 
 2. **USR-8 before simulator evidence** — collect USR-8 (Unified Scenario Rating
    8-point scale) ratings from real human sessions before using
    simulator-generated conversations as evaluation evidence. Document in
-   `simulator.usr8`.
+   `simulator.usr8_report`.
 
 3. **Diversity sampling for eval / rubric design / fine-tuning; uniform for
    production SLA gates** — set `sampling.evaluation: diversity` and
    `sampling.sla: uniform` in your trust profile.
 
 4. **Benchmark metadata** — when comparing evaluation results across releases,
-   pin `benchmark.name`, `benchmark.version`, `benchmark.judge`, and
-   `benchmark.agent_config` so release-to-release deltas are attributable.
+   pin `benchmark.name`, `benchmark.version`, `benchmark.judge_version`, and
+   set `benchmark.applicable: true` so release-to-release deltas are attributable.
    Applicable only when cross-release comparison is relevant to your deployment.
 
 ### Emit Output Artefacts

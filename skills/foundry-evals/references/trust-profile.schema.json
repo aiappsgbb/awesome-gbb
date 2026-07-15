@@ -38,22 +38,43 @@
       "$ref": "#/definitions/Sampling"
     },
     "evaluation_design": {
-      "type": "string",
-      "description": "Optional description of the sampling and evaluation design."
-    },
-    "task_rubric": {
       "type": "object",
-      "description": "Optional reviewed task rubric describing evaluation criteria.",
-      "additionalProperties": true
+      "description": "Optional evaluation design flags for the trust profile.",
+      "additionalProperties": true,
+      "properties": {
+        "held_out_data_only": {
+          "type": "boolean",
+          "description": "True if evaluation uses only held-out data not seen during rubric authoring."
+        },
+        "rubric_applicable": {
+          "type": "boolean",
+          "description": "True if a task-specific rubric applies to this evaluation."
+        }
+      }
+    },
+    "task_specific_rubric": {
+      "type": "object",
+      "description": "Optional reviewed task-specific rubric describing evaluation criteria.",
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Rubric version identifier."
+        },
+        "reviewed": {
+          "type": "boolean",
+          "description": "True if the rubric has been reviewed against known-good and known-bad sessions."
+        }
+      }
     },
     "simulator": {
       "type": "object",
-      "description": "Optional simulator configuration.",
+      "description": "Optional simulator configuration. Use usr8_report to document USR-8 baseline results from real human sessions.",
       "additionalProperties": true
     },
     "benchmark": {
       "type": "object",
-      "description": "Optional pinned benchmark reference with delta.",
+      "description": "Optional pinned benchmark reference. Use applicable, name, version, judge_version, and delta for release-to-release attribution.",
       "additionalProperties": true
     }
   },

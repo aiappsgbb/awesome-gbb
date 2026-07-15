@@ -57,38 +57,21 @@ sampling:
   evaluation: diversity
   sla: uniform
 
-evaluation_design: >
-  Stratified sample of 100 sessions per deployment cycle covering all task types in the
-  task rubric. Diversity sampling selects sessions across intent categories, time-of-day
-  bands, and agent versions. SLA (production gate) draws a uniform random sample.
+evaluation_design:
+  held_out_data_only: true
+  rubric_applicable: true
 
-task_rubric:
-  reviewed: true
+task_specific_rubric:
   version: "2.1"
-  reviewed_against_known_good_bad: true
-  criteria:
-    - Agent completes the primary requested task
-    - Response is grounded in retrieved context
-    - Coherence score reflects conversational flow across session turns
+  reviewed: true
 
 simulator:
   used: false
-  usr8: null
-  note: >
-    USR-8 (Unified Scenario Rating 8-point scale) ratings MUST be collected from real
-    human sessions before simulator-generated conversations are accepted as evaluation
-    evidence. Do not use simulator output as ground-truth until USR-8 baseline is
-    established and documented here.
+  usr8_report: null
 
 benchmark:
+  applicable: true
   name: foundry-evals-baseline-2025Q1
   version: "1.0.0"
-  judge: gpt-4o-mini-eval
-  agent_config: hosted-agent-v2
-  run_metadata:
-    date: "2025-01-10"
-    sessions: 100
-    task_types: [inquiry, escalation, lookup, multi-turn]
+  judge_version: "2024-07-18"
   delta: 0.03
-  direction: improvement
-  applicable: true

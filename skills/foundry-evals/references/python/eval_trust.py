@@ -286,7 +286,7 @@ def build_trust_evidence(profile: dict, calibration: dict) -> dict[str, Any]:
     }
 
     # Optional P1 fields — pass through when present in profile.
-    for optional_key in ("evaluation_design", "task_rubric", "simulator", "sampling", "benchmark"):
+    for optional_key in ("evaluation_design", "task_specific_rubric", "simulator", "sampling", "benchmark"):
         if optional_key in profile:
             evidence[optional_key] = profile[optional_key]
 

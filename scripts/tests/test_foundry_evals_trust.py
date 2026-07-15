@@ -567,22 +567,23 @@ class TestBuildTrustEvidence(unittest.TestCase):
     # --- optional P1 fields ---
 
     def test_evaluation_design_included_when_present(self) -> None:
-        p = _p(evaluation_design="Stratified sample across all task types.")
+        design = {"held_out_data_only": True, "rubric_applicable": True}
+        p = _p(evaluation_design=design)
         ev = self._build(p, _VALID_CALIBRATION)
-        self.assertEqual(ev["evaluation_design"], "Stratified sample across all task types.")
+        self.assertEqual(ev["evaluation_design"], design)
 
     def test_evaluation_design_absent_when_not_in_profile(self) -> None:
         ev = self._build(_VALID_PROFILE, _VALID_CALIBRATION)
         self.assertNotIn("evaluation_design", ev)
 
-    def test_task_rubric_included_when_present(self) -> None:
-        rubric = {"reviewed": True, "version": "2.1", "criteria": ["step 1"]}
-        p = _p(task_rubric=rubric)
+    def test_task_specific_rubric_included_when_present(self) -> None:
+        rubric = {"reviewed": True, "version": "2.1"}
+        p = _p(task_specific_rubric=rubric)
         ev = self._build(p, _VALID_CALIBRATION)
-        self.assertEqual(ev["task_rubric"], rubric)
+        self.assertEqual(ev["task_specific_rubric"], rubric)
 
     def test_simulator_included_when_present(self) -> None:
-        simulator = {"used": False, "usr8": None}
+        simulator = {"used": False, "usr8_report": None}
         p = _p(simulator=simulator)
         ev = self._build(p, _VALID_CALIBRATION)
         self.assertEqual(ev["simulator"], simulator)
@@ -592,7 +593,7 @@ class TestBuildTrustEvidence(unittest.TestCase):
         self.assertEqual(ev["sampling"], _VALID_PROFILE["sampling"])
 
     def test_benchmark_included_when_present(self) -> None:
-        benchmark = {"name": "baseline-2025Q1", "delta": 0.03, "pinned": True}
+        benchmark = {"applicable": True, "name": "baseline-2025Q1", "version": "1.0.0", "judge_version": "2024-07-18", "delta": 0.03}
         p = _p(benchmark=benchmark)
         ev = self._build(p, _VALID_CALIBRATION)
         self.assertEqual(ev["benchmark"], benchmark)
@@ -753,7 +754,7 @@ class TestFixtures(unittest.TestCase):
         data = json.loads((_DATA_DIR / "trust-profile.valid.json").read_text(encoding="utf-8"))
         self.assertIn("simulator", data)
         self.assertFalse(data["simulator"]["used"])
-        self.assertIsNone(data["simulator"]["usr8"])
+        self.assertIsNone(data["simulator"]["usr8_report"])
 
     def test_valid_fixture_has_benchmark_with_delta(self) -> None:
         data = json.loads((_DATA_DIR / "trust-profile.valid.json").read_text(encoding="utf-8"))
@@ -975,20 +976,20 @@ class TestTrustProfileYAML(unittest.TestCase):
     def test_all_pins_set(self) -> None:
         self.assertTrue(self._compute_pins(self._profile["evaluators"]))
 
-    def test_has_p1_task_rubric(self) -> None:
-        self.assertIn("task_rubric", self._profile)
-        self.assertIn("reviewed", self._profile["task_rubric"])
+    def test_has_p1_task_specific_rubric(self) -> None:
+        self.assertIn("task_specific_rubric", self._profile)
+        self.assertIn("reviewed", self._profile["task_specific_rubric"])
 
-    def test_has_p1_simulator_with_usr8(self) -> None:
+    def test_has_p1_simulator_with_usr8_report(self) -> None:
         self.assertIn("simulator", self._profile)
         sim = self._profile["simulator"]
         self.assertIn("used", sim)
-        self.assertIn("usr8", sim)
+        self.assertIn("usr8_report", sim)
 
     def test_has_p1_benchmark(self) -> None:
         self.assertIn("benchmark", self._profile)
         bm = self._profile["benchmark"]
-        for field in ("name", "version", "judge", "agent_config"):
+        for field in ("name", "version", "judge_version", "applicable"):
             self.assertIn(field, bm, f"benchmark.{field} missing")
         self.assertIn("delta", bm)
 
@@ -1152,6 +1153,148 @@ class TestTrustEvidenceIntegration(unittest.TestCase):
         self.assertIn("sampling", self._evidence)
         self.assertEqual(self._evidence["sampling"]["evaluation"], "diversity")
         self.assertEqual(self._evidence["sampling"]["sla"], "uniform")
+
+
+
+
+# ===========================================================================
+# YAML / valid JSON semantic equality
+# ===========================================================================
+
+
+@unittest.skipUnless(_HAS_YAML, "pyyaml not installed")
+class TestYAMLJSONSemanticEquality(unittest.TestCase):
+    """trust-profile.yaml and trust-profile.valid.json must be structurally equivalent.
+
+    The YAML is the human-editable source of truth; the JSON is the machine-readable
+    equivalent. Both must deserialise to semantically equal Python objects (modulo
+    $schema and threshold_rationale whitespace differences acceptable to pyyaml).
+    """
+
+    _YAML_PATH = _DATA_DIR / "trust-profile.yaml"
+    _JSON_PATH = _DATA_DIR / "trust-profile.valid.json"
+
+    def _normalise(self, d: dict) -> dict:
+        """Deep-normalise a profile dict for semantic comparison.
+
+        - Strip leading/trailing whitespace from all string values recursively
+          (YAML block scalars may carry a trailing newline).
+        - Remove $schema — format identifier not semantically meaningful here.
+        """
+        import copy
+
+        def _strip(v: object) -> object:
+            if isinstance(v, str):
+                return v.strip()
+            if isinstance(v, dict):
+                return {k: _strip(val) for k, val in v.items()}
+            if isinstance(v, list):
+                return [_strip(item) for item in v]
+            return v
+
+        out = copy.deepcopy(d)
+        out.pop("$schema", None)
+        return _strip(out)  # type: ignore[return-value]
+
+    def setUp(self) -> None:
+        self._yaml_profile: dict = _yaml.safe_load(
+            self._YAML_PATH.read_text(encoding="utf-8")
+        )
+        self._json_profile: dict = json.loads(
+            self._JSON_PATH.read_text(encoding="utf-8")
+        )
+
+    def test_both_files_exist(self) -> None:
+        self.assertTrue(self._YAML_PATH.exists())
+        self.assertTrue(self._JSON_PATH.exists())
+
+    def test_yaml_json_structural_equivalence(self) -> None:
+        """YAML and valid JSON must produce semantically equal Python objects."""
+        self.assertEqual(
+            self._normalise(self._yaml_profile),
+            self._normalise(self._json_profile),
+            "trust-profile.yaml and trust-profile.valid.json are not semantically equal",
+        )
+
+    def test_both_have_all_p1_keys(self) -> None:
+        p1_keys = {"evaluation_design", "task_specific_rubric", "simulator", "sampling", "benchmark"}
+        for key in p1_keys:
+            with self.subTest(key=key):
+                self.assertIn(key, self._yaml_profile, f"YAML missing P1 key: {key}")
+                self.assertIn(key, self._json_profile, f"JSON missing P1 key: {key}")
+
+
+# ===========================================================================
+# Normalized evidence: all P1 keys present
+# ===========================================================================
+
+
+@unittest.skipUnless(_HAS_YAML, "pyyaml not installed")
+class TestNormalizedEvidenceP1Keys(unittest.TestCase):
+    """Evidence built from the reference YAML must carry all P1 keys with correct structure."""
+
+    def setUp(self) -> None:
+        from eval_trust import build_trust_evidence
+        self._build = build_trust_evidence
+        self._profile: dict = _yaml.safe_load(
+            (_DATA_DIR / "trust-profile.yaml").read_text(encoding="utf-8")
+        )
+        self._calibration: dict = json.loads(
+            (_DATA_DIR / "calibration-run.json").read_text(encoding="utf-8")
+        )
+        self._evidence: dict = self._build(self._profile, self._calibration)
+
+    def test_evidence_has_evaluation_design(self) -> None:
+        self.assertIn("evaluation_design", self._evidence)
+        ed = self._evidence["evaluation_design"]
+        self.assertIsInstance(ed, dict)
+        self.assertIn("held_out_data_only", ed)
+        self.assertIn("rubric_applicable", ed)
+
+    def test_evidence_has_task_specific_rubric(self) -> None:
+        self.assertIn("task_specific_rubric", self._evidence)
+        tsr = self._evidence["task_specific_rubric"]
+        self.assertIsInstance(tsr, dict)
+        self.assertIn("version", tsr)
+        self.assertIn("reviewed", tsr)
+
+    def test_evidence_has_simulator_with_usr8_report(self) -> None:
+        self.assertIn("simulator", self._evidence)
+        sim = self._evidence["simulator"]
+        self.assertIsInstance(sim, dict)
+        self.assertIn("used", sim)
+        self.assertIn("usr8_report", sim)
+        self.assertNotIn("note", sim)
+
+    def test_evidence_has_sampling(self) -> None:
+        self.assertIn("sampling", self._evidence)
+        s = self._evidence["sampling"]
+        self.assertEqual(s["evaluation"], "diversity")
+        self.assertEqual(s["sla"], "uniform")
+
+    def test_evidence_has_benchmark_with_authoritative_fields(self) -> None:
+        self.assertIn("benchmark", self._evidence)
+        bm = self._evidence["benchmark"]
+        self.assertIsInstance(bm, dict)
+        self.assertIn("applicable", bm)
+        self.assertIn("name", bm)
+        self.assertIn("version", bm)
+        self.assertIn("judge_version", bm)
+        self.assertIn("delta", bm)
+        self.assertNotIn("pinned", bm)
+        self.assertNotIn("judge", bm)
+        self.assertNotIn("agent_config", bm)
+        self.assertNotIn("run_metadata", bm)
+
+    def test_evidence_does_not_use_old_field_names(self) -> None:
+        """Validate no legacy field names appear in the evidence."""
+        self.assertNotIn("task_rubric", self._evidence)
+        for key in ("task_rubric", "pinned", "agent_config", "run_metadata"):
+            bm = self._evidence.get("benchmark", {})
+            self.assertNotIn(key, bm, f"benchmark must not contain legacy key: {key}")
+        sim = self._evidence.get("simulator", {})
+        self.assertNotIn("usr8", sim, "simulator.usr8 must be renamed to usr8_report")
+        self.assertNotIn("note", sim, "simulator.note must not appear in normalized evidence")
 
 
 if __name__ == "__main__":
