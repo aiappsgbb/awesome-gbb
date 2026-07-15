@@ -134,6 +134,11 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertIn('"kind": "searchIndex"', fixture)
         self.assertIn("preview-only", fixture)
         self.assertIn("/tmp/foundry-iq-smoke-result", fixture)
+        step_zero = fixture.split("## Step 0", 1)[1].split("---", 1)[0]
+        self.assertIn(
+            'echo "Loading skill contract: skills/foundry-iq/SKILL.md',
+            step_zero,
+        )
 
         deps = yaml.safe_load(DEPS.read_text(encoding="utf-8"))
         self.assertIn("foundry-iq", deps["skills"])

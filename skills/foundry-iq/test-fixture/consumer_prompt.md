@@ -33,6 +33,7 @@ echo "Fixture path: skills/foundry-iq/test-fixture/consumer_prompt.md"
 ## Step 0 — Show auth context and gate only on required variables
 
 ```bash
+echo "Loading skill contract: skills/foundry-iq/SKILL.md (version 1.4.x)"
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
