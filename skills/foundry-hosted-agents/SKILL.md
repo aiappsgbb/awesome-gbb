@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.0.1"
+  version: "2.1.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -1286,6 +1286,9 @@ azd ext list --output json
 
 | Model | Version |
 |-------|---------|
+| `gpt-5.6-sol` | `2026-07-09` |
+| `gpt-5.6-terra` | `2026-07-09` |
+| `gpt-5.6-luna` | `2026-07-09` |
 | `gpt-5.4` | `2026-03-05` |
 | `gpt-5.4-mini` | `2026-03-17` |
 | `gpt-5.4-nano` | `2026-03-17` |
@@ -1295,6 +1298,17 @@ azd ext list --output json
 | `gpt-5-mini` | `2025-08-07` |
 | `gpt-4.1` | `2025-04-14` |
 | `gpt-4.1-mini` | `2025-04-14` |
+
+> **GPT-5.6 GA boundary (verified 2026-07-15).** Microsoft publishes
+> `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` as three distinct
+> model IDs at version `2026-07-09`. All three are GA and have a documented
+> retirement date of `2027-07-09`. They share a 1,050,000-token context
+> envelope (922,000 input + 128,000 output), accept text and image input,
+> produce text output, and support both the Responses API and Chat
+> Completions API. `gpt-5.6` and `gpt-5.6-mini` are not documented Azure
+> model IDs - do not invent either alias. Sources:
+> [model catalog](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure)
+> and [retirement schedule](https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule).
 
 Verify with: `az cognitiveservices account list-models --resource-group <rg> --name <account> -o table`
 
