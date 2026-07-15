@@ -354,8 +354,9 @@ import sys
 from pathlib import Path
 
 success = False
-# 0=none, 1=anchored failures, 2=generic failures, 3=session retry, 4=terminal 401
-readiness_state = 0
+envelope_started = False
+saw_transient_auth_info = False
+provider_auth_terminal = False
 unrelated_terminal_error = False
 malformed_data = False
 for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
@@ -374,6 +375,12 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
         malformed_data = True
         continue
     event_type = event.get("type")
+    if provider_auth_terminal and event_type not in {
+        "assistant.message",
+        "assistant.message_delta",
+    }:
+        unrelated_terminal_error = True
+        continue
     if event_type in {"assistant.message", "assistant.message_delta"}:
         success = True
     elif event_type == "model.call_failure":
@@ -393,14 +400,17 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
                 in error_message
                 and "POST /openai/v1/responses" in error_message
             )
-            if anchored and not success and readiness_state in {0, 1}:
-                readiness_state = 1
-            # Subsequent generic 401 PermissionDenied model failures are part
-            # of the same envelope, but cannot establish readiness alone.
-            elif not anchored and not success and readiness_state in {1, 2}:
-                readiness_state = 2
-            else:
+            if success:
                 unrelated_terminal_error = True
+            elif not envelope_started:
+                if anchored:
+                    envelope_started = True
+                else:
+                    unrelated_terminal_error = True
+            # After the anchored first failure, subsequent 401
+            # PermissionDenied model failures may interleave with retry info.
+            else:
+                pass
         else:
             unrelated_terminal_error = True
     elif event_type == "session.info":
@@ -413,8 +423,8 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
             malformed_data = True
             continue
         if "transient_auth_error" in message:
-            if not success and readiness_state in {1, 2, 3}:
-                readiness_state = 3
+            if envelope_started and not success:
+                saw_transient_auth_info = True
             else:
                 unrelated_terminal_error = True
     elif event_type == "error":
@@ -425,18 +435,19 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
         if (
             "Authentication failed with provider" in message
             and "HTTP 401" in message
+            and envelope_started
+            and saw_transient_auth_info
             and not success
-            and readiness_state == 3
         ):
-            readiness_state = 4
+            provider_auth_terminal = True
         else:
             unrelated_terminal_error = True
 
 if malformed_data or unrelated_terminal_error:
     raise SystemExit(20)
 if success:
-    raise SystemExit(0 if readiness_state in {0, 4} else 20)
-if readiness_state == 4:
+    raise SystemExit(0 if not envelope_started or provider_auth_terminal else 20)
+if provider_auth_terminal:
     raise SystemExit(10)
 raise SystemExit(20)
 PY

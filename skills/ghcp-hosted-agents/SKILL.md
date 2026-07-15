@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.4"
+  version: "2.0.5"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -321,17 +321,20 @@ azd ai agent invoke "<agent-name>" '{"input": "Say hello in one short sentence."
 
 Immediately after a new version becomes `active`, the first model call can
 briefly return an HTTP-200 SSE readiness envelope while the platform's
-implicit agent permission finishes propagating. The exception is exact: the
-stream must contain, in this order:
+implicit agent permission finishes propagating. The exception is exact and
+has these guards:
 
-1. One or more `model.call_failure` events with `statusCode: 401` whose
+1. The first recognized auth failure must be a `model.call_failure` event
+   with `statusCode: 401` whose
    `PermissionDenied` error contains both
    `Microsoft.CognitiveServices/accounts/OpenAI/responses/write` and
    `POST /openai/v1/responses`.
-2. Zero or more subsequent generic 401 `PermissionDenied`
-   `model.call_failure` events.
-3. One or more `session.info` events containing `transient_auth_error`.
-4. A terminal error containing `Authentication failed with provider` and
+2. After that anchor, subsequent 401 `PermissionDenied`
+   `model.call_failure` events and `session.info` events containing
+   `transient_auth_error` may interleave. At least one transient-info event
+   is required.
+3. The envelope must end with a terminal error containing
+   `Authentication failed with provider` and
    `HTTP 401`.
 
 Only that complete immediate-post-active sequence is retryable. Retry the

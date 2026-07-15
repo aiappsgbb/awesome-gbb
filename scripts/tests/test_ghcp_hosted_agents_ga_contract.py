@@ -41,7 +41,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.4")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.5")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -260,6 +260,21 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 ),
             },
         }
+        unrelated_model_failure = {
+            "type": "model.call_failure",
+            "data": {
+                "statusCode": 500,
+                "errorMessage": "Unrelated model failure",
+            },
+        }
+        interleaved_readiness = (
+            self._exact_readiness_events()[0],
+            self._exact_readiness_events()[2],
+            self._exact_readiness_events()[1],
+            self._exact_readiness_events()[2],
+            self._exact_readiness_events()[1],
+            self._exact_readiness_events()[3],
+        )
         malformed_terminal_fields: list[tuple[str, tuple[dict, ...]]] = []
         for field_type, value in (
             (
@@ -311,6 +326,13 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         cases = (
             ("assistant only", (assistant,), (), 0),
             ("exact readiness", self._exact_readiness_events(), (), 10),
+            ("interleaved readiness", interleaved_readiness, (), 10),
+            (
+                "interleaved readiness then assistant",
+                interleaved_readiness + (assistant,),
+                (),
+                0,
+            ),
             (
                 "exact readiness then assistant",
                 self._exact_readiness_events() + (assistant,),
@@ -337,6 +359,32 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 20,
             ),
             ("generic permission", (generic_permission,), (), 20),
+            (
+                "generic permission before anchor",
+                (generic_permission,) + self._exact_readiness_events(),
+                (),
+                20,
+            ),
+            (
+                "provider terminal before transient info",
+                (
+                    self._exact_readiness_events()[0],
+                    self._exact_readiness_events()[3],
+                ),
+                (),
+                20,
+            ),
+            (
+                "unrelated model failure within readiness",
+                (
+                    self._exact_readiness_events()[0],
+                    unrelated_model_failure,
+                    self._exact_readiness_events()[2],
+                    self._exact_readiness_events()[3],
+                ),
+                (),
+                20,
+            ),
             ("malformed data", (), ("data: {not-json",), 20),
             ("non-object data", (), ("data: []",), 20),
             (
@@ -378,7 +426,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 20,
             ),
             (
-                "anchored failure after generic phase",
+                "repeated anchor after generic failure",
                 (
                     self._exact_readiness_events()[0],
                     self._exact_readiness_events()[1],
@@ -386,6 +434,13 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                     self._exact_readiness_events()[2],
                     self._exact_readiness_events()[3],
                 ),
+                (),
+                10,
+            ),
+            (
+                "non-assistant event after provider terminal",
+                self._exact_readiness_events()
+                + ({"type": "session.completed", "data": {}},),
                 (),
                 20,
             ),
@@ -407,11 +462,12 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             self.assertNotIn(stale, self.fixture)
         self.assertIn("exact immediate-post-active readiness envelope", self.fixture)
         self.assertIn("exact immediate-post-active readiness envelope", self.skill)
+        self.assertNotIn("stream must contain, in this order:", self.skill)
+        self.assertIn("may interleave", self.skill)
         for token in (
             "Microsoft.CognitiveServices/accounts/OpenAI/responses/write",
             "POST /openai/v1/responses",
             "Authentication failed with provider",
-            "in this order",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.skill)
