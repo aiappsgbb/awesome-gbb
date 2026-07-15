@@ -37,6 +37,10 @@ except ImportError:
 # ── stdlib-only profile validator ─────────────────────────────────────────────
 
 
+def _is_non_blank_string(value: str) -> bool:
+    return value.strip() != ""
+
+
 def _validate_profile_stdlib(profile: dict) -> None:
     """Validate profile structure using stdlib only.
 
@@ -80,6 +84,8 @@ def _validate_profile_stdlib(profile: dict) -> None:
             raise TypeError(
                 f"evaluators[{i}].evaluator_version must be a string, got {type(ev['evaluator_version']).__name__}"
             )
+        if not _is_non_blank_string(ev["evaluator_version"]):
+            raise ValueError(f"evaluators[{i}].evaluator_version must be a non-empty string")
 
         judge = ev["judge"]
         if not isinstance(judge, dict):
@@ -96,6 +102,10 @@ def _validate_profile_stdlib(profile: dict) -> None:
             if not isinstance(judge[field], str):
                 raise TypeError(
                     f"evaluators[{i}].judge.{field} must be a string, got {type(judge[field]).__name__}"
+                )
+            if not _is_non_blank_string(judge[field]):
+                raise ValueError(
+                    f"evaluators[{i}].judge.{field} must be a non-empty string"
                 )
 
         if not isinstance(ev["threshold"], (int, float)):
@@ -173,12 +183,12 @@ def _compute_pins(evaluators: list) -> bool:
     """
     for ev in evaluators:
         ev_ver = ev.get("evaluator_version")
-        if not isinstance(ev_ver, str) or not ev_ver:
+        if not isinstance(ev_ver, str) or not _is_non_blank_string(ev_ver):
             return False
         judge = ev.get("judge") if isinstance(ev.get("judge"), dict) else {}
         for field in ("deployment", "model", "version"):
             val = judge.get(field)
-            if not isinstance(val, str) or not val:
+            if not isinstance(val, str) or not _is_non_blank_string(val):
                 return False
     return True
 

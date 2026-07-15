@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # ---------------------------------------------------------------------------
 # Resolve skill module path once so every test class can use it.
@@ -199,7 +200,7 @@ class TestProfileValidationStdlib(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._validate(_p(evaluators="task_completion"))
 
-    def test_invalid_role_raises_valueerror(self) -> None:
+    def test_invalid_role_raises_valueerror_in_stdlib_validation(self) -> None:
         evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
         evs[0]["role"] = "hard-gate"
         with self.assertRaises(ValueError) as ctx:
@@ -255,6 +256,21 @@ class TestProfileValidationStdlib(unittest.TestCase):
         with self.assertRaises(TypeError) as ctx:
             self._validate(_p(evaluators=evs))
         self.assertIn("model", str(ctx.exception))
+
+    def test_whitespace_only_pin_fields_raise_valueerror(self) -> None:
+        cases = (
+            ("evaluator_version", lambda ev: ev.__setitem__("evaluator_version", "   ")),
+            ("judge.deployment", lambda ev: ev["judge"].__setitem__("deployment", " \t")),
+            ("judge.model", lambda ev: ev["judge"].__setitem__("model", "\n")),
+            ("judge.version", lambda ev: ev["judge"].__setitem__("version", "  ")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
+                mutate(evs[0])
+                with self.assertRaises(ValueError) as ctx:
+                    self._validate(_p(evaluators=evs))
+                self.assertIn("non-empty", str(ctx.exception))
 
     def test_profile_not_dict_raises_typeerror(self) -> None:
         with self.assertRaises(TypeError):
@@ -361,6 +377,19 @@ class TestComputePins(unittest.TestCase):
         evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
         evs[0]["judge"]["version"] = ""
         self.assertFalse(self._compute(evs))
+
+    def test_whitespace_only_pin_fields_return_false(self) -> None:
+        cases = (
+            ("evaluator_version", lambda ev: ev.__setitem__("evaluator_version", "   ")),
+            ("judge.deployment", lambda ev: ev["judge"].__setitem__("deployment", " \t")),
+            ("judge.model", lambda ev: ev["judge"].__setitem__("model", "\n")),
+            ("judge.version", lambda ev: ev["judge"].__setitem__("version", "  ")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
+                mutate(evs[0])
+                self.assertFalse(self._compute(evs))
 
     def test_only_first_evaluator_unpinned_returns_false(self) -> None:
         """Validates ALL entries — one bad entry means False."""
@@ -559,11 +588,26 @@ class TestBuildTrustEvidence(unittest.TestCase):
 
     # --- invalid inputs ---
 
-    def test_invalid_role_raises_valueerror(self) -> None:
+    def test_invalid_role_raises_valueerror_in_build_trust_evidence(self) -> None:
         evs = copy.deepcopy(_VALID_PROFILE["evaluators"])
         evs[0]["role"] = "blocker"
         with self.assertRaises(ValueError):
             self._build(_p(evaluators=evs), _VALID_CALIBRATION)
+
+    def test_whitespace_only_pin_fields_reject_build_trust_evidence(self) -> None:
+        cases = (
+            ("evaluator_version", lambda ev: ev.__setitem__("evaluator_version", "   ")),
+            ("judge.deployment", lambda ev: ev["judge"].__setitem__("deployment", " \t")),
+            ("judge.model", lambda ev: ev["judge"].__setitem__("model", "\n")),
+            ("judge.version", lambda ev: ev["judge"].__setitem__("version", "  ")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                p = _p()
+                mutate(p["evaluators"][0])
+                with self.assertRaises(ValueError) as ctx:
+                    self._build(p, _VALID_CALIBRATION)
+                self.assertIn("non-empty", str(ctx.exception))
 
     def test_non_dict_profile_raises_typeerror(self) -> None:
         with self.assertRaises(TypeError):
@@ -785,12 +829,25 @@ class TestStdlibFallback(unittest.TestCase):
             _validate_profile_stdlib(_p(evaluators=evs))
         self.assertIn("gate", str(ctx.exception))
 
-    def test_validate_profile_with_schema_always_runs_stdlib(self) -> None:
-        """validate_profile_with_schema runs stdlib checks even when jsonschema available."""
+    def test_validate_profile_with_schema_rejects_whitespace_only_pins_without_jsonschema(self) -> None:
+        """Force stdlib-only validation and ensure blank pin fields are rejected."""
+        import eval_trust
         from eval_trust import validate_profile_with_schema
-        bad = _p(unit_of_analysis="tenant")
-        with self.assertRaises(ValueError):
-            validate_profile_with_schema(bad)
+
+        cases = (
+            ("evaluator_version", lambda p: p["evaluators"][0].__setitem__("evaluator_version", "   ")),
+            ("judge.deployment", lambda p: p["evaluators"][0]["judge"].__setitem__("deployment", " \t")),
+            ("judge.model", lambda p: p["evaluators"][0]["judge"].__setitem__("model", "\n")),
+            ("judge.version", lambda p: p["evaluators"][0]["judge"].__setitem__("version", "  ")),
+        )
+        for label, mutate in cases:
+            with self.subTest(label=label):
+                bad = _p()
+                mutate(bad)
+                with mock.patch.object(eval_trust, "_HAS_JSONSCHEMA", False):
+                    with self.assertRaises(ValueError) as ctx:
+                        validate_profile_with_schema(bad)
+                self.assertIn("non-empty", str(ctx.exception))
 
 
 if __name__ == "__main__":
