@@ -17,12 +17,25 @@ outer workflow captures stdout.
 
 ---
 
-## Step 0 — Show auth context and acknowledge the skill
+## Step -1 — Acknowledge the skill contract
 
-Run this block before any other action:
+Your first action must be a separate Bash tool call containing only this
+command. Do not combine it with Step 0 or any later work; the standalone
+output is required by the workflow audit.
 
 ```bash
-echo "Loading skill contract: skills/foundry-iq/SKILL.md (version 1.4.x)"
+echo "skills/foundry-iq/SKILL.md"
+```
+
+Wait for that tool call to finish before proceeding.
+
+---
+
+## Step 0 — Show auth context
+
+Run this block as a new Bash tool call after Step -1:
+
+```bash
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"

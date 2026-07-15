@@ -406,11 +406,16 @@ class FoundryIqGaContractTests(unittest.TestCase):
             "python3 skills/foundry-iq/test-fixture/live_smoke.py",
             fixture,
         )
-        step_zero = fixture.split("## Step 0", 1)[1].split("---", 1)[0]
+        self.assertIn("## Step -1", fixture)
+        step_minus_one = fixture.split("## Step -1", 1)[1].split("---", 1)[0]
         self.assertIn(
-            'echo "Loading skill contract: skills/foundry-iq/SKILL.md',
-            step_zero,
+            'echo "skills/foundry-iq/SKILL.md"',
+            step_minus_one,
         )
+        self.assertNotIn("AZURE_CLIENT_ID", step_minus_one)
+        step_zero = fixture.split("## Step 0", 1)[1].split("---", 1)[0]
+        self.assertNotIn("skills/foundry-iq/SKILL.md", step_zero)
+        self.assertIn('echo "AZURE_CLIENT_ID=', step_zero)
         self.assertNotRegex(
             fixture,
             r"(?:cat|head|tail|sed|view)\s+.*skills/foundry-iq/SKILL\.md",
