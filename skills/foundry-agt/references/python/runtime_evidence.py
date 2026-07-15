@@ -1,6 +1,6 @@
 """Canonical runtime evidence producer for foundry-agt.
 
-Source of truth for the prose example in `../../SKILL.md § CI gating (`threadlight-safe-check` integration)`.
+Source of truth for the prose example in `../../SKILL.md § Runtime audit evidence`.
 """
 from __future__ import annotations
 

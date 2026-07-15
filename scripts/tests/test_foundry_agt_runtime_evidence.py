@@ -343,5 +343,77 @@ class TestRuntimeEvidence(unittest.TestCase):
         self.assertIn("telemetry_sink", valid_fixture)
 
 
+SKILL_MD_PATH = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "SKILL.md"
+FIXTURE_PATH = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "test-fixture" / "consumer_prompt.md"
+
+
+class TestSkillFixtureContract(unittest.TestCase):
+    """Pin the SKILL.md / fixture output contract so heading renames are caught early."""
+
+    def test_skill_has_runtime_audit_evidence_section(self) -> None:
+        """SKILL.md must contain the ## Runtime audit evidence heading."""
+        skill_text = SKILL_MD_PATH.read_text(encoding="utf-8")
+        self.assertIn("## Runtime audit evidence", skill_text,
+                      "SKILL.md is missing '## Runtime audit evidence' section")
+
+    def test_skill_links_schema_and_producer(self) -> None:
+        """The Runtime audit evidence section must link both the schema and producer module."""
+        skill_text = SKILL_MD_PATH.read_text(encoding="utf-8")
+        self.assertIn("runtime-evidence.schema.json", skill_text)
+        self.assertIn("runtime_evidence.py", skill_text)
+
+    def test_skill_names_output_artifact(self) -> None:
+        """SKILL.md must name specs/agt-runtime-evidence.json as the output artifact."""
+        skill_text = SKILL_MD_PATH.read_text(encoding="utf-8")
+        self.assertIn("specs/agt-runtime-evidence.json", skill_text,
+                      "SKILL.md is missing output artifact 'specs/agt-runtime-evidence.json'")
+
+    def test_skill_links_runtime_audit_export(self) -> None:
+        """SKILL.md must link to runtime-audit-export.md."""
+        skill_text = SKILL_MD_PATH.read_text(encoding="utf-8")
+        self.assertIn("runtime-audit-export.md", skill_text,
+                      "SKILL.md is missing link to references/runtime-audit-export.md")
+
+    def test_consumer_prompt_requires_specs_output(self) -> None:
+        """test-fixture/consumer_prompt.md must require writing specs/agt-runtime-evidence.json."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        self.assertIn("specs/agt-runtime-evidence.json", prompt_text,
+                      "consumer_prompt.md does not mention specs/agt-runtime-evidence.json")
+
+    def test_consumer_prompt_requires_allow_and_deny(self) -> None:
+        """consumer_prompt.md must check allow_count and deny_count in the artifact."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        self.assertIn("allow_count", prompt_text)
+        self.assertIn("deny_count", prompt_text)
+
+    def test_consumer_prompt_requires_integrity_verified(self) -> None:
+        """consumer_prompt.md must check integrity_verified in the artifact."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        self.assertIn("integrity_verified", prompt_text,
+                      "consumer_prompt.md does not check integrity_verified")
+
+    def test_consumer_prompt_checks_schema_field(self) -> None:
+        """consumer_prompt.md must verify the schema sentinel value."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        self.assertIn("foundry-agt-runtime-evidence/v1", prompt_text,
+                      "consumer_prompt.md does not assert schema == 'foundry-agt-runtime-evidence/v1'")
+
+    def test_consumer_prompt_checks_absence_of_sentinels(self) -> None:
+        """consumer_prompt.md must check that sensitive sentinel strings are absent."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        self.assertIn("DROP TABLE", prompt_text,
+                      "consumer_prompt.md missing sentinel check for 'DROP TABLE'")
+        self.assertIn("api_key=", prompt_text,
+                      "consumer_prompt.md missing sentinel check for 'api_key='")
+
+    def test_producer_module_references_new_skill_heading(self) -> None:
+        """runtime_evidence.py docstring must reference the Runtime audit evidence heading."""
+        producer_path = REF_DIR / "python" / "runtime_evidence.py"
+        head = producer_path.read_text(encoding="utf-8").splitlines()[:10]
+        joined = "\n".join(head)
+        self.assertIn("Runtime audit evidence", joined,
+                      "runtime_evidence.py docstring does not reference '§ Runtime audit evidence'")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

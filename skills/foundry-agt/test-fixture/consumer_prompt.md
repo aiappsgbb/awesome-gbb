@@ -96,6 +96,49 @@ prove all of the following:
    returns an iterable of length 2. This is the skill's headline
    tamper-evidence story — it must work.
 
+7. **`AuditLog` produces a valid runtime audit evidence record.**
+
+   Using the same `AuditLog` from step 6 (the hash-chain round-trip),
+   confirm that the evidence export contract — documented in
+   `skills/foundry-agt/SKILL.md § Runtime audit evidence` and the
+   run-book at `skills/foundry-agt/references/runtime-audit-export.md`
+   — holds end-to-end:
+
+   a. Create an `AuditLog`. Append **one ALLOW event** and **one DENY
+      event** using `log(...)` calls. Use generic placeholder values for
+      all fields — no real secrets, no real tool argument values.
+
+   b. Call `verify_integrity()` and assert the result is truthy.
+
+   c. Call `export_cloudevents()` and assert it returns an iterable of
+      length 2.
+
+   d. Import `build_evidence` and `write_evidence` from
+      `skills/foundry-agt/references/python/runtime_evidence.py`
+      (verbatim — do NOT redefine).
+
+   e. Construct `safe_events` containing only the ten required fields for
+      each event (`event_id`, `timestamp`, `event_type`, `agent_id`,
+      `session_id`, `policy_name`, `tool_name`, `decision`, `reason`,
+      `evaluation_ms`). Do NOT include prompt text, model responses, tool
+      argument values, credentials, or personal data.
+
+   f. Call `build_evidence(safe_events, ...)` and assert:
+      - `evidence["allow_count"] >= 1`
+      - `evidence["deny_count"] >= 1`
+      - `evidence["integrity_verified"] is True`
+      - `evidence["schema"] == "foundry-agt-runtime-evidence/v1"`
+
+   g. Call `write_evidence("specs/agt-runtime-evidence.json", evidence)`.
+
+   h. Read back `specs/agt-runtime-evidence.json` and assert its contents
+      pass all four checks in (f) above.
+
+   i. Assert that the file's raw JSON does NOT contain any of these
+      sentinel strings: `"DROP TABLE"`, `"password="`, `"Bearer "`,
+      `"api_key="`. These sentinels are the canonical negative test for
+      accidental sensitive-data leakage into the committed artifact.
+
 Anchor every filesystem reference to `$GITHUB_WORKSPACE` (`cd
 "$GITHUB_WORKSPACE"` upfront) so the Python script can find the policy
 YAML regardless of where the venv ends up. Read
@@ -122,7 +165,10 @@ On success (all of: `pip install` succeeded, `agt --version` /
 contained `OWASP ASI 2026`, all 6 signatures printed, the `middleware`
 parameter assertion held, the factory returned a list of length ≥ 2,
 `load_policies` did not raise, both policy evaluations matched the
-expected text, the AuditLog round-trip held):
+expected text, the AuditLog round-trip held, the runtime audit evidence
+record was written to `specs/agt-runtime-evidence.json` with
+`allow_count >= 1`, `deny_count >= 1`, `integrity_verified true`, and no
+sentinel secrets present):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-agt-smoke-result

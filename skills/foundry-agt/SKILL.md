@@ -17,7 +17,7 @@ description: >
   App Insights wiring (use foundry-observability), eval scoring (use
   foundry-evals).
 metadata:
-  version: "1.3.1"
+  version: "1.4.0"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -462,6 +462,52 @@ cross-skill bumps).
 
 ---
 
+## Runtime audit evidence
+
+The `AuditLog` hash-chain accumulates one entry per tool call. After a
+governed session completes — or at any safe-shutdown point — export
+sanitized metadata to a durable sink and write a machine-checkable
+evidence record.
+
+**Canonical resources**
+
+| Resource | Role |
+|----------|------|
+| [`references/runtime-evidence.schema.json`](references/runtime-evidence.schema.json) | JSON Schema (Draft 7) — SSOT for the evidence envelope shape |
+| [`references/python/runtime_evidence.py`](references/python/runtime_evidence.py) | Producer module — `build_evidence()` / `write_evidence()` — copy verbatim; do NOT redefine inline |
+| [`references/data/runtime-evidence.valid.json`](references/data/runtime-evidence.valid.json) | Contract fixture — valid evidence record (tested in CI) |
+| [`references/data/runtime-evidence.invalid.json`](references/data/runtime-evidence.invalid.json) | Contract fixture — deliberately invalid (schema reject test) |
+| [`references/runtime-audit-export.md`](references/runtime-audit-export.md) | Operator run-book — full export flow, bounded telemetry queue, retention policy |
+
+**Output artifact**
+
+The export flow writes `specs/agt-runtime-evidence.json` to the workspace
+root. This file contains **only sanitized metadata** — no prompts, no model
+responses, no tool argument values, no credentials, no personal data.
+Detailed event payloads stay in your configured sinks (Application Insights,
+append-only blob, Splunk, etc.) and are **never committed**.
+
+The non-sensitive committed proof carries these fields for every event:
+
+```
+event_id  ·  timestamp  ·  event_type  ·  agent_id
+session_id (trace-correlated)  ·  policy_name  ·  tool_name
+decision  ·  reason  ·  evaluation_ms
+```
+
+A valid evidence record MUST have `allow_count >= 1`, `deny_count >= 1`,
+and `integrity_verified: true`. The full field contract is in
+[`references/runtime-evidence.schema.json`](references/runtime-evidence.schema.json).
+
+> **MUST:** Copy `build_evidence()` and `write_evidence()` verbatim from
+> [`references/python/runtime_evidence.py`](references/python/runtime_evidence.py).
+> Do NOT inline or redefine — the validator enforces single-source-of-truth.
+> See [`references/runtime-audit-export.md`](references/runtime-audit-export.md)
+> for the complete operator flow including the bounded async telemetry queue
+> and explicit shutdown flush.
+
+---
+
 ## MCP Security Scanner
 
 Scan MCP tool definitions for tool poisoning, typosquatting, hidden
@@ -619,6 +665,14 @@ default shape with `detection_confidence: 0.0`.
 
 ## GBB Changelog
 
+- **v1.4.0** — Document durable audit export. Added `## Runtime audit evidence`
+  section with canonical resource table, output artifact spec
+  (`specs/agt-runtime-evidence.json`), committed-field list, and SSOT
+  pointer to `references/runtime-audit-export.md`. Updated
+  `references/python/runtime_evidence.py` section header to reference new
+  heading. Strengthened `test-fixture/consumer_prompt.md` to exercise one
+  allow and one deny and verify the output artifact schema. Added SKILL/fixture
+  contract pins to `scripts/tests/test_foundry_agt_runtime_evidence.py`.
 - **v1.2.0** — MAF 1.8.0 compat refresh. Bumped `agent-framework` pin
   `1.7.0` → `1.8.0` (PyPI release 2026-06-04). AGT pin held at `3.7.0`
   — the AGT 4.0.0 GA package-reorg (5 distributions replacing 45
