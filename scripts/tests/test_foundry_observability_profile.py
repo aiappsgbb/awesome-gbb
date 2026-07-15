@@ -503,6 +503,27 @@ class TestConsumerFixtureContract(unittest.TestCase):
 # SKILL.md: Production Operating Profile workflow references canonical artifacts
 # ===========================================================================
 
+# Matches ONLY top-level step headings: "### Step N —" where N is a bare
+# integer (no dot).  Deliberately rejects "### Step 1.1 —" style sub-steps
+# that appear in Layer 1–3 sections and would otherwise cause a false-pass.
+_PROFILE_STEP_RE = re.compile(r"^### Step (\d+) —", re.MULTILINE)
+
+
+def _extract_profile_section(text: str) -> str:
+    """Slice out the '## Production Operating Profile' section.
+
+    Returns text from that heading to the next ``##``-level heading (or EOF).
+    This prevents sub-step headings in earlier sections (e.g. ``### Step 1.1
+    —``) from contributing to the step count.
+    """
+    start = text.find("\n## Production Operating Profile\n")
+    if start == -1:
+        return ""
+    body_start = start + 1
+    next_h2 = text.find("\n## ", body_start + 1)
+    return text[body_start:] if next_h2 == -1 else text[body_start:next_h2]
+
+
 class TestSkillMdWorkflow(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -512,11 +533,49 @@ class TestSkillMdWorkflow(unittest.TestCase):
         self.assertIn("Production Operating Profile", self.content)
 
     def test_seven_steps_present(self) -> None:
-        for step_n in range(1, 8):
-            self.assertRegex(
-                self.content,
-                rf'### Step {step_n}',
-                msg=f"SKILL.md Production Operating Profile must have Step {step_n}",
+        """Exactly steps 1–7 (bare integers) exist in the Production Operating
+        Profile section.
+
+        Scoped to the section so sub-step headings like '### Step 1.1 —' from
+        Layer 1–3 cannot cause a false-pass.
+        """
+        section = _extract_profile_section(self.content)
+        self.assertTrue(
+            section,
+            msg="## Production Operating Profile section not found in SKILL.md",
+        )
+        found_nums = sorted(int(n) for n in _PROFILE_STEP_RE.findall(section))
+        self.assertEqual(
+            found_nums,
+            list(range(1, 8)),
+            msg=(
+                f"Expected steps 1–7 in Production Operating Profile, "
+                f"got {found_nums}.  Check that '### Step N —' headings "
+                f"(bare integer N, no dot) exist for N=1…7 and that "
+                f"sub-step headings like '### Step 1.1 —' are NOT in "
+                f"this section."
+            ),
+        )
+
+    def test_substep_headings_do_not_false_pass(self) -> None:
+        """Regression: sub-step headings (Step 1.1 / 2.1 / 3.1) are outside
+        the Production Operating Profile section and do NOT match the step
+        regex, so they can never satisfy test_seven_steps_present."""
+        substep_lines = [
+            "### Step 1.1 — Single LAW",
+            "### Step 2.1 — Create account connection",
+            "### Step 3.1 — Python init",
+        ]
+        for line in substep_lines:
+            self.assertIsNone(
+                _PROFILE_STEP_RE.match(line),
+                msg=f"Sub-step '{line}' must NOT match the profile step regex",
+            )
+        # Positive case: top-level steps DO match
+        for n in range(1, 8):
+            self.assertIsNotNone(
+                _PROFILE_STEP_RE.match(f"### Step {n} — Something"),
+                msg=f"Top-level '### Step {n} — …' must match the profile step regex",
             )
 
     def test_references_yaml_profile(self) -> None:
