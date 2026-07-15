@@ -96,8 +96,9 @@ environment, no ACA app, and nothing else to provision for this fixture.
 agent's own Entra identity has implicit access to model inferencing and
 session storage by default. Do NOT run any command that creates an Azure
 RBAC role assignment against the agent's identity, and do NOT expect one to
-be necessary. If any step returns a permission error, that is a hard FAIL,
-not something to route around with an ad hoc role grant.
+be necessary. Any permission error is a hard FAIL except the exact immediate-post-active readiness envelope described in Step 4; that one
+narrow case retries the same invoke path. Never route around a failure with
+an ad hoc role grant.
 
 ## Step 1 - install and verify the azd Foundry extensions
 
@@ -307,9 +308,10 @@ with DefaultAzureCredential() as credential, AIProjectClient(
 
 Do not use `allow_preview=True`, `project.beta.agents.patch_agent_details`,
 protocol version `"1.0.0"`/`"v1"`, or a `Foundry-Features` preview header. A
-permission error at any step (`PermissionDenied`, 403) is a hard FAIL - do
-not retry it as if it were a transient cold-start error, and do not attempt
-a manual role assignment to work around it.
+permission error during deploy or the version check is a hard FAIL. The only
+retryable permission case is the exact immediate-post-active readiness
+envelope classified in Step 4. Do not attempt a manual role assignment to
+work around either case.
 
 ## Step 4 - invoke via `azd ai agent invoke` (single documented path)
 
@@ -352,35 +354,79 @@ import sys
 from pathlib import Path
 
 success = False
-transient_auth_error = False
+# 0=none, 1=anchored failures, 2=generic failures, 3=session retry, 4=terminal 401
+readiness_state = 0
+unrelated_terminal_error = False
+malformed_data = False
 for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
-    if not line.startswith("data: "):
+    if not line.startswith("data:"):
+        continue
+    payload = line[5:].lstrip()
+    if not payload:
+        malformed_data = True
         continue
     try:
-        event = json.loads(line[6:])
+        event = json.loads(payload)
     except json.JSONDecodeError:
+        malformed_data = True
+        continue
+    if not isinstance(event, dict):
+        malformed_data = True
         continue
     event_type = event.get("type")
     if event_type in {"assistant.message", "assistant.message_delta"}:
         success = True
     elif event_type == "model.call_failure":
         data = event.get("data") or {}
-        # Live envelope: `model.call_failure` with `"statusCode": 401` and
-        # PermissionDenied while Foundry's implicit access finishes propagating.
-        if data.get("statusCode") == 401 and "PermissionDenied" in str(
-            data.get("errorMessage", "")
-        ):
-            transient_auth_error = True
+        if not isinstance(data, dict):
+            malformed_data = True
+            continue
+        error_message = str(data.get("errorMessage", ""))
+        if data.get("statusCode") == 401 and "PermissionDenied" in error_message:
+            # The first event in the exact live readiness envelope names the
+            # missing project-scoped Responses action and request path.
+            anchored = (
+                "Microsoft.CognitiveServices/accounts/OpenAI/responses/write"
+                in error_message
+                and "POST /openai/v1/responses" in error_message
+            )
+            if anchored and not success and readiness_state in {0, 1}:
+                readiness_state = 1
+            # Subsequent generic 401 PermissionDenied model failures are part
+            # of the same envelope, but cannot establish readiness alone.
+            elif not anchored and not success and readiness_state in {1, 2}:
+                readiness_state = 2
+            else:
+                unrelated_terminal_error = True
+        else:
+            unrelated_terminal_error = True
     elif event_type == "session.info":
-        if "transient_auth_error" in str((event.get("data") or {}).get("message", "")):
-            transient_auth_error = True
+        data = event.get("data")
+        if not isinstance(data, dict):
+            malformed_data = True
+            continue
+        if "transient_auth_error" in str(data.get("message", "")):
+            if not success and readiness_state in {1, 2, 3}:
+                readiness_state = 3
+            else:
+                unrelated_terminal_error = True
     elif event_type == "error":
-        if "Authentication failed with provider" in str(event.get("message", "")):
-            transient_auth_error = True
+        message = str(event.get("message", ""))
+        if (
+            "Authentication failed with provider" in message
+            and "HTTP 401" in message
+            and not success
+            and readiness_state == 3
+        ):
+            readiness_state = 4
+        else:
+            unrelated_terminal_error = True
 
+if malformed_data or unrelated_terminal_error:
+    raise SystemExit(20)
 if success:
-    raise SystemExit(0)
-if transient_auth_error:
+    raise SystemExit(0 if readiness_state in {0, 4} else 20)
+if readiness_state == 4:
     raise SystemExit(10)
 raise SystemExit(20)
 PY

@@ -6,6 +6,9 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
 
 import yaml
@@ -37,7 +40,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.2")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.3")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -183,6 +186,186 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertIn("for attempt in 1 2 3 4 5 6", self.fixture)
         self.assertNotIn("az role assignment create", self.fixture)
 
+    def _invoke_classifier_code(self) -> str:
+        start = 'python3 - "$invoke_log" <<\'PY\'\n'
+        end = "\nPY\n  envelope_status=$?"
+        self.assertIn(start, self.fixture)
+        self.assertIn(end, self.fixture)
+        return self.fixture.split(start, 1)[1].split(end, 1)[0]
+
+    def _classify_invoke_events(self, *events: object, raw_lines: tuple[str, ...] = ()) -> int:
+        lines = [f"data: {json.dumps(event)}" for event in events]
+        lines.extend(raw_lines)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as stream:
+            stream.write("\n\n".join(lines))
+            stream.flush()
+            result = subprocess.run(
+                [sys.executable, "-c", self._invoke_classifier_code(), stream.name],
+                check=False,
+            )
+        return result.returncode
+
+    @staticmethod
+    def _exact_readiness_events() -> tuple[dict, ...]:
+        return (
+            {
+                "type": "model.call_failure",
+                "data": {
+                    "statusCode": 401,
+                    "errorMessage": json.dumps(
+                        {
+                            "code": "PermissionDenied",
+                            "message": (
+                                "The principal lacks the required data action "
+                                "Microsoft.CognitiveServices/accounts/OpenAI/responses/write "
+                                "to perform POST /openai/v1/responses operation."
+                            ),
+                        }
+                    ),
+                },
+            },
+            {
+                "type": "model.call_failure",
+                "data": {
+                    "statusCode": 401,
+                    "errorMessage": json.dumps(
+                        {
+                            "code": "PermissionDenied",
+                            "message": "Principal does not have access to API/Operation.",
+                        }
+                    ),
+                },
+            },
+            {
+                "type": "session.info",
+                "data": {"message": "Request failed (transient_auth_error). Retrying..."},
+            },
+            {
+                "type": "error",
+                "message": "Authentication failed with provider at <endpoint> (HTTP 401).",
+            },
+        )
+
+    def test_invoke_classifier_requires_exact_readiness_envelope(self) -> None:
+        assistant = {"type": "assistant.message", "data": {"content": "hello"}}
+        unrelated_error = {"type": "error", "message": "Unrelated terminal failure"}
+        provider_auth_terminal = self._exact_readiness_events()[-1]
+        generic_permission = {
+            "type": "model.call_failure",
+            "data": {
+                "statusCode": 401,
+                "errorMessage": json.dumps(
+                    {"code": "PermissionDenied", "message": "Generic denied"}
+                ),
+            },
+        }
+
+        cases = (
+            ("assistant only", (assistant,), (), 0),
+            ("exact readiness", self._exact_readiness_events(), (), 10),
+            (
+                "exact readiness then assistant",
+                self._exact_readiness_events() + (assistant,),
+                (),
+                0,
+            ),
+            ("assistant plus unrelated terminal", (assistant, unrelated_error), (), 20),
+            (
+                "assistant plus generic permission",
+                (assistant, generic_permission),
+                (),
+                20,
+            ),
+            (
+                "assistant plus incomplete provider auth terminal",
+                (assistant, provider_auth_terminal),
+                (),
+                20,
+            ),
+            (
+                "readiness plus unrelated terminal",
+                self._exact_readiness_events() + (unrelated_error,),
+                (),
+                20,
+            ),
+            ("generic permission", (generic_permission,), (), 20),
+            ("malformed data", (), ("data: {not-json",), 20),
+            ("non-object data", (), ("data: []",), 20),
+            (
+                "malformed session data",
+                ({"type": "session.info", "data": [{"message": "not an object"}]},),
+                (),
+                20,
+            ),
+            (
+                "malformed empty session data",
+                ({"type": "session.info", "data": None}, assistant),
+                (),
+                20,
+            ),
+            (
+                "assistant plus no-space malformed data",
+                (assistant,),
+                ("data:{not-json",),
+                20,
+            ),
+            (
+                "exact readiness without generic follow-up",
+                (
+                    self._exact_readiness_events()[0],
+                    self._exact_readiness_events()[2],
+                    self._exact_readiness_events()[3],
+                ),
+                (),
+                10,
+            ),
+            (
+                "reordered readiness",
+                (
+                    self._exact_readiness_events()[2],
+                    self._exact_readiness_events()[0],
+                    self._exact_readiness_events()[3],
+                ),
+                (),
+                20,
+            ),
+            (
+                "anchored failure after generic phase",
+                (
+                    self._exact_readiness_events()[0],
+                    self._exact_readiness_events()[1],
+                    self._exact_readiness_events()[0],
+                    self._exact_readiness_events()[2],
+                    self._exact_readiness_events()[3],
+                ),
+                (),
+                20,
+            ),
+        )
+        for name, events, raw_lines, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self._classify_invoke_events(*events, raw_lines=raw_lines),
+                    expected,
+                )
+
+    def test_permission_guidance_has_only_the_exact_readiness_exception(self) -> None:
+        for stale in (
+            "If any step returns a permission error, that is a hard FAIL",
+            "A permission error at any step (`PermissionDenied`, 403) is a hard FAIL",
+        ):
+            self.assertNotIn(stale, self.fixture)
+        self.assertIn("exact immediate-post-active readiness envelope", self.fixture)
+        self.assertIn("exact immediate-post-active readiness envelope", self.skill)
+        for token in (
+            "Microsoft.CognitiveServices/accounts/OpenAI/responses/write",
+            "POST /openai/v1/responses",
+            "Authentication failed with provider",
+            "in this order",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.skill)
+
     def test_fixture_persists_raw_invoke_forensics(self) -> None:
         required = (
             'invoke_log="/tmp/ghcp-hosted-agents-invoke.log"',
@@ -191,7 +374,8 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             "invoke_status=$?",
             'cat "$invoke_log"',
             'python3 - "$invoke_log"',
-            'event = json.loads(line[6:])',
+            'payload = line[5:].lstrip()',
+            "event = json.loads(payload)",
             'event_type in {"assistant.message", "assistant.message_delta"}',
         )
         for token in required:

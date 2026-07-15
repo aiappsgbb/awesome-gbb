@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.2"
+  version: "2.0.3"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -248,7 +248,7 @@ Microsoft sample's `main.py`) — see `references/container.py`.
 | Wrong scope | 401 Unauthorized | Use `ai.azure.com` not `cognitiveservices.azure.com` |
 | `type="openai"` + bare endpoint | `400 Missing api-version` | Either switch to `type="azure"` + bare, or append `/openai/v1/` |
 | Token not refreshed | 401 after ~1h | Mint fresh token per session in `_get_provider()` |
-| Permission error during deploy or invoke | 403 / `PermissionDenied` | This is a hard FAIL, not a role-grant opportunity — the hosted agent's identity has implicit access to model inferencing and session storage by default (see § "Identity & RBAC for hosted agents"). Investigate the actual cause; do not grant roles to route around it |
+| Permission error during deploy or invoke | 403 / `PermissionDenied` | Hard FAIL except the exact immediate-post-active readiness envelope documented under § "Invoking the Agent". That narrow case retries the same path; all others require root-cause investigation. Never grant roles to route around it |
 
 ---
 
@@ -320,13 +320,25 @@ azd ai agent invoke "<agent-name>" '{"input": "Say hello in one short sentence."
   1800s, which is far longer than most smoke/CI budgets need
 
 Immediately after a new version becomes `active`, the first model call can
-briefly return an HTTP-200 SSE stream containing `model.call_failure` with
-`statusCode: 401`, `PermissionDenied`, and `transient_auth_error` while the
-platform's implicit agent permission finishes propagating. Retry the **same
-JSON positional invoke path** with bounded backoff (six attempts, 15 seconds
-between attempts). Do not switch invocation methods and do not add a role
-grant. A nonzero CLI exit or a different terminal SSE error remains a hard
-failure.
+briefly return an HTTP-200 SSE readiness envelope while the platform's
+implicit agent permission finishes propagating. The exception is exact: the
+stream must contain, in this order:
+
+1. One or more `model.call_failure` events with `statusCode: 401` whose
+   `PermissionDenied` error contains both
+   `Microsoft.CognitiveServices/accounts/OpenAI/responses/write` and
+   `POST /openai/v1/responses`.
+2. Zero or more subsequent generic 401 `PermissionDenied`
+   `model.call_failure` events.
+3. One or more `session.info` events containing `transient_auth_error`.
+4. A terminal error containing `Authentication failed with provider` and
+   `HTTP 401`.
+
+Only that complete immediate-post-active sequence is retryable. Retry the
+**same JSON positional invoke path** with bounded backoff (six attempts,
+15 seconds between attempts). Do not switch invocation methods and do not
+add a role grant. Missing, malformed, reordered, or unrelated terminal
+events remain a hard failure.
 
 > The older claim that `azd ai agent invoke` "does not wrap user input" was
 > a pre-GA defect specific to earlier preview builds. It does not reproduce
@@ -589,10 +601,11 @@ it's not just unnecessary now, the client-side assignment attempt is
 itself what the GA change removed (it used to fail noisily when the
 deploying user lacked `Microsoft.Authorization/roleAssignments/write`).
 
-**A permission error during deploy or invoke is a hard FAIL, not a
-role-grant opportunity.** Investigate the actual cause (wrong scope,
-expired credential, wrong project) — do not attempt to work around it
-with an ad hoc role assignment.
+**A permission error during deploy or invoke is a hard FAIL, except for the
+exact immediate-post-active readiness envelope documented under § "Invoking
+the Agent".** That narrow case retries the same path with bounded backoff.
+Investigate every other cause (wrong scope, expired credential, wrong project)
+and do not attempt to work around it with an ad hoc role assignment.
 
 **Deploying user** still needs a role to create/update the agent:
 
@@ -626,7 +639,7 @@ Reader** on the project's managed identity) automatically as part of
 | **Missing `[tool.setuptools] packages = []`** | uv resolution fails without it | Add to pyproject.toml (see `references/pyproject.toml`) |
 | **CognitiveServices API version wrong** | Using old `2024-10-01` | Use `2025-10-01-preview` for agent management APIs |
 | **Hooks fail on Windows** | `shell: sh` in a custom azd hook | Use `shell: pwsh` for cross-platform |
-| **Permission error on deploy or invoke** | Attempting to work around it with a manual role grant | It's a hard FAIL by design — see § "Identity & RBAC for hosted agents". Investigate the real cause instead |
+| **Permission error on deploy or invoke** | Wrong scope, expired credential, wrong project, or another authorization failure | Hard FAIL except the exact immediate-post-active readiness envelope below. Investigate the real cause and never add a manual role grant |
 | **Immediate post-deploy SSE `model.call_failure` 401 / `transient_auth_error`** | Agent version is active but implicit model permission has not finished propagating | Retry the same JSON positional `azd ai agent invoke` path with bounded 15-second backoff (max six); do not grant roles. Any different permission envelope remains a hard FAIL |
 | **"responses protocol not declared" (bot 400)** | `azure.yaml`'s agent service only declares `invocations` but bot/CLI calls via Responses API (`oai.responses.create()`) | **Dual protocols don't work** — `InvocationAgentServerHost` only serves `/invocations`; the `/responses` path returns 404 even if a second protocol entry is declared. **Fix:** Rewrite the bot to POST directly to the Invocations SSE endpoint (or use `azd ai agent invoke --protocol invocations`) and parse `assistant.message` + `assistant.message_delta` events. **Alternative:** Use MAF runtime (ResponsesHostServer) which natively serves responses. |
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use the guided `azd ai agent init --deploy-mode container` path, which wires the registry automatically (Azure/azure-dev #8981) |
