@@ -651,5 +651,87 @@ class TestSkillMdWorkflow(unittest.TestCase):
         )
 
 
+# ===========================================================================
+# Release contract — version / catalog pinning (Task 6 operating evidence)
+# ===========================================================================
+
+_PLUGIN_JSON = _REPO_ROOT / "plugin.json"
+
+_EXPECTED_SKILL_VERSION = "1.3.0"
+_EXPECTED_PLUGIN_VERSION = "4.32.0"
+
+_ALERT_CATALOG_TRIGGERS = [
+    "operating profile",
+    "observability evidence",
+    "alert catalog",
+]
+
+
+class TestReleaseVersionContract(unittest.TestCase):
+    """Surface-pins skill 1.3.0 and plugin 4.32.0 for the operating-evidence release."""
+
+    def _skill_frontmatter(self) -> dict:
+        try:
+            import yaml  # type: ignore[import]
+        except ImportError:
+            raise unittest.SkipTest("pyyaml not installed")
+        content = _SKILL_MD.read_text(encoding="utf-8")
+        fm_end = content.index("---", 3)
+        return yaml.safe_load(content[4:fm_end])
+
+    def test_skill_version_pinned_to_1_3_0(self) -> None:
+        fm = self._skill_frontmatter()
+        version = fm.get("metadata", {}).get("version")
+        self.assertEqual(
+            version,
+            _EXPECTED_SKILL_VERSION,
+            f"SKILL.md metadata.version must be {_EXPECTED_SKILL_VERSION}, got {version!r}",
+        )
+
+    def test_plugin_version_pinned_to_4_32_0(self) -> None:
+        self.assertTrue(_PLUGIN_JSON.exists(), f"Missing: {_PLUGIN_JSON}")
+        data = _load_json(_PLUGIN_JSON)
+        version = data.get("version")
+        self.assertEqual(
+            version,
+            _EXPECTED_PLUGIN_VERSION,
+            f"plugin.json version must be {_EXPECTED_PLUGIN_VERSION}, got {version!r}",
+        )
+
+    def test_description_includes_alert_catalog_triggers(self) -> None:
+        fm = self._skill_frontmatter()
+        desc = fm.get("description", "")
+        for trigger in _ALERT_CATALOG_TRIGGERS:
+            self.assertIn(
+                trigger,
+                desc,
+                f"SKILL.md description must include trigger {trigger!r} for operating-evidence release",
+            )
+
+    def test_profile_schema_v1_in_what_ships(self) -> None:
+        content = _SKILL_MD.read_text(encoding="utf-8")
+        self.assertIn(
+            "foundry-observability-profile/v1",
+            content,
+            "SKILL.md must reference the v1 profile schema in the What ships tree",
+        )
+
+    def test_canonical_evidence_output_in_what_ships(self) -> None:
+        content = _SKILL_MD.read_text(encoding="utf-8")
+        self.assertIn(
+            "specs/observability-evidence.json",
+            content,
+            "SKILL.md must state the canonical output artifact path",
+        )
+
+    def test_alert_catalog_bicep_in_what_ships(self) -> None:
+        content = _SKILL_MD.read_text(encoding="utf-8")
+        self.assertIn(
+            "agent-alerts.bicep",
+            content,
+            "SKILL.md must reference agent-alerts.bicep (alert catalog) in the What ships tree",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

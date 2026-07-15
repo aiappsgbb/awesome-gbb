@@ -4,21 +4,21 @@ description: >
   End-to-end observability for Azure AI pilots — App Insights +
   Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers,
   ACA jobs, bot service, workspace UIs. Closes the silent telemetry gap
-  where `azd up` returns 0 but **zero traces ever reach App Insights**.
-  Covers Bicep modules, Foundry account-level telemetry connection,
-  ACA-side instrumentation, `Monitoring Metrics Publisher` RBAC, and
-  KQL diagnostic queries. Read the full skill body for the 3-layer
-  wiring sequence — do not instrument from this summary alone.
+  where `azd up` returns 0 but zero traces reach App Insights. Covers
+  Bicep modules, operating profile (v1 schema), observability evidence
+  normaliser, agent alert catalog, `Monitoring Metrics Publisher` RBAC,
+  and KQL queries.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
   Monitoring Metrics Publisher RBAC, AppInsights connection foundry,
   account-level appin, AppIn PUT 400, credentials null,
-  silent injection, server_error telemetry.
+  silent injection, server_error telemetry, operating profile,
+  observability evidence, alert catalog.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Foundry Observability
