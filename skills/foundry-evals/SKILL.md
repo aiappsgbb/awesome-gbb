@@ -998,7 +998,6 @@ Call the canonical helper — do NOT hand-write the evidence JSON:
 ```python
 from eval_trust import build_trust_evidence, write_trust_evidence
 evidence = build_trust_evidence(profile, calibration)
-write_trust_evidence(evidence, "evals/runs/<timestamp>-calibration.json")
 write_trust_evidence(evidence, "specs/evals-trust-evidence.json")
 ```
 

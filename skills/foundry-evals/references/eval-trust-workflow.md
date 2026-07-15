@@ -185,8 +185,7 @@ with open("evals/runs/<timestamp>-calibration.json", encoding="utf-8") as f:
 validate_profile_with_schema(profile)
 evidence = build_trust_evidence(profile, calibration)
 
-# Emit both artefacts
-write_trust_evidence(evidence, "evals/runs/<timestamp>-calibration.json")
+# Emit canonical artefact
 write_trust_evidence(evidence, "specs/evals-trust-evidence.json")
 print("Trust evidence written.")
 ```
@@ -195,8 +194,8 @@ print("Trust evidence written.")
 
 | File | Purpose |
 |------|---------|
-| `evals/runs/<timestamp>-calibration.json` | Per-calibration-run record; archive one per calibration cycle |
-| `specs/evals-trust-evidence.json` | Latest trust evidence; checked into source control as the canonical gate declaration |
+| `evals/runs/<timestamp>-calibration.json` | Per-calibration-run record (read-only input); archive one per calibration cycle |
+| `specs/evals-trust-evidence.json` | Normalized trust evidence written by `write_trust_evidence`; canonical gate declaration checked into source control |
 
 ---
 
