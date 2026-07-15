@@ -8,6 +8,7 @@ import json
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "references" / "python"
@@ -71,6 +72,55 @@ def _sample_inputs(*, empty_session: bool = False) -> tuple[list[dict[str, objec
 
 
 def _assert_schema_contract(schema: dict[str, object]) -> None:
+    def _resolve_local_ref(node: object) -> dict[str, object]:
+        if not isinstance(node, dict):
+            raise AssertionError(f"expected schema node to be a mapping, got {type(node).__name__}")
+        ref = node.get("$ref")
+        if ref is None:
+            return node
+        if not isinstance(ref, str) or not ref.startswith("#/"):
+            raise AssertionError(f"unsupported schema ref: {ref!r}")
+        target: object = schema
+        for part in ref[2:].split("/"):
+            if not isinstance(target, dict) or part not in target:
+                raise AssertionError(f"unresolvable schema ref: {ref!r}")
+            target = target[part]
+        if not isinstance(target, dict):
+            raise AssertionError(f"schema ref did not resolve to a mapping: {ref!r}")
+        return target
+
+    def _assert_string_schema(node: object, *, enum: list[object] | None = None, min_length: int | None = None) -> None:
+        resolved = _resolve_local_ref(node)
+        assert resolved["type"] == "string"
+        if enum is not None:
+            assert resolved["enum"] == enum
+        if min_length is not None:
+            assert resolved["minLength"] == min_length
+
+    def _assert_boolean_schema(node: object, *, enum: list[object] | None = None) -> None:
+        resolved = _resolve_local_ref(node)
+        assert resolved["type"] == "boolean"
+        if enum is not None:
+            assert resolved["enum"] == enum
+
+    def _assert_object_schema(
+        node: object,
+        *,
+        required: tuple[str, ...] = (),
+        property_checks: dict[str, Callable[[object], None]] | None = None,
+    ) -> None:
+        resolved = _resolve_local_ref(node)
+        assert resolved["type"] == "object"
+        if "required" in resolved:
+            for field in required:
+                assert field in resolved["required"]
+        if resolved.get("additionalProperties") is not True:
+            raise AssertionError("expected object schema to allow additional properties")
+        properties = resolved.get("properties", {})
+        if property_checks:
+            for name, check in property_checks.items():
+                check(properties[name])
+
     assert schema["$schema"] == "http://json-schema.org/draft-07/schema#"
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is True
@@ -96,8 +146,24 @@ def _assert_schema_contract(schema: dict[str, object]) -> None:
     assert props["deny_count"]["minimum"] == 1
     assert props["required_fields_observed"]["minItems"] == len(REQUIRED_FIELDS)
     assert props["required_fields_observed"]["maxItems"] == len(REQUIRED_FIELDS)
-    assert props["audit_sink"]["type"] == "object"
-    assert props["telemetry_sink"]["type"] == "object"
+    _assert_object_schema(
+        props["audit_sink"],
+        required=("kind", "persistent"),
+        property_checks={
+            "kind": lambda node: _assert_string_schema(node, enum=["append-only"]),
+            "persistent": lambda node: _assert_boolean_schema(node, enum=[True]),
+        },
+    )
+    _assert_object_schema(
+        props["telemetry_sink"],
+        required=("kind", "trace_correlated"),
+        property_checks={
+            "kind": lambda node: _assert_string_schema(node, enum=["application-insights"]),
+            "trace_correlated": lambda node: _assert_boolean_schema(node),
+        },
+    )
+    _assert_object_schema(props["redaction_policy"])
+    _assert_object_schema(props["retention_policy"])
 
 
 class TestRuntimeEvidence(unittest.TestCase):
@@ -267,13 +333,14 @@ class TestRuntimeEvidence(unittest.TestCase):
             Draft7Validator(schema).validate(valid_fixture)
             with self.assertRaises(ValidationError):
                 Draft7Validator(schema).validate(invalid_fixture)
-            return
+        else:
+            self.assertEqual(invalid_fixture["schema"], "foundry-agt-runtime-evidence/v0")
+            self.assertNotIn("telemetry_sink", invalid_fixture)
 
+        # Always exercise the stdlib fallback so local runs cover the CI path.
         _assert_schema_contract(schema)
         self.assertEqual(valid_fixture["schema"], SCHEMA)
         self.assertIn("telemetry_sink", valid_fixture)
-        self.assertEqual(invalid_fixture["schema"], "foundry-agt-runtime-evidence/v0")
-        self.assertNotIn("telemetry_sink", invalid_fixture)
 
 
 if __name__ == "__main__":
