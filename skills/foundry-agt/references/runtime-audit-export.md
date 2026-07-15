@@ -284,7 +284,7 @@ assert evidence["allow_count"] >= 1
 assert evidence["deny_count"] >= 1
 assert evidence["integrity_verified"] is True
 
-SENTINEL_SECRETS = ["DROP TABLE", "Authorization: Bearer test-secret-token", "api_key="]
+SENTINEL_SECRETS = ["DROP TABLE", "credential-leak-sentinel-7f9c", "api_key="]
 payload = json.dumps(evidence)
 for sentinel in SENTINEL_SECRETS:
     assert sentinel not in payload, f"Sentinel value found in evidence: {sentinel!r}"

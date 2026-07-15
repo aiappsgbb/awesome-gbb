@@ -28,6 +28,7 @@ SCHEMA_PATH = REF_DIR / "runtime-evidence.schema.json"
 DATA_DIR = REF_DIR / "data"
 VALID_FIXTURE_PATH = DATA_DIR / "runtime-evidence.valid.json"
 INVALID_FIXTURE_PATH = DATA_DIR / "runtime-evidence.invalid.json"
+CREDENTIAL_LEAK_SENTINEL = "credential-leak-sentinel-7f9c"
 
 try:  # pragma: no cover - optional dependency
     from jsonschema import Draft7Validator  # type: ignore
@@ -201,7 +202,7 @@ class TestRuntimeEvidence(unittest.TestCase):
         self.assertTrue(evidence["integrity_verified"])
 
     def test_build_evidence_never_leaks_payload_values(self) -> None:
-        leak = "LEAK-ME-914d9f1d"
+        leak = CREDENTIAL_LEAK_SENTINEL
         events = [
             _event(
                 session_id="session-001",
@@ -231,7 +232,7 @@ class TestRuntimeEvidence(unittest.TestCase):
             captured_at="2026-07-15T12:34:56Z",
         )
         payload = json.dumps(evidence, sort_keys=True)
-        self.assertNotIn(leak, payload)
+        self.assertNotIn(CREDENTIAL_LEAK_SENTINEL, payload)
 
     def test_build_evidence_missing_required_field_raises(self) -> None:
         events = [
@@ -424,7 +425,7 @@ class TestExtractCloudeventPayload(unittest.TestCase):
         return base
 
     def test_flat_mapping_returns_required_fields_only(self) -> None:
-        flat = self._flat(sensitive_arg="secret", credentials="Authorization: Bearer test-secret-token")
+        flat = self._flat(sensitive_arg="secret", credentials="credential-leak-sentinel-7f9c")
         result = extract_cloudevent_payload(flat)
         self.assertEqual(set(result.keys()) - _SAFE_CE_ENVELOPE_FIELDS, set(REQUIRED_FIELDS))
         self.assertNotIn("sensitive_arg", result)
@@ -492,7 +493,7 @@ class TestExtractCloudeventPayload(unittest.TestCase):
         valid_text = VALID_FIXTURE_PATH.read_text(encoding="utf-8")
         invalid_text = INVALID_FIXTURE_PATH.read_text(encoding="utf-8")
         SENTINELS = [
-            "Authorization: Bearer test-secret-token",
+            "credential-leak-sentinel-7f9c",
             "DROP TABLE",
             "api_key=",
             "LEAK-ME",
@@ -573,8 +574,8 @@ class TestSkillFixtureContract(unittest.TestCase):
                       "consumer_prompt.md missing sentinel check for 'DROP TABLE'")
         self.assertIn("api_key=", prompt_text,
                       "consumer_prompt.md missing sentinel check for 'api_key='")
-        self.assertIn("Authorization: Bearer test-secret-token", prompt_text,
-                      "consumer_prompt.md missing sentinel check for 'Authorization: Bearer test-secret-token'")
+        self.assertIn("credential-leak-sentinel-7f9c", prompt_text,
+                      "consumer_prompt.md missing sentinel check for 'credential-leak-sentinel-7f9c'")
 
     def test_runbook_uses_extract_cloudevent_payload(self) -> None:
         """The runbook must reference extract_cloudevent_payload."""
@@ -585,8 +586,8 @@ class TestSkillFixtureContract(unittest.TestCase):
     def test_runbook_sentinel_is_realistic(self) -> None:
         """The runbook verification section must use the explicit test sentinel."""
         runbook_text = RUNBOOK_PATH.read_text(encoding="utf-8")
-        self.assertIn("Authorization: Bearer test-secret-token", runbook_text,
-                      "runbook must use 'Authorization: Bearer test-secret-token' as test sentinel")
+        self.assertIn("credential-leak-sentinel-7f9c", runbook_text,
+                      "runbook must use 'credential-leak-sentinel-7f9c' as test sentinel")
 
     def test_runbook_policy_as_path(self) -> None:
         """The runbook Step 5 must pass policy path strings, not inline objects."""
