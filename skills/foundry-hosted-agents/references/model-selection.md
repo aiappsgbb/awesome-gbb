@@ -29,6 +29,48 @@ the single source of truth for versions; do not restate them here.
 | High-volume classify / extract / route | `gpt-5.4-nano` | Cheapest/fastest of the pinned family |
 | Legacy / compat baseline | `gpt-4.1` / `gpt-4.1-mini` | When a consumer pins the 4.x surface |
 
+### GPT-5.6 GA availability boundary (verified 2026-07-15)
+
+`gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` are distinct SKUs,
+not aliases. Microsoft publishes a common capability envelope but no
+comparative ranking among them. Keep the workload defaults above until
+first-party comparative evidence supports changing them.
+
+> **Source discrepancy.** On 2026-07-15, the
+> [reasoning-model feature matrix](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning)
+> still showed `2026-06-25`, while the deployable catalog and live control
+> plane reported `2026-07-09`. Use the catalog/control-plane version for
+> deployment and keep capability claims to the shared envelope repeated in
+> the current model catalog.
+
+The table below combines the documented deployment-type boundary with a
+read-only Sweden Central catalog/quota check on 2026-07-15. Quota values
+are capacity units (1 unit = 1,000 TPM) and remain subscription-specific.
+
+| Model ID | Global Standard | Data Zone Standard | Global Provisioned Managed | Sweden Central Global Standard quota | Sweden Central Data Zone Standard quota | Global Provisioned minimum / increment |
+|---|---|---|---|---:|---:|---:|
+| `gpt-5.6-sol` | Yes | Yes | Yes | 1,000 | 333 | 15 / 5 |
+| `gpt-5.6-terra` | Yes | Yes | No | 1,000 | 333 | N/A |
+| `gpt-5.6-luna` | Yes | Yes | No | 1,000 | 333 | N/A |
+
+Use this as an availability boundary, not as a recommendation:
+
+- The [Foundry Agent Service compatibility table](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/limits-quotas-regions)
+  currently stops at `gpt-5.5`; the model catalog does not establish
+  GPT-5.6 Agent Service compatibility. Confirm the model in the target
+  project's model experience before binding it to an agent.
+- Do not change an agent default, judge, router, or cost recommendation
+  based only on GA status. Sol, Terra, and Luna have no first-party
+  comparative ranking in the cited catalog.
+- The [Azure OpenAI pricing page](https://azure.microsoft.com/en-us/pricing/details/azure-openai/)
+  and Retail Prices data checked on 2026-07-15 do not yet list this family;
+  pricing tables do not yet publish GPT-5.6 rates. Do not add inferred
+  prices to `paygo-ptu-cost-analyzer`.
+- Recheck the [region/deployment matrix](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability)
+  and [quota table](https://learn.microsoft.com/en-us/azure/foundry/openai/quotas-limits)
+  immediately before deployment; both can vary by region, subscription,
+  and quota tier.
+
 Cross-cutting checks before you commit a family:
 
 - **Tool / function calling + structured outputs** — required for most
