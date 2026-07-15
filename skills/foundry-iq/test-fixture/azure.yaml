@@ -1,0 +1,5 @@
+name: foundry-iq-ga-smoke
+
+infra:
+  provider: bicep
+  path: infra

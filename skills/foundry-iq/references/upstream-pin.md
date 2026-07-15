@@ -6,9 +6,9 @@ upstream:
   type: github_repo
   repo: microsoft/agent-framework
   ref: main
-  pinned_sha: 329d59eff464833c70954ad5a81b89f17a266f67
+  pinned_sha: b3f2e5392350d32835a40455d5069c18cac47a97
   pinned_commit_message: |
-    Bumped to SHA b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75
+    .NET: [BREAKING] Graduate ToolApprovalAgent and add ToolAutoApprovalRuleContext (#7107)
   license: MIT
   notes: |
     foundry-iq primarily wraps Azure AI Search Knowledge Base / agentic retrieval docs. The only GitHub upstream referenced by SKILL.md is microsoft/agent-framework for hosted-MCP behavior; validation also pins the Azure AI Search Python SDK.
@@ -20,9 +20,11 @@ packages:
     notes: |
       Used for import-only smoke validation of Azure AI Search client types. No Azure service calls are made.
 docs_to_revalidate:
-  - https://learn.microsoft.com/azure/search/search-agentic-retrieval-concept
-  - https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-create
-  - https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-retrieve
+  - https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq
+  - https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview
+  - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate
+  - https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve
+  - https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01
   - https://pypi.org/project/azure-search-documents/
 known_issues: []
 validation:
@@ -34,7 +36,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-e38592a23c10bf8e85318a4efed6e77874147ec2}"
+    PINNED_SHA="${PINNED_SHA:-b3f2e5392350d32835a40455d5069c18cac47a97}"
     PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
     WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -54,30 +56,44 @@ validation:
     fi
     echo "upstream SHA drift check ok"
 
-    python -m venv "$WORK/.venv"
+    python3 -m venv "$WORK/.venv"
     . "$WORK/.venv/bin/activate"
     python -m pip install --quiet --upgrade pip
     python -m pip install --quiet "azure-search-documents~=${PINNED_VERSION}"
-    python - <<'PY'
+    python3 - <<'PY'
     from azure.search.documents import SearchClient
     from azure.search.documents.indexes import SearchIndexClient
+    from azure.search.documents.indexes.models import (
+        SearchIndexFieldReference,
+        SearchIndexKnowledgeSource,
+        SearchIndexKnowledgeSourceParameters,
+    )
     from azure.search.documents.models import VectorizedQuery
-    assert SearchClient and SearchIndexClient and VectorizedQuery
+    assert all((
+        SearchClient,
+        SearchIndexClient,
+        SearchIndexFieldReference,
+        SearchIndexKnowledgeSource,
+        SearchIndexKnowledgeSourceParameters,
+        VectorizedQuery,
+    ))
     PY
     echo "azure-search-documents import smoke ok: ${PINNED_VERSION}"
 
-    curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-concept" >/dev/null
-    curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-create" >/dev/null
-    curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-retrieve" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve" >/dev/null
+    curl -fsSI -L "https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01" >/dev/null
     echo "Foundry IQ docs link check ok"
   expected_output:
     - "upstream SHA drift check ok"
     - "azure-search-documents import smoke ok"
     - "Foundry IQ docs link check ok"
   failure_signatures: []
-last_validated: 2026-07-06
+last_validated: 2026-07-15
 validated_by: copilot-bot
-field_test_scope: github_pypi_docs
+field_test_scope: github_pypi_docs_live_search_rest
 known_issues_count: 0
 ---
 
@@ -95,11 +111,11 @@ weekly; the prose below is the human audit trail. Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/agent-framework` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75` |
-| **Pinned commit subject** | `Bumped to SHA b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75` |
+| **Pinned SHA** | `b3f2e5392350d32835a40455d5069c18cac47a97` |
+| **Pinned commit subject** | `.NET: [BREAKING] Graduate ToolApprovalAgent and add ToolAutoApprovalRuleContext (#7107)` |
 | **License** | `MIT` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-06-18` |
+| **Last re-validated** | `2026-07-15` |
 
 Refresh procedure:
 ```bash
@@ -127,7 +143,7 @@ git ls-remote https://github.com/microsoft/agent-framework main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-b3f8aaa9d7e662c2c433b722e63a1b6d10f63b75}"
+PINNED_SHA="${PINNED_SHA:-b3f2e5392350d32835a40455d5069c18cac47a97}"
 PINNED_VERSION="${PINNED_VERSION:-12.0.0}"
 WORK=".upstream-pin-smoke/foundry-iq"
 
@@ -147,21 +163,35 @@ else
 fi
 echo "upstream SHA drift check ok"
 
-python -m venv "$WORK/.venv"
+python3 -m venv "$WORK/.venv"
 . "$WORK/.venv/bin/activate"
 python -m pip install --quiet --upgrade pip
 python -m pip install --quiet "azure-search-documents~=${PINNED_VERSION}"
-python - <<'PY'
+python3 - <<'PY'
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    SearchIndexFieldReference,
+    SearchIndexKnowledgeSource,
+    SearchIndexKnowledgeSourceParameters,
+)
 from azure.search.documents.models import VectorizedQuery
-assert SearchClient and SearchIndexClient and VectorizedQuery
+assert all((
+    SearchClient,
+    SearchIndexClient,
+    SearchIndexFieldReference,
+    SearchIndexKnowledgeSource,
+    SearchIndexKnowledgeSourceParameters,
+    VectorizedQuery,
+))
 PY
 echo "azure-search-documents import smoke ok: ${PINNED_VERSION}"
 
-curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-concept" >/dev/null
-curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-create" >/dev/null
-curl -fsSI -L "https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-retrieve" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve" >/dev/null
+curl -fsSI -L "https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01" >/dev/null
 echo "Foundry IQ docs link check ok"
 ```
 
@@ -183,9 +213,12 @@ echo "Foundry IQ docs link check ok"
 |-------|--------|----------|
 | GitHub reference | ✅ | `upstream SHA drift check ok` |
 | SDK import smoke | ✅ | `azure-search-documents import smoke ok` |
-| Learn docs | ✅ | `Foundry IQ docs link check ok` |
+| Learn docs | ✅ | Foundry IQ overview, availability matrix, migration guide, and stable `2026-04-01` REST reference returned success |
+| Live Azure AI Search | ✅ | Stable `searchIndex` knowledge-source PUT with `Prefer: return=representation` returned `201`, GET returned `200`, billing was `knowledgeRetrieval=standard`, and cleanup left zero UUID-scoped objects |
 
-Captured at `last_validated: 2026-06-18` by `copilot-bot` via pin-validation CI on issue #192.
+Captured at `last_validated: 2026-07-15` by `copilot-bot` via the executable
+pin contract plus the `foundry-iq` Copilot-CLI fixture contract against a
+real keyless Azure AI Search service.
 
 ---
 
@@ -219,9 +252,11 @@ When upstream advances:
 
 ## 7. URLs to re-validate (link-rot detector input)
 
-- <https://learn.microsoft.com/azure/search/search-agentic-retrieval-concept>
-- <https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-create>
-- <https://learn.microsoft.com/azure/search/search-agentic-retrieval-how-to-retrieve>
+- <https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq>
+- <https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview>
+- <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate>
+- <https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-retrieve>
+- <https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01>
 - <https://pypi.org/project/azure-search-documents/>
 
 ---
@@ -230,7 +265,8 @@ When upstream advances:
 
 - `azure-search-documents` — Azure AI Search Python SDK imported by the smoke.
 - `microsoft/agent-framework` PR references — source of hosted-MCP behavior called out in the troubleshooting table.
-- Learn agentic retrieval pages — canonical docs for Knowledge Bases and retrieval calls.
+- Learn Foundry IQ, availability, and migration pages — canonical GA-versus-preview boundary.
+- Stable Search Service `2026-04-01` REST reference — canonical knowledge-source wire contract.
 
 ---
 

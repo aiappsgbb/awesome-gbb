@@ -275,6 +275,7 @@ jobs:
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           # Explicit OIDC identity vars for the consumer fixture's
           # subshells. `azure/login@v2` (above) authenticates the Azure
@@ -406,6 +407,7 @@ jobs:
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
           # See "Run consumer prompt" step above for the rationale on
           # the explicit AZURE_CLIENT_ID/_TENANT_ID/_SUBSCRIPTION_ID
