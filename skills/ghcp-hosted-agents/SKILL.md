@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.6"
+  version: "2.0.7"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -337,6 +337,14 @@ has these guards:
 3. The envelope must end with a terminal error containing
    `Authentication failed with provider` and
    `HTTP 401`.
+
+Observed streams may include benign `session.usage_info` and
+`assistant.turn_end` lifecycle events inside the recognized envelope. The SSE
+epilogue is a separate `event: done` frame whose JSON payload contains a
+non-empty string `invocation_id`; accept it only after assistant success or
+the recognized provider-auth terminal. Untyped data outside that done frame,
+unknown typed events inside the envelope, or a malformed done payload remain
+hard failures.
 
 Only that complete immediate-post-active sequence is retryable. Retry the
 **same JSON positional invoke path** with bounded backoff (six attempts,

@@ -359,11 +359,37 @@ saw_transient_auth_info = False
 provider_auth_terminal = False
 unrelated_terminal_error = False
 malformed_data = False
-for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
-    if not line.startswith("data:"):
-        continue
-    payload = line[5:].lstrip()
-    if not payload:
+
+# Preserve SSE frame boundaries so an `event: done` payload is not mistaken
+# for an ordinary untyped data event. HTTP status/header blocks are ignored.
+frames = []
+frame_event = None
+frame_data = []
+frame_invalid = False
+raw_lines = Path(sys.argv[1]).read_text(
+    encoding="utf-8", errors="replace"
+).splitlines()
+for line in [*raw_lines, ""]:
+    if not line:
+        if frame_event is not None or frame_data or frame_invalid:
+            frames.append((frame_event, "\n".join(frame_data), frame_invalid))
+        frame_event = None
+        frame_data = []
+        frame_invalid = False
+    elif line.startswith("event:"):
+        if frame_event is not None:
+            frame_invalid = True
+        frame_event = line[6:].strip()
+        if not frame_event:
+            frame_invalid = True
+    elif line.startswith("data:"):
+        frame_data.append(line[5:].lstrip())
+    elif frame_event is not None or frame_data:
+        frame_invalid = True
+
+done_seen = False
+for frame_event, payload, frame_invalid in frames:
+    if frame_invalid or done_seen or not payload:
         malformed_data = True
         continue
     try:
@@ -374,7 +400,23 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
     if not isinstance(event, dict):
         malformed_data = True
         continue
+    if frame_event is not None:
+        invocation_id = event.get("invocation_id")
+        if (
+            frame_event != "done"
+            or not isinstance(invocation_id, str)
+            or not invocation_id.strip()
+            or not (success or provider_auth_terminal)
+        ):
+            malformed_data = True
+            continue
+        done_seen = True
+        continue
+
     event_type = event.get("type")
+    if not isinstance(event_type, str):
+        malformed_data = True
+        continue
     if provider_auth_terminal and event_type not in {
         "assistant.message",
         "assistant.message_delta",
@@ -443,6 +485,9 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
         ):
             provider_auth_terminal = True
         else:
+            unrelated_terminal_error = True
+    elif envelope_started:
+        if event_type not in {"session.usage_info", "assistant.turn_end"}:
             unrelated_terminal_error = True
 
 if malformed_data or unrelated_terminal_error:

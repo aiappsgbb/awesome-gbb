@@ -41,7 +41,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.6")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.7")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -194,17 +194,20 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertIn(end, self.fixture)
         return self.fixture.split(start, 1)[1].split(end, 1)[0]
 
-    def _classify_invoke_events(self, *events: object, raw_lines: tuple[str, ...] = ()) -> int:
-        lines = [f"data: {json.dumps(event)}" for event in events]
-        lines.extend(raw_lines)
+    def _classify_invoke_stream(self, raw_stream: str) -> int:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as stream:
-            stream.write("\n\n".join(lines))
+            stream.write(raw_stream)
             stream.flush()
             result = subprocess.run(
                 [sys.executable, "-c", self._invoke_classifier_code(), stream.name],
                 check=False,
             )
         return result.returncode
+
+    def _classify_invoke_events(self, *events: object, raw_lines: tuple[str, ...] = ()) -> int:
+        lines = [f"data: {json.dumps(event)}" for event in events]
+        lines.extend(raw_lines)
+        return self._classify_invoke_stream("\n\n".join(lines))
 
     @staticmethod
     def _exact_readiness_events() -> tuple[dict, ...]:
@@ -473,6 +476,9 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertIn("may interleave", self.skill)
         self.assertIn("subsequent generic 401", self.skill)
         self.assertIn("anchor must not repeat", self.skill)
+        for token in ("session.usage_info", "assistant.turn_end", "event: done"):
+            with self.subTest(token=token):
+                self.assertIn(token, self.skill)
         for token in (
             "Microsoft.CognitiveServices/accounts/OpenAI/responses/write",
             "POST /openai/v1/responses",
@@ -480,6 +486,105 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.skill)
+
+    def test_invoke_classifier_parses_complete_sse_frames(self) -> None:
+        anchor, generic, transient_info, provider_terminal = (
+            self._exact_readiness_events()
+        )
+        usage = {"type": "session.usage_info", "data": {"inputTokens": 42}}
+        turn_end = {"type": "assistant.turn_end", "data": {}}
+
+        def data_frame(event: object) -> str:
+            return f"data: {json.dumps(event)}"
+
+        full_artifact_stream = "\n\n".join(
+            (
+                "HTTP/1.1 200 OK\ncontent-type: text/event-stream",
+                data_frame(usage),
+                data_frame(anchor),
+                data_frame(transient_info),
+                data_frame(usage),
+                data_frame(generic),
+                data_frame(transient_info),
+                data_frame(usage),
+                data_frame(generic),
+                data_frame(turn_end),
+                data_frame(provider_terminal),
+                'event: done\ndata: {"invocation_id":"inv_artifact"}',
+            )
+        )
+        invalid_streams = (
+            (
+                "missing event type",
+                "\n\n".join(
+                    (
+                        'data: {"data":{}}',
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                    )
+                ),
+            ),
+            (
+                "null event type",
+                "\n\n".join(
+                    (
+                        'data: {"type":null}',
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                    )
+                ),
+            ),
+            (
+                "list event type",
+                "\n\n".join(
+                    (
+                        'data: {"type":["session.info"]}',
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                    )
+                ),
+            ),
+            (
+                "unknown typed event during envelope",
+                "\n\n".join(
+                    (
+                        data_frame(anchor),
+                        'data: {"type":"session.completed","data":{}}',
+                        data_frame(transient_info),
+                        data_frame(provider_terminal),
+                    )
+                ),
+            ),
+            (
+                "malformed done payload",
+                "\n\n".join(
+                    (
+                        data_frame({"type": "assistant.message", "data": {}}),
+                        "event: done\ndata: {not-json",
+                    )
+                ),
+            ),
+            (
+                "non-string done invocation id",
+                "\n\n".join(
+                    (
+                        data_frame({"type": "assistant.message", "data": {}}),
+                        'event: done\ndata: {"invocation_id":["inv_bad"]}',
+                    )
+                ),
+            ),
+            (
+                "done before success",
+                "\n\n".join(
+                    (
+                        'event: done\ndata: {"invocation_id":"inv_early"}',
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                    )
+                ),
+            ),
+        )
+
+        self.assertEqual(self._classify_invoke_stream(full_artifact_stream), 10)
+        for name, raw_stream in invalid_streams:
+            with self.subTest(name=name):
+                self.assertEqual(self._classify_invoke_stream(raw_stream), 20)
 
     def test_fixture_persists_raw_invoke_forensics(self) -> None:
         required = (
@@ -489,8 +594,9 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             "invoke_status=$?",
             'cat "$invoke_log"',
             'python3 - "$invoke_log"',
-            'payload = line[5:].lstrip()',
+            'frame_data.append(line[5:].lstrip())',
             "event = json.loads(payload)",
+            'frame_event != "done"',
             'event_type in {"assistant.message", "assistant.message_delta"}',
         )
         for token in required:
