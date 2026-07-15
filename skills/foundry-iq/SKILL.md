@@ -13,7 +13,7 @@ description: >
   standalone Work IQ, Fabric IQ, or Web IQ workloads, MCP server deployment (use
   foundry-mcp-aca), agent runtime (use foundry-hosted-agents).
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
@@ -37,7 +37,7 @@ metadata:
 | Produces | At |
 |----------|-----|
 | Azure AI Search index | One per Knowledge Base in SPEC § 7 |
-| Knowledge Agent (in Foundry project) | One per Knowledge Base; reasoning effort per § 7 spec |
+| Knowledge retrieval object | One per Knowledge Base; select the API generation and supported controls from SPEC § 7 |
 | `infra/modules/foundry-iq-index.bicep` | Composed by `azd-patterns` Bicep library; included by `threadlight-deploy` Phase 6 when SPEC § 7 declares foundry-iq |
 | `infra/scripts/bootstrap_foundry_iq.py` | Postprovision hook that creates the index + uploads documents + creates the Knowledge Agent |
 | `src/agent/skills/<knowledge-skill>/SKILL.md` | Skill that wraps the Knowledge Agent retrieval call as a tool |
@@ -57,7 +57,7 @@ metadata:
 | `scripts/__init__.py` | Module | Package initializer with exports |
 | `scripts/search_index_manager.py` | Index Manager | Creates and manages Azure AI Search indexes with vector search and HNSW configuration |
 | `scripts/document_indexer.py` | Indexer | Document chunking with sentence boundary detection and batch upload to search index |
-| `scripts/knowledge_agent_manager.py` | Agent Manager | Creates Knowledge Agents with configurable reasoning effort; KnowledgeAgentRetriever for multi-turn retrieval |
+| `scripts/knowledge_agent_manager.py` | Agent Manager | Creates `2025-05-01-preview` Knowledge Agents with explicit model and target-index definitions; retrieves with the matching message contract |
 | `scripts/azure_openai_client.py` | LLM Client | Azure OpenAI client for chat completions; PolicyBot combining retrieval + generation |
 | `test-fixture/consumer_prompt.md` | Live smoke | Creates and reads a GA `searchIndex` knowledge source on REST `2026-04-01` |
 | `test-fixture/azure.yaml` + `infra/` | CI infrastructure | azd+Bicep source for the standing keyless Azure AI Search service |
@@ -75,12 +75,12 @@ Foundry IQ is Microsoft's enterprise-grade RAG solution that treats retrieval as
 >
 > | Surface | API version | Status | Endpoint shape |
 > |---------|-------------|--------|----------------|
-> | Legacy Knowledge Agents used by this skill's scripts | `2025-01-01-preview` | Preview | `/agents/<name>` |
+> | First-generation Knowledge Agents used by this skill's scripts | `2025-05-01-preview` | Preview | `/agents('<name>')` |
 > | Knowledge sources and Knowledge Bases | `2026-04-01` | Narrow GA programmatic slice | `/knowledgesources('<name>')`, `/knowledgebases('<name>')` |
 > | Expanded knowledge-source kinds and options | `2026-05-01-preview` | Preview | Same resource families with preview-only wire values |
 >
-> The scripts in this skill are pinned to the legacy `/agents/` surface
-> for compatibility only. New production code should use the `2026-04-01`
+> The scripts in this skill are pinned to the published first-generation
+> Knowledge Agent contract for compatibility only. New production code should use the `2026-04-01`
 > Knowledge Source and Knowledge Base REST resources directly and should
 > opt into `2026-05-01-preview` only when it needs a capability explicitly
 > marked preview in the matrix below. Do not migrate by changing only the
@@ -171,11 +171,14 @@ The Knowledge Agent provides:
 | `semantic` | ~100-300ms | Simple Q&A, speed-critical apps |
 | `agentic` | ~1-3s | Complex questions, multi-hop reasoning |
 
-### 3. Reasoning Effort Levels
+### 3. API-generation-specific retrieval controls
 
-- `minimal`: Basic retrieval
-- `low`: Light query planning
-- `medium`: Full query planning and multi-hop reasoning
+Reasoning and answer-synthesis controls are API-generation-specific. The
+bundled `2025-05-01-preview` helper does not send persisted reasoning-effort
+or output-mode properties because that contract doesn't define them. Stable
+`2026-04-01` Knowledge Bases provide minimal extractive retrieval, while
+newer preview Knowledge Base versions add documented reasoning and synthesis
+controls. Never copy those newer fields into a 2025-05 agent request.
 
 ### 4. Knowledge Sources
 
@@ -324,11 +327,17 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 AI_SEARCH_ENDPOINT=https://<service>.search.windows.net
 # AI_SEARCH_KEY=                    # Optional — omit for keyless auth (REQUIRED to omit for threadlight pilots)
 # Pin to match the endpoint surface you use:
-#   2025-01-01-preview → /agents/<name>             (legacy; configuration-nested)
+#   2025-05-01-preview → /agents('<name>')           (first-generation Knowledge Agents)
 #   2026-04-01         → GA /knowledgesources + /knowledgebases programmatic slice
 #   2026-05-01-preview → expanded preview kinds and options
-AI_SEARCH_API_VERSION=2025-01-01-preview
+AI_SEARCH_API_VERSION=2025-05-01-preview
 AI_SEARCH_KNOWLEDGE_SOURCE_API_VERSION=2026-04-01
+
+# Required by the 2025-05 Knowledge Agent definition. Omit apiKey and
+# authIdentity so Azure AI Search uses its system-assigned managed identity.
+KNOWLEDGE_AGENT_MODEL_RESOURCE_URI=https://<resource>.openai.azure.com/
+KNOWLEDGE_AGENT_MODEL_DEPLOYMENT_ID=<deployment-name>
+KNOWLEDGE_AGENT_MODEL_NAME=gpt-4.1-mini
 
 # PolicyBot Configuration
 POLICY_INDEX_NAME=policy-documents
@@ -338,10 +347,6 @@ POLICY_CHAT_MODEL=gpt-5.4-mini
 # Document Chunking
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
-
-# Agentic Retrieval — wire format is camelCase (NOT snake_case)
-REASONING_EFFORT=medium       # minimal | low | medium
-OUTPUT_MODE=extractiveData    # extractiveData | answerSynthesis
 
 # Server Configuration
 API_HOST=0.0.0.0
@@ -387,7 +392,7 @@ Indexes documents into Azure AI Search with smart chunking.
 Creates and manages Knowledge Agents for agentic retrieval.
 
 **Key Classes**:
-- `KnowledgeAgentManager`: Creates agents with configurable reasoning effort
+- `KnowledgeAgentManager`: Creates first-generation agents with an explicit Azure OpenAI model and target indexes
 - `KnowledgeAgentRetriever`: Performs retrieval with multi-turn history
 
 ### 4. `azure_openai_client.py`
@@ -446,12 +451,18 @@ def retrieve(self, query: str) -> Dict[str, Any]:
 
     request_body = {
         "messages": [
-            {"role": msg["role"], "content": [{"text": msg["content"]}]}
+            {
+                "role": msg["role"],
+                "content": [{"type": "text", "text": msg["content"]}],
+            }
             for msg in self.messages if msg["role"] != "system"
         ]
     }
+    request_body["targetIndexParams"] = [
+        {"indexName": self.index_name}
+    ]
 
-    url = f"{self.endpoint}/agents/{self.agent_name}/retrieve?api-version={self.api_version}"
+    url = f"{self.endpoint}/agents('{self.agent_name}')/retrieve?api-version={self.api_version}"
     response = requests.post(url=url, headers=self.headers, json=request_body)
     # ... response handling
 ```
@@ -460,8 +471,10 @@ def retrieve(self, query: str) -> Dict[str, Any]:
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `reasoningEffort` | minimal, low, medium | Query planning depth |
-| `outputMode` | extractive_data, generated_text | How results are returned |
+| `models[].azureOpenAIParameters` | `resourceUri`, `deploymentId`, `modelName` | Required query-planning model; omit `apiKey` and `authIdentity` to use the Search service system MI |
+| `targetIndexes[].indexName` | Existing Search index name | Required object-valued target index |
+| `targetIndexes[].defaultRerankerThreshold` | 0-4 | Optional persisted reranker default |
+| `targetIndexParams[].includeReferenceSourceData` | `true` / `false` | Optional retrieve-time override |
 
 ---
 
@@ -624,13 +637,17 @@ from azure.identity import DefaultAzureCredential
 credential = DefaultAzureCredential()
 token = credential.get_token("https://search.azure.com/.default").token
 
-url = f"{endpoint}/agents/{agent_name}/retrieve?api-version=2025-01-01-preview"
+url = f"{endpoint}/agents('{agent_name}')/retrieve?api-version=2025-05-01-preview"
 headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
 
 request_body = {
     "messages": [
-        {"role": "user", "content": [{"text": "What is the PTO policy?"}]}
-    ]
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "What is the PTO policy?"}],
+        }
+    ],
+    "targetIndexParams": [{"indexName": "policy-documents"}],
 }
 
 response = requests.post(url, headers=headers, json=request_body)
@@ -675,7 +692,7 @@ print(f"Seeded {ok} docs into '{os.environ['FOUNDRY_IQ_INDEX']}'")
 
 ### 2. Fail-fast on every shell-out
 
-If you *must* shell out to `az rest` (e.g., for the `/agents/<name>` PUT
+If you *must* shell out to `az rest` (e.g., for the `/agents('<name>')` PUT
 when creating a Knowledge Agent — there's no first-party SDK path for
 that yet), check rc explicitly and **never** log success unconditionally:
 
@@ -981,10 +998,10 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 - Smart sentence boundary detection prevents mid-sentence splits
 - Overlap ensures context continuity across chunks
 
-### 3. Reasoning Effort Selection
-- Use `minimal` for simple factual queries
-- Use `medium` for complex multi-hop questions
-- Higher effort = more tokens = more cost + latency
+### 3. API Generation Selection
+- Use stable `2026-04-01` for minimal extractive Knowledge Base retrieval
+- Use `2025-05-01-preview` only for compatibility with first-generation Knowledge Agents
+- Adopt reasoning or answer-synthesis controls only on a Knowledge Base API version that publishes them
 
 ### 4. Error Handling
 - Knowledge Agents may not exist on first run - handle gracefully
@@ -1006,7 +1023,7 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 ## Best Practices
 
 1. **Use appropriate retrieval mode**: `semantic` for simple queries, `agentic` for complex
-2. **Set reasoning effort based on query complexity**: `medium` for multi-hop
+2. **Keep API generations atomic**: version, paths, persisted definitions, and retrieve request shapes must move together
 3. **Include clear agent instructions** for citation format
 4. **Handle gracefully when KB lacks relevant content**
 5. **Log all configuration at startup** for debugging
@@ -1020,12 +1037,12 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| API Version mismatch | Mixing stable, expanded-preview, and legacy wire contracts | Use `AI_SEARCH_KNOWLEDGE_SOURCE_API_VERSION=2026-04-01` for the GA programmatic slice, `2026-05-01-preview` only for preview-only kinds/options, or `AI_SEARCH_API_VERSION=2025-01-01-preview` for this skill's legacy `/agents/` scripts. Do not change only the version string; endpoint paths and payloads differ. |
+| API Version mismatch | Mixing stable, expanded-preview, and first-generation wire contracts | Use `AI_SEARCH_KNOWLEDGE_SOURCE_API_VERSION=2026-04-01` for the GA programmatic slice, `2026-05-01-preview` only for preview-only kinds/options, or `AI_SEARCH_API_VERSION=2025-05-01-preview` for this skill's first-generation `/agents('<name>')` scripts. Do not change only the version string; endpoint paths and payloads differ. |
 | Missing index | Index not created | Run `/setup` endpoint first |
 | Authentication failed | 401 / 403 from Search or AOAI | Threadlight pilots are **keyless-by-mandate** — verify the agent's UAMI has the required Entra roles (Search Index Data Reader, Cognitive Services OpenAI User, Azure AI User on the Foundry project) AND that `AZURE_CLIENT_ID` is exported into the container so DefaultAzureCredential picks the UAMI (not the dev-loop user). Do NOT bypass by setting `AI_SEARCH_KEY` or `AZURE_OPENAI_API_KEY`. |
 | 403 from `corpus_query` after RBAC grant on Foundry hosted agent | Granted only to project / account MI; hosted-agent runtime uses `blueprint.principal_id` + `instance_identity.principal_id` instead | Grant `Search Index Data Reader` to BOTH MIs (see Hosted-agent runtime identity callout in § Environment Variables). Wait 5-10 min for AI Search RBAC propagation. |
 | `'search.in' invalid expression` from corpus filter | Wrong OData syntax — separate quoted args instead of single CSV string | Use `search.in(field, 'a,b,c', ',')` — single quoted CSV string + delimiter, NOT `search.in(field, 'a','b','c')`. Common copy-paste error. |
-| `KnowledgeAgent` PUT returns 500 (`Internal Server Error`) | Legacy Knowledge Agents path is preview-fluid | Use the stable `/knowledgebases('<name>')` surface on `2026-04-01`, or plain `SearchClient.search(query_type="semantic", semantic_configuration_name=...)` when you don't need agentic planning. |
+| `KnowledgeAgent` PUT returns 400/500 | The `2025-05-01-preview` tuple is incomplete or the preview surface is unavailable in the target region | Confirm the OData `/agents('<name>')` path, required `models` and object-valued `targetIndexes`, supported model name, Search system-MI access to the model, and the matching retrieve shape. Prefer stable `/knowledgebases('<name>')` on `2026-04-01` for new production code. |
 | Index doc count = 0 after "successful" bootstrap | Bootstrap script silently swallowed an `az rest` error (rc != 0 then `[seeded N]` logged unconditionally) | See § Bootstrap script: hardening checklist. Replace `az rest` with direct `SearchClient.upload_documents(...)`, fail-fast on rc != 0, and inspect per-doc result.succeeded. |
 | `InvalidDocumentKey` 400 on upload | Document key contains illegal chars (parens, brackets, dots, spaces) | Sanitize keys: `re.sub(r"[^A-Za-z0-9_\-=]", "_", name)` then collapse runs of `_` and trim to 128 chars. AI Search only accepts `[A-Za-z0-9_\-=]`. |
 | `Field 'content' contains a term that is too large to process. The max length for UTF-8 encoded terms is 32766 bytes.` | Source doc has a long unbroken token (URL, base64 blob, no whitespace) > 32k bytes | Chunk content > ~25k chars at paragraph / sentence / whitespace boundaries with a hard-cap fallback. Don't rely on `[:60000]` truncation — that doesn't fix the term length, only the field length. |
@@ -1035,7 +1052,7 @@ Example: "Employees receive 15 PTO days [0:1+pto_policy.md]"
 | `client.get_mcp_tool()` accepts only static `headers: dict[str, str]` — no `header_provider` | The hosted-MCP shape is designed for static API keys / unauthenticated MCPs; the static dict is pinned at agent build time | For MCP servers that need short-lived AAD tokens (e.g. KB MCP, Storage MCP behind PMI), do NOT use `client.get_mcp_tool()` — switch to `MCPStreamableHTTPTool + header_provider`. Static `Bearer` tokens in the dict will expire after ~1h and break the agent until container restart. Bug-009/014 itself is FIXED in `agent-framework-core` 1.3.0 ([PR #5581](https://github.com/microsoft/agent-framework/pull/5581)) — the static-headers limitation is a separate design constraint. |
 | Foundry Toolbox `azure_ai_search` tool type wraps an INDEX, not a Knowledge Base | The built-in Toolbox tool only exposes `index_name` + `query_type=vector_semantic_hybrid` — no agentic query planning or answer synthesis | The Foundry Agent Service / Toolbox MCP integration is preview. Use `server_url=<search>/knowledgebases/<n>/mcp?api-version=2026-05-01-preview` with a project connection only when preview terms are acceptable; otherwise call stable Route A directly. |
 | No results | Empty index | Index sample documents first |
-| Timeout | Large retrieval | Reduce reasoning effort or chunk size |
+| Timeout | Large retrieval | Reduce requested output or chunk size; adjust reasoning only when the selected API version publishes that control |
 
 ### Debug Checklist
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
+import json
 import re
 import unittest
 from pathlib import Path
@@ -16,6 +18,8 @@ SKILL = ROOT / "skills" / "foundry-iq" / "SKILL.md"
 PRD = ROOT / "skills" / "foundry-iq" / "PRD.md"
 ENV_SAMPLE = ROOT / "skills" / "foundry-iq" / ".env.sample"
 CI_ENV_SAMPLE = ROOT / ".env.ci.example"
+PLUGIN = ROOT / "plugin.json"
+MARKETPLACE = ROOT / ".github" / "plugin" / "marketplace.json"
 REQUIREMENTS = ROOT / "skills" / "foundry-iq" / "requirements.txt"
 PIN = ROOT / "skills" / "foundry-iq" / "references" / "upstream-pin.md"
 KNOWLEDGE_AGENT_MANAGER = (
@@ -152,7 +156,7 @@ class FoundryIqGaContractTests(unittest.TestCase):
         )
         self.assertIn(f"| **Pinned SHA** | `{pinned_sha}` |", self.pin)
 
-    def test_legacy_agent_default_version_path_and_body_stay_together(self) -> None:
+    def test_published_2025_05_agent_version_path_and_body_stay_together(self) -> None:
         module = _load_knowledge_agent_manager()
         with patch.object(
             module,
@@ -162,35 +166,182 @@ class FoundryIqGaContractTests(unittest.TestCase):
             manager = module.KnowledgeAgentManager(
                 endpoint="https://example.search.windows.net"
             )
+        self.assertTrue(
+            {
+                "model_resource_uri",
+                "model_deployment_id",
+                "model_name",
+            }.issubset(inspect.signature(manager.create_agent).parameters)
+        )
 
         expected_body = {
             "name": "policy-agent",
             "description": "Knowledge Agent for policy-documents",
-            "knowledgeSources": [
+            "models": [
                 {
-                    "name": "policy-documents-source",
-                    "kind": "searchIndex",
-                    "indexName": "policy-documents",
+                    "kind": "azureOpenAI",
+                    "azureOpenAIParameters": {
+                        "resourceUri": "https://example.openai.azure.com/",
+                        "deploymentId": "agent-planner",
+                        "modelName": "gpt-4.1-mini",
+                    },
                 }
             ],
-            "targetIndexes": ["policy-documents"],
-            "configuration": {
-                "reasoningEffort": "medium",
-                "outputMode": "extractiveData",
-            },
+            "targetIndexes": [{"indexName": "policy-documents"}],
         }
 
         with patch.object(manager, "_make_request", return_value={}) as request:
             manager.create_agent(
                 agent_name="policy-agent",
                 index_name="policy-documents",
+                model_resource_uri="https://example.openai.azure.com/",
+                model_deployment_id="agent-planner",
+                model_name="gpt-4.1-mini",
             )
 
-        self.assertEqual(manager.api_version, "2025-01-01-preview")
+        self.assertEqual(manager.api_version, "2025-05-01-preview")
         request.assert_called_once_with(
             "PUT",
-            "/agents/policy-agent",
+            "/agents('policy-agent')",
             expected_body,
+        )
+
+    def test_published_2025_05_agent_lifecycle_and_retrieve_tuple(self) -> None:
+        module = _load_knowledge_agent_manager()
+        with patch.object(
+            module,
+            "_get_search_headers",
+            return_value={"Content-Type": "application/json"},
+        ):
+            manager = module.KnowledgeAgentManager(
+                endpoint="https://example.search.windows.net"
+            )
+            retriever = module.KnowledgeAgentRetriever(
+                endpoint="https://example.search.windows.net",
+                agent_name="policy-agent",
+            )
+
+        with patch.object(manager, "_make_request", return_value={}) as request:
+            manager.get_agent("policy-agent")
+            manager.delete_agent("policy-agent")
+
+        self.assertEqual(
+            [call.args[:2] for call in request.call_args_list],
+            [
+                ("GET", "/agents('policy-agent')"),
+                ("DELETE", "/agents('policy-agent')"),
+            ],
+        )
+
+        response = unittest.mock.Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "response": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Grounded answer"}],
+                }
+            ],
+            "activity": [],
+            "references": [],
+        }
+        with patch.object(module.requests, "post", return_value=response) as post:
+            result = retriever.retrieve(
+                "What is the PTO policy?",
+                target_index_name="policy-documents",
+                include_history=False,
+            )
+
+        self.assertEqual(retriever.api_version, "2025-05-01-preview")
+        post.assert_called_once_with(
+            url=(
+                "https://example.search.windows.net/"
+                "agents('policy-agent')/retrieve?api-version=2025-05-01-preview"
+            ),
+            headers={"Content-Type": "application/json"},
+            json={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What is the PTO policy?"}
+                        ],
+                    }
+                ],
+                "targetIndexParams": [{"indexName": "policy-documents"}],
+            },
+        )
+        self.assertEqual(result["response"][0]["content"][0]["text"], "Grounded answer")
+        self.assertEqual(
+            retriever.messages[-1],
+            {"role": "assistant", "content": "Grounded answer"},
+        )
+
+    def test_2025_05_agent_requires_supported_explicit_model_configuration(self) -> None:
+        module = _load_knowledge_agent_manager()
+        with patch.object(
+            module,
+            "_get_search_headers",
+            return_value={"Content-Type": "application/json"},
+        ):
+            manager = module.KnowledgeAgentManager(
+                endpoint="https://example.search.windows.net"
+            )
+        self.assertTrue(
+            {
+                "model_resource_uri",
+                "model_deployment_id",
+                "model_name",
+            }.issubset(inspect.signature(manager.create_agent).parameters)
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsupported knowledge agent model"):
+            manager.create_agent(
+                agent_name="policy-agent",
+                index_name="policy-documents",
+                model_resource_uri="https://example.openai.azure.com/",
+                model_deployment_id="agent-planner",
+                model_name="gpt-5.4-mini",
+            )
+
+    def test_skill_and_supporting_docs_use_only_published_2025_05_agent_contract(
+        self,
+    ) -> None:
+        manager = KNOWLEDGE_AGENT_MANAGER.read_text(encoding="utf-8")
+        for artifact in (self.skill, self.prd, self.env_sample, manager):
+            self.assertNotIn("2025-01-01-preview", artifact)
+        self.assertIn("`2025-05-01-preview`", self.skill)
+        self.assertIn("AI_SEARCH_API_VERSION=2025-05-01-preview", self.env_sample)
+        self.assertIn(
+            "KNOWLEDGE_AGENT_MODEL_RESOURCE_URI=https://<resource>.openai.azure.com/",
+            self.env_sample,
+        )
+        self.assertIn(
+            "KNOWLEDGE_AGENT_MODEL_DEPLOYMENT_ID=<deployment-name>",
+            self.env_sample,
+        )
+        self.assertIn("KNOWLEDGE_AGENT_MODEL_NAME=gpt-4.1-mini", self.env_sample)
+        self.assertNotIn("REASONING_EFFORT=", self.env_sample)
+        self.assertNotIn("OUTPUT_MODE=", self.env_sample)
+        self.assertIn(
+            '"content": [{"type": "text", "text": msg["content"]}]',
+            self.skill,
+        )
+        self.assertIn(
+            'request_body["targetIndexParams"] = [',
+            self.skill,
+        )
+        self.assertNotIn(
+            '"content": [{"text": msg["content"]}]',
+            self.skill,
+        )
+        self.assertNotIn("reasoning effort per § 7 spec", self.skill)
+        self.assertNotIn("with configurable reasoning effort", self.skill)
+        self.assertNotIn("### 3. Reasoning Effort Levels", self.skill)
+        self.assertNotIn("### 3. Reasoning Effort Selection", self.skill)
+        self.assertIn(
+            "Reasoning and answer-synthesis controls are API-generation-specific",
+            self.skill,
         )
 
     def test_live_fixture_exercises_only_a_ga_kind(self) -> None:
@@ -249,15 +400,35 @@ class FoundryIqGaContractTests(unittest.TestCase):
         self.assertIn("knowledgeRetrieval: 'standard'", infra)
 
     def test_subscription_deploy_uses_dedicated_foundry_iq_resource_group(self) -> None:
-        parameters = INFRA_PARAMETERS.read_text(encoding="utf-8")
+        parameters_text = INFRA_PARAMETERS.read_text(encoding="utf-8")
+        parameters = json.loads(parameters_text)["parameters"]
         ci_env = CI_ENV_SAMPLE.read_text(encoding="utf-8")
 
-        self.assertIn('"${FOUNDRY_IQ_RESOURCE_GROUP}"', parameters)
-        self.assertNotIn('"${AZURE_RESOURCE_GROUP}"', parameters)
-        self.assertIn('"${AZURE_TENANT_ID}"', parameters)
-        self.assertIn('"${AZURE_SUBSCRIPTION_ID}"', parameters)
+        self.assertEqual(
+            parameters["resourceGroupName"]["value"],
+            "${FOUNDRY_IQ_RESOURCE_GROUP}",
+        )
+        self.assertEqual(
+            parameters["expectedTenantId"]["value"],
+            "${FOUNDRY_IQ_EXPECTED_TENANT_ID}",
+        )
+        self.assertEqual(
+            parameters["expectedSubscriptionId"]["value"],
+            "${FOUNDRY_IQ_EXPECTED_SUBSCRIPTION_ID}",
+        )
+        self.assertNotIn("${AZURE_RESOURCE_GROUP}", parameters_text)
+        self.assertNotIn('"value": "${AZURE_TENANT_ID}"', parameters_text)
+        self.assertNotIn('"value": "${AZURE_SUBSCRIPTION_ID}"', parameters_text)
         self.assertIn(
             "FOUNDRY_IQ_RESOURCE_GROUP=rg-foundry-iq-<suffix>",
+            ci_env,
+        )
+        self.assertIn(
+            "FOUNDRY_IQ_EXPECTED_TENANT_ID=<approved-entra-tenant-guid>",
+            ci_env,
+        )
+        self.assertIn(
+            "FOUNDRY_IQ_EXPECTED_SUBSCRIPTION_ID=<approved-subscription-guid>",
             ci_env,
         )
 
@@ -349,7 +520,11 @@ class FoundryIqGaContractTests(unittest.TestCase):
         )
 
     def test_patch_version_records_post_merge_corrections(self) -> None:
-        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "1.4.1")
+        self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "1.4.2")
+        self.assertEqual(json.loads(PLUGIN.read_text())["version"], "4.29.3")
+        marketplace = json.loads(MARKETPLACE.read_text())
+        self.assertEqual(marketplace["metadata"]["version"], "4.29.3")
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.29.3")
 
 
 if __name__ == "__main__":

@@ -6,10 +6,10 @@
       "value": "${FOUNDRY_IQ_RESOURCE_GROUP}"
     },
     "expectedTenantId": {
-      "value": "${AZURE_TENANT_ID}"
+      "value": "${FOUNDRY_IQ_EXPECTED_TENANT_ID}"
     },
     "expectedSubscriptionId": {
-      "value": "${AZURE_SUBSCRIPTION_ID}"
+      "value": "${FOUNDRY_IQ_EXPECTED_SUBSCRIPTION_ID}"
     },
     "location": {
       "value": "${AZURE_LOCATION}"
