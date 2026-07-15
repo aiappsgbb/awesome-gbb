@@ -25,6 +25,9 @@ PIN = ROOT / "skills" / "foundry-iq" / "references" / "upstream-pin.md"
 KNOWLEDGE_AGENT_MANAGER = (
     ROOT / "skills" / "foundry-iq" / "scripts" / "knowledge_agent_manager.py"
 )
+AZURE_OPENAI_CLIENT = (
+    ROOT / "skills" / "foundry-iq" / "scripts" / "azure_openai_client.py"
+)
 FIXTURE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "consumer_prompt.md"
 LIVE_SMOKE = ROOT / "skills" / "foundry-iq" / "test-fixture" / "live_smoke.py"
 AZURE_YAML = ROOT / "skills" / "foundry-iq" / "test-fixture" / "azure.yaml"
@@ -85,6 +88,18 @@ def _load_knowledge_agent_manager():
     )
     if spec is None or spec.loader is None:
         raise AssertionError("could not load knowledge_agent_manager.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_azure_openai_client():
+    spec = importlib.util.spec_from_file_location(
+        "foundry_iq_azure_openai_client",
+        AZURE_OPENAI_CLIENT,
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load azure_openai_client.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -505,6 +520,62 @@ class FoundryIqGaContractTests(unittest.TestCase):
             "pip install azure-search-documents>=11.7.0b1",
             self.skill,
         )
+
+    def test_legacy_api_reference_uses_the_published_rest_helper(self) -> None:
+        api_reference = self.skill.split("## API Reference", 1)[1]
+        legacy_reference = api_reference.split(
+            "### Direct REST API (Alternative)", 1
+        )[0]
+
+        self.assertNotIn("from azure.search.documents.agent", legacy_reference)
+        self.assertNotIn("KnowledgeAgentRetrievalClient", legacy_reference)
+        self.assertNotIn("knowledge_source_params=[", legacy_reference)
+        self.assertIn(
+            "[`scripts/knowledge_agent_manager.py`](scripts/knowledge_agent_manager.py)",
+            legacy_reference,
+        )
+        self.assertIn("no first-party Python SDK client", legacy_reference)
+
+        direct_rest = api_reference.split(
+            "### Direct REST API (Alternative)", 1
+        )[1]
+        self.assertIn("2025-05-01-preview", direct_rest)
+        self.assertIn('"targetIndexParams": [{"indexName":', direct_rest)
+
+        manager_source = KNOWLEDGE_AGENT_MANAGER.read_text(encoding="utf-8")
+        self.assertNotIn("KnowledgeAgentRetrievalClient pattern", manager_source)
+        self.assertRegex(manager_source, r"REST endpoint via\s+direct HTTP")
+
+    def test_policy_bot_returns_sources_from_published_references(self) -> None:
+        module = _load_azure_openai_client()
+
+        class FakeRetriever:
+            def retrieve(self, _query: str) -> dict:
+                return {
+                    "response": [],
+                    "references": [
+                        {"docKey": "pto-policy"},
+                        {"docKey": "pto-policy"},
+                        {"docKey": "benefits-guide"},
+                    ],
+                }
+
+            def format_citations(self, _result: dict) -> str:
+                return "Grounded policy context"
+
+        class FakeOpenAIClient:
+            def chat_with_context(self, **_kwargs) -> str:
+                return "Employees receive paid time off."
+
+        bot = module.PolicyBot.__new__(module.PolicyBot)
+        bot.openai = FakeOpenAIClient()
+        bot.retriever = FakeRetriever()
+        bot.system_prompt = "Answer from retrieved policy documents."
+        bot.conversation_history = []
+
+        result = bot.ask("What is the PTO policy?")
+
+        self.assertEqual(result["sources"], ["pto-policy", "benefits-guide"])
 
     def test_reference_source_data_is_stable_retrieve_time_control(self) -> None:
         self.assertRegex(

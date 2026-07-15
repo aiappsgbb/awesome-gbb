@@ -217,9 +217,8 @@ class KnowledgeAgentManager:
 
 class KnowledgeAgentRetriever:
     """
-    Performs agentic retrieval using a Knowledge Agent.
-
-    Uses the KnowledgeAgentRetrievalClient pattern from Azure AI Search SDK.
+    Performs retrieval against the 2025-05 Knowledge Agent REST endpoint via
+    direct HTTP.
     """
 
     def __init__(

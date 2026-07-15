@@ -595,38 +595,16 @@ MAF 1.3.0 + Toolbox v1, May 2026).
 
 ### Knowledge Agent Retrieval
 
-```python
-from azure.search.documents.agent import KnowledgeAgentRetrievalClient
-from azure.search.documents.agent.models import (
-    KnowledgeAgentRetrievalRequest,
-    KnowledgeAgentMessage,
-    KnowledgeAgentMessageTextContent,
-    SearchIndexKnowledgeSourceParams
-)
+`azure-search-documents~=12.0.0` has no first-party Python SDK client for
+the `2025-05-01-preview` Knowledge Agent surface. Do not import
+`azure.search.documents.agent` or reuse stable Knowledge Base
+`knowledge_source_params` models here.
 
-agent_client = KnowledgeAgentRetrievalClient(
-    endpoint=search_endpoint,
-    agent_name=knowledge_agent_name,
-    credential=credential
-)
-
-req = KnowledgeAgentRetrievalRequest(
-    messages=[
-        KnowledgeAgentMessage(
-            role="user",
-            content=[KnowledgeAgentMessageTextContent(text=query)]
-        )
-    ],
-    knowledge_source_params=[
-        SearchIndexKnowledgeSourceParams(
-            knowledge_source_name=index_name,
-            kind="searchIndex"
-        )
-    ]
-)
-
-result = agent_client.retrieve(retrieval_request=req)
-```
+> **MUST:** Reuse the canonical bundled REST helper in
+> [`scripts/knowledge_agent_manager.py`](scripts/knowledge_agent_manager.py).
+> Its `KnowledgeAgentRetriever` keeps the API version, OData agent path,
+> typed `messages`, and `targetIndexParams` request shape together. For a
+> minimal standalone call, use the direct REST example below.
 
 ### Direct REST API (Alternative)
 
