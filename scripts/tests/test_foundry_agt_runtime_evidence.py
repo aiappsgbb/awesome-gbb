@@ -10,11 +10,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SKILL_DIR = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "references" / "python"
+sys.path.insert(0, str(SKILL_DIR))
 
 from runtime_evidence import REQUIRED_FIELDS, SCHEMA, build_evidence, write_evidence  # noqa: E402
 
-REF_DIR = Path(__file__).resolve().parents[1]
+REF_DIR = Path(__file__).resolve().parents[1].parent / "skills" / "foundry-agt" / "references"
 SCHEMA_PATH = REF_DIR / "runtime-evidence.schema.json"
 DATA_DIR = REF_DIR / "data"
 VALID_FIXTURE_PATH = DATA_DIR / "runtime-evidence.valid.json"
