@@ -1,8 +1,9 @@
 # foundry-hosted-agents
 
-Deploy and manage Foundry hosted agents (code-mode / BYOK container agents on
-ACA) via `azd` — identity/RBAC wiring, the FoundryChatClient bootstrap, and
-blue-green/canary version rollout patterns.
+Deploy and manage Foundry hosted agents (container-built agents run on
+Foundry-managed, per-session sandboxes — GA) via `azd` and the unified
+`azure.yaml` — the FoundryChatClient bootstrap, identity (implicit
+access by default), and blue-green/canary version rollout patterns.
 
 ## Roadmap
 

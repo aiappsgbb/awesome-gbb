@@ -195,6 +195,18 @@ class TestChangedOnly(unittest.TestCase):
                 _run_changed_only(repo, base), ["alpha", "beta", "gamma"]
             )
 
+    def test_changed_only_force_full_on_project_resolver(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, base = self._setup(td)
+            resolver = repo / "scripts" / "resolve-foundry-project.py"
+            resolver.parent.mkdir(parents=True, exist_ok=True)
+            resolver.write_text("print('project')\n")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit project resolver")
+            self.assertEqual(
+                _run_changed_only(repo, base), ["alpha", "beta", "gamma"]
+            )
+
     def test_changed_only_plugin_json_is_metadata_no_fanout(self) -> None:
         # plugin.json and marketplace.json are metadata manifests — a
         # bare version bump (or new-skill registration) must NOT trigger

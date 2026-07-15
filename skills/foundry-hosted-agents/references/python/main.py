@@ -1,20 +1,21 @@
 # Canonical hosted-agent main.py — MAF + FoundryChatClient pattern.
 #
-# This is the field-validated reference shape for a Foundry hosted agent on the
-# refreshed May 2026 preview. It is the SOURCE OF TRUTH for the prose example in
-# `../../SKILL.md § Runtime Pattern (MAF Variant)`. When the SKILL prose drifts
-# from this file (or vice-versa), update both in the same commit.
+# This is the field-validated reference shape for a Foundry hosted agent on
+# the GA container-deploy path. It is the SOURCE OF TRUTH for the prose
+# example in `../../SKILL.md § Runtime Pattern (MAF Variant)`. When the SKILL
+# prose drifts from this file (or vice-versa), update both in the same commit.
 #
 # Pre-conditions consumed from the platform-injected environment:
-#   FOUNDRY_PROJECT_ENDPOINT       (platform-injected at container start; NEVER declare in agent.yaml)
-#   MODEL_DEPLOYMENT_NAME          (declared in agent.yaml as a LITERAL — see ../yaml/agent.yaml)
+#   FOUNDRY_PROJECT_ENDPOINT          (platform-injected at container start; set in azd env for direct-copy deploy, NEVER project through environmentVariables)
+#   AZURE_AI_MODEL_DEPLOYMENT_NAME     (declared in azure.yaml's environmentVariables list — see ../yaml/azure.yaml)
 #
-# Why each line matters (validated against 2026-05-29 smb-credit-memo run, MID-16 + MID-17):
+# Why each line matters:
 #   - `model=` MUST be passed explicitly to FoundryChatClient. The runtime
-#     injects AZURE_CLIENT_ID into the container but the SDK does NOT auto-pick
-#     it up unless `model=` is supplied — agent boot fails at import otherwise.
+#     injects the agent's Entra identity into the container but the SDK does
+#     NOT auto-pick a model unless `model=` is supplied — agent boot fails at
+#     import otherwise.
 #   - `credential=DefaultAzureCredential()` MUST be passed explicitly for the
-#     same reason — runtime auto-injection ≠ SDK auto-detection.
+#     same reason — runtime identity injection != SDK auto-detection.
 #   - `@tool(approval_mode="never_require")` is what registers a Python function
 #     as a tool. Bare `def my_tool` will not get called.
 #   - `default_options={"store": False}` — platform manages session history; if
@@ -31,7 +32,7 @@ from pydantic import Field
 
 client = FoundryChatClient(
     project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ["MODEL_DEPLOYMENT_NAME"],
+    model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
     credential=DefaultAzureCredential(),
 )
 

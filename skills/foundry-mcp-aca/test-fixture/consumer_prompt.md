@@ -14,6 +14,17 @@ whether a customer following the skill verbatim ends up with a working
 MCP server reachable from Foundry hosted agents over the network. Pretend
 you are that customer.
 
+## Step -1 — acknowledge the skill contract
+
+Your first Bash action must be:
+
+```bash
+echo "skills/foundry-mcp-aca/SKILL.md"
+```
+
+This lightweight line is the workflow's skill-usage audit evidence. Do not
+open the whole file.
+
 **CRITICAL — never invoke `copilot` recursively from a Bash tool.** You
 ARE the running Copilot CLI process. Do NOT run `copilot -p ...`,
 `copilot --version`, `npm install -g @github/copilot`, or any other
@@ -25,7 +36,7 @@ information found" and (b) overwrite this run's transcript at
 `/tmp/foundry-mcp-aca-transcript.log`, defeating the workflow's retry
 classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow ALREADY
 captures your output via the outer `tee` — your job is to EXECUTE Steps
-0-7 directly in Bash tool calls, not to "run the smoke".
+-1-7 directly in Bash tool calls, not to "run the smoke".
 
 ---
 

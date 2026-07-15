@@ -5,25 +5,30 @@ Source of truth for the prose example in
 
 Demonstrates the **native** Foundry platform traffic-routing primitives —
 NOT a client-side router. Each `create_version` call yields an immutable
-version; `patch_agent_details(agent_endpoint=...)` weights traffic across
-versions via `FixedRatio` rules summing to 100 %.
+version; `project.agents.update_details(agent_endpoint=AgentEndpointConfig(...))`
+weights traffic across versions via `FixedRatio` rules summing to 100 %.
+
+This is the **stable, GA** SDK surface — `update_details` is a top-level
+`project.agents` method (not `project.beta.agents`), and no
+`Foundry-Features` preview header is required. The old preview-era
+`project.beta.agents.patch_agent_details(agent_endpoint=AgentEndpoint(...))`
+call is gone in `azure-ai-projects` 2.3.0 (`BetaAgentsOperations` only
+covers `AgentsOptimization` operations now) — do not reintroduce it.
 
 Requires:
-- azure-ai-projects ~= 2.1.0
+- azure-ai-projects ~= 2.3.0
 - azure-identity ~= 1.25.3
-- Environment variables: FOUNDRY_PROJECT_ENDPOINT, AGENT_NAME, NEW_IMAGE
+- Environment variables: FOUNDRY_PROJECT_ENDPOINT, AGENT_NAME, NEW_IMAGE,
+  AZURE_AI_MODEL_DEPLOYMENT_NAME
 
 Usage:
     export FOUNDRY_PROJECT_ENDPOINT=https://<acct>.services.ai.azure.com/api/projects/<proj>
     export AGENT_NAME=my-agent
     export NEW_IMAGE=myregistry.azurecr.io/my-agent@sha256:def...
+    export AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-5.4-mini
     python version_rollout.py blue-green
     python version_rollout.py canary 1            # prior version is "1"
     python version_rollout.py rollback 1          # revert to version "1"
-
-The script is preview-feature-aware: the SDK calls below use
-`project.beta.agents.patch_agent_details` which sends the
-`Foundry-Features: AgentEndpoints=V1Preview` header server-side.
 """
 
 from __future__ import annotations
@@ -34,14 +39,22 @@ import time
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import (
-    AgentEndpoint,
+    AgentEndpointConfig,
     AgentEndpointProtocol,
+    ContainerConfiguration,
     FixedRatioVersionSelectionRule,
     HostedAgentDefinition,
+    ProtocolConfiguration,
     ProtocolVersionRecord,
+    ResponsesProtocolConfiguration,
     VersionSelector,
 )
 from azure.identity import DefaultAzureCredential
+
+# Current GA protocol version for the Responses surface. See SKILL.md
+# § azure.yaml (unified hosted-agent configuration) — the historical
+# preview values were "v1" then "1.0.0"; do NOT regress to either.
+RESPONSES_PROTOCOL_VERSION = "2.0.0"
 
 
 def _env(name: str) -> str:
@@ -77,12 +90,12 @@ def wait_for_active(
     )
 
 
-def patch_routing(
+def update_routing(
     project: AIProjectClient,
     agent_name: str,
     splits: list[tuple[str, int]],
 ) -> None:
-    """Set the agent_endpoint traffic split.
+    """Set the agent endpoint's traffic split via the stable update_details call.
 
     Args:
         splits: list of (agent_version, traffic_percentage) tuples
@@ -95,11 +108,13 @@ def patch_routing(
         FixedRatioVersionSelectionRule(agent_version=v, traffic_percentage=p)
         for v, p in splits
     ]
-    project.beta.agents.patch_agent_details(
+    project.agents.update_details(
         agent_name=agent_name,
-        agent_endpoint=AgentEndpoint(
+        agent_endpoint=AgentEndpointConfig(
             version_selector=VersionSelector(version_selection_rules=rules),
-            protocols=[AgentEndpointProtocol.RESPONSES],
+            protocol_configuration=ProtocolConfiguration(
+                responses=ResponsesProtocolConfiguration()
+            ),
         ),
     )
     print(f"  routed: {splits}")
@@ -114,21 +129,35 @@ def create_new_version(
 ) -> str:
     """Create a new agent version. Returns the version id (e.g. '2').
 
-    Always bumps a `_BUILD_TS` env var to defeat the `create_version`
-    deduplication trap documented in SKILL.md §
-    `create_version deduplication trap`. Without it, the platform may
-    silently return an existing version with identical inputs.
+    Carries the required `AZURE_AI_MODEL_DEPLOYMENT_NAME` runtime setting
+    into the complete immutable definition and bumps `_BUILD_TS` to defeat
+    the `create_version` deduplication trap documented in SKILL.md §
+    `create_version deduplication trap`. Without the model setting, the new
+    version does not inherit it and the container fails at startup. Without
+    the build stamp, the platform may silently return an existing version
+    with identical inputs. Versions are immutable once created — this is how
+    you ship a change, not `update_details` (that call only ever touches
+    endpoint/routing config, never the version's own definition).
     """
     v = project.agents.create_version(
         agent_name=agent_name,
         definition=HostedAgentDefinition(
+            kind="hosted",
             cpu=cpu,
             memory=memory,
-            image=image,
-            container_protocol_versions=[
-                ProtocolVersionRecord(protocol="responses", version="1.0.0"),
+            container_configuration=ContainerConfiguration(image=image),
+            protocol_versions=[
+                ProtocolVersionRecord(
+                    protocol=AgentEndpointProtocol.RESPONSES,
+                    version=RESPONSES_PROTOCOL_VERSION,
+                ),
             ],
-            environment_variables={"_BUILD_TS": str(int(time.time()))},
+            environment_variables={
+                "AZURE_AI_MODEL_DEPLOYMENT_NAME": _env(
+                    "AZURE_AI_MODEL_DEPLOYMENT_NAME"
+                ),
+                "_BUILD_TS": str(int(time.time())),
+            },
         ),
     )
     print(f"  created v{v.version} (status: {v['status']})")
@@ -136,11 +165,11 @@ def create_new_version(
 
 
 def blue_green(project: AIProjectClient, agent_name: str, new_image: str) -> str:
-    """Pattern A: atomic 0 → 100 % cutover. Returns new version id."""
+    """Pattern A: atomic 0 -> 100 % cutover. Returns new version id."""
     print("== BLUE-GREEN ==")
     new_v = create_new_version(project, agent_name, new_image)
     wait_for_active(project, agent_name, new_v)
-    patch_routing(project, agent_name, [(new_v, 100)])
+    update_routing(project, agent_name, [(new_v, 100)])
     print(f"  cutover complete; v{new_v} now serves 100 % traffic")
     return new_v
 
@@ -153,7 +182,7 @@ def canary(
     ramp: tuple[int, ...] = (10, 50, 100),
     observe_seconds_between_ramps: float = 0.0,
 ) -> str:
-    """Pattern B: gradual ramp (default 10/90 → 50/50 → 100/0).
+    """Pattern B: gradual ramp (default 10/90 -> 50/50 -> 100/0).
 
     `observe_seconds_between_ramps` is 0 by default for CI; in production,
     pass hours / days converted to seconds. Returns new version id.
@@ -166,7 +195,7 @@ def canary(
             splits = [(prior_version, 100 - new_pct), (new_v, new_pct)]
         else:
             splits = [(new_v, 100)]
-        patch_routing(project, agent_name, splits)
+        update_routing(project, agent_name, splits)
         if new_pct < 100 and observe_seconds_between_ramps > 0:
             time.sleep(observe_seconds_between_ramps)
     print(f"  promotion complete; v{new_v} now serves 100 % traffic")
@@ -183,10 +212,10 @@ def rollback(
     Assumes `prior_version` was NOT deleted. If it was, you must
     `create_new_version()` from the prior image digest first (2-5 min
     cold provision) — which is why production guidance is to keep
-    `prior_version` for ≥ 24 h after promotion.
+    `prior_version` for >= 24 h after promotion.
     """
     print(f"== ROLLBACK to v{prior_version} ==")
-    patch_routing(project, agent_name, [(prior_version, 100)])
+    update_routing(project, agent_name, [(prior_version, 100)])
     print(f"  revert complete; v{prior_version} now serves 100 % traffic")
 
 

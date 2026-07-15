@@ -2,11 +2,11 @@
 
 Choose **which model, in which region, at what capacity** before you run
 `azd provision`. The deployment *mechanics* are in SKILL.md — the
-`azure.yaml` `deployments:` block (§ *azure.yaml (azd ai agent
-Extension)*), the version pin (§ *Model Version Lookup*), the `azd env`
-wiring (§ *Required azd env variables for the azure.ai.agents
-extension*), and region support (§ *Region Availability*). This file is
-the *decision* that feeds them.
+`azure.yaml` `services.ai-project.deployments:` block (§ *azure.yaml
+(unified hosted-agent configuration)*), the version pin (§ *Model
+Version Lookup*), the `azd env` wiring (§ *azd env variables for the
+azure.ai.agents extension*), and region support (§ *Region
+Availability*). This file is the *decision* that feeds them.
 
 ## When to read this
 
@@ -113,8 +113,9 @@ cost more than `GlobalStandard` where residency isn't needed) — see the
 
 ## 5 — Wiring the decision in
 
-The four axes land in one place — the `azure.yaml` `deployments:` block
-(§ *azure.yaml (azd ai agent Extension)*):
+The four axes land in one place — the `azure.yaml`
+`services.ai-project.deployments:` block (§ *azure.yaml (unified
+hosted-agent configuration)*):
 
 | Decision | `azure.yaml` field |
 |---|---|

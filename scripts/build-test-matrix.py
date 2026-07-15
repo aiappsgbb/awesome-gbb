@@ -19,10 +19,12 @@ Sorted alphabetically for deterministic GHA matrix expansion.
         .github/workflows/skill-test.yml
         .github/quarantine.yml
         .github/ci-shared-preamble.md
+        scripts/resolve-foundry-project.py
     These files change the per-leg input contract (workflow timeouts,
     env vars, retry logic, runner image; shared preamble prepended to
-    every fixture; quarantine list) — any change to them MUST
-    re-validate every fixtured skill against real Azure resources.
+    every fixture; quarantine list; Foundry project selection) — any
+    change to them MUST re-validate every fixtured skill against real
+    Azure resources.
 
     `plugin.json`, `.github/plugin/marketplace.json`,
     `scripts/build-test-matrix.py`, and `.github/skill-deps.yml` are
@@ -73,8 +75,9 @@ import yaml
 # Paths whose modification forces a full-matrix run. These files change
 # the per-leg input contract (workflow timeouts, env vars, retry logic,
 # runner image; shared preamble prepended to every fixture; quarantine
-# list) — any change to them requires real-Azure re-validation across
-# the catalog. plugin.json/marketplace.json, this script, and
+# list; Foundry project selection) — any change to them requires
+# real-Azure re-validation across the catalog.
+# plugin.json/marketplace.json, this script, and
 # skill-deps.yml are NOT here: the manifests are metadata, this script
 # is covered by its own unit tests, and skill-deps.yml is read live by
 # _load_dep_map (a new entry is additive and doesn't change existing
@@ -88,6 +91,8 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     # fixture run prepends this file's content, so editing it changes
     # the input contract for every leg — re-validate the whole catalog.
     ".github/ci-shared-preamble.md",
+    # Every Azure fixture consumes the project context selected here.
+    "scripts/resolve-foundry-project.py",
 })
 
 

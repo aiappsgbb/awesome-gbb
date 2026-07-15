@@ -30,9 +30,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
-from copilot import CopilotClient
-from copilot.session import PermissionHandler, ProviderConfig
-from copilot.generated.session_events import SessionEventType
+from copilot import CopilotClient, PermissionHandler, ProviderConfig
+from copilot.session_events import SessionEventType
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)

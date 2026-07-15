@@ -21,6 +21,7 @@ on:
       - ".github/quarantine.yml"
       - ".github/ci-shared-preamble.md"
       - "scripts/build-test-matrix.py"
+      - "scripts/resolve-foundry-project.py"
       - "plugin.json"
       - ".github/plugin/**"
   push:
@@ -246,6 +247,37 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
+      - name: Resolve Foundry project context
+        id: resolve-foundry-project
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FOUNDRY_PROJECT_ENDPOINT" ]]; then
+            echo "::error::FOUNDRY_PROJECT_ENDPOINT secret is required"
+            exit 1
+          fi
+          if [[ -z "$AZURE_SUBSCRIPTION_ID" ]]; then
+            echo "::error::AZURE_SUBSCRIPTION_ID secret is required"
+            exit 1
+          fi
+
+          projects_json="$(az resource list \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --resource-type "Microsoft.CognitiveServices/accounts/projects" \
+            --output json \
+            --only-show-errors)"
+          project_id="$(
+            python3 scripts/resolve-foundry-project.py \
+              --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
+              --subscription-id "$AZURE_SUBSCRIPTION_ID" \
+              <<<"$projects_json"
+          )"
+
+          echo "::add-mask::$project_id"
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
         # Pattern 21 (AGENTS.md § 9.7): suppress this step's exit code
@@ -274,32 +306,20 @@ jobs:
           COPILOT_PROVIDER_WIRE_API: responses
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
+          # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          # Explicit OIDC identity vars for the consumer fixture's
-          # subshells. `azure/login@v2` (above) authenticates the Azure
-          # CLI cache, but bash subprocesses spawned by Copilot CLI tool
-          # calls only inherit env-block vars, not the CLI cache. Without
-          # these, fixtures that reference `$AZURE_CLIENT_ID` / `_TENANT_ID`
-          # / `_SUBSCRIPTION_ID` (e.g. `azd auth login`, `azd env set`)
-          # get empty strings → silent auth failures or paranoid
-          # printenv-and-bail (see AGENTS.md § 9.7 Pattern 11).
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
           # Optional standing Entra app client id for the foundry-mcp-aca
           # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
           # creates the secret; the fixture skips the auth sub-test when
           # unset, so this is inert by default (AGENTS.md § 2.8).
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
-          # Foundry project endpoint + model deployment exposed to the
-          # consumer fixture. `AZURE_AI_ENDPOINT` is the account host
-          # (cognitiveservices.azure.com); `FOUNDRY_PROJECT_ENDPOINT` is
-          # the per-project URL on the services.ai.azure.com host that
-          # `AIProjectClient(endpoint=…)` requires. These are CI
-          # infrastructure URLs/names, not secrets.
-          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 (AGENTS.md § 9.7 Pattern 11): App Insights + LAW
           # context exposed to consumer fixtures that emit traces and
@@ -315,13 +335,26 @@ jobs:
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
           MARKER="/tmp/${SKILL}-smoke-result"
           EVIDENCE="/tmp/${SKILL}-smoke-evidence"
+          INVOKE_LOG="/tmp/${SKILL}-invoke.log"
+          PRIMARY_EVIDENCE="/tmp/${SKILL}-primary-smoke-evidence"
+          PRIMARY_INVOKE_LOG="/tmp/${SKILL}-primary-invoke.log"
+          RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"
+          RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"
           test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
           # Pattern 12 (AGENTS.md § 9.7): the fixture writes its result
           # marker to MARKER via a deterministic Bash-tool printf. The
           # transcript grep is a legacy fallback only — see eval block
           # below. Clean stale state BEFORE the run so a leftover marker
           # can't false-PASS and old evidence can't contaminate forensics.
-          rm -f "$TRANSCRIPT" "$MARKER" "$EVIDENCE"
+          rm -f \
+            "$TRANSCRIPT" \
+            "$MARKER" \
+            "$EVIDENCE" \
+            "$INVOKE_LOG" \
+            "$PRIMARY_EVIDENCE" \
+            "$PRIMARY_INVOKE_LOG" \
+            "$RETRY_EVIDENCE" \
+            "$RETRY_INVOKE_LOG"
           # `-p` is the released CLI's one-shot prompt form. `copilot run`
           # does not exist; `--prompt-file` does not exist. Inline the
           # fixture body with $(cat …). `--disable-builtin-mcps` drops the
@@ -353,7 +386,11 @@ jobs:
           set -e
           echo "copilot exit status: $COPILOT_STATUS"
           if [ -f "$EVIDENCE" ]; then
+            cp "$EVIDENCE" "$PRIMARY_EVIDENCE"
             cat "$EVIDENCE"
+          fi
+          if [ -f "$INVOKE_LOG" ]; then
+            cp "$INVOKE_LOG" "$PRIMARY_INVOKE_LOG"
           fi
           # === Result evaluation (Pattern 12, AGENTS.md § 9.7) ===
           # Marker file is AUTHORITATIVE when present — its bytes were
@@ -406,22 +443,20 @@ jobs:
           COPILOT_PROVIDER_WIRE_API: responses
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
+          # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
           ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-          # See "Run consumer prompt" step above for the rationale on
-          # the explicit AZURE_CLIENT_ID/_TENANT_ID/_SUBSCRIPTION_ID
-          # exports; the retry step must mirror it or the second attempt
-          # runs with a different env contract than the first.
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
           # Optional standing Entra app client id for the foundry-mcp-aca
           # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
           # creates the secret; the fixture skips the auth sub-test when
           # unset, so this is inert by default (AGENTS.md § 2.8).
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
-          FOUNDRY_PROJECT_ENDPOINT: https://aif-awesome-gbb-ci.services.ai.azure.com/api/projects/ci-test
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 — mirror the initial-run env block per Pattern 11
           # (byte-identical auth/observability contract on retry).
@@ -435,6 +470,9 @@ jobs:
           RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
           MARKER="/tmp/${SKILL}-smoke-result"
           EVIDENCE="/tmp/${SKILL}-smoke-evidence"
+          INVOKE_LOG="/tmp/${SKILL}-invoke.log"
+          RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"
+          RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"
           # Pattern 18 (AGENTS.md § 9.7): expand the retry-classifier
           # regex to include known ARM/ACA control-plane transients that
           # a real Azure deployment hits even when the target resource
@@ -497,7 +535,13 @@ jobs:
             sleep "${COOLDOWN}"
             # Pattern 12: clear marker, evidence, AND retry transcript before
             # the second attempt so retry-leg evaluation is hermetic.
-            rm -f "$RETRY_TRANSCRIPT" "$MARKER" "$EVIDENCE"
+            rm -f \
+              "$RETRY_TRANSCRIPT" \
+              "$MARKER" \
+              "$EVIDENCE" \
+              "$INVOKE_LOG" \
+              "$RETRY_EVIDENCE" \
+              "$RETRY_INVOKE_LOG"
             # Same shared-CI hardening preamble as the initial run
             # (Pattern 11 byte-identical contract between initial and
             # retry steps applies here too).
@@ -513,7 +557,11 @@ jobs:
             set -e
             echo "copilot retry exit status: $COPILOT_STATUS"
             if [ -f "$EVIDENCE" ]; then
+              cp "$EVIDENCE" "$RETRY_EVIDENCE"
               cat "$EVIDENCE"
+            fi
+            if [ -f "$INVOKE_LOG" ]; then
+              cp "$INVOKE_LOG" "$RETRY_INVOKE_LOG"
             fi
             # Same Pattern 12 eval ladder as the primary step
             if [ -f "$MARKER" ]; then
@@ -579,5 +627,9 @@ jobs:
             /tmp/${{ matrix.skill }}-transcript.log
             /tmp/${{ matrix.skill }}-retry.log
             /tmp/${{ matrix.skill }}-smoke-evidence
+            /tmp/${{ matrix.skill }}-primary-smoke-evidence
+            /tmp/${{ matrix.skill }}-retry-smoke-evidence
+            /tmp/${{ matrix.skill }}-primary-invoke.log
+            /tmp/${{ matrix.skill }}-retry-invoke.log
           if-no-files-found: warn
           retention-days: 7
