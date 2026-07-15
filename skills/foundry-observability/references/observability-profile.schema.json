@@ -88,7 +88,7 @@
         },
         "environments": {
           "type": "array",
-          "items": {"type": "string"},
+          "items": {"type": "string", "minLength": 1},
           "minItems": 1,
           "description": "Environments where this evaluator definition is deployed. Must be exactly [dev, ci, production] for evaluator_parity=True."
         }

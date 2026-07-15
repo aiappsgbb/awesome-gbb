@@ -367,6 +367,49 @@ class TestEvaluatorDefinitionValidation(unittest.TestCase):
         with self.assertRaises(TypeError):
             self._build(_p(evaluator_definition="agent-quality-v3"), captured_at=_CAPTURED_AT)
 
+    def test_rejects_all_int_environments(self) -> None:
+        """All-int environments must be rejected with localized index error."""
+        p = _p()
+        p["evaluator_definition"]["environments"] = [1, 2, 3]
+        with self.assertRaisesRegex(TypeError, r"environments\[0\]"):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_rejects_mixed_type_environments(self) -> None:
+        """Mixed-type environments must be rejected at the first non-string index."""
+        p = _p()
+        p["evaluator_definition"]["environments"] = ["dev", 42, "production"]
+        with self.assertRaisesRegex(TypeError, r"environments\[1\]"):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_rejects_blank_environment_item(self) -> None:
+        """Blank string environment item must be rejected with localized index error."""
+        p = _p()
+        p["evaluator_definition"]["environments"] = ["dev", "", "production"]
+        with self.assertRaisesRegex(ValueError, r"environments\[1\]"):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_rejects_whitespace_only_environment_item(self) -> None:
+        """Whitespace-only environment item must be rejected with localized index error."""
+        p = _p()
+        p["evaluator_definition"]["environments"] = ["dev", "  ", "production"]
+        with self.assertRaisesRegex(ValueError, r"environments\[1\]"):
+            self._build(p, captured_at=_CAPTURED_AT)
+
+    def test_accepts_duplicate_environments(self) -> None:
+        """Duplicate environment strings pass validation (parity logic handles duplicates)."""
+        p = _p()
+        p["evaluator_definition"]["environments"] = ["dev", "ci", "production", "production"]
+        ev = self._build(p, captured_at=_CAPTURED_AT)
+        # set comparison: {"dev","ci","production","production"} == {"dev","ci","production"}
+        self.assertIs(ev["evaluator_parity"], True)
+
+    def test_accepts_extra_environment_string(self) -> None:
+        """Extra valid environment string passes item validation; parity is False."""
+        p = _p()
+        p["evaluator_definition"]["environments"] = ["dev", "ci", "production", "staging"]
+        ev = self._build(p, captured_at=_CAPTURED_AT)
+        self.assertIs(ev["evaluator_parity"], False)
+
 
 # ===========================================================================
 # Trace policy validation
@@ -837,6 +880,38 @@ class TestSchemaValidation(unittest.TestCase):
         """jsonschema rejects extra alert blank string via minLength:1."""
         p = copy.deepcopy(_VALID_PROFILE)
         p["alerts"]["availability"] = "  "
+        with self.assertRaises(Exception):
+            self._validate(p)
+
+    # -- environments item parity -----------------------------------------------
+
+    def test_stdlib_rejects_environments_int_item_parity(self) -> None:
+        """stdlib rejects int environment item — mirrors JSON Schema items.type:string."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["evaluator_definition"]["environments"] = [1, 2, 3]
+        with self.assertRaises((ValueError, TypeError)):
+            self._validate(p)
+
+    def test_stdlib_rejects_environments_blank_item_parity(self) -> None:
+        """stdlib rejects blank environment item — mirrors JSON Schema items.minLength:1."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["evaluator_definition"]["environments"] = ["dev", "", "production"]
+        with self.assertRaises((ValueError, TypeError)):
+            self._validate(p)
+
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_environments_int_item(self) -> None:
+        """jsonschema rejects int environment item via items.type:string."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["evaluator_definition"]["environments"] = [1, 2, 3]
+        with self.assertRaises(Exception):
+            self._validate(p)
+
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_environments_blank_item(self) -> None:
+        """jsonschema rejects blank environment item via items.minLength:1."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["evaluator_definition"]["environments"] = ["dev", "", "production"]
         with self.assertRaises(Exception):
             self._validate(p)
 

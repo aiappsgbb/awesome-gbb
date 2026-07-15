@@ -184,6 +184,8 @@ def _validate_profile_stdlib(profile: dict) -> None:
         raise TypeError(
             f"evaluator_definition.environments must be a list, got {type(ev['environments']).__name__}"
         )
+    for i, item in enumerate(ev["environments"]):
+        _require_non_blank_string(item, f"evaluator_definition.environments[{i}]")
 
     # trace_policy
     tp = profile["trace_policy"]
