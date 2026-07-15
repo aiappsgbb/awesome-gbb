@@ -35,6 +35,8 @@ skills:
     depends_on: []
   foundry-hosted-agents:
     depends_on: []
+  foundry-iq:
+    depends_on: []
   foundry-memory:
     depends_on: []
   foundry-toolbox:

@@ -139,14 +139,12 @@ class KnowledgeAgentManager:
                     "indexName": idx_name
                 })
 
-        # NOTE on wire format (2025-11-01-preview): top-level
-        # `retrievalReasoningEffort` and `outputConfiguration.modality` —
-        # NOT nested under `configuration`. The legacy /agents/ endpoint
-        # at api-version 2025-01-01-preview accepted the `configuration`
-        # nesting; the new /knowledgebases/ endpoint at 2025-11-01-preview
-        # rejects it. Switch this manager to /knowledgebases/ once your
-        # tenant is migrated; until then, callers MUST pin the matching
-        # api_version+endpoint pair.
+        # Knowledge Base wire format on stable 2026-04-01 and expanded
+        # 2026-05-01-preview is top-level `retrievalReasoningEffort` plus
+        # `outputConfiguration.modality`, not a nested `configuration`.
+        # The legacy /agents/ endpoint on 2025-01-01-preview is a separate
+        # contract. Callers must migrate endpoint, payload, and API version
+        # together rather than changing only the version string.
         agent_config = {
             "name": agent_name,
             "description": description or f"Knowledge Agent for {index_name}",

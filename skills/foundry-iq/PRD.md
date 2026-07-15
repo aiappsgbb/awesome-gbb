@@ -4,8 +4,8 @@
 | Field | Value |
 |-------|-------|
 | Skill Name | Foundry IQ |
-| Version | 1.0 |
-| Last Updated | January 2026 |
+| Version | 1.1 |
+| Last Updated | July 2026 |
 | Status | Building Block |
 
 ---
@@ -22,6 +22,7 @@ This skill covers:
 - Knowledge Agent configuration and retrieval
 - Agentic retrieval with query decomposition
 - Citation tracking and response synthesis
+- GA-versus-preview knowledge-source selection
 
 ### 1.3 Building Block Nature
 **This skill is a building block, not a complete product.** Integrators should:
@@ -48,6 +49,7 @@ This skill covers:
 | FR-7 | Query Decomposition | P1 | Break complex questions into sub-queries |
 | FR-8 | Multi-turn Conversations | P1 | Track conversation history for context |
 | FR-9 | Configurable Reasoning | P2 | Adjust reasoning effort (minimal/low/medium) |
+| FR-10 | Stable Knowledge Sources | P0 | Use only `searchIndex`, `azureBlob`, `indexedOneLake`, or `web` on stable REST `2026-04-01` |
 
 ### 2.2 Retrieval Modes
 
@@ -107,10 +109,12 @@ This skill covers:
 
 ### 4.2 API Version Requirements
 
-| Service | Minimum Version | Recommended |
-|---------|-----------------|-------------|
-| Azure AI Search | 2025-01-01-preview | 2025-01-01-preview |
-| Azure OpenAI | 2024-12-01-preview | 2024-12-01-preview |
+| Surface | Version | Status |
+|---------|---------|--------|
+| Azure AI Search Knowledge Sources / Knowledge Bases | `2026-04-01` | GA programmatic slice |
+| Azure AI Search expanded source kinds and options | `2026-05-01-preview` | Preview |
+| Legacy Knowledge Agents used by bundled scripts | `2025-01-01-preview` | Preview compatibility path |
+| Azure OpenAI | `2024-12-01-preview` | Existing sample dependency |
 
 ### 4.3 Chunking Constraints
 
@@ -205,7 +209,7 @@ your-app/
 |------------|--------|------------|
 | Agentic retrieval latency | 1-3s per query | Use semantic mode for simple queries |
 | Reasoning effort cost | Higher effort = more tokens | Match effort to query complexity |
-| API version requirements | Preview APIs required | Pin to documented versions |
+| API version requirements | Stable and preview capabilities differ | Use `2026-04-01` for the four GA kinds; opt into `2026-05-01-preview` only for explicitly preview features |
 | Regional availability | Knowledge Agents limited regions | Deploy in supported regions |
 
 ### 8.2 Out of Scope
@@ -257,5 +261,7 @@ Suggested metrics for integrated applications:
 
 - [SKILL.md](./SKILL.md) - Detailed technical documentation
 - [Azure AI Search Documentation](https://learn.microsoft.com/azure/search/)
-- [Knowledge Agents Overview](https://learn.microsoft.com/azure/search/knowledge-agents)
-- [Agentic Retrieval Concepts](https://learn.microsoft.com/azure/search/agentic-retrieval)
+- [Foundry IQ overview](https://learn.microsoft.com/azure/foundry/agents/concepts/what-is-foundry-iq)
+- [Knowledge-source availability](https://learn.microsoft.com/azure/search/agentic-knowledge-source-overview)
+- [Agentic retrieval migration guide](https://learn.microsoft.com/azure/search/agentic-retrieval-how-to-migrate)
+- [Stable `2026-04-01` knowledge-source REST operation](https://learn.microsoft.com/rest/api/searchservice/knowledge-sources/create-or-update?view=rest-searchservice-2026-04-01)
