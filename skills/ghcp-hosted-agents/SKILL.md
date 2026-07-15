@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.5"
+  version: "2.0.6"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -329,10 +329,11 @@ has these guards:
    `PermissionDenied` error contains both
    `Microsoft.CognitiveServices/accounts/OpenAI/responses/write` and
    `POST /openai/v1/responses`.
-2. After that anchor, subsequent 401 `PermissionDenied`
+2. After that anchor, subsequent generic 401 `PermissionDenied`
    `model.call_failure` events and `session.info` events containing
    `transient_auth_error` may interleave. At least one transient-info event
-   is required.
+   is required. The anchor must not repeat; a repeated anchored failure is
+   outside the observed readiness envelope and remains a hard failure.
 3. The envelope must end with a terminal error containing
    `Authentication failed with provider` and
    `HTTP 401`.

@@ -409,6 +409,8 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").spli
                     unrelated_terminal_error = True
             # After the anchored first failure, subsequent 401
             # PermissionDenied model failures may interleave with retry info.
+            elif anchored:
+                unrelated_terminal_error = True
             else:
                 pass
         else:

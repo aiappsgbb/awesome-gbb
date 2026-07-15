@@ -41,7 +41,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.5")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.6")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -275,6 +275,12 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             self._exact_readiness_events()[1],
             self._exact_readiness_events()[3],
         )
+        readiness_with_normal_info = (
+            self._exact_readiness_events()[0],
+            {"type": "session.info", "data": {"message": "Normal progress event"}},
+            self._exact_readiness_events()[2],
+            self._exact_readiness_events()[3],
+        )
         malformed_terminal_fields: list[tuple[str, tuple[dict, ...]]] = []
         for field_type, value in (
             (
@@ -327,6 +333,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             ("assistant only", (assistant,), (), 0),
             ("exact readiness", self._exact_readiness_events(), (), 10),
             ("interleaved readiness", interleaved_readiness, (), 10),
+            ("readiness with normal session info", readiness_with_normal_info, (), 10),
             (
                 "interleaved readiness then assistant",
                 interleaved_readiness + (assistant,),
@@ -435,7 +442,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                     self._exact_readiness_events()[3],
                 ),
                 (),
-                10,
+                20,
             ),
             (
                 "non-assistant event after provider terminal",
@@ -464,6 +471,8 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertIn("exact immediate-post-active readiness envelope", self.skill)
         self.assertNotIn("stream must contain, in this order:", self.skill)
         self.assertIn("may interleave", self.skill)
+        self.assertIn("subsequent generic 401", self.skill)
+        self.assertIn("anchor must not repeat", self.skill)
         for token in (
             "Microsoft.CognitiveServices/accounts/OpenAI/responses/write",
             "POST /openai/v1/responses",
