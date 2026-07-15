@@ -68,10 +68,13 @@ Success requires exit code 0, output containing
 - `exercised_ga_kind` is exactly `searchIndex`
 - index PUT and knowledge-source PUT returned `201`
 - knowledge-source GET returned `200`
+- `knowledge_source_delete_status` is `204` or `404`
+- `index_delete_status` is `204` or `404`
 
 If the script fails, write the FAIL marker with the exception class or HTTP
-status and stop. A cleanup warning after all assertions is a transcript NOTE,
-not a hard failure.
+status and stop. A cleanup warning is a transcript NOTE, but do not write the
+PASS marker unless both delete-status fields satisfy the evidence contract
+above.
 
 ---
 

@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import io
 import json
+import os
 import re
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -106,6 +110,31 @@ def _load_azure_openai_client():
     openai_stub = ModuleType("openai")
     openai_stub.AzureOpenAI = object
     with patch.dict(sys.modules, {"openai": openai_stub}):
+        spec.loader.exec_module(module)
+    return module
+
+
+def _load_live_smoke():
+    spec = importlib.util.spec_from_file_location(
+        "foundry_iq_live_smoke",
+        LIVE_SMOKE,
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("could not load live_smoke.py")
+    module = importlib.util.module_from_spec(spec)
+    azure_stub = ModuleType("azure")
+    azure_stub.__path__ = []
+    identity_stub = ModuleType("azure.identity")
+    identity_stub.DefaultAzureCredential = object
+    requests_stub = ModuleType("requests")
+    with patch.dict(
+        sys.modules,
+        {
+            "azure": azure_stub,
+            "azure.identity": identity_stub,
+            "requests": requests_stub,
+        },
+    ):
         spec.loader.exec_module(module)
     return module
 
@@ -498,6 +527,110 @@ class FoundryIqGaContractTests(unittest.TestCase):
             2,
         )
         self.assertIn("assert response.status_code == 200", fixture)
+        self.assertIn('"knowledge_source_delete_status"', fixture)
+        self.assertIn('"index_delete_status"', fixture)
+        prompt = FIXTURE.read_text(encoding="utf-8")
+        self.assertIn("`knowledge_source_delete_status` is `204` or `404`", prompt)
+        self.assertIn("`index_delete_status` is `204` or `404`", prompt)
+
+    def test_live_fixture_fails_when_delete_evidence_is_incomplete(self) -> None:
+        live_smoke = _load_live_smoke()
+
+        class Response:
+            def __init__(self, status_code: int, body: dict | None = None) -> None:
+                self.status_code = status_code
+                self._body = body or {}
+                self.text = json.dumps(self._body)
+
+            def json(self) -> dict:
+                return self._body
+
+            def raise_for_status(self) -> None:
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+        class Credential:
+            def __init__(self, **_kwargs) -> None:
+                pass
+
+            def get_token(self, _scope: str) -> SimpleNamespace:
+                return SimpleNamespace(token="test-token")
+
+            def close(self) -> None:
+                return None
+
+        class Requests:
+            def __init__(self, delete_results: list[object]) -> None:
+                self.delete_results = delete_results
+                self.index_name = ""
+
+            def post(self, *_args, **_kwargs) -> Response:
+                return Response(200, {"data": [{"name": "search-ci"}]})
+
+            def get(self, url: str, **_kwargs) -> Response:
+                if "/knowledgesources(" in url:
+                    return Response(
+                        200,
+                        {
+                            "kind": "searchIndex",
+                            "searchIndexParameters": {
+                                "searchIndexName": self.index_name,
+                            },
+                        },
+                    )
+                return Response(200)
+
+            def put(self, url: str, **kwargs) -> Response:
+                if "/indexes(" in url:
+                    self.index_name = kwargs["json"]["name"]
+                return Response(201)
+
+            def delete(self, *_args, **_kwargs) -> Response:
+                result = self.delete_results.pop(0)
+                if isinstance(result, Exception):
+                    raise result
+                return Response(result)
+
+        cases = (
+            (
+                [204, 404],
+                0,
+                {
+                    "knowledge_source_delete_status": 204,
+                    "index_delete_status": 404,
+                },
+            ),
+            (
+                [204, 500],
+                1,
+                {
+                    "knowledge_source_delete_status": 204,
+                    "index_delete_status": 500,
+                },
+            ),
+            (
+                [RuntimeError("delete failed"), 204],
+                1,
+                {"knowledge_source_delete_status": None, "index_delete_status": 204},
+            ),
+        )
+        for delete_results, expected_exit, expected_evidence in cases:
+            with self.subTest(delete_results=delete_results):
+                requests = Requests(list(delete_results))
+                live_smoke.requests = requests
+                live_smoke.DefaultAzureCredential = Credential
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    evidence_path = Path(temp_dir) / "evidence.json"
+                    live_smoke.EVIDENCE_PATH = str(evidence_path)
+                    with patch.dict(
+                        os.environ,
+                        {"AZURE_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000000"},
+                    ):
+                        with redirect_stdout(io.StringIO()):
+                            self.assertEqual(live_smoke.main(), expected_exit)
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    for key, expected in expected_evidence.items():
+                        self.assertEqual(evidence[key], expected)
 
     def test_stable_sdk_and_mcp_examples_match_current_surfaces(self) -> None:
         self.assertIn(

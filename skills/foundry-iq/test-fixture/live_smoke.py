@@ -111,6 +111,11 @@ Resources
 
     hard_success = False
     cleanup_notes: list[str] = []
+    cleanup_statuses: dict[str, object] = {
+        "knowledge_source_delete_status": None,
+        "index_delete_status": None,
+    }
+    evidence: dict[str, object] = {}
     try:
         for attempt in range(30):
             response = requests.get(
@@ -163,18 +168,19 @@ Resources
             "knowledge_source_status": create_status,
             "get_status": response.status_code,
         }
-        with open(EVIDENCE_PATH, "w", encoding="utf-8") as handle:
-            json.dump(evidence, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        print(json.dumps(evidence, sort_keys=True))
         hard_success = True
     finally:
-        for label, url in (
-            ("knowledge source", source_url),
-            ("index", index_url),
+        for label, status_key, url in (
+            (
+                "knowledge source",
+                "knowledge_source_delete_status",
+                source_url,
+            ),
+            ("index", "index_delete_status", index_url),
         ):
             try:
                 response = requests.delete(url, headers=headers, timeout=90)
+                cleanup_statuses[status_key] = response.status_code
                 if response.status_code not in (204, 404):
                     cleanup_notes.append(
                         f"{label} cleanup HTTP {response.status_code}"
@@ -191,6 +197,13 @@ Resources
             + "; ".join(cleanup_notes)
         )
     if not hard_success:
+        return 1
+    evidence.update(cleanup_statuses)
+    with open(EVIDENCE_PATH, "w", encoding="utf-8") as handle:
+        json.dump(evidence, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    print(json.dumps(evidence, sort_keys=True))
+    if any(status not in (204, 404) for status in cleanup_statuses.values()):
         return 1
     print("foundry-iq-ga-searchIndex-ok")
     return 0
