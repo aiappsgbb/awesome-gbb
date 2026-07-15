@@ -417,11 +417,16 @@ for frame_event, payload, frame_invalid in frames:
     if not isinstance(event_type, str):
         malformed_data = True
         continue
-    if provider_auth_terminal and event_type not in {
-        "assistant.message",
-        "assistant.message_delta",
-    }:
-        unrelated_terminal_error = True
+    if provider_auth_terminal:
+        if (
+            not success
+            and event_type in {"assistant.message", "assistant.message_delta"}
+        ):
+            success = True
+        elif success and event_type in {"session.usage_info", "assistant.turn_end"}:
+            pass
+        else:
+            unrelated_terminal_error = True
         continue
     if event_type in {"assistant.message", "assistant.message_delta"}:
         success = True

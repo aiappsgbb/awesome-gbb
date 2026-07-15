@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.7"
+  version: "2.0.8"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -345,6 +345,12 @@ non-empty string `invocation_id`; accept it only after assistant success or
 the recognized provider-auth terminal. Untyped data outside that done frame,
 unknown typed events inside the envelope, or a malformed done payload remain
 hard failures.
+
+If assistant output arrives after the recognized provider-auth terminal, it
+establishes recovered assistant output. Only after that recovery may
+`session.usage_info` and `assistant.turn_end` follow before the exact done
+frame. Those lifecycle events before assistant recovery do not convert the
+terminal failure into success.
 
 Only that complete immediate-post-active sequence is retryable. Retry the
 **same JSON positional invoke path** with bounded backoff (six attempts,

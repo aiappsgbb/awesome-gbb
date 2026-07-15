@@ -41,7 +41,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.7")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.8")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -479,6 +479,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         for token in ("session.usage_info", "assistant.turn_end", "event: done"):
             with self.subTest(token=token):
                 self.assertIn(token, self.skill)
+        self.assertIn("recovered assistant output", self.skill)
         for token in (
             "Microsoft.CognitiveServices/accounts/OpenAI/responses/write",
             "POST /openai/v1/responses",
@@ -512,6 +513,21 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                 data_frame(provider_terminal),
                 'event: done\ndata: {"invocation_id":"inv_artifact"}',
             )
+        )
+        recovered_streams = tuple(
+            (
+                assistant_type,
+                "\n\n".join(
+                    (
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                        data_frame({"type": assistant_type, "data": {"content": "ok"}}),
+                        data_frame(usage),
+                        data_frame(turn_end),
+                        'event: done\ndata: {"invocation_id":"inv_recovered"}',
+                    )
+                ),
+            )
+            for assistant_type in ("assistant.message", "assistant.message_delta")
         )
         invalid_streams = (
             (
@@ -579,9 +595,56 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
                     )
                 ),
             ),
+            (
+                "usage before recovered assistant",
+                "\n\n".join(
+                    (
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                        data_frame(usage),
+                        data_frame({"type": "assistant.message", "data": {}}),
+                        'event: done\ndata: {"invocation_id":"inv_late"}',
+                    )
+                ),
+            ),
+            (
+                "turn end before recovered assistant",
+                "\n\n".join(
+                    (
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                        data_frame(turn_end),
+                        data_frame({"type": "assistant.message", "data": {}}),
+                        'event: done\ndata: {"invocation_id":"inv_late"}',
+                    )
+                ),
+            ),
+            (
+                "unknown event after recovered assistant",
+                "\n\n".join(
+                    (
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                        data_frame({"type": "assistant.message", "data": {}}),
+                        'data: {"type":"session.completed","data":{}}',
+                        'event: done\ndata: {"invocation_id":"inv_unknown"}',
+                    )
+                ),
+            ),
+            (
+                "second assistant event after recovery",
+                "\n\n".join(
+                    (
+                        *(data_frame(event) for event in self._exact_readiness_events()),
+                        data_frame({"type": "assistant.message", "data": {}}),
+                        data_frame({"type": "assistant.message_delta", "data": {}}),
+                        'event: done\ndata: {"invocation_id":"inv_duplicate"}',
+                    )
+                ),
+            ),
         )
 
         self.assertEqual(self._classify_invoke_stream(full_artifact_stream), 10)
+        for assistant_type, raw_stream in recovered_streams:
+            with self.subTest(assistant_type=assistant_type):
+                self.assertEqual(self._classify_invoke_stream(raw_stream), 0)
         for name, raw_stream in invalid_streams:
             with self.subTest(name=name):
                 self.assertEqual(self._classify_invoke_stream(raw_stream), 20)
