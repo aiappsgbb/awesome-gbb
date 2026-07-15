@@ -172,8 +172,8 @@ class TestBuildEvidence(unittest.TestCase):
     def test_evaluator_parity_false_empty_environments(self) -> None:
         p = _p()
         p["evaluator_definition"]["environments"] = []
-        ev = self._build(p, captured_at=_CAPTURED_AT)
-        self.assertIs(ev["evaluator_parity"], False)
+        with self.assertRaisesRegex(ValueError, r"environments"):
+            self._build(p, captured_at=_CAPTURED_AT)
 
     def test_retention_days_passthrough_as_int(self) -> None:
         ev = self._build(_p(), captured_at=_CAPTURED_AT)
@@ -912,6 +912,21 @@ class TestSchemaValidation(unittest.TestCase):
         """jsonschema rejects blank environment item via items.minLength:1."""
         p = copy.deepcopy(_VALID_PROFILE)
         p["evaluator_definition"]["environments"] = ["dev", "", "production"]
+        with self.assertRaises(Exception):
+            self._validate(p)
+
+    def test_stdlib_rejects_empty_environments_parity(self) -> None:
+        """stdlib rejects empty environments list — mirrors JSON Schema minItems:1."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["evaluator_definition"]["environments"] = []
+        with self.assertRaisesRegex(ValueError, r"environments"):
+            self._validate(p)
+
+    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_jsonschema_rejects_empty_environments(self) -> None:
+        """jsonschema rejects empty environments list via minItems:1."""
+        p = copy.deepcopy(_VALID_PROFILE)
+        p["evaluator_definition"]["environments"] = []
         with self.assertRaises(Exception):
             self._validate(p)
 
