@@ -14,7 +14,7 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # Foundry Agent Evaluations

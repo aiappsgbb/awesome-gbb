@@ -22,6 +22,7 @@ import re
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -803,9 +804,16 @@ class TestSchemaShape(unittest.TestCase):
     def test_schema_file_exists(self) -> None:
         self.assertTrue(_SCHEMA_PATH.exists())
 
-    def test_schema_has_id(self) -> None:
+    def test_schema_has_absolute_id_for_legacy_ref_resolution(self) -> None:
         self.assertIn("$id", self._schema)
-        self.assertEqual(self._schema["$id"], "foundry-evals-trust-profile/v1")
+        schema_id = self._schema["$id"]
+        parsed = urllib.parse.urlparse(schema_id)
+        self.assertIn(parsed.scheme, {"http", "https"})
+        self.assertTrue(parsed.netloc)
+        self.assertEqual(
+            parsed.path,
+            "/awesome-gbb/schemas/foundry-evals-trust-profile/v1",
+        )
 
     def test_schema_has_type_object(self) -> None:
         self.assertEqual(self._schema["type"], "object")

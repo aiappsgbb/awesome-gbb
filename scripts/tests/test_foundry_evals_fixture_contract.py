@@ -40,6 +40,10 @@ class FoundryEvalsFixtureContractTests(unittest.TestCase):
             fixture[fixture.index(headings[2]) : fixture.index(headings[3])],
         )
 
+    def test_fixture_patch_version_is_bumped(self) -> None:
+        frontmatter = SKILL_MD.read_text(encoding="utf-8").split("---", 2)[1]
+        self.assertIn('version: "1.4.1"', frontmatter)
+
 
 class TrustEvidenceOutputContractTests(unittest.TestCase):
     """Guard against write_trust_evidence clobbering the calibration input.

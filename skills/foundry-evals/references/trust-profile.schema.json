@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "foundry-evals-trust-profile/v1",
+  "$id": "https://aiappsgbb.github.io/awesome-gbb/schemas/foundry-evals-trust-profile/v1",
   "title": "Foundry Evals Trust Profile",
   "description": "Declares the evaluator stack, calibration contract, and sampling design for a Foundry hosted-agent trust evaluation.",
   "type": "object",
