@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -477,7 +477,8 @@ can stop. See `foundry-agt`'s "Why this matters" for the
 ## 11. Known issues (from live audit)
 
 Captured during the audit pass on `rg-citadel-hub-01` (Sweden Central,
-upstream pinned at `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`):
+first observed at upstream pin `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`;
+still applicable at the current pin `08294f09a70833e282776a07fe7f97a6aead55b1`):
 
 1. **Newer GPT-5.4 models reject `max_tokens`.** A vanilla
    `chat/completions` POST with `max_tokens` returns HTTP 400 with
@@ -555,6 +556,17 @@ upstream pinned at `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`):
 
 ## 13. Changelog
 
+- **1.1.1** (2026-07) — Re-pin upstream `f2702b49` (PR #117) →
+  `08294f09a70833e282776a07fe7f97a6aead55b1` (PR #133), 48 commits. Offline
+  `az bicep build` at the new SHA passes (exit 0, ~4.6 MB ARM JSON,
+  warnings-only). Env-var surface diff shows exactly one change:
+  `FOUNDRY_NETWORK_INJECTION_ENABLED` removed upstream — now dropped from all
+  3 profiles. Audit notes updated: API Center is now live on
+  `rg-citadel-hub-01` (`apic-codfa4k4hph2q`, Free). Full `azd up` re-audit at
+  the new pin is still pending (skill is `issue_only` / not-CI-runnable) —
+  see `references/upstream-pin.md`.
+- **1.1.0** (2026-05) — Adopt superpowers patterns: description audit,
+  verification gates, escalation rules (multi-skill rewrite, #78).
 - **1.0.1** (2026-05) — Fix: profile `.env` path in Quickstart paths now
   references `$SKILL_DIR` (the awesome-gbb skill dir) rather than the
   azd project dir (which doesn't have it). Add `az login` before
