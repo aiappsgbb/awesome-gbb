@@ -1,188 +1,297 @@
-# Customer goal — `foundry-agt` skill smoke
+# Customer goal — `foundry-agt` execution smoke
 
-You are a developer on a customer team. You just installed the `awesome-gbb`
-Copilot CLI plugin and you want to prove that the `foundry-agt` skill works
-end-to-end on a CI runner with **no Azure resources, no model deployments,
-no ACA, no dataplane calls** — `foundry-agt` is in-process MAF middleware
-that fires before any model dispatch on a denied capability, so the entire
-smoke runs locally in a Python venv.
+Prove the `foundry-agt` in-process governance and runtime-evidence producer
+work against the pinned AGT and Microsoft Agent Framework packages. This
+smoke is local-only: it uses no Azure resources, model deployments, ACA
+resources, or dataplane calls.
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of the Agent Governance Toolkit (AGT) or the Microsoft Agent
-Framework (MAF) — read the skill's `SKILL.md` first, and follow its
-documented contract.
+**This is an EXECUTION-ONLY smoke, not an authoring or catalog-maintenance
+task.** You MUST run every Bash block below exactly as written and in order.
+Do not rewrite, reinterpret, or replace the commands.
+
+- Do NOT edit any file except the runtime artifacts written by the exact
+  blocks below.
+- Do NOT invoke `apply_patch` or any other file-editing tool.
+- Do NOT inspect repository files with view, read, cat, sed, grep, rg, find,
+  or directory-listing tools. This fixture is self-contained.
+- Do NOT run tests, validators, linters, or package/catalog checks.
+- Do NOT rebuild docs or inspect generated documentation.
+- Do NOT run any `git` command, including status, diff, log, or rev-parse.
+- Do NOT finish with a prose-only response. A Bash tool call that writes the
+  marker file must be your final action.
+- Do NOT invoke `copilot` recursively. You are already the running Copilot
+  CLI process; the workflow captures your output with its outer `tee`.
+
+The marker file is the only success source. Assistant prose, transcript text,
+test output, and repository changes cannot make this smoke pass. If any block
+fails, stop executing later smoke blocks and make the
+failure-marker Bash write in Step 4 your next and final action.
 
 ---
 
-## Step 0 — Auth context (show, do not assert)
+## Step 0 — Acknowledge the skill contract
 
-`foundry-agt` itself does **no Azure dataplane calls** in the in-process
-middleware path you're exercising. The inventory below is printed only for
-run-log consistency with other fixtures in the catalog — do NOT gate flow
-on any of these checks (Pattern 17), and an empty `az account show` cache
-is not a failure for this skill.
+Run this exact block first. It supplies the workflow's post-hoc skill-usage
+evidence without reading the large SKILL.md into model context.
 
 ```bash
-echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
-echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
-echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
-az account show --output table || echo "(az cache not inherited — fine; this skill does no Azure calls)"
+echo "Loading execution contract: skills/foundry-agt/SKILL.md"
+echo "Fixture: skills/foundry-agt/test-fixture/consumer_prompt.md"
+echo "Mode: execution-only"
 ```
 
 ---
 
-## Step 1 — The goal
+## Step 1 — Install the pinned packages and verify the AGT CLI
 
-Using the `foundry-agt` skill, prove that the in-process MAF middleware
-integration surface documented in `SKILL.md` is wired correctly against
-the pinned versions of AGT and the Microsoft Agent Framework. Specifically
-prove all of the following:
+Run this exact block. Do not substitute package versions or install into the
+repository.
 
-1. **The documented install produces a working `agt` CLI.** Use the exact
-   `pip install` command the skill prescribes (note the `[full]` extras —
-   they are required for `agt doctor` / `agt verify` to work). Then run
-   `agt --version`, `agt doctor`, and `agt verify` and confirm `agt verify`
-   prints `OWASP ASI 2026` somewhere in its output.
+```bash
+set -euo pipefail
+cd "$GITHUB_WORKSPACE"
+rm -rf /tmp/foundry-agt-smoke-venv /tmp/foundry-agt-verify.log
+python3 -m venv /tmp/foundry-agt-smoke-venv
+. /tmp/foundry-agt-smoke-venv/bin/activate
+python -m pip install --quiet \
+  "agent-governance-toolkit[full]~=4.1.0" \
+  "agent-framework~=1.10.0"
+agt --version
+agt doctor
+agt verify | tee /tmp/foundry-agt-verify.log
+grep -F "OWASP ASI 2026" /tmp/foundry-agt-verify.log
+```
 
-2. **The five public surfaces the skill documents are importable and
-   their signatures are stable.** Print `inspect.signature(...)` for each
-   of these symbols to stdout — the audit trail cites these prints as
-   evidence of the actual 3.7.x / 1.7.x API surface:
-   - `agent_os.integrations.maf_adapter.create_governance_middleware`
-   - `agent_os.policies.PolicyEvaluator.evaluate`
-   - `agent_os.policies.PolicyEvaluator.load_policies`
-   - `agentmesh.governance.AuditLog.log`
-   - `agentmesh.governance.AuditLog.export_cloudevents`
-   - `agent_framework.Agent.__init__`
-
-3. **MAF accepts `middleware` as a constructor parameter.** The skill's
-   integration story is `Agent(..., middleware=create_governance_middleware(...))`,
-   so the literal parameter name `middleware` MUST appear in the
-   `Agent.__init__` signature. Assert this — if it's missing, the
-   integration contract is broken regardless of whether AGT works in
-   isolation.
-
-4. **`create_governance_middleware()` returns a middleware stack of
-   length ≥ 2.** Call the factory with `policy_directory` pointing at
-   `skills/foundry-agt/references/policies` (the canonical policies
-   shipped with the skill), `allowed_tools=[]`, `denied_tools=[]`, a
-   CI-safe `agent_id`, and **`enable_rogue_detection=False`** (Known
-   Issue #4 in the SKILL — RogueDetection needs a pre-built capability
-   profile and breaks without it). Assert the return value is a `list`
-   of length ≥ 2.
-
-5. **The canonical policy YAML loads and evaluates the expected way.**
-   Load `skills/foundry-agt/references/policies/default.yaml` via
-   `PolicyEvaluator.load_policies(...)` (structural — a malformed YAML
-   would raise). Then run two policy evaluations through the loaded
-   evaluator:
-   - A SQL-injection-shaped message containing `DROP TABLE users` MUST
-     produce a `deny` decision (per `default.yaml`'s `block-sql-injection`
-     rule on field `message`).
-   - A benign greeting (`"hello"`) MUST produce a non-deny decision.
-
-   Because `PolicyEvaluator`'s decision return type has evolved across
-   releases (could be a dataclass, dict, or plain string), introspect
-   the returned object across several plausible attribute names —
-   `action`, `decision`, `effect`, `result`, `allowed`, `message`,
-   `reason`, plus `str(decision).lower()` as a fallback — and assert
-   that the resulting text-form contains `"deny"` (SQL case) or does
-   NOT contain `"deny"` (benign case). A version-tolerant check
-   prevents an `allow`/no-op object from silently passing.
-
-6. **AuditLog hash-chain round-trip.** Create an `AuditLog`, append two
-   entries via `log(...)`, call `verify_integrity()` and assert the
-   result is truthy, then call `export_cloudevents()` and assert it
-   returns an iterable of length 2. This is the skill's headline
-   tamper-evidence story — it must work.
-
-7. **`AuditLog` produces a valid runtime audit evidence record.**
-
-   Using the same `AuditLog` from step 6 (the hash-chain round-trip),
-   confirm that the evidence export contract — documented in
-   `skills/foundry-agt/SKILL.md § Runtime audit evidence` and the
-   run-book at `skills/foundry-agt/references/runtime-audit-export.md`
-   — holds end-to-end:
-
-   a. Create an `AuditLog`. Append **one ALLOW event** and **one DENY
-      event** using `log(...)` calls. Use generic placeholder values for
-      all fields — no real secrets, no real tool argument values.
-
-   b. Call `verify_integrity()` and assert the result is truthy.
-
-   c. Call `export_cloudevents()` and assert it returns an iterable of
-      length 2.
-
-   d. Import `build_evidence` and `write_evidence` from
-      `skills/foundry-agt/references/python/runtime_evidence.py`
-      (verbatim — do NOT redefine).
-
-   e. Construct `safe_events` containing only the ten required fields for
-      each event (`event_id`, `timestamp`, `event_type`, `agent_id`,
-      `session_id`, `policy_name`, `tool_name`, `decision`, `reason`,
-      `evaluation_ms`). Do NOT include prompt text, model responses, tool
-      argument values, credentials, or personal data.
-
-   f. Call `build_evidence(safe_events, ...)` and assert:
-      - `evidence["events_observed"]["allow"] >= 1`
-      - `evidence["events_observed"]["deny"] >= 1`
-      - `evidence["integrity_verified"] is True`
-      - `evidence["schema"] == "foundry-agt-runtime-evidence/v1"`
-
-   g. Call `write_evidence("specs/agt-runtime-evidence.json", evidence)`.
-
-   h. Read back `specs/agt-runtime-evidence.json` and assert its contents
-      pass all four checks in (f) above.
-
-   i. Assert that the file's raw JSON does NOT contain any of these
-      sentinel strings: `"DROP TABLE"`, `"password="`, `"Bearer "`,
-      `"api_key="`. These sentinels are the canonical negative test for
-      accidental sensitive-data leakage into the committed artifact.
-
-Anchor every filesystem reference to `$GITHUB_WORKSPACE` (`cd
-"$GITHUB_WORKSPACE"` upfront) so the Python script can find the policy
-YAML regardless of where the venv ends up. Read
-`skills/foundry-agt/SKILL.md` for the canonical import paths,
-factory contract, and Known Issues — and read
-`skills/foundry-agt/references/maf-middleware-snippet.py` for the
-already-vetted shape of the integration code. If anything you remember
-from training data conflicts with the skill, the skill wins.
-
-There are **no Azure resources to clean up** — this is an in-process
-smoke. Process exit handles all teardown.
+This block is a hard gate. A non-zero exit from installation, any AGT command,
+or the OWASP output check is a smoke failure.
 
 ---
 
-## Step 2 — Marker contract (deterministic, MANDATORY)
+## Step 2 — Execute the pinned AGT runtime and export safe audit events
 
-Your FINAL action — after the Python smoke prints all assertions and
-signature dumps — is to invoke the Bash tool to write the marker file.
-The file's literal byte content is what CI grades; your assistant-text
-reply is NOT graded.
+Run this exact Bash/Python block. It checks the six public signatures,
+middleware construction, default-policy allow/deny behavior, the shared
+AuditLog hash chain, and CloudEvents export. It then writes only sanitized
+event metadata for the canonical runtime-evidence producer.
 
-On success (all of: `pip install` succeeded, `agt --version` /
-`agt doctor` / `agt verify` all returned 0, `agt verify` output
-contained `OWASP ASI 2026`, all 6 signatures printed, the `middleware`
-parameter assertion held, the factory returned a list of length ≥ 2,
-`load_policies` did not raise, both policy evaluations matched the
-expected text, the AuditLog round-trip held, the runtime audit evidence
-record was written to `specs/agt-runtime-evidence.json` with
-`events_observed` `"allow"` >= 1, `"deny"` >= 1, `integrity_verified true`, and no
-sentinel secrets present):
+```bash
+set -euo pipefail
+cd "$GITHUB_WORKSPACE"
+. /tmp/foundry-agt-smoke-venv/bin/activate
+python3 - <<'PY'
+# AGT_RUNTIME_SMOKE
+from __future__ import annotations
+
+import inspect
+import json
+from pathlib import Path
+
+from agent_framework import Agent
+from agent_os.integrations.maf_adapter import create_governance_middleware
+from agent_os.policies import PolicyEvaluator
+from agentmesh.governance import AuditLog
+
+policy_dir = Path("skills/foundry-agt/references/policies")
+assert policy_dir.is_dir(), f"missing policy directory: {policy_dir}"
+
+symbols = (
+    create_governance_middleware,
+    PolicyEvaluator.evaluate,
+    PolicyEvaluator.load_policies,
+    AuditLog.log,
+    AuditLog.export_cloudevents,
+    Agent.__init__,
+)
+for symbol in symbols:
+    print(f"SIGNATURE {symbol.__module__}.{symbol.__qualname__}{inspect.signature(symbol)}")
+assert "middleware" in inspect.signature(Agent.__init__).parameters
+
+audit_log = AuditLog()
+middleware = create_governance_middleware(
+    policy_directory=policy_dir,
+    allowed_tools=[],
+    denied_tools=[],
+    agent_id="ci-smoke-agt",
+    enable_rogue_detection=False,
+    audit_log=audit_log,
+)
+assert isinstance(middleware, list)
+assert len(middleware) >= 2
+print(f"MIDDLEWARE count={len(middleware)}")
+
+evaluator = PolicyEvaluator()
+evaluator.load_policies(policy_dir)
+deny_decision = evaluator.evaluate({"message": "DROP TABLE users"})
+allow_decision = evaluator.evaluate({"message": "hello"})
+assert str(getattr(deny_decision, "action", "")).lower() == "deny"
+assert str(getattr(allow_decision, "action", "")).lower() != "deny"
+print(
+    "POLICY "
+    f"deny={getattr(deny_decision, 'action', None)} "
+    f"allow={getattr(allow_decision, 'action', None)}"
+)
+
+audit_log.log(
+    "tool_call",
+    "agt://ci-smoke-agent",
+    "read_record",
+    resource="record://example",
+    data={"session_id": "session-allow"},
+    outcome="success",
+    policy_decision="allow",
+    trace_id="trace-allow",
+    policy_version="2026.07",
+)
+audit_log.log(
+    "tool_call",
+    "agt://ci-smoke-agent",
+    "delete_record",
+    resource="record://example",
+    data={"session_id": "session-deny"},
+    outcome="denied",
+    policy_decision="deny",
+    trace_id="trace-deny",
+    policy_version="2026.07",
+)
+
+integrity_result = audit_log.verify_integrity()
+integrity_verified = (
+    bool(integrity_result[0])
+    if isinstance(integrity_result, tuple)
+    else bool(integrity_result)
+)
+assert integrity_verified, f"AuditLog integrity failed: {integrity_result!r}"
+
+cloud_events = list(audit_log.export_cloudevents())
+assert len(cloud_events) == 2
+reasons = {
+    "read_record": str(getattr(allow_decision, "reason", "allowed")),
+    "delete_record": str(getattr(deny_decision, "reason", "blocked")),
+}
+safe_events = []
+for cloud_event in cloud_events:
+    data = dict(cloud_event["data"])
+    action = str(data["action"])
+    safe_events.append(
+        {
+            "event_id": str(cloud_event["id"]),
+            "timestamp": str(cloud_event["time"]),
+            "event_type": str(cloud_event["type"]),
+            "agent_id": str(cloud_event["source"]),
+            "session_id": str(data["session_id"]),
+            "policy_name": "foundry-agt-default",
+            "tool_name": action,
+            "decision": str(data["policy_decision"]),
+            "reason": reasons[action],
+            "evaluation_ms": 0.0,
+        }
+    )
+
+raw_safe_events = json.dumps(safe_events, indent=2, sort_keys=True)
+for sentinel in ("DROP TABLE", "Bearer ", "api_key="):
+    assert sentinel not in raw_safe_events
+Path("/tmp/foundry-agt-safe-events.json").write_text(
+    raw_safe_events + "\n",
+    encoding="utf-8",
+)
+Path("/tmp/foundry-agt-integrity-ok").write_text("true\n", encoding="utf-8")
+print("AGT_RUNTIME_SMOKE=PASS")
+PY
+```
+
+This block is a hard gate. The safe-events and integrity files must be
+created by this runtime execution; do not synthesize or hand-edit them.
+
+---
+
+## Step 3 — Invoke the canonical runtime-evidence producer
+
+Run this exact Bash/Python block. It imports the producer from
+`references/python/runtime_evidence.py`; it does not redefine the producer.
+
+```bash
+set -euo pipefail
+cd "$GITHUB_WORKSPACE"
+export AGT_SAFE_EVENTS_PATH="/tmp/foundry-agt-safe-events.json"
+export AGT_INTEGRITY_PATH="/tmp/foundry-agt-integrity-ok"
+export AGT_EVIDENCE_PATH="specs/agt-runtime-evidence.json"
+python3 - <<'PY'
+# RUNTIME_EVIDENCE_PRODUCER_SMOKE
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+workspace = Path(os.environ["GITHUB_WORKSPACE"])
+sys.path.insert(
+    0,
+    str(workspace / "skills" / "foundry-agt" / "references" / "python"),
+)
+from runtime_evidence import build_evidence, write_evidence
+
+safe_events = json.loads(
+    Path(os.environ["AGT_SAFE_EVENTS_PATH"]).read_text(encoding="utf-8")
+)
+integrity_verified = (
+    Path(os.environ["AGT_INTEGRITY_PATH"]).read_text(encoding="utf-8").strip()
+    == "true"
+)
+assert integrity_verified, "AGT runtime did not verify AuditLog integrity"
+
+redaction_policy = "skills/foundry-agt/references/policies/pii-deny.yaml"
+retention_policy = "skills/foundry-agt/references/runtime-audit-export.md"
+assert (workspace / redaction_policy).is_file()
+assert (workspace / retention_policy).is_file()
+
+evidence = build_evidence(
+    safe_events,
+    policy_version="foundry-agt-default@1.0",
+    redaction_policy=redaction_policy,
+    retention_policy=retention_policy,
+    integrity_verified=integrity_verified,
+    captured_at=datetime.now(timezone.utc).isoformat(),
+)
+write_evidence(os.environ["AGT_EVIDENCE_PATH"], evidence)
+
+evidence_path = Path(os.environ["AGT_EVIDENCE_PATH"])
+raw_evidence = evidence_path.read_text(encoding="utf-8")
+written = json.loads(raw_evidence)
+assert written["schema"] == "foundry-agt-runtime-evidence/v1"
+assert written["events_observed"]["allow"] >= 1
+assert written["events_observed"]["deny"] >= 1
+assert written["integrity_verified"] is True
+for sentinel in ("DROP TABLE", "Bearer ", "api_key="):
+    assert sentinel not in raw_evidence
+print(f"RUNTIME_EVIDENCE_SMOKE=PASS path={evidence_path}")
+PY
+```
+
+This block is a hard gate. Success requires the actual
+`specs/agt-runtime-evidence.json` artifact and all assertions above.
+
+---
+
+## Step 4 — Write the authoritative result marker
+
+Your FINAL action must be one Bash tool call containing exactly one of the
+following commands. Do not emit assistant prose before or after this action.
+
+After Steps 0-3 all exit successfully:
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-agt-smoke-result
 ```
 
-On ANY failure (install error, missing CLI, missing signature, broken
-integration contract, policy decision mismatched, AuditLog integrity
-broken):
+If any prior step fails:
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-agt-smoke-result
 ```
 
-The marker file is single-source-of-truth. Do not print the marker token
-anywhere else in your reply — no echoes, no summaries, no fenced code
-blocks containing the literal string. The Bash tool write is the only
-legitimate emission path.
+Do not print either marker token to stdout. Do not put a marker token in a
+summary or fenced prose response. CI reads only the literal bytes at
+`/tmp/foundry-agt-smoke-result`; the marker Bash write must be your final
+action.

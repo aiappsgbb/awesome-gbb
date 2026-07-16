@@ -5,6 +5,9 @@ Source of truth for the prose example in `../../SKILL.md § CI gating (`threadli
 from __future__ import annotations
 
 import json
+import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -402,6 +405,116 @@ class TestSkillFixtureContract(unittest.TestCase):
                       "consumer_prompt.md missing sentinel check for 'DROP TABLE'")
         self.assertIn("api_key=", prompt_text,
                       "consumer_prompt.md missing sentinel check for 'api_key='")
+
+    def test_consumer_prompt_is_execution_only(self) -> None:
+        """The fixture must forbid the authoring behavior that caused CI to skip execution."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        required_prohibitions = (
+            "This is an EXECUTION-ONLY smoke",
+            "Do NOT edit any file",
+            "Do NOT invoke `apply_patch`",
+            "Do NOT inspect repository files",
+            "Do NOT run tests",
+            "Do NOT rebuild docs",
+            "Do NOT run any `git` command",
+            "Do NOT finish with a prose-only response",
+        )
+        for prohibition in required_prohibitions:
+            with self.subTest(prohibition=prohibition):
+                self.assertIn(prohibition, prompt_text)
+
+    def test_consumer_prompt_pins_executable_runtime_evidence_block(self) -> None:
+        """The exact producer invocation in the fixture must execute against safe events."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'export AGT_SAFE_EVENTS_PATH="/tmp/foundry-agt-safe-events.json"',
+            prompt_text,
+        )
+        self.assertIn(
+            'export AGT_EVIDENCE_PATH="specs/agt-runtime-evidence.json"',
+            prompt_text,
+        )
+        self.assertIn(
+            'export AGT_INTEGRITY_PATH="/tmp/foundry-agt-integrity-ok"',
+            prompt_text,
+        )
+        self.assertIn(
+            "from runtime_evidence import build_evidence, write_evidence",
+            prompt_text,
+        )
+        self.assertIn(
+            'write_evidence(os.environ["AGT_EVIDENCE_PATH"], evidence)',
+            prompt_text,
+        )
+
+        match = re.search(
+            r"python3 - <<'PY'\n"
+            r"# RUNTIME_EVIDENCE_PRODUCER_SMOKE\n"
+            r"(?P<code>.*?)\nPY",
+            prompt_text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "fixture is missing the exact runtime-evidence Python block")
+        code = match.group("code") if match else ""
+
+        events = [
+            _event(session_id="session-allow", decision="allow", event_id="evt-allow"),
+            _event(
+                session_id="session-deny",
+                decision="deny",
+                event_id="evt-deny",
+                reason="blocked",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            safe_events = Path(tmp) / "safe-events.json"
+            integrity_path = Path(tmp) / "integrity-ok"
+            evidence_path = Path(tmp) / "agt-runtime-evidence.json"
+            safe_events.write_text(json.dumps(events), encoding="utf-8")
+            integrity_path.write_text("true\n", encoding="utf-8")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AGT_SAFE_EVENTS_PATH": str(safe_events),
+                    "AGT_INTEGRITY_PATH": str(integrity_path),
+                    "AGT_EVIDENCE_PATH": str(evidence_path),
+                    "GITHUB_WORKSPACE": str(SKILL_MD_PATH.parents[2]),
+                }
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True,
+                cwd=SKILL_MD_PATH.parents[2],
+                env=env,
+                text=True,
+                timeout=15,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["schema"], SCHEMA)
+            self.assertEqual(evidence["events_observed"], {"allow": 1, "deny": 1})
+            self.assertTrue(evidence["integrity_verified"])
+
+    def test_consumer_prompt_uses_marker_as_only_success_source(self) -> None:
+        """CI success must come only from the byte-exact marker file write."""
+        prompt_text = FIXTURE_PATH.read_text(encoding="utf-8")
+        success_write = "printf 'SMOKE_RESULT=PASS\\n' > /tmp/foundry-agt-smoke-result"
+        failure_write = (
+            "printf 'SMOKE_RESULT=FAIL <one-line reason>\\n' "
+            "> /tmp/foundry-agt-smoke-result"
+        )
+        self.assertEqual(prompt_text.count(success_write), 1)
+        self.assertEqual(prompt_text.count(failure_write), 1)
+        self.assertEqual(prompt_text.count("SMOKE_RESULT=PASS"), 1)
+        self.assertIn("The marker file is the only success source", prompt_text)
+        self.assertIn("failure-marker Bash write in Step 4", prompt_text)
+        self.assertNotIn("PASS via transcript", prompt_text)
+
+    def test_fixture_asset_change_bumps_patch_version(self) -> None:
+        """Changing the consumer fixture must advance the skill's patch version."""
+        frontmatter = "\n".join(SKILL_MD_PATH.read_text(encoding="utf-8").splitlines()[:25])
+        self.assertIn('version: "1.4.1"', frontmatter)
 
     def test_producer_module_references_new_skill_heading(self) -> None:
         """runtime_evidence.py docstring must reference the Runtime audit evidence heading."""
