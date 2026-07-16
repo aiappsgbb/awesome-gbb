@@ -349,4 +349,3 @@ The marker file is single-source-of-truth. Do not print the marker token
 anywhere else in your reply — no echoes, no summaries, no fenced code
 blocks containing the literal string. The Bash tool write is the only
 legitimate emission path.
-
