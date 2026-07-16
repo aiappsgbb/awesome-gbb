@@ -1,0 +1,43 @@
+// eval-quality-drift.kql
+// Evaluation pass-rate drift detection.
+//
+// Compares the average agent_eval.pass_rate in the most recent 1-hour window
+// against a rolling baseline (days 8 through 1 ago) and returns a result row
+// when the recent pass-rate has fallen by >= 5 percentage points.
+//
+// Missing-data guard: if either the recent OR the baseline window contains no
+// agent_eval.pass_rate metrics, toscalar() returns null.  Null arithmetic
+// produces null delta.  isfinite(null) == false, so the final where-clause
+// drops the row — zero rows emitted, zero false alerts.
+//
+// Metric storage assumption: agent_eval.pass_rate is emitted as an AppMetrics
+// entry with Sum = sum of pass rates and Count = number of evaluations in the
+// aggregation interval (standard OTel counter/histogram pattern).
+//
+// Table    : AppMetrics (workspace-based Application Insights)
+// Deployed : agent-alerts.bicep quality_safety alert (semantically equivalent
+//            inline KQL — this file is the canonical reference)
+
+let pass_rate_delta_threshold = -0.05;
+let recent_pass_rate = toscalar(
+    AppMetrics
+    | where TimeGenerated > ago(1h)
+    | where Name == "agent_eval.pass_rate"
+    | where Count > 0                             // exclude empty aggregation buckets
+    | summarize sum(Sum) / sum(Count)             // weighted mean across the hour
+);
+let baseline_pass_rate = toscalar(
+    AppMetrics
+    | where TimeGenerated between (ago(8d) .. ago(1d))
+    | where Name == "agent_eval.pass_rate"
+    | where Count > 0
+    | summarize sum(Sum) / sum(Count)
+);
+range sentinel from 1 to 1 step 1               // synthetic row to anchor the result
+| extend
+    recent   = recent_pass_rate,
+    baseline = baseline_pass_rate,
+    delta    = (recent_pass_rate - baseline_pass_rate)
+| where isfinite(recent) and isfinite(baseline)  // missing-data guard (null → false)
+| where delta <= pass_rate_delta_threshold
+| project recent, baseline, delta

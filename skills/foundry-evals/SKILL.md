@@ -9,12 +9,12 @@ description: >
   post-deploy, score grounding quality, measure tool_selection, detect dataset drift,
   write custom grader, check URL citations, validate eval RBAC, day-1 smoke test,
   continuous eval loop, pre-merge eval gate, Foundry Evals SDK setup, evaluator
-  framework, eval-driven optimization, ASSERT evaluators. DO NOT USE FOR: deploying
+  framework, eval-driven optimization, ASSERT evaluators, calibrate eval stack. DO NOT USE FOR: deploying
   agents (use threadlight-deploy), designing processes (use threadlight-design),
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.3.0"
+  version: "1.4.1"
 ---
 
 # Foundry Agent Evaluations
@@ -947,6 +947,62 @@ Consumed by threadlight EVAL-201 when `kind: sibling-skill` (issue #247).
 | `task_adherence` recovers with conversation format | Using plain string query instead of conversation-format + tool_definitions | Use conversation-format query (messages array) and always include `tool_definitions` — evaluator scores improve significantly |
 | BYOK token expires during long eval | Many sequential invocations exhaust the ~1h token | Refresh BYOK token per invocation: mint fresh `_get_provider()` every ~30 scenarios or create new session |
 | `task_completion` = 0% but agent works | MCP tools not deployed — agent can't complete tasks that need tool calls | This is a deployment gap, not a quality failure. Deploy MCP server first, then re-run evals. |
+
+---
+
+## Trustworthy Evaluation Workflow
+
+Before assigning `role: gate` to any evaluator, calibrate it against a
+**held-out set of labelled known-good and known-bad sessions**. An evaluator
+is gate-ready only when repeated scoring passes show consistent verdicts:
+`agreement ≥ 0.80`, `flip_rate ≤ 0.10`, `repeated_runs ≥ 4`.
+
+Default `groundedness` to `role: human_review` or `role: trend` until that bar
+is cleared — the canonical helper enforces this as a hard check.
+
+### Canonical Resources
+
+> **MUST:** Use the reference files below — do NOT redefine `eval_trust` functions inline.
+
+| Resource | Role |
+|----------|------|
+| [`references/data/trust-profile.yaml`](references/data/trust-profile.yaml) | Human-editable YAML trust profile — edit evaluators, thresholds, and P1 fields to match your stack |
+| [`references/data/calibration-run.json`](references/data/calibration-run.json) | Calibration run record — replace with your actual calibration output |
+| [`references/eval-trust-workflow.md`](references/eval-trust-workflow.md) | Step-by-step calibration workflow with exact commands |
+| [`references/python/eval_trust.py`](references/python/eval_trust.py) | Canonical helper — `build_trust_evidence()`, `write_trust_evidence()`, `validate_profile_with_schema()` |
+
+### P1 Requirements Before Gate Assignment
+
+1. **Task-specific weighted rubric** — author a rubric in `task_specific_rubric` with
+   per-criterion weights; review it against your known-good and known-bad
+   session set before adopting thresholds.
+
+2. **USR-8 before simulator evidence** — collect USR-8 (Unified Scenario Rating
+   8-point scale) ratings from real human sessions before using
+   simulator-generated conversations as evaluation evidence. Document in
+   `simulator.usr8_report`.
+
+3. **Diversity sampling for eval / rubric design / fine-tuning; uniform for
+   production SLA gates** — set `sampling.evaluation: diversity` and
+   `sampling.sla: uniform` in your trust profile.
+
+4. **Benchmark metadata** — when comparing evaluation results across releases,
+   pin `benchmark.name`, `benchmark.version`, `benchmark.judge_version`, and
+   set `benchmark.applicable: true` so release-to-release deltas are attributable.
+   Applicable only when cross-release comparison is relevant to your deployment.
+
+### Emit Output Artefacts
+
+Call the canonical helper — do NOT hand-write the evidence JSON:
+
+```python
+from eval_trust import build_trust_evidence, write_trust_evidence
+evidence = build_trust_evidence(profile, calibration)
+write_trust_evidence(evidence, "specs/evals-trust-evidence.json")
+```
+
+See [`references/eval-trust-workflow.md`](references/eval-trust-workflow.md)
+for the full procedure including agreement/flip calculation and threshold tuning.
 
 ---
 

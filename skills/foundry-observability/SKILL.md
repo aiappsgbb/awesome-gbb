@@ -4,21 +4,21 @@ description: >
   End-to-end observability for Azure AI pilots — App Insights +
   Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers,
   ACA jobs, bot service, workspace UIs. Closes the silent telemetry gap
-  where `azd up` returns 0 but **zero traces ever reach App Insights**.
-  Covers Bicep modules, Foundry account-level telemetry connection,
-  ACA-side instrumentation, `Monitoring Metrics Publisher` RBAC, and
-  KQL diagnostic queries. Read the full skill body for the 3-layer
-  wiring sequence — do not instrument from this summary alone.
+  where `azd up` returns 0 but zero traces reach App Insights. Covers
+  Bicep modules, operating profile (v1 schema), observability evidence
+  normaliser, agent alert catalog, `Monitoring Metrics Publisher` RBAC,
+  and KQL queries.
   USE FOR: app insights, application insights, OpenTelemetry, OTel,
   configure_azure_monitor, agent traces missing, no telemetry, blank
   appin, log analytics, KQL, observability, trace MCP, silent cron,
   Monitoring Metrics Publisher RBAC, AppInsights connection foundry,
   account-level appin, AppIn PUT 400, credentials null,
-  silent injection, server_error telemetry.
+  silent injection, server_error telemetry, operating profile,
+  observability evidence, alert catalog.
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Foundry Observability
@@ -87,19 +87,33 @@ the trace graph and makes correlation impossible.
 foundry-observability/
 ├── SKILL.md
 └── references/
+    ├── observability-profile.yaml       # canonical YAML operating profile (schema foundry-observability-profile/v1)
+    ├── observability-profile.schema.json  # JSON Schema for the operating profile
     ├── bicep/
     │   ├── log-analytics.bicep          # LAW (workspace) — required by both AppIn and ACA env
     │   ├── app-insights.bicep           # AppIn workspace-based + UAMI Monitoring Metrics Publisher RBAC
-    │   └── aca-env-monitoring.bicep     # ACA env wired to LAW + AppIn
+    │   ├── aca-env-monitoring.bicep     # ACA env wired to LAW + AppIn
+    │   └── agent-alerts.bicep           # four scheduled-query alert rules + action-group wiring
     ├── python/
-    │   └── otel_init.py                 # configure_azure_monitor() for ACA workloads
+    │   ├── otel_init.py                 # configure_azure_monitor() for ACA workloads
+    │   └── observability_evidence.py    # normaliser library: build_evidence / write_evidence
     ├── postprovision/
     │   └── connect_foundry_appinsights.py  # creates the account-level AppInsights connection
+    ├── data/
+    │   ├── observability-profile.valid.json    # canonical valid profile fixture (JSON form)
+    │   └── observability-profile.invalid.json  # invalid profile fixture (missing alert)
     └── queries/
         ├── agent-traces.kql             # hosted-agent traces, last 1h
         ├── mcp-tool-calls.kql           # MCP tool invocation breakdown
         ├── silent-cron-debug.kql        # ACA Job exec failures with no console logs
-        └── first-trace-probe.kql        # smoke query — "did ANY trace land in last 5 min?"
+        ├── first-trace-probe.kql        # smoke query — "did ANY trace land in last 5 min?"
+        ├── agt-denial-rate.kql          # AGT governance denial rate, 5-min bins
+        └── eval-quality-drift.kql       # eval pass-rate drift, 8-day baseline
+```
+
+Canonical output artifact (advisory evidence, not proof alerts fired):
+```
+specs/observability-evidence.json        # produced by the normaliser from observability-profile.yaml
 ```
 
 Drop these into a PoC's `infra/modules/`, `infra/scripts/`, `src/<svc>/`,
@@ -738,6 +752,156 @@ Layer 2 as a bonus.
 > and Foundry deduplicates `create_version` — the new code never
 > reaches the container. See `foundry-hosted-agents` § Image-tag
 > staleness trap.
+
+
+---
+
+## Production Operating Profile
+
+The **Production Operating Profile** workflow formalises the seven steps
+that turn a live pilot into a production-ready observable system.  Complete
+these steps in order.  The output artifact `specs/observability-evidence.json`
+is **advisory evidence** (a normalised snapshot of what the profile declares)
+— it is NOT proof that alerts fired or that traces flowed.  Use the KQL
+verification gate above to confirm telemetry is actually flowing.
+
+### Step 1 — Connect App Insights to the Foundry account
+
+Run the postprovision script to create the account-level AppInsights
+connection.  Without this, the hosted-agent runtime never injects
+`APPLICATIONINSIGHTS_CONNECTION_STRING`.
+
+```bash
+uv run infra/scripts/connect_foundry_appinsights.py
+```
+
+Source: [`references/postprovision/connect_foundry_appinsights.py`](references/postprovision/connect_foundry_appinsights.py)
+
+> See Layer 2 above (Steps 2.1–2.3) for the full O-012 fallback path if
+> `credentials: null` is returned.
+
+### Step 2 — Emit traces from all workloads
+
+Every ACA workload and hosted-agent container must call
+`configure_azure_monitor()` before any other init code.  Use the guarded
+helper to avoid crashing startup on a missing env var.
+
+```python
+# src/<svc>/main.py — first line of __main__
+from references.python.otel_init import init_telemetry
+init_telemetry()
+```
+
+Source: [`references/python/otel_init.py`](references/python/otel_init.py)
+
+Verify with [`references/queries/first-trace-probe.kql`](references/queries/first-trace-probe.kql)
+or [`references/queries/agent-traces.kql`](references/queries/agent-traces.kql).
+
+### Step 3 — Deploy alert rules and action group
+
+Deploy the four scheduled-query alert rules (failure, latency, token_cost,
+quality_safety) and wire them to an existing action group.
+
+```bash
+az deployment group create \
+  --resource-group <rg> \
+  --template-file references/bicep/agent-alerts.bicep \
+  --parameters \
+      telemetryScopeResourceId=<appin-arm-id> \
+      actionGroupResourceId=<action-group-arm-id>
+```
+
+Source: [`references/bicep/agent-alerts.bicep`](references/bicep/agent-alerts.bicep)
+
+> `agent-alerts.bicep` **never** creates an action group.  Provision the
+> action group separately and pass its ARM ID as `actionGroupResourceId`.
+
+### Step 4 — Declare trace content policy and sampling
+
+Edit (or adopt) the canonical operating profile:
+[`references/observability-profile.yaml`](references/observability-profile.yaml)
+
+Set `trace_policy.content_recording` to `false` (metadata only) unless your
+data-governance policy permits full content.  Set `sampling.traces` and
+`sampling.continuous_evaluation` to values in [0, 1].
+
+Schema: [`references/observability-profile.schema.json`](references/observability-profile.schema.json)
+
+### Step 5 — Pin the evaluator definition across dev / CI / production
+
+In the operating profile set `evaluator_definition.environments` to exactly
+`["dev", "ci", "production"]`.  The normaliser sets `evaluator_parity: true`
+in the evidence iff the environment set is exactly those three — extra or
+missing environments invalidate parity.
+
+```yaml
+evaluator_definition:
+  name: "agent-quality-v3"
+  version: "3.0.0"
+  environments: ["dev", "ci", "production"]
+```
+
+### Step 6 — Declare retention and telemetry / evaluation budget
+
+Set `retention_days` (strict integer ≥ 30, matching the LAW
+`retentionInDays` in
+[`references/bicep/log-analytics.bicep`](references/bicep/log-analytics.bicep))
+and `monthly_budget_usd` (finite real > 0) in the operating profile.
+
+```yaml
+retention_days: 90
+monthly_budget_usd: 500
+```
+
+### Step 7 — Emit and verify evidence
+
+Run the normaliser to produce `specs/observability-evidence.json`.  The
+normaliser is a library — call it directly with `python3`:
+
+```python
+python3 - <<'PY'
+import sys, json
+from datetime import datetime, timezone
+sys.path.insert(0, 'skills/foundry-observability/references/python')
+from observability_evidence import build_evidence, write_evidence
+import yaml
+profile = yaml.safe_load(open('skills/foundry-observability/references/observability-profile.yaml'))
+captured_at = datetime.now(timezone.utc).isoformat()
+evidence = build_evidence(profile, captured_at=captured_at)
+write_evidence(evidence, 'specs/observability-evidence.json')
+print('Written specs/observability-evidence.json')
+PY
+```
+
+> **No CLI flags.** `observability_evidence.py` exposes a library API
+> (`build_evidence`, `write_evidence`, `validate_profile_with_schema`) only —
+> there is no command-line interface.  Do not invent flags.
+
+Inspect the emitted evidence:
+
+```bash
+python3 -c "import json; e=json.load(open('specs/observability-evidence.json')); print(json.dumps(e, indent=2))"
+```
+
+The `evaluator_parity` field confirms the evaluator definition spans the
+canonical three environments.  The artifact is advisory evidence — OBS-107,
+OBS-108, OBS-109, and EVAL-106 consume it.  Cross-check with the KQL
+verification gate (the "Verification before claiming telemetry is wired"
+section above) to confirm traces are actually flowing.
+
+> **Stdlib JSON alternative** (no PyYAML needed — profile only, not YAML):
+>
+> ```python
+> python3 - <<'PY'
+> import sys, json
+> from datetime import datetime, timezone
+> sys.path.insert(0, 'skills/foundry-observability/references/python')
+> from observability_evidence import build_evidence, write_evidence
+> profile = json.loads(open('skills/foundry-observability/references/data/observability-profile.valid.json').read())
+> evidence = build_evidence(profile, captured_at=datetime.now(timezone.utc).isoformat())
+> write_evidence(evidence, 'specs/observability-evidence.json')
+> PY
+> ```
 
 ---
 

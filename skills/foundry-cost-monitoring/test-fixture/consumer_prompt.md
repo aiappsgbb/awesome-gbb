@@ -388,9 +388,10 @@ No teardown — this fixture is read-only and created zero Azure
 resources (Pattern 25 N/A for cleanup; only for the Step 4 soft-pass
 classification).
 
-Your FINAL action is to invoke the Bash tool to write the marker file.
-The file's literal byte content is what CI grades; your assistant-text
-reply is NOT graded.
+Your FINAL action is to invoke the exact Bash tool block below. It emits
+the skill path required by the workflow's transcript audit immediately
+before writing the marker. The marker file's literal byte content is what
+CI grades; your assistant-text reply is NOT graded.
 
 On success (Step 0 auth context complete AND Step 1 Retail Prices probe
 returned 200 + non-empty Items AND Step 3 cost computation join
@@ -406,6 +407,7 @@ echo "smoke-summary: retail=$(cat /tmp/foundry-cost-monitoring-retail-http 2>/de
 ```
 
 ```bash
+printf 'SKILL_CONTRACT=skills/foundry-cost-monitoring/SKILL.md\n'
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-cost-monitoring-smoke-result
 ```
 

@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aiappsgbb.github.io/awesome-gbb/schemas/foundry-evals-trust-profile/v1",
+  "title": "Foundry Evals Trust Profile",
+  "description": "Declares the evaluator stack, calibration contract, and sampling design for a Foundry hosted-agent trust evaluation.",
+  "type": "object",
+  "required": [
+    "unit_of_analysis",
+    "evaluators",
+    "threshold_rationale",
+    "last_calibrated_at",
+    "sampling"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "unit_of_analysis": {
+      "type": "string",
+      "enum": ["session"],
+      "description": "Granularity of a single evaluation record; must be 'session'."
+    },
+    "evaluators": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/Evaluator"
+      },
+      "description": "Non-empty list of evaluator declarations."
+    },
+    "threshold_rationale": {
+      "type": "string",
+      "description": "Human-readable explanation of how thresholds were chosen."
+    },
+    "last_calibrated_at": {
+      "type": "string",
+      "description": "ISO-8601 timestamp of the most recent calibration run."
+    },
+    "sampling": {
+      "$ref": "#/definitions/Sampling"
+    },
+    "evaluation_design": {
+      "type": "object",
+      "description": "Optional evaluation design flags for the trust profile.",
+      "additionalProperties": true,
+      "properties": {
+        "held_out_data_only": {
+          "type": "boolean",
+          "description": "True if evaluation uses only held-out data not seen during rubric authoring."
+        },
+        "rubric_applicable": {
+          "type": "boolean",
+          "description": "True if a task-specific rubric applies to this evaluation."
+        }
+      }
+    },
+    "task_specific_rubric": {
+      "type": "object",
+      "description": "Optional reviewed task-specific rubric describing evaluation criteria.",
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Rubric version identifier."
+        },
+        "reviewed": {
+          "type": "boolean",
+          "description": "True if the rubric has been reviewed against known-good and known-bad sessions."
+        }
+      }
+    },
+    "simulator": {
+      "type": "object",
+      "description": "Optional simulator configuration. Use usr8_report to document USR-8 baseline results from real human sessions.",
+      "additionalProperties": true
+    },
+    "benchmark": {
+      "type": "object",
+      "description": "Optional pinned benchmark reference. Use applicable, name, version, judge_version, and delta for release-to-release attribution.",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "Evaluator": {
+      "type": "object",
+      "required": ["name", "role", "evaluator_version", "judge", "threshold"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": ["gate", "trend", "human_review"],
+          "description": "Evaluator gate role: gate (hard threshold), trend (tracking only), or human_review (manual triage)."
+        },
+        "evaluator_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "judge": {
+          "$ref": "#/definitions/Judge"
+        },
+        "threshold": {
+          "type": "number"
+        }
+      }
+    },
+    "Judge": {
+      "type": "object",
+      "required": ["deployment", "model", "version"],
+      "additionalProperties": true,
+      "properties": {
+        "deployment": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        }
+      }
+    },
+    "Sampling": {
+      "type": "object",
+      "required": ["evaluation", "sla"],
+      "additionalProperties": true,
+      "properties": {
+        "evaluation": {
+          "type": "string",
+          "enum": ["diversity"],
+          "description": "Sampling strategy for evaluation sessions."
+        },
+        "sla": {
+          "type": "string",
+          "enum": ["uniform"],
+          "description": "SLA distribution strategy across evaluation slots."
+        }
+      }
+    }
+  }
+}

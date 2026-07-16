@@ -29,6 +29,107 @@ marker (Step 2) with reason `auth context missing: <var-name>` and stop.
 
 ---
 
+## Step 0b — Trust Workflow Scaffold (no Azure required)
+
+Before the live eval smoke, validate that the trust workflow scaffold works
+correctly in this environment. This step runs entirely locally — no Azure
+credentials required.
+
+Read `foundry-evals` `SKILL.md § Trustworthy Evaluation Workflow`. Then:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+python3 -c "
+import sys, json, pathlib
+
+# ---- path setup ----
+skill_dir = pathlib.Path('skills/foundry-evals/references/python')
+data_dir  = pathlib.Path('skills/foundry-evals/references/data')
+sys.path.insert(0, str(skill_dir))
+
+import yaml
+from eval_trust import (
+    build_trust_evidence,
+    write_trust_evidence,
+    validate_profile_with_schema,
+)
+
+# ---- load YAML trust profile ----
+yaml_path = data_dir / 'trust-profile.yaml'
+assert yaml_path.exists(), f'Missing: {yaml_path}'
+with yaml_path.open(encoding='utf-8') as f:
+    profile = yaml.safe_load(f)
+
+# ---- load calibration record ----
+cal_path = data_dir / 'calibration-run.json'
+assert cal_path.exists(), f'Missing: {cal_path}'
+calibration = json.loads(cal_path.read_text(encoding='utf-8'))
+
+# ---- validate ----
+validate_profile_with_schema(profile)
+
+# ---- assert profile contract ----
+assert profile['unit_of_analysis'] == 'session', 'unit_of_analysis must be session'
+roles = {e['name']: e['role'] for e in profile['evaluators']}
+assert roles.get('groundedness') != 'gate', 'groundedness must not be role=gate before reliable calibration'
+assert roles.get('task_completion') == 'gate', 'task_completion must be gate'
+assert roles.get('coherence') == 'trend', 'coherence must be trend'
+
+# ---- assert all pins set ----
+for ev in profile['evaluators']:
+    assert ev.get('evaluator_version', '').strip(), f'{ev[\"name\"]}.evaluator_version must be non-empty'
+    j = ev.get('judge', {})
+    for f_ in ('deployment', 'model', 'version'):
+        assert j.get(f_, '').strip(), f'{ev[\"name\"]}.judge.{f_} must be non-empty'
+
+# ---- assert calibration reliability ----
+assert calibration['repeated_runs'] >= 4, 'calibration repeated_runs must be >= 4'
+assert calibration['agreement'] >= 0.80, 'calibration agreement must be >= 0.80'
+assert calibration['flip_rate'] <= 0.10, 'calibration flip_rate must be <= 0.10'
+
+# ---- assert no sensitive production trace content ----
+import re
+profile_text = yaml_path.read_text(encoding='utf-8')
+# No real subscription IDs or ARM resource paths
+assert not re.search(r'subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', profile_text, re.I), \
+    'trust-profile.yaml must not contain real ARM subscription IDs'
+
+# ---- build and emit evidence ----
+evidence = build_trust_evidence(profile, calibration)
+assert evidence['\$schema'] == 'foundry-evals-trust-evidence/v1'
+assert evidence['session'] == 'session'
+assert evidence['judge_and_evaluator_versions_pinned'] is True
+assert evidence['evaluator_reliability_ok'] is True
+ev_roles = evidence['evaluator_roles']
+assert ev_roles.get('groundedness') != 'gate', 'evidence must show groundedness is not gate'
+
+import tempfile, os
+with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+    tmp_path = tmp.name
+try:
+    write_trust_evidence(evidence, tmp_path)
+    written = json.loads(pathlib.Path(tmp_path).read_text(encoding='utf-8'))
+    assert written['\$schema'] == 'foundry-evals-trust-evidence/v1'
+finally:
+    os.unlink(tmp_path)
+
+print('TRUST_SCAFFOLD=PASS')
+print(f'  unit_of_analysis: {evidence[\"session\"]}')
+print(f'  evaluator_roles: {ev_roles}')
+print(f'  pins_ok: {evidence[\"judge_and_evaluator_versions_pinned\"]}')
+print(f'  calibration_reliable: {evidence[\"evaluator_reliability_ok\"]}')
+print(f'  groundedness_not_gate: {ev_roles.get(\"groundedness\") != \"gate\"}')
+"
+```
+
+If this prints `TRUST_SCAFFOLD=PASS`, the local trust contract is verified.
+Any assertion failure indicates a broken reference file — note the error and
+continue with a FAIL marker in Step 2.
+
+---
+
+
+
 ## Step 1 — The goal
 
 Using the `foundry-evals` skill, score one real assistant response with one

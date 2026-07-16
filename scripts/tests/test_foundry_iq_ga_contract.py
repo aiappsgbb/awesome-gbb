@@ -799,12 +799,12 @@ class FoundryIqGaContractTests(unittest.TestCase):
             self.skill,
         )
 
-    def test_patch_version_records_post_merge_corrections(self) -> None:
+    def test_skill_and_catalog_versions_match_current_release_contract(self) -> None:
         self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "1.4.2")
-        self.assertEqual(json.loads(PLUGIN.read_text())["version"], "4.29.3")
+        self.assertEqual(json.loads(PLUGIN.read_text())["version"], "4.32.0")
         marketplace = json.loads(MARKETPLACE.read_text())
-        self.assertEqual(marketplace["metadata"]["version"], "4.29.3")
-        self.assertEqual(marketplace["plugins"][0]["version"], "4.29.3")
+        self.assertEqual(marketplace["metadata"]["version"], "4.32.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.32.0")
 
 
 if __name__ == "__main__":

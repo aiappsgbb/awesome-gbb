@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "foundry-observability-profile/v1",
+  "title": "Foundry Observability Operating Profile",
+  "description": "Human-authored operating profile for a Foundry agent deployment. Declares alert coverage, trace-content policy, sampling rates, evaluator parity, retention, and telemetry/evaluation budget. Normalised by observability_evidence.py into foundry-observability-evidence/v1. Note: JSON Schema type:number/integer cannot reject Python booleans at the schema layer; stdlib validation in observability_evidence.py always enforces boolean rejection for numeric fields.",
+  "type": "object",
+  "required": [
+    "schema",
+    "action_group",
+    "alerts",
+    "evaluator_definition",
+    "trace_policy",
+    "sampling",
+    "retention_days",
+    "monthly_budget_usd"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": ["foundry-observability-profile/v1"],
+      "description": "Schema identifier; must be foundry-observability-profile/v1."
+    },
+    "action_group": {
+      "type": "object",
+      "description": "Azure Monitor action group that receives all agent alert notifications.",
+      "required": ["resource_id", "owner"],
+      "additionalProperties": true,
+      "properties": {
+        "resource_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Full Azure resource ID of the action group."
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Team or alias responsible for the action group."
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "description": "Named alert rules. The four required categories are failure, latency, token_cost, and quality_safety. Additional categories are permitted for forward compatibility.",
+      "required": ["failure", "latency", "token_cost", "quality_safety"],
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "properties": {
+        "failure": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alert rule name for 5xx / error-rate failures."
+        },
+        "latency": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alert rule name for P95 latency breaches."
+        },
+        "token_cost": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alert rule name for token-cost anomalies."
+        },
+        "quality_safety": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alert rule name for evaluation quality / safety drift."
+        }
+      }
+    },
+    "evaluator_definition": {
+      "type": "object",
+      "description": "Shared evaluator definition pinned across SDLC environments. evaluator_parity is True in evidence iff environments is exactly [dev, ci, production].",
+      "required": ["name", "version", "environments"],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Evaluator package or deployment name."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pinned evaluator version string."
+        },
+        "environments": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1,
+          "description": "Environments where this evaluator definition is deployed. Must be exactly [dev, ci, production] for evaluator_parity=True."
+        }
+      }
+    },
+    "trace_policy": {
+      "type": "object",
+      "description": "Trace content and access-control policy for the agent deployment.",
+      "required": ["content_recording", "redaction_policy", "readers_group"],
+      "additionalProperties": true,
+      "properties": {
+        "content_recording": {
+          "type": "boolean",
+          "description": "Strict boolean. True = full content recorded; False = metadata only."
+        },
+        "redaction_policy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative path to the PII/sensitive-data redaction policy document."
+        },
+        "readers_group": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Group identity (AAD group name or alias) with read access to traces."
+        }
+      }
+    },
+    "sampling": {
+      "type": "object",
+      "description": "Trace and continuous-evaluation sampling fractions.",
+      "required": ["traces", "continuous_evaluation"],
+      "additionalProperties": true,
+      "properties": {
+        "traces": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of traces to capture; real number in [0, 1]. Booleans are rejected by stdlib validation."
+        },
+        "continuous_evaluation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of sessions submitted to continuous evaluation; real number in [0, 1]. Booleans are rejected by stdlib validation."
+        }
+      }
+    },
+    "retention_days": {
+      "type": "integer",
+      "minimum": 30,
+      "description": "Log/trace retention in days; strict integer >= 30. Booleans and floats are rejected by stdlib validation."
+    },
+    "monthly_budget_usd": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Monthly telemetry and evaluation budget in USD; finite real number > 0. Booleans are rejected by stdlib validation."
+    }
+  }
+}

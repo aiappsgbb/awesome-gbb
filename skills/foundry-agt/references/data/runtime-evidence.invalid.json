@@ -1,0 +1,28 @@
+{
+  "audit_sink": {
+    "kind": "append-only",
+    "persistent": true
+  },
+  "captured_at": "2026-07-15T12:34:56Z",
+  "events_observed": {
+    "allow": 1,
+    "deny": 1
+  },
+  "integrity_verified": true,
+  "policy_version": "2026.07",
+  "redaction_policy": "policies/redaction.md",
+  "required_fields_observed": [
+    "agent_id",
+    "decision",
+    "evaluation_ms",
+    "event_id",
+    "event_type",
+    "policy_name",
+    "reason",
+    "session_id",
+    "timestamp",
+    "tool_name"
+  ],
+  "retention_policy": "policies/retention.md",
+  "schema": "foundry-agt-runtime-evidence/v0"
+}

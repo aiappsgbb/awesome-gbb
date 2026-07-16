@@ -1,0 +1,29 @@
+{
+  "$schema": "foundry-observability-profile/v1",
+  "schema": "foundry-observability-profile/v1",
+  "action_group": {
+    "resource_id": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Insights/actionGroups/agent-oncall",
+    "owner": "agent-sre"
+  },
+  "alerts": {
+    "failure": "agent-5xx",
+    "latency": "tool-p95",
+    "token_cost": "token-anomaly"
+  },
+  "evaluator_definition": {
+    "name": "agent-quality-v3",
+    "version": "3.0.0",
+    "environments": ["dev", "ci", "production"]
+  },
+  "trace_policy": {
+    "content_recording": false,
+    "redaction_policy": "docs/pii-redaction.md",
+    "readers_group": "agent-observability-readers"
+  },
+  "sampling": {
+    "traces": 0.1,
+    "continuous_evaluation": 0.05
+  },
+  "retention_days": 90,
+  "monthly_budget_usd": 500
+}

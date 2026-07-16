@@ -1,0 +1,75 @@
+{
+  "$schema": "foundry-evals-trust-profile/v1",
+  "unit_of_analysis": "session",
+  "evaluators": [
+    {
+      "name": "task_completion",
+      "role": "gate",
+      "evaluator_version": "1.2.0",
+      "judge": {
+        "deployment": "gpt-4o-mini-eval",
+        "model": "gpt-4o-mini-2024-07-18",
+        "version": "2024-07-18"
+      },
+      "threshold": 0.80
+    },
+    {
+      "name": "csat",
+      "role": "gate",
+      "evaluator_version": "1.0.1",
+      "judge": {
+        "deployment": "gpt-4o-mini-eval",
+        "model": "gpt-4o-mini-2024-07-18",
+        "version": "2024-07-18"
+      },
+      "threshold": 0.75
+    },
+    {
+      "name": "groundedness",
+      "role": "human_review",
+      "evaluator_version": "1.1.0",
+      "judge": {
+        "deployment": "gpt-4o-eval",
+        "model": "gpt-4o-2024-11-20",
+        "version": "2024-11-20"
+      },
+      "threshold": 0.85
+    },
+    {
+      "name": "coherence",
+      "role": "trend",
+      "evaluator_version": "1.0.0",
+      "judge": {
+        "deployment": "gpt-4o-mini-eval",
+        "model": "gpt-4o-mini-2024-07-18",
+        "version": "2024-07-18"
+      },
+      "threshold": 0.70
+    }
+  ],
+  "threshold_rationale": "task_completion and csat gates calibrated from 50 known-good / 20 known-bad sessions (agreement 0.92, flip_rate 0.05, 5 repeated runs on the held-out set). groundedness is human_review until a second calibration pass confirms agreement >= 0.80. coherence is trend-only — no gate assigned until a release-to-release delta baseline is established.",
+  "last_calibrated_at": "2025-01-10T14:00:00Z",
+  "sampling": {
+    "evaluation": "diversity",
+    "sla": "uniform"
+  },
+  "evaluation_design": {
+    "held_out_data_only": true,
+    "rubric_applicable": true
+  },
+  "task_specific_rubric": {
+    "version": "2.1",
+    "reviewed": true
+  },
+  "simulator": {
+    "used": false,
+    "usr8_report": null
+  },
+  "benchmark": {
+    "applicable": true,
+    "name": "foundry-evals-baseline-2025Q1",
+    "version": "1.0.0",
+    "judge_version": "2024-07-18",
+    "delta": 0.03
+  }
+}

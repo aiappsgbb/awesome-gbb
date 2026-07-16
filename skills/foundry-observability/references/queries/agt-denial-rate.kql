@@ -1,0 +1,39 @@
+// agt-denial-rate.kql
+// AGT (Agent Governance Tool) denial-rate monitor — 15-minute rolling window, 5-minute bins.
+//
+// Computes the fraction of agent_governance.* metric value (Sum) where
+// Properties["decision"] == "deny" within each 5-minute bin. Returns rows
+// only when the denial rate meets or exceeds denial_rate_threshold (default 0.20 = 20 %).
+//
+// Metric-value aggregation: uses sum(Sum) and sumif(Sum, ...) so that the
+// query treats AppMetrics rows as event-count metric values (OTel counter
+// pattern), avoiding row-count distortion from AppMetrics fanout.
+//
+// Divide-by-zero guard : `where total > 0` ensures the denominator is never
+// zero before the division.  Null-total guard: bins with no AppMetrics rows
+// are excluded by the same predicate.
+//
+// This query ships as an operator / governance reference file.
+// It is NOT a fifth alert rule — it is used for dashboards and ad-hoc
+// investigation.  See agent-alerts.bicep quality_safety alert for the
+// eval-quality-drift signal that gates the operating profile.
+//
+// Table   : AppMetrics (workspace-based Application Insights)
+// KQL param (set to desired threshold before running):
+//   let denial_rate_threshold = 0.20;
+
+let denial_rate_threshold = 0.20;
+let window = 15m;
+AppMetrics
+| where TimeGenerated > ago(window)
+| where Name startswith "agent_governance."
+| extend decision = tostring(Properties["decision"])
+| summarize
+    total  = sum(Sum),
+    denied = sumif(Sum, decision == "deny")
+    by bin(TimeGenerated, 5m)
+| where total > 0                                          // null/zero-total guard
+| extend denial_rate = todouble(denied) / todouble(total) // safe: total > 0 enforced above
+| where denial_rate >= denial_rate_threshold
+| project TimeGenerated, total, denied, denial_rate
+| order by TimeGenerated desc
