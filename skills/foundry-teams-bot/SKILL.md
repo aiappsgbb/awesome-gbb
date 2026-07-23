@@ -9,7 +9,7 @@ description: >
   DO NOT USE FOR: designing the agent (use threadlight-design), deploying the hosted agent
   itself (use threadlight-deploy), general Bot Framework development.
 metadata:
-  version: "1.1.4"
+  version: "1.1.5"
 ---
 
 # Foundry Teams Bot
