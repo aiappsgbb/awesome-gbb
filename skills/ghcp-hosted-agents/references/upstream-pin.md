@@ -61,11 +61,11 @@ packages:
     upstream_changelog: https://pypi.org/project/github-copilot-sdk/#history
   - name: azure-ai-agentserver-invocations
     source: pypi
-    version: "1.0.0b6"
+    version: "1.0.0b7"
     upstream_changelog: https://pypi.org/project/azure-ai-agentserver-invocations/#history
   - name: azure-ai-agentserver-core
     source: pypi
-    version: "2.0.0b7"
+    version: "2.0.0b8"
     upstream_changelog: https://pypi.org/project/azure-ai-agentserver-core/#history
     notes: |
       Transitive dep of azure-ai-agentserver-invocations (which declares
@@ -128,7 +128,7 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "github-copilot-sdk~=1.0.0" \
-      "azure-ai-agentserver-invocations==${PINNED_VERSION:-1.0.0b6}" \
+      "azure-ai-agentserver-invocations==${PINNED_VERSION:-1.0.0b7}" \
       "azure-identity~=1.25.3" \
       "python-dotenv~=1.2.2"
     python -c "
@@ -164,7 +164,7 @@ validation:
     - "ok ProviderConfig type=azure accepted"
     - "ok CopilotClient(github_token=...)"
 
-last_validated: 2026-07-14
+last_validated: 2026-07-23
 validated_by: copilot-bot
 known_issues_count: 2
 ---
