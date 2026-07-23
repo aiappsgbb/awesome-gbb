@@ -20,15 +20,15 @@ upstream:
 packages:
   - name: agent-framework-core
     source: pypi
-    version: "1.11.0"
+    version: "1.12.1"
     upstream_changelog: https://pypi.org/project/agent-framework-core/#history
   - name: agent-framework-foundry
     source: pypi
-    version: "1.10.1"
+    version: "1.10.3"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0a260709"
+    version: "1.0.0b260722"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
     notes: |
       Alpha pre-release pinned EXACT per AGENTS.md § 9.5. PEP 440 treats
@@ -176,7 +176,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet --pre "agent-framework-core~=1.11.0" "agent-framework-foundry~=1.10.1" "agent-framework-foundry-hosting==1.0.0a260709" "azure-ai-projects~=2.3.0" "azure-identity~=1.25.3" "mcp~=1.28.1" "python-dotenv~=1.2.2"
+    pip install --quiet --pre "agent-framework-core~=1.12.1" "agent-framework-foundry~=1.10.3" "agent-framework-foundry-hosting==1.0.0b260722" "azure-ai-projects~=2.3.0" "azure-identity~=1.25.3" "mcp~=1.28.1" "python-dotenv~=1.2.2"
     python -c "
     from agent_framework import Agent, SkillsProvider, tool, MCPStreamableHTTPTool
     from agent_framework.foundry import FoundryChatClient
@@ -220,7 +220,7 @@ validation:
     - "ok stable project.agents.update_details present"
     - "ok patch_agent_details absent from beta surface"
 
-last_validated: 2026-07-14
+last_validated: 2026-07-23
 validated_by: copilot-bot
 known_issues_count: 7
 ---
