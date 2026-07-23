@@ -6,7 +6,7 @@ upstream:
   type: github_repo
   repo: blader/humanizer
   ref: main
-  pinned_sha: 1b48564898e999219882660237fde01bf4843a0f
+  pinned_sha: 523374dee72d67c7b2b5f858ea0094ffda49c3ac
   pinned_commit_message: |
     Add passive voice rule to humanizer (#80)
   license: MIT
@@ -26,7 +26,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-1b48564898e999219882660237fde01bf4843a0f}"
+    PINNED_SHA="${PINNED_SHA:-523374dee72d67c7b2b5f858ea0094ffda49c3ac}"
     REPO_URL="https://github.com/blader/humanizer"
     REF="main"
     WORK=".upstream-pin-smoke/gbb-humanizer"
@@ -54,7 +54,7 @@ validation:
     - "humanizer pattern catalog ok"
     - "reference URL check ok"
   failure_signatures: []
-last_validated: 2026-07-02
+last_validated: 2026-07-23
 validated_by: copilot-bot
 known_issues_count: 0
 ---
