@@ -20,9 +20,10 @@ reliable execution mechanism. On 2026-08-04:
 - several older PRs were green but already superseded by newer releases;
 - the Copilot bot remained assignable and the 2026-08-03 freshness workflow
   succeeded, so workflow health did not prove that assigned work would run;
-- at least one issue retained a stale impact label:
-  `citadel-hub-deploy` was medium in the current report but still carried an
-  older `impact:high` label.
+- the current dry-run classified `citadel-hub-deploy` as medium while its
+  issue still showed the high-impact label from the preceding scheduled run;
+  exact label replacement already exists, but needs regression coverage so the
+  next live upsert is guaranteed to reconcile that state.
 
 The catalog needs a bounded manual recovery round that reduces current risk,
 cleans up stale automation output, and leaves a reversible fallback for future
@@ -43,7 +44,7 @@ periods when GitHub Copilot coding-agent execution is unavailable.
 - Require live Azure evidence for every changed Azure-connected contract.
 - Add a reversible manual execution mode without disabling freshness
   detection.
-- Reconcile stale impact labels and bot ownership.
+- Prove exact impact-label reconciliation and reconcile stale bot ownership.
 - Leave every medium item with a reviewed disposition and next action.
 - Finish with no unexplained critical/high drift and no stale bot PRs.
 
@@ -75,8 +76,8 @@ In `manual` mode the workflow:
 - does not assign new work to `copilot-swe-agent`;
 - removes stale Copilot ownership from open freshness issues;
 - applies a `manual-review` label;
-- reconciles the full `impact:*` label set so each issue has exactly one
-  current impact label;
+- preserves exact `impact:*` label replacement so each issue has exactly one
+  current impact label, with a regression test for impact changes;
 - still uploads the freshness report artifact.
 
 In `copilot` mode the current assignment behavior resumes and the
