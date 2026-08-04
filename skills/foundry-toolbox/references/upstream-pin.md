@@ -17,13 +17,13 @@ packages:
       Stable management uses AIProjectClient.toolboxes and Toolbox-specific models.
   - name: agent-framework
     source: pypi
-    version: "1.11.0"
+    version: "1.12.1"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Agent, FoundryChatClient, MCPStreamableHTTPTool, local function-tool composition.
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0a260709"
+    version: "1.0.0b260722"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
     notes: |
       Exact prerelease containing FoundryToolbox.
@@ -61,7 +61,7 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.11.0" "agent-framework-foundry-hosting==1.0.0a260709" "mcp~=1.28.1"
+    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.12.1" "agent-framework-foundry-hosting==1.0.0b260722" "mcp~=1.28.1"
     python - <<'PY'
     from agent_framework import MCPStreamableHTTPTool, SkillsProvider
     from agent_framework_foundry_hosting import FoundryToolbox
@@ -127,7 +127,7 @@ validation:
     - "ok AzureAIToolbox removed"
     - "ok skill_paths constructor removed"
 
-last_validated: 2026-07-13
+last_validated: 2026-07-23
 validated_by: copilot-bot
 known_issues_count: 1
 ---
@@ -147,8 +147,8 @@ before `azd ai toolbox create --from-file`.
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
 | `azure-ai-projects` | PyPI | **2.3.0** | Stable management via `AIProjectClient.toolboxes` and Toolbox-specific models |
-| `agent-framework` | PyPI | **1.11.0** | `Agent`, `FoundryChatClient`, `MCPStreamableHTTPTool`, local function-tool composition |
-| `agent-framework-foundry-hosting` | PyPI | **1.0.0a260709** | Exact prerelease containing `FoundryToolbox` |
+| `agent-framework` | PyPI | **1.12.1** | `Agent`, `FoundryChatClient`, `MCPStreamableHTTPTool`, local function-tool composition |
+| `agent-framework-foundry-hosting` | PyPI | **1.0.0b260722** | Exact prerelease containing `FoundryToolbox` |
 | `mcp` | PyPI | **1.28.1** | Streamable HTTP MCP primitives |
 
 ## Verification checklist

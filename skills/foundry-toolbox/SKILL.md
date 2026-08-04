@@ -17,7 +17,7 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
   validated: 2026-07-13
 ---
 
