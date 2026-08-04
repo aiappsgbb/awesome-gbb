@@ -4,16 +4,18 @@
 # `../../SKILL.md § Dependencies (pyproject.toml)`. Mirrors the F1
 # patch from PR #180 (DO NOT install the meta-package).
 #
-# Three pyproject mistakes this file prevents:
-#   1. `agent-framework>=1.11.0` meta-package — non-deterministic transitive
-#      resolution across uv versions. We pin individual sub-packages instead.
-#   2. `agent-framework-core[mcp]` extra — does NOT exist. MCP tools
+# Four pyproject mistakes this file prevents:
+#   1. `agent-framework>=1.13.0` meta-package — floating/transitive
+#      resolution is non-deterministic. Pin hosted-agent sub-packages directly.
+#   2. Floating `azure-ai-projects` via transitive resolution — pin direct
+#      `azure-ai-projects~=2.3.0` because Foundry is still held below 2.4.
+#   3. `agent-framework-core[mcp]` extra — does NOT exist. MCP tools
 #      are top-level exports of agent_framework; the bare pin already covers them.
-#   3. Missing `mcp` — agent_framework_foundry_hosting imports `from mcp
-#      import McpError` at module-load time; container crashes at startup with
-#      `ModuleNotFoundError: No module named 'mcp'` even when no MCP tool is
-#      wired. Surfaces as `session_not_ready` after 60s timeout — high
-#      diagnosis cost. Pin `mcp` in EVERY hosted-agent pyproject.toml.
+#   4. Missing `mcp~=1.29.0` — agent_framework_foundry_hosting imports
+#      `from mcp import McpError` at module-load time; container crashes at
+#      startup with `ModuleNotFoundError: No module named 'mcp'` even when no
+#      MCP tool is wired. Surfaces as `session_not_ready` after 60s timeout —
+#      high diagnosis cost. Pin `mcp` in EVERY hosted-agent pyproject.toml.
 #
 # Container GA. Pins current as of this skill's last_validated date in
 # references/upstream-pin.md.

@@ -3,8 +3,8 @@ name: foundry-hosted-agents
 description: >
   Deploy + manage Foundry hosted agents — container deploy via unified
   azure.yaml is GA; source-code --deploy-mode code is still preview. MAF
-  1.8.0, azd ext install microsoft.foundry, implicit agent access (no
-  default role grant). Read the body for patterns, identity, runtime,
+  1.13 current, azd ext install microsoft.foundry, implicit agent access
+  (no default role grant). Read the body for patterns, identity,
   rollout, troubleshooting. USE FOR: deploy foundry agent, hosted agent,
   container agent, azure.yaml, azd ai agent, microsoft.foundry, MAF,
   FoundryChatClient, ResponsesHostServer, ACR push, batch eval, agent
@@ -30,18 +30,19 @@ surface — see [§ Preview appendix: source-code deploy](#preview-appendix-sour
 for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 `ResponsesHostServer` (MAF) variant exclusively.
 
-> **⚠️ MAF 1.8.0 recommended — caller-side `FoundryAgent(timeout=...)` knob.**
-> Upgrade from 1.6.0 → 1.8.0 to pick up the new HTTP timeout kwarg on the
-> caller-side `agent_framework.foundry.FoundryAgent` class (overrides the
-> OpenAI-SDK 5s connect / 600s total defaults). All MAF 1.6.0 telemetry
-> bundling (`microsoft-opentelemetry` + `opentelemetry-instrumentation-openai-v2`)
-> is unchanged. The two MAF 1.8.0 `[BREAKING]` markers (github-copilot
-> sub-package internal rename + experimental `Skill` ABC refactor) are
-> **non-impact** for hosted-agent code — see [§ MAF 1.8.0 update](#maf-180-update-june-2026).
+> **✅ Core 1.13.0 is the current validated stack.** Use the canonical pins in
+> this skill (`agent-framework-core~=1.13.0`, `agent-framework-foundry~=1.10.4`,
+> `agent-framework-foundry-hosting==1.0.0b260730`) for new hosted-agent work and
+> refreshes.
 >
-> If you are still on 1.3.x, upgrade directly to 1.8.0 — absorb the 1.4.0
-> breaking changes below AND the 1.6.0 telemetry improvements AND the
-> 1.8.0 timeout knob in one pass.
+> `MAF 1.8.0` matters here only as the historical feature boundary where the
+> caller-side `agent_framework.foundry.FoundryAgent(timeout=...)` knob landed
+> (overrides the OpenAI-SDK 5s connect / 600s total defaults) — see
+> [§ MAF 1.8.0 update](#maf-180-update-june-2026).
+>
+> If you are still on 1.3.x, upgrade directly to current 1.13.0 and absorb the
+> 1.4.0 breaking changes below plus the 1.6.0 telemetry bundling and the 1.8.0
+> timeout knob in one pass.
 
 ## When to Use
 
