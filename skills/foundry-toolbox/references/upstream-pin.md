@@ -11,28 +11,26 @@ upstream:
 packages:
   - name: azure-ai-projects
     source: pypi
-    version: "2.3.0"
+    version: "2.4.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
-    notes: |
-      Stable management uses AIProjectClient.toolboxes and Toolbox-specific models.
+    notes: Stable Toolbox management and stable ToolSearchToolboxTool.
   - name: agent-framework
     source: pypi
-    version: "1.12.1"
+    version: "1.13.0"
     upstream_changelog: https://pypi.org/project/agent-framework/#history
-    notes: |
-      Agent, FoundryChatClient, MCPStreamableHTTPTool, local function-tool composition.
+    notes: Current core agent and MCP tool composition surface.
   - name: agent-framework-foundry-hosting
     source: pypi
-    version: "1.0.0b260722"
+    version: "1.0.0b260730"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
-    notes: |
-      Exact prerelease containing FoundryToolbox.
+    notes: Exact prerelease containing FoundryToolbox; requires mcp>=1.24,<2.
   - name: mcp
     source: pypi
-    version: "1.28.1"
+    version: "1.29.0"
     upstream_changelog: https://pypi.org/project/mcp/#history
-    notes: |
-      Streamable HTTP MCP primitives.
+    hold_below: "2.0.0"
+    hold_reason: KI-002
+    notes: Current MCP 1.x maintenance line; MCP 2 is blocked by the hosting package.
 
 docs_to_revalidate:
   - https://learn.microsoft.com/azure/foundry/agents/how-to/install-cli-foundry-extensions
@@ -52,6 +50,11 @@ known_issues:
     upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox
     status: closed_upstream_fixed
     workaround_location: removed in foundry-toolbox v2.0.0
+  - id: KI-002
+    description: agent-framework-foundry-hosting 1.0.0b260730 requires mcp>=1.24,<2, so MCP 2 cannot resolve with the canonical FoundryToolbox consumer.
+    upstream_url: https://github.com/microsoft/agent-framework/issues/7446
+    status: open
+    workaround_location: SKILL.md § "Current API matrix"
 
 validation:
   requires: [pypi]
@@ -61,23 +64,25 @@ validation:
     set -euo pipefail
     python -m venv .venv
     . .venv/bin/activate
-    pip install --quiet "azure-ai-projects~=2.3.0" "agent-framework~=1.12.1" "agent-framework-foundry-hosting==1.0.0b260722" "mcp~=1.28.1"
+    pip install --quiet \
+      "azure-ai-projects~=2.4.0" \
+      "agent-framework~=1.13.0" \
+      "agent-framework-foundry-hosting==1.0.0b260730" \
+      "mcp~=1.29.0"
     python - <<'PY'
-    from agent_framework import MCPStreamableHTTPTool, SkillsProvider
+    from importlib.metadata import version
+    from agent_framework import MCPStreamableHTTPTool
     from agent_framework_foundry_hosting import FoundryToolbox
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import (
-        CodeInterpreterToolboxTool,
-        MCPToolboxTool,
+        ToolSearchToolboxTool,
         ToolboxSearchPreviewToolboxTool,
-        ToolboxTool,
     )
     from mcp import ClientSession
 
     class OfflineCredential:
         def get_token(self, *scopes, **kwargs):
-            raise RuntimeError("network access is not part of the import smoke")
-
+            raise RuntimeError("network is outside the import smoke")
         def close(self):
             return None
 
@@ -85,51 +90,26 @@ validation:
         endpoint="https://example.services.ai.azure.com/api/projects/example",
         credential=OfflineCredential(),
     )
-    assert client.toolboxes is not None
     assert callable(client.toolboxes.create_version)
     assert callable(client.toolboxes.get_version)
     assert callable(client.toolboxes.delete)
+    assert ToolSearchToolboxTool().as_dict() == {"type": "toolbox_search"}
+    assert ToolboxSearchPreviewToolboxTool().as_dict()["type"] == "toolbox_search_preview"
+    assert FoundryToolbox and MCPStreamableHTTPTool and ClientSession
+    assert version("azure-ai-projects").startswith("2.4.")
+    assert version("agent-framework").startswith("1.13.")
+    assert version("mcp").startswith("1.29.")
     client.close()
-    print("ok stable toolbox client")
-
-    for model in (
-        ToolboxTool,
-        CodeInterpreterToolboxTool,
-        MCPToolboxTool,
-        ToolboxSearchPreviewToolboxTool,
-    ):
-        assert model is not None
-    print("ok toolbox-specific models")
-
-    assert FoundryToolbox is not None
-    assert MCPStreamableHTTPTool is not None
-    assert ClientSession is not None
-    print("ok FoundryToolbox imports")
-
-    try:
-        from agent_framework.foundry import AzureAIToolbox
-    except (ImportError, ModuleNotFoundError):
-        print("ok AzureAIToolbox removed")
-    else:
-        raise SystemExit("AzureAIToolbox unexpectedly remains importable")
-
-    try:
-        SkillsProvider(skill_paths=".")
-    except TypeError:
-        print("ok skill_paths constructor removed")
-    else:
-        raise SystemExit("SkillsProvider(skill_paths=...) unexpectedly accepted")
+    print("ok stable toolbox search")
+    print("ok foundry toolbox current stack")
     PY
   expected_output:
-    - "ok stable toolbox client"
-    - "ok toolbox-specific models"
-    - "ok FoundryToolbox imports"
-    - "ok AzureAIToolbox removed"
-    - "ok skill_paths constructor removed"
+    - "ok stable toolbox search"
+    - "ok foundry toolbox current stack"
 
-last_validated: 2026-07-23
-validated_by: copilot-bot
-known_issues_count: 1
+last_validated: 2026-08-04
+validated_by: ricchi
+known_issues_count: 2
 ---
 
 # Upstream pin — `foundry-toolbox` skill
@@ -146,17 +126,24 @@ before `azd ai toolbox create --from-file`.
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `azure-ai-projects` | PyPI | **2.3.0** | Stable management via `AIProjectClient.toolboxes` and Toolbox-specific models |
-| `agent-framework` | PyPI | **1.12.1** | `Agent`, `FoundryChatClient`, `MCPStreamableHTTPTool`, local function-tool composition |
-| `agent-framework-foundry-hosting` | PyPI | **1.0.0b260722** | Exact prerelease containing `FoundryToolbox` |
-| `mcp` | PyPI | **1.28.1** | Streamable HTTP MCP primitives |
+| `azure-ai-projects` | PyPI | **2.4.0** | Stable Toolbox management and stable `ToolSearchToolboxTool` |
+| `agent-framework` | PyPI | **1.13.0** | Current core agent and MCP tool composition surface |
+| `agent-framework-foundry-hosting` | PyPI | **1.0.0b260730** | Exact prerelease containing `FoundryToolbox`; requires `mcp>=1.24,<2` |
+| `mcp` | PyPI | **1.29.0** | Current MCP 1.x maintenance line; MCP 2 is blocked by the hosting package |
 
 ## Verification checklist
 
-Run the `validation.script` front-matter block. Expected output contains all five `ok ...` lines.
+Run the `validation.script` front-matter block. Expected output contains both `ok ...` lines.
 
 ## Known issues
 
 ### KI-001 - preview Toolbox feature header
 
 Closed upstream. The GA Toolbox API no longer requires `Foundry-Features: Toolboxes=V1Preview`; v2.0.0 removes the workaround from canonical requests.
+
+### KI-002 - MCP 2 blocked by Agent Framework hosting
+
+`agent-framework-foundry-hosting==1.0.0b260730` requires
+`mcp>=1.24,<2`. Keep MCP on the 1.29 maintenance line until
+[microsoft/agent-framework#7446](https://github.com/microsoft/agent-framework/issues/7446)
+is resolved by a released, live-validated hosting package.
