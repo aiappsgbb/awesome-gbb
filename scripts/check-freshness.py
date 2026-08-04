@@ -119,6 +119,59 @@ def _graphql(query: str, variables: dict[str, Any], gh_token: str) -> dict[str, 
     return payload["data"]
 
 
+def _resolve_copilot_bot_id(repo: str, token: str) -> str | None:
+    """Resolve the Copilot Coding Agent's canonical Actor node ID for `repo`.
+
+    Both assignment and removal must key off this exact node ID rather
+    than a login string: GitHub's GraphQL API can surface the identical
+    underlying bot actor as login `Copilot` / __typename `User` in
+    `issue.assignees` even though this `suggestedActors` lookup reports
+    the same actor as login `copilot-swe-agent` / __typename `Bot`.
+    """
+    owner, _, name = repo.partition("/")
+    data = _graphql(
+        """
+        query($owner:String!, $name:String!) {
+          repository(owner:$owner, name:$name) {
+            suggestedActors(capabilities:[CAN_BE_ASSIGNED], first:100) {
+              nodes { login __typename ... on Bot { id } ... on User { id } }
+            }
+          }
+        }
+        """,
+        {"owner": owner, "name": name},
+        token,
+    )
+    return next(
+        (
+            n.get("id")
+            for n in data["repository"]["suggestedActors"]["nodes"]
+            if n.get("login") == COPILOT_BOT_LOGIN
+        ),
+        None,
+    )
+
+
+def _is_copilot_actor(node: dict[str, Any], bot_id: str | None) -> bool:
+    """Return True if the GraphQL actor `node` (with `id`/`login`) is the
+    Copilot Coding Agent bot.
+
+    Prefers canonical node-ID comparison against `bot_id` (resolved via
+    `_resolve_copilot_bot_id`) because the same underlying actor can be
+    reported under different logins in different GraphQL fields (e.g.
+    `copilot-swe-agent` in `suggestedActors` vs. `Copilot` in
+    `issue.assignees`).
+
+    Falls back to login comparison when `bot_id` could not be resolved
+    (e.g. the `suggestedActors` lookup returned no Copilot actor at all),
+    accepting either known login alias so the bot is still recognized in
+    this degraded mode instead of being silently missed.
+    """
+    if bot_id is not None:
+        return node.get("id") == bot_id
+    return node.get("login") in (COPILOT_BOT_LOGIN, "Copilot")
+
+
 def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool:
     """Assign the Copilot Coding Agent bot to an issue via GraphQL.
 
@@ -141,27 +194,7 @@ def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool
     try:
         # 1. Resolve the Copilot bot's Actor node ID for THIS repo. The
         #    bot is only assignable where the org has enabled the agent.
-        data = _graphql(
-            """
-            query($owner:String!, $name:String!) {
-              repository(owner:$owner, name:$name) {
-                suggestedActors(capabilities:[CAN_BE_ASSIGNED], first:100) {
-                  nodes { login __typename ... on Bot { id } ... on User { id } }
-                }
-              }
-            }
-            """,
-            {"owner": owner, "name": name},
-            token,
-        )
-        actor_id = next(
-            (
-                n.get("id")
-                for n in data["repository"]["suggestedActors"]["nodes"]
-                if n.get("login") == COPILOT_BOT_LOGIN
-            ),
-            None,
-        )
+        actor_id = _resolve_copilot_bot_id(repo, token)
         if not actor_id:
             print(
                 f"WARN: @{COPILOT_BOT_LOGIN} is not assignable in {repo} "
@@ -187,13 +220,14 @@ def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool
         )
         issue = data["repository"]["issue"]
         issue_id = issue["id"]
+        # Exclude the bot by canonical identity so a login-based filter
+        # can't miss an aliased Copilot assignee already in the list.
         actor_ids = [
             node["id"]
             for node in issue["assignees"]["nodes"]
-            if node.get("login") != COPILOT_BOT_LOGIN and node.get("id")
+            if not _is_copilot_actor(node, actor_id) and node.get("id")
         ]
         actor_ids.append(actor_id)
-        actor_ids = list(dict.fromkeys(actor_ids))
 
         # 3. Assign Copilot while preserving any existing human assignees.
         data = _graphql(
@@ -233,6 +267,12 @@ def remove_copilot_from_issue(repo: str, issue_number: int, gh_token: str) -> bo
     token = os.environ.get("GH_ASSIGN_TOKEN") or gh_token
     owner, _, name = repo.partition("/")
     try:
+        # Resolve the bot's canonical node ID the same way assignment
+        # does — matching issue assignees by login alone can miss the
+        # bot when `issue.assignees` reports it under a different login
+        # alias than `suggestedActors` does.
+        bot_id = _resolve_copilot_bot_id(repo, token)
+
         data = _graphql(
             """
             query($owner:String!, $name:String!, $num:Int!) {
@@ -249,13 +289,13 @@ def remove_copilot_from_issue(repo: str, issue_number: int, gh_token: str) -> bo
         )
         issue = data["repository"]["issue"]
         assignees = issue["assignees"]["nodes"]
-        if not any(node.get("login") == COPILOT_BOT_LOGIN for node in assignees):
+        if not any(_is_copilot_actor(node, bot_id) for node in assignees):
             return True
 
         actor_ids = [
             node["id"]
             for node in assignees
-            if node.get("login") != COPILOT_BOT_LOGIN and node.get("id")
+            if not _is_copilot_actor(node, bot_id) and node.get("id")
         ]
         data = _graphql(
             """
@@ -276,7 +316,7 @@ def remove_copilot_from_issue(repo: str, issue_number: int, gh_token: str) -> bo
             node["login"]
             for node in data["replaceActorsForAssignable"]["assignable"]["assignees"]["nodes"]
         ]
-        if COPILOT_BOT_LOGIN not in assigned:
+        if COPILOT_BOT_LOGIN not in assigned and "Copilot" not in assigned:
             return True
         print(
             f"WARN: removal mutation for issue #{issue_number} returned but "
@@ -1127,11 +1167,20 @@ def close_resolved_issues(
     gh_token: str,
     labels: list[str],
     dry_run: bool,
-) -> None:
+    execution_mode: str,
+) -> bool:
     """Close freshness issues for skills with zero remaining drift signals.
 
     Searches for open issues with the freshness label and the 🔄 Refresh
     title pattern, then closes any whose skill has no active signals.
+
+    In manual execution mode, Copilot must be unassigned from an issue
+    BEFORE it closes: a closed-but-still-assigned issue leaves the coding
+    agent holding a decision that is no longer a human's to own. If
+    removal cannot be performed, the issue is left open, an ERROR is
+    printed, and this function returns False so `main()` treats the
+    freshness run as failed — while still checking the remaining
+    resolved issues.
     """
     headers = {
         "Accept": "application/vnd.github+json",
@@ -1150,8 +1199,9 @@ def close_resolved_issues(
     )
     if search.status_code != 200:
         print(f"WARN: auto-close search returned {search.status_code}", file=sys.stderr)
-        return
+        return True
 
+    all_ok = True
     for issue in search.json().get("items", []):
         title = issue.get("title", "")
         # Extract skill name from "🔄 Refresh `<skill>`"
@@ -1162,14 +1212,55 @@ def close_resolved_issues(
         if skill in skills_with_signals:
             continue
 
-        # This skill has zero signals — close the issue
+        # This skill has zero signals — close the issue. Search API issue
+        # items always include a `labels` array of `{"name": ...}` objects;
+        # access both keys directly so a response that doesn't match this
+        # expected shape fails loudly instead of quietly dropping labels.
+        # A single malformed item (missing "labels"/"name" keys, or a
+        # non-iterable/non-dict shape) must not abort the whole loop —
+        # log it, mark the run failed, skip mutation for just this item,
+        # and keep reconciling the remaining valid resolved issues.
+        try:
+            current_labels = [label["name"] for label in issue["labels"]]
+        except (KeyError, TypeError) as exc:
+            print(
+                f"ERROR: malformed labels on issue {title!r} — {exc} — skipping close for this item",
+                file=sys.stderr,
+            )
+            all_ok = False
+            continue
+        close_labels = [label for label in current_labels if label != MANUAL_REVIEW_LABEL]
         issue_url = issue["url"]
+        issue_number = issue.get("number")
         close_payload = {
             "state": "closed",
             "state_reason": "completed",
             "body": issue.get("body", "") + "\n\n---\n\n✅ All drift signals resolved. Closing automatically.",
+            "labels": close_labels,
         }
-        if dry_run:
+
+        if execution_mode == "manual":
+            if dry_run:
+                print(f"[DRY-RUN] would remove @{COPILOT_BOT_LOGIN} if present from issue: {title}")
+                print(f"[DRY-RUN] would close resolved issue: {title}")
+                continue
+            if not issue_number:
+                print(
+                    f"ERROR: could not determine issue number for Copilot removal before "
+                    f"close: {title} — leaving issue open",
+                    file=sys.stderr,
+                )
+                all_ok = False
+                continue
+            if not remove_copilot_from_issue(repo, issue_number, gh_token):
+                print(
+                    f"ERROR: could not remove @{COPILOT_BOT_LOGIN} from issue #{issue_number} "
+                    f"({title}) — leaving issue open",
+                    file=sys.stderr,
+                )
+                all_ok = False
+                continue
+        elif dry_run:
             print(f"[DRY-RUN] would close resolved issue: {title}")
             continue
 
@@ -1178,7 +1269,9 @@ def close_resolved_issues(
             print(f"✓ closed resolved issue: {title}", file=sys.stderr)
         else:
             print(f"WARN: close for {title} returned {r.status_code}", file=sys.stderr)
+            all_ok = False
 
+    return all_ok
 
 # ──────────────────────────── main ──────────────────────────────────
 
@@ -1291,14 +1384,15 @@ def main() -> int:
             upsert_ok = ok and upsert_ok
         # Auto-close issues for skills with zero remaining signals
         skills_with_signals = {s.skill for s in issue_signals}
-        close_resolved_issues(
+        close_ok = close_resolved_issues(
             skills_with_signals,
             repo=args.repo,
             gh_token=gh_token or "",
             labels=labels,
             dry_run=args.dry_run,
+            execution_mode=execution_mode,
         )
-        if not upsert_ok:
+        if not upsert_ok or not close_ok:
             print("ERROR: one or more issue upserts failed", file=sys.stderr)
             return 1
 
