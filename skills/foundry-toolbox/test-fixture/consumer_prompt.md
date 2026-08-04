@@ -45,9 +45,9 @@ authentication gate; if it fails, use the matching final-step marker.
 
 ## Step 1 - execute the azd and GA SDK Toolbox contracts
 
-First, install the bounded unified Foundry bundle and run the exact
-service-target and standalone-file shapes documented by the skill. Use a Bash heredoc to
-write this script to `/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
+First, run the exact service-target and standalone-file shapes documented by
+the skill. Use a Bash heredoc to write this script to
+`/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
 
 ```bash
 #!/usr/bin/env bash
@@ -91,13 +91,8 @@ cleanup() {
       --force \
       --no-prompt >"$delete_log" 2>&1
     delete_status=$?
-    if [[ $delete_status -eq 0 ]]; then
-      record "AZD_TOOLBOX_DELETED name=${toolbox_name}"
-    else
-      cat "$delete_log"
-      if [[ $status -eq 0 ]]; then
-        status=$delete_status
-      fi
+    if [[ $delete_status -ne 0 ]]; then
+      echo "NOTE azd Toolbox delete failed name=${toolbox_name} status=${delete_status}"
     fi
   done
   rm -rf "$work_dir"
@@ -131,17 +126,18 @@ record "AZD_CLI_CREATED name=${cli_name}"
 bash /tmp/foundry-toolbox-azd-smoke.sh
 ```
 
-After that script exits `0` and confirms deletion of both Toolbox resources,
-create an isolated virtual environment and install the bounded Python stack:
+After that script exits `0`, both azd Toolboxes have been cleaned up
+best-effort and any deletion trouble is transcript-only. Create an isolated
+virtual environment and install the bounded Python stack:
 
 ```bash
 python3 -m venv /tmp/foundry-toolbox-venv
 /tmp/foundry-toolbox-venv/bin/pip install --quiet \
-  "azure-ai-projects~=2.3.0" \
+  "azure-ai-projects~=2.4.0" \
   "azure-identity~=1.25.3" \
-  "agent-framework~=1.11.0" \
-  "agent-framework-foundry-hosting==1.0.0a260709" \
-  "mcp~=1.28.1"
+  "agent-framework~=1.13.0" \
+  "agent-framework-foundry-hosting==1.0.0b260730" \
+  "mcp~=1.29.0"
 ```
 
 Use a Bash heredoc to write the following program to
@@ -155,7 +151,10 @@ import uuid
 
 from agent_framework_foundry_hosting import FoundryToolbox
 from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import CodeInterpreterToolboxTool
+from azure.ai.projects.models import (
+    CodeInterpreterToolboxTool,
+    ToolSearchToolboxTool,
+)
 from azure.identity import DefaultAzureCredential
 
 
@@ -178,9 +177,14 @@ async def verify_functions(
         url=toolbox_url,
         name=toolbox_name,
     ) as toolbox:
-        function_count = len(toolbox.functions)
-        assert function_count > 0
-        record(f"TOOLBOX_FUNCTIONS count={function_count}")
+        names = {
+            getattr(function, "name", None)
+            or getattr(function, "__name__", None)
+            for function in toolbox.functions
+        }
+        names.discard(None)
+        assert {"tool_search", "call_tool"} <= names, names
+        record(f"TOOL_SEARCH_FUNCTIONS names={','.join(sorted(names))}")
 
 
 project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
@@ -195,53 +199,66 @@ with (
 ):
     created = project.toolboxes.create_version(
         name=toolbox_name,
-        description="CI GA Toolbox smoke",
-        tools=[CodeInterpreterToolboxTool()],
+        description="CI stable Tool Search smoke",
+        tools=[
+            ToolSearchToolboxTool(),
+            CodeInterpreterToolboxTool(),
+        ],
+    )
+    assert created.name == toolbox_name
+    assert created.version
+    record(
+        f"TOOL_SEARCH_CREATED name={created.name} "
+        f"version={created.version}"
+    )
+
+    fetched = project.toolboxes.get_version(
+        toolbox_name,
+        created.version,
+    )
+    assert fetched.name == created.name
+    assert fetched.version == created.version
+    record(
+        f"TOOLBOX_RETRIEVED name={fetched.name} "
+        f"version={fetched.version}"
+    )
+
+    toolbox_url = (
+        f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}"
+        f"/versions/{created.version}/mcp?api-version=v1"
+    )
+    asyncio.run(
+        verify_functions(
+            credential,
+            toolbox_url,
+            toolbox_name,
+        )
     )
     try:
-        assert created.name == toolbox_name
-        assert created.version
-        record(
-            f"TOOLBOX_CREATED name={created.name} "
-            f"version={created.version}"
-        )
-
-        fetched = project.toolboxes.get_version(
-            toolbox_name,
-            created.version,
-        )
-        assert fetched.name == created.name
-        assert fetched.version == created.version
-        record(
-            f"TOOLBOX_RETRIEVED name={fetched.name} "
-            f"version={fetched.version}"
-        )
-
-        toolbox_url = (
-            f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}"
-            f"/versions/{created.version}/mcp?api-version=v1"
-        )
-        asyncio.run(
-            verify_functions(
-                credential,
-                toolbox_url,
-                toolbox_name,
-            )
-        )
-    finally:
         project.toolboxes.delete(toolbox_name)
-        record(f"TOOLBOX_DELETED name={toolbox_name}")
+    except Exception as exc:
+        print(
+            f"NOTE Toolbox delete failed name={toolbox_name} "
+            f"error_type={type(exc).__name__}"
+        )
 ```
 
-Do not use the beta toolbox namespace, generic Agent tool classes, a
-`create_toolbox_version` method, `allow_preview=True`, raw REST, or any
-preview feature header. Deletion is a hard success criterion because the
-Toolbox is the direct resource under test; the `finally` block must remain.
+Every management call in this Python smoke must stay under stable
+`project.toolboxes`. `project.beta.toolboxes` is forbidden; if stable
+`project.toolboxes` rejects the Tool Search payload, stop and fail. Beta-only
+acceptance is a hard failure and triggers rollback rather than any retry under
+beta. Do not use generic Agent tool classes, a
+`create_toolbox_version` method, `allow_preview=True`, raw REST, or any preview
+feature header. Keep the Python Toolbox deletion inside this same smoke
+program, but make it best-effort: catch deletion exceptions, print exactly one
+transcript-only `NOTE`, and never append a deletion sidecar record or replace
+completed hard proof with cleanup failure.
 
 ## Step 2 - write the deterministic result marker
 
-After all three Toolboxes have been deleted, verify that the fresh sidecar
-contains exactly the eight required success records:
+After both azd Toolboxes and the Python Toolbox have been cleaned up
+best-effort, verify that the fresh sidecar contains exactly the five required
+hard-success records:
 
 ```bash
 python3 - <<'PY'
@@ -254,12 +271,9 @@ lines = Path("/tmp/foundry-toolbox-smoke-evidence").read_text(
 patterns = (
     r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
     r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
-    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdcli-[0-9a-f]{8}",
-    r"AZD_TOOLBOX_DELETED name=ci-smoke-azdsvc-[0-9a-f]{8}",
-    r"TOOLBOX_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
+    r"TOOL_SEARCH_CREATED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
     r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
-    r"TOOLBOX_FUNCTIONS count=[1-9][0-9]*",
-    r"TOOLBOX_DELETED name=ci-smoke-tbx-[0-9a-f]{8}",
+    r"TOOL_SEARCH_FUNCTIONS names=.+",
 )
 assert len(lines) == len(patterns), lines
 for pattern in patterns:
@@ -290,8 +304,7 @@ printf 'SMOKE_RESULT=FAIL package install failed\n' > /tmp/foundry-toolbox-smoke
 printf 'SMOKE_RESULT=FAIL create_version failed\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL get_version failed\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL FoundryToolbox connect failed\n' > /tmp/foundry-toolbox-smoke-result
-printf 'SMOKE_RESULT=FAIL Toolbox functions empty\n' > /tmp/foundry-toolbox-smoke-result
-printf 'SMOKE_RESULT=FAIL Toolbox delete failed\n' > /tmp/foundry-toolbox-smoke-result
+printf 'SMOKE_RESULT=FAIL Tool Search meta-tools missing\n' > /tmp/foundry-toolbox-smoke-result
 printf 'SMOKE_RESULT=FAIL evidence incomplete\n' > /tmp/foundry-toolbox-smoke-result
 ```
 

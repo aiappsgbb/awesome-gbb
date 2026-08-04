@@ -1,4 +1,4 @@
-"""Canonical toolbox wiring sample - MAF 1.11 + Foundry Toolbox GA.
+"""Canonical toolbox wiring sample - MAF 1.13 + Foundry Toolbox GA.
 
 Source of truth for the prose example in `../../SKILL.md § Step 2 —
 Wire into a hosted agent`.
@@ -14,8 +14,9 @@ Demonstrates three patterns:
        Microsoft Learn. Always pass parse_tool_results=extract_mcp_text.
     3. Composition - Toolbox, direct MCP, and local function tools on one Agent.
 
-Validated against agent-framework 1.11.0, agent-framework-foundry-hosting
-1.0.0a260709, and azure-ai-projects 2.3.0 in July 2026.
+Validated against `azure-ai-projects~=2.4.0`, `agent-framework~=1.13.0`,
+`agent-framework-foundry-hosting==1.0.0b260730`, and `mcp~=1.29.0` (`<2`)
+in August 2026.
 """
 
 from __future__ import annotations
