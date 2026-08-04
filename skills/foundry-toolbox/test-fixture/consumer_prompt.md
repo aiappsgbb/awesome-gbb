@@ -237,7 +237,10 @@ with (
     try:
         project.toolboxes.delete(toolbox_name)
     except Exception as exc:
-        print(f"NOTE Toolbox delete failed name={toolbox_name}: {exc}")
+        print(
+            f"NOTE Toolbox delete failed name={toolbox_name} "
+            f"error_type={type(exc).__name__}"
+        )
 ```
 
 Every management call in this Python smoke must stay under stable
