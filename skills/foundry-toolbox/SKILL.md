@@ -18,8 +18,8 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.1.0"
-  validated: 2026-07-13
+  version: "2.1.1"
+  validated: 2026-08-04
 ---
 
 # Microsoft Foundry Toolbox GA - Reference Guide
@@ -1091,7 +1091,7 @@ SPEC § 7c).
 | Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
 | Standalone `azd ai toolbox` command reports no project context | Component-only install or no active Foundry project | Install pinned `microsoft.foundry`, then run `azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt`; inspect with `azd ai project show` |
 | `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
-| Only `tool_search` and `call_tool` are listed | Tool Search is active | Search first, then call the discovered tool; pin critical tools |
+| Only `tool_search` and `call_tool` are listed | Tool Search is active | Search first, then call the discovered tool |
 | `tools/list` returns 0 tools (MCP / A2A) | Bad connection creds, missing `audience`, MI lacks RBAC | Verify `project_connection_id` exists; `UserEntraToken` / `AgenticIdentity` need `audience`; check RBAC on target |
 | `tools/list` returns 0 tools (OpenAPI) | Malformed OpenAPI spec | Validate spec is OpenAPI 3.0 / 3.1 with `paths`, `operationId`, parameter schemas |
 | `tools/list` returns 0 tools (built-in) | Toolbox not provisioned yet, or tool unsupported in region | Wait 10s and retry; check region compatibility table |
@@ -1120,6 +1120,13 @@ SPEC § 7c).
 
 ## Catalog history
 
+- `2.1.1` - post-merge correction: fixture Toolbox delete now runs from a
+  `finally` block so a raised assert/get/verification failure still triggers
+  best-effort cleanup instead of leaking the CI toolbox; cleanup failures stay
+  sanitized (toolbox name + exception type only) and transcript-only; removed
+  a dangling troubleshooting remediation clause left over from removed
+  tool-pinning guidance (no ToolConfig support exists in this skill);
+  realigned `metadata.validated` to the upstream pin's `last_validated`.
 - `2.1.0` - stabilized Tool Search with `ToolSearchToolboxTool` /
   `toolbox_search`, refreshed the supported package lines, and kept skills in
   Toolboxes preview-only.
