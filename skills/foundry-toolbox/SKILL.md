@@ -6,9 +6,9 @@ description: >
   stable AIProjectClient.toolboxes CRUD, Toolbox-specific SDK models,
   agent_framework_foundry_hosting.FoundryToolbox, authentication,
   immutable-version promotion and rollback, the azd ai toolbox declarative
-  path, and preview Tool Search. Distinguishes the GA Toolbox core from
-  preview A2A, Work IQ, Fabric IQ, Browser Automation, Reminder, skills, and
-  Tool Search; explains that azure_ai_search wraps an index, not a Foundry IQ
+  path, and stable Tool Search. Distinguishes the GA Toolbox core from
+  preview A2A, Work IQ, Fabric IQ, Browser Automation, Reminder, and skills in
+  Toolboxes; explains that azure_ai_search wraps an index, not a Foundry IQ
   knowledge base. USE FOR: foundry toolbox, toolbox MCP endpoint,
   AIProjectClient toolboxes, FoundryToolbox, toolbox version promote,
   multi-tool MCP endpoint, ToolboxSearchPreviewToolboxTool, kind toolbox,
@@ -17,7 +17,7 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.0.1"
+  version: "2.1.0"
   validated: 2026-07-13
 ---
 
@@ -31,10 +31,10 @@ policy, and immutable-version promotion while the agent connects to one URL.
 Use a Toolbox when an agent needs several managed tools, when tool composition
 must change without redeploying agent code, or when credentials belong in the
 Foundry project rather than the agent container. Stable management uses
-`AIProjectClient.toolboxes`. Preview capabilities, including
+`AIProjectClient.toolboxes`. Stable
 [Tool Search](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search)
-and skills in Toolboxes, retain their preview support terms even though the
-parent Toolbox resource is GA.
+uses `ToolSearchToolboxTool`; skills in Toolboxes retain their preview support
+terms even though the parent Toolbox resource is GA.
 
 ## Status boundary
 
@@ -43,13 +43,14 @@ parent Toolbox resource is GA.
 | Toolbox resource, versions, promotion, CRUD, and MCP `v1` endpoints | **GA** | `AIProjectClient.toolboxes`; no preview feature header |
 | MCP, Web Search, Azure AI Search, Code Interpreter, File Search, OpenAPI | **GA Toolbox tool types** | Toolbox-specific SDK model classes |
 | A2A, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
-| Tool Search and skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
+| Tool Search | **Stable Toolbox capability** | `ToolSearchToolboxTool`; returns `tool_search` + `call_tool` |
+| Skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
 | `agent_framework_foundry_hosting.FoundryToolbox` | **Prerelease client package** | High-level consumer for the GA Toolbox MCP endpoint |
 | `microsoft.foundry` azd bundle `1.0.0-beta.1` | **Beta client bundle** | Recommended CLI install; currently bundles Toolbox component `azure.ai.toolboxes` `1.0.0-beta.2` |
 
 Do not infer a subfeature's status from the Toolbox resource's GA status. A
-GA Toolbox can contain a preview tool, but that tool keeps its preview support
-and SLA terms.
+GA Toolbox can contain stable Tool Search and a preview skill at the same time;
+each subfeature keeps its own support and SLA boundary.
 
 ```
 Foundry project
@@ -62,14 +63,14 @@ Foundry project
     │   ├── AzureAISearchToolboxTool
     │   ├── CodeInterpreterToolboxTool
     │   ├── FileSearchToolboxTool
+    │   ├── ToolSearchToolboxTool
     │   └── OpenApiToolboxTool
     └── preview tool models
         ├── A2APreviewToolboxTool
         ├── WorkIQPreviewToolboxTool
         ├── FabricIQPreviewToolboxTool
         ├── BrowserAutomationPreviewToolboxTool
-        ├── ReminderPreviewToolboxTool
-        └── ToolboxSearchPreviewToolboxTool
+        └── ReminderPreviewToolboxTool
 
 Version-specific MCP endpoint:
   {project}/toolboxes/agent-tools/versions/3/mcp?api-version=v1
@@ -85,7 +86,7 @@ Consumers:
   Hosted MAF -> FoundryToolbox
   Direct non-Toolbox MCP -> MCPStreamableHTTPTool
   LangGraph / other frameworks -> authenticated Streamable HTTP MCP client
-  Prompt Agent Tool Search -> preview MCPTool bridge
+  Prompt Agent Tool Search -> MCPTool bridge
 ```
 
 ## Consumption boundary
@@ -97,12 +98,12 @@ is not itself an Agent `tools[].type`. Use the consumer that matches the host:
 |---|---|---|
 | Hosted Microsoft Agent Framework code | `FoundryToolbox` in the Agent `tools` list | GA Toolbox path through a prerelease hosting wrapper |
 | LangGraph or another code framework | Its authenticated Streamable HTTP MCP client | Framework-specific |
-| Prompt Agent | `MCPTool` pointing at the Toolbox endpoint with Tool Search enabled | Tool Search preview |
+| Prompt Agent | `MCPTool` pointing at the Toolbox endpoint with Tool Search enabled | Stable Tool Search bridge |
 
 Do not invent `tools=[{"type": "toolbox"}]`; that Agent tool type does not
-exist. A Prompt Agent can use the documented Tool Search preview bridge, where
-the Toolbox endpoint exposes only `tool_search` and `call_tool`. For stable
-hosted production composition, use `FoundryToolbox` in code.
+exist. A Prompt Agent can use the documented Tool Search bridge, where the
+Toolbox endpoint exposes only `tool_search` and `call_tool`. For stable hosted
+production composition, use `FoundryToolbox` in code.
 
 ## When to use Toolbox vs alternatives
 
@@ -122,7 +123,7 @@ hosted production composition, use `FoundryToolbox` in code.
 
 `ToolboxTool` is the abstract base. Use the concrete subclasses below for
 Toolbox versions. Generic Agent models such as `MCPTool` and `WebSearchTool`
-belong to Agent definitions and are not the canonical Toolbox 2.3 models.
+belong to Agent definitions and are not the canonical Toolbox 2.4 models.
 
 | SDK model | Wire type | Status | Required configuration |
 |---|---|---|---|
@@ -132,12 +133,12 @@ belong to Agent definitions and are not the canonical Toolbox 2.3 models.
 | `CodeInterpreterToolboxTool` | `code_interpreter` | GA | No required fields; optional container/files |
 | `FileSearchToolboxTool` | `file_search` | GA | Vector-store configuration |
 | `OpenApiToolboxTool` | `openapi` | GA | `openapi=OpenApiFunctionDefinition(...)` |
+| `ToolSearchToolboxTool` | `toolbox_search` | GA | No required fields; activates `tool_search` and `call_tool` |
 | `A2APreviewToolboxTool` | `a2a_preview` | Preview | Remote agent URL and project connection as needed |
 | `WorkIQPreviewToolboxTool` | `work_iq_preview` | Preview | Work IQ project connection |
 | `FabricIQPreviewToolboxTool` | `fabric_iq_preview` | Preview | Fabric IQ project connection and target server details |
 | `BrowserAutomationPreviewToolboxTool` | `browser_automation_preview` | Preview | Browser Automation connection parameters |
 | `ReminderPreviewToolboxTool` | `reminder_preview` | Preview | No required fields |
-| `ToolboxSearchPreviewToolboxTool` | `toolbox_search_preview` | Preview | No required fields; activates `tool_search` and `call_tool` |
 
 ### Per-tool anti-patterns
 
@@ -159,7 +160,7 @@ The GA request shape is:
 | MCP API version | `?api-version=v1` |
 | Preview feature header | **None** |
 
-`azure-ai-projects` 2.3.0 and `FoundryToolbox` apply this contract without
+`azure-ai-projects` 2.4.0 and `FoundryToolbox` apply this contract without
 `Foundry-Features: Toolboxes=V1Preview`. Remove that header when migrating
 preview-era clients; do not make correctness depend on a retired feature gate.
 
@@ -173,7 +174,7 @@ preview-era clients; do not make correctness depend on a retired feature gate.
 | Generic `MCPTool`, `WebSearchTool`, `AzureAISearchTool` | `MCPToolboxTool`, `WebSearchToolboxTool`, `AzureAISearchToolboxTool` |
 | `Foundry-Features: Toolboxes=V1Preview` | Remove the feature header |
 | `AzureAIToolbox` | `agent_framework_foundry_hosting.FoundryToolbox` |
-| `create_toolbox_version(...)` in stale examples | `create_version(...)` in SDK 2.3.0 |
+| `create_toolbox_version(...)` in stale examples | `create_version(...)` in SDK 2.4.0 |
 
 This table is the only place presenting obsolete APIs as migration mapping;
 status/troubleshooting may name retired header, but fenced canonical code must
@@ -214,7 +215,7 @@ applies:
 
 ## Low-level MCP compatibility notes
 
-`FoundryToolbox` is the canonical MAF consumer. On MAF 1.11 it handles
+`FoundryToolbox` is the canonical MAF consumer. On MAF 1.13 it handles
 per-request Entra authorization, defaults `load_prompts=False`, treats MCP
 method-not-found from `ping` as a supported server capability boundary, and
 owns connection cleanup.
@@ -300,14 +301,14 @@ with (
 `update`, `get_version`, `list_versions`, `delete_version`; stable management
 does not require `allow_preview=True`.
 
-> **Current API matrix (validated 2026-07-13):**
+> **Current API matrix (validated 2026-08-04):**
 >
-> | Package | Validated version | Notes |
-> |---|---|---|
-> | azure-ai-projects | 2.3.0 | Stable Toolbox management and Toolbox models |
-> | agent-framework | 1.11.0 | Agent, chat client, and direct MCP composition |
-> | agent-framework-foundry-hosting | 1.0.0a260709 | High-level FoundryToolbox consumer |
-> | mcp | 1.28.1 | Streamable HTTP MCP primitives |
+> | Package | Supported line |
+> |---|---|
+> | `azure-ai-projects` | `~=2.4.0` |
+> | `agent-framework` | `~=1.13.0` |
+> | `agent-framework-foundry-hosting` | `==1.0.0b260730` |
+> | `mcp` | `~=1.29.0` (`<2` until KI-002 closes) |
 
 The first call creates the toolbox AND version `1`, auto-promoted to
 default. Subsequent calls create new versions that stay un-promoted
@@ -682,40 +683,27 @@ Numeric version strings are returned and rendered under
 
 ---
 
-## Tool Search (preview)
+## Tool Search
 
-Tool Search is a preview capability inside the GA Toolbox resource. Add
-`ToolboxSearchPreviewToolboxTool()` to activate it:
+Tool Search is a stable Toolbox capability. Use `ToolSearchToolboxTool` to
+activate it:
 
 ```python
-from azure.ai.projects.models import (
-    MCPToolboxTool,
-    ToolboxSearchPreviewToolboxTool,
-    ToolConfig,
-)
+from azure.ai.projects.models import ToolSearchToolboxTool
 
-tools = [
-    ToolboxSearchPreviewToolboxTool(),
-    MCPToolboxTool(
-        server_label="analytics",
-        server_url="https://analytics.example.com/mcp",
-        tool_configs={
-            "execute_query": ToolConfig(pin=True),
-            "list_tables": ToolConfig(
-                additional_search_text=(
-                    "schema columns metadata table structure discover"
-                ),
-            ),
-        },
-    ),
-]
+tool_search = ToolSearchToolboxTool()
+assert tool_search.as_dict() == {"type": "toolbox_search"}
 ```
 
-When enabled, the initial tool list exposes `tool_search` and `call_tool`
-instead of every full schema. Instruct the model to search for the capability
-it needs and then call the discovered tool. Pin critical tools with
-`ToolConfig(pin=True)`; add `additional_search_text` when tool descriptions do
-not match user vocabulary.
+| Preview name | Stable name |
+|---|---|
+| `ToolboxSearchPreviewToolboxTool` | `ToolSearchToolboxTool` |
+| `toolbox_search_preview` | `toolbox_search` |
+
+When Tool Search is enabled, the initial tool list exposes `tool_search` and
+`call_tool` instead of every full schema. Search first, then call the
+discovered tool. Pin critical tools with `ToolConfig(pin=True)`; add
+`additional_search_text` when tool descriptions do not match user vocabulary.
 
 Microsoft showed one side-by-side trace with 467 input tokens versus roughly
 4,700 without Tool Search, a 90.1% arithmetic reduction for that trace. Treat
@@ -724,11 +712,11 @@ universal savings claim. Source:
 [Tokenomics - The new AI currency and your options
 explained](https://techcommunity.microsoft.com/blog/microsoftmechanicsblog/tokenomics--the-new-ai-currency--your-options-explained/4535040).
 
-### Preview Prompt Agent bridge
+### Prompt Agent bridge
 
-Prompt Agents do not yet accept a Toolbox resource directly. For preview-only
-Prompt Agent scenarios, expose the versioned Toolbox endpoint as an `MCPTool`
-and pass one short-lived `https://ai.azure.com/.default` token. This is a
+Prompt Agents do not yet accept a Toolbox resource directly. For Prompt Agent
+scenarios that need Tool Search, expose the versioned Toolbox endpoint as an
+`MCPTool` and pass one short-lived `https://ai.azure.com/.default` token. This is a
 structural excerpt that uses the `toolbox_version` returned by the preceding
 create call; the full create/invoke/delete lifecycle is in the
 [official Toolbox sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/agents/tools/sample_toolboxes_with_search_preview.py):
@@ -757,7 +745,7 @@ with DefaultAzureCredential() as credential:
 Do not copy that static-token bridge into long-running hosted MAF agents. Use
 `FoundryToolbox` there so each outbound request obtains a fresh token.
 
-The inspected 2.3.0 generated models serialize these constructors as
+The inspected 2.4.0 generated models serialize these constructors as
 `{"pin": true}` and `{"additional_search_text": "..."}`. Keep the typed
 `ToolConfig` objects; do not replace them with untyped dictionaries.
 
@@ -891,7 +879,7 @@ PUT /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServic
 }
 ```
 
-> **SDK split ownership:** `azure-ai-projects` 2.3.0 provides writable
+> **SDK split ownership:** `azure-ai-projects` 2.4.0 provides writable
 > `project.toolboxes`, while `project.connections` remains read-only for
 > project connection discovery. Provision new `RemoteTool` connections with
 > Bicep or the documented ARM connection API, then reference the connection
@@ -1103,11 +1091,11 @@ SPEC § 7c).
 | `500` on agent startup | Direct MCP client called `prompts/list` against a tools-only server | Set `load_prompts=False` |
 | `500` on `tools/call` with no streaming | Direct MCP client set `stream=False` | Keep Streamable HTTP tool calls in streaming mode |
 | Custom env var disappeared at runtime | Hosted Foundry reserves the `FOUNDRY_*` prefix | Rename custom values to `TOOLBOX_*` |
-| `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.3 | Use `project.toolboxes` |
+| `AttributeError: ... beta ... toolboxes` | Preview-era SDK path with `azure-ai-projects` 2.4 | Use `project.toolboxes` |
 | Toolbox create rejects generic `MCPTool` / `WebSearchTool` | Agent model passed to Toolbox CRUD | Use the matching `*ToolboxTool` model |
 | Standalone `azd ai toolbox` command reports no project context | Component-only install or no active Foundry project | Install pinned `microsoft.foundry`, then run `azd ai project set "$FOUNDRY_PROJECT_ENDPOINT" --no-prompt`; inspect with `azd ai project show` |
 | `FoundryToolbox` cannot resolve its endpoint | Neither `TOOLBOX_ENDPOINT` nor `FOUNDRY_PROJECT_ENDPOINT` + `TOOLBOX_NAME` is set | Set the versioned Toolbox MCP URL or both fallback variables |
-| Only `tool_search` and `call_tool` are listed | Tool Search preview is active | Search first, then call the discovered tool; pin critical tools |
+| Only `tool_search` and `call_tool` are listed | Tool Search is active | Search first, then call the discovered tool; pin critical tools |
 | `tools/list` returns 0 tools (MCP / A2A) | Bad connection creds, missing `audience`, MI lacks RBAC | Verify `project_connection_id` exists; `UserEntraToken` / `AgenticIdentity` need `audience`; check RBAC on target |
 | `tools/list` returns 0 tools (OpenAPI) | Malformed OpenAPI spec | Validate spec is OpenAPI 3.0 / 3.1 with `paths`, `operationId`, parameter schemas |
 | `tools/list` returns 0 tools (built-in) | Toolbox not provisioned yet, or tool unsupported in region | Wait 10s and retry; check region compatibility table |
@@ -1136,6 +1124,9 @@ SPEC § 7c).
 
 ## Catalog history
 
+- `2.1.0` - stabilized Tool Search with `ToolSearchToolboxTool` /
+  `toolbox_search`, refreshed the supported package lines, and kept skills in
+  Toolboxes preview-only.
 - `2.0.0` - migrated the core Toolbox contract to GA:
   `AIProjectClient.toolboxes`, Toolbox-specific SDK models, no preview feature
   header, `FoundryToolbox` consumption, and an explicit preview boundary for
