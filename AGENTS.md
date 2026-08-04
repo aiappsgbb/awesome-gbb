@@ -607,13 +607,18 @@ human audit trail. Keep them in sync.
 
 Each pin file declares an `automation_tier`:
 
-- **`auto`** — drift opens an issue **assigned to `@Copilot`**. The
-  GitHub Copilot coding agent autonomously executes the pin file's
-  `validation.script`, opens a PR, and the standard CI gates review
-  it. A human reviews and merges.
-- **`issue_only`** — drift opens an unassigned issue. Validation requires
-  credentials (Azure subscription, Foundry project) that we don't ship
-  to the coding agent. A human authors the refresh.
+- **`auto`** — drift always opens/updates a consolidated issue, but who owns
+  it depends on the workflow execution mode:
+  - **`manual`** — safe fallback, and the repository-default when
+    `FRESHNESS_EXECUTION_MODE` is absent. Auto-tier issues stay human-owned,
+    carry the `manual-review` label, and are refreshed by a human.
+  - **`copilot`** — auto-tier issues are assigned to `@Copilot`. The GitHub
+    Copilot coding agent executes the pin file's `validation.script`, opens
+    a PR, and the standard CI gates review it. A human reviews and merges.
+- **`issue_only`** — drift opens a human-owned issue in **both** execution
+  modes. Validation requires credentials (Azure subscription, Foundry
+  project) that we don't ship to the coding agent, so a human authors the
+  refresh.
 
 **Rules** (enforced by [`scripts/validate-skills.py`](scripts/validate-skills.py)):
 
@@ -635,7 +640,11 @@ Each pin file declares an `automation_tier`:
 ### 9.3 · The weekly loop
 
 [`.github/workflows/skill-freshness.yml`](.github/workflows/skill-freshness.yml)
-runs every Monday 07:00 UTC and on-demand via `workflow_dispatch`.
+runs every Monday **and Thursday** 07:00 UTC and on-demand via
+`workflow_dispatch`. `workflow_dispatch` accepts
+`execution_mode={repository,manual,copilot}`; `repository` resolves to the
+repo variable `FRESHNESS_EXECUTION_MODE`, which safely defaults to
+`manual` when absent.
 For each skill it runs five drift detectors:
 
 1. **SHA drift** — `git ls-remote <repo> <ref>` vs `pinned_sha`
@@ -655,9 +664,19 @@ drift signals with an impact classification:
 | 🟢 LOW | `impact:low` | Link rot, package PATCH bump (auto-covered by `~=`) |
 
 Issue title format: `🔄 Refresh \`<skill>\` — <N> signal(s), impact: <level>`.
-Auto-tier issues are assigned to `@Copilot`. The coding agent reads
-[`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) for
-its setup contract.
+Ownership then reconciles by execution mode:
+
+- **Manual mode** — auto-tier issues gain the `manual-review` label and stay
+  human-owned; if the workflow has the assignment PAT available, it also
+  removes any stale Copilot assignment while preserving human assignees.
+- **Copilot mode** — auto-tier issues drop `manual-review`, are assigned to
+  `@Copilot`, and the coding agent reads
+  [`.github/copilot-setup-steps.md`](.github/copilot-setup-steps.md) for
+  its setup contract.
+- **Issue-only** — stays human-only regardless of execution mode.
+
+Operational commands, rollback steps, and queue triage rules live in the
+[manual freshness runbook](docs/maintenance/manual-skill-freshness.md).
 
 ### 9.4 · Re-pin procedure (manual or coding agent)
 
@@ -730,22 +749,23 @@ This policy is enforced both by the cap-aware
 [`pin-validation.yml`](.github/workflows/pin-validation.yml) gate (which
 re-runs the script on the runner) and by reviewer eyeball.
 
-### 9.6 · Seven workflows: six gates + the delivery loop
+### 9.6 · Seven workflows: six gates + the Copilot-mode delivery loop
 
 | Gate | When | What it checks |
 |------|------|---------------|
 | [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR (no `paths:` filter — required-check invariant below) | Frontmatter parses, description ≤ 1024, valid SemVer, no forbidden strings, pin files conform to schema v2, **plugin.json + marketplace.json valid and version-consistent** |
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR (no `paths:` filter; no-ops when no skill changed) | The § 4 mass-edit invariants — see that section |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR (no `paths:` filter; no-ops when no skill folder changed) | **Re-runs `validation.script` on the runner** for the pin file of every changed skill (any SKILL.md / `references/*` edit invalidates the skill's live contract until re-validated); asserts every `expected_output` substring. No "trust me, I tested" path. Skills without a pin file are silently skipped. |
-| [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift |
+| [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detection (no PR gating) — opens issues for drift in both modes; auto-tier issues route to `manual-review` or `@Copilot` by execution mode, while `issue_only` stays human-owned |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | **Live execution suite**: unit tests, catalog lint, and `copilot-cli-matrix` (one runner per skill — a real Copilot CLI agent reads SKILL.md and executes its fixture against real Azure resources in `<ci-resource-group>`: deploys, API calls, model inference). Legacy pytest-based E2E + pin-import smoke were retired; see the header comment on the workflow. |
-| [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot PRs when all CI gates pass — zero human intervention for routine pin refreshes |
-| [`copilot-pr-autorun.yml`](.github/workflows/copilot-pr-autorun.yml) | Every ~10 min (schedule) + on-demand | **Delivery un-blocker** (not a gate). Marks Copilot refresh PRs ready (they open as draft) and **re-runs** their `action_required` CI runs so the gates actually execute. Requires the `AUTOMERGE_PAT` secret. |
+| [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check suite completion | **Auto-approves and merges** Copilot-mode refresh PRs when all CI gates pass — zero human intervention for routine pin refreshes once execution mode is `copilot` |
+| [`copilot-pr-autorun.yml`](.github/workflows/copilot-pr-autorun.yml) | Every ~10 min (schedule) + on-demand | **Copilot-mode delivery un-blocker** (not a gate). Marks Copilot refresh PRs ready (they open as draft) and **re-runs** their `action_required` CI runs so the gates actually execute. Requires the `AUTOMERGE_PAT` secret. |
 
-The first three run on every PR. The fourth detects drift autonomously.
-The fifth runs on every PR (including Copilot's) and on push/schedule.
-The sixth and seventh form the **delivery loop** that makes "zero human
-intervention" real:
+The first three run on every PR. The fourth detects drift autonomously in
+both manual and copilot modes. The fifth runs on every PR (including
+Copilot's) and on push/schedule. The sixth and seventh form the
+**delivery loop** only when execution mode is `copilot`; in manual mode,
+humans open the refresh PRs and use the normal PR path:
 
 > **🔑 The delivery loop (and why `AUTOMERGE_PAT` exists).** GitHub gates
 > every workflow run authored by the `copilot-swe-agent` bot behind a manual
@@ -2933,12 +2953,17 @@ The freshness lifecycle (§ 9) is the answer:
 
 ```
 Weekly cron → drift detection → consolidated issue (per skill, impact-classified)
-  → @Copilot auto-assigned → coding agent opens PR → CI gates validate
-  → human reviews → merge
+  → issue_only: human-owned issue in all modes
+  → auto + manual/repository default: manual-review issue → human opens PR
+  → auto + copilot: @Copilot-assigned issue → coding agent opens PR
+  → CI gates validate → human reviews → merge
 ```
 
-The loop is **closed**: detection → action → validation → merge, with
-human review as the quality gate, not the bottleneck. Key design choices:
+Detection is never turned off; manual mode is the safe fallback, and
+copilot mode restores automatic assignment for auto-tier issues. The loop
+is **closed** in copilot mode: detection → action → validation → merge,
+with human review as the quality gate, not the bottleneck. Key design
+choices:
 
 - **Consolidated issues, not per-signal spam.** One issue per skill with
   all signals and an impact label. Reduces noise from ~50 issues to ~15.
@@ -2973,9 +2998,12 @@ Push to main / weekly cron
                               model inference)
 
 Weekly cron (detection only)
- └─ skill-freshness.yml       drift detection → consolidated issue → @Copilot auto-PR
+ └─ skill-freshness.yml       drift detection → consolidated issue
+                              ├─ issue_only → human-owned issue
+                              ├─ auto + manual/repository default → manual-review issue
+                              └─ auto + copilot → @Copilot issue → coding agent PR
 
-On Copilot PR check-suite success
+On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 

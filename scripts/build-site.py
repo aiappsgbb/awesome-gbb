@@ -256,7 +256,7 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
     # — e.g. `audit/` holds per-skill audit trails, `superpowers/` holds
     # planning specs and plans, both committed by humans). Add new dir names
     # here if more hand-authored content lands under docs/.
-    PRESERVE_DIRS = {'audit', 'superpowers'}
+    PRESERVE_DIRS = {'audit', 'superpowers', 'maintenance'}
     if out_dir.exists():
         for entry in out_dir.iterdir():
             if entry.name.startswith('.'):

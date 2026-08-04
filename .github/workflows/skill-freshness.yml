@@ -12,6 +12,14 @@ on:
         description: "Dry run (no issue writes)"
         type: boolean
         default: false
+      execution_mode:
+        description: "Execution mode override"
+        type: choice
+        options:
+          - repository
+          - manual
+          - copilot
+        default: repository
 
 permissions:
   contents: read
@@ -35,16 +43,24 @@ jobs:
         id: detect
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Assigning the Copilot coding agent requires a PAT (or GitHub
-          # App token) with issues:write — the default GITHUB_TOKEN CANNOT
-          # assign the Copilot bot (GitHub returns 422 / silently no-ops).
-          # Add a repo secret COPILOT_ASSIGN_PAT to enable auto-assignment;
-          # if absent, issue creation still works and assignment is skipped
-          # with a WARN. See scripts/check-freshness.py:assign_copilot_to_issue.
+          # Safe default is the repository variable (manual) so scheduled runs
+          # stay conservative; workflow_dispatch can override to repository,
+          # manual, or copilot for one-off reversals.
+          CONFIGURED_MODE: ${{ vars.FRESHNESS_EXECUTION_MODE || 'manual' }}
+          DISPATCH_MODE: ${{ inputs.execution_mode || 'repository' }}
+          # GH_ASSIGN_TOKEN is used for both bot assignment and bot removal.
+          # The default GITHUB_TOKEN cannot assign/remove the Copilot bot, so
+          # add COPILOT_ASSIGN_PAT to enable ownership reconciliation.
           GH_ASSIGN_TOKEN: ${{ secrets.COPILOT_ASSIGN_PAT }}
           GH_REPO: ${{ github.repository }}
         run: |
-          ARGS="--upsert-issues --consolidated --assign-copilot-on-auto-tier --labels freshness,automation --output report.md --print-report"
+          MODE="$CONFIGURED_MODE"
+          if [ "$DISPATCH_MODE" != "repository" ]; then MODE="$DISPATCH_MODE"; fi
+          case "$MODE" in
+            manual|copilot) ;;
+            *) echo "::error::Invalid FRESHNESS_EXECUTION_MODE=$MODE"; exit 2 ;;
+          esac
+          ARGS="--upsert-issues --consolidated --execution-mode $MODE --labels freshness,automation --output report.md --print-report"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS="$ARGS --dry-run"
           fi

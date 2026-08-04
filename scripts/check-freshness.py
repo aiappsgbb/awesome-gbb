@@ -16,8 +16,9 @@ For each drift event the script can:
   - Print a Markdown report (`--print-report`)
   - Upsert ONE consolidated GitHub issue per skill (`--upsert-issues`, default)
     or use legacy per-signal issues via `--legacy`
-  - Auto-assign to `Copilot` if the skill's `automation_tier: auto`
-    (`--assign-copilot-on-auto-tier`)
+  - Control issue ownership with `--execution-mode {manual,copilot}`
+    (default: manual). `--assign-copilot-on-auto-tier` remains as a
+    compatibility alias for `--execution-mode copilot`.
 
 Run locally with `--dry-run` to preview without API writes.
 
@@ -169,30 +170,41 @@ def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool
             )
             return False
 
-        # 2. Resolve the issue's node ID.
+        # 2. Resolve the issue's node ID and preserve any non-Copilot assignees.
         data = _graphql(
             """
             query($owner:String!, $name:String!, $num:Int!) {
-              repository(owner:$owner, name:$name) { issue(number:$num) { id } }
+              repository(owner:$owner, name:$name) {
+                issue(number:$num) {
+                  id
+                  assignees(first:100) { nodes { id login } }
+                }
+              }
             }
             """,
             {"owner": owner, "name": name, "num": issue_number},
             token,
         )
-        issue_id = data["repository"]["issue"]["id"]
+        issue = data["repository"]["issue"]
+        issue_id = issue["id"]
+        actor_ids = [
+            node["id"]
+            for node in issue["assignees"]["nodes"]
+            if node.get("login") != COPILOT_BOT_LOGIN and node.get("id")
+        ]
+        actor_ids.append(actor_id)
+        actor_ids = list(dict.fromkeys(actor_ids))
 
-        # 3. Assign Copilot. replaceActorsForAssignable REPLACES the
-        #    assignee set — fine for bot-authored freshness issues, which
-        #    carry no human assignees.
+        # 3. Assign Copilot while preserving any existing human assignees.
         data = _graphql(
             """
-            mutation($assignable:ID!, $actor:ID!) {
-              replaceActorsForAssignable(input:{assignableId:$assignable, actorIds:[$actor]}) {
+            mutation($assignable:ID!, $actors:[ID!]!) {
+              replaceActorsForAssignable(input:{assignableId:$assignable, actorIds:$actors}) {
                 assignable { ... on Issue { number assignees(first:10) { nodes { login } } } }
               }
             }
             """,
-            {"assignable": issue_id, "actor": actor_id},
+            {"assignable": issue_id, "actors": actor_ids},
             token,
         )
         assigned = [
@@ -211,6 +223,70 @@ def assign_copilot_to_issue(repo: str, issue_number: int, gh_token: str) -> bool
     except Exception as e:  # noqa: BLE001 — best-effort assignment
         print(
             f"WARN: assign @{COPILOT_BOT_LOGIN} to issue #{issue_number} failed: {e}",
+            file=sys.stderr,
+        )
+        return False
+
+
+def remove_copilot_from_issue(repo: str, issue_number: int, gh_token: str) -> bool:
+    """Remove the Copilot Coding Agent bot while preserving human assignees."""
+    token = os.environ.get("GH_ASSIGN_TOKEN") or gh_token
+    owner, _, name = repo.partition("/")
+    try:
+        data = _graphql(
+            """
+            query($owner:String!, $name:String!, $num:Int!) {
+              repository(owner:$owner, name:$name) {
+                issue(number:$num) {
+                  id
+                  assignees(first:100) { nodes { id login } }
+                }
+              }
+            }
+            """,
+            {"owner": owner, "name": name, "num": issue_number},
+            token,
+        )
+        issue = data["repository"]["issue"]
+        assignees = issue["assignees"]["nodes"]
+        if not any(node.get("login") == COPILOT_BOT_LOGIN for node in assignees):
+            return True
+
+        actor_ids = [
+            node["id"]
+            for node in assignees
+            if node.get("login") != COPILOT_BOT_LOGIN and node.get("id")
+        ]
+        data = _graphql(
+            """
+            mutation($assignable:ID!, $actors:[ID!]!) {
+              replaceActorsForAssignable(input:{assignableId:$assignable, actorIds:$actors}) {
+                assignable {
+                  ... on Issue {
+                    assignees(first:100) { nodes { login } }
+                  }
+                }
+              }
+            }
+            """,
+            {"assignable": issue["id"], "actors": actor_ids},
+            token,
+        )
+        assigned = [
+            node["login"]
+            for node in data["replaceActorsForAssignable"]["assignable"]["assignees"]["nodes"]
+        ]
+        if COPILOT_BOT_LOGIN not in assigned:
+            return True
+        print(
+            f"WARN: removal mutation for issue #{issue_number} returned but "
+            f"@{COPILOT_BOT_LOGIN} remains assigned: {assigned}",
+            file=sys.stderr,
+        )
+        return False
+    except Exception as e:  # noqa: BLE001 — best-effort assignment reconciliation
+        print(
+            f"WARN: remove @{COPILOT_BOT_LOGIN} from issue #{issue_number} failed: {e}",
             file=sys.stderr,
         )
         return False
@@ -237,6 +313,34 @@ IMPACT_HEADINGS = {
     "medium": "## 🟡 MEDIUM",
     "low": "## 🟢 LOW",
 }
+EXECUTION_MODES = ("manual", "copilot")
+MANUAL_REVIEW_LABEL = "manual-review"
+
+
+def labels_for_execution_mode(base_labels: list[str], signal: Signal, execution_mode: str) -> list[str]:
+    if execution_mode not in EXECUTION_MODES:
+        raise ValueError(f"unsupported execution mode: {execution_mode}")
+
+    labels = [
+        label
+        for label in base_labels
+        if label != MANUAL_REVIEW_LABEL and not label.startswith("impact:")
+    ]
+    if execution_mode == "manual":
+        labels.append(MANUAL_REVIEW_LABEL)
+    if signal.signal_type == "consolidated":
+        labels.append(f"impact:{signal.impact}")
+    return list(dict.fromkeys(labels))
+
+
+def ownership_note_for_execution_mode(signal: Signal, execution_mode: str) -> str:
+    if execution_mode not in EXECUTION_MODES:
+        raise ValueError(f"unsupported execution mode: {execution_mode}")
+    if signal.automation_tier != "auto":
+        return "human action required"
+    if execution_mode == "copilot":
+        return "assigned to @Copilot"
+    return "manual review required"
 
 
 def parse_semver(v: str) -> tuple[int, int, int] | None:
@@ -842,7 +946,14 @@ def collect_signals(pins: list[PinFile], gh_token: str | None) -> list[Signal]:
     return signals
 
 
-def render_report(signals: list[Signal], pin_count: int, consolidated: bool = True) -> str:
+def render_report(
+    signals: list[Signal],
+    pin_count: int,
+    consolidated: bool = True,
+    execution_mode: str = "manual",
+) -> str:
+    if execution_mode not in EXECUTION_MODES:
+        raise ValueError(f"unsupported execution mode: {execution_mode}")
     today = dt.date.today().isoformat()
     if not signals:
         return (
@@ -875,11 +986,7 @@ def render_report(signals: list[Signal], pin_count: int, consolidated: bool = Tr
             lines.append(f"## {sig_type} ({len(bucket)})")
             lines.append("")
             for s in bucket:
-                assignee_note = (
-                    " — assigned to @Copilot"
-                    if s.automation_tier == "auto"
-                    else " — human action required"
-                )
+                assignee_note = f" — {ownership_note_for_execution_mode(s, execution_mode)}"
                 lines.append(f"- **{s.skill}** — {s.title}{assignee_note}")
             lines.append("")
 
@@ -896,11 +1003,7 @@ def render_report(signals: list[Signal], pin_count: int, consolidated: bool = Tr
         lines.append(f"{IMPACT_HEADINGS[impact]} ({len(bucket)})")
         lines.append("")
         for s in bucket:
-            assignee_note = (
-                " — assigned to @Copilot"
-                if s.automation_tier == "auto"
-                else " — human action required"
-            )
+            assignee_note = f" — {ownership_note_for_execution_mode(s, execution_mode)}"
             lines.append(f"- **{s.skill}** — {s.title}{assignee_note}")
         lines.append("")
 
@@ -914,16 +1017,13 @@ def upsert_issue(
     signal: Signal,
     repo: str,
     gh_token: str,
-    assign_copilot: bool,
+    execution_mode: str,
     labels: list[str],
     dry_run: bool,
-) -> None:
+) -> bool:
     body = signal.body
     title = signal.title
-    issue_labels = list(labels)
-    if signal.signal_type == "consolidated":
-        issue_labels.append(f"impact:{signal.impact}")
-    issue_labels = list(dict.fromkeys(issue_labels))
+    issue_labels = labels_for_execution_mode(labels, signal, execution_mode)
 
     # Find an existing open issue for this skill (idempotent upsert).
     # Key by skill-name prefix so signal count/impact changes don't create
@@ -957,17 +1057,16 @@ def upsert_issue(
     if issue_labels:
         payload["labels"] = issue_labels
 
-    want_copilot_assign = assign_copilot and signal.automation_tier == "auto"
+    want_copilot_assign = execution_mode == "copilot" and signal.automation_tier == "auto"
+    want_copilot_remove = execution_mode == "manual" and matched is not None
 
     if matched:
         url = matched["url"]
-        issue_node_id = matched.get("node_id")
         action = "edit"
         method = requests.patch
     else:
         url = f"https://api.github.com/repos/{repo}/issues"
         payload["title"] = title
-        issue_node_id = None
         action = "create"
         method = requests.post
 
@@ -975,7 +1074,11 @@ def upsert_issue(
         print(f"[DRY-RUN] would {action} issue: {title}")
         if want_copilot_assign:
             print(f"[DRY-RUN] would assign @{COPILOT_BOT_LOGIN}")
-        return
+        elif want_copilot_remove:
+            print(f"[DRY-RUN] would remove @{COPILOT_BOT_LOGIN} if present")
+        else:
+            print("[DRY-RUN] would leave issue ownership unchanged")
+        return True
 
     r = method(url, json=payload, headers=headers, timeout=HTTP_TIMEOUT)
 
@@ -985,17 +1088,37 @@ def upsert_issue(
             f"{r.status_code}: {r.text[:300]}",
             file=sys.stderr,
         )
-        return
+        return False
 
     print(f"✓ {action} issue: {title}", file=sys.stderr)
 
+    issue_number = r.json().get("number") or (matched or {}).get("number")
+
     # Assign the Coding Agent bot via GraphQL (REST cannot assign Bots)
     if want_copilot_assign:
-        issue_number = r.json().get("number")
-        if issue_number:
-            ok = assign_copilot_to_issue(repo, issue_number, gh_token)
-            if ok:
-                print(f"  ↳ assigned @{COPILOT_BOT_LOGIN}", file=sys.stderr)
+        if not issue_number:
+            print(
+                f"ERROR: could not determine issue number for Copilot assignment: {title}",
+                file=sys.stderr,
+            )
+            return False
+        ok = assign_copilot_to_issue(repo, issue_number, gh_token)
+        if not ok:
+            return False
+        print(f"  ↳ assigned @{COPILOT_BOT_LOGIN}", file=sys.stderr)
+    elif want_copilot_remove:
+        if not issue_number:
+            print(
+                f"ERROR: could not determine issue number for Copilot removal: {title}",
+                file=sys.stderr,
+            )
+            return False
+        ok = remove_copilot_from_issue(repo, issue_number, gh_token)
+        if not ok:
+            return False
+        print(f"  ↳ removed @{COPILOT_BOT_LOGIN} if present", file=sys.stderr)
+
+    return True
 
 
 def close_resolved_issues(
@@ -1079,6 +1202,12 @@ def main() -> int:
     )
     ap.set_defaults(consolidated=True)
     ap.add_argument(
+        "--execution-mode",
+        choices=EXECUTION_MODES,
+        default=None,
+        help="issue ownership mode (default: manual)",
+    )
+    ap.add_argument(
         "--assign-copilot-on-auto-tier",
         action="store_true",
         help="auto-assign issues to @Copilot for skills with automation_tier=auto",
@@ -1105,6 +1234,10 @@ def main() -> int:
         print("ERROR: GH_TOKEN required for --upsert-issues", file=sys.stderr)
         return 2
 
+    if args.execution_mode is not None and args.assign_copilot_on_auto_tier:
+        ap.error("--execution-mode cannot be combined with --assign-copilot-on-auto-tier")
+    execution_mode = args.execution_mode or ("copilot" if args.assign_copilot_on_auto_tier else "manual")
+
     pins = discover_pin_files()
     print(f"Discovered {len(pins)} pin files", file=sys.stderr)
 
@@ -1130,7 +1263,12 @@ def main() -> int:
             f.write(f"iso_week={iso_week_str}\n")
     print(f"iso_week={iso_week_str}")
 
-    report = render_report(issue_signals, len(pins), consolidated=args.consolidated)
+    report = render_report(
+        issue_signals,
+        len(pins),
+        consolidated=args.consolidated,
+        execution_mode=execution_mode,
+    )
 
     if args.print_report:
         print(report)
@@ -1140,15 +1278,17 @@ def main() -> int:
 
     if args.upsert_issues:
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
+        upsert_ok = True
         for signal in issue_signals:
-            upsert_issue(
+            ok = upsert_issue(
                 signal,
                 repo=args.repo,
                 gh_token=gh_token or "",
-                assign_copilot=args.assign_copilot_on_auto_tier,
+                execution_mode=execution_mode,
                 labels=labels,
                 dry_run=args.dry_run,
             )
+            upsert_ok = ok and upsert_ok
         # Auto-close issues for skills with zero remaining signals
         skills_with_signals = {s.skill for s in issue_signals}
         close_resolved_issues(
@@ -1158,6 +1298,9 @@ def main() -> int:
             labels=labels,
             dry_run=args.dry_run,
         )
+        if not upsert_ok:
+            print("ERROR: one or more issue upserts failed", file=sys.stderr)
+            return 1
 
     print(
         f"Done — {len(signals)} drift signal(s), {len(issue_signals)} issue candidate(s) across {len(pins)} pins",
