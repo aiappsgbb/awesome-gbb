@@ -128,5 +128,62 @@ class RemoveCopilotAssignmentTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
 
+class AssignCopilotAssignmentTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_graphql = CF._graphql
+
+    def tearDown(self) -> None:
+        CF._graphql = self._orig_graphql
+
+    def test_assignment_preserves_existing_human_assignees(self) -> None:
+        calls: list[tuple[str, dict[str, object], str]] = []
+
+        def fake_graphql(query: str, variables: dict[str, object], gh_token: str):
+            calls.append((query, variables, gh_token))
+            if len(calls) == 1:
+                return {
+                    "repository": {
+                        "suggestedActors": {
+                            "nodes": [
+                                {"id": "BOT", "login": "copilot-swe-agent"},
+                            ]
+                        }
+                    }
+                }
+            if len(calls) == 2:
+                return {
+                    "repository": {
+                        "issue": {
+                            "id": "ISSUE",
+                            "assignees": {
+                                "nodes": [
+                                    {"id": "HUMAN", "login": "maintainer"},
+                                ]
+                            },
+                        }
+                    }
+                }
+            if len(calls) == 3:
+                self.assertEqual(variables["actors"], ["HUMAN", "BOT"])
+                return {
+                    "replaceActorsForAssignable": {
+                        "assignable": {
+                            "assignees": {
+                                "nodes": [
+                                    {"login": "maintainer"},
+                                    {"login": "copilot-swe-agent"},
+                                ]
+                            }
+                        }
+                    }
+                }
+            self.fail(f"unexpected GraphQL call #{len(calls)}")
+
+        CF._graphql = fake_graphql
+
+        self.assertTrue(CF.assign_copilot_to_issue("aiappsgbb/awesome-gbb", 42, "token"))
+        self.assertEqual(len(calls), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
