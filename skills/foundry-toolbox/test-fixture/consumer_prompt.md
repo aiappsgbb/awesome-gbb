@@ -93,7 +93,6 @@ cleanup() {
     delete_status=$?
     if [[ $delete_status -ne 0 ]]; then
       echo "NOTE azd Toolbox delete failed name=${toolbox_name} status=${delete_status}"
-      cat "$delete_log"
     fi
   done
   rm -rf "$work_dir"
