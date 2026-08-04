@@ -18,7 +18,7 @@ description: >
   Functions / Logic Apps), agent runtime (use foundry-prompt-agents
   or foundry-hosted-agents).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # Microsoft Foundry Routines — Reference Guide
