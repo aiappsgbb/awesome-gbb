@@ -11,31 +11,31 @@ upstream:
 packages:
   - name: microsoft-agents-activity
     source: pypi
-    version: "1.1.0"
+    version: "1.2.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-activity/#history
     notes: |
       Microsoft Agents SDK package floor from the template requirements; 0.9.x is required for streaming_response.
   - name: microsoft-agents-authentication-msal
     source: pypi
-    version: "1.1.0"
+    version: "1.2.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-authentication-msal/#history
     notes: |
       MsalConnectionManager UAMI auth package floor from the template requirements.
   - name: microsoft-agents-hosting-aiohttp
     source: pypi
-    version: "1.1.0"
+    version: "1.2.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-hosting-aiohttp/#history
     notes: |
       aiohttp host integration package floor from the template requirements.
   - name: microsoft-agents-hosting-core
     source: pypi
-    version: "1.1.0"
+    version: "1.2.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-hosting-core/#history
     notes: |
       Provides context.streaming_response used by the recommended Teams streaming template.
   - name: microsoft-agents-hosting-teams
     source: pypi
-    version: "1.1.0"
+    version: "1.2.0"
     upstream_changelog: https://pypi.org/project/microsoft-agents-hosting-teams/#history
     notes: |
       Teams-specific hosting helpers from the template requirements.
@@ -90,11 +90,11 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
-      "microsoft-agents-activity~=1.1.0" \
-      "microsoft-agents-authentication-msal~=1.1.0" \
-      "microsoft-agents-hosting-aiohttp~=1.1.0" \
-      "microsoft-agents-hosting-core~=1.1.0" \
-      "microsoft-agents-hosting-teams~=1.1.0" \
+      "microsoft-agents-activity~=1.2.0" \
+      "microsoft-agents-authentication-msal~=1.2.0" \
+      "microsoft-agents-hosting-aiohttp~=1.2.0" \
+      "microsoft-agents-hosting-core~=1.2.0" \
+      "microsoft-agents-hosting-teams~=1.2.0" \
       "azure-ai-projects~=2.3.0" \
       "azure-identity~=1.25.3" \
       "aiohttp~=3.13.5" \
@@ -118,7 +118,7 @@ validation:
   expected_output:
     - "ok foundry-teams-bot imports and manifest parse"
 
-last_validated: 2026-07-04
+last_validated: 2026-07-23
 validated_by: copilot-bot
 known_issues_count: 1
 ---
