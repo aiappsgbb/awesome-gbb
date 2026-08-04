@@ -35,9 +35,9 @@ class Gpt56GaContractTests(unittest.TestCase):
         cls.skill_flat = " ".join(cls.skill.replace("\n> ", " ").split())
         cls.selection_flat = " ".join(cls.selection.replace("\n> ", " ").split())
 
-    def test_skill_version_is_minor_bump(self) -> None:
+    def test_skill_version_is_current(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.1.0")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.1.1")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
 
     def test_version_lookup_has_only_exact_gpt56_ids(self) -> None:
