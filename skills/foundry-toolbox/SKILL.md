@@ -702,8 +702,7 @@ assert tool_search.as_dict() == {"type": "toolbox_search"}
 
 When Tool Search is enabled, the initial tool list exposes `tool_search` and
 `call_tool` instead of every full schema. Search first, then call the
-discovered tool. Pin critical tools with `ToolConfig(pin=True)`; add
-`additional_search_text` when tool descriptions do not match user vocabulary.
+discovered tool.
 
 Microsoft showed one side-by-side trace with 467 input tokens versus roughly
 4,700 without Tool Search, a 90.1% arithmetic reduction for that trace. Treat
@@ -744,10 +743,6 @@ with DefaultAzureCredential() as credential:
 
 Do not copy that static-token bridge into long-running hosted MAF agents. Use
 `FoundryToolbox` there so each outbound request obtains a fresh token.
-
-The inspected 2.4.0 generated models serialize these constructors as
-`{"pin": true}` and `{"additional_search_text": "..."}`. Keep the typed
-`ToolConfig` objects; do not replace them with untyped dictionaries.
 
 ---
 
