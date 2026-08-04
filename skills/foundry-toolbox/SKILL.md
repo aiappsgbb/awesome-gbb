@@ -3,7 +3,7 @@ name: foundry-toolbox
 description: >
   Use Microsoft Foundry Toolbox GA to manage versioned multi-tool bundles
   behind a single MCP endpoint and connect them to hosted agents. Covers
-  stable AIProjectClient.toolboxes CRUD, Toolbox-specific SDK models,
+  stable AIProjectClient.toolboxes CRUD, SDK models,
   agent_framework_foundry_hosting.FoundryToolbox, authentication,
   immutable-version promotion and rollback, the azd ai toolbox declarative
   path, and stable Tool Search. Distinguishes the GA Toolbox core from
@@ -11,7 +11,8 @@ description: >
   Toolboxes; explains that azure_ai_search wraps an index, not a Foundry IQ
   knowledge base. USE FOR: foundry toolbox, toolbox MCP endpoint,
   AIProjectClient toolboxes, FoundryToolbox, toolbox version promote,
-  multi-tool MCP endpoint, ToolboxSearchPreviewToolboxTool, kind toolbox,
+  multi-tool MCP endpoint, ToolboxSearchPreviewToolboxTool,
+  ToolSearchToolboxTool, kind toolbox,
   host azure.ai.toolbox, toolbox.yaml. DO NOT USE FOR: building MCP servers
   (use foundry-mcp-aca),
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
