@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -70,6 +71,61 @@ def _calls_named(stmts: list, dotted_name: str) -> list:
     """
     module = ast.Module(body=list(stmts), type_ignores=[])
     return [n for n in ast.walk(module) if _is_call_named(n, dotted_name)]
+
+
+def _exception_var_name(handler: ast.ExceptHandler) -> str:
+    """Return the identifier an `except ... as <name>:` clause binds.
+
+    `ast.ExceptHandler.name` is a plain `str` (not an `ast.Name`), so a
+    missing bind (`except Exception:`) surfaces as `None` -- fail loudly
+    rather than let callers silently treat "no binding" as "no leak risk".
+    """
+    if not handler.name:
+        raise AssertionError(
+            "except handler does not bind the exception to a name "
+            "(expected `except Exception as exc:`)"
+        )
+    return handler.name
+
+
+def _unsafe_exception_references(handler: ast.ExceptHandler) -> list[ast.Name]:
+    """Return every reference to the handler's bound exception name that leaks it.
+
+    The only permitted shape for referencing the caught exception is as the
+    direct, sole, non-keyword argument of a bare `type(...)` call -- e.g.
+    `type(exc)`, whose result may then be narrowed further (`.__name__`).
+    Every other reference -- `f"{exc}"`, `f"{exc!r}"`, `f"{exc!s}"`,
+    `str(exc)`, `exc.args`, string concatenation with `exc`, passing `exc`
+    to any other call, etc. -- risks leaking the raw exception object or its
+    message and is rejected.
+
+    `ast` nodes carry no parent pointers, so this builds a one-off parent
+    map over the handler body before classifying each `ast.Name` match.
+    """
+    var_name = _exception_var_name(handler)
+    module = ast.Module(body=list(handler.body), type_ignores=[])
+
+    parent_of: dict[int, ast.AST] = {}
+    for parent in ast.walk(module):
+        for child in ast.iter_child_nodes(parent):
+            parent_of[id(child)] = parent
+
+    unsafe: list[ast.Name] = []
+    for node in ast.walk(module):
+        if not (isinstance(node, ast.Name) and node.id == var_name):
+            continue
+        parent = parent_of.get(id(node))
+        is_direct_type_arg = (
+            isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name)
+            and parent.func.id == "type"
+            and not parent.keywords
+            and len(parent.args) == 1
+            and parent.args[0] is node
+        )
+        if not is_direct_type_arg:
+            unsafe.append(node)
+    return unsafe
 
 
 def _extract_python_smoke() -> str:
@@ -242,16 +298,24 @@ class FoundryToolboxCleanupContractTests(unittest.TestCase):
             "cleanup failure, growing the hard-record count past five",
         )
 
+        # Structural anti-leak guard (AST shape, not a source substring check):
+        # every reference to the bound exception name must be the direct sole
+        # argument of `type(...)`. A substring check for literal "{exc}" would
+        # miss `{exc!r}`, `{exc!s}`, `str(exc)`, `exc.args`, or concatenation.
+        unsafe_refs = _unsafe_exception_references(handler)
+        self.assertEqual(
+            unsafe_refs,
+            [],
+            "the delete-failure NOTE must reference the caught exception only as "
+            "the direct argument of `type(...)` (e.g. `type(exc).__name__`) -- "
+            "found raw/unsafe reference(s) at line(s) "
+            f"{[n.lineno for n in unsafe_refs]} in handler body: "
+            f"{ast.unparse(ast.Module(body=handler.body, type_ignores=[]))!r}",
+        )
         self.assertIn(
             "type(exc).__name__",
             handler_source,
             "the delete-failure NOTE must be sanitized to the exception TYPE name",
-        )
-        self.assertNotIn(
-            "{exc}",
-            handler_source,
-            "the delete-failure NOTE must not interpolate the raw exception object "
-            "or its message -- only the sanitized type name and toolbox name",
         )
         self.assertIn(
             "toolbox_name",
@@ -338,6 +402,220 @@ class FoundryToolboxValidationDateContractTests(unittest.TestCase):
             "both SKILL.md metadata.validated and the upstream pin last_validated "
             "must equal 2026-08-04",
         )
+
+    def test_skill_metadata_version_matches_post_merge_correction(self) -> None:
+        """Guard: a version/history revert must not be able to go green.
+
+        Pins `metadata.version` to the exact SemVer the post-merge correction
+        (cleanup-from-finally + dangling-remediation-text + date-alignment
+        fixes) shipped under, so reverting `SKILL.md` to a pre-correction
+        version string fails here even if it happens to keep the corrected
+        body content intact.
+        """
+        skill_meta = _frontmatter(SKILL.read_text(encoding="utf-8"))["metadata"]
+        self.assertEqual(
+            str(skill_meta["version"]),
+            "2.1.1",
+            "SKILL.md metadata.version must be '2.1.1' -- the PATCH bump that "
+            "shipped the post-merge correction. A version/history revert must "
+            "not be able to go green.",
+        )
+
+
+def _handler_from_snippet(snippet: str) -> ast.ExceptHandler:
+    """Parse a standalone `try/except` snippet, returning its single handler.
+
+    Test-only harness for proving `_unsafe_exception_references` itself
+    (Finding #1's "prove the guard against mutations" requirement) against
+    representative safe/unsafe handler bodies, independent of the fixture
+    file on disk.
+    """
+    tree = ast.parse(textwrap.dedent(snippet))
+    stmt = tree.body[0]
+    if not isinstance(stmt, ast.Try):
+        raise AssertionError(f"snippet's first statement must be a Try, got {type(stmt)}")
+    if len(stmt.handlers) != 1:
+        raise AssertionError(f"snippet must have exactly one except handler, got {len(stmt.handlers)}")
+    return stmt.handlers[0]
+
+
+class ExceptionReferenceGuardUnitTests(unittest.TestCase):
+    """Mutation proof for `_unsafe_exception_references` (Finding #1).
+
+    A plain `assertNotIn("{exc}", handler_source)` substring check -- the
+    pre-hardening version of the anti-leak assertion -- passes on every
+    snippet below EXCEPT the literal `f"{exc}"` case, meaning it misses
+    `{exc!r}`, `{exc!s}`, `str(exc)`, `exc.args`, and concatenation entirely.
+    These tests pin the AST-structural replacement against exactly those
+    variants, plus the one safe shape it must continue to accept.
+    """
+
+    def test_accepts_type_exc_dunder_name(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error_type={type(exc).__name__}")
+            """
+        )
+        self.assertEqual(
+            _unsafe_exception_references(handler),
+            [],
+            "type(exc).__name__ is the canonical sanitized shape and must be accepted",
+        )
+
+    def test_accepts_bare_type_exc_without_dunder_name(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                kind = type(exc)
+                print(f"NOTE failed error_type={kind.__name__}")
+            """
+        )
+        self.assertEqual(
+            _unsafe_exception_references(handler),
+            [],
+            "type(exc) alone (result bound and narrowed later) must also be accepted "
+            "-- the guard only constrains how `exc` itself may be referenced",
+        )
+
+    def test_rejects_raw_interpolation(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error={exc}")
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "f\"{exc}\" must be flagged as an unsafe leak")
+
+    def test_rejects_repr_conversion(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error={exc!r}")
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "f\"{exc!r}\" must be flagged as an unsafe leak")
+
+    def test_rejects_str_conversion_field(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error={exc!s}")
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "f\"{exc!s}\" must be flagged as an unsafe leak")
+
+    def test_rejects_str_call(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print("NOTE failed error=" + str(exc))
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "str(exc) must be flagged as an unsafe leak")
+
+    def test_rejects_args_attribute_access(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error={exc.args}")
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "exc.args must be flagged as an unsafe leak")
+
+    def test_rejects_bare_concatenation(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                message = "NOTE failed error=" + exc
+                print(message)
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "bare string concatenation with exc must be flagged")
+
+    def test_rejects_passing_exc_to_a_non_type_call(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error={repr(exc)}")
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(len(unsafe), 1, "repr(exc) must be flagged as an unsafe leak")
+
+    def test_rejects_exc_as_extra_argument_alongside_type(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error_type={type(exc).__name__} raw={exc}")
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(
+            len(unsafe),
+            1,
+            "the safe type(exc).__name__ reference must not mask a second, unsafe "
+            "raw reference to exc in the same handler",
+        )
+
+    def test_rejects_exc_passed_as_second_positional_to_type(self) -> None:
+        # Avoid nesting a dict/collection literal inside an f-string
+        # expression -- unsupported by the f-string grammar before the
+        # PEP 701 relaxation (Python < 3.12); the CI matrix runs 3.11 too.
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                result = type("unused", exc)
+                print(result)
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(
+            len(unsafe),
+            1,
+            "exc must remain the SOLE argument of type(...) -- passed alongside "
+            "other arguments it is no longer the accepted shape",
+        )
+
+    def test_reference_requires_a_bound_exception_name(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception:
+                print("NOTE failed")
+            """
+        )
+        with self.assertRaises(AssertionError):
+            _unsafe_exception_references(handler)
 
 
 if __name__ == "__main__":
