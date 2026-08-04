@@ -100,8 +100,8 @@ class RemoveCopilotAssignmentTest(unittest.TestCase):
                             "id": "ISSUE",
                             "assignees": {
                                 "nodes": [
-                                    {"login": "copilot-swe-agent"},
-                                    {"login": "maintainer"},
+                                    {"id": "COPILOT", "login": "copilot-swe-agent"},
+                                    {"id": "HUMAN", "login": "maintainer"},
                                 ]
                             },
                         }
