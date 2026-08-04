@@ -746,7 +746,8 @@ def render_home(
         '<span class="stat-foot">FSI · MFG · Retail · Telco · Airline</span></div>'
         '<div class="stat"><span class="stat-num">twice weekly</span>'
         '<span class="stat-label">freshness checks</span>'
-        '<span class="stat-foot">manual-review or Copilot assignment</span></div>'
+        '<span class="stat-foot">manual mode routes auto-tier issues to manual-review; '
+        'copilot mode assigns auto-tier issues to Copilot</span></div>'
         '</section>'
     )
 
@@ -889,8 +890,9 @@ def render_engineering() -> str:
         ('skill-freshness.yml', 'twice weekly',
          'Detects SHA drift, PyPI bumps, upstream issue closure, link rot, '
          'and stale validation. Opens one consolidated issue per skill with '
-         'an <code>impact:</code> label — auto-tier routing uses manual-review '
-         'or Copilot assignment.'),
+         'an <code>impact:</code> label — manual mode routes auto-tier issues to '
+         '<code>manual-review</code>; copilot mode assigns auto-tier issues to '
+         '<code>Copilot</code>.'),
         ('skill-test.yml', 'every PR · push · cron',
          'Unit tests, catalog lint, the all-pin smoke job, and the '
          'E2E Azure matrix — real <code>azd up</code>, real Foundry calls, '
@@ -951,17 +953,19 @@ def render_engineering() -> str:
         '<p class="lede">The detector runs twice weekly on Monday and Thursday '
         '07:00 UTC. Execution mode comes from '
         '<code>FRESHNESS_EXECUTION_MODE</code>: <code>manual</code> is the '
-        'safe default, while <code>copilot</code> keeps auto-tier routing on '
-        'manual-review or Copilot assignment. Manual mode keeps auto-tier '
-        'issues human-owned with <code>manual-review</code>; issue_only stays '
-        'human-owned in every mode. Only copilot mode closes the delivery '
+        'safe default. Manual mode routes auto-tier issues to '
+        '<code>manual-review</code>. Copilot mode assigns auto-tier issues to '
+        '<code>Copilot</code>. Issue_only stays human-owned in every mode. '
+        'Only copilot mode closes the delivery '
         'loop end-to-end by opening refresh PRs and running auto-merge in '
         'copilot mode.</p>'
         '<pre><code>'
         'freshness schedule: twice weekly (Monday 07:00 UTC + Thursday 07:00 UTC)\n'
         'execution modes: manual (default via FRESHNESS_EXECUTION_MODE) | copilot\n'
-        'manual mode → issue_only stays human-owned; auto-tier issues → manual-review\n'
-        'copilot mode → auto-tier issues → Copilot assignment; Copilot coding agent opens refresh PR in copilot mode; auto-merge-copilot closes the delivery loop in copilot mode\n'
+        'manual mode routes auto-tier issues to manual-review\n'
+        'copilot mode assigns auto-tier issues to Copilot\n'
+        'issue_only stays human-owned in every mode\n'
+        'Copilot coding agent opens refresh PR in copilot mode; auto-merge-copilot closes the delivery loop in copilot mode\n'
         '</code></pre>'
         '<p class="install-alt">The Copilot agent reads '
         '<code>.github/copilot-setup-steps.md</code> as its scope contract '

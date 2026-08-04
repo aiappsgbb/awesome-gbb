@@ -14,6 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
+    def assert_unambiguous_freshness_routing(self, engineering: str) -> None:
+        self.assertIn("manual mode routes auto-tier issues to manual-review", engineering)
+        self.assertIn("copilot mode assigns auto-tier issues to Copilot", engineering)
+
     def test_preserves_manual_skill_freshness_runbook(self) -> None:
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as td:
             out_dir = Path(td)
@@ -44,6 +48,15 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
                 (out_dir / "engineering" / "index.html").read_text(encoding="utf-8")
             )
             home = html.unescape((out_dir / "index.html").read_text(encoding="utf-8"))
+            legacy_engineering = (
+                "The detector runs twice weekly on Monday and Thursday 07:00 UTC. "
+                "Execution mode comes from FRESHNESS_EXECUTION_MODE: manual is the "
+                "safe default, while copilot keeps auto-tier routing on manual-review "
+                "or Copilot assignment. Manual mode keeps auto-tier issues human-owned "
+                "with manual-review; issue_only stays human-owned in every mode. Only "
+                "copilot mode closes the delivery loop end-to-end by opening refresh PRs "
+                "and running auto-merge in copilot mode."
+            )
 
             for haystack, expected in (
                 (engineering, "weekly cron"),
@@ -58,13 +71,16 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
             self.assertIn("Thursday 07:00 UTC", engineering)
             self.assertIn("FRESHNESS_EXECUTION_MODE", engineering)
             self.assertIn("manual-review", engineering)
-            self.assertIn("manual-review or Copilot assignment", engineering)
             self.assertIn("twice weekly", engineering)
             self.assertIn("manual mode", engineering)
             self.assertIn("copilot mode", engineering)
             self.assertIn("in copilot mode", engineering)
             self.assertIn("issue_only stays human-owned", engineering)
             self.assertIn("closed end-to-end in copilot mode", engineering)
+            self.assert_unambiguous_freshness_routing(engineering)
+
+            with self.assertRaises(AssertionError):
+                self.assert_unambiguous_freshness_routing(legacy_engineering)
 
 
 if __name__ == "__main__":
