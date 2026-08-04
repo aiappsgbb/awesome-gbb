@@ -719,7 +719,7 @@ scenarios that need Tool Search, expose the versioned Toolbox endpoint as an
 `MCPTool` and pass one short-lived `https://ai.azure.com/.default` token. This is a
 structural excerpt that uses the `toolbox_version` returned by the preceding
 create call; the full create/invoke/delete lifecycle is in the
-[official Toolbox sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/agents/tools/sample_toolboxes_with_search_preview.py):
+[official Toolbox sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/agents/tools/sample_toolboxes_with_search.py):
 
 ```python
 import os
