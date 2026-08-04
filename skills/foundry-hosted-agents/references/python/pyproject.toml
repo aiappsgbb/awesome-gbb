@@ -23,11 +23,12 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core~=1.11.0",
-    "agent-framework-foundry~=1.10.1",
-    "agent-framework-foundry-hosting==1.0.0a260709",
+    "agent-framework-core~=1.13.0",
+    "agent-framework-foundry~=1.10.4",
+    "agent-framework-foundry-hosting==1.0.0b260730",
+    "azure-ai-projects~=2.3.0",
     "azure-identity~=1.25.3",
-    "mcp~=1.28.1",
+    "mcp~=1.29.0",
     "python-dotenv~=1.2.2",
     # OTel + gen_ai instrumentors are bundled via hosting → microsoft-opentelemetry.
     # Do NOT add explicit azure-monitor-opentelemetry or opentelemetry-* lines.
