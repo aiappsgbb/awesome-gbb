@@ -159,6 +159,12 @@ cp "$skill_refs/python/pyproject.toml" "$work_dir/pyproject.toml"
 cp "$skill_refs/yaml/azure.yaml" "$work_dir/azure.yaml"
 printf 'You are a customer-support triage assistant.\n' > "$work_dir/copilot-instructions.md"
 
+grep -F '"agent-framework-core~=1.13.0"' "$work_dir/pyproject.toml"
+grep -F '"agent-framework-foundry~=1.10.4"' "$work_dir/pyproject.toml"
+grep -F '"agent-framework-foundry-hosting==1.0.0b260730"' "$work_dir/pyproject.toml"
+grep -F '"azure-ai-projects~=2.3.0"' "$work_dir/pyproject.toml"
+grep -F '"mcp~=1.29.0"' "$work_dir/pyproject.toml"
+
 # Preserve the canonical YAML byte-for-byte except for the two exact
 # UUID-bearing agent identifiers. Count each source token before replacing so
 # an upstream reference change fails loudly instead of altering prose/comments.
