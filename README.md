@@ -277,7 +277,15 @@ flowchart LR
     M -- yes --> R[human review + merge]
     M -- yes, Copilot PR --> A[auto-merge-copilot<br/>squash-merges]
     CRON[weekly cron] --> F[skill-freshness<br/>drift detection]
-    F --> ISSUE[consolidated issue<br/>impact-classified] --> COP[@Copilot opens PR] --> PR
+    F --> ISSUE[consolidated issue<br/>impact-classified]
+    ISSUE --> TIER{automation tier}
+    TIER -- issue_only --> HISSUE[human-owned issue]
+    TIER -- auto --> MODE{execution mode}
+    MODE -- manual / repository default --> MAN[manual-review issue]
+    MODE -- copilot --> COP[@Copilot-assigned issue]
+    HISSUE --> HPR[human opens refresh PR] --> PR
+    MAN --> HPR
+    COP --> CPR[coding agent opens PR] --> PR
 ```
 
 **Six CI gates** (see [`.github/workflows/`](.github/workflows/)):
@@ -287,9 +295,9 @@ flowchart LR
 | [`skill-validation.yml`](.github/workflows/skill-validation.yml) | Every PR | Frontmatter parses, description ≤ 1024 chars, valid SemVer, no forbidden strings, pin files conform to schema, plugin manifests version-consistent |
 | [`automation-pr-gate.yml`](.github/workflows/automation-pr-gate.yml) | Every PR | Mass-edit invariants (no normalization of reference canon, no cross-skill body edits without `[multi-skill]`, no MAJOR bumps from metadata-only changes) |
 | [`pin-validation.yml`](.github/workflows/pin-validation.yml) | Every PR touching `skills/<skill>/` | **Re-runs `validation.script` on the runner** for the pin file of every changed skill — no "trust me, I tested" path |
-| [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron | Detects SHA drift, PyPI version bumps, upstream KI closures, link rot, validation age — opens one consolidated issue per skill with `impact:critical/high/medium/low` label |
+| [`skill-freshness.yml`](.github/workflows/skill-freshness.yml) | Weekly cron + on-demand | Detects SHA drift, PyPI version bumps, upstream KI closures, link rot, validation age — opens one consolidated issue per skill with `impact:critical/high/medium/low`; auto-tier issues stay `manual-review` by default and switch to `@Copilot` only in copilot mode |
 | [`skill-test.yml`](.github/workflows/skill-test.yml) | Every PR + push to main + weekly cron | T2 import smoke (all auto-tier pins) + **T3 E2E Azure** (deploys agents, calls models, verifies the credential chain works against real resources in `<ci-resource-group>`) |
-| [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check-suite completion | Auto-approves and squash-merges Copilot PRs once all gates pass — closes the freshness loop without a human bottleneck |
+| [`auto-merge-copilot.yml`](.github/workflows/auto-merge-copilot.yml) | On check-suite completion | Auto-approves and squash-merges Copilot-mode refresh PRs once all gates pass — closes the delivery loop when execution mode is `copilot` |
 
 **Four testing tiers** (see [AGENTS.md § 9.8](AGENTS.md#98--skill-testing-tiers)) — each subsumes the ones below:
 
@@ -298,7 +306,7 @@ flowchart LR
 - **T2 · Import smoke** — `pip install <pinned-version>` + `python -c "from X import Y"` for every import in SKILL.md code samples. Required on MINOR/MAJOR upstream bumps.
 - **T3 · E2E Azure** — deploys real agents, makes real API calls (Foundry, ACA, ACR), verifies the credential chain works end-to-end. CI has OIDC-federated credentials and dedicated infra (`<ci-foundry-account>`, `<ci-container-registry>`, `<ci-container-app-env>`, `gpt-5.4-mini`, `text-embedding-3-small`). Required for any skill that tells consumers to connect to Azure.
 
-**Self-healing freshness loop.** Every wrapper skill ships a machine-readable [`upstream-pin.md`](scripts/templates/upstream-pin.template.md). The weekly cron runs five drift detectors (SHA, PyPI, upstream-issue closure, link rot, validation age), consolidates signals into one issue per skill with an impact label, and assigns auto-tier skills to **`@Copilot`**. The coding agent refreshes the pin, opens a PR, the six gates above validate it live against Azure, and `auto-merge-copilot` squash-merges on green. A human only intervenes when impact is `critical` or the pin requires credentials the agent doesn't have.
+**Self-healing freshness loop.** Every wrapper skill ships a machine-readable [`upstream-pin.md`](scripts/templates/upstream-pin.template.md). The detector always runs: `skill-freshness.yml` resolves `execution_mode=repository` against the repository variable `FRESHNESS_EXECUTION_MODE`, and if that variable is absent the safe default is `manual`. In manual mode, auto-tier issues stay human-owned and gain the `manual-review` label; in copilot mode, those same auto-tier issues are assigned to **`@Copilot`** and the delivery loop (`copilot-pr-autorun` → `auto-merge-copilot`) resumes. `automation_tier: issue_only` remains human-only in both modes. See the [manual freshness runbook](docs/maintenance/manual-skill-freshness.md) for the operating procedure.
 
 **Patterns from the trenches.** The pipeline is what it is because 25 hard-won patterns (LAW ingestion lag, OIDC TTL on teardown, ARM cross-resource cache lag, Foundry project-MI vs caller-UAMI 401s, autoregressive marker priming, Copilot-CLI 429 throttling, …) are baked into the workflows and fixture authoring rules. Each pattern carries a forensic provenance link to the run that exposed it. See [AGENTS.md § 9.7](AGENTS.md#97--azure-ci-credentials-and-e2e-infrastructure) for the full list, or the [Engineering page](https://aiappsgbb.github.io/awesome-gbb/engineering/) for a curated tour.
 
@@ -359,13 +367,15 @@ runs weekly and opens a per-skill GitHub issue when it detects:
 - Link rot on a documented URL
 - Validation age > 180 days
 
-Issues for skills with `automation_tier: auto` are **assigned to
-`@Copilot`** — the GitHub Copilot coding agent autonomously executes the
-pin file's `validation.script` and opens a PR. The standard CI gates
-([`skill-validation`](.github/workflows/skill-validation.yml) and
-[`automation-pr-gate`](.github/workflows/automation-pr-gate.yml)) review
-the PR. A human reviews and merges. See [AGENTS.md § 9](AGENTS.md) for
-the full lifecycle convention.
+Detection always runs in both modes. For `automation_tier: auto`, the
+repository variable `FRESHNESS_EXECUTION_MODE` decides issue ownership:
+`manual` (the safe default when the variable is absent) keeps the issue
+human-owned with a `manual-review` label, while `copilot` assigns the
+issue to `@Copilot` so the coding agent can open the refresh PR. Skills
+with `automation_tier: issue_only` stay human-only in both modes. See
+the [manual freshness runbook](docs/maintenance/manual-skill-freshness.md)
+and [AGENTS.md § 9](AGENTS.md#9--skill-freshness-lifecycle) for the full
+lifecycle convention.
 
 ## License
 
