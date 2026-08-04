@@ -744,9 +744,9 @@ def render_home(
         f'<div class="stat"><span class="stat-num">{industry_count}</span>'
         '<span class="stat-label">industries</span>'
         '<span class="stat-foot">FSI · MFG · Retail · Telco · Airline</span></div>'
-        '<div class="stat"><span class="stat-num">weekly</span>'
+        '<div class="stat"><span class="stat-num">twice weekly</span>'
         '<span class="stat-label">freshness checks</span>'
-        '<span class="stat-foot">CI-gated, auto-refresh</span></div>'
+        '<span class="stat-foot">manual-review or Copilot assignment</span></div>'
         '</section>'
     )
 
@@ -803,7 +803,7 @@ def render_engineering() -> str:
         '<h1>How <strong>awesome-gbb</strong> stays green</h1>'
         '<p class="lede">Every skill is a contract. Code samples in SKILL.md '
         'are the exact bytes a customer will paste — so we wrap the catalog '
-        'in six CI gates, four testing tiers, weekly drift detection, and a '
+        'in six CI gates, four testing tiers, twice weekly drift detection, and a '
         'self-healing refresh loop. Nothing lands on <code>main</code> '
         'unless it passed live on Azure.</p>'
         '</section>'
@@ -817,9 +817,9 @@ def render_engineering() -> str:
         '<div class="stat"><span class="stat-num">4</span>'
         '<span class="stat-label">testing tiers</span>'
         '<span class="stat-foot">T0 lint → T3 live Azure</span></div>'
-        '<div class="stat"><span class="stat-num">weekly</span>'
+        '<div class="stat"><span class="stat-num">twice weekly</span>'
         '<span class="stat-label">drift checks</span>'
-        '<span class="stat-foot">auto-PR by Copilot coding agent</span></div>'
+        '<span class="stat-foot">auto-PR in copilot mode by Copilot coding agent</span></div>'
         '</section>'
     )
 
@@ -886,11 +886,11 @@ def render_engineering() -> str:
          'Re-runs the pin file&rsquo;s <code>validation.script</code> on the '
          'runner and asserts every <code>expected_output</code> substring. '
          'No &ldquo;trust me, I tested&rdquo; path.'),
-        ('skill-freshness.yml', 'weekly cron',
+        ('skill-freshness.yml', 'twice weekly',
          'Detects SHA drift, PyPI bumps, upstream issue closure, link rot, '
          'and stale validation. Opens one consolidated issue per skill with '
-         'an <code>impact:</code> label — <em>auto</em>-tier issues are '
-         'assigned to <code>@Copilot</code>.'),
+         'an <code>impact:</code> label — auto-tier routing uses manual-review '
+         'or Copilot assignment.'),
         ('skill-test.yml', 'every PR · push · cron',
          'Unit tests, catalog lint, the all-pin smoke job, and the '
          'E2E Azure matrix — real <code>azd up</code>, real Foundry calls, '
@@ -948,20 +948,20 @@ def render_engineering() -> str:
         '<span class="count">manual default · closed end-to-end in copilot mode</span></div>'
         '<section class="install-cta" aria-labelledby="freshness-h">'
         '<h2 id="freshness-h" class="sr-only">Freshness loop</h2>'
-        '<p class="lede">The detector always runs on Monday and Thursday '
+        '<p class="lede">The detector runs twice weekly on Monday and Thursday '
         '07:00 UTC. Execution mode comes from '
         '<code>FRESHNESS_EXECUTION_MODE</code>: <code>manual</code> is the '
-        'safe default, while <code>copilot</code> hands auto-tier issues to '
-        'bot-owned automation. Manual mode keeps auto-tier issues human-owned '
-        'with <code>manual-review</code>; issue_only stays human-owned in '
-        'every mode. Only copilot mode closes the delivery loop end-to-end '
-        'by assigning <code>@Copilot</code>, opening refresh PRs, and '
-        'running auto-merge on success.</p>'
+        'safe default, while <code>copilot</code> keeps auto-tier routing on '
+        'manual-review or Copilot assignment. Manual mode keeps auto-tier '
+        'issues human-owned with <code>manual-review</code>; issue_only stays '
+        'human-owned in every mode. Only copilot mode closes the delivery '
+        'loop end-to-end by opening refresh PRs and running auto-merge in '
+        'copilot mode.</p>'
         '<pre><code>'
-        'freshness schedule: Monday 07:00 UTC + Thursday 07:00 UTC\n'
+        'freshness schedule: twice weekly (Monday 07:00 UTC + Thursday 07:00 UTC)\n'
         'execution modes: manual (default via FRESHNESS_EXECUTION_MODE) | copilot\n'
         'manual mode → issue_only stays human-owned; auto-tier issues → manual-review\n'
-        'copilot mode → auto-tier issues → assigned to @Copilot; Copilot coding agent opens refresh PR; auto-merge-copilot closes the delivery loop end-to-end\n'
+        'copilot mode → auto-tier issues → Copilot assignment; Copilot coding agent opens refresh PR in copilot mode; auto-merge-copilot closes the delivery loop in copilot mode\n'
         '</code></pre>'
         '<p class="install-alt">The Copilot agent reads '
         '<code>.github/copilot-setup-steps.md</code> as its scope contract '
