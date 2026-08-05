@@ -200,3 +200,26 @@ values rather than deriving them again.
   values.
 - Counts remain 59 fixture contract tests and 379 full catalog tests because
   this correction strengthens the existing behavioral test.
+
+## Round-11 correction (2026-08-05): naming and persistence must share one process
+
+**Root cause:** The naming and state-persistence instructions were separate
+Bash fences even though the fixture states every Bash tool call starts a fresh
+process. The round-10 test masked this by concatenating both fences. Literal
+execution of the state fence persisted an empty `APP_NAME`, and exact-head T3
+run `31011829922` compensated by adding a `PROJECT_DIR` assignment while
+combining the instructions.
+
+**Fix:** The state-persistence fence now generates `SUFFIX` and `APP_NAME`
+before deriving and persisting all four cross-shell values. Naming prose
+explicitly forbids a separate Bash invocation. The behavioral test executes
+that exact fence alone with only workflow inputs, then executes Step 3 in a
+new Bash process.
+
+**TDD evidence:**
+- RED on head `8d537c06`: exact state-fence replay persisted an empty app name
+  (`'^ci-smoke-mcp-[0-9a-f]{8}$' not found in ''`).
+- GREEN: the exact state fence persists a non-empty unique app name, and the
+  fresh Step 3 process renders literal `$schema`, the same app name, the exact
+  UAMI resource ID, and the exact ACR server.
+- Counts remain 59 fixture contract tests and 379 full catalog tests.

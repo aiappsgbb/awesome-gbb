@@ -179,14 +179,9 @@ deployed FQDN and call the MCP HTTP endpoint with three JSON-RPC requests
 
 ### Naming
 
-Generate a short UUID suffix for this run so parallel matrix legs and
-retries don't collide on resource names (Pattern 3):
-
-```bash
-SUFFIX=$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)
-APP_NAME="ci-smoke-mcp-${SUFFIX}"
-echo "APP_NAME=$APP_NAME"
-```
+Generate the short UUID suffix and application name inside the state-persistence
+block below. Do not run naming as a separate Bash tool invocation: the next
+invocation would not inherit `APP_NAME`.
 
 Use `$APP_NAME` for the Container App name, the ACR repository tag, and
 the `azd` environment name throughout.
@@ -196,12 +191,16 @@ the `azd` environment name throughout.
 Copilot CLI runs each Bash tool invocation in a **fresh process** — env
 vars set in one call are NOT available in the next. You MUST persist
 `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER` to a state
-file and `source` it at the top of every subsequent Bash block:
+file in the same Bash tool invocation that generates `APP_NAME`, then `source`
+it at the top of every subsequent Bash block:
 
 ```bash
+SUFFIX=$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)
+APP_NAME="ci-smoke-mcp-${SUFFIX}"
 STATE_FILE="/tmp/foundry-mcp-aca-state.env"
 UAMI_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
 ACR_SERVER="$ACR_LOGIN_SERVER"
+echo "APP_NAME=$APP_NAME"
 echo "APP_NAME=$APP_NAME" > "$STATE_FILE"
 echo "PROJECT_DIR=${GITHUB_WORKSPACE}/.scratch/${APP_NAME}" >> "$STATE_FILE"
 echo "UAMI_RESOURCE_ID=$UAMI_RESOURCE_ID" >> "$STATE_FILE"

@@ -633,7 +633,6 @@ class TestStatePersistence(unittest.TestCase):
             block_end = self.fixture.index("```", marker_index)
             return self.fixture[block_start + len("```bash\n"):block_end]
 
-        naming_block = bash_block_containing("SUFFIX=$(uuidgen")
         state_block = bash_block_containing(f'STATE_FILE="{state_path}"')
         parameters_block = bash_block_containing(
             'cat > "${PROJECT_DIR}/infra/main.parameters.json"'
@@ -641,7 +640,9 @@ class TestStatePersistence(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = pathlib.Path(temp_dir)
-            persisted_state = workspace / "state.env"
+            persisted_state = pathlib.Path(state_path)
+            persisted_state.unlink(missing_ok=True)
+            self.addCleanup(persisted_state.unlink, missing_ok=True)
             workflow_env = {
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
                 "GITHUB_WORKSPACE": str(workspace),
@@ -652,7 +653,7 @@ class TestStatePersistence(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    f"{naming_block}\n{state_block.replace(state_path, str(persisted_state))}",
+                    state_block,
                 ],
                 env=workflow_env,
                 capture_output=True,
@@ -676,7 +677,7 @@ class TestStatePersistence(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    parameters_block.replace(state_path, str(persisted_state)),
+                    parameters_block,
                 ],
                 env=workflow_env,
                 capture_output=True,
@@ -697,6 +698,11 @@ class TestStatePersistence(unittest.TestCase):
             "/subscriptions/test-subscription/resourceGroups/rg-awesome-gbb-ci/"
             "providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
             "uami-awesome-gbb-ci"
+        )
+        self.assertRegex(
+            state_values["APP_NAME"],
+            r"^ci-smoke-mcp-[0-9a-f]{8}$",
+            "the exact Step 1 state block must generate and persist APP_NAME",
         )
         self.assertIn("$schema", rendered)
         self.assertEqual(

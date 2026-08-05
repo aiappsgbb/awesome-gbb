@@ -205,3 +205,33 @@ AssertionError: None != '/subscriptions/test-subscription/.../uami-awesome-gbb-c
   PASS
 - Fixture contracts: 59 tests, PASS
 - Full catalog suite: 379 tests, PASS
+
+## Round-11 corrections (2026-08-05)
+
+### T3 rejection and genuine RED
+
+Exact-head run `31011829922` / job `92325758381` passed CI but is not valid
+final evidence. Artifact `8932995008` shows the agent combined the separate
+naming and state instructions and added an unprescribed
+`PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"` assignment. Literal
+fresh-shell execution of the state fence therefore remained unproven.
+
+The behavioral test stopped concatenating the naming and state fences and
+executed the exact state fence with only workflow environment variables. On
+head `8d537c06`, it failed:
+
+```text
+Regex didn't match: '^ci-smoke-mcp-[0-9a-f]{8}$' not found in ''
+```
+
+### Minimal correction
+
+1. Generate `SUFFIX` and `APP_NAME` inside the state-persistence fence.
+2. Persist all four cross-shell values in that same invocation.
+3. Explicitly forbid running naming as a separate Bash tool invocation.
+4. Keep Step 3 as a separate fresh process that sources only persisted state.
+
+### GREEN
+
+- Exact Step 1 state + fresh-shell Step 3 replay: PASS
+- Fixture contract count remains 59 tests
