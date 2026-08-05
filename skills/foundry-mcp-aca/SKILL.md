@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.2.3"
+  version: "1.2.4"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP.
 
@@ -67,13 +67,13 @@ The hosted agent container:
 
 ## MCP Protocol Requirements
 
-**ALL 6 JSON-RPC methods must return HTTP 200** — even if the response body is empty `{}`.
+**All JSON-RPC requests must return HTTP 200; notifications must return HTTP 202** (per [MCP 2025-06-18 transport spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)).
 Failing to handle any of these causes `FoundryChatClient.get_mcp_tool()` to silently fail.
 
 | Method | Purpose | Notes |
 |--------|---------|-------|
 | `initialize` | Protocol handshake | Must return server capabilities |
-| `notifications/initialized` | Client notification | Can return `{}` |
+| `notifications/initialized` | Client notification | HTTP 202 Accepted (no body) |
 | `tools/list` | Discover available tools | Must return tool definitions |
 | `prompts/list` | List prompts | Required by agent-framework (return empty list) |
 | `resources/list` | List resources | Required by agent-framework (return empty list) |
@@ -108,8 +108,8 @@ A pre-built .NET Cosmos DB MCPToolKit image provides 10 tools out of the box:
 
 ### Deployment
 
-Deploy as a per-project ACA. **Threadlight pilots are keyless-by-mandate** —
-prefer managed identity over Cosmos keys.
+Deploy as a per-project ACA. **Prefer keyless (managed identity) over Cosmos keys** —
+disable account keys at the Cosmos resource (`disableLocalAuth: true`).
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
@@ -155,8 +155,8 @@ prefer managed identity over Cosmos keys.
 > Pin `fastmcp < 3` in production, then upgrade when you're ready.
 > ```
 >
-> If you skim past that and ship, every Cosmos tool call will 404. The KYC PoC
-> burned an hour on this when an unrelated `azd deploy cosmos-mcp` rebuild
+> If you skim past that and ship, every Cosmos tool call will 404. A real
+> deployment burned an hour on this when an unrelated `azd deploy` rebuild
 > jumped fastmcp 2.14.7 → 3.2.4 and broke point reads + queries simultaneously.
 > Always upper-bound: `fastmcp>=2.0.0,<3.0.0`. Same rule applies to **any
 > client** that imports `fastmcp` (e.g. an ACA Job that drives the MCP) — pin
@@ -240,24 +240,24 @@ prefer managed identity over Cosmos keys.
 > **Where this should ideally be solved**: the agent runtime's MCP client should
 > catch JSON-RPC error code `-32600 Session not found` and re-initialize. Until
 > the platform handles this, treat MCP and agent as a **coupled deploy pair** —
-> you cannot redeploy one without the other on a running pilot.
+> you cannot redeploy one without the other on a running environment.
 >
 > **🛑 DO NOT redeploy MCP server without re-importing the consuming agent version** — the cached session ID will become stale and every tool call will 404. **DO bump the agent version pin** (or call `azd ai agent show` to refresh) **immediately after each MCP redeploy.** This is the most common production outage pattern on Foundry hosted agents.
 
-### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh PoC)
+### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh deployment)
 
 The single biggest "first-deploy doesn't work" gotcha for ACA→Cosmos:
 
 | Default | What happens | Fix |
 |---|---|---|
-| Cosmos `publicNetworkAccess: Disabled` (the Azure default) | All ACA→Cosmos traffic returns `Forbidden — public access disabled` | Set `publicNetworkAccess: Enabled` for pilots (production: use private endpoint) |
-| Cosmos `networkAclBypass: None` (default) AND `ipRules: []` | All ACA→Cosmos traffic returns `Forbidden — Request originated from IP <egress-ip> through public internet. This is blocked` | Either: (a) set `networkAclBypass: AzureServices` ⚠️ (see caveat) OR (b) add the ACA environment's egress IP to `ipRules` (proven path for pilots) |
+| Cosmos `publicNetworkAccess: Disabled` (the Azure default) | All ACA→Cosmos traffic returns `Forbidden — public access disabled` | Set `publicNetworkAccess: Enabled` for development (production: use private endpoint) |
+| Cosmos `networkAclBypass: None` (default) AND `ipRules: []` | All ACA→Cosmos traffic returns `Forbidden — Request originated from IP <egress-ip> through public internet. This is blocked` | Either: (a) set `networkAclBypass: AzureServices` ⚠️ (see caveat) OR (b) add the ACA environment's egress IP to `ipRules` (proven path for non-production environments) |
 | `networkAclBypass: AzureServices` is set, ACA still blocked | Even with `AzureServices` bypass, ACA managed-environment egress can still be treated as "public internet" by Cosmos. The bypass DOES NOT cover ACA the way it covers Functions/Logic Apps. | **Add the ACA egress IP to `ipRules` explicitly.** Get it from the Cosmos Forbidden error message ("Request originated from IP X.X.X.X"), then `az cosmosdb update -g <rg> -n <acct> --ip-range-filter "X.X.X.X"`. For prod, use a private endpoint instead. |
 
-**Bicep snippet** (pilot-grade default — put this in `infra/modules/cosmos-db.bicep`):
+**Bicep snippet** (development-grade default — put this in `infra/modules/cosmos-db.bicep`):
 
 ```bicep
-@description('Pilot posture: enables public network with AzureServices bypass + room for explicit ACA egress IP. Set false for prod-grade (private endpoint).')
+@description('Pilot posture (canonical — see azd-patterns): enables public network with AzureServices bypass + room for explicit ACA egress IP. Set false for prod-grade (private endpoint).')
 param pilotPosture bool = true
 
 @description('Optional explicit IP allowlist (for ACA egress IPs). Pilots: leave empty initially, then re-deploy with the IP from the Cosmos Forbidden error.')
@@ -315,7 +315,7 @@ hooks:
 ```
 
 This closes the last manual step in the "1-shot `azd up` for Cosmos-using
-processes" flow. Verified design against recent pilot forensics.
+processes" flow. Verified design against real deployment experience.
 
 ### Agent Configuration
 
@@ -392,7 +392,7 @@ VNet injection is intentionally out of scope here — see `foundry-vnet-deploy` 
 
 ---
 
-## Option D: Mock MCP Server (for PoC / Demo)
+## Option D: Mock MCP Server (for Prototyping / Demo)
 
 When backend systems are inaccessible (SAP, Oracle, corporate CRM, etc.), generate a
 **FastMCP mock server** backed by sample data from `specs/sample-data/`. The customer
@@ -536,9 +536,10 @@ python server.py
 
 ### Deploy to ACA
 
+Use the standard `azd` workflow (see `azure.yaml` service binding in [`azd-patterns`](../azd-patterns/)):
+
 ```bash
-az acr build --registry <acr> --image mock-mcp:latest ./src/mcp/
-# Then create ACA pointing to the image (see Bicep above)
+azd up   # provisions Bicep + builds image to ACR + patches ACA
 ```
 
 ### Swap to Real System
@@ -715,7 +716,7 @@ distributed tracing.
   "servers": {
     "my-mcp": {
       "type": "http",
-      "url": "https://<aca-fqdn>/mcp/",
+      "url": "https://<aca-fqdn>/mcp",
       "headers": { "Authorization": "Bearer ${input:mcpToken}" }
     }
   }
@@ -743,7 +744,7 @@ CI-tested.
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| MCP tools not appearing in agent | Server returns 400/404 on protocol methods | All 6 JSON-RPC methods must return HTTP 200 |
+| MCP tools not appearing in agent | Server returns 400/404 on protocol methods | Requests must return HTTP 200; notifications must return HTTP 202 |
 | `logging/setLevel` returns -32601 Method not found | Server didn't implement the optional logging capability OR used wrong casing | Either implement the method per [MCP spec § Logging](https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging) (camelCase `setLevel`) and declare `capabilities.logging`, or simply omit the capability — Foundry's MCP client tolerates servers that don't expose logging. |
 | MCP connection timeout | ACA not started (cold start) | Runtime retries automatically; set `minReplicas: 1` for always-on |
 | `invalid_payload` error | `${ENV_VAR}` in mcp-config.json not resolved → empty URL | Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. |
@@ -813,7 +814,7 @@ uv run scripts/seed_data.py --to src/mcp/data/   # threadlight-demo-data-factory
 
 ## Validate-or-reject (the canonical pattern for stateful tools)
 
-> **Highest-leverage pattern in the toolchain.** Observed in recent pilots:
+> **Highest-leverage pattern in the toolchain.** Observed in real deployments:
 > lifted recommendation quality from "junk packet
 > with `confidence: 0`" to "well-cited `confidence: 0.93` packet" with
 > a single server-side change. Apply this to **every** MCP tool that
