@@ -56,11 +56,9 @@ Open a Voice Live WSS session against the CI Foundry resource using the
 native `azure-ai-voicelive` SDK with `DefaultAzureCredential` (scope
 `https://ai.azure.com/.default` — handled by the SDK). Send one short
 text turn (a `session.update` configuring text modality + a single user
-message + a `response.create`). Receive at least one server event back
-from the family `session.created` / `session.updated` /
-`conversation.item.created` / `response.created` /
-`response.audio_transcript.delta` / `response.text.delta` /
-`response.done`. Close the session cleanly.
+message + a `response.create`). Receive `session.created`, then require
+the terminal `response.done` event and require its final
+`response.status` to be exactly `completed`. Close the session cleanly.
 
 The deployment to use is `gpt-realtime` (GA in Voice Live, NOT preview)
 on the CI Foundry resource. It is already provisioned in
@@ -112,8 +110,8 @@ Run the Python script below. It MUST complete without exception, print
 `voice-live-roundtrip-ok` on success, persist the successful runtime audit
 records to `/tmp/foundry-voice-live-smoke-evidence`, and exit 0. The
 workflow uploads the evidence file; it is the authoritative audit trail for
-the runtime connect record and first accepted-event record when the Copilot
-CLI transcript collapses long shell output.
+the runtime connect record, session-created record, and completed terminal
+record when the Copilot CLI transcript collapses long shell output.
 
 **Do NOT redirect the script's stdout anywhere.** The workflow harness
 already captures all output via its own `tee` pipeline (so the
@@ -163,20 +161,64 @@ if not resource:
 voicelive_endpoint = f"https://{resource}.services.ai.azure.com/"
 print(f"voicelive endpoint: {voicelive_endpoint}")
 
-ACCEPT = {
-    ServerEventType.SESSION_CREATED,
-    ServerEventType.SESSION_UPDATED,
-    ServerEventType.CONVERSATION_ITEM_CREATED,
-    ServerEventType.RESPONSE_CREATED,
-    ServerEventType.RESPONSE_TEXT_DELTA,
-    ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA,
-    ServerEventType.RESPONSE_DONE,
-}
+def enum_value(value):
+    if value is None:
+        return None
+    return getattr(value, "value", value)
+
+
+def event_type(event):
+    return enum_value(getattr(event, "type", None))
+
+
+def response_status(event):
+    response = getattr(event, "response", None)
+    return enum_value(getattr(response, "status", None))
+
+
+async def await_completed_response(conn, timeout_seconds=60.0):
+    saw_session_created = False
+    session_created_type = enum_value(ServerEventType.SESSION_CREATED)
+    response_done_type = enum_value(ServerEventType.RESPONSE_DONE)
+    error_type = enum_value(ServerEventType.ERROR)
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async for event in conn:
+                etype = event_type(event)
+                print(f"event: {etype}")
+
+                if etype == error_type:
+                    error = getattr(event, "error", str(event))
+                    raise RuntimeError(f"server error event: {error}")
+
+                if etype == session_created_type:
+                    if not saw_session_created:
+                        record("VOICELIVE_EVENT type=session.created")
+                    saw_session_created = True
+                    continue
+
+                if etype == response_done_type:
+                    if not saw_session_created:
+                        raise RuntimeError("response.done received before session.created")
+                    status = response_status(event)
+                    status_label = "None" if status is None else str(status)
+                    if status_label != "completed":
+                        raise RuntimeError(
+                            f"response.done status={status_label} is not completed"
+                        )
+                    record("VOICELIVE_TERMINAL type=response.done status=completed")
+                    return status_label
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(
+            f"timeout waiting for response.done after {timeout_seconds:g}s"
+        ) from exc
+
+    if not saw_session_created:
+        raise RuntimeError("stream ended before session.created")
+    raise RuntimeError("stream ended before response.done")
 
 async def main() -> None:
-    saw_event = False
-    saw_terminal = False
-    saw_error = None
     async with DefaultAzureCredential() as cred:
         # SDK 1.3 defaults 2026-07-15; the fixture preserves the live-proven 2026-04-10 API.
         async with connect(
@@ -202,34 +244,11 @@ async def main() -> None:
             ))
             await conn.response.create()
 
-            # Wait up to 60 s for any accepted server event (Voice Live
-            # response generation is typically 5-15 s — 60 s leaves
-            # headroom for cold-start jitter without flaking).
-            try:
-                async with asyncio.timeout(60.0):
-                    async for event in conn:
-                        etype = getattr(event, "type", None)
-                        print(f"event: {etype}")
-                        if etype == ServerEventType.ERROR:
-                            saw_error = getattr(event, "error", str(event))
-                            break
-                        if etype in ACCEPT:
-                            if not saw_event:
-                                record(f"VOICELIVE_EVENT type={event.type}")
-                            saw_event = True
-                        if etype == ServerEventType.RESPONSE_DONE:
-                            saw_terminal = True
-                            break
-            except asyncio.TimeoutError:
-                print("event loop hit 60 s timeout")
+            # Voice Live emits response.done for every completed response
+            # attempt, regardless of final state. Only status=completed is
+            # success for this smoke.
+            await await_completed_response(conn, timeout_seconds=60.0)
 
-    if saw_error is not None:
-        print(f"FAIL: server error event: {saw_error}", file=sys.stderr)
-        sys.exit(1)
-    if not saw_event:
-        print("FAIL: no accepted server event received", file=sys.stderr)
-        sys.exit(1)
-    print(f"saw_terminal={saw_terminal}")
     print("voice-live-roundtrip-ok")
 
 asyncio.run(main())
@@ -241,11 +260,10 @@ Success criteria for Step 3:
 - Process exits 0.
 - Stdout contains the literal string `voice-live-roundtrip-ok`.
 - The evidence file contains exactly the successful runtime audit records:
-  one connect record and one first accepted-event record.
-- At least one event of type `session.created` / `session.updated` /
-  `conversation.item.created` / `response.created` /
-  `response.text.delta` / `response.audio_transcript.delta` /
-  `response.done` was printed.
+  one connect record, one session-created record, and one terminal completed
+  record.
+- The terminal event was `response.done` and its final
+  `response.status` was exactly `completed`.
 
 If the script raises `ClientAuthenticationError` or any HTTP
 `401`/`403` from the WSS handshake, the CI UAMI is missing a role
@@ -265,7 +283,8 @@ match the workflow's anchored grep — substitute the leading `_` back to
 `S` when you emit the actual `printf` command.
 
 On success (Step 3's script exited 0 AND its stdout contained
-`voice-live-roundtrip-ok` AND the evidence file contains both runtime records):
+`voice-live-roundtrip-ok` AND the evidence file contains exactly three
+runtime records: connect, session-created, and terminal completed):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-live-smoke-result
@@ -273,8 +292,9 @@ printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-live-smoke-result
 
 On ANY failure (auth context missing in Step 0, `pip install` failure
 in Step 2, Python exception, `_MOKE_RESULT=FAIL` condition in Step 3,
-HTTP 401/403 from the WSS handshake, no accepted server event received,
-explicit server-side `error` event):
+HTTP 401/403 from the WSS handshake, timeout before terminal
+`response.done`, stream ending before `response.done`, non-`completed`
+terminal status, or explicit server-side `error` event):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-voice-live-smoke-result

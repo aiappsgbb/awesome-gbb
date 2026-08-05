@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import ast
+import asyncio
+from enum import Enum
 import json
 import pathlib
 import re
+from types import SimpleNamespace
 import unittest
 
 import yaml
@@ -45,6 +49,70 @@ def _python_heredoc(markdown: str) -> str:
         if match:
             return match.group("body")
     raise AssertionError("fixture Python heredoc not found")
+
+
+def _load_fixture_event_helpers() -> dict[str, object]:
+    python = _python_heredoc(FIXTURE.read_text(encoding="utf-8"))
+    tree = ast.parse(python)
+    helper_defs = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name not in {"main", "record"}
+    ]
+    module = ast.Module(body=helper_defs, type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace: dict[str, object] = {
+        "asyncio": asyncio,
+        "ServerEventType": FakeServerEventType,
+        "record": lambda message: None,
+        "print": lambda *args, **kwargs: None,
+        "RuntimeError": RuntimeError,
+        "getattr": getattr,
+        "str": str,
+    }
+    exec(compile(module, "<foundry-voice-live-fixture-helpers>", "exec"), namespace)
+    if "await_completed_response" not in namespace:
+        raise AssertionError("fixture helper await_completed_response not found")
+    return namespace
+
+
+class FakeServerEventType(Enum):
+    SESSION_CREATED = "session.created"
+    RESPONSE_DONE = "response.done"
+    ERROR = "error"
+
+
+class FakeStatus(Enum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INCOMPLETE = "incomplete"
+    IN_PROGRESS = "in_progress"
+
+
+class FakeAsyncStream:
+    def __init__(self, events: list[object], *, never_end: bool = False) -> None:
+        self._events = list(events)
+        self._never_end = never_end
+
+    def __aiter__(self) -> "FakeAsyncStream":
+        return self
+
+    async def __anext__(self) -> object:
+        if self._events:
+            return self._events.pop(0)
+        if self._never_end:
+            await asyncio.sleep(3600)
+        raise StopAsyncIteration
+
+
+def _event(event_type: object, *, status: object = None, error: object = None) -> object:
+    response = SimpleNamespace(status=status) if status is not _NO_RESPONSE else None
+    return SimpleNamespace(type=event_type, response=response, error=error)
+
+
+_NO_RESPONSE = object()
 
 
 SEMVER_RE = re.compile(
@@ -412,6 +480,89 @@ class FoundryVoiceLiveSkillContractTests(unittest.TestCase):
                 self.assertNotIn(stale, self.skill)
 
 
+class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.helpers = _load_fixture_event_helpers()
+        cls.await_completed_response = cls.helpers["await_completed_response"]
+
+    async def _run(
+        self,
+        events: list[object],
+        *,
+        timeout_seconds: float = 0.01,
+        never_end: bool = False,
+    ) -> tuple[object, list[str]]:
+        records: list[str] = []
+        self.helpers["record"] = records.append
+        result = await self.helpers["await_completed_response"](
+            FakeAsyncStream(events, never_end=never_end),
+            timeout_seconds=timeout_seconds,
+        )
+        return result, records
+
+    async def test_session_created_then_timeout_fails(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "timeout"):
+            await self._run(
+                [_event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE)],
+                never_end=True,
+            )
+
+    async def test_session_created_then_completed_response_done_succeeds_and_records_audit(self) -> None:
+        result, records = await self._run(
+            [
+                _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.COMPLETED),
+            ],
+        )
+
+        self.assertEqual(result, "completed")
+        self.assertEqual(
+            records,
+            [
+                "VOICELIVE_EVENT type=session.created",
+                "VOICELIVE_TERMINAL type=response.done status=completed",
+            ],
+        )
+
+    async def test_server_error_event_fails_immediately(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "server error event"):
+            await self._run([_event(FakeServerEventType.ERROR, error="boom")])
+
+    async def test_stream_ending_before_response_done_fails(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "stream ended before response.done"):
+            await self._run([_event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE)])
+
+    async def test_response_done_failed_fails(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "status=failed"):
+            await self._run(
+                [
+                    _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                    _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.FAILED),
+                ],
+            )
+
+    async def test_response_done_cancelled_fails(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "status=cancelled"):
+            await self._run(
+                [
+                    _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                    _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.CANCELLED),
+                ],
+            )
+
+    async def test_response_done_non_completed_statuses_fail(self) -> None:
+        for status in (FakeStatus.INCOMPLETE, FakeStatus.IN_PROGRESS, None):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(RuntimeError, "response.done"):
+                    await self._run(
+                        [
+                            _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                            _event(FakeServerEventType.RESPONSE_DONE, status=status),
+                        ],
+                    )
+
+
 class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -505,7 +656,8 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
 
         for evidence in (
             'record("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")',
-            'record(f"VOICELIVE_EVENT type={event.type}")',
+            'record("VOICELIVE_EVENT type=session.created")',
+            'record("VOICELIVE_TERMINAL type=response.done status=completed")',
         ):
             with self.subTest(evidence=evidence):
                 self.assertIn(evidence, self.python)
@@ -513,6 +665,7 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         for prose_only_token in (
             "VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3",
             "VOICELIVE_EVENT type=",
+            "VOICELIVE_TERMINAL type=",
         ):
             with self.subTest(prose_only_token=prose_only_token):
                 self.assertNotIn(prose_only_token, self.fixture_without_python)
@@ -534,7 +687,8 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
             append_line,
             print_line,
             'record("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")',
-            'record(f"VOICELIVE_EVENT type={event.type}")',
+            'record("VOICELIVE_EVENT type=session.created")',
+            'record("VOICELIVE_TERMINAL type=response.done status=completed")',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.python)
@@ -553,14 +707,12 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
             "UserMessageItem",
             'text="say hi"',
             "ServerEventType.SESSION_CREATED",
-            "ServerEventType.SESSION_UPDATED",
-            "ServerEventType.CONVERSATION_ITEM_CREATED",
-            "ServerEventType.RESPONSE_CREATED",
-            "ServerEventType.RESPONSE_TEXT_DELTA",
-            "ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA",
             "ServerEventType.RESPONSE_DONE",
             "ServerEventType.ERROR",
-            "FAIL: server error event",
+            "async def await_completed_response(conn, timeout_seconds=60.0):",
+            "timeout waiting for response.done",
+            "stream ended before response.done",
+            "response.done status=",
             "voice-live-roundtrip-ok",
             "/tmp/foundry-voice-live-smoke-result",
             "printf 'SMOKE_RESULT=PASS\\n' > /tmp/foundry-voice-live-smoke-result",
@@ -574,9 +726,21 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         self.assertLess(self.fixture.index("voice-live-roundtrip-ok"), self.fixture.index("## Step 4"))
         self.assertIn(
             "On success (Step 3's script exited 0 AND its stdout contained\n"
-            "`voice-live-roundtrip-ok` AND the evidence file contains both runtime records):",
+            "`voice-live-roundtrip-ok` AND the evidence file contains exactly three\n"
+            "runtime records: connect, session-created, and terminal completed):",
             self.fixture,
         )
+        for forbidden in (
+            "ACCEPT =",
+            "saw_event",
+            "saw_terminal",
+            "event loop hit 60 s timeout",
+            "no accepted server event received",
+            "first accepted-event record",
+            "At least one event of type",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.fixture)
 
     def test_fixture_only_uses_smoke_result_literals_in_authoritative_printf_commands(self) -> None:
         authoritative_lines = (
