@@ -25,7 +25,7 @@ This skill excludes deployment, RBAC, identity grants, containers, registries, `
 `create_harness_agent` returns a normal Agent Framework `Agent` around any compatible chat client. Preserve this exact context-provider order:
 
 1. history;
-2. conditional before/after compaction;
+2. optional after-call `CompactionProvider`;
 3. todo;
 4. `AgentModeProvider`;
 5. `FileMemoryProvider`;
@@ -34,6 +34,8 @@ This skill excludes deployment, RBAC, identity grants, containers, registries, `
 8. optional `BackgroundAgentsProvider`;
 9. optional shell provider;
 10. caller context providers.
+
+Before-call compaction is not a context provider: it is attached to `agent.compaction_strategy`. When both token budgets create the shared strategy, the factory assembles the before-call strategy and after-call `CompactionProvider` phases together.
 
 Preserve this tool order:
 
@@ -67,7 +69,7 @@ The default history provider is `InMemoryHistoryProvider`. Per-service-call hist
 | OpenTelemetry | Factory sets the OTel provider name. | Released; telemetry destination and sensitive-data settings remain caller-owned. |
 | Shared file access | Opt in only through `file_access_store`; Python 1.13.0 has no `disable_file_access` parameter. | Experimental; read and write tools require approval by default, and the host owns access policy and real sandboxing. |
 | Skills | Opt-in through `skills_provider` and/or `skills_paths`. | Released; external skills are untrusted input and are not Foundry Skills REST distribution. |
-| Background agents | Opt-in through `background_agents`. | Experimental. |
+| Background agents | Opt-in through `background_agents`; child sessions and running tasks are process memory, not restart state. | Experimental; long-lived providers require host-owned cancellation, cleanup, and retention management. |
 | Shell | Requires `shell_executor` and a client implementing `SupportsShellTool`. | Experimental and prerelease. |
 | Autonomous looping | Opt-in through `loop_should_continue`; the default cap resolves to `10`. | Experimental; every recipe must pass an explicit positive cap. |
 | Caller providers and middleware | Opt-in advanced extension surfaces. | Preserve the built-in order. |
@@ -114,7 +116,9 @@ Inspect the structured response before reading `.text`. A `function_approval_req
 
 Persist and restore the full opaque `AgentSession`, not only transcript text. Restore it with the same agent, providers, middleware, and stores. Partition durable state by authenticated tenant and user; authorize the session identifier before loading; reject caller-supplied serialized state; and never mutate provider-owned keys directly.
 
-File memory stores notes and artifacts. `AgentSession` carries the history, approval, mode, todo, provider, and middleware state needed for recovery. Assign one owner to transcript persistence: in the hosted recipe, keep `store=False` and the no-load/no-store Harness history provider so the adapter remains the owner.
+Full `AgentSession` persistence restores serializable session, provider, and middleware state, including history, approval, mode, and todo state. It does not serialize provider-instance runtime or external stores. `BackgroundAgentsProvider` child sessions and running `asyncio` tasks are non-serializable process memory; after restart, running tasks are **LOST**. Pinned issue [#7385](https://github.com/microsoft/agent-framework/issues/7385) also means a long-lived provider requires host-owned cancellation, cleanup, and retention management.
+
+File-memory and other external stores must be made separately durable and partitioned by authenticated tenant and user. Assign one owner to transcript persistence: in the hosted recipe, keep `store=False` and the no-load/no-store Harness history provider so the adapter remains the owner.
 
 ## Offline contract and pin validation
 
@@ -158,7 +162,8 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 | A standing auto-approval rule approves an unintended tool. | Its callback matched only a tool name that collides across tools or servers. | Match arguments and the server boundary as well as the tool name. |
 | A standing or "always approve" choice is treated as authorization. | Standing approval is session-backed UX state, not an enforceable authorization boundary. | Implement authorization in the application and use [`foundry-agt`](../foundry-agt/SKILL.md) for enforceable policy. |
 | A headless run stalls on a plan or tool request. | Plan mode or approval-required tools were enabled without caller UX. | Disable those features or implement the complete plan/approval protocol. |
-| State disappears after restart. | The default in-memory history or only message text was persisted. | Persist and restore the full opaque `AgentSession` with the same composition. |
+| Serializable session state disappears after restart. | The default in-memory history or only message text was persisted. | Persist and restore the full opaque `AgentSession` with the same composition; separately persist and partition external stores. |
+| Background work was expected to resume after restart. | `BackgroundAgentsProvider` child sessions and running `asyncio` tasks are non-serializable process memory. | Treat running tasks as LOST after restart; make the host own cancellation, cleanup, retention, and any durable work queue. |
 | A restored session crosses a tenant or user boundary. | Session identifiers and serialized payloads were trusted before tenant/user authorization, or durable state was not partitioned. | Authorize the authenticated tenant and user before loading, partition state by both boundaries, and reject untrusted session payloads. |
 | Hosted transcripts duplicate or history is rejected. | `store=False` is missing, or the Harness history provider loads/stores transcript messages while `ResponsesHostServer` owns them. | Keep `default_options={"store": False}` and use the no-load/no-store history provider from the hosted reference. |
 | Hosting adapter semver is used to infer the Hosted Agents service lifecycle. | Adapter package maturity and Hosted Agents service status were treated as one lifecycle. | Track and report the adapter lifecycle and Hosted Agents service lifecycle independently. |
