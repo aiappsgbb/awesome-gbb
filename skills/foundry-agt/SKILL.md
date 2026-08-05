@@ -11,7 +11,7 @@ description: >
   adapter, agt verify, agt doctor, agt red-team, ACS policy, guardrail decision,
   AGT vs GuardrailTool. DO NOT USE FOR: create_harness_agent runtime scaffolding
   or approval UX (use agent-framework-harness); Foundry deployment (use
-  foundry-hosted-agents); Citadel hub setup (use citadel-spoke-onboarding); App
+  foundry-hosted-agents); Citadel spoke onboarding (use citadel-spoke-onboarding); App
   Insights wiring (use foundry-observability); eval scoring (use foundry-evals).
 metadata:
   version: "1.3.2"
