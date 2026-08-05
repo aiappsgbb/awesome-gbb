@@ -1,23 +1,19 @@
 ---
 name: foundry-skill-catalog
 description: >
-  Centrally store and distribute instruction-only `SKILL.md` files via the
-  Foundry **Skills** REST API (`{project}/skills`) — and consume them at
-  runtime from MAF agents through a custom `SkillsSource` adapter. Hosted
-  agents only (no Prompt agents). Covers the JSON vs ZIP modes (JSON mode
-  is **write-only** — body never returned), the mandatory
-  `Foundry-Features: Skills=V1Preview` header, the unquoted-frontmatter
-  HTTP 500 trap, `allow_preview=True`, and the verified-working
-  `FoundrySkillsSource(SkillsSource)` for `agent_framework.SkillsProvider`.
-  USE FOR: foundry skills, central skill store, client.beta.skills,
-  has_blob, create_from_package, Foundry-Features Skills V1Preview,
-  FoundrySkillsSource, SkillsProvider with Foundry, skills:import,
-  skills:download.
-  DO NOT USE FOR: awesome-gbb skill authoring (this very repo), Foundry
-  tools (use foundry-toolbox), file-system SkillsProvider wiring (use
-  foundry-hosted-agents § Skill Loading), generic hosted-agent runtime.
+  Store and distribute instruction-only SKILL.md files through the Foundry
+  Skills REST API ({project}/skills), then consume them from MAF agents through
+  FoundrySkillsSource and SkillsProvider. Covers JSON versus ZIP modes, the JSON
+  write-only trap, mandatory Foundry-Features: Skills=V1Preview header,
+  quoted-frontmatter HTTP 500, allow_preview=True, and runtime fetch. USE FOR:
+  Foundry skills, central skill store, client.beta.skills, has_blob,
+  create_from_package, FoundrySkillsSource, SkillsProvider with Foundry,
+  skills:import, skills:download. DO NOT USE FOR: awesome-gbb skill authoring;
+  create_harness_agent runtime composition or file-system skills wiring (use
+  agent-framework-harness); Foundry tools (use foundry-toolbox); general
+  hosted-agent deployment (use foundry-hosted-agents).
 metadata:
-  version: "1.2.3"
+  version: "1.2.4"
 ---
 
 # Foundry Skills Catalog — Reference Guide
@@ -106,6 +102,7 @@ workarounds are:
 | Situation | Use |
 |---|---|
 | You want one team to own canonical "how to handle X" instructions and many Hosted agents to inherit them | **This skill** (Foundry Skills + `FoundrySkillsSource`) |
+| Foundry Skills REST distribution vs. Harness-local `SkillsProvider` / `skills_paths` composition | **This skill** for REST distribution; [`agent-framework-harness`](../agent-framework-harness/SKILL.md) for Harness-local composition |
 | Every agent has its own instructions and they never need to be shared | Just put `SKILL.md` files in the agent's `skills/` dir → standard `SkillsProvider.from_paths(…)` (see `foundry-hosted-agents` § Skill Loading) |
 | You need progressive-disclosure tools, but the **bodies** live elsewhere (DB, env, code) | `agent_framework.InlineSkill` directly + `InMemorySkillsSource` (see MAF docs) |
 | You need to share executable scripts / multi-file resources, not just an instruction body | Foundry Skills ZIP-mode (this skill) — the ZIP can contain `scripts/`, `references/`, `assets/` |

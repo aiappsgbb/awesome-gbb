@@ -1,24 +1,20 @@
 ---
 name: foundry-hosted-agents
 description: >
-  Deploy + manage Foundry hosted agents — container deploy via unified
-  azure.yaml is GA; source-code --deploy-mode code is still preview. MAF
-  1.13 current, azd ext install microsoft.foundry, implicit agent access
-  (no default role grant). Read the body for patterns, identity,
-  rollout, troubleshooting. USE FOR: deploy foundry agent, hosted agent,
-  container agent, azure.yaml, azd ai agent, microsoft.foundry, MAF,
-  FoundryChatClient, ResponsesHostServer, ACR push, batch eval, agent
-  identity, Foundry User role, entra-agent-id, Responses/Invocations
-  protocols, Activity protocol, blue-green deploy, canary rollout,
-  version rollback, traffic routing, version_selector, agent_endpoint,
-  update_details. DO NOT USE FOR: prompt agents (use
-  foundry-prompt-agents), ACA MCP (use foundry-mcp-aca), GHCP coding
-  agent (use ghcp-hosted-agents), Citadel hub/spoke (use
-  citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
-  continuous eval (use foundry-evals), Routines (use foundry-routines),
-  A2A wiring (use foundry-toolbox).
+  Deploy and manage Foundry hosted agents: GA container deploy through unified
+  azure.yaml and azd, MAF 1.13, microsoft.foundry extension, implicit agent
+  access, ResponsesHostServer, ACR, identity, rollout, and troubleshooting. USE
+  FOR: deploy foundry agent, hosted agent, container agent, azure.yaml, azd ai
+  agent, FoundryChatClient, ResponsesHostServer, ACR push, agent identity,
+  Foundry User, Responses/Invocations protocols, Activity protocol, blue-green
+  deploy, canary, rollback, traffic routing, version_selector, agent_endpoint,
+  update_details. DO NOT USE FOR: create_harness_agent runtime composition (use
+  agent-framework-harness); prompt agents (use foundry-prompt-agents); ACA MCP
+  (use foundry-mcp-aca); GHCP agents (use ghcp-hosted-agents); Citadel (use
+  citadel-hub-deploy); continuous eval (use foundry-evals); routines (use
+  foundry-routines); A2A (use foundry-toolbox).
 metadata:
-  version: "2.1.1"
+  version: "2.1.2"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -55,6 +51,10 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 - **Migrating from the legacy two-file `agent.yaml` + `agent.manifest.yaml`
   contract** — both are gone; a single `azure.yaml` is now the source of truth
   ([§ azure.yaml](#azureyaml-unified-hosted-agent-configuration))
+
+| Need | Use |
+|---|---|
+| Build an already-hostable `Agent` with `create_harness_agent` | [`agent-framework-harness`](../agent-framework-harness/SKILL.md) |
 
 > **Choosing a model?** See [`references/model-selection.md`](references/model-selection.md) for the model / region / capacity / data-residency decision before you `azd provision`.
 
@@ -476,6 +476,8 @@ LangGraph state-graph requirements).
 > [`agentic-loop` skill](https://github.com/aiappsgbb/agentic-loop) §
 > "Foundry Model Selector". That table is the single source of truth for
 > model selection across all awesome-gbb skills — we don't duplicate it here.
+
+This skill hosts and deploys the returned `Agent`; [`agent-framework-harness`](../agent-framework-harness/SKILL.md) owns factory composition.
 
 > **MUST:** Copy verbatim from [`references/python/main.py`](references/python/main.py). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the field-validated `FoundryChatClient` + `Agent` + `ResponsesHostServer` shape for a single-purpose hosted agent (one tool, no `SkillsProvider`, MAF 1.6.0).
 

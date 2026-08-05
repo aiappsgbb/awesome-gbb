@@ -3,21 +3,18 @@ name: foundry-agt
 description: >
   Wrap the Microsoft Agent Governance Toolkit (AGT) around Foundry hosted
   agents, MCP servers, and Citadel spokes. Adds deterministic policy
-  enforcement, capability allow/deny, hash-chained audit, and OWASP ASI
-  2026 coverage via in-process MAF middleware (8-12 µs/eval verified on
-  Windows + Py 3.13 + AGT 3.7.0) or ACA sidecar. Ships 3 starter policies
-  (default / HITL gate / PII deny), working create_governance_middleware
-  snippet, ACA sidecar Bicep, and field-tested Known Issues (rogue detection
-  setup). USE FOR: agent governance, AGT, agent-governance-toolkit,
-  policy enforcement, capability guard, audit trail, OWASP ASI 2026, MAF
-  middleware, MCP scanner, PromptDefense, Citadel adapter, agt verify, agt
-  doctor, agt red-team, acs policy, guardrail decision, agt vs
-  guardrailtool. DO NOT USE FOR: Foundry agent deployment (use
-  foundry-hosted-agents), Citadel hub setup (use citadel-spoke-onboarding),
-  App Insights wiring (use foundry-observability), eval scoring (use
-  foundry-evals).
+  enforcement, capability allow/deny, hash-chained audit, OWASP ASI 2026
+  coverage, MAF middleware, ACA sidecar patterns, starter policies, and
+  field-tested known issues. USE FOR: agent governance,
+  agent-governance-toolkit, deterministic policy, capability guard, audit
+  trail, OWASP ASI 2026, MAF middleware, MCP scanner, PromptDefense, Citadel
+  adapter, agt verify, agt doctor, agt red-team, ACS policy, guardrail decision,
+  AGT vs GuardrailTool. DO NOT USE FOR: create_harness_agent runtime scaffolding
+  or approval UX (use agent-framework-harness); Foundry deployment (use
+  foundry-hosted-agents); Citadel hub setup (use citadel-spoke-onboarding); App
+  Insights wiring (use foundry-observability); eval scoring (use foundry-evals).
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit for GBB Foundry workloads
@@ -121,6 +118,7 @@ you've mistaken the problem for an AGT one:
 | Eval scoring (task adherence, intent resolution, custom judges) | [`foundry-evals`](../foundry-evals/SKILL.md) | AGT's PromptDefense covers **adversarial** regression; `foundry-evals` covers **quality** regression. Run both. |
 | Telemetry plumbing (App Insights, OTel exporters) | [`foundry-observability`](../foundry-observability/SKILL.md) | AGT **emits** CloudEvents; the observability skill **owns** the pipe they flow through. |
 | Authoring or deploying the Foundry agent itself | [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md), [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills/blob/main/skills/threadlight-deploy/SKILL.md) | AGT plugs **into** the agent runtime. It does not provision, deploy, or version your agent. |
+| Harness modes, todos, compaction, or native approval UX | [`agent-framework-harness`](../agent-framework-harness/SKILL.md) | Native Harness approval is caller interaction/UX, not AGT policy enforcement. |
 | Vector store / RAG / retrieval | [`foundry-iq`](../foundry-iq/SKILL.md) | AGT has no embeddings story — that's not its layer. |
 
 ---
