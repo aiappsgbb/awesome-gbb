@@ -201,7 +201,9 @@ validation:
       "python-dotenv~=1.2.2" \
       "pyyaml~=6.0"
     python - <<'PY'
+    import importlib.util
     import os
+    import sys
     from pathlib import Path
     import tomllib
     import yaml
@@ -210,7 +212,9 @@ validation:
     from agent_framework.foundry import FoundryChatClient
     from agent_framework_foundry_hosting import ResponsesHostServer
     from azure.ai.projects import AIProjectClient
+    from microsoft.opentelemetry import use_microsoft_opentelemetry
     from mcp import McpError
+    from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
 
     canonical_dependencies = [
         "agent-framework-core~=1.13.0",
@@ -233,14 +237,19 @@ validation:
     relative_pyproject = Path(
         "skills/foundry-hosted-agents/references/python/pyproject.toml"
     )
+    relative_container = Path(
+        "skills/foundry-hosted-agents/references/python/container.py"
+    )
     relative_pin = Path("skills/foundry-hosted-agents/references/upstream-pin.md")
 
     repo_root = Path(
         os.environ.get("PIN_VALIDATION_REPO_ROOT", Path.cwd())
     ).resolve()
     pyproject_path = repo_root / relative_pyproject
+    container_path = repo_root / relative_container
     pin_path = repo_root / relative_pin
     assert pyproject_path.exists(), f"missing canonical pyproject: {pyproject_path}"
+    assert container_path.exists(), f"missing canonical container: {container_path}"
     assert pin_path.exists(), f"missing canonical pin: {pin_path}"
 
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
@@ -276,6 +285,24 @@ validation:
     assert pin["known_issues_count"] == 9
     assert len(pin["known_issues"]) == pin["known_issues_count"]
 
+    container_spec = importlib.util.spec_from_file_location(
+        "foundry_hosted_agents_container", container_path
+    )
+    assert container_spec and container_spec.loader, (
+        f"unable to load canonical container spec: {container_path}"
+    )
+    container_module = importlib.util.module_from_spec(container_spec)
+    sys.modules[container_spec.name] = container_module
+    container_spec.loader.exec_module(container_module)
+    assert container_module.Agent
+    assert container_module.SkillsProvider
+    assert container_module.MCPStreamableHTTPTool
+    assert container_module.FoundryChatClient
+    assert container_module.ResponsesHostServer
+    assert callable(container_module.main)
+    assert hasattr(container_module, "my_tool")
+    print("ok canonical container import")
+
     class OfflineCredential:
         def get_token(self, *scopes, **kwargs):
             raise RuntimeError("network is outside the import smoke")
@@ -293,12 +320,17 @@ validation:
     assert version("azure-ai-projects").startswith("2.3.")
     assert version("mcp").startswith("1.29.")
     client.close()
+    assert callable(use_microsoft_opentelemetry)
+    assert OpenAIInstrumentor
     print("ok hosted coherent stack")
     print("ok update_details")
+    print("ok otel bundle")
     PY
   expected_output:
+    - "ok canonical container import"
     - "ok hosted coherent stack"
     - "ok update_details"
+    - "ok otel bundle"
 
 last_validated: 2026-08-04
 validated_by: ricchi
