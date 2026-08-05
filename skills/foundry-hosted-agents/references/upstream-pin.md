@@ -201,8 +201,8 @@ validation:
       "python-dotenv~=1.2.2" \
       "pyyaml~=6.0"
     python - <<'PY'
+    import os
     from pathlib import Path
-    import subprocess
     import tomllib
     import yaml
     from importlib.metadata import version
@@ -234,66 +234,22 @@ validation:
         "skills/foundry-hosted-agents/references/python/pyproject.toml"
     )
     relative_pin = Path("skills/foundry-hosted-agents/references/upstream-pin.md")
-    relative_skill = Path("skills/foundry-hosted-agents/SKILL.md")
 
-    def resolve_repo_root() -> Path:
-        direct_pin = Path.cwd() / relative_pin
-        if direct_pin.exists():
-            return Path.cwd()
+    repo_root = Path(
+        os.environ.get("PIN_VALIDATION_REPO_ROOT", Path.cwd())
+    ).resolve()
+    pyproject_path = repo_root / relative_pyproject
+    pin_path = repo_root / relative_pin
+    assert pyproject_path.exists(), f"missing canonical pyproject: {pyproject_path}"
+    assert pin_path.exists(), f"missing canonical pin: {pin_path}"
 
-        candidates = []
-        repo_roots = [
-            Path.home() / "work" / "awesome-gbb" / "awesome-gbb",
-            Path.home() / "actions-runner" / "_work" / "awesome-gbb" / "awesome-gbb",
-            Path.home() / ".copilot" / "repos" / "awesome-gbb",
-        ]
-        worktrees_root = (
-            Path.home() / ".copilot" / "repos" / "copilot-worktrees" / "awesome-gbb"
-        )
-        if worktrees_root.exists():
-            for child in worktrees_root.iterdir():
-                if child.is_dir():
-                    repo_roots.append(child)
-
-        for repo_root in repo_roots:
-            candidate = repo_root / relative_pin
-            if not candidate.exists():
-                continue
-            dirty = 0
-            probe = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repo_root),
-                    "status",
-                    "--porcelain",
-                    "--",
-                    str(relative_pin),
-                    str(relative_skill),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if probe.returncode == 0 and probe.stdout.strip():
-                dirty = 1
-            candidates.append((dirty, candidate))
-
-        if not candidates:
-            raise FileNotFoundError(f"unable to resolve {relative_pin}")
-        candidates.sort(key=lambda item: (item[0], len(str(item[1]))), reverse=True)
-        return candidates[0][1].parents[3]
-
-    repo_root = resolve_repo_root()
-
-    pyproject = tomllib.loads(
-        (repo_root / relative_pyproject).read_text(encoding="utf-8")
-    )
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     dependencies = pyproject["project"]["dependencies"]
     assert len(dependencies) == len(canonical_dependencies)
     for dependency in canonical_dependencies:
         assert dependency in dependencies, f"canonical dependency missing: {dependency}"
 
-    pin_text = (repo_root / relative_pin).read_text(encoding="utf-8")
+    pin_text = pin_path.read_text(encoding="utf-8")
     delimiter = "-" * 3
     frontmatter_lines = []
     for line in pin_text.splitlines():

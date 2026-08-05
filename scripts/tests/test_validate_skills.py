@@ -601,6 +601,33 @@ class TestRegexMatching(unittest.TestCase):
             self.assertIn("failure_signature", msg)
 
 
+    def test_run_one_exposes_repo_root_env_outside_temp_cwd(self):
+        expected_root = self.rpv.REPO.resolve()
+        pin = {
+            "validation": {
+                "script": (
+                    "python - <<'PY'\n"
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    f"expected = Path({str(expected_root)!r}).resolve()\n"
+                    "actual = Path(os.environ['PIN_VALIDATION_REPO_ROOT']).resolve()\n"
+                    "assert actual == expected, (actual, expected)\n"
+                    "assert Path.cwd().resolve() != expected\n"
+                    "print(actual)\n"
+                    "PY"
+                ),
+                "expected_output": [str(expected_root)],
+                "failure_signatures": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "skills" / "test" / "references" / "upstream-pin.md"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            ok, msg = self.rpv.run_one(path, pin)
+            self.assertTrue(ok, msg)
+
+
 class TestSkillDeps(unittest.TestCase):
     """Tests for vs.validate_skill_deps + helpers."""
 

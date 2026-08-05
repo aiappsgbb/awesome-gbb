@@ -45,6 +45,7 @@ PIN_GLOB = "skills/*/references/upstream-pin.md"
 SAFE_REQUIRES = {"github_only", "pypi"}
 AZURE_REQUIRES = {"azure_subscription", "foundry_project"}
 SCRIPT_TIMEOUT_SECONDS = 600
+PIN_VALIDATION_REPO_ROOT_ENV = "PIN_VALIDATION_REPO_ROOT"
 
 # Consolidated map: pin requires → env var the runner must have set.
 # ALL Azure env vars live here — no ad-hoc forwarding elsewhere.
@@ -261,6 +262,9 @@ def _build_clean_env(shim_dir: Path) -> dict[str, str]:
     env["PYTHONUTF8"] = "1"
     # Prepend shim dir so bare `python`/`pip` resolve correctly
     env["PATH"] = f"{shim_dir}{os.pathsep}{env.get('PATH', '')}"
+    # Tell scripts which repository tree is canonical while keeping the
+    # script cwd isolated in a temp dir.
+    env[PIN_VALIDATION_REPO_ROOT_ENV] = str(REPO.resolve())
     # Forward all Azure env vars from the consolidated lists
     for env_var in AZURE_EXTRA_ENV:
         val = os.environ.get(env_var)
