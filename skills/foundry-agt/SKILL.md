@@ -276,8 +276,9 @@ python -m venv .venv
 $env:PYTHONUTF8 = "1"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# 2. Install AGT [full] + MAF
-pip install agent-governance-toolkit[full] agent-framework
+# 2. Install AGT [full] + the bounded MAF runtime, then its metadata package.
+pip install "agent-governance-toolkit[full]~=4.1.0" "agent-framework-core~=1.10.0"
+pip install --no-deps "agent-framework~=1.10.0"
 
 # 3. Smoke-check
 agt --version

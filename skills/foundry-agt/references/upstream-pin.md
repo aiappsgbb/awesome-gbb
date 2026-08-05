@@ -9,13 +9,13 @@ upstream:
   ref: main
   pinned_sha: b3c899675e8f76a263f3f1f22a7a29137d84fe03
   pinned_commit_message: |
-    AGT 3.7.0 release — meta-package + 6 sub-packages
+    feat(sdks): host-side telemetry and OpenTelemetry export across Python,
+    Rust, Node, and .NET (#3190)
   license: MIT
   notes: |
     Wrapper skill around the AGT meta-package. The skill body documents
     the in-process middleware path (create_governance_middleware factory)
-    and verified API surface at 3.7.0 — re-validate API signatures on
-    every minor bump.
+    against AGT 4.1.0 — re-validate API signatures on every minor bump.
 
 packages:
   - name: agent-governance-toolkit
@@ -30,15 +30,18 @@ packages:
     upstream_changelog: https://pypi.org/project/agent-framework/#history
     notes: |
       Required for the in-process middleware integration path.
-      Pinned to 1.9.0: the 1.8.0 and 1.8.1 meta-packages ship a broken
-      self-dependency (`agent-framework==1.8.x` conflicts with
-      `agent-framework-core[all]==1.8.x`) that makes `pip install` fail
-      with `ResolutionImpossible` — verified against PyPI. 1.9.0 resolves
-      cleanly. The `Agent(client, instructions, *, name, middleware,
-      tools, ...)` ctor and `FunctionInvocationContext` hook that
-      `create_governance_middleware(...)` depends on are unchanged in
-      1.9.0 (validated: `agt verify` → OWASP ASI 2026 10/10, factory
-      import ok).
+      The 1.10.0 meta-package's `agent-framework-core[all]` dependency does
+      not resolve cleanly. Validation installs the bounded core package first,
+      then installs the matching meta-package with `--no-deps`; this preserves
+      the declared distribution pin while proving the middleware factory against
+      the required runtime API.
+  - name: agent-framework-core
+    source: pypi
+    version: "1.10.0"
+    upstream_changelog: https://pypi.org/project/agent-framework-core/#history
+    notes: |
+      Runtime package installed before the matching meta-package to avoid the
+      1.10.0 `[all]` resolver conflict.
 
 docs_to_revalidate:
   - https://github.com/microsoft/agent-governance-toolkit
@@ -76,7 +79,8 @@ validation:
     set -euo pipefail
     python -m venv .venv-agt
     . .venv-agt/bin/activate
-    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-4.1.0}" "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.10.0}"
+    pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-4.1.0}" "agent-framework-core~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.10.0}"
+    pip install --quiet --no-deps "agent-framework~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.10.0}"
     agt --version
     agt doctor
     agt verify
@@ -85,7 +89,7 @@ validation:
     - "OWASP ASI 2026"
     - "factory ok"
 
-last_validated: 2026-07-02
+last_validated: 2026-08-05
 validated_by: copilot-bot
 known_issues_count: 3
 ---
@@ -103,26 +107,23 @@ re-pin to a newer upstream and re-run the smoke checklist below.
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `agent-governance-toolkit` | PyPI (`pip install agent-governance-toolkit[full]`) | **3.7.0** | Meta-package; pulls 6 sub-packages with `[full]` extra |
-| `agent-governance-toolkit` repo | <https://github.com/microsoft/agent-governance-toolkit> | main `8c4692cf...` | Public Preview, MIT, Microsoft-owned |
-| `agent-framework` (MAF) | PyPI (`pip install agent-framework`) | **1.9.0** | Required for in-process middleware path; 1.8.0/1.8.1 have a broken `agent-framework-core[all]` self-dependency (`ResolutionImpossible`), so pinned to 1.9.0 (see `packages[*].notes`) |
-| Internal `agentmesh-runtime` | bundled with `[full]` | 2.3.0 | Independent versioning cadence — note skew |
+| `agent-governance-toolkit` | PyPI (`pip install agent-governance-toolkit[full]`) | **4.1.0** | Meta-package; `[full]` pulls the consolidated core, integrations, CLI, and protocols distributions |
+| `agent-governance-toolkit` repo | <https://github.com/microsoft/agent-governance-toolkit> | main `b3c89967...` | Public Preview, MIT, Microsoft-owned |
+| `agent-framework` (MAF) | PyPI (`pip install agent-framework`) | **1.10.0** | Required for the in-process middleware path. Install bounded `agent-framework-core` first, then the matching meta-package with `--no-deps`, because the 1.10.0 `[all]` dependency does not resolve cleanly (see `packages[*].notes`). |
 
-Sub-packages installed by `agent-governance-toolkit[full]` (verified via
-`agt doctor`):
+Consolidated distributions installed by `agent-governance-toolkit[full]`:
 
-- ✅ `agent_governance_toolkit` (meta)
-- ✅ `agent_os_kernel`
-- ✅ `agentmesh_platform`
-- ✅ `agentmesh_runtime` (2.3.0)
-- ✅ `agent_sre`
-- ✅ `agent_hypervisor`
-- ⛔ `agentmesh_marketplace` — not pulled by `[full]`
-- ⛔ `agentmesh_lightning` — not pulled by `[full]`
+- `agent-governance-toolkit`
+- `agent-governance-toolkit-core`
+- `agent-governance-toolkit-integrations`
+- `agent-governance-toolkit-cli`
+- `agent-governance-toolkit-protocols`
 
-CLI version skew: `agt verify` self-reports `Toolkit: 3.2.2` while the
-meta-package is `3.7.0`. The verifier ships its own compliance schema
-version independently. Cosmetic, not a bug.
+`agt doctor` 4.1.0 still scans the retired pre-consolidation distribution
+names and reports `1/8 packages installed`; use `agt verify` plus the
+middleware factory import as the validation contract. `agt verify` self-reports
+`Toolkit: 3.2.2` because the verifier's compliance schema versions
+independently from the 4.1.0 meta-package.
 
 ---
 
