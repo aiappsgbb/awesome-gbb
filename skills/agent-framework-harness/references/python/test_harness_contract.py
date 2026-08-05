@@ -9,6 +9,7 @@ from __future__ import annotations
 import inspect
 import os
 import py_compile
+import sys
 import tempfile
 from contextlib import contextmanager
 from collections.abc import Awaitable, Iterator, Mapping, Sequence
@@ -24,6 +25,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CompactionProvider,
+    ContextWindowCompactionStrategy,
     FileAccessProvider,
     FileMemoryProvider,
     InMemoryAgentFileStore,
@@ -113,19 +115,19 @@ def assert_defaults(client: NeverCalledChatClient) -> None:
     assert isinstance(agent, Agent)
     providers = provider_types(agent)
     middleware = middleware_types(agent)
-    assert providers[:1] == [InMemoryHistoryProvider]
-    assert TodoProvider in providers
-    assert AgentModeProvider in providers
-    assert FileMemoryProvider in providers
+    assert providers == [
+        InMemoryHistoryProvider,
+        TodoProvider,
+        AgentModeProvider,
+        FileMemoryProvider,
+    ]
     assert FileAccessProvider not in providers
     assert SkillsProvider not in providers
     assert CompactionProvider not in providers
     provider_names = {provider.__name__ for provider in providers}
     assert "BackgroundAgentsProvider" not in provider_names
     assert "ShellEnvironmentProvider" not in provider_names
-    assert ToolApprovalMiddleware in middleware
-    assert MessageInjectionMiddleware in middleware
-    assert AgentLoopMiddleware not in middleware
+    assert middleware == [ToolApprovalMiddleware, MessageInjectionMiddleware]
     approval = next(
         item
         for item in agent.middleware or []
@@ -141,7 +143,12 @@ def assert_compaction(client: NeverCalledChatClient) -> None:
         max_output_tokens=16_384,
         disable_web_search=True,
     )
-    assert complete.compaction_strategy is not None
+    assert isinstance(
+        complete.compaction_strategy,
+        ContextWindowCompactionStrategy,
+    )
+    assert complete.compaction_strategy.max_context_window_tokens == 128_000
+    assert complete.compaction_strategy.max_output_tokens == 16_384
     complete_provider = next(
         provider
         for provider in complete.context_providers or []
@@ -165,6 +172,7 @@ def assert_compaction(client: NeverCalledChatClient) -> None:
     )
     assert output_only.compaction_strategy is None
     assert CompactionProvider not in provider_types(output_only)
+    assert output_only.default_options["max_tokens"] == 16_384
 
     before = ToolResultCompactionStrategy()
     after = ToolResultCompactionStrategy()
@@ -223,9 +231,13 @@ def assert_construction(client: NeverCalledChatClient) -> None:
         loop_max_iterations=3,
         disable_web_search=True,
     )
-    loop = next(
-        item for item in looped.middleware or [] if isinstance(item, AgentLoopMiddleware)
-    )
+    assert middleware_types(looped) == [
+        AgentLoopMiddleware,
+        ToolApprovalMiddleware,
+        MessageInjectionMiddleware,
+    ]
+    loop = (looped.middleware or [])[0]
+    assert isinstance(loop, AgentLoopMiddleware)
     assert loop.max_iterations == 3
 
     hosted_options = create_harness_agent(
@@ -257,7 +269,7 @@ def assert_construction(client: NeverCalledChatClient) -> None:
             raise AssertionError("invalid token budgets were accepted")
 
 
-def assert_reference_imports() -> None:
+def assert_reference_imports(compile_dir: Path) -> None:
     reference_dir = Path(__file__).parent
     for name in (
         "local_harness.py",
@@ -265,8 +277,17 @@ def assert_reference_imports() -> None:
         "plan_execute.py",
         "session_recovery.py",
     ):
-        py_compile.compile(str(reference_dir / name), doraise=True)
-    from hosted_harness import build_agent, build_server
+        py_compile.compile(
+            str(reference_dir / name),
+            cfile=str(compile_dir / f"{Path(name).stem}.pyc"),
+            doraise=True,
+        )
+    previous_dont_write_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        from hosted_harness import build_agent, build_server
+    finally:
+        sys.dont_write_bytecode = previous_dont_write_bytecode
 
     assert callable(build_agent)
     assert callable(build_server)
@@ -274,7 +295,11 @@ def assert_reference_imports() -> None:
 
 
 def main() -> None:
-    with isolated_working_directory():
+    if not __debug__:
+        raise RuntimeError(
+            "offline contract smoke requires assertions; Python optimization is unsupported"
+        )
+    with isolated_working_directory() as working_directory:
         client = NeverCalledChatClient()
         assert_signature()
         print("HARNESS_SIGNATURE_OK")
@@ -284,7 +309,7 @@ def main() -> None:
         print("HARNESS_COMPACTION_OK")
         assert_construction(client)
         print("HARNESS_CONSTRUCTION_OK")
-        assert_reference_imports()
+        assert_reference_imports(working_directory)
         print("HOSTING_IMPORT_OK")
 
 
