@@ -45,9 +45,22 @@ authentication gate; if it fails, use the matching final-step marker.
 
 ## Step 1 - execute the azd and GA SDK Toolbox contracts
 
+The Copilot CLI shell-tool permission gate rejects file creation OUTSIDE
+`$GITHUB_WORKSPACE`, even with `--allow-all-tools` (a heredoc write to `/tmp`
+fails with "Permission denied and could not request permission from user"), so
+every program you author through a Bash heredoc must live under a
+workspace-local scratch directory. Shell variables do not persist across
+separate Copilot tool calls, so always spell out the explicit
+`${GITHUB_WORKSPACE}` path in each command. Create the scratch directory first:
+
+```bash
+mkdir -p "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox"
+```
+
 First, run the exact service-target and standalone-file shapes documented by
 the skill. Use a Bash heredoc to write this script to
-`/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
+`${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-azd-smoke.sh`,
+then run it once:
 
 ```bash
 #!/usr/bin/env bash
@@ -123,7 +136,7 @@ record "AZD_CLI_CREATED name=${cli_name}"
 ```
 
 ```bash
-bash /tmp/foundry-toolbox-azd-smoke.sh
+bash "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-azd-smoke.sh"
 ```
 
 After that script exits `0`, both azd Toolboxes have been cleaned up
@@ -141,8 +154,8 @@ python3 -m venv /tmp/foundry-toolbox-venv
 ```
 
 Use a Bash heredoc to write the following program to
-`/tmp/foundry-toolbox-smoke.py`, then run it once with
-`/tmp/foundry-toolbox-venv/bin/python`:
+`${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-smoke.py`, then
+run it once with the venv interpreter:
 
 ```python
 import asyncio
@@ -201,46 +214,54 @@ with (
         name=toolbox_name,
         description="CI stable Tool Search smoke",
         tools=[
-            ToolSearchToolboxTool(),
-            CodeInterpreterToolboxTool(),
+            ToolSearchToolboxTool(name="tool-search"),
+            CodeInterpreterToolboxTool(name="code-interpreter"),
         ],
     )
-    assert created.name == toolbox_name
-    assert created.version
-    record(
-        f"TOOL_SEARCH_CREATED name={created.name} "
-        f"version={created.version}"
-    )
-
-    fetched = project.toolboxes.get_version(
-        toolbox_name,
-        created.version,
-    )
-    assert fetched.name == created.name
-    assert fetched.version == created.version
-    record(
-        f"TOOLBOX_RETRIEVED name={fetched.name} "
-        f"version={fetched.version}"
-    )
-
-    toolbox_url = (
-        f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}"
-        f"/versions/{created.version}/mcp?api-version=v1"
-    )
-    asyncio.run(
-        verify_functions(
-            credential,
-            toolbox_url,
-            toolbox_name,
-        )
-    )
     try:
-        project.toolboxes.delete(toolbox_name)
-    except Exception as exc:
-        print(
-            f"NOTE Toolbox delete failed name={toolbox_name} "
-            f"error_type={type(exc).__name__}"
+        assert created.name == toolbox_name
+        assert created.version
+        record(
+            f"TOOL_SEARCH_CREATED name={created.name} "
+            f"version={created.version}"
         )
+
+        fetched = project.toolboxes.get_version(
+            toolbox_name,
+            created.version,
+        )
+        assert fetched.name == created.name
+        assert fetched.version == created.version
+        record(
+            f"TOOLBOX_RETRIEVED name={fetched.name} "
+            f"version={fetched.version}"
+        )
+
+        toolbox_url = (
+            f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}"
+            f"/versions/{created.version}/mcp?api-version=v1"
+        )
+        asyncio.run(
+            verify_functions(
+                credential,
+                toolbox_url,
+                toolbox_name,
+            )
+        )
+    finally:
+        try:
+            project.toolboxes.delete(toolbox_name)
+        except Exception as exc:
+            print(
+                f"NOTE Toolbox delete failed name={toolbox_name} "
+                f"error_type={type(exc).__name__}"
+            )
+```
+
+Run it once:
+
+```bash
+/tmp/foundry-toolbox-venv/bin/python "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-smoke.py"
 ```
 
 Every management call in this Python smoke must stay under stable
@@ -250,9 +271,15 @@ acceptance is a hard failure and triggers rollback rather than any retry under
 beta. Do not use generic Agent tool classes, a
 `create_toolbox_version` method, `allow_preview=True`, raw REST, or any preview
 feature header. Keep the Python Toolbox deletion inside this same smoke
-program, but make it best-effort: catch deletion exceptions, print exactly one
-transcript-only `NOTE`, and never append a deletion sidecar record or replace
-completed hard proof with cleanup failure.
+program, but make it best-effort: once `create_version` succeeds, run the
+get/assert/verify steps inside a `try` whose `finally` attempts
+`project.toolboxes.delete(toolbox_name)`, so a raised assertion or meta-tool
+verification failure still triggers cleanup instead of leaking the toolbox.
+Catch deletion exceptions, print exactly one transcript-only `NOTE` sanitized
+to the toolbox name and `type(exc).__name__`, and never append a deletion
+sidecar record, re-raise from the cleanup handler, or replace completed hard
+proof (or a propagating get/assert/verify failure) with a cleanup-only
+failure.
 
 ## Step 2 - write the deterministic result marker
 
