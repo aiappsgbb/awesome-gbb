@@ -662,19 +662,34 @@ project_scope="$AZURE_AI_PROJECT_ID"                 # full project ARM id
 account_scope="${AZURE_AI_PROJECT_ID%/projects/*}"   # strip /projects/<name>
 ```
 
-Grant the instance identity at both scopes:
+Grant the instance identity at both scopes, **capturing each assignment's
+ARM id** so teardown can revoke exactly what it created (never a standing
+grant):
 
 ```bash
-az role assignment create \
+account_assignment_id=$(az role assignment create \
   --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
   --assignee-object-id "$instance_principal_id" \
   --assignee-principal-type ServicePrincipal \
-  --scope "$account_scope"
-az role assignment create \
+  --scope "$account_scope" \
+  --query id -o tsv)
+project_assignment_id=$(az role assignment create \
   --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
   --assignee-object-id "$instance_principal_id" \
   --assignee-principal-type ServicePrincipal \
-  --scope "$project_scope"
+  --scope "$project_scope" \
+  --query id -o tsv)
+```
+
+If a grant may already exist, resolve its id idempotently first and only
+create (and only later revoke) the ones you actually add:
+
+```bash
+account_assignment_id=$(az role assignment list \
+  --assignee "$instance_principal_id" \
+  --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
+  --scope "$account_scope" --query "[0].id" -o tsv)
+# empty -> create it (owned by you); non-empty -> pre-existing, do not revoke
 ```
 
 ### Discovering the instance identity (deterministic)
@@ -718,25 +733,22 @@ envelope and bounded backoff are documented under § "Invoking the Agent".
 ### Cleanup / revocation
 
 The two `Foundry User` grants are the only assignments you add. When
-tearing down (or after a one-shot validation), revoke exactly what you
-created — leave no standing broad access:
+tearing down (or after a one-shot validation), revoke **strictly by the
+assignment id you captured at create time** — deleting by
+`--assignee`/`--role`/`--scope` can match and remove a pre-existing
+standing grant you did not create:
 
 ```bash
-az role assignment delete \
-  --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
-  --assignee "$instance_principal_id" \
-  --scope "$account_scope"
-az role assignment delete \
-  --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
-  --assignee "$instance_principal_id" \
-  --scope "$project_scope"
+az role assignment delete --ids "$account_assignment_id"
+az role assignment delete --ids "$project_assignment_id"
 ```
 
 Revocation is best-effort during teardown — a failed delete must not fail
 an otherwise-successful run (the instance identity is deleted with the
-agent version anyway). If a grant already existed **before** your run
-(resolve its id with `az role assignment list --assignee ... --role ...
---scope ... --query "[0].id"`), do not revoke it — you did not create it.
+agent version anyway). Never revoke an id you resolved as **pre-existing**
+in the idempotent-create step above (`az role assignment list --assignee
+... --role ... --scope ... --query "[0].id"` returned non-empty before you
+created anything) — you did not create it, so it is not yours to delete.
 
 ### Deploying user
 

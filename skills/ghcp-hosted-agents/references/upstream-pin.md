@@ -164,7 +164,7 @@ validation:
     - "ok ProviderConfig type=azure accepted"
     - "ok CopilotClient(github_token=...)"
 
-last_validated: 2026-07-14
+last_validated: 2026-08-05
 validated_by: copilot-bot
 known_issues_count: 2
 ---
@@ -234,9 +234,11 @@ contract, the `remoteBuild`/manual `services:` wiring, the
   managed identity to hold `Foundry User`
   (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account
   scope AND the Foundry project scope; project-only and account-only both
-  returned HTTP 401, and only the dual-scope grant succeeded. Foundry's
-  internal grant covers the blueprint identity and non-inference paths, but
-  not real model inference by the instance identity. The skill and fixture
+  returned HTTP 401, and only the dual-scope grant succeeded. The
+  successful model-inference run had zero explicit blueprint assignments,
+  so the blueprint identity needs no explicit role for this inference
+  path; only the instance identity requires the dual-scope grant. The
+  skill and fixture
   now document and perform the dual-scope instance grant before invocation
   (SKILL.md § "Identity & RBAC for hosted agents", Step 3.5 of the
   fixture). This is not a re-opening of KI-001's *deploy-time* auto-grant
@@ -264,7 +266,7 @@ documented as before.
 
 ## Last validation
 
-`2026-07-14b` (copilot-bot) — **instance-RBAC model-inference correction
+`2026-08-05` (copilot-bot) — **instance-RBAC model-inference correction
 (v2.0.9).** Controlled Azure tests established the minimum working contract
 for real model inference by a hosted agent: grant the per-version
 **instance** managed identity (not the blueprint identity) the `Foundry

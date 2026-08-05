@@ -359,7 +359,28 @@ set -euo pipefail
 work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
 cd "$work_dir"
 
-# Deterministic instance/blueprint discovery via azd. Write the show output to
+# Failure-safe rollback: if this script exits nonzero AFTER creating one grant
+# but before both are in place (e.g. account create succeeds, project create
+# fails), best-effort revoke ONLY the assignment(s) this run created (owned=1)
+# and preserve the original exit status. A pre-existing grant (owned=0) is
+# never touched. The trap is installed before any create so a partial grant is
+# always covered even though the script runs under `set -e`.
+rollback() {
+  rc=$?
+  [ "$rc" -eq 0 ] && exit 0
+  for state in /tmp/ghcp-hosted-agents-account-assignment /tmp/ghcp-hosted-agents-project-assignment; do
+    [ -f "$state" ] || continue
+    read -r rb_id rb_owned < "$state"
+    if [ "${rb_owned:-0}" = "1" ] && [ -n "${rb_id:-}" ]; then
+      az role assignment delete --ids "$rb_id" 2>/dev/null \
+        && printf 'NOTE rollback revoked owned assignment %s\n' "$rb_id" \
+        || printf 'NOTE rollback revoke failed for %s; CI janitor will prune\n' "$rb_id"
+    fi
+  done
+  exit "$rc"
+}
+trap rollback EXIT
+
 # a file and read each principal by explicit jq field path (never an
 # intermediate variable piped into jq). Retry up to twice with a 30s wait if
 # the instance identity has not populated yet.
@@ -707,6 +728,8 @@ a separate janitor.
 
 ```bash
 agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
+work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
+cd "$work_dir"
 timeout 300 azd ai agent delete "$agent_name" --force --no-prompt \
   && printf 'AGENT_DELETED name=%s\n' "$agent_name" >> /tmp/ghcp-hosted-agents-smoke-evidence \
   || echo "NOTE best-effort teardown exceeded 300-second cap or encountered an error; CI janitor will prune orphaned resources"

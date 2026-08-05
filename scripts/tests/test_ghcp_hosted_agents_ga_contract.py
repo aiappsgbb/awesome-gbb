@@ -292,6 +292,159 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertLess(cat_idx, grant_idx)
         self.assertLess(grant_idx, run_idx)
 
+    def test_fixture_teardown_cds_to_work_dir_before_delete(self) -> None:
+        fx = self.fixture
+        # Live proof: `azd ai agent delete` could not read project config
+        # because Step 5 never cd'd into the persisted azd work dir. The Step 5
+        # teardown block MUST read /tmp/ghcp-hosted-agents-work-dir and cd into
+        # it before the delete, exactly like Step 3.5 does before `azd ai
+        # agent show`.
+        step5 = fx[fx.index("## Step 5") : fx.index("## Step 6")]
+        self.assertIn(
+            'work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"', step5
+        )
+        self.assertIn('cd "$work_dir"', step5)
+        self.assertLess(
+            step5.index('cd "$work_dir"'), step5.index("azd ai agent delete")
+        )
+
+    def test_rbac_script_rolls_back_owned_assignments_on_failure(self) -> None:
+        # Structural + executable coverage for the failure-safe rollback: if
+        # the account grant succeeds and the project grant then fails, the RBAC
+        # script must best-effort revoke ONLY the assignment(s) it created
+        # (owned=1) and leave any pre-existing (owned=0) assignment untouched,
+        # preserving the original nonzero exit status.
+        fx = self.fixture
+        self.assertIn("rollback", fx)
+        self.assertRegex(fx, r"trap\s+rollback")
+        # The rollback lives inside the heredoc script, before the bash run.
+        cat_idx = fx.index("cat > /tmp/ghcp-hosted-agents-rbac.sh <<'RBAC'")
+        trap_idx = fx.index("trap rollback")
+        run_idx = fx.index("bash /tmp/ghcp-hosted-agents-rbac.sh")
+        grant_idx = fx.index("az role assignment create")
+        self.assertLess(cat_idx, trap_idx)
+        self.assertLess(trap_idx, run_idx)
+        # trap installed before any create so a partial grant is always covered.
+        self.assertLess(trap_idx, grant_idx)
+
+        script_match = re.search(r"<<'RBAC'\n(.*?)\nRBAC\n", fx, re.S)
+        self.assertIsNotNone(script_match, "RBAC heredoc script not found")
+        script_body = script_match.group(1)
+
+        def _run_rollback_case(preexisting_account: bool) -> tuple[int, str]:
+            with tempfile.TemporaryDirectory() as td:
+                tdp = pathlib.Path(td)
+                prefix = str(tdp / "gh-")
+                # Sandbox all /tmp state paths into the temp dir.
+                body = script_body.replace("/tmp/ghcp-hosted-agents-", prefix)
+                work = tdp / "work"
+                work.mkdir()
+                (tdp / "gh-work-dir").write_text(str(work))
+                deleted = tdp / "deleted.txt"
+                bind = tdp / "bin"
+                bind.mkdir()
+                account_id = "/subscriptions/s/ra/ACC-OWNED"
+                preexisting = "/subscriptions/s/ra/ACC-PREEXISTING"
+                (bind / "azd").write_text(
+                    "#!/usr/bin/env bash\n"
+                    'if [ "$1" = ai ] && [ "$2" = agent ] && [ "$3" = show ]; then\n'
+                    '  echo \'{"instance_identity":{"principal_id":"11111111-1111-1111-1111-111111111111"},'
+                    '"blueprint":{"principal_id":"22222222-2222-2222-2222-222222222222"}}\'\n'
+                    "fi\n"
+                )
+                az_lines = [
+                    "#!/usr/bin/env bash",
+                    "shift 2  # 'role assignment'",
+                    'action="$1"; shift',
+                    'scope=""; ids=""',
+                    "while [ $# -gt 0 ]; do",
+                    '  case "$1" in',
+                    "    --scope) scope=\"$2\"; shift 2;;",
+                    "    --ids) ids=\"$2\"; shift 2;;",
+                    "    *) shift;;",
+                    "  esac",
+                    "done",
+                    'case "$action" in',
+                    "  list)",
+                    '    case "$scope" in',
+                    "      */projects/*) : ;;",
+                    "      *) "
+                    + (f'echo "{preexisting}"' if preexisting_account else ":")
+                    + " ;;",
+                    "    esac ;;",
+                    "  create)",
+                    '    case "$scope" in',
+                    "      */projects/*) exit 1;;",
+                    f'      *) echo "{account_id}";;',
+                    "    esac ;;",
+                    f'  delete) echo "$ids" >> "{deleted}";;',
+                    "esac",
+                ]
+                (bind / "az").write_text("\n".join(az_lines) + "\n")
+                for b in ("azd", "az"):
+                    (bind / b).chmod(0o755)
+                script_path = tdp / "rbac.sh"
+                script_path.write_text(body)
+                env = {
+                    "PATH": f"{bind}:/usr/bin:/bin",
+                    "AZURE_AI_PROJECT_ID": (
+                        "/subscriptions/s/resourceGroups/rg/providers/"
+                        "Microsoft.CognitiveServices/accounts/acct/projects/proj"
+                    ),
+                }
+                proc = subprocess.run(
+                    ["bash", str(script_path)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                deleted_txt = deleted.read_text() if deleted.exists() else ""
+                return proc.returncode, deleted_txt
+
+        # Case A: this run created the account grant (owned=1) -> rollback revokes it.
+        rc_a, deleted_a = _run_rollback_case(preexisting_account=False)
+        self.assertNotEqual(rc_a, 0, "script must preserve the nonzero failure status")
+        self.assertIn("ACC-OWNED", deleted_a)
+        self.assertNotIn("projects", deleted_a)
+
+        # Case B: account grant pre-existed (owned=0) -> rollback deletes nothing.
+        rc_b, deleted_b = _run_rollback_case(preexisting_account=True)
+        self.assertNotEqual(rc_b, 0)
+        self.assertEqual(deleted_b.strip(), "", "must never revoke a pre-existing grant")
+
+    def test_skill_cleanup_deletes_by_captured_ids(self) -> None:
+        skill = self.skill
+        # SKILL code is an exact copy-paste contract. The cleanup example MUST
+        # capture the assignment id at create time and delete strictly by
+        # --ids, never by --role/--assignee/--scope (which can match and delete
+        # a standing pre-existing assignment).
+        self.assertIn("az role assignment delete --ids", skill)
+        self.assertIn("--query id -o tsv", skill)
+        # The unsafe assignee+scope delete form must be gone from the example.
+        self.assertNotRegex(
+            skill, r"az role assignment delete[^\n]*\\\n\s*--role[^\n]*\\\n\s*--assignee"
+        )
+
+    def test_pin_audit_trail_is_current_dated(self) -> None:
+        frontmatter = yaml.safe_load(self.pin.split("---")[1])
+        # The live model-inference correction was validated on 2026-08-05, not
+        # 2026-07-14 — the audit metadata must reflect the real validation date.
+        self.assertEqual(str(frontmatter["last_validated"]), "2026-08-05")
+        self.assertEqual(frontmatter["validated_by"], "copilot-bot")
+        self.assertIn("`2026-08-05`", self.pin)
+        self.assertNotIn("2026-07-14b", self.pin)
+
+    def test_pin_states_only_observed_blueprint_conclusion(self) -> None:
+        # The A/B proof establishes only that a successful inference run had zero
+        # explicit blueprint assignments -> the blueprint needs no explicit role
+        # for this path. It does NOT prove how Foundry internally covers the
+        # blueprint / non-inference paths, so that speculative claim must go.
+        self.assertNotIn(
+            "internal grant covers the blueprint identity and non-inference paths",
+            self.pin,
+        )
+
     def test_fixture_guards_malformed_project_id(self) -> None:
         fx = self.fixture
         # A malformed AZURE_AI_PROJECT_ID that does not carry a /projects/<name>
