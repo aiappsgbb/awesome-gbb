@@ -9,8 +9,8 @@ description: >
   Foundry skills, central skill store, client.beta.skills, has_blob,
   create_from_package, FoundrySkillsSource, SkillsProvider with Foundry,
   skills:import, skills:download. DO NOT USE FOR: awesome-gbb skill authoring;
-  create_harness_agent runtime composition or file-system skills wiring (use
-  agent-framework-harness); Foundry tools (use foundry-toolbox); general
+  create_harness_agent runtime composition or Harness-local file-system skills
+  wiring (use agent-framework-harness); Foundry tools (use foundry-toolbox); general
   hosted-agent deployment (use foundry-hosted-agents).
 metadata:
   version: "1.2.4"
