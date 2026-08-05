@@ -13,6 +13,26 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PIN = ROOT / "skills" / "foundry-voice-live" / "references" / "upstream-pin.md"
 SKILL = ROOT / "skills" / "foundry-voice-live" / "SKILL.md"
+FIXTURE = ROOT / "skills" / "foundry-voice-live" / "test-fixture" / "consumer_prompt.md"
+
+
+def _fenced_blocks(markdown: str, language: str) -> list[str]:
+    return [
+        match.group("body")
+        for match in re.finditer(
+            rf"```{re.escape(language)}\n(?P<body>.*?)\n```",
+            markdown,
+            flags=re.DOTALL,
+        )
+    ]
+
+
+def _python_heredoc(markdown: str) -> str:
+    for block in _fenced_blocks(markdown, "bash"):
+        match = re.search(r"python3 <<'PY'\n(?P<body>.*?)\nPY(?:\n|$)", block, flags=re.DOTALL)
+        if match:
+            return match.group("body")
+    raise AssertionError("fixture Python heredoc not found")
 
 
 class FoundryVoiceLivePinContractTests(unittest.TestCase):
@@ -267,6 +287,130 @@ class FoundryVoiceLiveSkillContractTests(unittest.TestCase):
         ):
             with self.subTest(stale=stale):
                 self.assertNotIn(stale, self.skill)
+
+
+class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture = FIXTURE.read_text(encoding="utf-8")
+        cls.skill = SKILL.read_text(encoding="utf-8")
+        cls.fixture_flat = " ".join(cls.fixture.split())
+        cls.python = _python_heredoc(cls.fixture)
+        cls.fixture_without_python = cls.fixture.replace(cls.python, "")
+        cls.bash_blocks = _fenced_blocks(cls.fixture, "bash")
+
+    def test_fixture_is_self_contained_and_first_bash_action_acknowledges_skill_contract(self) -> None:
+        first_bash_lines = [
+            line.strip()
+            for line in self.bash_blocks[0].splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        self.assertEqual(first_bash_lines[0], 'echo "skills/foundry-voice-live/SKILL.md"')
+
+        for required in (
+            "self-contained execution smoke",
+            "Do NOT open/read the whole skill file",
+            "never invoke `copilot` recursively",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, self.fixture)
+
+        for forbidden in (
+            "Do whatever the skill tells you",
+            "read the skill's `SKILL.md` first",
+            "Read it before you write any code",
+            "find /",
+            "git grep",
+            "rg ",
+            "copilot -p",
+            "copilot --version",
+            "npm install -g @github/copilot",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.fixture)
+
+    def test_fixture_installs_only_sdk_13_bounded_dependencies(self) -> None:
+        expected_install = (
+            'python3 -m pip install --quiet \\\n'
+            '  "azure-ai-voicelive[aiohttp]~=1.3.0" \\\n'
+            '  "azure-identity~=1.25.3"'
+        )
+        self.assertIn(expected_install, self.fixture)
+        self.assertEqual(self.fixture.count("python3 -m pip install --quiet"), 1)
+        self.assertNotIn("python3 -m pip install --quiet --upgrade pip", self.fixture)
+
+    def test_fixture_documents_explicit_ga_api_version_for_sdk_13(self) -> None:
+        for required in (
+            "SDK 1.3 now defaults 2026-07-15",
+            'passes `api_version="2026-04-10"` explicitly',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, self.fixture_flat)
+
+        for forbidden in (
+            "~=1.2.0",
+            'SDK defaults: api_version="2026-04-10"',
+            "the SDK default",
+            "do not override",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.fixture)
+
+        self.assertIn('api_version="2026-04-10"', self.fixture)
+        self.assertIn('api_version="2026-04-10"', self.skill)
+
+    def test_fixture_python_uses_explicit_ga_connect_shape_and_runtime_evidence(self) -> None:
+        expected_connect = (
+            "async with connect(\n"
+            "            endpoint=voicelive_endpoint,\n"
+            "            credential=cred,\n"
+            '            api_version="2026-04-10",\n'
+            '            model="gpt-realtime",\n'
+            "        ) as conn:"
+        )
+        self.assertIn(expected_connect, self.python)
+        self.assertIn(
+            "SDK 1.3 defaults 2026-07-15; the fixture preserves the "
+            "live-proven 2026-04-10 API.",
+            self.python,
+        )
+
+        for evidence in (
+            'print("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")',
+            'print(f"VOICELIVE_EVENT type={event.type}")',
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertIn(evidence, self.python)
+
+        for prose_only_token in (
+            "VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3",
+            "VOICELIVE_EVENT type=",
+        ):
+            with self.subTest(prose_only_token=prose_only_token):
+                self.assertNotIn(prose_only_token, self.fixture_without_python)
+
+    def test_fixture_preserves_wss_roundtrip_and_marker_contract(self) -> None:
+        for token in (
+            "InputTextContentPart",
+            "UserMessageItem",
+            'text="say hi"',
+            "ServerEventType.SESSION_CREATED",
+            "ServerEventType.SESSION_UPDATED",
+            "ServerEventType.CONVERSATION_ITEM_CREATED",
+            "ServerEventType.RESPONSE_CREATED",
+            "ServerEventType.RESPONSE_TEXT_DELTA",
+            "ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA",
+            "ServerEventType.RESPONSE_DONE",
+            "ServerEventType.ERROR",
+            "FAIL: server error event",
+            "voice-live-roundtrip-ok",
+            "/tmp/foundry-voice-live-smoke-result",
+            "printf 'SMOKE_RESULT=PASS\\n' > /tmp/foundry-voice-live-smoke-result",
+            "printf 'SMOKE_RESULT=FAIL <one-line reason>\\n' > /tmp/foundry-voice-live-smoke-result",
+            "byte content is what CI grades",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.fixture)
 
 
 if __name__ == "__main__":

@@ -1,14 +1,31 @@
-# Customer goal — `foundry-voice-live` skill smoke
+# Customer goal — `foundry-voice-live` self-contained execution smoke
 
 You are a developer on a customer team. You just installed the `awesome-gbb`
 Copilot CLI plugin and you want to prove that the `foundry-voice-live` skill
 works end-to-end against your CI Foundry resource using the native
 `azure-ai-voicelive` Python SDK (Rung 4 of the skill's migration ladder).
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of the Azure SDK — read the skill's `SKILL.md` first (in
-particular § 1 "Four Rungs", § 2 "Rung 4 — native `azure-ai-voicelive` SDK",
-and § 12 "2026-04-10 GA Deltas") and follow its documented contract.
+This fixture is self-contained. Do NOT open/read the whole skill file, do
+NOT inspect unrelated repository files, and do NOT improvise from
+training-data knowledge of the Azure SDK. The first required Bash action is
+the lightweight audit acknowledgement below; after that, execute the steps in
+this prompt directly.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You ARE
+the running Copilot CLI process. Do NOT run any `copilot ...` command from
+inside a Bash tool call, and do NOT install or probe Copilot CLI. The workflow
+already captures your output; your job is to execute these steps directly.
+
+---
+
+## Step -1 — Acknowledge skill contract (first required Bash action)
+
+```bash
+echo "skills/foundry-voice-live/SKILL.md"
+```
+
+Do not perform broad repository inspection. Do not hunt for tooling. Python,
+`az`, and the workflow-provided environment are already present.
 
 ---
 
@@ -48,8 +65,9 @@ from the family `session.created` / `session.updated` /
 The deployment to use is `gpt-realtime` (GA in Voice Live, NOT preview)
 on the CI Foundry resource. It is already provisioned in
 `aif-awesome-gbb-ci` (region `swedencentral`, GlobalStandard, capacity 5,
-version `2025-08-28`). The API version is `2026-04-10` (the SDK default —
-do not override).
+version `2025-08-28`). SDK 1.3 now defaults 2026-07-15, so this fixture
+passes `api_version="2026-04-10"` explicitly to preserve the live-proven
+GA path.
 
 The Voice Live WSS endpoint lives on the `services.ai.azure.com` DNS
 surface, NOT on `cognitiveservices.azure.com`. Both names point at the
@@ -64,12 +82,6 @@ auto-closes when the Python `async with` block exits, and no
 persistent Foundry artefacts are touched (AGENTS.md § 9.7 Pattern 25 —
 teardown N/A for this fixture).
 
-The skill's `SKILL.md` is the source of truth for which SDK to use, how
-to authenticate, the endpoint hostname convention, the `connect()` kwargs,
-and how to build session/conversation/response items. Read it before you
-write any code. If the skill's instructions conflict with anything you
-remember from training data, the skill wins.
-
 Do NOT branch on "if `az` has a voice-live CLI extension, use it;
 otherwise SDK" (AGENTS.md § 9.7 Pattern 16). There is no GA `az` surface
 for Voice Live — use the Python SDK only.
@@ -83,10 +95,9 @@ runs inside the fixture (AGENTS.md § 9.7 Pattern 15 only kicks in for
 binaries like `azd` / `func` / `kubectl`).
 
 ```bash
-python3 -m pip install --quiet --upgrade pip
 python3 -m pip install --quiet \
-  "azure-ai-voicelive[aiohttp]~=1.2.0" \
-  "azure-identity~=1.24.0"
+  "azure-ai-voicelive[aiohttp]~=1.3.0" \
+  "azure-identity~=1.25.3"
 ```
 
 The `[aiohttp]` extra is REQUIRED for the async `connect()` path — without
@@ -153,13 +164,14 @@ async def main() -> None:
     saw_terminal = False
     saw_error = None
     async with DefaultAzureCredential() as cred:
-        # SDK defaults: api_version="2026-04-10",
-        # credential_scopes=["https://ai.azure.com/.default"].
+        # SDK 1.3 defaults 2026-07-15; the fixture preserves the live-proven 2026-04-10 API.
         async with connect(
             endpoint=voicelive_endpoint,
             credential=cred,
+            api_version="2026-04-10",
             model="gpt-realtime",
         ) as conn:
+            print("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")
             # session.update — text modality + GA AzureSemanticVad with
             # the 2026-04-10 fields (create_response / auto_truncate).
             await conn.session.update(session=RequestSession(
@@ -188,6 +200,8 @@ async def main() -> None:
                             saw_error = getattr(event, "error", str(event))
                             break
                         if etype in ACCEPT:
+                            if not saw_event:
+                                print(f"VOICELIVE_EVENT type={event.type}")
                             saw_event = True
                         if etype == ServerEventType.RESPONSE_DONE:
                             saw_terminal = True
