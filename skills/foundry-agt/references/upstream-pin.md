@@ -77,6 +77,7 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
+    : "${PIN_VALIDATION_REPO_ROOT:?PIN_VALIDATION_REPO_ROOT must point to the canonical checkout}"
     python -m venv .venv-agt
     . .venv-agt/bin/activate
     pip install --quiet "agent-governance-toolkit[full]~=${PINNED_VERSION:-4.1.0}" "agent-framework-core~=${PINNED_AGENT_FRAMEWORK_VERSION:-1.10.0}"
@@ -84,7 +85,34 @@ validation:
     agt --version
     agt doctor
     agt verify
-    python -c "from agent_os.integrations.maf_adapter import create_governance_middleware; print('factory ok')"
+    python - <<'PY'
+    import os
+    from pathlib import Path
+    from agent_os.integrations.maf_adapter import create_governance_middleware
+    from agentmesh.governance import AuditLog
+
+    policy_dir = (
+        Path(os.environ["PIN_VALIDATION_REPO_ROOT"])
+        / "skills"
+        / "foundry-agt"
+        / "references"
+        / "policies"
+    )
+    stack = create_governance_middleware(
+        policy_directory=policy_dir,
+        allowed_tools=[],
+        denied_tools=[],
+        agent_id="pin-smoke",
+        enable_rogue_detection=False,
+        audit_log=AuditLog(),
+    )
+    assert [type(item).__name__ for item in stack] == [
+        "AuditTrailMiddleware",
+        "GovernancePolicyMiddleware",
+        "CapabilityGuardMiddleware",
+    ]
+    print("factory ok")
+    PY
   expected_output:
     - "OWASP ASI 2026"
     - "factory ok"
@@ -135,11 +163,12 @@ Throwaway venv:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 $env:PYTHONUTF8 = "1"               # MANDATORY on Windows — see Known Issues
-pip install agent-governance-toolkit[full] agent-framework
+pip install "agent-governance-toolkit[full]~=4.1.0" "agent-framework-core~=1.10.0"
+pip install --no-deps "agent-framework~=1.10.0"
 agt --version
-agt doctor                          # expect 6/8 packages present
+agt doctor                          # 4.1.0 currently reports legacy 1/8 names
 agt verify                          # expect 10/10 OWASP ASI 2026
-python -c "from agent_os.integrations.maf_adapter import create_governance_middleware; print('ok')"
+python -c "from agent_os.integrations.maf_adapter import create_governance_middleware; print('factory ok')"
 ```
 
 If `agt doctor` or `agt verify` raises `UnicodeEncodeError`, you forgot
@@ -151,28 +180,15 @@ If `agt doctor` or `agt verify` raises `UnicodeEncodeError`, you forgot
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| `pip install agent-governance-toolkit[full]` | ✅ | 6/8 sub-packages installed |
-| `agt doctor` | ✅ | All required packages present |
+| Bounded AGT + MAF install | ✅ | AGT 4.1.0, `agent-framework-core` 1.10.0, and `agent-framework` 1.10.0 |
+| `agt doctor` | ✅ | Command completes; its legacy package scan reports 1/8 after package consolidation |
 | `agt verify` | ✅ | OWASP ASI 2026: **10/10 PASSED** |
-| `examples/quickstart/govern_in_60_seconds.py` | ✅ | 5 actions, 3 DENY / 2 ALLOW, 0.002 ms avg |
-| `create_governance_middleware(...)` factory | ✅ | Returns 3 mw (audit + policy + capability) |
-| `PolicyEvaluator.load_policies("dir/")` (YAML) | ✅ | 1 file → 1 policy loaded |
-| Policy ALLOW path latency | ✅ | **8.03 µs/eval** (1k iters) |
-| Policy DENY path latency | ✅ | **12.35 µs/eval** (1k iters) |
-| Custom `message:` surfaces in `decision.reason` | ✅ | "SQL injection pattern blocked by GBB policy" |
-| Regex `matches` operator (PII patterns) | ✅ | SSN regex `\b\d{3}-\d{2}-\d{4}\b` matches |
-| `AuditLog.log(...)` returns `AuditEntry` | ✅ | (entries iterable is private — use `query()`) |
-| `AuditLog.verify_integrity()` API present | ✅ | Hash-chain integrity check available |
-| `AuditLog.export_cloudevents()` | ✅ | OTel-compatible export — wires into `foundry-observability` |
-
-Latency comparison: upstream documents "< 0.1 ms (100 µs) per check" — the
-GBB workstation observed **~8–12 µs**, an order of magnitude headroom.
-This is healthy for any Foundry-shaped agent, including high-tool-fanout
-threadlight processes.
+| `create_governance_middleware(...)` factory | ✅ | Returns audit, policy, and capability middleware for the canonical policy-directory path |
+| Middleware signature inspection | ✅ | 4.1.0 signatures below match `inspect.signature(...)` |
 
 ---
 
-## Verified API surface (3.7.0)
+## Verified API surface (4.1.0)
 
 These are the **actual** signatures from `inspect.signature(...)`. The
 upstream `docs/deployment/azure-foundry-agent-service.md` page documents
@@ -181,8 +197,8 @@ Use these:
 
 ```python
 from agent_os.integrations.maf_adapter import (
-    GovernancePolicyMiddleware,    # (evaluator: PolicyEvaluator, audit_log: AuditLog | None = None)
-    CapabilityGuardMiddleware,     # (allowed_tools=None, denied_tools=None, audit_log=None)
+    GovernancePolicyMiddleware,    # (evaluator=None, audit_log=None, *, kernel=None, agent_id="maf-agent")
+    CapabilityGuardMiddleware,     # (allowed_tools=None, denied_tools=None, audit_log=None, *, kernel=None, agent_id="maf-agent")
     AuditTrailMiddleware,          # (audit_log: AuditLog, agent_did: str | None = None)
     RogueDetectionMiddleware,      # (detector: RogueAgentDetector, agent_id: str, capability_profile=None, audit_log=None)
     create_governance_middleware,  # ← USE THIS — assembles the stack correctly
