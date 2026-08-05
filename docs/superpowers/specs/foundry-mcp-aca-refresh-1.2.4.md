@@ -149,4 +149,29 @@ schema, or count failure writes the deterministic FAIL marker and exits before
 - GREEN: the same payload matrix passes after the minimal predicate change:
   all 7 invalid payloads fail the gate and a JSON-RPC 2.0 response containing
   a non-empty tools array passes.
-- Current counts: 58 fixture contract tests; 378 full catalog tests.
+- Round-8 counts: 58 fixture contract tests; 378 full catalog tests.
+
+## Round-9 correction (2026-08-05): parameter heredoc must render values
+
+**Root cause:** Round 7 changed `main.parameters.json` to a quoted heredoc to
+preserve `$schema`, but quoted heredocs also preserve `${APP_NAME}`,
+`${UAMI_RESOURCE_ID}`, and `${ACR_SERVER}`. The first round-8 T3 run exposed
+the defect: the agent wrote the prescribed literal placeholders, then repaired
+the parameter file in a second shell call. The green marker therefore did not
+qualify as literal prescribed execution.
+
+**Fix:** Use an expanding heredoc and escape only `\$schema`. A behavioral
+test extracts and executes the shipped heredoc, parses the rendered JSON, and
+asserts both the literal `$schema` key and all three expanded deployment
+values.
+
+**TDD and T3 evidence:**
+- RED on head `6853b61e`: the rendered `appName` was literal
+  `"${APP_NAME}"` instead of `"ci-smoke-mcp-test1234"`.
+- GREEN: the behavioral heredoc test, structural escape test, and semantic
+  `tools/list` matrix all pass.
+- Run `31009977441`, job `92319391511`, artifact `8932166611` is explicitly
+  rejected as final T3 evidence because transcript lines 44-52 show the
+  parameter-file repair.
+- Current local counts after correction: 59 fixture contract tests; 379 full
+  catalog tests.

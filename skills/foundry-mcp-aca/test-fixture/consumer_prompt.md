@@ -405,15 +405,16 @@ output appName string = app.name
 ```
 
 Then write `${PROJECT_DIR}/infra/main.parameters.json` to map azd env vars
-to Bicep params. **Use a quoted heredoc** (`<<'PARAMS'`) so that `$schema`
-is preserved literally without shell expansion:
+to Bicep params. **Use an expanding heredoc** (`<<PARAMS`) and escape only
+`\$schema` so the schema key stays literal while the three deployment values
+expand from the persisted state:
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
 cd "$PROJECT_DIR"
-cat > "${PROJECT_DIR}/infra/main.parameters.json" <<'PARAMS'
+cat > "${PROJECT_DIR}/infra/main.parameters.json" <<PARAMS
 {
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "\$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
     "appName": { "value": "${APP_NAME}" },

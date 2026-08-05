@@ -46,7 +46,7 @@ MCP-Protocol-Version header), session ID FAIL gate, synchronized gates.
 - `skills/foundry-mcp-aca/SKILL.md` — version bump + agnostic rewrites
 - `skills/foundry-mcp-aca/references/upstream-pin.md` — pin script + KI-001
 - `skills/foundry-mcp-aca/test-fixture/consumer_prompt.md` — full protocol conformance
-- `scripts/tests/test_foundry_mcp_aca_fixture_contract.py` — 58 contract tests
+- `scripts/tests/test_foundry_mcp_aca_fixture_contract.py` — 59 contract tests
 - `docs/superpowers/specs/foundry-mcp-aca-refresh-1.2.4.md` — design spec
 - `docs/superpowers/plans/foundry-mcp-aca-refresh-1.2.4.md` — this plan
 - `docs/` — rebuilt static site
@@ -137,3 +137,34 @@ Failure at parsing, schema validation, or count validation writes
 - Targeted semantic contract: 1 test, 8 payload cases, PASS
 - Fixture contracts: 58 tests, PASS
 - Full catalog suite: 378 tests, PASS
+
+## Round-9 corrections (2026-08-05)
+
+### T3 rejection and genuine RED
+
+Exact-head run `31009977441` / job `92319391511` passed CI but is not valid
+final evidence. Artifact `8932166611` shows the agent first wrote the
+prescribed quoted parameter heredoc, then announced “Fixing the parameter-file
+write” and rewrote it. The quoted heredoc had preserved all deployment
+placeholders literally.
+
+An execution-level regression test extracted the shipped heredoc and rendered
+it with known environment values. On head `6853b61e` it failed:
+
+```text
+AssertionError: '${APP_NAME}' != 'ci-smoke-mcp-test1234'
+```
+
+### Minimal correction
+
+1. Change `<<'PARAMS'` to expanding `<<PARAMS`.
+2. Escape only the schema key as `"\$schema"`.
+3. Keep `${APP_NAME}`, `${UAMI_RESOURCE_ID}`, and `${ACR_SERVER}` expandable.
+4. Replace the obsolete quoted-heredoc substring test with a structural escape
+   test; retain the new execution-level JSON rendering test.
+
+### GREEN
+
+- Coupled heredoc + semantic gate contracts: 3 tests, PASS
+- Fixture contracts: 59 tests, PASS
+- Full catalog suite: 379 tests, PASS

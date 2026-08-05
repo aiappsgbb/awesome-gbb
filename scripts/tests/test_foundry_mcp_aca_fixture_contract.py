@@ -14,6 +14,7 @@ that CI cannot catch through grep alone. They verify:
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import subprocess
@@ -601,18 +602,68 @@ class TestStatePersistence(unittest.TestCase):
 
     # --- Round 7: Heredoc, state, protocol, anchoring ---
 
-    def test_parameters_json_uses_quoted_heredoc(self):
-        """main.parameters.json must be written via quoted heredoc to prevent $schema expansion."""
-        # The fixture must contain a cat <<'PARAMS' or cat <<'EOF' style command
-        # for the parameters.json file, not just a JSON code fence
+    def test_parameters_json_escapes_schema_in_expanding_heredoc(self):
+        """The heredoc must preserve $schema while expanding deployment values."""
         blocks = re.findall(r'```bash\n(.*?)```', self.fixture, re.DOTALL)
         combined = '\n'.join(blocks)
-        # Must contain a safe write of parameters.json with quoted heredoc
         self.assertRegex(
             combined,
-            r"cat\s*>\s*.*parameters\.json.*<<\s*'",
-            "main.parameters.json must use a quoted heredoc (<<'DELIM') to prevent "
-            "$schema shell expansion. A JSON code fence is ambiguous.",
+            r"cat\s*>\s*.*parameters\.json.*<<\s*PARAMS",
+            "main.parameters.json must use an expanding heredoc so deployment "
+            "values are rendered instead of preserved as literal placeholders.",
+        )
+        self.assertIn(
+            r'"\$schema"',
+            combined,
+            "main.parameters.json must escape only the $schema key.",
+        )
+
+    def test_parameters_json_heredoc_preserves_schema_and_expands_values(self):
+        """Execute the shipped heredoc and verify its rendered JSON values."""
+        heredoc_match = re.search(
+            r'cat > "\$\{PROJECT_DIR\}/infra/main\.parameters\.json" '
+            r"<<'?PARAMS'?\n.*?^PARAMS$",
+            self.fixture,
+            re.DOTALL | re.MULTILINE,
+        )
+        self.assertIsNotNone(heredoc_match, "main.parameters.json heredoc not found")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = pathlib.Path(temp_dir)
+            (project_dir / "infra").mkdir()
+            expected = {
+                "APP_NAME": "ci-smoke-mcp-test1234",
+                "UAMI_RESOURCE_ID": "/subscriptions/test/resourceGroups/test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test",
+                "ACR_SERVER": "test.azurecr.io",
+            }
+            result = subprocess.run(
+                ["bash", "-c", heredoc_match.group(0)],
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "PROJECT_DIR": str(project_dir),
+                    **expected,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"shipped parameters heredoc failed: stderr={result.stderr!r}",
+            )
+            rendered = json.loads(
+                (project_dir / "infra" / "main.parameters.json").read_text()
+            )
+
+        self.assertIn("$schema", rendered)
+        self.assertEqual(rendered["parameters"]["appName"]["value"], expected["APP_NAME"])
+        self.assertEqual(
+            rendered["parameters"]["uamiResourceId"]["value"],
+            expected["UAMI_RESOURCE_ID"],
+        )
+        self.assertEqual(
+            rendered["parameters"]["acrServer"]["value"], expected["ACR_SERVER"]
         )
 
     def test_protocol_version_fails_if_empty(self):
