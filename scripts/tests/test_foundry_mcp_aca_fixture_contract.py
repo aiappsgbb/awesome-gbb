@@ -702,5 +702,55 @@ class TestStatePersistence(unittest.TestCase):
                           "in the preamble (first 2000 chars)")
 
 
+    # --- Blocker 1: auth curl targets must use /mcp not /mcp/ ---
+    def test_auth_curl_targets_use_canonical_mcp_path(self):
+        """Step 5b auth curl targets must use /mcp (no trailing slash).
+        FastMCP 2.14.7 returns 307 for /mcp/ which breaks non-redirect curls."""
+        # Extract Step 5b auth section (after MCP_AUTH_APP_CLIENT_ID check)
+        auth_section = ""
+        in_auth = False
+        for line in self.fixture.split("\n"):
+            if "MCP_AUTH_APP_CLIENT_ID" in line:
+                in_auth = True
+            if in_auth:
+                auth_section += line + "\n"
+        # All curl URLs in auth section must use /mcp" not /mcp/"
+        import re
+        curl_urls = re.findall(r'https://\$\{FQDN\}/mcp/?["\']?\)', auth_section)
+        for url in curl_urls:
+            self.assertNotIn("/mcp/", url,
+                             "Auth curl target must use /mcp (no trailing slash); "
+                             "FastMCP 2.14.7 returns 307 for /mcp/")
+
+    # --- Blocker 2: malformed JSON must not bypass tools/list gate ---
+    def test_tools_list_gate_handles_malformed_json(self):
+        """TOOL_COUNT assignment must use jq -e or explicit parse guard so
+        malformed JSON cannot silently bypass the >=1 check."""
+        # Find the TOOL_COUNT assignment block
+        import re
+        # The gate must either use jq -e, or have an explicit empty/error guard
+        tool_count_match = re.search(
+            r'TOOL_COUNT=\$\(.*?\)', self.fixture, re.DOTALL)
+        self.assertIsNotNone(tool_count_match, "TOOL_COUNT assignment not found")
+        tc_line = tool_count_match.group(0)
+        # Must have explicit malformed-JSON protection:
+        # Either jq -e (exits non-zero on null/false), or a subsequent
+        # empty-string guard before the arithmetic comparison
+        has_jq_e = "jq -e" in tc_line
+        # Check for explicit empty guard after assignment
+        tc_pos = tool_count_match.end()
+        next_100 = self.fixture[tc_pos:tc_pos + 200]
+        has_empty_guard = ('[ -z "$TOOL_COUNT" ]' in next_100 or
+                           '[ -z "${TOOL_COUNT' in next_100 or
+                           'TOOL_COUNT:-' in next_100 or
+                           '|| {' in tc_line or
+                           '|| printf' in tc_line or
+                           '|| exit' in tc_line)
+        self.assertTrue(has_jq_e or has_empty_guard,
+                        "TOOL_COUNT gate must protect against malformed JSON: "
+                        "use 'jq -e' or guard empty TOOL_COUNT before arithmetic test. "
+                        f"Found: {tc_line}")
+
+
 if __name__ == "__main__":
     unittest.main()

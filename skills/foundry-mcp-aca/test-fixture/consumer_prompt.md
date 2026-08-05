@@ -672,8 +672,11 @@ fi
 TOOLS_JSON=$(echo "$TOOLS_BODY" | sed -n 's/^data: //p' | head -1)
 [ -z "$TOOLS_JSON" ] && TOOLS_JSON="$TOOLS_BODY"
 
-TOOL_COUNT=$(echo "$TOOLS_JSON" | jq -r '.result.tools | length // 0')
-if [ "$TOOL_COUNT" -lt 1 ]; then
+TOOL_COUNT=$(echo "$TOOLS_JSON" | jq -e -r '.result.tools | length // 0') || {
+  printf 'SMOKE_RESULT=FAIL tools/list returned malformed JSON or missing .result.tools\n' > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+}
+if [ -z "$TOOL_COUNT" ] || [ "$TOOL_COUNT" -lt 1 ]; then
   printf 'SMOKE_RESULT=FAIL tools/list returned 0 tools\n' > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 fi
@@ -798,7 +801,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
      for i in $(seq 1 6); do
        CODE=$(curl -s -o /dev/null -w '%{http_code}' \
          -H 'Accept: application/json, text/event-stream' \
-         "https://${FQDN}/mcp/")
+         "https://${FQDN}/mcp")
        [ "$CODE" = "401" ] && break
        sleep 10
      done
@@ -821,7 +824,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
        --resource "api://$MCP_AUTH_APP_CLIENT_ID" \
        --query accessToken -o tsv)
      AUTHED_CODE=$(curl -s -o /tmp/mcp-authed.json -w '%{http_code}' \
-       -X POST "https://${FQDN}/mcp/" \
+       -X POST "https://${FQDN}/mcp" \
        -H 'Content-Type: application/json' \
        -H 'Accept: application/json, text/event-stream' \
        -H "Authorization: Bearer $TOKEN" \

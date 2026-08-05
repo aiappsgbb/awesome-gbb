@@ -46,7 +46,7 @@ MCP-Protocol-Version header), session ID FAIL gate, synchronized gates.
 - `skills/foundry-mcp-aca/SKILL.md` — version bump + agnostic rewrites
 - `skills/foundry-mcp-aca/references/upstream-pin.md` — pin script + KI-001
 - `skills/foundry-mcp-aca/test-fixture/consumer_prompt.md` — full protocol conformance
-- `scripts/tests/test_foundry_mcp_aca_fixture_contract.py` — 28 contract tests
+- `scripts/tests/test_foundry_mcp_aca_fixture_contract.py` — 57 contract tests
 - `docs/superpowers/specs/foundry-mcp-aca-refresh-1.2.4.md` — design spec
 - `docs/superpowers/plans/foundry-mcp-aca-refresh-1.2.4.md` — this plan
 - `docs/` — rebuilt static site
@@ -65,7 +65,7 @@ Copilot CLI Bash tool process isolation — env vars don't persist.
 - 6 contract tests added (TestStatePersistence class)
 
 ### GREEN
-- 34/34 tests pass
+- 57 fixture + 377 full suite pass
 - validate-skills.py ✅
 - build-plugins.py --check ✅
 - T3 run 30998053808 GREEN — zero improvisation, full MCP roundtrip
@@ -103,4 +103,4 @@ All 47 tests pass.
 6. SKILL.md L719: `/mcp/` → `/mcp`
 
 ### GREEN
-All 54 tests pass.
+All 57 fixture tests pass, 377 full suite.

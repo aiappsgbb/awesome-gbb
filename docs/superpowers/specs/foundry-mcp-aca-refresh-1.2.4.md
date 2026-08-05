@@ -124,4 +124,4 @@ from run 30999760430 (head 6ceda5bc, one prior commit):
 
 **TDD evidence:**
 - RED: 5 of 7 new tests failed at round-6 head (2 scoped tests already passed)
-- GREEN: all 54 tests pass after fixes
+- GREEN: all 57 tests pass after fixes
