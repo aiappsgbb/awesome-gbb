@@ -1,7 +1,7 @@
 # Plan: foundry-mcp-aca refresh 1.2.4
 
 **Design:** [specs/foundry-mcp-aca-refresh-1.2.4.md](../specs/foundry-mcp-aca-refresh-1.2.4.md)
-**Status:** Round 14 implemented; exact-head T3 pending
+**Status:** Round 15 implemented; exact-head T3 pending
 
 ## Correction rounds
 
@@ -391,3 +391,27 @@ Exact-head T3 must prove zero Edit/Create/Write actions; exact bootstrap first;
 one unchanged scaffold Bash action; one authenticated provision path after
 bootstrap; one MCP roundtrip; no repair or generated-file/catalog inspection
 beyond the audit echo; and deterministic marker output.
+
+## Round-15 corrections (2026-08-05)
+
+### Exact-head rejection
+
+Run `31031280923`, job `92392368732`, head
+`351a44934b58f5e4ba9ba59f83ec4540f47aa571`, artifact `8940859005`,
+transcript SHA-256
+`ee6d6db8ccf751d349bb74c41a28de6ddba86b1212335aa61c6df84f3476bc8f`
+is rejected. Its 65 transcript lines satisfy the action contract: bootstrap
+first, zero file tools, one scaffold, one provision, one MCP roundtrip,
+deterministic PASS, and best-effort teardown. The workflow still failed its
+post-hoc audit because the CLI collapsed the 52-line bootstrap before the
+later audit echo became visible.
+
+### Executable correction and TDD
+
+1. Keep the audit inside the same mandatory bootstrap Bash action.
+2. Move the audit echo to line 2, immediately after `set -Eeuo pipefail`, so
+   it appears in the transcript prefix before command collapse.
+3. Do not add a second audit action or depend on assistant prose.
+4. RED on `351a449`: the structural test found `STATE_FILE` on line 2.
+5. GREEN: the exact bootstrap begins with `set` plus the audit echo; all 73
+   fixture contract tests and all 393 repository tests pass.

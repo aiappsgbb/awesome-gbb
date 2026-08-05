@@ -1289,6 +1289,15 @@ class TestStatePersistence(unittest.TestCase):
         self.assertIn('echo "skills/foundry-mcp-aca/SKILL.md"', bootstrap)
         self.assertIn("set -Eeuo pipefail", bootstrap)
         self.assertIn("FAIL()", bootstrap)
+        self.assertEqual(
+            [
+                "set -Eeuo pipefail",
+                'echo "skills/foundry-mcp-aca/SKILL.md"',
+            ],
+            bootstrap.splitlines()[:2],
+            "the audit path must be visible before Copilot collapses the "
+            "first Bash action in its transcript",
+        )
         bash_bodies = [body for _start, body in _shell_fences(self.fixture)]
         auth_commands = [
             command

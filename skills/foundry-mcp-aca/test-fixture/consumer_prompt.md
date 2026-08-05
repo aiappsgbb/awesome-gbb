@@ -137,6 +137,7 @@ The `az account show` command is show-don't-assert; explicit
 
 ```bash
 set -Eeuo pipefail
+echo "skills/foundry-mcp-aca/SKILL.md"
 STATE_FILE="/tmp/foundry-mcp-aca-state.env"
 STATE_TMP="${STATE_FILE}.tmp.$$"
 FAIL() {
@@ -148,7 +149,6 @@ FAIL() {
 trap 'FAIL "bootstrap block failed"' ERR
 rm -f "$STATE_TMP" "$STATE_FILE"
 
-echo "skills/foundry-mcp-aca/SKILL.md"
 for REQUIRED_VAR in GITHUB_WORKSPACE AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID ACR_LOGIN_SERVER; do
   if [[ -z "${!REQUIRED_VAR:-}" ]]; then
     FAIL "auth context missing: ${REQUIRED_VAR}"

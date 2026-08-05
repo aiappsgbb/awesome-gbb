@@ -1,6 +1,6 @@
 # Design Spec: foundry-mcp-aca refresh 1.2.4
 
-**Status:** Round 14 implemented; exact-head T3 pending
+**Status:** Round 15 implemented; exact-head T3 pending
 **Date:** 2026-08-05
 **Base version:** 1.2.3
 **Target version:** 1.2.4 (PATCH — pin refresh + wording + deployment corrections)
@@ -348,3 +348,27 @@ Edit/Create/Write actions, the exact bootstrap as the first action, one
 unchanged scaffold Bash action, exactly one authenticated provision path, one
 MCP roundtrip, no repair or generated-file/catalog inspection beyond the audit
 echo, and the deterministic marker.
+
+## Round-15 correction (2026-08-05): transcript-visible bootstrap audit
+
+**Rejected exact-head T3:** Run `31031280923`, job `92392368732`, head
+`351a44934b58f5e4ba9ba59f83ec4540f47aa571`, artifact `8940859005`,
+transcript SHA-256
+`ee6d6db8ccf751d349bb74c41a28de6ddba86b1212335aa61c6df84f3476bc8f`.
+The 65-line transcript proves zero file-tool actions, the exact bootstrap as
+the first Bash action, one unchanged scaffold call, one provision call, one
+MCP roundtrip, immediate deterministic PASS, and best-effort teardown.
+Nevertheless, the post-hoc audit failed because Copilot collapsed the
+52-line bootstrap after displaying its first four lines; the audit echo was
+inside the hidden portion and therefore absent from the transcript artifact.
+
+**Architecture:** Keep the same single bootstrap action and dependency order,
+but move the required audit echo to line 2, immediately after
+`set -Eeuo pipefail`. The CLI transcript always displays this prefix before
+collapsing the remainder, making the existing audit grep deterministic without
+adding a second audit action or a prose-only acknowledgement.
+
+**TDD evidence:** The strengthened bootstrap contract was RED on `351a449`
+because line 2 declared `STATE_FILE`; after promoting the audit echo, the same
+test and all 73 fixture contract tests are GREEN. Full `scripts/tests` remains
+393 tests.
