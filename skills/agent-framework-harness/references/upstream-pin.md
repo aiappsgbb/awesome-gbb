@@ -78,7 +78,7 @@ validation:
     : "${PIN_VALIDATION_REPO_ROOT:?PIN_VALIDATION_REPO_ROOT must point to the canonical checkout}"
     VENV="$PWD/agent-framework-harness-pin-venv"
     rm -rf -- "$VENV"
-    python3 -m venv "$VENV"
+    python -m venv "$VENV"
     VENV_PYTHON="$VENV/bin/python"
     VENV_PIP="$VENV/bin/pip"
     "$VENV_PIP" install --quiet \
