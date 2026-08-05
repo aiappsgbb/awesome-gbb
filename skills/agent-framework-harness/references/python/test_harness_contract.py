@@ -20,11 +20,13 @@ from agent_framework import (
     Agent,
     AgentLoopMiddleware,
     AgentModeProvider,
+    AgentResponse,
     BaseChatClient,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CompactionProvider,
+    Content,
     ContextProvider,
     ContextWindowCompactionStrategy,
     FileAccessProvider,
@@ -35,18 +37,25 @@ from agent_framework import (
     MessageInjectionMiddleware,
     ResponseStream,
     SkillsProvider,
+    SupportsWebSearchTool,
     TodoProvider,
     ToolApprovalMiddleware,
     ToolResultCompactionStrategy,
     create_harness_agent,
 )
 from agent_framework_foundry_hosting import ResponsesHostServer
+from plan_execute import (
+    ToolApprovalRequired,
+    build_plan_execute_agents,
+    has_pending_tool_approval,
+)
 
 
 class NeverCalledChatClient(BaseChatClient[ChatOptions[Any]]):
     """Minimal client used only to prove construction never calls a model."""
 
     model = "offline-construction-only"
+    web_search_requested = False
 
     def _inner_get_response(
         self,
@@ -57,6 +66,10 @@ class NeverCalledChatClient(BaseChatClient[ChatOptions[Any]]):
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         raise AssertionError("offline construction called the model")
+
+    def get_web_search_tool(self) -> Any:
+        self.web_search_requested = True
+        raise AssertionError("offline construction enabled web search")
 
 
 @contextmanager
@@ -278,6 +291,83 @@ def assert_construction(client: NeverCalledChatClient) -> None:
             raise AssertionError("invalid token budgets were accepted")
 
 
+def assert_plan_execute_construction(client: NeverCalledChatClient) -> None:
+    assert isinstance(client, SupportsWebSearchTool)
+    agents = build_plan_execute_agents(client)
+    assert isinstance(agents.plan, Agent)
+    assert isinstance(agents.execute, Agent)
+
+    plan_providers = agents.plan.context_providers or []
+    execute_providers = agents.execute.context_providers or []
+    assert not any(isinstance(item, AgentModeProvider) for item in plan_providers)
+    assert AgentLoopMiddleware not in middleware_types(agents.plan)
+    assert any(isinstance(item, AgentModeProvider) for item in execute_providers)
+    assert middleware_types(agents.execute) == [
+        AgentLoopMiddleware,
+        ToolApprovalMiddleware,
+        MessageInjectionMiddleware,
+    ]
+    loop = (agents.execute.middleware or [])[0]
+    assert isinstance(loop, AgentLoopMiddleware)
+    assert loop.max_iterations == 10
+
+    for provider_type in (InMemoryHistoryProvider, TodoProvider):
+        plan_provider = next(
+            item for item in plan_providers if isinstance(item, provider_type)
+        )
+        execute_provider = next(
+            item for item in execute_providers if isinstance(item, provider_type)
+        )
+        assert plan_provider is execute_provider
+
+    plan_memory = next(
+        item for item in plan_providers if isinstance(item, FileMemoryProvider)
+    )
+    execute_memory = next(
+        item for item in execute_providers if isinstance(item, FileMemoryProvider)
+    )
+    assert plan_memory.store is execute_memory.store
+
+    for agent in (agents.plan, agents.execute):
+        assert isinstance(agent.compaction_strategy, ContextWindowCompactionStrategy)
+        assert agent.compaction_strategy.max_context_window_tokens == 128_000
+        assert agent.compaction_strategy.max_output_tokens == 16_384
+        compaction_provider = next(
+            item
+            for item in agent.context_providers or []
+            if isinstance(item, CompactionProvider)
+        )
+        assert compaction_provider.before_strategy is None
+        assert compaction_provider.after_strategy is agent.compaction_strategy
+        assert agent.default_options["max_tokens"] == 16_384
+        assert agent.default_options["tools"] == []
+    assert client.web_search_requested is False
+
+    plan_instructions = agents.plan.default_options["instructions"].lower()
+    assert "keep todos current" in plan_instructions
+    assert "do not execute" in plan_instructions
+
+
+def assert_pending_approval_contract() -> None:
+    approval_response = AgentResponse(
+        messages=[
+            Message(
+                "assistant",
+                [Content(type="function_approval_request")],
+            )
+        ]
+    )
+    assert approval_response.text == ""
+    assert has_pending_tool_approval(approval_response)
+    error = ToolApprovalRequired(approval_response)
+    assert error.response is approval_response
+
+    text_response = AgentResponse(
+        messages=[Message("assistant", [Content(type="text", text="ready")])]
+    )
+    assert not has_pending_tool_approval(text_response)
+
+
 def assert_reference_imports(compile_dir: Path) -> None:
     reference_dir = Path(__file__).parent
     for name in (
@@ -317,6 +407,8 @@ def main() -> None:
         assert_compaction(client)
         print("HARNESS_COMPACTION_OK")
         assert_construction(client)
+        assert_plan_execute_construction(client)
+        assert_pending_approval_contract()
         print("HARNESS_CONSTRUCTION_OK")
         assert_reference_imports(working_directory)
         print("HOSTING_IMPORT_OK")
