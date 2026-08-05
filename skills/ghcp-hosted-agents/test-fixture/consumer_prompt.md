@@ -268,14 +268,11 @@ Use a Bash heredoc to write the following program to
 `/tmp/ghcp-hosted-agents-venv/bin/python`:
 
 ```python
-import json
 import os
-import re
 import time
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
-from pathlib import Path
 
 evidence_path = "/tmp/ghcp-hosted-agents-smoke-evidence"
 
@@ -313,120 +310,137 @@ with DefaultAzureCredential() as credential, AIProjectClient(
         for p in protocol_versions
     ), f"expected invocations protocol 2.0.0, got {protocol_versions}"
     record(f"AGENT_VERSION_ACTIVE name={agent_name} protocol=invocations/2.0.0")
-
-    # Discover the INSTANCE (per-version) managed identity principal. This is
-    # the identity that presents to the model at inference time and that must
-    # receive Foundry User at both scopes in Step 3.5. The blueprint identity
-    # is NOT this one and needs no grant. The exact field name on the version
-    # object is the one live-CI-iterable assumption in this fixture: search the
-    # full object recursively for a principal/object id, and also expose the
-    # raw object for a REST fallback.
-    version_obj = dict(version)
-    Path("/tmp/ghcp-hosted-agents-version.json").write_text(
-        json.dumps(version_obj, default=str), encoding="utf-8"
-    )
-
-    _GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-    _KEYS = ("principal_id", "principalId", "object_id", "objectId")
-
-    def _find_principal(node):
-        if isinstance(node, dict):
-            for key in _KEYS:
-                val = node.get(key)
-                if isinstance(val, str) and _GUID.match(val):
-                    return val
-            identity = node.get("identity")
-            if identity is not None:
-                found = _find_principal(identity)
-                if found:
-                    return found
-            for val in node.values():
-                found = _find_principal(val)
-                if found:
-                    return found
-        elif isinstance(node, list):
-            for item in node:
-                found = _find_principal(item)
-                if found:
-                    return found
-        return None
-
-    instance_principal = _find_principal(version_obj) or ""
-    Path("/tmp/ghcp-hosted-agents-instance-principal").write_text(
-        instance_principal, encoding="utf-8"
-    )
-    if instance_principal:
-        record(f"INSTANCE_PRINCIPAL id={instance_principal} source=version-object")
-    else:
-        print("NOTE instance principal not on version object; Step 3.5 will "
-              "attempt a REST fallback before granting")
 ```
 
-Add `import json` and `import re` to the program's imports alongside the
-existing `import os` / `import time`. Do not use `allow_preview=True`,
-`project.beta.agents.patch_agent_details`, protocol version `"1.0.0"`/`"v1"`,
-or a `Foundry-Features` preview header. A permission error during deploy or
-the version check is a hard FAIL. The only retryable permission case is the
-grant-propagation readiness envelope classified in Step 4.
+The instance/blueprint identity discovery is NOT done here (builtin MCPs are
+disabled in CI); it is done deterministically with the `azd` CLI in Step 3.5.
+Add nothing to this program's imports beyond `os` and `time`. Do not use
+`allow_preview=True`, `project.beta.agents.patch_agent_details`, protocol
+version `"1.0.0"`/`"v1"`, or a `Foundry-Features` preview header. A permission
+error during deploy or the version check is a hard FAIL. The only retryable
+permission case is the grant-propagation readiness envelope classified in
+Step 4.
 
-## Step 3.5 - grant the instance identity Foundry User at both scopes
+## Step 3.5 - discover both identities, grant the instance one at both scopes
 
-The instance principal discovered in Step 3 must hold `Foundry User`
+Discovery is deterministic and self-contained. Because builtin MCPs are
+disabled in CI, use the `azd` CLI (not a Foundry MCP tool). Run
+`azd ai agent show --output json` from the azd work dir; it exposes BOTH
+managed identities by explicit field path:
+
+- `.instance_identity.principal_id` (fallback `.versions.latest.instance_identity.principal_id`)
+  — the runtime per-version **instance** MI. **This is the only grant target.**
+- `.blueprint.principal_id` (fallback `.versions.latest.blueprint.principal_id`)
+  — the **blueprint** identity. Log it for the distinction, but **never grant it.**
+
+The instance principal must hold `Foundry User`
 (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account scope AND
 the Foundry project scope before invocation. Project scope is the full project
 ARM id from CI; account scope strips the trailing `/projects/<name>` segment.
-Create both assignments now, before Step 4. The CI UAMI's ABAC condition
-permits granting only this one role at the account and its descendants.
+The grant is idempotent: reuse a pre-existing assignment (never revoke it),
+otherwise create one and record ownership so teardown deletes only ours. The
+CI UAMI's ABAC condition permits granting only this one role at the account and
+its descendants.
 
 ```bash
-INSTANCE_PRINCIPAL="$(cat /tmp/ghcp-hosted-agents-instance-principal)"
-if [ -z "$INSTANCE_PRINCIPAL" ]; then
-  # REST fallback: read the agent version resource and scan for a principalId.
-  agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
-  INSTANCE_PRINCIPAL="$(az rest --method get \
-    --url "${FOUNDRY_PROJECT_ENDPOINT%/}/assistants/${agent_name}/versions/1?api-version=2025-05-01" \
-    --resource "https://ai.azure.com" 2>/dev/null \
-    | jq -r '[.. | objects | (.principalId // .principal_id // .objectId // .object_id) | select(type=="string")] | first // empty')"
-fi
-if [ -z "$INSTANCE_PRINCIPAL" ]; then
+work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
+cd "$work_dir"
+
+# Deterministic instance/blueprint discovery via azd. Retry up to twice with a
+# 30s wait if the instance identity has not populated yet.
+INSTANCE_PID=""
+BLUEPRINT_PID=""
+for attempt in 1 2 3; do
+  show_json="$(azd ai agent show --output json 2>/dev/null || true)"
+  INSTANCE_PID="$(printf '%s' "$show_json" | jq -r '.instance_identity.principal_id // .versions.latest.instance_identity.principal_id // empty')"
+  BLUEPRINT_PID="$(printf '%s' "$show_json" | jq -r '.blueprint.principal_id // .versions.latest.blueprint.principal_id // empty')"
+  [ -n "$INSTANCE_PID" ] && break
+  sleep 30
+done
+if [ -z "$INSTANCE_PID" ]; then
   printf 'SMOKE_RESULT=FAIL could not discover hosted-agent instance principal\n' \
     > /tmp/ghcp-hosted-agents-smoke-result
   exit 1
 fi
-printf 'INSTANCE_PRINCIPAL id=%s\n' "$INSTANCE_PRINCIPAL" \
+# Log both identities so the instance-vs-blueprint distinction is explicit.
+printf 'INSTANCE_PRINCIPAL id=%s\n' "$INSTANCE_PID" \
   >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'INSTANCE_PRINCIPAL id=%s\n' "$INSTANCE_PID"
+printf 'BLUEPRINT_PRINCIPAL id=%s\n' "${BLUEPRINT_PID:-<none>}" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'BLUEPRINT_PRINCIPAL id=%s\n' "${BLUEPRINT_PID:-<none>}"
 
 foundry_role="53ca6127-db72-4b80-b1b0-d745d6d5456d"
 project_scope="$AZURE_AI_PROJECT_ID"
 account_scope="${AZURE_AI_PROJECT_ID%/projects/*}"
 
-az role assignment create \
-  --role "$foundry_role" \
-  --assignee-object-id "$INSTANCE_PRINCIPAL" \
-  --assignee-principal-type ServicePrincipal \
-  --scope "$account_scope" >/dev/null
-printf 'ROLE_ASSIGNED scope=account\n' >> /tmp/ghcp-hosted-agents-smoke-evidence
-printf 'ROLE_ASSIGNED scope=account\n'
+# Guard: AZURE_AI_PROJECT_ID must be a full project ARM id carrying a
+# /projects/<name> segment, or the derived account scope is wrong.
+case "$project_scope" in
+  "$account_scope"/projects/*) ;;
+  *) printf 'SMOKE_RESULT=FAIL malformed AZURE_AI_PROJECT_ID\n' \
+       > /tmp/ghcp-hosted-agents-smoke-result; exit 1 ;;
+esac
 
-az role assignment create \
-  --role "$foundry_role" \
-  --assignee-object-id "$INSTANCE_PRINCIPAL" \
-  --assignee-principal-type ServicePrincipal \
-  --scope "$AZURE_AI_PROJECT_ID" >/dev/null
-printf 'ROLE_ASSIGNED scope=project\n' >> /tmp/ghcp-hosted-agents-smoke-evidence
-printf 'ROLE_ASSIGNED scope=project\n'
+# --- account scope (idempotent) ---
+ACCOUNT_ASSIGNMENT_ID="$(az role assignment list \
+  --assignee "$INSTANCE_PID" --role "$foundry_role" --scope "$account_scope" \
+  --query "[0].id" -o tsv 2>/dev/null || true)"
+if [ -n "$ACCOUNT_ASSIGNMENT_ID" ]; then
+  ACCOUNT_OWNED=0
+else
+  ACCOUNT_ASSIGNMENT_ID="$(az role assignment create \
+    --role "$foundry_role" \
+    --assignee-object-id "$INSTANCE_PID" \
+    --assignee-principal-type ServicePrincipal \
+    --scope "$account_scope" \
+    --query id -o tsv)"
+  ACCOUNT_OWNED=1
+fi
+printf '%s %s\n' "$ACCOUNT_ASSIGNMENT_ID" "$ACCOUNT_OWNED" \
+  > /tmp/ghcp-hosted-agents-account-assignment
+printf 'ROLE_ASSIGNED scope=account owned=%s\n' "$ACCOUNT_OWNED" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'ROLE_ASSIGNED scope=account owned=%s\n' "$ACCOUNT_OWNED"
 
-echo "$INSTANCE_PRINCIPAL" > /tmp/ghcp-hosted-agents-instance-principal
+# --- project scope (idempotent) ---
+PROJECT_ASSIGNMENT_ID="$(az role assignment list \
+  --assignee "$INSTANCE_PID" --role "$foundry_role" --scope "$project_scope" \
+  --query "[0].id" -o tsv 2>/dev/null || true)"
+if [ -n "$PROJECT_ASSIGNMENT_ID" ]; then
+  PROJECT_OWNED=0
+else
+  PROJECT_ASSIGNMENT_ID="$(az role assignment create \
+    --role "$foundry_role" \
+    --assignee-object-id "$INSTANCE_PID" \
+    --assignee-principal-type ServicePrincipal \
+    --scope "$project_scope" \
+    --query id -o tsv)"
+  PROJECT_OWNED=1
+fi
+printf '%s %s\n' "$PROJECT_ASSIGNMENT_ID" "$PROJECT_OWNED" \
+  > /tmp/ghcp-hosted-agents-project-assignment
+printf 'ROLE_ASSIGNED scope=project owned=%s\n' "$PROJECT_OWNED" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'ROLE_ASSIGNED scope=project owned=%s\n' "$PROJECT_OWNED"
+
+printf 'ASSIGNMENT_IDS account=%s project=%s\n' \
+  "$ACCOUNT_ASSIGNMENT_ID" "$PROJECT_ASSIGNMENT_ID"
+
+# Proven propagation contract: with both grants freshly created, wait 60s
+# before invoking. Controlled testing showed the first invoke event may STILL
+# emit a 401 that the hosted agent's internal retry recovers ~2s later, so
+# Step 4's bounded loop must consume the FULL event stream after this wait.
+sleep 60
 ```
 
-Role-assignment propagation is not instant. Do NOT add a fixed long sleep
-here - Step 4's bounded six-attempt invoke loop (15-second backoff) is the
-propagation wait: an initial `model.call_failure` 401 / `transient_auth_error`
-may appear before propagation completes, and the loop retries the same invoke
-path until a recovered assistant event appears in the stream. Grant exactly
-these two assignments and nothing else; grant to the instance principal only,
-never the blueprint identity.
+Grant exactly these two assignments and nothing else; grant to the instance
+principal (`$INSTANCE_PID`) only, never the blueprint identity
+(`$BLUEPRINT_PID`). The 60s wait plus Step 4's bounded six-attempt invoke loop
+(15-second backoff) together cover propagation: an initial `model.call_failure`
+401 / `transient_auth_error` may appear before propagation completes, and the
+loop retries the same invoke path — consuming the full stream each attempt —
+until a recovered assistant event appears.
 
 ## Step 4 - invoke via `azd ai agent invoke` (single documented path)
 
@@ -680,19 +694,20 @@ timeout 300 azd ai agent delete "$agent_name" --force --no-prompt \
   && printf 'AGENT_DELETED name=%s\n' "$agent_name" >> /tmp/ghcp-hosted-agents-smoke-evidence \
   || echo "NOTE best-effort teardown exceeded 300-second cap or encountered an error; CI janitor will prune orphaned resources"
 
-# Best-effort revoke of only the two assignments Step 3.5 created.
-INSTANCE_PRINCIPAL="$(cat /tmp/ghcp-hosted-agents-instance-principal 2>/dev/null)"
-if [ -n "$INSTANCE_PRINCIPAL" ]; then
-  foundry_role="53ca6127-db72-4b80-b1b0-d745d6d5456d"
-  az role assignment delete --role "$foundry_role" \
-    --assignee "$INSTANCE_PRINCIPAL" \
-    --scope "${AZURE_AI_PROJECT_ID%/projects/*}" 2>/dev/null \
-    && echo "NOTE revoked account-scope grant" || true
-  az role assignment delete --role "$foundry_role" \
-    --assignee "$INSTANCE_PRINCIPAL" \
-    --scope "$AZURE_AI_PROJECT_ID" 2>/dev/null \
-    && echo "NOTE revoked project-scope grant" || true
-fi
+# Best-effort revoke of ONLY the assignments this run created (owned=1). A
+# pre-existing assignment (owned=0) is left intact. Pattern 25: a failed revoke
+# emits a NOTE and never turns a green deploy+invoke into FAIL.
+for state in /tmp/ghcp-hosted-agents-account-assignment /tmp/ghcp-hosted-agents-project-assignment; do
+  [ -f "$state" ] || continue
+  read -r assignment_id owned < "$state"
+  if [ "${owned:-0}" = "1" ] && [ -n "${assignment_id:-}" ]; then
+    az role assignment delete --ids "$assignment_id" 2>/dev/null \
+      && echo "NOTE revoked $assignment_id" \
+      || echo "NOTE best-effort revoke failed for $assignment_id; CI janitor will prune"
+  else
+    echo "NOTE assignment ${assignment_id:-<none>} pre-existed (owned=0); left intact"
+  fi
+done
 ```
 
 Do NOT run a full-environment teardown command, a container-app cleanup
@@ -723,8 +738,9 @@ required_patterns = (
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ghcp-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ghcp-[0-9a-f]{8} protocol=invocations/2\.0\.0",
     r"INSTANCE_PRINCIPAL id=\S+",
-    r"ROLE_ASSIGNED scope=account",
-    r"ROLE_ASSIGNED scope=project",
+    r"BLUEPRINT_PRINCIPAL id=\S+",
+    r"ROLE_ASSIGNED scope=account owned=[01]",
+    r"ROLE_ASSIGNED scope=project owned=[01]",
     r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8} attempt=[1-6]",
 )
 for pattern in required_patterns:

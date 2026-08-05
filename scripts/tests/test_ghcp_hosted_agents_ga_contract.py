@@ -200,13 +200,13 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertIn("--assignee-principal-type ServicePrincipal", fx)
         self.assertIn("--assignee-object-id", fx)
         self.assertIn("INSTANCE_PRINCIPAL", fx)
-        # Project scope is the full project ARM id from CI; account scope strips
-        # the trailing /projects/<name> segment via bash parameter expansion.
-        self.assertIn('--scope "$AZURE_AI_PROJECT_ID"', fx)
-        self.assertIn("${AZURE_AI_PROJECT_ID%/projects/*}", fx)
         # Both grants are recorded as evidence and gated before invocation.
         self.assertIn("ROLE_ASSIGNED scope=account", fx)
         self.assertIn("ROLE_ASSIGNED scope=project", fx)
+        # Scope is derived into named vars; project scope is AZURE_AI_PROJECT_ID
+        # verbatim and account scope strips the trailing /projects/<name>.
+        self.assertIn('--scope "$project_scope"', fx)
+        self.assertIn('--scope "$account_scope"', fx)
         grant_idx = fx.index("az role assignment create")
         invoke_idx = fx.index("azd ai agent invoke")
         self.assertLess(grant_idx, invoke_idx)
@@ -228,6 +228,61 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
         self.assertRegex(skill, r"blueprint[^\n]*no[^\n]*(grant|assignment|role)")
         # Cleanup / revocation guidance for the grants the operator adds.
         self.assertIn("az role assignment delete", skill)
+        # Deterministic discovery: azd ai agent show exposes BOTH principals.
+        self.assertIn("azd ai agent show", skill)
+        self.assertIn("instance_identity.principal_id", skill)
+        self.assertIn("blueprint.principal_id", skill)
+
+    def test_fixture_discovers_instance_and_blueprint_via_azd_show(self) -> None:
+        fx = self.fixture
+        # Discovery is deterministic and self-contained (builtin MCPs are
+        # disabled in CI): azd ai agent show --output json exposes both
+        # principals by explicit field path. No heuristic recursive scan.
+        self.assertIn("azd ai agent show", fx)
+        self.assertIn(".instance_identity.principal_id", fx)
+        self.assertIn(".blueprint.principal_id", fx)
+        self.assertNotIn("_find_principal", fx)
+        # Both identities are logged so the distinction is explicit in-transcript.
+        self.assertIn("INSTANCE_PRINCIPAL id=", fx)
+        self.assertIn("BLUEPRINT_PRINCIPAL id=", fx)
+        # Bounded discovery retry when the instance identity has not populated.
+        self.assertIn("sleep 30", fx)
+        # ONLY the instance identity is ever the grant assignee; blueprint never.
+        self.assertNotIn('--assignee-object-id "$BLUEPRINT', fx)
+        self.assertNotIn('--assignee-object-id "${BLUEPRINT', fx)
+
+    def test_fixture_captures_and_revokes_assignment_ids_idempotent(self) -> None:
+        fx = self.fixture
+        # Capture the assignment ARM id at create time for by-id revocation.
+        self.assertIn("--query id -o tsv", fx)
+        self.assertIn("ACCOUNT_ASSIGNMENT_ID", fx)
+        self.assertIn("PROJECT_ASSIGNMENT_ID", fx)
+        # Idempotency: resolve a pre-existing assignment instead of blind create,
+        # and carry an ownership flag so a pre-existing grant is never revoked.
+        self.assertIn("az role assignment list", fx)
+        self.assertIn('--query "[0].id"', fx)
+        self.assertIn("OWNED", fx)
+        # Teardown deletes strictly by captured id (best-effort), not by
+        # assignee+scope (which could match a pre-existing standing grant).
+        self.assertIn("az role assignment delete --ids", fx)
+
+    def test_fixture_guards_malformed_project_id(self) -> None:
+        fx = self.fixture
+        # A malformed AZURE_AI_PROJECT_ID that does not carry a /projects/<name>
+        # segment must FAIL deterministically rather than derive a bad scope.
+        self.assertIn("SMOKE_RESULT=FAIL malformed AZURE_AI_PROJECT_ID", fx)
+        self.assertRegex(fx, r'case "\$project_scope" in')
+
+    def test_fixture_waits_for_propagation_before_invoke_loop(self) -> None:
+        fx = self.fixture
+        # Proven contract: create both grants, wait 60s for propagation, THEN
+        # run the bounded invoke loop that consumes the full event stream.
+        self.assertIn("sleep 60", fx)
+        grant_idx = fx.index("az role assignment create")
+        sleep_idx = fx.index("sleep 60")
+        invoke_idx = fx.index("azd ai agent invoke")
+        self.assertLess(grant_idx, sleep_idx)
+        self.assertLess(sleep_idx, invoke_idx)
 
     def _invoke_classifier_code(self) -> str:
         start = 'python3 - "$invoke_log" <<\'PY\'\n'

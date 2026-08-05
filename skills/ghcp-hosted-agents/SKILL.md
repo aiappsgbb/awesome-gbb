@@ -677,9 +677,26 @@ az role assignment create \
   --scope "$project_scope"
 ```
 
-`$instance_principal_id` is the **instance** (active version) service
-principal object ID — discover it from the active agent version after
-deploy, not from the blueprint `azd ai agent show` identity.
+### Discovering the instance identity (deterministic)
+
+`azd ai agent show --output json` exposes **both** managed identities by
+explicit field path — do not scan the object heuristically:
+
+```bash
+azd ai agent show --output json
+# .instance_identity.principal_id  -> the runtime per-version INSTANCE MI (grant this)
+# .blueprint.principal_id          -> the blueprint identity (never grant)
+# fallbacks: .versions.latest.instance_identity.principal_id
+#            .versions.latest.blueprint.principal_id
+INSTANCE_PID=$(azd ai agent show --output json | jq -er '.instance_identity.principal_id')
+BLUEPRINT_PID=$(azd ai agent show --output json | jq -er '.blueprint.principal_id')
+```
+
+Discover and log **both** so the instance-vs-blueprint distinction is explicit,
+then grant **only** `$INSTANCE_PID`. The instance identity is populated shortly
+after the version goes active; if it is briefly empty, retry `azd ai agent show`
+up to twice with a short wait. `$instance_principal_id` above is this
+`instance_identity.principal_id` — never the `blueprint.principal_id`.
 
 > **Least-privilege note.** The grantor needs
 > `Microsoft.Authorization/roleAssignments/write` scoped to grant only
@@ -717,7 +734,9 @@ az role assignment delete \
 
 Revocation is best-effort during teardown — a failed delete must not fail
 an otherwise-successful run (the instance identity is deleted with the
-agent version anyway).
+agent version anyway). If a grant already existed **before** your run
+(resolve its id with `az role assignment list --assignee ... --role ...
+--scope ... --query "[0].id"`), do not revoke it — you did not create it.
 
 ### Deploying user
 
