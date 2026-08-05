@@ -25,6 +25,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CompactionProvider,
+    ContextProvider,
     ContextWindowCompactionStrategy,
     FileAccessProvider,
     FileMemoryProvider,
@@ -208,19 +209,27 @@ def assert_compaction(client: NeverCalledChatClient) -> None:
 
 
 def assert_construction(client: NeverCalledChatClient) -> None:
-    file_access = create_harness_agent(
+    caller_provider = ContextProvider("caller-contract")
+    full_pipeline = create_harness_agent(
         client=client,
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
         file_access_store=InMemoryAgentFileStore(),
-        disable_web_search=True,
-    )
-    assert FileAccessProvider in provider_types(file_access)
-
-    skills = create_harness_agent(
-        client=client,
         skills_paths=["./offline-skills"],
+        context_providers=[caller_provider],
         disable_web_search=True,
     )
-    assert SkillsProvider in provider_types(skills)
+    assert provider_types(full_pipeline) == [
+        InMemoryHistoryProvider,
+        CompactionProvider,
+        TodoProvider,
+        AgentModeProvider,
+        FileMemoryProvider,
+        FileAccessProvider,
+        SkillsProvider,
+        ContextProvider,
+    ]
+    assert (full_pipeline.context_providers or [])[-1] is caller_provider
 
     async def stop_loop(**kwargs: Any) -> bool:
         return False
