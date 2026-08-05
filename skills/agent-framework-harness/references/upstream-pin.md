@@ -27,15 +27,12 @@ packages:
     source: pypi
     version: "1.0.0b260730"
     upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
-    notes: |
-      Exact prerelease pin; do not replace with a compatible-release cap.
+    notes: Exact prerelease pin; do not replace with a compatible-release range.
   - name: agent-framework-tools
     source: pypi
     version: "1.0.0b260730"
     upstream_changelog: https://pypi.org/project/agent-framework-tools/#history
-    notes: |
-      Exact prerelease pin for optional shell tooling; do not replace with
-      a compatible-release cap.
+    notes: Exact prerelease pin for optional shell tooling.
   - name: azure-identity
     source: pypi
     version: "1.25.3"
@@ -137,11 +134,16 @@ Prerelease refreshes require an explicit revalidation rather than cap drift.
 
 ## Verified signature defaults and ordering
 
-The offline smoke verifies factory signature defaults, provider order,
-middleware order, compaction wiring, construction, and hosting imports. The
-references also embody two API-correct findings: async Azure credentials are
-used with the async Foundry client, and hosted harness history is configured
-not to load or store messages because `ResponsesHostServer` owns that history.
+The audited factory defaults set the six disable flags (`compaction`, `todo`,
+`mode`, `file_memory`, `web_search`, and `tool_auto_approval`) to `False`.
+`file_access_store`, `skills_provider`, `skills_paths`, `background_agents`,
+`shell_executor`, and `loop_should_continue` default to `None`;
+`loop_max_iterations` defaults to `10`.
+
+Provider order is history, conditional compaction, todo, mode, file memory,
+optional file access, optional skills, optional background agents, optional
+shell, then caller providers. Middleware order is optional loop, tool approval,
+message injection, then caller middleware.
 
 ## MINOR-refresh rechecks
 
