@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_framework import Agent, InMemoryHistoryProvider, create_harness_agent
+from agent_framework import Agent, create_harness_agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
@@ -32,11 +32,6 @@ def build_agent(
         agent_instructions="Complete the caller's task and return a concise result.",
         max_context_window_tokens=128_000,
         max_output_tokens=16_384,
-        history_provider=InMemoryHistoryProvider(
-            load_messages=False,
-            store_inputs=False,
-            store_outputs=False,
-        ),
         disable_mode=True,
         disable_file_memory=True,
         disable_web_search=True,
