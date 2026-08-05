@@ -1,6 +1,6 @@
 # Design Spec: foundry-mcp-aca refresh 1.2.4
 
-**Status:** Round 15 implemented; exact-head T3 pending
+**Status:** Round 16 implemented; exact-head T3 pending
 **Date:** 2026-08-05
 **Base version:** 1.2.3
 **Target version:** 1.2.4 (PATCH — pin refresh + wording + deployment corrections)
@@ -372,3 +372,40 @@ adding a second audit action or a prose-only acknowledgement.
 because line 2 declared `STATE_FILE`; after promoting the audit echo, the same
 test and all 73 fixture contract tests are GREEN. Full `scripts/tests` remains
 393 tests.
+
+## Round-16 correction (2026-08-05): teardown restores state and exposes failure
+
+**Rejected previously accepted T3:** Run `31031888829`, job `92394412664`,
+head `4d53b5fc419c05e12502dee119d0e6276dbfd22d`, artifact `8941088170`,
+transcript SHA-256
+`92c1de96cab8b353e081b5503c4ca0501f6d08167e39c638fd28aa8c18539a7a`.
+Transcript lines 41-47 show Step 7 beginning with `cd "$PROJECT_DIR"` without
+sourcing `/tmp/foundry-mcp-aca-state.env`; line 51 reports that `azd down`
+found no project in the current directory. Because every Copilot Bash action
+is a fresh process, the unset variable made cleanup run from the repository
+root. The pipeline also omitted `pipefail`, so `tail -20` returned zero and
+suppressed the Pattern-25 NOTE when `azd down` failed.
+
+**Focused correction:** Step 7 now sources the persisted state first, soft-NOTEs
+and returns success when state or the restored project directory is unavailable,
+changes to that directory, enables pipeline failure propagation, and runs the
+same bounded `azd down --purge --force --no-prompt`. A nonzero or timed-out
+teardown emits the existing shared-RG janitor NOTE. The previously written PASS
+marker remains byte-for-byte unchanged on every cleanup path.
+
+**Execution-level contract and TDD evidence:**
+
+- RED on `4d53b5fc`: 6 failed, 2 passed, 72 deselected, 4 subtests passed.
+  The exact extracted Step 7 block failed the structural source check, ran the
+  successful stub from the fresh-shell cwd instead of the restored project, and
+  emitted no NOTE for missing state, invalid cwd, nonzero `azd`, or timeout.
+- GREEN: 3 targeted tests passed with 9 subtests. The success stub records the
+  restored cwd and exact `down --purge --force --no-prompt` arguments; the four
+  failure paths return zero, emit a NOTE, and preserve the PASS marker.
+- Final local counts: 75 fixture contract tests and 395 full `scripts/tests`
+  tests pass (82 and 269 subtests respectively).
+
+**Acceptance remains open:** exact-head T3 must retain the Round-15 hard-path
+purity and visibly show Step 7 sourcing state, running from the restored azd
+project, and either completing deletion or emitting the expected Pattern-25
+NOTE for real shared-resource-group delete protection.

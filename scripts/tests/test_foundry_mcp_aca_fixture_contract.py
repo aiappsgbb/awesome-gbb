@@ -48,6 +48,7 @@ SCAFFOLD_BLOCK_HEADING = (
 STEP_1_HEADING = "## Step 1 — goal + scaffolding constraints"
 STEP_2_HEADING = "## Step 2 — create the deterministic scaffold"
 STEP_4_HEADING = "## Step 4 — `azd up` (HARD GATE)"
+STEP_7_HEADING = "## Step 7 — Best-effort teardown (Pattern 25 — AFTER the marker)"
 STEP_2_BOUNDARY_PREFIX = "---\n\n## Step 2 — "
 STEP_4_BOUNDARY = f"---\n\n{STEP_4_HEADING}"
 DETERMINISTIC_GUARD_HEADING = (
@@ -458,6 +459,26 @@ def _provision_block(markdown: str) -> str:
         raise AssertionError(
             "the prescribed provision section must not expose a second command path"
         )
+    return shape.group("body")
+
+
+def _teardown_block(markdown: str) -> str:
+    """Extract the sole prescribed Step 7 teardown Bash block."""
+    headings = list(re.finditer(rf"(?m)^{re.escape(STEP_7_HEADING)}$", markdown))
+    if len(headings) != 1:
+        raise AssertionError("expected the exact Step 7 heading exactly once")
+    next_step = markdown.find("\n---\n\n## Summary of FAIL conditions", headings[0].end())
+    if next_step < 0:
+        raise AssertionError("Step 7 must end before the FAIL-condition summary")
+    section = markdown[headings[0].start():next_step]
+    shape = re.match(
+        rf"{re.escape(STEP_7_HEADING)}\n\n.*?\n\n"
+        r"```bash\n(?P<body>.*?)```\n\n",
+        section,
+        re.DOTALL,
+    )
+    if shape is None or len(_shell_fences(section)) != 1:
+        raise AssertionError("Step 7 must contain exactly one standard Bash fence")
     return shape.group("body")
 
 
@@ -1803,15 +1824,179 @@ class TestStatePersistence(unittest.TestCase):
             "SUB=$(az account show",
             "CODE=$(curl",
             "TOKEN=$(az account get-access-token",
+            "azd down --purge --force --no-prompt",
         ):
             with self.subTest(marker=marker):
                 block = _standard_bash_block_containing(self.fixture, marker)
-                self.assertTrue(
-                    block.lstrip().startswith(
-                        "source /tmp/foundry-mcp-aca-state.env\n"
-                    ),
+                self.assertRegex(
+                    block.lstrip(),
+                    r"^source /tmp/foundry-mcp-aca-state\.env(?:\n| \|\| \{)",
                     f"fresh block containing {marker!r} must source state first",
                 )
+
+    def test_teardown_restores_project_dir_and_runs_exact_azd_down(self):
+        """Step 7 must run teardown from PROJECT_DIR restored in a fresh shell."""
+        teardown = _teardown_block(self.fixture)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            temp = pathlib.Path(temp_dir)
+            project_dir = temp / "restored-project"
+            project_dir.mkdir()
+            safe_cwd = temp / "fresh-shell-cwd"
+            safe_cwd.mkdir()
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            call_log = temp / "azd-call.log"
+            timeout_log = temp / "timeout-call.log"
+
+            timeout_stub = bin_dir / "timeout"
+            timeout_stub.write_text(
+                "#!/usr/bin/env bash\n"
+                "duration=$1\n"
+                "shift\n"
+                'printf "duration=%s\\n" "$duration" > "$TIMEOUT_CALL_LOG"\n'
+                'if [ "${TIMEOUT_RESULT:-0}" -ne 0 ]; then '
+                'exit "$TIMEOUT_RESULT"; fi\n'
+                'exec "$@"\n',
+                encoding="utf-8",
+            )
+            azd_stub = bin_dir / "azd"
+            azd_stub.write_text(
+                "#!/usr/bin/env bash\n"
+                'printf "cwd=%s\\nargs=%s\\n" "$PWD" "$*" > "$AZD_CALL_LOG"\n'
+                'exit "${AZD_RESULT:-0}"\n',
+                encoding="utf-8",
+            )
+            timeout_stub.chmod(0o755)
+            azd_stub.chmod(0o755)
+
+            STATE_PATH.write_text(
+                f"PROJECT_DIR={shlex.quote(str(project_dir))}\n",
+                encoding="utf-8",
+            )
+            SMOKE_MARKER_PATH.write_text(
+                "SMOKE_RESULT=PASS\n",
+                encoding="utf-8",
+            )
+            result = _run_bash(
+                teardown,
+                {
+                    "PATH": f"{bin_dir}:/usr/bin:/bin",
+                    "AZD_CALL_LOG": str(call_log),
+                    "TIMEOUT_CALL_LOG": str(timeout_log),
+                },
+                cwd=safe_cwd,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                f"best-effort teardown failed: {result.stderr!r}",
+            )
+            self.assertEqual(
+                [
+                    f"cwd={project_dir}",
+                    "args=down --purge --force --no-prompt",
+                ],
+                call_log.read_text(encoding="utf-8").splitlines(),
+            )
+            self.assertEqual(
+                ["duration=300"],
+                timeout_log.read_text(encoding="utf-8").splitlines(),
+            )
+            self.assertNotIn("NOTE:", result.stdout)
+            self.assertEqual(
+                "SMOKE_RESULT=PASS\n",
+                SMOKE_MARKER_PATH.read_text(encoding="utf-8"),
+            )
+
+    def test_teardown_soft_passes_and_notes_each_cleanup_failure(self):
+        """State, cwd, azd, and timeout failures must be observable soft-PASSes."""
+        teardown = _teardown_block(self.fixture)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            temp = pathlib.Path(temp_dir)
+            project_dir = temp / "restored-project"
+            project_dir.mkdir()
+            safe_cwd = temp / "fresh-shell-cwd"
+            safe_cwd.mkdir()
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            call_log = temp / "azd-call.log"
+
+            timeout_stub = bin_dir / "timeout"
+            timeout_stub.write_text(
+                "#!/usr/bin/env bash\n"
+                "duration=$1\n"
+                "shift\n"
+                'if [ "${TIMEOUT_RESULT:-0}" -ne 0 ]; then '
+                'exit "$TIMEOUT_RESULT"; fi\n'
+                'exec "$@"\n',
+                encoding="utf-8",
+            )
+            azd_stub = bin_dir / "azd"
+            azd_stub.write_text(
+                "#!/usr/bin/env bash\n"
+                'printf "called\\n" >> "$AZD_CALL_LOG"\n'
+                'exit "${AZD_RESULT:-0}"\n',
+                encoding="utf-8",
+            )
+            timeout_stub.chmod(0o755)
+            azd_stub.chmod(0o755)
+            base_env = {
+                "PATH": f"{bin_dir}:/usr/bin:/bin",
+                "AZD_CALL_LOG": str(call_log),
+            }
+
+            failure_cases = (
+                ("missing state", None, {}, False),
+                ("invalid project dir", temp / "missing-project", {}, False),
+                ("azd nonzero", project_dir, {"AZD_RESULT": "42"}, True),
+                ("timeout", project_dir, {"TIMEOUT_RESULT": "124"}, False),
+            )
+            for name, state_project_dir, env_overrides, azd_called in failure_cases:
+                with self.subTest(failure=name):
+                    call_log.unlink(missing_ok=True)
+                    STATE_PATH.unlink(missing_ok=True)
+                    if state_project_dir is not None:
+                        STATE_PATH.write_text(
+                            f"PROJECT_DIR={shlex.quote(str(state_project_dir))}\n",
+                            encoding="utf-8",
+                        )
+                    SMOKE_MARKER_PATH.write_text(
+                        "SMOKE_RESULT=PASS\n",
+                        encoding="utf-8",
+                    )
+
+                    result = _run_bash(
+                        teardown,
+                        {**base_env, **env_overrides},
+                        cwd=safe_cwd,
+                    )
+
+                    self.assertEqual(
+                        0,
+                        result.returncode,
+                        f"{name} must remain best-effort: {result.stderr!r}",
+                    )
+                    self.assertIn(
+                        "NOTE: teardown",
+                        result.stdout,
+                        f"{name} must be visible in the transcript",
+                    )
+                    self.assertEqual(azd_called, call_log.exists())
+                    self.assertEqual(
+                        "SMOKE_RESULT=PASS\n",
+                        SMOKE_MARKER_PATH.read_text(encoding="utf-8"),
+                    )
 
     def test_azure_tenant_id_in_azd_env(self):
         """azd env .env must include AZURE_TENANT_ID for federated-credential CI."""

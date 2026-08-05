@@ -1,7 +1,7 @@
 # Plan: foundry-mcp-aca refresh 1.2.4
 
 **Design:** [specs/foundry-mcp-aca-refresh-1.2.4.md](../specs/foundry-mcp-aca-refresh-1.2.4.md)
-**Status:** Round 15 implemented; exact-head T3 pending
+**Status:** Round 16 implemented; exact-head T3 pending
 
 ## Correction rounds
 
@@ -415,3 +415,43 @@ later audit echo became visible.
 4. RED on `351a449`: the structural test found `STATE_FILE` on line 2.
 5. GREEN: the exact bootstrap begins with `set` plus the audit echo; all 73
    fixture contract tests and all 393 repository tests pass.
+
+## Round-16 corrections (2026-08-05)
+
+### Exact-head rejection and root cause
+
+Run `31031888829`, job `92394412664`, head
+`4d53b5fc419c05e12502dee119d0e6276dbfd22d`, artifact `8941088170`,
+transcript SHA-256
+`92c1de96cab8b353e081b5503c4ca0501f6d08167e39c638fd28aa8c18539a7a`
+is no longer accepted. Lines 41-47 show teardown starting with
+`cd "$PROJECT_DIR"` in a fresh Bash process without sourcing the state file.
+Line 51 confirms `azd down` found no azd project in the current directory. The
+pipeline lacked `pipefail`, so `tail` masked the nonzero `azd` result and the
+documented cleanup NOTE never appeared.
+
+### Minimal correction
+
+1. Source `/tmp/foundry-mcp-aca-state.env` as the first Step 7 command.
+2. On missing state or unusable `PROJECT_DIR`, emit the Pattern-25 janitor NOTE
+   and return success without invoking `azd`.
+3. Change to the restored project directory, enable `pipefail`, and keep the
+   existing 300-second `azd down --purge --force --no-prompt` command.
+4. Emit the NOTE when `azd` returns nonzero or the timeout expires.
+5. Never rewrite or downgrade the already-written PASS marker.
+
+### RED and GREEN
+
+- RED on `4d53b5fc`: 6 failed, 2 passed, 72 deselected, 4 subtests passed.
+  The exact Step 7 replay proved the missing source, wrong cwd, and silent
+  missing-state/cd/nonzero/timeout paths.
+- GREEN targeted: 3 passed, 72 deselected, 9 subtests passed.
+- GREEN fixture contracts: 75 passed, 82 subtests passed.
+- GREEN full `scripts/tests`: 395 passed, 269 subtests passed.
+
+### Acceptance pending
+
+The replacement exact-head T3 must preserve bootstrap/scaffold/provision/MCP
+purity and show Step 7 visibly sourcing state, running from the restored azd
+project, and either deleting successfully or printing the expected Pattern-25
+NOTE when shared-RG protection prevents deletion.

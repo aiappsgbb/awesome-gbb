@@ -819,10 +819,19 @@ is **5 minutes** (Pattern 25). If teardown stalls past that, emit a
 single NOTE line to stdout and return — the smoke verdict stays PASS:
 
 ```bash
-cd "$PROJECT_DIR"
-timeout 300 azd down --purge --force --no-prompt 2>&1 | tail -20 || {
-  echo "NOTE: teardown stalled or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days)"
+source /tmp/foundry-mcp-aca-state.env || {
+  echo "NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days) (state file unavailable)"
+  exit 0
 }
+TEARDOWN_NOTE="NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days)"
+if [[ -z "${PROJECT_DIR:-}" || ! -d "$PROJECT_DIR" ]] || ! cd "$PROJECT_DIR"; then
+  echo "$TEARDOWN_NOTE (project directory unavailable)"
+  exit 0
+fi
+set -o pipefail
+if ! timeout 300 azd down --purge --force --no-prompt 2>&1 | tail -20; then
+  echo "$TEARDOWN_NOTE"
+fi
 ```
 
 The marker stays `SMOKE_RESULT=PASS`. Cleanup failure does NOT downgrade
