@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import unittest
@@ -14,6 +15,17 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PIN = ROOT / "skills" / "foundry-voice-live" / "references" / "upstream-pin.md"
 SKILL = ROOT / "skills" / "foundry-voice-live" / "SKILL.md"
 FIXTURE = ROOT / "skills" / "foundry-voice-live" / "test-fixture" / "consumer_prompt.md"
+README = ROOT / "README.md"
+PLUGIN = ROOT / "plugin.json"
+MARKETPLACE = ROOT / ".github" / "plugin" / "marketplace.json"
+
+VOICE_LIVE_README_ROW = (
+    "| [**foundry-voice-live**](skills/foundry-voice-live/) | Build real-time voice agents "
+    "with Azure Voice Live (GA 2026-04-10) through a four-rung migration from Azure OpenAI "
+    "Realtime to the native Voice Live SDK. Covers semantic VAD, echo cancellation, Neural HD "
+    "voices, Foundry agent routing, benchmark patterns, and the FastRTC 0.0.34 plus Gradio 5.50 "
+    "compatibility boundary |"
+)
 
 
 def _fenced_blocks(markdown: str, language: str) -> list[str]:
@@ -33,6 +45,53 @@ def _python_heredoc(markdown: str) -> str:
         if match:
             return match.group("body")
     raise AssertionError("fixture Python heredoc not found")
+
+
+def _version_fields(value: object, path: str = "$") -> dict[str, str]:
+    if isinstance(value, dict):
+        found: dict[str, str] = {}
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if key == "version":
+                found[child_path] = child
+            found.update(_version_fields(child, child_path))
+        return found
+    if isinstance(value, list):
+        found = {}
+        for index, child in enumerate(value):
+            found.update(_version_fields(child, f"{path}[{index}]"))
+        return found
+    return {}
+
+
+class FoundryVoiceLivePublicationContractTests(unittest.TestCase):
+    def test_root_plugin_version_is_4296(self) -> None:
+        plugin = json.loads(PLUGIN.read_text(encoding="utf-8"))
+
+        self.assertEqual(plugin["version"], "4.29.6")
+
+    def test_all_marketplace_version_fields_are_4296(self) -> None:
+        marketplace = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
+        version_fields = _version_fields(marketplace)
+
+        self.assertTrue(version_fields)
+        self.assertEqual(
+            version_fields,
+            {
+                "$.metadata.version": "4.29.6",
+                "$.plugins[0].version": "4.29.6",
+            },
+        )
+
+    def test_readme_contains_exact_foundry_voice_live_publication_row(self) -> None:
+        readme = README.read_text(encoding="utf-8")
+        rows = [
+            line
+            for line in readme.splitlines()
+            if line.startswith("| [**foundry-voice-live**](skills/foundry-voice-live/) |")
+        ]
+
+        self.assertEqual(rows, [VOICE_LIVE_README_ROW])
 
 
 class FoundryVoiceLivePinContractTests(unittest.TestCase):
