@@ -12,7 +12,7 @@ description: >
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
   local MCP development (use mcp-config.json directly), general Azure deploy.
 metadata:
-  version: "1.2.3"
+  version: "1.3.0"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP.
 
@@ -155,8 +155,8 @@ prefer managed identity over Cosmos keys.
 > Pin `fastmcp < 3` in production, then upgrade when you're ready.
 > ```
 >
-> If you skim past that and ship, every Cosmos tool call will 404. The KYC PoC
-> burned an hour on this when an unrelated `azd deploy cosmos-mcp` rebuild
+> If you skim past that and ship, every Cosmos tool call will 404. A real
+> deployment burned an hour on this when an unrelated `azd deploy` rebuild
 > jumped fastmcp 2.14.7 → 3.2.4 and broke point reads + queries simultaneously.
 > Always upper-bound: `fastmcp>=2.0.0,<3.0.0`. Same rule applies to **any
 > client** that imports `fastmcp` (e.g. an ACA Job that drives the MCP) — pin
@@ -392,7 +392,7 @@ VNet injection is intentionally out of scope here — see `foundry-vnet-deploy` 
 
 ---
 
-## Option D: Mock MCP Server (for PoC / Demo)
+## Option D: Mock MCP Server (for Prototyping / Demo)
 
 When backend systems are inaccessible (SAP, Oracle, corporate CRM, etc.), generate a
 **FastMCP mock server** backed by sample data from `specs/sample-data/`. The customer
@@ -536,9 +536,10 @@ python server.py
 
 ### Deploy to ACA
 
+Use the standard `azd` workflow (see `azure.yaml` service binding in [`azd-patterns`](../azd-patterns/)):
+
 ```bash
-az acr build --registry <acr> --image mock-mcp:latest ./src/mcp/
-# Then create ACA pointing to the image (see Bicep above)
+azd up   # provisions Bicep + builds image to ACR + patches ACA
 ```
 
 ### Swap to Real System

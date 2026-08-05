@@ -20,19 +20,21 @@ packages:
       Machine-enforced hold: hold_below + hold_reason make the freshness detector suppress 3.x drift signals while KI-001 is open, so the weekly auto-refresh cannot re-bump past 3.0.0 (regression PR #166). The hold releases automatically when KI-001 is closed/revalidated.
   - name: mcp
     source: pypi
-    version: "1.28.1"
+    version: "1.29.0"
     upstream_changelog: https://pypi.org/project/mcp/#history
+    hold_below: "2.0.0"
+    hold_reason: KI-001
     notes: |
-      MCP protocol package; version pulled transitively by fastmcp (fastmcp~=2.14.7 requires mcp>=1.24.0,<2.0).
+      MCP protocol package; version pulled transitively by fastmcp (fastmcp~=2.14.7 requires mcp>=1.24.0,<2.0). mcp 2.0.0 is incompatible with fastmcp 2.x.
   - name: azure-mgmt-appcontainers
     source: pypi
-    version: "4.0.0"
+    version: "5.0.0"
     upstream_changelog: https://pypi.org/project/azure-mgmt-appcontainers/#history
     notes: |
-      Azure Container Apps management SDK used for ACA resource operations; import smoke only, no live deploy.
+      Azure Container Apps management SDK. MAJOR bump from 4.0.0; jobs.get/begin_create_or_update API is preserved.
   - name: azure-cosmos
     source: pypi
-    version: "4.15.0"
+    version: "4.16.3"
     upstream_changelog: https://pypi.org/project/azure-cosmos/#history
     notes: |
       Async Cosmos MCP path requires the >=4.15 query_items signature discipline documented in SKILL.md.
@@ -44,7 +46,7 @@ packages:
       Keyless Azure SDK authentication floor from the reference requirements.
   - name: aiohttp
     source: pypi
-    version: "3.13.5"
+    version: "3.14.3"
     upstream_changelog: https://pypi.org/project/aiohttp/#history
     notes: |
       Required async HTTP transport for azure-cosmos in the Python Cosmos MCP server.
@@ -83,11 +85,11 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "fastmcp~=2.14.7" \
-      "azure-mgmt-appcontainers~=4.0.0" \
-      "azure-cosmos~=4.15.0" \
+      "azure-mgmt-appcontainers~=5.0.0" \
+      "azure-cosmos~=4.16.3" \
       "azure-identity~=1.25.3" \
       "azure-keyvault-secrets~=4.11.0" \
-      "aiohttp~=3.13.5"
+      "aiohttp~=3.14.3"
     python - <<'PY'
     from fastmcp import FastMCP
     import mcp
@@ -101,7 +103,7 @@ validation:
   expected_output:
     - "ok foundry-mcp-aca imports"
 
-last_validated: 2026-07-04
+last_validated: 2026-08-05
 validated_by: copilot-bot
 known_issues_count: 1
 ---
@@ -115,12 +117,12 @@ This Tier-B pin captures the MCP and Azure Container Apps package stack for impo
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
 | `fastmcp` | PyPI | **2.14.7** | Known-good 2.x line; keep `<3.0.0` |
-| `mcp` | PyPI | **1.28.1** | Transitive via fastmcp (>=1.24.0,<2.0) |
-| `azure-mgmt-appcontainers` | PyPI | **4.0.0** | ACA management SDK |
-| `azure-cosmos` | PyPI | **4.15.0** | Cosmos MCP async SDK floor |
-| `azure-identity` | PyPI | **1.19.0** | Keyless auth floor |
+| `mcp` | PyPI | **1.29.0** | Transitive via fastmcp (>=1.24.0,<2.0); held below 2.0.0 |
+| `azure-mgmt-appcontainers` | PyPI | **5.0.0** | ACA management SDK; MAJOR from 4.0.0, jobs API preserved |
+| `azure-cosmos` | PyPI | **4.16.3** | Cosmos MCP async SDK; MINOR from 4.15.0 |
+| `azure-identity` | PyPI | **1.25.3** | Keyless auth floor |
 | `azure-keyvault-secrets` | PyPI | **4.11.0** | SecretClient — Layer 3 secret-metadata tool |
-| `aiohttp` | PyPI | **3.9.0** | Async HTTP transport |
+| `aiohttp` | PyPI | **3.14.3** | Async HTTP transport; MINOR from 3.13.5 |
 
 ## Verification checklist
 
