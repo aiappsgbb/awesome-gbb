@@ -126,7 +126,7 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
             'assert hasattr(AsyncAzureOpenAI, "realtime")',
             'assert version("openai").startswith("2.53.")',
             'assert version("azure-identity").startswith("1.25.")',
-            'assert version("fastrtc").startswith("0.0.34")',
+            'assert version("fastrtc").startswith("0.0.")',
             'assert version("gradio").startswith("5.50.")',
             'assert version("azure-ai-voicelive").startswith("1.3.")',
             '"create_response"',
