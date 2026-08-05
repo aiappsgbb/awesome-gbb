@@ -224,7 +224,6 @@ even with `--allow-all-tools`. Scaffold everything under
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
-PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"
 mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
 cd "$PROJECT_DIR"
 ```

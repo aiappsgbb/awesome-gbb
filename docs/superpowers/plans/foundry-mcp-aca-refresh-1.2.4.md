@@ -235,3 +235,34 @@ Regex didn't match: '^ci-smoke-mcp-[0-9a-f]{8}$' not found in ''
 
 - Exact Step 1 state + fresh-shell Step 3 replay: PASS
 - Fixture contract count remains 59 tests
+
+## Round-12 corrections (2026-08-05)
+
+### T3 rejection and genuine RED
+
+Exact-head run `31013776210` / job `92332489833` passed CI but is not valid
+final evidence. Artifact `8933777390` line 35 followed the shipped scaffolding
+block and reassigned
+`PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"` immediately after
+sourcing Step 1 state. That bypassed proof that the persisted `PROJECT_DIR`
+controlled the fresh-shell scaffold.
+
+The focused contract extracts the shipped Step 1 and scaffolding blocks. It
+also forbids assignments to `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, or
+`ACR_SERVER` after the scaffold sources state. On head `9b56147c`, it failed:
+
+```text
+the scaffolding block must not reassign persisted variables after sourcing
+Step 1 state; found ['PROJECT_DIR']
+```
+
+### Minimal correction
+
+Remove only the redundant `PROJECT_DIR` assignment. Preserve the state source,
+`mkdir`, and `cd "$PROJECT_DIR"`.
+
+### GREEN
+
+- Exact Step 1 + fresh-shell scaffolding replay: PASS
+- Fixture contracts: 60 tests, PASS
+- Full catalog suite: 380 tests, PASS

@@ -542,6 +542,101 @@ class TestStatePersistence(unittest.TestCase):
                 f"{variable} must be persisted to the fixture state file.",
             )
 
+    def test_scaffolding_block_uses_restored_state_without_reassignment(self):
+        """The fresh-shell scaffold must trust every persisted Step 1 value."""
+        state_path = pathlib.Path("/tmp/foundry-mcp-aca-state.env")
+
+        def bash_block_containing(marker: str) -> str:
+            marker_index = self.fixture.index(marker)
+            block_start = self.fixture.rfind("```bash\n", 0, marker_index)
+            block_end = self.fixture.index("```", marker_index)
+            return self.fixture[block_start + len("```bash\n"):block_end]
+
+        state_block = bash_block_containing(
+            'STATE_FILE="/tmp/foundry-mcp-aca-state.env"'
+        )
+        scaffolding_block = bash_block_containing(
+            'mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"'
+        )
+        source_index = scaffolding_block.index(
+            "source /tmp/foundry-mcp-aca-state.env"
+        )
+        restored_body = scaffolding_block[source_index:]
+        persisted_variables = (
+            "APP_NAME",
+            "PROJECT_DIR",
+            "UAMI_RESOURCE_ID",
+            "ACR_SERVER",
+        )
+        reassigned = re.findall(
+            rf"^\s*(?:export\s+)?({'|'.join(persisted_variables)})=",
+            restored_body,
+            re.MULTILINE,
+        )
+        self.assertEqual(
+            [],
+            reassigned,
+            "the scaffolding block must not reassign persisted variables after "
+            f"sourcing Step 1 state; found {reassigned}",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = pathlib.Path(temp_dir)
+            restored_project_dir = workspace / "restored-from-state"
+            state_path.unlink(missing_ok=True)
+            self.addCleanup(state_path.unlink, missing_ok=True)
+            workflow_env = {
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "GITHUB_WORKSPACE": str(workspace),
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "ACR_LOGIN_SERVER": "test.azurecr.io",
+            }
+            create_state = subprocess.run(
+                ["bash", "-c", state_block],
+                env=workflow_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                0,
+                create_state.returncode,
+                f"shipped Step 1 state creation failed: {create_state.stderr!r}",
+            )
+            state_lines = state_path.read_text(encoding="utf-8").splitlines()
+            state_path.write_text(
+                "\n".join(
+                    (
+                        f"PROJECT_DIR={restored_project_dir}"
+                        if line.startswith("PROJECT_DIR=")
+                        else line
+                    )
+                    for line in state_lines
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            scaffold = subprocess.run(
+                ["bash", "-c", scaffolding_block],
+                env=workflow_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                0,
+                scaffold.returncode,
+                "shipped scaffolding block failed after sourcing Step 1 state: "
+                f"{scaffold.stderr!r}",
+            )
+            self.assertTrue(
+                (restored_project_dir / "src").is_dir()
+                and (restored_project_dir / "infra").is_dir(),
+                "the scaffolding block must create directories under the "
+                "PROJECT_DIR restored from persisted state",
+            )
+
     def test_azure_yaml_block_sources_state(self):
         """The azure.yaml heredoc block must source state first."""
         # Find the azure.yaml heredoc

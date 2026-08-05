@@ -223,3 +223,22 @@ new Bash process.
   fresh Step 3 process renders literal `$schema`, the same app name, the exact
   UAMI resource ID, and the exact ACR server.
 - Counts remain 59 fixture contract tests and 379 full catalog tests.
+
+## Round-12 correction (2026-08-05): scaffolding must trust restored state
+
+**Root cause:** The scaffolding block sourced Step 1 state and then reassigned
+`PROJECT_DIR` from `GITHUB_WORKSPACE` and `APP_NAME`. Although the recomputed
+value matched the persisted value, that prescribed reassignment bypassed proof
+that the fresh shell actually restored and used `PROJECT_DIR`.
+
+**Fix:** Remove only the redundant `PROJECT_DIR` assignment. The block still
+sources `/tmp/foundry-mcp-aca-state.env`, creates `src/` and `infra/` beneath
+the restored directory, and changes into it.
+
+**TDD evidence:**
+- RED on head `9b56147c`: the new extracted-block contract found
+  `['PROJECT_DIR']` assigned after the state source.
+- GREEN: the contract executes the exact Step 1 block, replaces the persisted
+  `PROJECT_DIR` with a distinct test path, then runs the exact scaffolding block
+  in a fresh shell and observes both directories under that restored path.
+- Counts are 60 fixture contract tests and 380 full catalog tests.
