@@ -1,7 +1,7 @@
 # Plan: foundry-mcp-aca refresh 1.2.4
 
 **Design:** [specs/foundry-mcp-aca-refresh-1.2.4.md](../specs/foundry-mcp-aca-refresh-1.2.4.md)
-**Status:** Correction round 3 applied
+**Status:** Correction round 8 applied
 
 ## Correction rounds
 
@@ -46,7 +46,7 @@ MCP-Protocol-Version header), session ID FAIL gate, synchronized gates.
 - `skills/foundry-mcp-aca/SKILL.md` — version bump + agnostic rewrites
 - `skills/foundry-mcp-aca/references/upstream-pin.md` — pin script + KI-001
 - `skills/foundry-mcp-aca/test-fixture/consumer_prompt.md` — full protocol conformance
-- `scripts/tests/test_foundry_mcp_aca_fixture_contract.py` — 57 contract tests
+- `scripts/tests/test_foundry_mcp_aca_fixture_contract.py` — 58 contract tests
 - `docs/superpowers/specs/foundry-mcp-aca-refresh-1.2.4.md` — design spec
 - `docs/superpowers/plans/foundry-mcp-aca-refresh-1.2.4.md` — this plan
 - `docs/` — rebuilt static site
@@ -104,3 +104,36 @@ All 47 tests pass.
 
 ### GREEN
 All 57 fixture tests pass, 377 full suite.
+
+## Round-8 corrections (2026-08-05)
+
+### Genuine RED on `58a3cd66`
+
+The new behavioral test extracts and executes the fixture's shipped
+`TOOL_COUNT` Bash gate rather than matching jq syntax. Its required payload
+matrix produced 2 failing subtests:
+
+- `string tools` — incorrectly returned success with count `4`
+- `object tools` — incorrectly returned success with count `1`
+
+Malformed syntax, missing `.result.tools`, JSON-RPC error, null tools, and an
+empty tools array already returned failure. A JSON-RPC 2.0 success response
+with a non-empty tools array returned success.
+
+### Minimal correction
+
+The jq predicate now accepts only a response where:
+
+1. `.jsonrpc == "2.0"`
+2. `.error == null`
+3. `.result.tools` has type `array`
+4. `.result.tools | length >= 1`
+
+Failure at parsing, schema validation, or count validation writes
+`SMOKE_RESULT=FAIL` and exits before the fixture can invoke `tools/call`.
+
+### GREEN
+
+- Targeted semantic contract: 1 test, 8 payload cases, PASS
+- Fixture contracts: 58 tests, PASS
+- Full catalog suite: 378 tests, PASS

@@ -672,8 +672,8 @@ fi
 TOOLS_JSON=$(echo "$TOOLS_BODY" | sed -n 's/^data: //p' | head -1)
 [ -z "$TOOLS_JSON" ] && TOOLS_JSON="$TOOLS_BODY"
 
-TOOL_COUNT=$(echo "$TOOLS_JSON" | jq -e -r '.result.tools | length // 0') || {
-  printf 'SMOKE_RESULT=FAIL tools/list returned malformed JSON or missing .result.tools\n' > /tmp/foundry-mcp-aca-smoke-result
+TOOL_COUNT=$(echo "$TOOLS_JSON" | jq -e -r 'select(.jsonrpc == "2.0" and (.error == null) and (.result.tools | type == "array") and (.result.tools | length >= 1)) | .result.tools | length') || {
+  printf 'SMOKE_RESULT=FAIL tools/list response failed JSON-RPC schema or non-empty tools array validation\n' > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 }
 if [ -z "$TOOL_COUNT" ] || [ "$TOOL_COUNT" -lt 1 ]; then

@@ -125,3 +125,28 @@ from run 30999760430 (head 6ceda5bc, one prior commit):
 **TDD evidence:**
 - RED: 5 of 7 new tests failed at round-6 head (2 scoped tests already passed)
 - GREEN: all 57 tests pass after fixes
+
+## Round-8 correction (2026-08-05): semantic `tools/list` schema gate
+
+**Root cause:** The fixture used
+`jq -e -r '.result.tools | length // 0'`. Although malformed JSON and
+zero-length values failed later, jq's `length` also accepts strings and
+objects. A non-empty string or object therefore produced a positive count and
+incorrectly allowed the smoke to continue to `tools/call`. The existing test
+only searched for the substring `jq -e`, so it did not execute or prove the
+shipped gate's semantics.
+
+**Fix:** The jq predicate now requires JSON-RPC `"2.0"`, no JSON-RPC error,
+an array-valued `.result.tools`, and at least one array entry. Any parse,
+schema, or count failure writes the deterministic FAIL marker and exits before
+`tools/call`.
+
+**TDD evidence:**
+- RED on head `58a3cd66`: the execution-level contract test extracted and ran
+  the shipped Bash gate; `string tools` and `object tools` incorrectly passed
+  (2 failing subtests). Malformed syntax, missing tools, JSON-RPC error, null,
+  and an empty array already failed.
+- GREEN: the same payload matrix passes after the minimal predicate change:
+  all 7 invalid payloads fail the gate and a JSON-RPC 2.0 response containing
+  a non-empty tools array passes.
+- Current counts: 58 fixture contract tests; 378 full catalog tests.

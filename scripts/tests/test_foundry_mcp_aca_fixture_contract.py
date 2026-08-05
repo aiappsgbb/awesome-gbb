@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -750,6 +752,69 @@ class TestStatePersistence(unittest.TestCase):
                         "TOOL_COUNT gate must protect against malformed JSON: "
                         "use 'jq -e' or guard empty TOOL_COUNT before arithmetic test. "
                         f"Found: {tc_line}")
+
+    def test_tools_list_gate_enforces_jsonrpc_tools_array_contract(self):
+        """Execute the shipped gate against valid and invalid tools/list bodies."""
+        gate_match = re.search(
+            r'^TOOL_COUNT=\$\(echo "\$TOOLS_JSON".*?'
+            r'^echo "tools/list returned \$TOOL_COUNT tool\(s\)"$',
+            self.fixture,
+            re.DOTALL | re.MULTILINE,
+        )
+        self.assertIsNotNone(gate_match, "Executable tools/list gate not found")
+
+        invalid_payloads = {
+            "malformed syntax": '{"jsonrpc":"2.0","result":',
+            "missing result.tools": '{"jsonrpc":"2.0","result":{}}',
+            "JSON-RPC error": (
+                '{"jsonrpc":"2.0","error":{"code":-32603,"message":"failure"},"id":2}'
+            ),
+            "null tools": '{"jsonrpc":"2.0","result":{"tools":null},"id":2}',
+            "string tools": '{"jsonrpc":"2.0","result":{"tools":"echo"},"id":2}',
+            "object tools": (
+                '{"jsonrpc":"2.0","result":{"tools":{"name":"echo"}},"id":2}'
+            ),
+            "empty tools array": '{"jsonrpc":"2.0","result":{"tools":[]},"id":2}',
+        }
+        valid_payload = (
+            '{"jsonrpc":"2.0","result":{"tools":[{"name":"echo"}]},"id":2}'
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            marker = pathlib.Path(temp_dir) / "smoke-result"
+            gate = gate_match.group(0).replace(
+                "/tmp/foundry-mcp-aca-smoke-result", str(marker)
+            )
+
+            for name, payload in invalid_payloads.items():
+                with self.subTest(payload=name):
+                    result = subprocess.run(
+                        ["bash", "-c", gate],
+                        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "TOOLS_JSON": payload},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertNotEqual(
+                        result.returncode,
+                        0,
+                        f"{name} incorrectly passed the shipped tools/list gate: "
+                        f"stdout={result.stdout!r} stderr={result.stderr!r}",
+                    )
+
+            result = subprocess.run(
+                ["bash", "-c", gate],
+                env={"PATH": "/usr/bin:/bin:/usr/local/bin", "TOOLS_JSON": valid_payload},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                "valid JSON-RPC tools/list response failed the shipped gate: "
+                f"stdout={result.stdout!r} stderr={result.stderr!r}",
+            )
 
 
 if __name__ == "__main__":
