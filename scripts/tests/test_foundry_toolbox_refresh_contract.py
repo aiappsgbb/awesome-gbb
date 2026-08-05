@@ -38,10 +38,10 @@ PYTHON_FENCE_RE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 # PR #437 fixture correction — the Copilot CLI shell-tool permission gate
 # rejects file creation OUTSIDE `$GITHUB_WORKSPACE`, even with
-# `--allow-all-tools` (AGENTS.md § 9.7 Pattern 20). The two programs the
-# fixture authors through OUTER Bash heredocs — the azd smoke shell script and
-# the Python smoke program — must therefore be written to and executed from a
-# workspace-local scratch directory, not `/tmp`. Marker/evidence workflow
+# `--allow-all-tools` (see the canonical azd-patterns fixture guidance). The two
+# programs the fixture authors through OUTER Bash heredocs — the azd smoke shell
+# script and the Python smoke program — must therefore be written to and executed
+# from a workspace-local scratch directory, not `/tmp`. Marker/evidence workflow
 # contracts and the inner script's own runtime work dirs (venv, azd env, delete
 # logs) legitimately stay in `/tmp` and are NOT policed by these constants.
 SCRATCH_DIR = "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox"
@@ -527,7 +527,7 @@ class FoundryToolboxScratchPathContractTests(unittest.TestCase):
     <<'PY'` — "Permission denied and could not request permission from user" —
     so the GA SDK call never ran. The Copilot CLI shell permission gate rejects
     file creation outside `$GITHUB_WORKSPACE` even with `--allow-all-tools`
-    (AGENTS.md § 9.7 Pattern 20; canonical form in the azd-patterns fixture).
+    (canonical form in the azd-patterns fixture).
 
     Both programs the fixture authors through OUTER Bash heredocs — the azd
     smoke shell script and the Python smoke program — must be authored at and
