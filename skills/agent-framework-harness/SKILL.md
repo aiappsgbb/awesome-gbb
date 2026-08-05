@@ -156,14 +156,20 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 | Approval appears to wait inside a loop, or the host sees empty text. | Autonomous code continued after a pending request, or reduced the structured response to `.text`. | Stop the loop, return the complete response through `ToolApprovalRequired`, and resume only after host interaction. |
 | Default approval middleware fails at runtime. | `AgentSession` was omitted from the Harness run. | Create or restore an `AgentSession` and pass it to `agent.run`. |
 | A standing auto-approval rule approves an unintended tool. | Its callback matched only a tool name that collides across tools or servers. | Match arguments and the server boundary as well as the tool name. |
+| A standing or "always approve" choice is treated as authorization. | Standing approval is session-backed UX state, not an enforceable authorization boundary. | Implement authorization in the application and use [`foundry-agt`](../foundry-agt/SKILL.md) for enforceable policy. |
 | A headless run stalls on a plan or tool request. | Plan mode or approval-required tools were enabled without caller UX. | Disable those features or implement the complete plan/approval protocol. |
 | State disappears after restart. | The default in-memory history or only message text was persisted. | Persist and restore the full opaque `AgentSession` with the same composition. |
+| A restored session crosses a tenant or user boundary. | Session identifiers and serialized payloads were trusted before tenant/user authorization, or durable state was not partitioned. | Authorize the authenticated tenant and user before loading, partition state by both boundaries, and reject untrusted session payloads. |
 | Hosted transcripts duplicate or history is rejected. | `store=False` is missing, or the Harness history provider loads/stores transcript messages while `ResponsesHostServer` owns them. | Keep `default_options={"store": False}` and use the no-load/no-store history provider from the hosted reference. |
+| Hosting adapter semver is used to infer the Hosted Agents service lifecycle. | Adapter package maturity and Hosted Agents service status were treated as one lifecycle. | Track and report the adapter lifecycle and Hosted Agents service lifecycle independently. |
 | Web search is assumed present but no tool appears. | The client does not implement `SupportsWebSearchTool`; the false disable flag alone cannot add support. | Check client capability, heed the warning, and reverify on every MINOR refresh. |
+| Web search appears unexpectedly. | A compatible client plus `disable_web_search=False` causes the factory to add the tool automatically. | Set `disable_web_search=True` when search is unwanted and reverify capability detection on refresh. |
 | An external skill source is trusted. | It can supply untrusted instructions or scripts. | Validate source and integrity, and constrain execution. |
 | A background agent is trusted. | It can exfiltrate input or inject output. | Vet identity, tools, returned content, and cancellation. |
 | Shell, background agents, or shared file access are treated as stable defaults. | Opt-in experimental/prerelease surfaces were misclassified. | Label them explicitly, check current upstream issues, and require host controls. |
+| A shell deny list or confined working directory is called a sandbox. | Convenience prefilters were mistaken for an isolation boundary. | Use real process or container isolation plus governance policy; keep deny lists and workdir confinement only as convenience prefilters. |
 | Custom composition changes behavior unexpectedly. | Caller providers or middleware were inserted ahead of built-ins or reordered. | Append caller extensions after the documented built-in pipeline and validate order offline. |
+| Harness security guidance is treated as a general evaluation framework. | Runtime security callouts were mistaken for evaluation ownership. | Route general evaluation design and scoring to [`foundry-evals`](../foundry-evals/SKILL.md) or the applicable evaluation skill. |
 
 **Security boundaries — do not weaken these statements:**
 
