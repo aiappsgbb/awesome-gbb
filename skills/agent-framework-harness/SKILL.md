@@ -8,13 +8,13 @@ metadata:
 
 ## Quick decision table
 
-| Need | Route |
+| Need | Owner |
 |---|---|
-| Compose a Microsoft Agent Framework `Agent` with Harness providers, middleware, modes, todos, compaction, recovery, approval UX, or opt-in executors | Use this skill. |
-| Deploy, authorize, containerize, roll out, or operate a hosted agent | Use [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md). |
-| Enforce deterministic authorization, policy, audit, or governance | Use [`foundry-agt`](../foundry-agt/SKILL.md). |
-| Publish or consume centrally distributed skills through Foundry Skills REST | Use [`foundry-skill-catalog`](../foundry-skill-catalog/SKILL.md). |
-| Design evaluations or scoring | Use [`foundry-evals`](../foundry-evals/SKILL.md). |
+| Compose a Microsoft Agent Framework `Agent` with Harness providers, middleware, modes, todos, compaction, recovery, approval UX, or opt-in executors | `agent-framework-harness` |
+| Deploy, authorize, containerize, roll out, or operate a hosted agent | [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) |
+| Enforce deterministic authorization, policy, audit, or governance | [`foundry-agt`](../foundry-agt/SKILL.md) |
+| Publish or consume centrally distributed skills through Foundry Skills REST | [`foundry-skill-catalog`](../foundry-skill-catalog/SKILL.md) |
+| Design evaluations or scoring | [`foundry-evals`](../foundry-evals/SKILL.md) |
 
 Agent Harness is runtime scaffolding, not hosting. Native approval provides interactive UX and session-backed standing-rule convenience; it is not non-bypassable policy. `ResponsesHostServer` adapts an existing `Agent` and does not create the Harness composition.
 
@@ -35,6 +35,12 @@ This skill excludes deployment, RBAC, identity grants, containers, registries, `
 9. optional shell provider;
 10. caller context providers.
 
+Preserve this tool order:
+
+1. conditional web-search tool when the client implements `SupportsWebSearchTool` and web search is not disabled;
+2. optional shell tool when `shell_executor` is supplied and the client implements `SupportsShellTool`;
+3. caller-supplied tools.
+
 Preserve this middleware order, outermost first:
 
 1. optional `AgentLoopMiddleware`;
@@ -49,20 +55,20 @@ The default history provider is `InMemoryHistoryProvider`. Per-service-call hist
 | Feature | Pinned factory behavior | Maturity and use |
 |---|---|---|
 | Function invocation | Always wired by the returned `Agent`. | Released. |
-| Per-service-call history | Enabled with default `InMemoryHistoryProvider`; not durable without full session persistence. | Released; persist the opaque `AgentSession` for restart recovery. |
+| Per-service-call history | Always enabled with default `InMemoryHistoryProvider`; not durable without full session persistence. | Released; persist the opaque `AgentSession` for restart recovery. |
 | Todo | Default-on unless `disable_todo=True`. | Released. |
 | Plan/execute mode | Default-on, initially `plan`, unless `disable_mode=True`. | Released; disable in headless hosts unless their protocol supports approval and mode transitions. |
-| File memory | Default-on; the default store is `{cwd}/agent-file-memory`. | Released; choose an explicit store and tenant boundary or disable it. |
+| File memory | Default-on unless `disable_file_memory=True`; the default store is `{cwd}/agent-file-memory`. | Released; choose an explicit store and tenant boundary or disable it. |
 | Compaction | Supported but inactive unless both token budgets are supplied; custom phases can activate independently. | Released; never claim a bare factory compacts. |
 | Web search | `disable_web_search=False` by default, but the tool is added only when the client implements `SupportsWebSearchTool`; otherwise the factory warns. | Released; disable for deterministic/offline runs and reverify capability detection on refresh. |
 | Approval middleware | Default-on unless `disable_tool_auto_approval=True`; coordinates queued approvals and session-backed standing rules. | Released interactive UX only; requires `AgentSession`, not a deterministic authorization boundary. |
 | Auto-approval callbacks | No callbacks unless `auto_approval_rules` is supplied. | Opt-in; inspect arguments whenever risk is argument-dependent. |
 | Message injection | Always-on; no-op when its session queue is empty. | Released. |
 | OpenTelemetry | Factory sets the OTel provider name. | Released; telemetry destination and sensitive-data settings remain caller-owned. |
-| Shared file access | Opt-in through `file_access_store`. | Experimental; the host owns access policy and real sandboxing. |
+| Shared file access | Opt in only through `file_access_store`; Python 1.13.0 has no `disable_file_access` parameter. | Experimental; read and write tools require approval by default, and the host owns access policy and real sandboxing. |
 | Skills | Opt-in through `skills_provider` and/or `skills_paths`. | Released; external skills are untrusted input and are not Foundry Skills REST distribution. |
 | Background agents | Opt-in through `background_agents`. | Experimental. |
-| Shell | Opt-in through `shell_executor` and a compatible shell-capable client. | Experimental and prerelease. |
+| Shell | Requires `shell_executor` and a client implementing `SupportsShellTool`. | Experimental and prerelease. |
 | Autonomous looping | Opt-in through `loop_should_continue`; the default cap resolves to `10`. | Experimental; every recipe must pass an explicit positive cap. |
 | Caller providers and middleware | Opt-in advanced extension surfaces. | Preserve the built-in order. |
 
@@ -80,7 +86,7 @@ Keep both token budgets so compaction is active, the explicit `.agent-memory` st
 
 > **MUST:** Copy or adapt [`references/python/hosted_harness.py`](references/python/hosted_harness.py), then use [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) for deployment, RBAC, containers, rollout, and lifecycle. Do not reproduce the reference functions inline.
 
-Keep `default_options={"store": False}` because the hosting adapter owns Responses transcript history. The pinned `ResponsesHostServer` rejects a history provider that loads messages; therefore the Harness must receive the reference's no-load/no-store `InMemoryHistoryProvider` (`load_messages=False`, `store_inputs=False`, and `store_outputs=False`). Use an async Azure credential because `FoundryChatClient` constructs an async `AIProjectClient`, and make the host responsible for closing any credential it creates.
+Keep `default_options={"store": False}` because the hosting adapter owns Responses transcript history. The pinned `ResponsesHostServer` rejects a history provider that loads messages; therefore the Harness must receive the reference's no-load/no-store `InMemoryHistoryProvider` (`load_messages=False`, `store_inputs=False`, and `store_outputs=False`). `FoundryChatClient` constructs an async `AIProjectClient`, so use an async Azure credential. The reference's internally created `DefaultAzureCredential` is process-lifetime and its handle is not exposed. A host requiring deterministic close must create and inject its own async credential, retain that handle, and close it.
 
 The baseline also disables mode, file memory, and web search. Re-enable mode only when the protocol transports explicit plan approval and transitions. Re-enable file memory only after choosing durable storage, authenticated tenant partitioning, and path policy.
 
@@ -88,7 +94,7 @@ The baseline also disables mode, file memory, and web search. Re-enable mode onl
 |---|---|
 | Harness factory stable core | `agent-framework-core` 1.13.x stable. |
 | Python hosting adapter | `agent-framework-foundry-hosting==1.0.0b260730`, exact prerelease pin. |
-| Hosted Agents service | Separate lifecycle owned by [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md). |
+| Hosted Agents service | Separate lifecycle: the current [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) contract treats container deployment as GA and source-code deployment as preview. |
 
 Do not infer service maturity from adapter semver or adapter maturity from service status.
 
@@ -120,12 +126,17 @@ The smoke validates construction, signature, defaults, provider and middleware o
 
 | Concern | Agent Framework Harness | Foundry Hosted Agents | Agent Governance Toolkit |
 |---|---|---|---|
-| Build runtime | Owns the `Agent` composition. | Consumes the existing `Agent`. | Can wrap the runtime. |
+| Primary job | Compose an agentic runtime around a chat client | Host, scale, identify, deploy, and expose an agent | Enforce deterministic action policy and produce governance evidence |
+| Main object | `Agent` returned by `create_harness_agent` | Container/runtime plus Responses or Invocations endpoint | Middleware or sidecar policy enforcement |
+| Plan, todos, compaction, memory | Owned | Not supplied by hosting itself | Not owned |
+| Tool approval | Session-backed UX prompts and standing approvals | Transports approval content; no policy semantics by itself | Deterministic allow, deny, sanitize, escalate, and audit |
+| Looping | Optional Harness middleware | Runs whatever the hosted Agent implements | Can gate actions inside a loop but does not create the loop |
+| Shell | Optional executor and environment provider | Supplies compute boundary only when configured | Owns policy/sandbox governance, not shell convenience |
+| Persistence | `AgentSession`, history provider, file memory | Hosted session and conversation lifecycle | Audit and policy state |
 | HTTP/Responses | No. | Owns it through the adapter and platform. | No. |
-| Deployment/RBAC/rollout | No. | Owns it. | No. |
-| Native approval | Interactive UX and standing-rule convenience. | Transports interaction when explicitly designed. | Deterministic policy and authorization. |
+| Deployment and RBAC | Excluded | Owned by `foundry-hosted-agents` | Excluded |
 | Audit/policy/governance | No. | Platform operations only. | Owns configured policy surfaces and evidence. |
-| Sandbox boundary | No. | Hosting isolation is separate. | Only the surfaces explicitly configured. |
+| Security boundary | No | Hosting isolation is a separate platform concern | Yes for the policy surfaces explicitly configured |
 
 ```text
 Harness Agent -> AGT middleware/policy -> ResponsesHostServer
@@ -137,13 +148,20 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 | Symptom | Cause | Fix |
 |---|---|---|
 | Compaction was expected but does not run. | One or both token budgets are absent, and no relevant custom strategy was supplied. | Supply both budgets for the shared default, or explicitly configure the required custom phase. |
+| Construction raises `ValueError` for token budgets. | `max_output_tokens >= max_context_window_tokens`, or a budget is not positive. | Validate positive budgets and require `max_output_tokens < max_context_window_tokens`. |
 | A run writes files beneath an unexpected working directory. | Default file memory writes to `{cwd}/agent-file-memory`. | Set an explicit tenant-partitioned store or use `disable_file_memory=True`. |
+| Construction rejects `disable_file_access=True` as an invalid argument. | Python 1.13.0 has no `disable_file_access` parameter. | Leave `file_access_store=None` to keep shared file access disabled. |
 | Planning switches into execution before host approval. | One agent exposed the model-accessible, auto-approved `mode_set` tool while planning. | Use separate plan/execute agents; disable mode and looping on the planning agent. |
 | A loop is unbounded or runs during planning. | `loop_max_iterations=None` or a predicate not restricted to execute mode was used. | Use an explicit positive cap and an execute-only predicate. |
 | Approval appears to wait inside a loop, or the host sees empty text. | Autonomous code continued after a pending request, or reduced the structured response to `.text`. | Stop the loop, return the complete response through `ToolApprovalRequired`, and resume only after host interaction. |
+| Default approval middleware fails at runtime. | `AgentSession` was omitted from the Harness run. | Create or restore an `AgentSession` and pass it to `agent.run`. |
+| A standing auto-approval rule approves an unintended tool. | Its callback matched only a tool name that collides across tools or servers. | Match arguments and the server boundary as well as the tool name. |
+| A headless run stalls on a plan or tool request. | Plan mode or approval-required tools were enabled without caller UX. | Disable those features or implement the complete plan/approval protocol. |
 | State disappears after restart. | The default in-memory history or only message text was persisted. | Persist and restore the full opaque `AgentSession` with the same composition. |
 | Hosted transcripts duplicate or history is rejected. | `store=False` is missing, or the Harness history provider loads/stores transcript messages while `ResponsesHostServer` owns them. | Keep `default_options={"store": False}` and use the no-load/no-store history provider from the hosted reference. |
 | Web search is assumed present but no tool appears. | The client does not implement `SupportsWebSearchTool`; the false disable flag alone cannot add support. | Check client capability, heed the warning, and reverify on every MINOR refresh. |
+| An external skill source is trusted. | It can supply untrusted instructions or scripts. | Validate source and integrity, and constrain execution. |
+| A background agent is trusted. | It can exfiltrate input or inject output. | Vet identity, tools, returned content, and cancellation. |
 | Shell, background agents, or shared file access are treated as stable defaults. | Opt-in experimental/prerelease surfaces were misclassified. | Label them explicitly, check current upstream issues, and require host controls. |
 | Custom composition changes behavior unexpectedly. | Caller providers or middleware were inserted ahead of built-ins or reordered. | Append caller extensions after the documented built-in pipeline and validate order offline. |
 
@@ -158,7 +176,8 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 
 ## Upstream pin and reference policy
 
-- Use compatible stable pins for `agent-framework~=1.13.0`, `agent-framework-core~=1.13.0`, `agent-framework-foundry~=1.10.4`, and `azure-identity~=1.25.3`.
+- Record `agent-framework` 1.13.0 for release context, but the `agent-framework` meta-package MUST NOT be used in canonical hosted dependency sets; canonical hosted dependencies use component packages.
+- Use compatible stable pins for `agent-framework-core~=1.13.0`, `agent-framework-foundry~=1.10.4`, and `azure-identity~=1.25.3`.
 - Pin `agent-framework-foundry-hosting==1.0.0b260730` and optional `agent-framework-tools==1.0.0b260730` exactly because they are prerelease surfaces.
 - Preserve the immutable audited source evidence: tag `python-1.13.0` at SHA `e39a8a2e79c8c8987a0b9082d3ccb8665734b897`.
 - Track the Hosted Agents service lifecycle separately from the Python hosting adapter lifecycle.
