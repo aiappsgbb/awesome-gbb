@@ -1,6 +1,6 @@
 # Design Spec: foundry-mcp-aca refresh 1.2.4
 
-**Status:** Implemented (correction-phase artifact)
+**Status:** Round 13 implemented; exact-head T3 pending
 **Date:** 2026-08-05
 **Base version:** 1.2.3
 **Target version:** 1.2.4 (PATCH — pin refresh + wording + deployment corrections)
@@ -242,3 +242,51 @@ the restored directory, and changes into it.
   `PROJECT_DIR` with a distinct test path, then runs the exact scaffolding block
   in a fresh shell and observes both directories under that restored path.
 - Counts are 60 fixture contract tests and 380 full catalog tests.
+
+## Round-13 correction (2026-08-05): deterministic scaffold execution
+
+**Architectural threshold:** After rounds 9–12, another narrow prose/state
+patch is rejected. The root cause is tool-choice ambiguity, not another missing
+state sentence.
+
+**Rejected exact-head T3:** Run `31015993206`, job `92340108760`, head
+`7f49057998777e4eee917f482cdf05e74a073d21`, artifact `8934773029`, transcript
+SHA-256
+`baf01d79ab3fd0b9696c5980b9c7dfb21aeeb57453717d3f95839f1fbf966e13`.
+Transcript lines 15–21 show one Edit/Create action authored all six files;
+lines 33–34 and 42–43 show two Edit repairs to `main.parameters.json`. The
+run/job was green but is false-green and explicitly rejected.
+
+**Design:** Replace the old Step 2/3 bare content fences and prose “write this
+file,” which allowed stochastic Edit/Create versus Bash heredocs, with a
+first-page mandatory guard and one exact executable Bash scaffold block. The
+block sources Step 1 state; fail-marks source, missing-state, `mkdir`, and `cat`
+failures; creates directories; and writes exactly six files using quoted
+static and unquoted dynamic heredocs. It performs no Azure or external calls,
+forbids Edit/Create/Write and generated-file inspection or repair, and exposes
+no second write path. Step 4+ deployment, protocol, marker, and cleanup remain
+unchanged.
+
+**Execution-level contract:** Extract the exact Step 1 state block and exact
+combined scaffold block, then execute them in separate fresh shells with only
+workflow environment. Validate all six exact file contracts, literal
+`$schema`, exact expanded persisted values, the parsed `azure.yaml`
+app/service key, no reassignment, alternate path, or external calls, and
+failure boundaries for a missing state file, each missing persisted value,
+`mkdir`, and the first `cat`.
+
+**TDD evidence:**
+- Architectural RED on parent `7f490579`: 3 failed, 60 passed, 29 subtests
+  (missing block/guard).
+- Fail-fast RED: 4 failures, 60 passed (masked early error, missing marker,
+  stale guard).
+- Missing-state gate RED: 5 failing cases (allowlist plus `APP_NAME`,
+  `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER`).
+- Final GREEN: 67 passed, 46 subtests.
+
+**Acceptance remains open:** There is no live-Azure acceptance claim yet.
+Exact-head T3 must still prove no Edit/Create/Write, one state Bash (the Step 1
+state-writing invocation), one combined scaffold Bash sourced from state, no
+repair or inspection, one `azd` path, one MCP roundtrip, deterministic marker,
+and audit echo only (the required `SKILL.md` audit-path echo, with no catalog
+reads beyond it).

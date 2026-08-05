@@ -14,12 +14,17 @@ that CI cannot catch through grep alone. They verify:
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import pathlib
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
+
+import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = (
@@ -29,6 +34,527 @@ SKILL_MD = ROOT / "skills" / "foundry-mcp-aca" / "SKILL.md"
 PIN_FILE = (
     ROOT / "skills" / "foundry-mcp-aca" / "references" / "upstream-pin.md"
 )
+STATE_PATH = pathlib.Path("/tmp/foundry-mcp-aca-state.env")
+STATE_LOCK_PATH = pathlib.Path("/tmp/foundry-mcp-aca-state.env.lock")
+SMOKE_MARKER_PATH = pathlib.Path("/tmp/foundry-mcp-aca-smoke-result")
+SMOKE_MARKER_LOCK_PATH = pathlib.Path("/tmp/foundry-mcp-aca-smoke-result.lock")
+STATE_MARKER = 'STATE_FILE="/tmp/foundry-mcp-aca-state.env"'
+SMOKE_MARKER_LITERAL = "/tmp/foundry-mcp-aca-smoke-result"
+SCAFFOLD_BLOCK_HEADING = (
+    "### Deterministic scaffold-authoring Bash block (MANDATORY)"
+)
+STEP_1_HEADING = "## Step 1 — goal + scaffolding constraints"
+STEP_2_HEADING = "## Step 2 — create the deterministic scaffold"
+STEP_4_HEADING = "## Step 4 — `azd up` (HARD GATE)"
+STEP_2_BOUNDARY_PREFIX = "---\n\n## Step 2 — "
+STEP_4_BOUNDARY = f"---\n\n{STEP_4_HEADING}"
+DETERMINISTIC_GUARD_HEADING = (
+    "**CRITICAL — deterministic scaffold authoring (MANDATORY).**"
+)
+EXPECTED_PARAMETERS_HEREDOC = """{
+  "\\$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": { "value": "${APP_NAME}" },
+    "uamiResourceId": { "value": "${UAMI_RESOURCE_ID}" },
+    "acrServer": { "value": "${ACR_SERVER}" }
+  }
+}"""
+EXPECTED_AZURE_YAML_HEREDOC = """name: ${APP_NAME}
+metadata:
+  template: ci-smoke-mcp@0.0.1
+services:
+  ${APP_NAME}:
+    project: ./src
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+      context: ."""
+SCAFFOLD_HEREDOC_SPECS = (
+    ("src/server.py", "'", "PY", None),
+    ("src/requirements.txt", "'", "REQ", None),
+    ("src/Dockerfile", "'", "DOCKER", None),
+    ("infra/main.bicep", "'", "BICEP", None),
+    (
+        "infra/main.parameters.json",
+        "",
+        "PARAMS",
+        EXPECTED_PARAMETERS_HEREDOC,
+    ),
+    ("azure.yaml", "", "AZDYAML", EXPECTED_AZURE_YAML_HEREDOC),
+)
+SCAFFOLD_FILES = tuple(spec[0] for spec in SCAFFOLD_HEREDOC_SPECS)
+SCAFFOLD_SOURCE_FALLBACK = (
+    "source /tmp/foundry-mcp-aca-state.env || { "
+    "printf 'SMOKE_RESULT=FAIL scaffold block failed\\n' > "
+    "/tmp/foundry-mcp-aca-smoke-result; exit 1; }"
+)
+SCAFFOLD_SET_FLAGS = "set -Eeuo pipefail"
+SCAFFOLD_ERR_TRAP = (
+    """trap 'printf "SMOKE_RESULT=FAIL scaffold block failed\\n" > """
+    """/tmp/foundry-mcp-aca-smoke-result' ERR"""
+)
+SCAFFOLD_STATE_VARIABLES = (
+    "APP_NAME",
+    "PROJECT_DIR",
+    "UAMI_RESOURCE_ID",
+    "ACR_SERVER",
+)
+
+
+def _scaffold_state_gate(variables: tuple[str, ...]) -> str:
+    """Build the one allowed completeness gate for persisted scaffold state."""
+    checks = " || ".join(f'-z "${{{variable}:-}}"' for variable in variables)
+    return (
+        f"if [[ {checks} ]]; then "
+        "printf 'SMOKE_RESULT=FAIL scaffold state incomplete\\n' > "
+        "/tmp/foundry-mcp-aca-smoke-result; exit 1; fi"
+    )
+
+
+SCAFFOLD_STATE_GATE = _scaffold_state_gate(SCAFFOLD_STATE_VARIABLES)
+SCAFFOLD_PREAMBLE_COMMANDS = (
+    SCAFFOLD_SOURCE_FALLBACK,
+    SCAFFOLD_SET_FLAGS,
+    SCAFFOLD_ERR_TRAP,
+    SCAFFOLD_STATE_GATE,
+    'mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"',
+    'cd "$PROJECT_DIR"',
+)
+EXPECTED_SERVER_PY = '''"""Tiny MCP server for the CI smoke — single `echo` tool + /health route."""
+from fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+
+mcp = FastMCP("ci-smoke-mcp")
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_req: Request) -> PlainTextResponse:
+    return PlainTextResponse("ok", status_code=200)
+
+
+@mcp.tool()
+async def echo(message: str) -> str:
+    """Echo back the message prefixed with `echoed: `."""
+    return f"echoed: {message}"
+
+
+if __name__ == "__main__":
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=8080)
+'''
+EXPECTED_REQUIREMENTS_TXT = "fastmcp~=2.14.7\n"
+EXPECTED_DOCKERFILE = """FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY server.py .
+
+EXPOSE 8080
+CMD ["python", "server.py"]
+"""
+EXPECTED_MAIN_BICEP = """@description('Deployment region — must match the CAE.')
+param location string = 'swedencentral'
+
+@description('Container App name (also used as ACR repo tag).')
+param appName string
+
+@description('Container image reference. Defaults to placeholder; azd deploy patches with the real image.')
+param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('Resource ID of the user-assigned managed identity used for ACR pull.')
+param uamiResourceId string
+
+@description('ACR login server (e.g. myacr.azurecr.io). Must be explicit — do NOT derive from image param.')
+param acrServer string
+
+@description('Name of the pre-provisioned Container Apps Environment.')
+param caeName string = 'cae-awesome-gbb-ci'
+
+resource cae 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
+  name: caeName
+}
+
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
+  name: appName
+  location: location
+  tags: {
+    'azd-service-name': appName
+  }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${uamiResourceId}': {}
+    }
+  }
+  properties: {
+    environmentId: cae.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        targetPort: 8080
+        transport: 'http'
+        allowInsecure: false
+      }
+      registries: [
+        {
+          server: acrServer
+          identity: uamiResourceId
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'mcp'
+          image: image
+          resources: {
+            cpu: json('1.0')
+            memory: '2Gi'
+          }
+          // Note: probes are omitted for the placeholder→deploy lifecycle.
+          // The placeholder image (containerapps-helloworld) serves on port 80
+          // while the real server serves on 8080. Probes targeting 8080 would
+          // prevent the placeholder revision from becoming healthy, potentially
+          // blocking azd provision. azd deploy immediately swaps the image to
+          // the real server which does serve on 8080. Production deployments
+          // should add liveness/startup probes after the first successful deploy.
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 3
+      }
+    }
+  }
+}
+
+output fqdn string = app.properties.configuration.ingress.fqdn
+output appName string = app.name
+"""
+EXPECTED_GUARD_SENTENCES = (
+    "Invoke only the prescribed Bash block in Step 2 to author the six "
+    "scaffold files.",
+    "NEVER use Edit, Create, or Write file tools.",
+    "Never inspect or patch the generated files after the scaffold block runs.",
+    "If the scaffold block fails, write SMOKE_RESULT=FAIL and stop.",
+    "There is no second file-write path.",
+)
+
+
+@contextlib.contextmanager
+def _isolated_locked_file(path: pathlib.Path, lock_path: pathlib.Path):
+    """Serialize a fixed-path probe and restore the file's original bytes."""
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        existed = path.exists()
+        original = path.read_bytes() if existed else None
+        path.unlink(missing_ok=True)
+        try:
+            yield
+        finally:
+            if existed:
+                assert original is not None
+                path.write_bytes(original)
+            else:
+                path.unlink(missing_ok=True)
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def _isolated_shipped_state_file():
+    """Serialize exact state-block execution and restore the prior state bytes."""
+    return _isolated_locked_file(STATE_PATH, STATE_LOCK_PATH)
+
+
+def _isolated_shipped_smoke_marker():
+    """Serialize marker probes and restore the prior marker bytes."""
+    return _isolated_locked_file(SMOKE_MARKER_PATH, SMOKE_MARKER_LOCK_PATH)
+
+
+def _run_bash(
+    shell: str,
+    env: dict[str, str],
+    *,
+    cwd: pathlib.Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run an architectural shell probe with a bounded execution time."""
+    return subprocess.run(
+        ["bash", "-c", shell],
+        env=env,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+
+def _scaffold_block_with_probe_marker(
+    scaffold_block: str, probe_marker: pathlib.Path
+) -> str:
+    """Rewrite only the marker path after proving the shipped literal contract."""
+    commands, _heredocs, _events = _parse_scaffold_shell(scaffold_block)
+    marker_commands = [
+        command for command in commands if "SMOKE_RESULT=FAIL scaffold" in command
+    ]
+    literal_marker_count = scaffold_block.count(SMOKE_MARKER_LITERAL)
+    if not marker_commands or literal_marker_count != len(marker_commands):
+        raise AssertionError(
+            "every executable scaffold FAIL writer must use the literal fixed "
+            "marker path before execution-only marker-path replacement; "
+            f"writers={marker_commands!r} literal_count={literal_marker_count}"
+        )
+    if any(SMOKE_MARKER_LITERAL not in command for command in marker_commands):
+        raise AssertionError(
+            "every executable scaffold FAIL writer must use the literal fixed "
+            "marker path before execution-only marker-path replacement"
+        )
+    return scaffold_block.replace(
+        SMOKE_MARKER_LITERAL,
+        shlex.quote(str(probe_marker)),
+    )
+
+
+def _standard_bash_block_containing(markdown: str, marker: str) -> str:
+    """Extract the standard Bash fence body containing a unique marker."""
+    marker_index = markdown.index(marker)
+    block_start = markdown.rfind("```bash\n", 0, marker_index)
+    block_end = markdown.index("```", marker_index)
+    if block_start < 0:
+        raise AssertionError(f"standard Bash fence not found for {marker!r}")
+    return markdown[block_start + len("```bash\n") : block_end]
+
+
+def _step_1_state_block(markdown: str) -> str:
+    """Extract the sole standard Bash fence containing the sole state marker."""
+    if markdown.count(STATE_MARKER) != 1:
+        raise AssertionError(
+            "expected the exact STATE_FILE marker exactly once in the fixture"
+        )
+
+    step_starts = list(
+        re.finditer(rf"(?m)^{re.escape(STEP_1_HEADING)}$", markdown)
+    )
+    step_2_boundaries = [
+        match
+        for match in re.finditer(
+            rf"(?m)^{re.escape(STEP_2_BOUNDARY_PREFIX)}", markdown
+        )
+        if match.start() > (step_starts[0].start() if step_starts else -1)
+    ]
+    if len(step_starts) != 1 or len(step_2_boundaries) != 1:
+        raise AssertionError(
+            "expected one exact Step 1 heading followed by one Step 2 boundary"
+        )
+    step_1 = markdown[step_starts[0].start():step_2_boundaries[0].start()]
+
+    standard_bash_fence = re.compile(
+        r"(?m)^```bash\n(?P<body>.*?)^```(?:\n|$)", re.DOTALL
+    )
+    global_matches = [
+        match.group("body")
+        for match in standard_bash_fence.finditer(markdown)
+        if STATE_MARKER in match.group("body")
+    ]
+    step_matches = [
+        match.group("body")
+        for match in standard_bash_fence.finditer(step_1)
+        if STATE_MARKER in match.group("body")
+    ]
+    if len(global_matches) != 1 or len(step_matches) != 1:
+        raise AssertionError(
+            "the sole STATE_FILE marker must be inside one standard Bash fence "
+            "within exact Step 1"
+        )
+    return global_matches[0]
+
+
+def _scaffold_block(markdown: str) -> str:
+    """Extract the Bash body only when the complete Step 2 shape is exact."""
+    scaffold_headings = list(
+        re.finditer(rf"(?m)^{re.escape(SCAFFOLD_BLOCK_HEADING)}$", markdown)
+    )
+    if len(scaffold_headings) != 1:
+        raise AssertionError(
+            "expected the exact mandatory scaffold heading exactly once globally"
+        )
+    starts = list(re.finditer(rf"(?m)^{re.escape(STEP_2_HEADING)}$", markdown))
+    boundaries = list(
+        re.finditer(rf"(?m)^{re.escape(STEP_4_BOUNDARY)}$", markdown)
+    )
+    if len(starts) != 1 or len(boundaries) != 1:
+        raise AssertionError(
+            "expected one exact scaffold Step 2 heading and one exact Step 4 boundary"
+        )
+    if boundaries[0].start() <= starts[0].start():
+        raise AssertionError("the exact Step 4 boundary must follow scaffold Step 2")
+
+    section = markdown[starts[0].start():boundaries[0].start()]
+    shape = re.fullmatch(
+        rf"{re.escape(STEP_2_HEADING)}\n\n"
+        rf"{re.escape(SCAFFOLD_BLOCK_HEADING)}\n\n"
+        r"```bash\n(?P<body>.*?)```\n\n",
+        section,
+        re.DOTALL,
+    )
+    if shape is None:
+        raise AssertionError(
+            "Step 2 must contain only the exact heading, the exact "
+            "mandatory scaffold heading, and one standard triple-backtick Bash fence"
+        )
+    body = shape.group("body")
+    if re.search(r"(?m)^[ \t]*(?:`{3,}|~{3,})", body):
+        raise AssertionError("the scaffold Bash block must not contain nested fences")
+    return body
+
+
+def _parse_scaffold_shell(
+    shell: str,
+) -> tuple[
+    list[str],
+    list[tuple[str, str, str, str]],
+    list[tuple[str, str]],
+]:
+    """Separate executable lines from heredoc bodies and closing delimiters."""
+    lines = shell.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    commands: list[str] = []
+    events: list[tuple[str, str]] = []
+    heredocs: list[tuple[str, str, str, str]] = []
+    opener = re.compile(
+        r"cat > (?P<path>[^ \t]+) <<(?P<quote>['\"]?)"
+        r"(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)"
+    )
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line:
+            index += 1
+            continue
+
+        match = opener.fullmatch(line)
+        commands.append(line)
+        events.append(("command", line))
+        if match is None:
+            index += 1
+            continue
+
+        delimiter = match.group("delimiter")
+        body_start = index + 1
+        index = body_start
+        while index < len(lines) and lines[index] != delimiter:
+            index += 1
+        if index == len(lines):
+            raise AssertionError(f"unterminated heredoc {delimiter!r}")
+
+        heredocs.append(
+            (
+                match.group("path"),
+                match.group("quote"),
+                delimiter,
+                "\n".join(lines[body_start:index]),
+            )
+        )
+        events.append(("heredoc-close", delimiter))
+        index += 1
+
+    return commands, heredocs, events
+
+
+def _scaffold_shell_contract(shell: str) -> list[tuple[str, str]]:
+    """Validate the scaffold's exact executable-command allowlist."""
+    commands, heredocs, events = _parse_scaffold_shell(shell)
+    if len(heredocs) != len(SCAFFOLD_FILES):
+        raise AssertionError(
+            f"expected exactly six scaffold heredocs, found {len(heredocs)}"
+        )
+
+    expected_openers = []
+    expected_events: list[tuple[str, str]] = [
+        ("command", command) for command in SCAFFOLD_PREAMBLE_COMMANDS
+    ]
+    for (
+        expected_path,
+        expected_quote,
+        expected_delimiter,
+        expected_body,
+    ), (path, quote, delimiter, body) in zip(
+        SCAFFOLD_HEREDOC_SPECS,
+        heredocs,
+    ):
+        if path != expected_path:
+            raise AssertionError(
+                "scaffold heredocs must target the six literal paths in canonical "
+                f"order; expected {expected_path!r}, found {path!r}"
+            )
+        if quote != expected_quote:
+            heredoc_kind = "quoted" if expected_quote else "expanding unquoted"
+            raise AssertionError(f"{path} must use a {heredoc_kind} heredoc")
+        if delimiter != expected_delimiter:
+            raise AssertionError(
+                f"{path} must use literal heredoc delimiter {expected_delimiter!r}"
+            )
+        if expected_body is not None and body != expected_body:
+            raise AssertionError(
+                f"{path} must use the exact expanding heredoc template"
+            )
+        expected_opener = (
+            f"cat > {path} "
+            f"<<{expected_quote}{expected_delimiter}{expected_quote}"
+        )
+        expected_openers.append(expected_opener)
+        expected_events.extend(
+            (("command", expected_opener), ("heredoc-close", delimiter))
+        )
+
+    expected_commands = [*SCAFFOLD_PREAMBLE_COMMANDS, *expected_openers]
+    if commands != expected_commands or events != expected_events:
+        raise AssertionError(
+            "scaffold executable lines must be exactly the restored-state preamble "
+            "and six literal cat heredocs in canonical order; "
+            f"found commands={commands!r}"
+        )
+    return events
+
+
+def _assert_single_scaffold_writer_block(
+    markdown: str, scaffold_block: str
+) -> None:
+    """Reject scaffold writes anywhere outside the exact canonical block."""
+    canonical_fence = f"```bash\n{scaffold_block}```"
+    if markdown.count(canonical_fence) != 1:
+        raise AssertionError(
+            "the exact combined scaffold Bash fence must occur exactly once"
+        )
+    outside_scaffold = markdown.replace(canonical_fence, "", 1)
+    authoring_primitive = re.compile(
+        r"(?:\bcat\s*>|\btee\b|"
+        r"\b(?:echo|printf)\b[^\n]*>>?|"
+        r"\b(?:touch|install|cp|mv)\b)"
+    )
+    logical_lines = outside_scaffold.replace("\\\n", " ").splitlines()
+    second_writers = [
+        line
+        for line in logical_lines
+        if any(path in line for path in SCAFFOLD_FILES)
+        and authoring_primitive.search(line)
+    ]
+    if second_writers:
+        raise AssertionError(
+            "scaffold target paths may not be paired with authoring primitives "
+            f"outside the canonical block; found {second_writers!r}"
+        )
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize line endings and tolerate only a missing terminal newline."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized if normalized.endswith("\n") else normalized + "\n"
 
 
 class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
@@ -544,18 +1070,9 @@ class TestStatePersistence(unittest.TestCase):
 
     def test_scaffolding_block_uses_restored_state_without_reassignment(self):
         """The fresh-shell scaffold must trust every persisted Step 1 value."""
-        state_path = pathlib.Path("/tmp/foundry-mcp-aca-state.env")
-
-        def bash_block_containing(marker: str) -> str:
-            marker_index = self.fixture.index(marker)
-            block_start = self.fixture.rfind("```bash\n", 0, marker_index)
-            block_end = self.fixture.index("```", marker_index)
-            return self.fixture[block_start + len("```bash\n"):block_end]
-
-        state_block = bash_block_containing(
-            'STATE_FILE="/tmp/foundry-mcp-aca-state.env"'
-        )
-        scaffolding_block = bash_block_containing(
+        state_block = _step_1_state_block(self.fixture)
+        scaffolding_block = _standard_bash_block_containing(
+            self.fixture,
             'mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"'
         )
         source_index = scaffolding_block.index(
@@ -580,31 +1097,26 @@ class TestStatePersistence(unittest.TestCase):
             f"sourcing Step 1 state; found {reassigned}",
         )
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+        ):
             workspace = pathlib.Path(temp_dir)
             restored_project_dir = workspace / "restored-from-state"
-            state_path.unlink(missing_ok=True)
-            self.addCleanup(state_path.unlink, missing_ok=True)
             workflow_env = {
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
                 "GITHUB_WORKSPACE": str(workspace),
                 "AZURE_SUBSCRIPTION_ID": "test-subscription",
                 "ACR_LOGIN_SERVER": "test.azurecr.io",
             }
-            create_state = subprocess.run(
-                ["bash", "-c", state_block],
-                env=workflow_env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            create_state = _run_bash(state_block, workflow_env)
             self.assertEqual(
                 0,
                 create_state.returncode,
                 f"shipped Step 1 state creation failed: {create_state.stderr!r}",
             )
-            state_lines = state_path.read_text(encoding="utf-8").splitlines()
-            state_path.write_text(
+            state_lines = STATE_PATH.read_text(encoding="utf-8").splitlines()
+            STATE_PATH.write_text(
                 "\n".join(
                     (
                         f"PROJECT_DIR={restored_project_dir}"
@@ -617,13 +1129,7 @@ class TestStatePersistence(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            scaffold = subprocess.run(
-                ["bash", "-c", scaffolding_block],
-                env=workflow_env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            scaffold = _run_bash(scaffolding_block, workflow_env)
             self.assertEqual(
                 0,
                 scaffold.returncode,
@@ -719,42 +1225,22 @@ class TestStatePersistence(unittest.TestCase):
         )
 
     def test_parameters_json_heredoc_preserves_schema_and_expands_values(self):
-        """Replay Step 1 state in a fresh shell before executing Step 3."""
-        state_path = "/tmp/foundry-mcp-aca-state.env"
+        """Replay exact state and scaffold blocks in separate fresh shells."""
+        state_block = _step_1_state_block(self.fixture)
+        scaffold_block = _scaffold_block(self.fixture)
 
-        def bash_block_containing(marker: str) -> str:
-            marker_index = self.fixture.index(marker)
-            block_start = self.fixture.rfind("```bash\n", 0, marker_index)
-            block_end = self.fixture.index("```", marker_index)
-            return self.fixture[block_start + len("```bash\n"):block_end]
-
-        state_block = bash_block_containing(f'STATE_FILE="{state_path}"')
-        parameters_block = bash_block_containing(
-            'cat > "${PROJECT_DIR}/infra/main.parameters.json"'
-        )
-
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+        ):
             workspace = pathlib.Path(temp_dir)
-            persisted_state = pathlib.Path(state_path)
-            persisted_state.unlink(missing_ok=True)
-            self.addCleanup(persisted_state.unlink, missing_ok=True)
             workflow_env = {
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
                 "GITHUB_WORKSPACE": str(workspace),
                 "AZURE_SUBSCRIPTION_ID": "test-subscription",
                 "ACR_LOGIN_SERVER": "test.azurecr.io",
             }
-            create_state = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    state_block,
-                ],
-                env=workflow_env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            create_state = _run_bash(state_block, workflow_env)
             self.assertEqual(
                 create_state.returncode,
                 0,
@@ -762,27 +1248,16 @@ class TestStatePersistence(unittest.TestCase):
             )
             state_values = dict(
                 line.split("=", 1)
-                for line in persisted_state.read_text().splitlines()
+                for line in STATE_PATH.read_text().splitlines()
                 if "=" in line
             )
             project_dir = pathlib.Path(state_values["PROJECT_DIR"])
-            (project_dir / "infra").mkdir(parents=True)
 
-            render_parameters = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    parameters_block,
-                ],
-                env=workflow_env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            render_parameters = _run_bash(scaffold_block, workflow_env)
             self.assertEqual(
                 render_parameters.returncode,
                 0,
-                "shipped Step 3 parameters block failed after sourcing Step 1 state: "
+                "shipped combined scaffold block failed after sourcing Step 1 state: "
                 f"stderr={render_parameters.stderr!r}",
             )
             rendered = json.loads(
@@ -810,6 +1285,674 @@ class TestStatePersistence(unittest.TestCase):
         )
         self.assertEqual(
             rendered["parameters"]["acrServer"]["value"], "test.azurecr.io"
+        )
+
+    def test_combined_scaffold_block_executes_complete_contract(self):
+        """The exact shipped blocks must build all six files across fresh shells."""
+        synthetic_scaffold = f"""{SCAFFOLD_SOURCE_FALLBACK}
+{SCAFFOLD_SET_FLAGS}
+{SCAFFOLD_ERR_TRAP}
+{SCAFFOLD_STATE_GATE}
+mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
+cd "$PROJECT_DIR"
+cat > src/server.py <<'PY'
+az account show
+read OTHER APP_NAME
+(( APP_NAME++ ))
+PY
+cat > src/requirements.txt <<'REQ'
+fastmcp~=2.14.7
+REQ
+cat > src/Dockerfile <<'DOCKER'
+FROM python:3.12-slim
+DOCKER
+cat > infra/main.bicep <<'BICEP'
+param appName string
+BICEP
+cat > infra/main.parameters.json <<PARAMS
+""" + EXPECTED_PARAMETERS_HEREDOC + """
+PARAMS
+cat > azure.yaml <<AZDYAML
+""" + EXPECTED_AZURE_YAML_HEREDOC + """
+AZDYAML
+"""
+        with self.subTest(scaffold_oracle="heredoc bodies are not commands"):
+            commands, heredocs, _events = _parse_scaffold_shell(
+                synthetic_scaffold
+            )
+            self.assertNotIn("az account show", commands)
+            self.assertIn("az account show", heredocs[0][3])
+            events = _scaffold_shell_contract(synthetic_scaffold)
+            self.assertEqual(18, len(events))
+
+        rejected_scaffolds = {
+            "source fallback removed": synthetic_scaffold.replace(
+                SCAFFOLD_SOURCE_FALLBACK,
+                "source /tmp/foundry-mcp-aca-state.env",
+                1,
+            ),
+            "set -e removed": synthetic_scaffold.replace(
+                SCAFFOLD_SET_FLAGS,
+                "set -Euo pipefail",
+                1,
+            ),
+            "ERR trap removed": synthetic_scaffold.replace(
+                f"{SCAFFOLD_ERR_TRAP}\n",
+                "",
+                1,
+            ),
+            **{
+                f"state gate missing {variable} check": synthetic_scaffold.replace(
+                    SCAFFOLD_STATE_GATE,
+                    _scaffold_state_gate(
+                        tuple(
+                            candidate
+                            for candidate in SCAFFOLD_STATE_VARIABLES
+                            if candidate != variable
+                        )
+                    ),
+                    1,
+                )
+                for variable in SCAFFOLD_STATE_VARIABLES
+            },
+            "external az call": synthetic_scaffold.replace(
+                'cd "$PROJECT_DIR"\n',
+                'cd "$PROJECT_DIR"\naz account show\n',
+                1,
+            ),
+            "read assignment": synthetic_scaffold.replace(
+                'cd "$PROJECT_DIR"\n',
+                'cd "$PROJECT_DIR"\nread OTHER APP_NAME\n',
+                1,
+            ),
+            "arithmetic mutation": synthetic_scaffold.replace(
+                'cd "$PROJECT_DIR"\n',
+                'cd "$PROJECT_DIR"\n(( APP_NAME++ ))\n',
+                1,
+            ),
+            "unquoted static delimiter": synthetic_scaffold.replace(
+                "<<'PY'", "<<PY", 1
+            ),
+            "renamed static delimiter": synthetic_scaffold.replace(
+                "<<'DOCKER'", "<<'CONTAINER'", 1
+            ).replace("\nDOCKER\n", "\nCONTAINER\n", 1),
+            "renamed parameters delimiter": synthetic_scaffold.replace(
+                "<<PARAMS", "<<JSONPARAMS", 1
+            ).replace("\nPARAMS\n", "\nJSONPARAMS\n", 1),
+            "renamed azure.yaml delimiter": synthetic_scaffold.replace(
+                "<<AZDYAML", "<<SERVICEYAML", 1
+            ).replace("\nAZDYAML\n", "\nSERVICEYAML\n", 1),
+            "unescaped schema": synthetic_scaffold.replace(
+                '"\\$schema"', '"$schema"', 1
+            ),
+            "extra parameters expansion": synthetic_scaffold.replace(
+                '"contentVersion": "1.0.0.0"',
+                '"contentVersion": "${AZURE_SUBSCRIPTION_ID}"',
+                1,
+            ),
+            "extra azure.yaml expansion": synthetic_scaffold.replace(
+                "metadata:",
+                "subscription: ${AZURE_SUBSCRIPTION_ID}\nmetadata:",
+                1,
+            ),
+        }
+        for case, shell in rejected_scaffolds.items():
+            with self.subTest(scaffold_oracle=case):
+                with self.assertRaises(AssertionError):
+                    _scaffold_shell_contract(shell)
+
+        synthetic_document = f"```bash\n{synthetic_scaffold}```\n"
+        with self.subTest(scaffold_oracle="single writer block"):
+            _assert_single_scaffold_writer_block(
+                synthetic_document, synthetic_scaffold
+            )
+        with self.subTest(scaffold_oracle="duplicate writer block"):
+            with self.assertRaises(AssertionError):
+                _assert_single_scaffold_writer_block(
+                    synthetic_document + synthetic_document,
+                    synthetic_scaffold,
+                )
+        duplicate_writer_documents = {
+            "tilde-fenced duplicate": (
+                synthetic_document
+                + "~~~bash\ncat > azure.yaml <<DUPLICATE\nbad\nDUPLICATE\n~~~\n"
+            ),
+            "indented nonstandard duplicate": (
+                synthetic_document
+                + "    ```sh\n"
+                + "    printf 'bad\\n' > infra/main.parameters.json\n"
+                + "    ```\n"
+            ),
+        }
+        for case, document in duplicate_writer_documents.items():
+            with self.subTest(scaffold_oracle=case):
+                with self.assertRaises(AssertionError):
+                    _assert_single_scaffold_writer_block(
+                        document,
+                        synthetic_scaffold,
+                    )
+        with self.subTest(scaffold_oracle="protocol artifact remains allowed"):
+            _assert_single_scaffold_writer_block(
+                synthetic_document
+                + "~~~sh\nprintf 'probe\\n' > "
+                "/tmp/foundry-mcp-aca-smoke-result\n~~~\n",
+                synthetic_scaffold,
+            )
+
+        synthetic_step_1 = (
+            f"{STEP_1_HEADING}\n\n```bash\n{STATE_MARKER}\n```\n\n---\n\n"
+            f"{STEP_2_HEADING}\n"
+        )
+        with self.subTest(state_marker_scope="unique in exact Step 1"):
+            self.assertEqual(
+                f"{STATE_MARKER}\n",
+                _step_1_state_block(synthetic_step_1),
+            )
+        invalid_state_documents = {
+            "duplicate in later Bash block": (
+                synthetic_step_1
+                + f"\n```bash\n{STATE_MARKER}\n```\n"
+            ),
+            "sole marker in prose": (
+                f"{STEP_1_HEADING}\n\n{STATE_MARKER}\n\n---\n\n"
+                f"{STEP_2_HEADING}\n"
+            ),
+            "sole marker in an indented fence": (
+                f"{STEP_1_HEADING}\n\n    ```bash\n    {STATE_MARKER}\n"
+                f"    ```\n\n---\n\n{STEP_2_HEADING}\n"
+            ),
+            "only outside Step 1": (
+                f"{STEP_1_HEADING}\n\n```bash\necho step-1\n```\n\n"
+                f"---\n\n{STEP_2_HEADING}\n\n"
+                f"```bash\n{STATE_MARKER}\n```\n"
+            ),
+        }
+        for case, document in invalid_state_documents.items():
+            with self.subTest(state_marker_scope=case):
+                with self.assertRaises(AssertionError):
+                    _step_1_state_block(document)
+
+        with self.subTest(scaffold_heading_scope="duplicate outside Step 2"):
+            with self.assertRaises(AssertionError):
+                _scaffold_block(
+                    f"{self.fixture}\n{SCAFFOLD_BLOCK_HEADING}\n"
+                )
+
+        state_block = _step_1_state_block(self.fixture)
+        scaffold_block = _scaffold_block(self.fixture)
+        _scaffold_shell_contract(scaffold_block)
+        _assert_single_scaffold_writer_block(self.fixture, scaffold_block)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+        ):
+            workspace = pathlib.Path(temp_dir)
+            workflow_env = {
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "GITHUB_WORKSPACE": str(workspace),
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "ACR_LOGIN_SERVER": "test.azurecr.io",
+            }
+
+            create_state = _run_bash(state_block, workflow_env)
+            self.assertEqual(
+                0,
+                create_state.returncode,
+                "exact shipped Step 1 state block failed in a fresh process: "
+                f"stdout={create_state.stdout!r} stderr={create_state.stderr!r}",
+            )
+            state_values = dict(
+                line.split("=", 1)
+                for line in STATE_PATH.read_text(encoding="utf-8").splitlines()
+                if "=" in line
+            )
+
+            scaffold = _run_bash(scaffold_block, workflow_env)
+            self.assertEqual(
+                0,
+                scaffold.returncode,
+                "exact shipped combined scaffold block failed in a fresh process: "
+                f"stdout={scaffold.stdout!r} stderr={scaffold.stderr!r}",
+            )
+
+            project_dir = pathlib.Path(state_values["PROJECT_DIR"])
+            for relative_path in SCAFFOLD_FILES:
+                with self.subTest(file=relative_path):
+                    self.assertTrue(
+                        (project_dir / relative_path).is_file(),
+                        f"combined scaffold block did not write {relative_path}",
+                    )
+
+            server = (project_dir / "src" / "server.py").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(
+                EXPECTED_SERVER_PY,
+                _normalize_text(server),
+                "server.py must equal the complete prescribed health/echo/main body",
+            )
+            requirements = (
+                project_dir / "src" / "requirements.txt"
+            ).read_text(encoding="utf-8")
+            self.assertEqual(
+                EXPECTED_REQUIREMENTS_TXT,
+                _normalize_text(requirements),
+                "requirements.txt must contain exactly the prescribed FastMCP pin",
+            )
+            dockerfile = (project_dir / "src" / "Dockerfile").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(
+                EXPECTED_DOCKERFILE,
+                _normalize_text(dockerfile),
+                "Dockerfile must equal the complete prescribed container body",
+            )
+            bicep = (project_dir / "infra" / "main.bicep").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(
+                EXPECTED_MAIN_BICEP,
+                _normalize_text(bicep),
+                "main.bicep must equal the complete prescribed deployment body",
+            )
+
+            parameters = json.loads(
+                (project_dir / "infra" / "main.parameters.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            expected_parameters = {
+                "$schema": (
+                    "https://schema.management.azure.com/schemas/"
+                    "2019-04-01/deploymentParameters.json#"
+                ),
+                "contentVersion": "1.0.0.0",
+                "parameters": {
+                    "appName": {"value": state_values["APP_NAME"]},
+                    "uamiResourceId": {
+                        "value": state_values["UAMI_RESOURCE_ID"]
+                    },
+                    "acrServer": {"value": state_values["ACR_SERVER"]},
+                },
+            }
+            self.assertEqual(
+                expected_parameters,
+                parameters,
+                "main.parameters.json must be exactly the schema, content version, "
+                "and three persisted deployment parameters",
+            )
+
+            app_name = state_values["APP_NAME"]
+            azure_yaml = yaml.safe_load(
+                (project_dir / "azure.yaml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                {
+                    "name": app_name,
+                    "metadata": {"template": "ci-smoke-mcp@0.0.1"},
+                    "services": {
+                        app_name: {
+                            "project": "./src",
+                            "language": "python",
+                            "host": "containerapp",
+                            "docker": {
+                                "path": "Dockerfile",
+                                "context": ".",
+                            },
+                        }
+                    },
+                },
+                azure_yaml,
+                "azure.yaml must have exactly one APP_NAME-keyed containerapp service",
+            )
+
+    def test_scaffold_failure_is_fail_fast_and_writes_marker(self):
+        """A bad restored PROJECT_DIR must fail before any scaffold file is written."""
+        scaffold_block = _scaffold_block(self.fixture)
+        repo_artifacts = {
+            relative_path: (
+                (ROOT / relative_path).is_file(),
+                (
+                    (ROOT / relative_path).read_bytes()
+                    if (ROOT / relative_path).is_file()
+                    else None
+                ),
+            )
+            for relative_path in SCAFFOLD_FILES
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            safe_cwd = pathlib.Path(temp_dir)
+            invalid_project_dir = safe_cwd / "project-is-a-file"
+            invalid_project_dir.write_text("not a directory\n", encoding="utf-8")
+            probe_marker = safe_cwd / "smoke-result"
+            STATE_PATH.write_text(
+                "\n".join(
+                    (
+                        "APP_NAME=ci-smoke-mcp-invalid",
+                        f"PROJECT_DIR={shlex.quote(str(invalid_project_dir))}",
+                        "UAMI_RESOURCE_ID=/subscriptions/test/resourceGroups/test/"
+                        "providers/Microsoft.ManagedIdentity/"
+                        "userAssignedIdentities/test",
+                        "ACR_SERVER=test.azurecr.io",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            probe_block = _scaffold_block_with_probe_marker(
+                scaffold_block, probe_marker
+            )
+            probe = _run_bash(
+                probe_block,
+                {"PATH": "/usr/bin:/bin"},
+                cwd=safe_cwd,
+            )
+            marker_bytes = probe_marker.read_bytes() if probe_marker.is_file() else b""
+            later_files = [
+                relative_path
+                for relative_path in SCAFFOLD_FILES
+                if (safe_cwd / relative_path).exists()
+            ]
+
+            violations = []
+            if probe.returncode == 0:
+                violations.append(
+                    "invalid PROJECT_DIR returned zero because a later relative "
+                    "scaffold write masked the earlier failure"
+                )
+            if not marker_bytes.startswith(b"SMOKE_RESULT=FAIL"):
+                violations.append(
+                    "failure marker is missing or does not begin SMOKE_RESULT=FAIL"
+                )
+            if later_files:
+                violations.append(
+                    f"scaffold continued to create later files: {later_files!r}"
+                )
+
+            self.assertEqual(
+                [],
+                violations,
+                "exact shipped combined scaffold block is not fail-fast: "
+                + "; ".join(violations)
+                + f"; stdout={probe.stdout!r} stderr={probe.stderr!r}",
+            )
+
+        restored_repo_artifacts = {
+            relative_path: (
+                (ROOT / relative_path).is_file(),
+                (
+                    (ROOT / relative_path).read_bytes()
+                    if (ROOT / relative_path).is_file()
+                    else None
+                ),
+            )
+            for relative_path in SCAFFOLD_FILES
+        }
+        self.assertEqual(
+            repo_artifacts,
+            restored_repo_artifacts,
+            "failure probe must not create or change scaffold files in the repository",
+        )
+
+    def test_scaffold_missing_state_source_fails_before_authoring(self):
+        """An absent shipped state file must fail before any scaffold output."""
+        scaffold_block = _scaffold_block(self.fixture)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            safe_cwd = pathlib.Path(temp_dir)
+            probe_marker = safe_cwd / "smoke-result"
+            workflow_env = {
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "GITHUB_WORKSPACE": str(safe_cwd),
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "ACR_LOGIN_SERVER": "test.azurecr.io",
+            }
+            self.assertFalse(
+                STATE_PATH.exists(),
+                "the missing-source probe requires the shipped state path to be absent",
+            )
+
+            probe_block = _scaffold_block_with_probe_marker(
+                scaffold_block, probe_marker
+            )
+            probe = _run_bash(probe_block, workflow_env, cwd=safe_cwd)
+            marker_bytes = probe_marker.read_bytes() if probe_marker.is_file() else b""
+            scaffold_outputs = [
+                relative_path
+                for relative_path in SCAFFOLD_FILES
+                if (safe_cwd / relative_path).exists()
+            ]
+
+            self.assertNotEqual(
+                0,
+                probe.returncode,
+                "an absent shipped state source must return nonzero",
+            )
+            self.assertTrue(
+                marker_bytes.startswith(b"SMOKE_RESULT=FAIL"),
+                "an absent shipped state source must write the deterministic FAIL "
+                f"marker; marker={marker_bytes!r} stderr={probe.stderr!r}",
+            )
+            self.assertEqual(
+                [],
+                scaffold_outputs,
+                "an absent shipped state source must not create scaffold outputs; "
+                f"outputs={scaffold_outputs!r}",
+            )
+
+    def test_scaffold_first_heredoc_write_failure_stops_later_writes(self):
+        """A first-heredoc redirection failure must stop all later heredocs."""
+        scaffold_block = _scaffold_block(self.fixture)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            safe_cwd = pathlib.Path(temp_dir)
+            project_dir = safe_cwd / "project"
+            (project_dir / "src").mkdir(parents=True)
+            (project_dir / "infra").mkdir()
+            (project_dir / "src" / "server.py").mkdir()
+            probe_marker = safe_cwd / "smoke-result"
+            STATE_PATH.write_text(
+                "\n".join(
+                    (
+                        "APP_NAME=ci-smoke-mcp-heredoc-failure",
+                        f"PROJECT_DIR={shlex.quote(str(project_dir))}",
+                        "UAMI_RESOURCE_ID=/subscriptions/test/resourceGroups/test/"
+                        "providers/Microsoft.ManagedIdentity/"
+                        "userAssignedIdentities/test",
+                        "ACR_SERVER=test.azurecr.io",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            probe_block = _scaffold_block_with_probe_marker(
+                scaffold_block, probe_marker
+            )
+            probe = _run_bash(
+                probe_block,
+                {"PATH": "/usr/bin:/bin:/usr/local/bin"},
+                cwd=safe_cwd,
+            )
+            marker_bytes = probe_marker.read_bytes() if probe_marker.is_file() else b""
+            later_outputs = [
+                relative_path
+                for relative_path in SCAFFOLD_FILES[1:]
+                if (project_dir / relative_path).exists()
+            ]
+
+            self.assertNotEqual(
+                0,
+                probe.returncode,
+                "a directory at src/server.py must make the first heredoc fail",
+            )
+            self.assertTrue(
+                marker_bytes.startswith(b"SMOKE_RESULT=FAIL"),
+                "the first-heredoc failure must write the deterministic FAIL marker; "
+                f"marker={marker_bytes!r} stderr={probe.stderr!r}",
+            )
+            self.assertEqual(
+                [],
+                later_outputs,
+                "the first-heredoc failure must prevent all later scaffold writes; "
+                f"outputs={later_outputs!r}",
+            )
+
+    def test_scaffold_missing_persisted_state_fails_before_authoring(self):
+        """Every missing persisted value must deterministically fail before writes."""
+        scaffold_block = _scaffold_block(self.fixture)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            safe_cwd = pathlib.Path(temp_dir)
+            state_values = {
+                "APP_NAME": "ci-smoke-mcp-state-probe",
+                "PROJECT_DIR": "",
+                "UAMI_RESOURCE_ID": (
+                    "/subscriptions/test/resourceGroups/test/providers/"
+                    "Microsoft.ManagedIdentity/userAssignedIdentities/test"
+                ),
+                "ACR_SERVER": "test.azurecr.io",
+            }
+
+            for missing_variable in SCAFFOLD_STATE_VARIABLES:
+                with self.subTest(missing_persisted_variable=missing_variable):
+                    project_dir = safe_cwd / f"project-{missing_variable.lower()}"
+                    state_values["PROJECT_DIR"] = str(project_dir)
+                    STATE_PATH.write_text(
+                        "\n".join(
+                            f"{variable}={shlex.quote(value)}"
+                            for variable, value in state_values.items()
+                            if variable != missing_variable
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+
+                    source_probe = _run_bash(
+                        "source /tmp/foundry-mcp-aca-state.env",
+                        {"PATH": "/usr/bin:/bin"},
+                        cwd=safe_cwd,
+                    )
+                    self.assertEqual(
+                        0,
+                        source_probe.returncode,
+                        "state omission probe must use a syntactically valid state "
+                        f"file; missing={missing_variable} "
+                        f"stderr={source_probe.stderr!r}",
+                    )
+
+                    probe_marker = safe_cwd / (
+                        f"smoke-result-{missing_variable.lower()}"
+                    )
+                    probe_block = _scaffold_block_with_probe_marker(
+                        scaffold_block, probe_marker
+                    )
+                    probe = _run_bash(
+                        probe_block,
+                        {"PATH": "/usr/bin:/bin"},
+                        cwd=safe_cwd,
+                    )
+                    marker_bytes = (
+                        probe_marker.read_bytes()
+                        if probe_marker.is_file()
+                        else b""
+                    )
+                    unexpected_outputs = [
+                        str(path.relative_to(safe_cwd))
+                        for base in (project_dir, safe_cwd)
+                        for path in (
+                            base / "src",
+                            base / "infra",
+                            *(base / relative for relative in SCAFFOLD_FILES),
+                        )
+                        if path.exists()
+                    ]
+
+                    self.assertNotEqual(
+                        0,
+                        probe.returncode,
+                        "missing persisted state must return nonzero; "
+                        f"missing={missing_variable}",
+                    )
+                    self.assertTrue(
+                        marker_bytes.startswith(b"SMOKE_RESULT=FAIL"),
+                        "missing persisted state must write the deterministic FAIL "
+                        f"marker; missing={missing_variable} "
+                        f"marker={marker_bytes!r} stderr={probe.stderr!r}",
+                    )
+                    self.assertEqual(
+                        [],
+                        unexpected_outputs,
+                        "missing persisted state must fail before mkdir or any "
+                        f"scaffold heredoc; missing={missing_variable} "
+                        f"outputs={unexpected_outputs!r}",
+                    )
+
+    def test_scaffold_authoring_section_has_exact_shape(self):
+        """Step 2 is exactly two headings and one standard Bash fence."""
+        scaffold_block = _scaffold_block(self.fixture)
+        _scaffold_shell_contract(scaffold_block)
+        _assert_single_scaffold_writer_block(self.fixture, scaffold_block)
+
+    def test_first_page_guard_forbids_nondeterministic_file_authoring(self):
+        """The critical guard must make the one Bash scaffold path mandatory."""
+        first_page = self.fixture[:2000]
+        guard_matches = list(
+            re.finditer(
+                rf"(?m)^{re.escape(DETERMINISTIC_GUARD_HEADING)}$",
+                self.fixture,
+            )
+        )
+        self.assertEqual(
+            1,
+            len(guard_matches),
+            "the exact deterministic scaffold-authoring guard heading must occur "
+            "exactly once",
+        )
+        guard_start = guard_matches[0].start()
+        self.assertLess(
+            guard_start,
+            len(first_page),
+            "the exact deterministic scaffold-authoring guard heading must begin "
+            "within the fixture's first 2000 characters",
+        )
+        following = self.fixture[guard_matches[0].end():]
+        guard_end = re.search(
+            r"\n(?:\*\*CRITICAL\b|---\s*$|##\s)",
+            following,
+            re.MULTILINE,
+        )
+        guard_body = following[: guard_end.start()] if guard_end else following
+        normalized_guard = re.sub(r"\s+", " ", guard_body).strip()
+        missing = [
+            sentence
+            for sentence in EXPECTED_GUARD_SENTENCES
+            if re.sub(r"\s+", " ", sentence) not in normalized_guard
+        ]
+        self.assertEqual(
+            [],
+            missing,
+            "the exact first-page guard is missing required machine-contract "
+            f"sentences: {missing}",
         )
 
     def test_protocol_version_fails_if_empty(self):

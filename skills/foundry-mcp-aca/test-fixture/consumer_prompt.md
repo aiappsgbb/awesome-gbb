@@ -37,6 +37,13 @@ what you create in the scratch project. Specifically forbidden:
 - `.github/skill-deps.yml`, `.github/ci-shared-preamble.md`
 - Any file under `skills/`, `docs/`, or `scripts/`
 
+**CRITICAL — deterministic scaffold authoring (MANDATORY).**
+Invoke only the prescribed Bash block in Step 2 to author the six scaffold files.
+NEVER use Edit, Create, or Write file tools.
+Never inspect or patch the generated files after the scaffold block runs.
+If the scaffold block fails, write SMOKE_RESULT=FAIL and stop.
+There is no second file-write path.
+
 This prompt contains EVERYTHING you need. Execute Steps 0–7 exactly as
 written. If a step's command fails, write SMOKE_RESULT=FAIL with the
 error and stop. Do NOT search the repository for fixes, alternative
@@ -207,29 +214,18 @@ echo "UAMI_RESOURCE_ID=$UAMI_RESOURCE_ID" >> "$STATE_FILE"
 echo "ACR_SERVER=$ACR_SERVER" >> "$STATE_FILE"
 ```
 
-**Every subsequent Bash block in this fixture MUST begin with:**
-
-```bash
-source /tmp/foundry-mcp-aca-state.env
-cd "$PROJECT_DIR"
-```
-
-Do NOT skip this. Do NOT assume variables survive between tool calls.
+The next Bash tool invocation is the single deterministic scaffold block
+in Step 2. It restores state, creates the scaffold directories, and enters
+`$PROJECT_DIR` in the prescribed `source; mkdir; cd` order. All later Bash
+blocks retain their explicit state restoration as written. Do NOT assume
+variables survive between tool calls.
 
 ### Scaffolding location
 
 The Copilot CLI's shell-tool gate rejects `cd` outside `$GITHUB_WORKSPACE`
-even with `--allow-all-tools`. Scaffold everything under
-`${GITHUB_WORKSPACE}/.scratch/<APP_NAME>/`:
-
-```bash
-source /tmp/foundry-mcp-aca-state.env
-mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
-cd "$PROJECT_DIR"
-```
-
-`.scratch/` is gitignored — no risk of polluting the repo. You will NOT
-commit any of the scaffolded files.
+even with `--allow-all-tools`. The persisted `PROJECT_DIR` already selects
+the workspace-backed, gitignored `.scratch/` location; use it exactly as
+prescribed in Step 2 and do not choose another location.
 
 ### Pattern 25 framing — read this BEFORE you start
 
@@ -257,16 +253,18 @@ cleanup is best-effort.
 
 ---
 
-## Step 2 — write the FastMCP server (`src/server.py`)
+## Step 2 — create the deterministic scaffold
 
-Write this exact server body to `${PROJECT_DIR}/src/server.py`. The
-canonical `references/python/server.py` in the skill does NOT register
-a `/health` route, but production deployments may add liveness probes —
-the explicit `mcp.custom_route("/health", …)` decorator below is the
-documented FastMCP 2.x health-check pattern (see the foundry-mcp-aca
-audit trail's HIT-1 entry):
+### Deterministic scaffold-authoring Bash block (MANDATORY)
 
-```python
+```bash
+source /tmp/foundry-mcp-aca-state.env || { printf 'SMOKE_RESULT=FAIL scaffold block failed\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; }
+set -Eeuo pipefail
+trap 'printf "SMOKE_RESULT=FAIL scaffold block failed\n" > /tmp/foundry-mcp-aca-smoke-result' ERR
+if [[ -z "${APP_NAME:-}" || -z "${PROJECT_DIR:-}" || -z "${UAMI_RESOURCE_ID:-}" || -z "${ACR_SERVER:-}" ]]; then printf 'SMOKE_RESULT=FAIL scaffold state incomplete\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; fi
+mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
+cd "$PROJECT_DIR"
+cat > src/server.py <<'PY'
 """Tiny MCP server for the CI smoke — single `echo` tool + /health route."""
 from fastmcp import FastMCP
 from starlette.requests import Request
@@ -288,20 +286,11 @@ async def echo(message: str) -> str:
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http", host="0.0.0.0", port=8080)
-```
-
-Then write `${PROJECT_DIR}/src/requirements.txt`. **Pin `fastmcp` per
-the SKILL.md mandate** — SKILL.md and the pin file's KI-001 both require
-FastMCP `<3.0.0` (the 3.x release rewrote the streamable-HTTP mount path
-and tool registration). The pin README table specifies `2.14.7`:
-
-```
+PY
+cat > src/requirements.txt <<'REQ'
 fastmcp~=2.14.7
-```
-
-Then write `${PROJECT_DIR}/src/Dockerfile`:
-
-```dockerfile
+REQ
+cat > src/Dockerfile <<'DOCKER'
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -313,18 +302,8 @@ COPY server.py .
 
 EXPOSE 8080
 CMD ["python", "server.py"]
-```
-
----
-
-## Step 3 — write the Bicep (`infra/main.bicep`)
-
-Write `${PROJECT_DIR}/infra/main.bicep` that references the
-pre-provisioned CAE and ACR via `existing`, deploys a single Container
-App, and outputs the FQDN. Do NOT create a new CAE, ACR, or UAMI — they
-are pre-provisioned and pre-RBAC'd:
-
-```bicep
+DOCKER
+cat > infra/main.bicep <<'BICEP'
 @description('Deployment region — must match the CAE.')
 param location string = 'swedencentral'
 
@@ -404,17 +383,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output fqdn string = app.properties.configuration.ingress.fqdn
 output appName string = app.name
-```
-
-Then write `${PROJECT_DIR}/infra/main.parameters.json` to map azd env vars
-to Bicep params. **Use an expanding heredoc** (`<<PARAMS`) and escape only
-`\$schema` so the schema key stays literal while the three deployment values
-expand from the persisted state:
-
-```bash
-source /tmp/foundry-mcp-aca-state.env
-cd "$PROJECT_DIR"
-cat > "${PROJECT_DIR}/infra/main.parameters.json" <<PARAMS
+BICEP
+cat > infra/main.parameters.json <<PARAMS
 {
   "\$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
@@ -425,16 +395,7 @@ cat > "${PROJECT_DIR}/infra/main.parameters.json" <<PARAMS
   }
 }
 PARAMS
-```
-
-Then write `${PROJECT_DIR}/azure.yaml` so `azd` knows how to build + push
-the container image and bind it to the Bicep service. The service key
-MUST match the `azd-service-name` tag in Bicep (which uses `appName`):
-
-```bash
-source /tmp/foundry-mcp-aca-state.env
-cd "$PROJECT_DIR"
-cat > "${PROJECT_DIR}/azure.yaml" <<AZDYAML
+cat > azure.yaml <<AZDYAML
 name: ${APP_NAME}
 metadata:
   template: ci-smoke-mcp@0.0.1
