@@ -195,13 +195,17 @@ the `azd` environment name throughout.
 
 Copilot CLI runs each Bash tool invocation in a **fresh process** — env
 vars set in one call are NOT available in the next. You MUST persist
-`APP_NAME` and `PROJECT_DIR` to a state file and `source` it at the top
-of every subsequent Bash block:
+`APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER` to a state
+file and `source` it at the top of every subsequent Bash block:
 
 ```bash
 STATE_FILE="/tmp/foundry-mcp-aca-state.env"
+UAMI_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
+ACR_SERVER="$ACR_LOGIN_SERVER"
 echo "APP_NAME=$APP_NAME" > "$STATE_FILE"
 echo "PROJECT_DIR=${GITHUB_WORKSPACE}/.scratch/${APP_NAME}" >> "$STATE_FILE"
+echo "UAMI_RESOURCE_ID=$UAMI_RESOURCE_ID" >> "$STATE_FILE"
+echo "ACR_SERVER=$ACR_SERVER" >> "$STATE_FILE"
 ```
 
 **Every subsequent Bash block in this fixture MUST begin with:**
@@ -489,9 +493,9 @@ AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
 AZURE_RESOURCE_GROUP=rg-awesome-gbb-ci
 AZURE_TENANT_ID=${AZURE_TENANT_ID}
 APP_NAME=${APP_NAME}
-UAMI_RESOURCE_ID=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci
-ACR_SERVER=${ACR_LOGIN_SERVER}
-AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_LOGIN_SERVER}
+UAMI_RESOURCE_ID=${UAMI_RESOURCE_ID}
+ACR_SERVER=${ACR_SERVER}
+AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_SERVER}
 EOF
 
 echo "azd env created at $AZD_ENV_DIR"

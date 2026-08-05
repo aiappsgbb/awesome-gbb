@@ -1,7 +1,7 @@
 # Plan: foundry-mcp-aca refresh 1.2.4
 
 **Design:** [specs/foundry-mcp-aca-refresh-1.2.4.md](../specs/foundry-mcp-aca-refresh-1.2.4.md)
-**Status:** Correction round 8 applied
+**Status:** Correction round 10 applied
 
 ## Correction rounds
 
@@ -166,5 +166,42 @@ AssertionError: '${APP_NAME}' != 'ci-smoke-mcp-test1234'
 ### GREEN
 
 - Coupled heredoc + semantic gate contracts: 3 tests, PASS
+- Fixture contracts: 59 tests, PASS
+- Full catalog suite: 379 tests, PASS
+
+## Round-10 corrections (2026-08-05)
+
+### Genuine RED on `8b27ec6a`
+
+The round-9 heredoc test injected `UAMI_RESOURCE_ID` and `ACR_SERVER`
+directly, even though literal fixture execution starts Step 3 in a fresh shell
+with only Step 1 state. The revised test now:
+
+1. extracts and executes the Step 1 naming and state blocks with only
+   `GITHUB_WORKSPACE`, `AZURE_SUBSCRIPTION_ID`, and `ACR_LOGIN_SERVER`;
+2. starts a fresh Bash process;
+3. executes the extracted Step 3 parameters block, which sources that state;
+4. parses and validates the rendered JSON.
+
+RED failed with:
+
+```text
+AssertionError: None != '/subscriptions/test-subscription/.../uami-awesome-gbb-ci'
+```
+
+### Minimal correction
+
+1. Derive `UAMI_RESOURCE_ID` and `ACR_SERVER` in Step 1 from workflow env.
+2. Persist them beside `APP_NAME` and `PROJECT_DIR`.
+3. Document the complete four-value state contract.
+4. Reuse the sourced pair in Step 4's `.azure/.env` instead of deriving them
+   in that later process.
+5. Correct the spec rationale: MCP `<2` is held for a future MCP 2.0 protocol
+   break, not because MCP 1.x is incompatible with FastMCP 2.x.
+
+### GREEN
+
+- Fresh-shell state + parameter replay and semantic gate contracts: 3 tests,
+  PASS
 - Fixture contracts: 59 tests, PASS
 - Full catalog suite: 379 tests, PASS

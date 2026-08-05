@@ -26,7 +26,7 @@ PATCH refresh of `foundry-mcp-aca` covering:
 | Package | Previous | Current | Hold | Rationale |
 |---------|----------|---------|------|-----------|
 | fastmcp | 2.14.7 | 2.14.7 | <3.0 | KI-001 — mount-path break |
-| mcp | (transitive) | 1.29.0 | <2.0 | KI-001 — incompatible with fastmcp 2.x |
+| mcp | (transitive) | 1.29.0 | <2.0 | KI-001 — future MCP 2.0 protocol break |
 | azure-mgmt-appcontainers | 4.0.0 | 5.0.0 | — | MAJOR but JobsOperations.get/begin_create_or_update preserved |
 | azure-cosmos | 4.15.0 | 4.16.3 | — | MINOR; async query_items signature unchanged |
 | azure-identity | 1.25.3 | 1.25.3 | — | unchanged |
@@ -175,3 +175,28 @@ values.
   parameter-file repair.
 - Current local counts after correction: 59 fixture contract tests; 379 full
   catalog tests.
+
+## Round-10 correction (2026-08-05): persist Step-3 deployment values
+
+**Root cause:** Step 3 sources the Step 1 state file before expanding
+`UAMI_RESOURCE_ID` and `ACR_SERVER`, but Step 1 persisted only `APP_NAME` and
+`PROJECT_DIR`. Those two values were first defined in Step 4's `.azure/.env`,
+which runs in a later fresh Bash process. The round-9 behavioral test masked
+the defect by injecting both missing values directly into its subprocess
+environment.
+
+**Fix:** Step 1 now derives `UAMI_RESOURCE_ID` from
+`AZURE_SUBSCRIPTION_ID`, copies `ACR_SERVER` from `ACR_LOGIN_SERVER`, and
+persists both beside `APP_NAME` and `PROJECT_DIR`. Step 4 reuses the sourced
+values rather than deriving them again.
+
+**TDD evidence:**
+- RED on head `8b27ec6a`: the revised test executed extracted Step 1 state
+  creation using only workflow inputs, sourced that state in a fresh shell,
+  then ran the extracted Step 3 parameters block. The state assertion failed
+  with `None` for `UAMI_RESOURCE_ID`.
+- GREEN: Step 1 persists all four values; the same fresh-shell replay renders
+  the literal `$schema` key plus non-empty, expected app, identity, and ACR
+  values.
+- Counts remain 59 fixture contract tests and 379 full catalog tests because
+  this correction strengthens the existing behavioral test.

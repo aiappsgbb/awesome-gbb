@@ -533,9 +533,14 @@ class TestStatePersistence(unittest.TestCase):
         cls.fixture = FIXTURE.read_text(encoding="utf-8")
 
     def test_state_file_written_after_naming(self):
-        """STATE_FILE must be written immediately after APP_NAME is generated."""
+        """All cross-shell deployment values must be persisted after naming."""
         self.assertIn('STATE_FILE="/tmp/foundry-mcp-aca-state.env"', self.fixture)
-        self.assertIn('echo "APP_NAME=$APP_NAME" > "$STATE_FILE"', self.fixture)
+        for variable in ("APP_NAME", "PROJECT_DIR", "UAMI_RESOURCE_ID", "ACR_SERVER"):
+            self.assertRegex(
+                self.fixture,
+                rf'echo "{variable}=.*" >{{1,2}} "\$STATE_FILE"',
+                f"{variable} must be persisted to the fixture state file.",
+            )
 
     def test_azure_yaml_block_sources_state(self):
         """The azure.yaml heredoc block must source state first."""
@@ -619,51 +624,91 @@ class TestStatePersistence(unittest.TestCase):
         )
 
     def test_parameters_json_heredoc_preserves_schema_and_expands_values(self):
-        """Execute the shipped heredoc and verify its rendered JSON values."""
-        heredoc_match = re.search(
-            r'cat > "\$\{PROJECT_DIR\}/infra/main\.parameters\.json" '
-            r"<<'?PARAMS'?\n.*?^PARAMS$",
-            self.fixture,
-            re.DOTALL | re.MULTILINE,
+        """Replay Step 1 state in a fresh shell before executing Step 3."""
+        state_path = "/tmp/foundry-mcp-aca-state.env"
+
+        def bash_block_containing(marker: str) -> str:
+            marker_index = self.fixture.index(marker)
+            block_start = self.fixture.rfind("```bash\n", 0, marker_index)
+            block_end = self.fixture.index("```", marker_index)
+            return self.fixture[block_start + len("```bash\n"):block_end]
+
+        naming_block = bash_block_containing("SUFFIX=$(uuidgen")
+        state_block = bash_block_containing(f'STATE_FILE="{state_path}"')
+        parameters_block = bash_block_containing(
+            'cat > "${PROJECT_DIR}/infra/main.parameters.json"'
         )
-        self.assertIsNotNone(heredoc_match, "main.parameters.json heredoc not found")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            project_dir = pathlib.Path(temp_dir)
-            (project_dir / "infra").mkdir()
-            expected = {
-                "APP_NAME": "ci-smoke-mcp-test1234",
-                "UAMI_RESOURCE_ID": "/subscriptions/test/resourceGroups/test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test",
-                "ACR_SERVER": "test.azurecr.io",
+            workspace = pathlib.Path(temp_dir)
+            persisted_state = workspace / "state.env"
+            workflow_env = {
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "GITHUB_WORKSPACE": str(workspace),
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "ACR_LOGIN_SERVER": "test.azurecr.io",
             }
-            result = subprocess.run(
-                ["bash", "-c", heredoc_match.group(0)],
-                env={
-                    "PATH": "/usr/bin:/bin",
-                    "PROJECT_DIR": str(project_dir),
-                    **expected,
-                },
+            create_state = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"{naming_block}\n{state_block.replace(state_path, str(persisted_state))}",
+                ],
+                env=workflow_env,
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self.assertEqual(
-                result.returncode,
+                create_state.returncode,
                 0,
-                f"shipped parameters heredoc failed: stderr={result.stderr!r}",
+                f"shipped Step 1 state creation failed: stderr={create_state.stderr!r}",
+            )
+            state_values = dict(
+                line.split("=", 1)
+                for line in persisted_state.read_text().splitlines()
+                if "=" in line
+            )
+            project_dir = pathlib.Path(state_values["PROJECT_DIR"])
+            (project_dir / "infra").mkdir(parents=True)
+
+            render_parameters = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    parameters_block.replace(state_path, str(persisted_state)),
+                ],
+                env=workflow_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                render_parameters.returncode,
+                0,
+                "shipped Step 3 parameters block failed after sourcing Step 1 state: "
+                f"stderr={render_parameters.stderr!r}",
             )
             rendered = json.loads(
                 (project_dir / "infra" / "main.parameters.json").read_text()
             )
 
+        expected_uami = (
+            "/subscriptions/test-subscription/resourceGroups/rg-awesome-gbb-ci/"
+            "providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+            "uami-awesome-gbb-ci"
+        )
         self.assertIn("$schema", rendered)
-        self.assertEqual(rendered["parameters"]["appName"]["value"], expected["APP_NAME"])
         self.assertEqual(
-            rendered["parameters"]["uamiResourceId"]["value"],
-            expected["UAMI_RESOURCE_ID"],
+            rendered["parameters"]["appName"]["value"], state_values["APP_NAME"]
+        )
+        self.assertEqual(state_values.get("UAMI_RESOURCE_ID"), expected_uami)
+        self.assertEqual(state_values.get("ACR_SERVER"), "test.azurecr.io")
+        self.assertEqual(
+            rendered["parameters"]["uamiResourceId"]["value"], expected_uami
         )
         self.assertEqual(
-            rendered["parameters"]["acrServer"]["value"], expected["ACR_SERVER"]
+            rendered["parameters"]["acrServer"]["value"], "test.azurecr.io"
         )
 
     def test_protocol_version_fails_if_empty(self):
