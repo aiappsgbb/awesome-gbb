@@ -5,7 +5,7 @@ automation_tier: auto
 
 upstream:
   type: pypi
-  notes: >
+  notes: |
     Tier-B package wrapper around microsoft/agent-framework. The source was
     audited at Python tag python-1.13.0, immutable commit
     e39a8a2e79c8c8987a0b9082d3ccb8665734b897. Package drift is detected
