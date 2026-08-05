@@ -690,5 +690,17 @@ class TestStatePersistence(unittest.TestCase):
         )
 
 
+    def test_anti_catalog_inspection_guard(self):
+        """Fixture must explicitly forbid reading catalog source files."""
+        # The guard must name specific forbidden paths
+        self.assertIn("Do NOT read, view, grep, glob, or open ANY repository file",
+                      self.fixture)
+        for forbidden in ["SKILL.md", "scripts/tests/", ".github/workflows/",
+                          "skill-deps.yml"]:
+            self.assertIn(forbidden, self.fixture[:2000],
+                          f"Anti-catalog-inspection guard must mention '{forbidden}' "
+                          "in the preamble (first 2000 chars)")
+
+
 if __name__ == "__main__":
     unittest.main()
