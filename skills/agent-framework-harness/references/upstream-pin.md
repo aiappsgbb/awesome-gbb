@@ -1,0 +1,167 @@
+---
+schema_version: 2
+freshness_tier: B
+automation_tier: auto
+
+upstream:
+  type: pypi
+  notes: |
+    Source-audited against the Agent Framework Python tag python-1.13.0
+    at immutable SHA e39a8a2e79c8c8987a0b9082d3ccb8665734b897.
+    Package drift is tracked through the PyPI versions below.
+
+packages:
+  - name: agent-framework
+    source: pypi
+    version: "1.13.0"
+    upstream_changelog: https://pypi.org/project/agent-framework/#history
+  - name: agent-framework-core
+    source: pypi
+    version: "1.13.0"
+    upstream_changelog: https://pypi.org/project/agent-framework-core/#history
+  - name: agent-framework-foundry
+    source: pypi
+    version: "1.10.4"
+    upstream_changelog: https://pypi.org/project/agent-framework-foundry/#history
+  - name: agent-framework-foundry-hosting
+    source: pypi
+    version: "1.0.0b260730"
+    upstream_changelog: https://pypi.org/project/agent-framework-foundry-hosting/#history
+    notes: |
+      Exact prerelease pin; do not replace with a compatible-release cap.
+  - name: agent-framework-tools
+    source: pypi
+    version: "1.0.0b260730"
+    upstream_changelog: https://pypi.org/project/agent-framework-tools/#history
+    notes: |
+      Exact prerelease pin for optional shell tooling; do not replace with
+      a compatible-release cap.
+  - name: azure-identity
+    source: pypi
+    version: "1.25.3"
+    upstream_changelog: https://pypi.org/project/azure-identity/#history
+
+docs_to_revalidate:
+  - https://learn.microsoft.com/agent-framework/agents/harness
+  - https://learn.microsoft.com/agent-framework/agents/skills
+  - https://learn.microsoft.com/agent-framework/agents/conversations/storage#persisting-sessions-across-restarts
+  - https://learn.microsoft.com/azure/foundry/how-to/develop/framework-hosted-agents
+  - https://pypi.org/project/agent-framework-foundry-hosting/
+
+known_issues:
+  - id: KI-001
+    description: |
+      FileAccessProvider remains experimental and its access UX is not a
+      sandbox boundary.
+    upstream_url: https://github.com/microsoft/agent-framework/issues/6770
+    status: open
+    workaround_location: SKILL.md § "Default, opt-in, and experimental feature matrix"
+  - id: KI-002
+    description: |
+      BackgroundAgentsProvider retains per-session tasks and child sessions;
+      the host must own cancellation and cleanup.
+    upstream_url: https://github.com/microsoft/agent-framework/issues/7385
+    status: open
+    workaround_location: SKILL.md § "Default, opt-in, and experimental feature matrix"
+  - id: KI-003
+    description: |
+      CompactionProvider runs after AgentLoopMiddleware iterations, so callers
+      need explicit caps and must reverify state before execution.
+    upstream_url: https://github.com/microsoft/agent-framework/issues/7236
+    status: open
+    workaround_location: SKILL.md § "Safe plan-to-execute pattern"
+  - id: KI-004
+    description: |
+      Shell and code-execution samples remain incomplete and
+      agent-framework-tools is a prerelease; work directories and deny lists
+      are not sandbox boundaries.
+    upstream_url: https://github.com/microsoft/agent-framework/issues/6448
+    status: open
+    workaround_location: SKILL.md § "Failure modes and security callouts"
+
+validation:
+  requires:
+    - github_only
+    - pypi
+  runnable: true
+  script: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VENV=/tmp/agent-framework-harness-pin
+    REPO_ROOT="${PIN_VALIDATION_REPO_ROOT:-$(pwd)}"
+    rm -rf "$VENV"
+    python -m venv "$VENV"
+    . "$VENV/bin/activate"
+    pip install --quiet \
+      "agent-framework~=1.13.0" \
+      "agent-framework-core~=1.13.0" \
+      "agent-framework-foundry~=1.10.4" \
+      "agent-framework-foundry-hosting==1.0.0b260730" \
+      "agent-framework-tools==1.0.0b260730" \
+      "azure-identity~=1.25.3"
+    python "$REPO_ROOT/skills/agent-framework-harness/references/python/test_harness_contract.py"
+  expected_output:
+    - "HARNESS_SIGNATURE_OK"
+    - "HARNESS_DEFAULTS_OK"
+    - "HARNESS_COMPACTION_OK"
+    - "HARNESS_CONSTRUCTION_OK"
+    - "HOSTING_IMPORT_OK"
+  failure_signatures:
+    - "AssertionError"
+    - "ImportError"
+    - "ModuleNotFoundError"
+    - "FileNotFoundError"
+
+last_validated: 2026-08-05
+validated_by: copilot-bot
+known_issues_count: 4
+---
+
+# Upstream pin — `agent-framework-harness`
+
+This Tier-B pin is the machine-readable runtime contract for the canonical
+offline harness smoke.
+
+## Stable 1.13.0 factory baseline
+
+The factory contract was source-audited at Python tag `python-1.13.0`
+(`e39a8a2e79c8c8987a0b9082d3ccb8665734b897`) and validated with
+`agent-framework` and `agent-framework-core` 1.13.0 plus
+`agent-framework-foundry` 1.10.4. PyPI versions drive drift detection.
+
+## Exact beta hosting and tools pins
+
+`agent-framework-foundry-hosting==1.0.0b260730` and the optional shell-tooling
+package `agent-framework-tools==1.0.0b260730` are exact prerelease pins.
+Prerelease refreshes require an explicit revalidation rather than cap drift.
+
+## Verified signature defaults and ordering
+
+The offline smoke verifies factory signature defaults, provider order,
+middleware order, compaction wiring, construction, and hosting imports. The
+references also embody two API-correct findings: async Azure credentials are
+used with the async Foundry client, and hosted harness history is configured
+not to load or store messages because `ResponsesHostServer` owns that history.
+
+## MINOR-refresh rechecks
+
+Every MINOR refresh must re-check web-search capability detection and empty
+approval-rule behavior in addition to the signature and ordering assertions.
+
+## Hosted Agents lifecycle tracking
+
+Track the Hosted Agents service lifecycle independently from the Python
+hosting adapter's semver; a green adapter import does not establish service
+lifecycle compatibility.
+
+## Latest offline smoke
+
+Validated on 2026-08-05 with the canonical reference smoke:
+
+```text
+HARNESS_SIGNATURE_OK
+HARNESS_DEFAULTS_OK
+HARNESS_COMPACTION_OK
+HARNESS_CONSTRUCTION_OK
+HOSTING_IMPORT_OK
+```
