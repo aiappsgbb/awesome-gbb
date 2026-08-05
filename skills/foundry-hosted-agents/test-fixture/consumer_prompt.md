@@ -145,9 +145,10 @@ record() {
 
 require_canonical_dependency() {
   local dependency="$1"
+  local result_marker="${SMOKE_RESULT_MARKER:-/tmp/foundry-hosted-agents-smoke-result}"
   if ! grep -Fq "\"$dependency\"" "$work_dir/pyproject.toml"; then
     printf 'SMOKE_RESULT=FAIL canonical pyproject dependency drift: %s\n' "$dependency" \
-      > /tmp/foundry-hosted-agents-smoke-result
+      > "$result_marker"
     exit 1
   fi
 }

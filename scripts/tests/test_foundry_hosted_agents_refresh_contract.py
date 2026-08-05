@@ -3,7 +3,13 @@
 
 from __future__ import annotations
 
+import ast
+import os
 import pathlib
+import re
+import shlex
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -23,6 +29,23 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         cls.pin = PIN.read_text(encoding="utf-8")
         cls.timeout = TIMEOUT.read_text(encoding="utf-8")
         cls.pin_frontmatter = yaml.safe_load(cls.pin.split("---", 2)[1])
+        cls.validation_script = cls.pin_frontmatter["validation"]["script"]
+        validation_python = re.search(
+            r"python - <<'PY'\n(?P<body>.*?)\nPY(?:\n|$)",
+            cls.validation_script,
+            flags=re.DOTALL,
+        )
+        if validation_python is None:
+            raise AssertionError("validation Python heredoc not found")
+        cls.validation_python = validation_python.group("body")
+        dependency_function = re.search(
+            r"require_canonical_dependency\(\) \{\n.*?^\}",
+            cls.fixture,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        if dependency_function is None:
+            raise AssertionError("fixture dependency guard not found")
+        cls.dependency_function = dependency_function.group(0)
 
     def test_timeout_reference_requires_current_versions(self) -> None:
         self.assertIn("- agent-framework-core ~= 1.13.0", self.timeout)
@@ -30,23 +53,97 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         self.assertNotIn("- agent-framework-core ~= 1.11.0", self.timeout)
         self.assertNotIn("- agent-framework-foundry ~= 1.10.1", self.timeout)
 
-    def test_fixture_records_canonical_pyproject_parity_with_marker_safe_failure(self) -> None:
-        required = (
-            'grep -Fq',
-            "CANONICAL_PYPROJECT_OK",
-            "SMOKE_RESULT=FAIL canonical pyproject dependency drift:",
-            'r"CANONICAL_PYPROJECT_OK"',
-            "printf 'SMOKE_RESULT=FAIL canonical pyproject dependency drift: <dependency>\\n' > /tmp/foundry-hosted-agents-smoke-result",
+    def _run_dependency_guard(
+        self, pyproject: str, dependency: str
+    ) -> tuple[subprocess.CompletedProcess[str], str | None]:
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = pathlib.Path(tmp)
+            (work_dir / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+            marker = work_dir / "result"
+            script = "\n".join(
+                (
+                    "set -euo pipefail",
+                    self.dependency_function,
+                    f"work_dir={shlex.quote(str(work_dir))}",
+                    f"require_canonical_dependency {shlex.quote(dependency)}",
+                )
+            )
+            env = os.environ.copy()
+            env["SMOKE_RESULT_MARKER"] = str(marker)
+            result = subprocess.run(
+                ["bash", "-c", script],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            marker_text = marker.read_text(encoding="utf-8") if marker.exists() else None
+        return result, marker_text
+
+    def test_fixture_dependency_guard_accepts_exact_canonical_pin(self) -> None:
+        dependency = "agent-framework-core~=1.13.0"
+        result, marker = self._run_dependency_guard(
+            f'[project]\ndependencies = ["{dependency}"]\n', dependency
         )
-        for token in required:
-            with self.subTest(token=token):
-                self.assertIn(token, self.fixture)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(marker)
+
+    def test_fixture_dependency_guard_writes_exact_failure_marker(self) -> None:
+        dependency = "agent-framework-core~=1.13.0"
+        result, marker = self._run_dependency_guard(
+            '[project]\ndependencies = ["agent-framework-core~=1.12.0"]\n',
+            dependency,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            marker,
+            f"SMOKE_RESULT=FAIL canonical pyproject dependency drift: {dependency}\n",
+        )
+
+    def test_fixture_records_parity_and_preserves_single_deploy_contract(self) -> None:
+        self.assertIn('record "CANONICAL_PYPROJECT_OK"', self.fixture)
+        self.assertIn('r"CANONICAL_PYPROJECT_OK"', self.fixture)
+        active_deploys = re.findall(
+            r"^\s*azd deploy\b.*$", self.fixture, flags=re.MULTILINE
+        )
+        active_ups = re.findall(r"^\s*azd up\b.*$", self.fixture, flags=re.MULTILINE)
+        self.assertEqual(active_deploys, ['  azd deploy "$agent_name" --no-prompt'])
+        self.assertEqual(active_ups, [])
 
     def test_pin_validation_imports_canonical_container_and_otel_bundle(self) -> None:
+        bash_syntax = subprocess.run(
+            ["bash", "-n"],
+            input=self.validation_script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(bash_syntax.returncode, 0, bash_syntax.stderr)
+        compile(self.validation_python, "<hosted-pin-validation>", "exec")
+        validation_tree = ast.parse(self.validation_python)
+        main_calls = [
+            node
+            for node in ast.walk(validation_tree)
+            if isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == "main")
+                or (isinstance(node.func, ast.Attribute) and node.func.attr == "main")
+            )
+        ]
+        self.assertEqual(main_calls, [], "pin smoke must import, not run, container main")
+        self.assertIn("class OfflineCredential:", self.validation_python)
+        self.assertIn(
+            'raise RuntimeError("network is outside the import smoke")',
+            self.validation_python,
+        )
+        self.assertNotIn("DefaultAzureCredential(", self.validation_python)
+        self.assertNotIn("AzureCliCredential(", self.validation_python)
+
         required = (
             "PIN_VALIDATION_REPO_ROOT",
             "references/python/container.py",
             "importlib.util.spec_from_file_location",
+            "container_spec.loader.exec_module(container_module)",
             "from microsoft.opentelemetry import use_microsoft_opentelemetry",
             "from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor",
             'print("ok canonical container import")',
