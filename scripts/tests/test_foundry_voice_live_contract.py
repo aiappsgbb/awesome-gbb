@@ -504,8 +504,8 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         )
 
         for evidence in (
-            'print("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")',
-            'print(f"VOICELIVE_EVENT type={event.type}")',
+            'record("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")',
+            'record(f"VOICELIVE_EVENT type={event.type}")',
         ):
             with self.subTest(evidence=evidence):
                 self.assertIn(evidence, self.python)
@@ -516,6 +516,36 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         ):
             with self.subTest(prose_only_token=prose_only_token):
                 self.assertNotIn(prose_only_token, self.fixture_without_python)
+
+    def test_fixture_python_persists_fresh_runtime_evidence_file(self) -> None:
+        evidence_path = "EVIDENCE_PATH = Path('/tmp/foundry-voice-live-smoke-evidence')"
+        clear_file = "EVIDENCE_PATH.write_text('', encoding='utf-8')"
+        record_signature = "def record(message: str) -> None:"
+        append_file = 'with EVIDENCE_PATH.open("a", encoding="utf-8") as evidence:'
+        append_line = 'evidence.write(message + "\\n")'
+        print_line = "print(message)"
+
+        for token in (
+            "from pathlib import Path",
+            evidence_path,
+            clear_file,
+            record_signature,
+            append_file,
+            append_line,
+            print_line,
+            'record("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")',
+            'record(f"VOICELIVE_EVENT type={event.type}")',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.python)
+
+        self.assertLess(self.python.index(clear_file), self.python.index(record_signature))
+        self.assertLess(self.python.index(record_signature), self.python.index("async def main() -> None:"))
+        self.assertLess(self.python.index(clear_file), self.python.index("async with connect("))
+
+        self.assertIn("/tmp/foundry-voice-live-smoke-evidence", self.fixture)
+        self.assertIn("authoritative audit trail", self.fixture_flat)
+        self.assertIn("workflow uploads the evidence file", self.fixture_flat)
 
     def test_fixture_preserves_wss_roundtrip_and_marker_contract(self) -> None:
         for token in (
@@ -539,6 +569,14 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.fixture)
+
+        self.assertNotIn("SMOKE_RESULT", self.python)
+        self.assertLess(self.fixture.index("voice-live-roundtrip-ok"), self.fixture.index("## Step 4"))
+        self.assertIn(
+            "On success (Step 3's script exited 0 AND its stdout contained\n"
+            "`voice-live-roundtrip-ok` AND the evidence file contains both runtime records):",
+            self.fixture,
+        )
 
     def test_fixture_only_uses_smoke_result_literals_in_authoritative_printf_commands(self) -> None:
         authoritative_lines = (

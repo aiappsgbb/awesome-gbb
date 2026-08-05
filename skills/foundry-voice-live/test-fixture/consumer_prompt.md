@@ -109,7 +109,11 @@ SKILL.md § 11 "Troubleshooting" for the corresponding row).
 ## Step 3 — Open the WSS session
 
 Run the Python script below. It MUST complete without exception, print
-`voice-live-roundtrip-ok` on success, and exit 0.
+`voice-live-roundtrip-ok` on success, persist the successful runtime audit
+records to `/tmp/foundry-voice-live-smoke-evidence`, and exit 0. The
+workflow uploads the evidence file; it is the authoritative audit trail for
+the runtime connect record and first accepted-event record when the Copilot
+CLI transcript collapses long shell output.
 
 **Do NOT redirect the script's stdout anywhere.** The workflow harness
 already captures all output via its own `tee` pipeline (so the
@@ -118,12 +122,14 @@ shell redirect — `> /tmp/...`, `>>`, `tee`, `rm` of a `/tmp/*log`
 file, or wrapping the heredoc in a sub-harness that mimics the
 workflow's `MARKER=…; TRANSCRIPT=…; rm -f; python3 … > "$TRANSCRIPT"`
 pattern — clobbers the workflow's audit transcript and fails the
-post-hoc step even when the WSS roundtrip succeeded. Just invoke
-`python3 <<'PY' … PY` and let the runtime print to stdout normally.
+post-hoc step even when the WSS roundtrip succeeded. The Python script's
+sanctioned evidence-file write is the only `/tmp` write in this step. Just
+invoke `python3 <<'PY' … PY` and let the runtime print to stdout normally.
 
 ```bash
 python3 <<'PY'
 import asyncio, os, sys
+from pathlib import Path
 from urllib.parse import urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -136,6 +142,14 @@ from azure.ai.voicelive.models import (
     ServerEventType,
     UserMessageItem,
 )
+
+EVIDENCE_PATH = Path('/tmp/foundry-voice-live-smoke-evidence')
+EVIDENCE_PATH.write_text('', encoding='utf-8')
+
+def record(message: str) -> None:
+    with EVIDENCE_PATH.open("a", encoding="utf-8") as evidence:
+        evidence.write(message + "\n")
+    print(message)
 
 # Derive the Voice Live WSS host from AZURE_AI_ENDPOINT (the
 # cognitiveservices.azure.com surface). Voice Live lives on
@@ -171,7 +185,7 @@ async def main() -> None:
             api_version="2026-04-10",
             model="gpt-realtime",
         ) as conn:
-            print("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")
+            record("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")
             # session.update — text modality + GA AzureSemanticVad with
             # the 2026-04-10 fields (create_response / auto_truncate).
             await conn.session.update(session=RequestSession(
@@ -201,7 +215,7 @@ async def main() -> None:
                             break
                         if etype in ACCEPT:
                             if not saw_event:
-                                print(f"VOICELIVE_EVENT type={event.type}")
+                                record(f"VOICELIVE_EVENT type={event.type}")
                             saw_event = True
                         if etype == ServerEventType.RESPONSE_DONE:
                             saw_terminal = True
@@ -226,6 +240,8 @@ Success criteria for Step 3:
 
 - Process exits 0.
 - Stdout contains the literal string `voice-live-roundtrip-ok`.
+- The evidence file contains exactly the successful runtime audit records:
+  one connect record and one first accepted-event record.
 - At least one event of type `session.created` / `session.updated` /
   `conversation.item.created` / `response.created` /
   `response.text.delta` / `response.audio_transcript.delta` /
@@ -249,7 +265,7 @@ match the workflow's anchored grep — substitute the leading `_` back to
 `S` when you emit the actual `printf` command.
 
 On success (Step 3's script exited 0 AND its stdout contained
-`voice-live-roundtrip-ok`):
+`voice-live-roundtrip-ok` AND the evidence file contains both runtime records):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-live-smoke-result
