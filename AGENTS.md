@@ -3007,15 +3007,15 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Current coverage (27 skills, 23 with upstream pins):**
+**Current coverage (36 skills, 32 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (`runnable: true`) | 23 pins | T0 + T1 + T2 in CI |
+| Auto-tier (`runnable: true`) | 26 pins | T0 + T1 + T2 in CI |
 | Auto-tier (`runnable: false`, CI-validated) | 3 pins | T0 in CI; T1–T3 via `--include-azure` on PR/schedule |
 | Issue-only (complex multi-resource deploy) | 3 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| Copilot-CLI fixtures | 17 skills | T3 in CI (`copilot-cli-matrix`, see `.github/skill-deps.yml`) |
+| Copilot-CLI fixtures | 21 skills | T3 in CI (`copilot-cli-matrix`, see `.github/skill-deps.yml`) |
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks
 issue-only pins when the runner has Azure credentials. The infra is
@@ -3047,9 +3047,9 @@ Consequences:
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 35 |
-| Skills with upstream pins | 31 |
-| Auto-tier (CI can refresh autonomously) | 28 |
+| Total skills | 36 |
+| Skills with upstream pins | 32 |
+| Auto-tier (CI can refresh autonomously) | 29 |
 | Issue-only (human / complex deploy) | 3 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
