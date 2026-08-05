@@ -344,6 +344,173 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
             "only exposes 'echo'. Remove unreachable fallback.",
         )
 
+    # --- Issue #15: Pin regex must not match fastmcp suffix ---
+
+    def test_pin_mcp_regex_excludes_fastmcp(self) -> None:
+        """Pin regex for mcp must not match the 'mcp' suffix of 'fastmcp~='."""
+        # Find lines with 'mcp' pin specifiers — must be word-boundary safe
+        # Extract the pip install line for standalone mcp
+        pin_lines = [
+            l for l in self.pin.splitlines()
+            if "mcp" in l and ("~=" in l or ">=" in l or "==" in l)
+        ]
+        # There must be a line that starts with 'mcp' (not 'fastmcp')
+        standalone_mcp = [l for l in pin_lines if re.search(r'(?<![a-z])mcp[~>=<]', l)]
+        self.assertTrue(
+            standalone_mcp,
+            "Pin script has no standalone 'mcp' specifier — the regex "
+            "'mcp[~>=<]' would match the suffix of 'fastmcp~='. "
+            "Must have an explicit 'mcp~=X.Y.Z' or '\"mcp~=X.Y.Z\"' line.",
+        )
+
+    # --- Issue #16: SKILL protocol claims correctness ---
+
+    def test_skill_notifications_return_202_not_200(self) -> None:
+        """SKILL.md must state notifications/initialized returns HTTP 202, not 200."""
+        protocol_section = self.skill[self.skill.index("## MCP Protocol Requirements"):]
+        protocol_section = protocol_section[:protocol_section.index("## ", 5)]
+        # Must NOT claim ALL methods return HTTP 200 — notifications return 202
+        self.assertNotIn(
+            "ALL 6 JSON-RPC methods must return HTTP 200",
+            protocol_section,
+            "SKILL.md falsely claims ALL 6 methods return HTTP 200 — "
+            "notifications/initialized returns HTTP 202 per MCP 2025-06-18 spec.",
+        )
+
+    def test_skill_initialized_not_can_return_empty(self) -> None:
+        """SKILL.md must not say notifications/initialized 'Can return {}'."""
+        # Find the protocol table
+        protocol_section = self.skill[self.skill.index("## MCP Protocol Requirements"):]
+        protocol_section = protocol_section[:protocol_section.index("## ", 5)]
+        # initialized is a notification — 202 with no body, not 200 with {}
+        self.assertNotIn(
+            "Can return `{}`",
+            protocol_section,
+            "SKILL.md says initialized 'Can return {}' — per MCP 2025-06-18, "
+            "accepted notifications return HTTP 202 with no body.",
+        )
+
+    def test_skill_gotchas_notifications_not_200(self) -> None:
+        """Gotchas table must not claim all methods return HTTP 200."""
+        gotchas_section = self.skill[self.skill.index("## Gotchas"):]
+        # The gotchas fix column says "All 6 ... must return HTTP 200"
+        self.assertNotIn(
+            "All 6 JSON-RPC methods must return HTTP 200",
+            gotchas_section,
+            "Gotchas table repeats the wrong claim — notifications return 202.",
+        )
+
+    # --- Issue #17: Initialized body assertion ---
+
+    def test_initialized_asserts_empty_body_or_no_body(self) -> None:
+        """notifications/initialized must verify body is empty (202 = no body)."""
+        # Find the bash block that actually sends notifications/initialized
+        init_curl_idx = self.fixture.index('"method": "notifications/initialized"')
+        block_start = self.fixture.rfind("```bash", 0, init_curl_idx)
+        block_end = self.fixture.index("```", init_curl_idx)
+        block_content = self.fixture[block_start:block_end]
+        has_body_check = (
+            "body" in block_content.lower()
+            or "INIT_NOTIFY_BODY" in block_content
+            or "empty" in block_content.lower()
+        )
+        self.assertTrue(
+            has_body_check,
+            "notifications/initialized must verify response body is empty "
+            "(HTTP 202 = accepted notification, no body per MCP spec).",
+        )
+
+    # --- Issue #18: Failure contract completeness ---
+
+    def test_failure_list_includes_protocol_version(self) -> None:
+        """Failure summary must mention protocol version negotiation failure."""
+        fail_section = self.fixture[self.fixture.rindex("## Summary of FAIL"):]
+        has_protocol = (
+            "protocolVersion" in fail_section
+            or "protocol version" in fail_section.lower()
+            or "MCP-Protocol-Version" in fail_section
+        )
+        self.assertTrue(
+            has_protocol,
+            "Failure list does not mention protocol version negotiation — "
+            "missing negotiated version or MCP-Protocol-Version replay is a FAIL.",
+        )
+
+    # --- Issue #19: Scoped echo assertion ---
+
+    def test_echo_assertion_in_tools_call_block(self) -> None:
+        """'echoed:' assertion must be in the same bash block as tools/call."""
+        call_idx = self.fixture.rindex('"method": "tools/call"')
+        block_start = self.fixture.rfind("```bash", 0, call_idx)
+        block_end = self.fixture.index("```", call_idx)
+        block_content = self.fixture[block_start:block_end]
+        self.assertIn(
+            "echoed:",
+            block_content,
+            "'echoed:' assertion must appear in the bash block containing tools/call.",
+        )
+
+    def test_isError_assertion_in_tools_call_block(self) -> None:
+        """isError check must be in the same bash block as tools/call."""
+        call_idx = self.fixture.rindex('"method": "tools/call"')
+        block_start = self.fixture.rfind("```bash", 0, call_idx)
+        block_end = self.fixture.index("```", call_idx)
+        block_content = self.fixture[block_start:block_end]
+        self.assertIn(
+            "isError",
+            block_content,
+            "isError check must appear in the bash block containing tools/call.",
+        )
+
+    # --- Issue #20: Spec date must not silently skip ---
+
+    def test_spec_file_exists(self) -> None:
+        """Design spec file must exist — test should not silently skip."""
+        spec_path = ROOT / "docs" / "superpowers" / "specs" / "foundry-mcp-aca-refresh-1.2.4.md"
+        self.assertTrue(
+            spec_path.exists(),
+            f"Design spec file does not exist: {spec_path}",
+        )
+
+    # --- Issue #21: SESSION_ARGS replayed on all three requests ---
+
+    def test_session_args_on_initialized(self) -> None:
+        """SESSION_ARGS must be used on notifications/initialized curl request."""
+        # Find the actual curl command for initialized (the bash block containing it)
+        init_curl_idx = self.fixture.index('notifications/initialized", "params"')
+        block_start = self.fixture.rfind("```bash", 0, init_curl_idx)
+        block_end = self.fixture.index("```", init_curl_idx)
+        block_content = self.fixture[block_start:block_end]
+        self.assertIn(
+            "SESSION_ARGS[@]",
+            block_content,
+            "SESSION_ARGS must be replayed on notifications/initialized curl.",
+        )
+
+    def test_session_args_on_tools_list(self) -> None:
+        """SESSION_ARGS must be used on tools/list curl request."""
+        list_curl_idx = self.fixture.index('"method": "tools/list"')
+        block_start = self.fixture.rfind("```bash", 0, list_curl_idx)
+        block_end = self.fixture.index("```", list_curl_idx)
+        block_content = self.fixture[block_start:block_end]
+        self.assertIn(
+            "SESSION_ARGS[@]",
+            block_content,
+            "SESSION_ARGS must be replayed on tools/list curl.",
+        )
+
+    def test_session_args_on_tools_call(self) -> None:
+        """SESSION_ARGS must be used on tools/call curl request."""
+        call_curl_idx = self.fixture.index('"method": "tools/call"')
+        block_start = self.fixture.rfind("```bash", 0, call_curl_idx)
+        block_end = self.fixture.index("```", call_curl_idx)
+        block_content = self.fixture[block_start:block_end]
+        self.assertIn(
+            "SESSION_ARGS[@]",
+            block_content,
+            "SESSION_ARGS must be replayed on tools/call curl.",
+        )
+
     # --- Skill acknowledgment (preserved from original) ---
 
     def test_fixture_acknowledges_skill_before_step_zero(self) -> None:

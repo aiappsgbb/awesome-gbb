@@ -593,16 +593,23 @@ Accepted. Capture and assert the exact status code:
 SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID")
 [ -n "$PROTOCOL_VERSION" ] && SESSION_ARGS+=(-H "MCP-Protocol-Version: $PROTOCOL_VERSION")
 
-INIT_NOTIFY_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+INIT_NOTIFY_BODY=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   "${SESSION_ARGS[@]}" \
   -d '{ "jsonrpc": "2.0", "method": "notifications/initialized", "params": {} }')
 
-echo "notifications/initialized HTTP=$INIT_NOTIFY_CODE"
+INIT_NOTIFY_CODE=$(echo "$INIT_NOTIFY_BODY" | grep '__HTTP_CODE__' | cut -d: -f2)
+INIT_NOTIFY_CONTENT=$(echo "$INIT_NOTIFY_BODY" | sed '/__HTTP_CODE__/d' | tr -d '[:space:]')
+
+echo "notifications/initialized HTTP=$INIT_NOTIFY_CODE body='$INIT_NOTIFY_CONTENT'"
 if [ "$INIT_NOTIFY_CODE" != "202" ]; then
   printf 'SMOKE_RESULT=FAIL notifications/initialized returned HTTP %s (expected 202)\n' "$INIT_NOTIFY_CODE" > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
+if [ -n "$INIT_NOTIFY_CONTENT" ]; then
+  printf 'SMOKE_RESULT=FAIL notifications/initialized returned non-empty body (expected empty per MCP spec)\n' > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 fi
 ```
@@ -854,8 +861,10 @@ any circumstance.
   infra or skill bug)
 - MCP `initialize` returned non-200 or missing `result.serverInfo.name`
 - MCP `initialize` did not return a `Mcp-Session-Id` header (empty session ID)
-- MCP `notifications/initialized` returned non-202 (expected HTTP 202 per
-  MCP 2025-06-18 spec)
+- MCP `initialize` did not return a negotiated `protocolVersion` or
+  `MCP-Protocol-Version` header replay failed on subsequent requests
+- MCP `notifications/initialized` returned non-202 or non-empty body
+  (expected HTTP 202 with no body per MCP 2025-06-18 spec)
 - MCP `tools/list` returned non-200 or returned 0 tools
 - MCP `tools/call` on `echo` returned non-200, `isError=true`, or
   payload did not match `"echoed: ci-probe"`

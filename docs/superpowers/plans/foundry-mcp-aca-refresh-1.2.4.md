@@ -69,3 +69,18 @@ Copilot CLI Bash tool process isolation — env vars don't persist.
 - validate-skills.py ✅
 - build-plugins.py --check ✅
 - T3 run 30998053808 GREEN — zero improvisation, full MCP roundtrip
+
+## Round-6: MCP protocol conformance (2026-08-05)
+
+### Genuine RED (pre-fix)
+- `test_initialized_asserts_empty_body_or_no_body` — FAILED (fixture checks HTTP 202 but not body emptiness)
+- `test_failure_list_includes_protocol_version` — FAILED (failure list omits protocol version)
+
+### Corrections applied
+1. SKILL.md: requests→200, notifications→202 (3 locations)
+2. Fixture initialized: capture body, assert empty
+3. Fixture failure list: add protocol version and non-empty body entries
+4. Test fix: `test_initialized_asserts_empty_body_or_no_body` search from `"method": "notifications/initialized"` not first prose mention
+
+### GREEN
+All 47 tests pass.

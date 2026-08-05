@@ -67,13 +67,13 @@ The hosted agent container:
 
 ## MCP Protocol Requirements
 
-**ALL 6 JSON-RPC methods must return HTTP 200** — even if the response body is empty `{}`.
+**All JSON-RPC requests must return HTTP 200; notifications must return HTTP 202** (per [MCP 2025-06-18 transport spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)).
 Failing to handle any of these causes `FoundryChatClient.get_mcp_tool()` to silently fail.
 
 | Method | Purpose | Notes |
 |--------|---------|-------|
 | `initialize` | Protocol handshake | Must return server capabilities |
-| `notifications/initialized` | Client notification | Can return `{}` |
+| `notifications/initialized` | Client notification | HTTP 202 Accepted (no body) |
 | `tools/list` | Discover available tools | Must return tool definitions |
 | `prompts/list` | List prompts | Required by agent-framework (return empty list) |
 | `resources/list` | List resources | Required by agent-framework (return empty list) |
@@ -744,7 +744,7 @@ CI-tested.
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| MCP tools not appearing in agent | Server returns 400/404 on protocol methods | All 6 JSON-RPC methods must return HTTP 200 |
+| MCP tools not appearing in agent | Server returns 400/404 on protocol methods | Requests must return HTTP 200; notifications must return HTTP 202 |
 | `logging/setLevel` returns -32601 Method not found | Server didn't implement the optional logging capability OR used wrong casing | Either implement the method per [MCP spec § Logging](https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging) (camelCase `setLevel`) and declare `capabilities.logging`, or simply omit the capability — Foundry's MCP client tolerates servers that don't expose logging. |
 | MCP connection timeout | ACA not started (cold start) | Runtime retries automatically; set `minReplicas: 1` for always-on |
 | `invalid_payload` error | `${ENV_VAR}` in mcp-config.json not resolved → empty URL | Only include MCP servers with deployed endpoints. Remove entries with unresolved env vars. |

@@ -79,3 +79,27 @@ missing for OIDC-based azd auth.
 at line 172 (`source /tmp/foundry-mcp-aca-state.env`), `azd up` succeeds
 without intervention, full MCP roundtrip passes. Zero improvisation signals
 in transcript grep.
+
+## Round-5 correction (2026-08-05): azd env headless CI fix
+
+**Root cause:** `azd env new` / `azd env set` trigger interactive prompts
+that block the CLI with "Permission denied". Fixed by writing `.azure/`
+config and env files directly instead of using `azd env` commands.
+
+**Evidence:** Run 30999760430 — clean T3, zero improvisation.
+
+## Round-6 correction (2026-08-05): MCP protocol conformance in SKILL/fixture
+
+**Changes:**
+1. SKILL.md L70: "All JSON-RPC requests must return HTTP 200; notifications
+   must return HTTP 202" (was "ALL 6 … HTTP 200")
+2. SKILL.md L76: initialized → "HTTP 202 Accepted (no body)" (was "Can return `{}`")
+3. SKILL.md L747 gotchas: same request/notification distinction
+4. Fixture: initialized now captures body and asserts empty (per MCP 2025-06-18)
+5. Fixture failure list: added protocol version negotiation and non-empty
+   initialized body as FAIL conditions
+
+**TDD evidence:**
+- RED (2 failures): `test_initialized_asserts_empty_body_or_no_body`,
+  `test_failure_list_includes_protocol_version` — ran before fixture fix
+- GREEN: all 47 tests pass after minimal source corrections
