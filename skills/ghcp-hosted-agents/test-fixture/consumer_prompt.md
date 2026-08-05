@@ -92,13 +92,19 @@ provisions a new Foundry project or registry. Hosted agents run on
 Foundry-managed, per-session sandboxes - there is no Container Apps
 environment, no ACA app, and nothing else to provision for this fixture.
 
-**No agent role grant.** Per the skill's GA identity guidance, the hosted
-agent's own Entra identity has implicit access to model inferencing and
-session storage by default. Do NOT run any command that creates an Azure
-RBAC role assignment against the agent's identity, and do NOT expect one to
-be necessary. Any permission error is a hard FAIL except the exact immediate-post-active readiness envelope described in Step 4; that one
-narrow case retries the same invoke path. Never route around a failure with
-an ad hoc role grant.
+**Dual-scope instance RBAC is required before real inference.** A hosted
+agent has two distinct identities. The **blueprint** identity (bound to the
+agent definition) needs no data-plane role grants. The **instance** identity
+(the per-version service principal the running agent presents when it calls
+the model) MUST hold the `Foundry User` role
+(`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account scope
+AND the Foundry project scope, or real model inference returns HTTP 401. The
+earlier "implicit access, never grant" note was validated only against an
+upstream echo agent that never called a model; it silently 401'd on live
+inference. Step 3.5 below discovers the instance principal and creates both
+assignments before Step 4 invokes; Step 5 revokes only those two assignments.
+Do NOT grant any role to the blueprint identity, and do NOT grant at only one
+scope (project-only and account-only both 401).
 
 ## Step 1 - install and verify the azd Foundry extensions
 
@@ -240,11 +246,11 @@ bash /tmp/ghcp-hosted-agents-ga-smoke.sh
 ```
 
 If `azd deploy` fails with a permission/authorization error, that is a hard
-FAIL (see the "No agent role grant" note above) - do not attempt to work
-around it with a manual role assignment. **The deploy command above is the
-only deploy attempt.** On any failure, do not rerun deploy, query Azure to
-discover replacement values, hardcode inventory, or modify the azd env.
-Write the matching FAIL marker and stop.
+FAIL - do not attempt to work around it by re-running deploy. Instance-identity
+role grants happen in Step 3.5 (after the version is active), not here. **The
+deploy command above is the only deploy attempt.** On any failure, do not rerun
+deploy, query Azure to discover replacement values, hardcode inventory, or
+modify the azd env. Write the matching FAIL marker and stop.
 
 ## Step 3 - GA SDK hard check: agent version active (deterministic, no preview surfaces)
 
@@ -262,11 +268,14 @@ Use a Bash heredoc to write the following program to
 `/tmp/ghcp-hosted-agents-venv/bin/python`:
 
 ```python
+import json
 import os
+import re
 import time
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
+from pathlib import Path
 
 evidence_path = "/tmp/ghcp-hosted-agents-smoke-evidence"
 
@@ -304,20 +313,128 @@ with DefaultAzureCredential() as credential, AIProjectClient(
         for p in protocol_versions
     ), f"expected invocations protocol 2.0.0, got {protocol_versions}"
     record(f"AGENT_VERSION_ACTIVE name={agent_name} protocol=invocations/2.0.0")
+
+    # Discover the INSTANCE (per-version) managed identity principal. This is
+    # the identity that presents to the model at inference time and that must
+    # receive Foundry User at both scopes in Step 3.5. The blueprint identity
+    # is NOT this one and needs no grant. The exact field name on the version
+    # object is the one live-CI-iterable assumption in this fixture: search the
+    # full object recursively for a principal/object id, and also expose the
+    # raw object for a REST fallback.
+    version_obj = dict(version)
+    Path("/tmp/ghcp-hosted-agents-version.json").write_text(
+        json.dumps(version_obj, default=str), encoding="utf-8"
+    )
+
+    _GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    _KEYS = ("principal_id", "principalId", "object_id", "objectId")
+
+    def _find_principal(node):
+        if isinstance(node, dict):
+            for key in _KEYS:
+                val = node.get(key)
+                if isinstance(val, str) and _GUID.match(val):
+                    return val
+            identity = node.get("identity")
+            if identity is not None:
+                found = _find_principal(identity)
+                if found:
+                    return found
+            for val in node.values():
+                found = _find_principal(val)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for item in node:
+                found = _find_principal(item)
+                if found:
+                    return found
+        return None
+
+    instance_principal = _find_principal(version_obj) or ""
+    Path("/tmp/ghcp-hosted-agents-instance-principal").write_text(
+        instance_principal, encoding="utf-8"
+    )
+    if instance_principal:
+        record(f"INSTANCE_PRINCIPAL id={instance_principal} source=version-object")
+    else:
+        print("NOTE instance principal not on version object; Step 3.5 will "
+              "attempt a REST fallback before granting")
 ```
 
-Do not use `allow_preview=True`, `project.beta.agents.patch_agent_details`,
-protocol version `"1.0.0"`/`"v1"`, or a `Foundry-Features` preview header. A
-permission error during deploy or the version check is a hard FAIL. The only
-retryable permission case is the exact immediate-post-active readiness
-envelope classified in Step 4. Do not attempt a manual role assignment to
-work around either case.
+Add `import json` and `import re` to the program's imports alongside the
+existing `import os` / `import time`. Do not use `allow_preview=True`,
+`project.beta.agents.patch_agent_details`, protocol version `"1.0.0"`/`"v1"`,
+or a `Foundry-Features` preview header. A permission error during deploy or
+the version check is a hard FAIL. The only retryable permission case is the
+grant-propagation readiness envelope classified in Step 4.
+
+## Step 3.5 - grant the instance identity Foundry User at both scopes
+
+The instance principal discovered in Step 3 must hold `Foundry User`
+(`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account scope AND
+the Foundry project scope before invocation. Project scope is the full project
+ARM id from CI; account scope strips the trailing `/projects/<name>` segment.
+Create both assignments now, before Step 4. The CI UAMI's ABAC condition
+permits granting only this one role at the account and its descendants.
+
+```bash
+INSTANCE_PRINCIPAL="$(cat /tmp/ghcp-hosted-agents-instance-principal)"
+if [ -z "$INSTANCE_PRINCIPAL" ]; then
+  # REST fallback: read the agent version resource and scan for a principalId.
+  agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
+  INSTANCE_PRINCIPAL="$(az rest --method get \
+    --url "${FOUNDRY_PROJECT_ENDPOINT%/}/assistants/${agent_name}/versions/1?api-version=2025-05-01" \
+    --resource "https://ai.azure.com" 2>/dev/null \
+    | jq -r '[.. | objects | (.principalId // .principal_id // .objectId // .object_id) | select(type=="string")] | first // empty')"
+fi
+if [ -z "$INSTANCE_PRINCIPAL" ]; then
+  printf 'SMOKE_RESULT=FAIL could not discover hosted-agent instance principal\n' \
+    > /tmp/ghcp-hosted-agents-smoke-result
+  exit 1
+fi
+printf 'INSTANCE_PRINCIPAL id=%s\n' "$INSTANCE_PRINCIPAL" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+
+foundry_role="53ca6127-db72-4b80-b1b0-d745d6d5456d"
+project_scope="$AZURE_AI_PROJECT_ID"
+account_scope="${AZURE_AI_PROJECT_ID%/projects/*}"
+
+az role assignment create \
+  --role "$foundry_role" \
+  --assignee-object-id "$INSTANCE_PRINCIPAL" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "$account_scope" >/dev/null
+printf 'ROLE_ASSIGNED scope=account\n' >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'ROLE_ASSIGNED scope=account\n'
+
+az role assignment create \
+  --role "$foundry_role" \
+  --assignee-object-id "$INSTANCE_PRINCIPAL" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "$AZURE_AI_PROJECT_ID" >/dev/null
+printf 'ROLE_ASSIGNED scope=project\n' >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'ROLE_ASSIGNED scope=project\n'
+
+echo "$INSTANCE_PRINCIPAL" > /tmp/ghcp-hosted-agents-instance-principal
+```
+
+Role-assignment propagation is not instant. Do NOT add a fixed long sleep
+here - Step 4's bounded six-attempt invoke loop (15-second backoff) is the
+propagation wait: an initial `model.call_failure` 401 / `transient_auth_error`
+may appear before propagation completes, and the loop retries the same invoke
+path until a recovered assistant event appears in the stream. Grant exactly
+these two assignments and nothing else; grant to the instance principal only,
+never the blueprint identity.
 
 ## Step 4 - invoke via `azd ai agent invoke` (single documented path)
 
 Per SKILL.md § "Invoking the Agent", `azd ai agent invoke` is the primary
-documented path on GA. Use only this path, with a bounded retry for the exact
-post-deploy implicit-permission readiness envelope observed in live CI. Capture
+documented path on GA. Use only this path, with a bounded retry for the
+grant-propagation readiness envelope (an initial `model.call_failure` 401 /
+`transient_auth_error` that clears once the Step 3.5 assignments propagate).
+The only retryable permission case is this exact immediate-post-active readiness envelope; every other permission failure is a hard FAIL. Capture
 stdout without a fixture-local `tee` (the workflow already captures the full
 transcript):
 
@@ -541,25 +658,41 @@ Do not use `curl`, a hand-rolled REST call, or `references/invoke_agent.py`
 here - `azd ai agent invoke` is the single documented path for this fixture
 (Pattern 16, AGENTS.md § 9.7). Retry only the confirmed HTTP-200 SSE
 readiness envelope (`model.call_failure`, status 401, `PermissionDenied` /
-`transient_auth_error`) with six attempts and 15-second backoff. A nonzero
-CLI exit or any other terminal envelope is a hard FAIL. Do not add a role
-grant. The last exact raw response is persisted to
-`/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it under an
-attempt-specific filename before any retry and uploads both attempts.
+`transient_auth_error`) with six attempts and 15-second backoff - this is the
+Step 3.5 grant-propagation window. A nonzero CLI exit or any other terminal
+envelope is a hard FAIL. The Step 3.5 assignments are already in place; do not
+add further role grants or re-grant here. The last exact raw response is
+persisted to `/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it
+under an attempt-specific filename before any retry and uploads both attempts.
 
 ## Step 5 - best-effort teardown
 
 Read the agent name persisted in Step 2 and perform teardown in a bounded
 300-second window. A failure or timeout here does NOT affect the PASS marker -
-print one NOTE to stdout and continue to Step 6. The CI resource group is
-periodically pruned of orphaned hosted-agent versions and ACR repositories
-by a separate janitor.
+print one NOTE to stdout and continue to Step 6. Teardown also revokes the two
+role assignments Step 3.5 created (and nothing else). The CI resource group is
+periodically pruned of orphaned hosted-agent versions and ACR repositories by
+a separate janitor.
 
 ```bash
 agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
 timeout 300 azd ai agent delete "$agent_name" --force --no-prompt \
   && printf 'AGENT_DELETED name=%s\n' "$agent_name" >> /tmp/ghcp-hosted-agents-smoke-evidence \
   || echo "NOTE best-effort teardown exceeded 300-second cap or encountered an error; CI janitor will prune orphaned resources"
+
+# Best-effort revoke of only the two assignments Step 3.5 created.
+INSTANCE_PRINCIPAL="$(cat /tmp/ghcp-hosted-agents-instance-principal 2>/dev/null)"
+if [ -n "$INSTANCE_PRINCIPAL" ]; then
+  foundry_role="53ca6127-db72-4b80-b1b0-d745d6d5456d"
+  az role assignment delete --role "$foundry_role" \
+    --assignee "$INSTANCE_PRINCIPAL" \
+    --scope "${AZURE_AI_PROJECT_ID%/projects/*}" 2>/dev/null \
+    && echo "NOTE revoked account-scope grant" || true
+  az role assignment delete --role "$foundry_role" \
+    --assignee "$INSTANCE_PRINCIPAL" \
+    --scope "$AZURE_AI_PROJECT_ID" 2>/dev/null \
+    && echo "NOTE revoked project-scope grant" || true
+fi
 ```
 
 Do NOT run a full-environment teardown command, a container-app cleanup
@@ -589,6 +722,9 @@ required_patterns = (
     r"AZD_DEPLOY_ATTEMPT count=1",
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ghcp-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ghcp-[0-9a-f]{8} protocol=invocations/2\.0\.0",
+    r"INSTANCE_PRINCIPAL id=\S+",
+    r"ROLE_ASSIGNED scope=account",
+    r"ROLE_ASSIGNED scope=project",
     r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8} attempt=[1-6]",
 )
 for pattern in required_patterns:
@@ -628,7 +764,8 @@ printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > /tmp/ghcp-hosted-agents-smo
 printf 'SMOKE_RESULT=FAIL microsoft.foundry or azure.ai.agents extension not installed\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd env contract incomplete\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd deploy failed\n' > /tmp/ghcp-hosted-agents-smoke-result
-printf 'SMOKE_RESULT=FAIL permission denied - agent identity should have implicit access by default\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL could not discover hosted-agent instance principal\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL role assignment create failed for instance identity\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL agent version never reached active\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL protocol version mismatch - expected invocations 2.0.0\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL invoke command exited non-zero\n' > /tmp/ghcp-hosted-agents-smoke-result

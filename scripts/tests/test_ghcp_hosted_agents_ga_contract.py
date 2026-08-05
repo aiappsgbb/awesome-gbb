@@ -41,7 +41,7 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
 
     def test_skill_version_and_legacy_deploy_contract(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.0.8")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.0.9")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
         for stale in (
             "## agent.yaml",
@@ -49,7 +49,6 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             "azd up",
             "azd provision",
             "remoteBuild",
-            "az role assignment create",
             "2025-11-15-preview",
             "Manual account-scope assignment",
             "ACA app",
@@ -107,8 +106,16 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             self.assertIn(name, self.skill)
         self.assertIn("guided", self.skill.lower())
         self.assertIn("direct-copy", self.skill.lower())
-        self.assertNotIn("az role assignment create", self.skill)
-        self.assertNotIn("az role assignment create", self.fixture)
+        # Proven model-inference RBAC contract: the hosted-agent INSTANCE
+        # managed identity must receive the Foundry User role at BOTH the
+        # Foundry account scope AND the Foundry project scope before a real
+        # model invocation. The old "no agent role assignment needed" claim
+        # was validated only against an upstream echo agent that never
+        # exercised real inference, so it silently 401'd on live models.
+        self.assertIn("az role assignment create", self.skill)
+        self.assertIn("az role assignment create", self.fixture)
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", self.skill)
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", self.fixture)
 
     def test_fixture_is_canonical_single_attempt_smoke(self) -> None:
         required = (
@@ -152,7 +159,6 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             "azd up",
             "azd provision",
             "azd down",
-            "az role assignment create",
             "az containerapp",
             "az acr repository delete",
             "2025-11-15-preview",
@@ -185,7 +191,43 @@ class GhcpHostedAgentsGaContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.fixture)
         self.assertIn("for attempt in 1 2 3 4 5 6", self.fixture)
-        self.assertNotIn("az role assignment create", self.fixture)
+
+    def test_fixture_grants_instance_identity_dual_scope(self) -> None:
+        fx = self.fixture
+        # Role pinned by GUID so it survives the Azure AI User -> Foundry User
+        # rename; the assignee is the per-version (instance) service principal.
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", fx)
+        self.assertIn("--assignee-principal-type ServicePrincipal", fx)
+        self.assertIn("--assignee-object-id", fx)
+        self.assertIn("INSTANCE_PRINCIPAL", fx)
+        # Project scope is the full project ARM id from CI; account scope strips
+        # the trailing /projects/<name> segment via bash parameter expansion.
+        self.assertIn('--scope "$AZURE_AI_PROJECT_ID"', fx)
+        self.assertIn("${AZURE_AI_PROJECT_ID%/projects/*}", fx)
+        # Both grants are recorded as evidence and gated before invocation.
+        self.assertIn("ROLE_ASSIGNED scope=account", fx)
+        self.assertIn("ROLE_ASSIGNED scope=project", fx)
+        grant_idx = fx.index("az role assignment create")
+        invoke_idx = fx.index("azd ai agent invoke")
+        self.assertLess(grant_idx, invoke_idx)
+        # Best-effort revoke of only the two assignments the fixture created,
+        # after invocation, as part of teardown.
+        self.assertIn("az role assignment delete", fx)
+        revoke_idx = fx.rindex("az role assignment delete")
+        self.assertGreater(revoke_idx, invoke_idx)
+
+    def test_skill_documents_instance_dual_scope_rbac(self) -> None:
+        skill = self.skill
+        # The role, both scopes, and the instance-vs-blueprint distinction.
+        self.assertIn("53ca6127-db72-4b80-b1b0-d745d6d5456d", skill)
+        self.assertIn("Foundry User", skill)
+        self.assertIn("instance", skill.lower())
+        self.assertIn("blueprint", skill.lower())
+        self.assertIn("${AZURE_AI_PROJECT_ID%/projects/*}", skill)
+        # Blueprint identity explicitly needs no grants; instance identity does.
+        self.assertRegex(skill, r"blueprint[^\n]*no[^\n]*(grant|assignment|role)")
+        # Cleanup / revocation guidance for the grants the operator adds.
+        self.assertIn("az role assignment delete", skill)
 
     def _invoke_classifier_code(self) -> str:
         start = 'python3 - "$invoke_log" <<\'PY\'\n'

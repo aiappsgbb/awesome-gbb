@@ -225,6 +225,23 @@ contract, the `remoteBuild`/manual `services:` wiring, the
   `azure.ai.agents` extension no longer assigns a role to the per-agent
   managed identity after deploy at all — Foundry grants the identity's
   required permissions internally. There is nothing left to work around.
+
+  **RBAC correction (v2.0.9):** PR #8941 and the upstream echo-agent
+  sample it was validated against never exercise a real model call — the
+  echo agent returns its input without ever authenticating to the model
+  data plane. Controlled Azure tests proved that a hosted agent doing
+  **real model inference** still requires the per-version **instance**
+  managed identity to hold `Foundry User`
+  (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account
+  scope AND the Foundry project scope; project-only and account-only both
+  returned HTTP 401, and only the dual-scope grant succeeded. Foundry's
+  internal grant covers the blueprint identity and non-inference paths, but
+  not real model inference by the instance identity. The skill and fixture
+  now document and perform the dual-scope instance grant before invocation
+  (SKILL.md § "Identity & RBAC for hosted agents", Step 3.5 of the
+  fixture). This is not a re-opening of KI-001's *deploy-time* auto-grant
+  (still retired); it is a distinct, previously-undocumented
+  model-inference prerequisite.
 - **KI-002** (`azd ai agent invoke` allegedly not wrapping user input in
   `{"input": "..."}`) — did not reproduce against the current GA CLI. The
   official sample's README documents `azd ai agent invoke '{"input": "..."}'`
@@ -246,6 +263,25 @@ removal) are unaffected by the deploy-model migration and remain open /
 documented as before.
 
 ## Last validation
+
+`2026-07-14b` (copilot-bot) — **instance-RBAC model-inference correction
+(v2.0.9).** Controlled Azure tests established the minimum working contract
+for real model inference by a hosted agent: grant the per-version
+**instance** managed identity (not the blueprint identity) the `Foundry
+User` role (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry
+account scope AND the Foundry project scope before invocation. Project-only
+failed (401), account-only failed (401), both together succeeded. A valid
+dual-scope invocation may emit an initial 401 before an internal retry
+succeeds, so validation inspects the full event stream rather than aborting
+on the first transient event. The earlier "no agent role grant needed"
+claim derived from an upstream echo-agent sample that never called a model;
+it silently 401'd on live inference. No package pins, SHAs, or
+`known_issues_count` changed in this correction — only the RBAC contract
+prose (this file), SKILL.md § "Identity & RBAC for hosted agents", and the
+fixture's grant/revoke steps. Do NOT add `transient_auth_error` (or any
+authorization token) to the workflow retry classifier: this was a
+persistent authorization regression, not a transient. Live GHCP T3 evidence
+is tracked via the skill's `test-fixture/consumer_prompt.md` matrix leg.
 
 `2026-07-14` (copilot-bot) — GA deploy-model migration re-grounded against
 two upstream sources: microsoft-foundry/foundry-samples commit
