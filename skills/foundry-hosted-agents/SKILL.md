@@ -62,10 +62,12 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 
 ## MAF 1.4.0 breaking changes (May 2026)
 
-> **If upgrading from 1.3.x today, skip to 1.6.0 directly.** The version
-> pins below show 1.4.0 for historical accuracy; use the 1.6.0 pins from
-> [§ MAF 1.6.0 update](#maf-160-update-may-2026) instead — they absorb
-> all 1.4.0 breaking changes AND add gen_ai telemetry.
+> **Historical boundary only.** The pins below are preserved for the
+> original 1.4.0 cutover. If you are still on 1.3.x today, do **not** copy
+> these historical 1.4 pins — use the current canonical 1.13 stack in
+> [`references/python/pyproject.toml`](references/python/pyproject.toml),
+> which already incorporates the 1.4 breaking changes, the 1.6 telemetry
+> update, and the 1.8 timeout correction.
 
 Azure renamed the Foundry data-plane role from **"Azure AI User"** to
 **"Foundry User"** and changed the AAD token audience the SDK requests

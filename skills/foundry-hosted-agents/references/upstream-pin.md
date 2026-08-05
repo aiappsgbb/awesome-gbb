@@ -189,7 +189,7 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
-    python -m venv .venv
+    python3 -m venv .venv
     . .venv/bin/activate
     pip install --quiet \
       "agent-framework-core~=1.13.0" \
@@ -198,14 +198,127 @@ validation:
       "azure-ai-projects~=2.3.0" \
       "azure-identity~=1.25.3" \
       "mcp~=1.29.0" \
-      "python-dotenv~=1.2.2"
+      "python-dotenv~=1.2.2" \
+      "pyyaml~=6.0"
     python - <<'PY'
+    from pathlib import Path
+    import subprocess
+    import tomllib
+    import yaml
     from importlib.metadata import version
     from agent_framework import Agent
     from agent_framework.foundry import FoundryChatClient
     from agent_framework_foundry_hosting import ResponsesHostServer
     from azure.ai.projects import AIProjectClient
     from mcp import McpError
+
+    canonical_dependencies = [
+        "agent-framework-core~=1.13.0",
+        "agent-framework-foundry~=1.10.4",
+        "agent-framework-foundry-hosting==1.0.0b260730",
+        "azure-ai-projects~=2.3.0",
+        "azure-identity~=1.25.3",
+        "mcp~=1.29.0",
+        "python-dotenv~=1.2.2",
+    ]
+    canonical_versions = {
+        "agent-framework-core": "1.13.0",
+        "agent-framework-foundry": "1.10.4",
+        "agent-framework-foundry-hosting": "1.0.0b260730",
+        "azure-ai-projects": "2.3.0",
+        "azure-identity": "1.25.3",
+        "mcp": "1.29.0",
+        "python-dotenv": "1.2.2",
+    }
+    relative_pyproject = Path(
+        "skills/foundry-hosted-agents/references/python/pyproject.toml"
+    )
+    relative_pin = Path("skills/foundry-hosted-agents/references/upstream-pin.md")
+    relative_skill = Path("skills/foundry-hosted-agents/SKILL.md")
+
+    def resolve_repo_root() -> Path:
+        direct_pin = Path.cwd() / relative_pin
+        if direct_pin.exists():
+            return Path.cwd()
+
+        candidates = []
+        repo_roots = [
+            Path.home() / "work" / "awesome-gbb" / "awesome-gbb",
+            Path.home() / "actions-runner" / "_work" / "awesome-gbb" / "awesome-gbb",
+            Path.home() / ".copilot" / "repos" / "awesome-gbb",
+        ]
+        worktrees_root = (
+            Path.home() / ".copilot" / "repos" / "copilot-worktrees" / "awesome-gbb"
+        )
+        if worktrees_root.exists():
+            for child in worktrees_root.iterdir():
+                if child.is_dir():
+                    repo_roots.append(child)
+
+        for repo_root in repo_roots:
+            candidate = repo_root / relative_pin
+            if not candidate.exists():
+                continue
+            dirty = 0
+            probe = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo_root),
+                    "status",
+                    "--porcelain",
+                    "--",
+                    str(relative_pin),
+                    str(relative_skill),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if probe.returncode == 0 and probe.stdout.strip():
+                dirty = 1
+            candidates.append((dirty, candidate))
+
+        if not candidates:
+            raise FileNotFoundError(f"unable to resolve {relative_pin}")
+        candidates.sort(key=lambda item: (item[0], len(str(item[1]))), reverse=True)
+        return candidates[0][1].parents[3]
+
+    repo_root = resolve_repo_root()
+
+    pyproject = tomllib.loads(
+        (repo_root / relative_pyproject).read_text(encoding="utf-8")
+    )
+    dependencies = pyproject["project"]["dependencies"]
+    assert len(dependencies) == len(canonical_dependencies)
+    for dependency in canonical_dependencies:
+        assert dependency in dependencies, f"canonical dependency missing: {dependency}"
+
+    pin_text = (repo_root / relative_pin).read_text(encoding="utf-8")
+    delimiter = "-" * 3
+    frontmatter_lines = []
+    for line in pin_text.splitlines():
+        if not frontmatter_lines and line == delimiter:
+            continue
+        if line == delimiter:
+            break
+        frontmatter_lines.append(line)
+    pin = yaml.safe_load("\n".join(frontmatter_lines))
+    packages = {package["name"]: package for package in pin["packages"]}
+    for package_name, expected_version in canonical_versions.items():
+        assert packages[package_name]["version"] == expected_version, (
+            f"{package_name} version drift: {packages[package_name]['version']}"
+        )
+
+    assert packages["azure-ai-projects"]["hold_below"] == "2.4.0"
+    assert packages["azure-ai-projects"]["hold_reason"] == "KI-009"
+    assert packages["mcp"]["hold_below"] == "2.0.0"
+    assert packages["mcp"]["hold_reason"] == "KI-010"
+
+    issues = {issue["id"]: issue for issue in pin["known_issues"]}
+    assert issues["KI-009"]["status"] == "open"
+    assert issues["KI-010"]["status"] == "open"
+    assert pin["known_issues_count"] == 9
+    assert len(pin["known_issues"]) == pin["known_issues_count"]
 
     class OfflineCredential:
         def get_token(self, *scopes, **kwargs):
