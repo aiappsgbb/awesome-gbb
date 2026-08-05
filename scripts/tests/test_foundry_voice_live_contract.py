@@ -412,6 +412,17 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.fixture)
 
+    def test_fixture_only_uses_smoke_result_literals_in_authoritative_printf_commands(self) -> None:
+        authoritative_lines = (
+            "printf 'SMOKE_RESULT=PASS\\n' > /tmp/foundry-voice-live-smoke-result",
+            "printf 'SMOKE_RESULT=FAIL <one-line reason>\\n' > /tmp/foundry-voice-live-smoke-result",
+        )
+        stripped = self.fixture
+        for line in authoritative_lines:
+            stripped = stripped.replace(line, "")
+
+        self.assertNotIn("SMOKE_RESULT=", stripped)
+
 
 if __name__ == "__main__":
     unittest.main()

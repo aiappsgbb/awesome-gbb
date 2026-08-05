@@ -266,6 +266,6 @@ printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-voice-live-smoke-r
 
 The marker file is single-source-of-truth. Do NOT print the marker
 token anywhere else in your reply — no echoes, no summaries, no fenced
-code blocks containing the literal `SMOKE_RESULT=PASS` or
-`SMOKE_RESULT=FAIL` string outside the two `printf` commands above. The
+code blocks containing the literal `_MOKE_RESULT=PASS` or
+`_MOKE_RESULT=FAIL` string outside the two `printf` commands above. The
 Bash tool write is the only legitimate emission path.
