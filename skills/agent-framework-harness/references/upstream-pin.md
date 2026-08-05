@@ -5,10 +5,11 @@ automation_tier: auto
 
 upstream:
   type: pypi
-  notes: |
-    Source-audited against the Agent Framework Python tag python-1.13.0
-    at immutable SHA e39a8a2e79c8c8987a0b9082d3ccb8665734b897.
-    Package drift is tracked through the PyPI versions below.
+  notes: >
+    Tier-B package wrapper around microsoft/agent-framework. The source was
+    audited at Python tag python-1.13.0, immutable commit
+    e39a8a2e79c8c8987a0b9082d3ccb8665734b897. Package drift is detected
+    through the PyPI versions below; the tag and SHA remain audit evidence.
 
 packages:
   - name: agent-framework
@@ -47,56 +48,43 @@ docs_to_revalidate:
 
 known_issues:
   - id: KI-001
-    description: |
-      FileAccessProvider remains experimental and its access UX is not a
-      sandbox boundary.
+    description: FileAccessProvider remains experimental and upstream is still improving its Harness contract; treat its controls as access UX, not sandboxing.
     upstream_url: https://github.com/microsoft/agent-framework/issues/6770
     status: open
     workaround_location: SKILL.md § "Default, opt-in, and experimental feature matrix"
   - id: KI-002
-    description: |
-      BackgroundAgentsProvider retains per-session tasks and child sessions;
-      the host must own cancellation and cleanup.
+    description: BackgroundAgentsProvider can retain per-session tasks and child sessions; keep host-owned cancellation and cleanup explicit.
     upstream_url: https://github.com/microsoft/agent-framework/issues/7385
     status: open
     workaround_location: SKILL.md § "Default, opt-in, and experimental feature matrix"
   - id: KI-003
-    description: |
-      CompactionProvider runs after AgentLoopMiddleware iterations, so callers
-      need explicit caps and must reverify state before execution.
+    description: CompactionProvider currently runs after each AgentLoopMiddleware iteration; use explicit caps and verify compaction behavior on refresh.
     upstream_url: https://github.com/microsoft/agent-framework/issues/7236
     status: open
     workaround_location: SKILL.md § "Safe plan-to-execute pattern"
   - id: KI-004
-    description: |
-      Shell and code-execution samples remain incomplete and
-      agent-framework-tools is a prerelease; work directories and deny lists
-      are not sandbox boundaries.
+    description: Shell and code-execution Harness samples remain incomplete while agent-framework-tools is prerelease; workdir or deny lists are not sandboxing.
     upstream_url: https://github.com/microsoft/agent-framework/issues/6448
     status: open
     workaround_location: SKILL.md § "Failure modes and security callouts"
 
 validation:
+  runnable: true
   requires:
     - github_only
     - pypi
-  runnable: true
   script: |
-    #!/usr/bin/env bash
     set -euo pipefail
-    VENV=/tmp/agent-framework-harness-pin
-    REPO_ROOT="${PIN_VALIDATION_REPO_ROOT:-$(pwd)}"
-    rm -rf "$VENV"
-    python -m venv "$VENV"
-    . "$VENV/bin/activate"
-    pip install --quiet \
+    python3 -m venv /tmp/agent-framework-harness-pin
+    /tmp/agent-framework-harness-pin/bin/pip install --quiet \
       "agent-framework~=1.13.0" \
       "agent-framework-core~=1.13.0" \
       "agent-framework-foundry~=1.10.4" \
       "agent-framework-foundry-hosting==1.0.0b260730" \
       "agent-framework-tools==1.0.0b260730" \
       "azure-identity~=1.25.3"
-    python "$REPO_ROOT/skills/agent-framework-harness/references/python/test_harness_contract.py"
+    /tmp/agent-framework-harness-pin/bin/python \
+      skills/agent-framework-harness/references/python/test_harness_contract.py
   expected_output:
     - "HARNESS_SIGNATURE_OK"
     - "HARNESS_DEFAULTS_OK"
