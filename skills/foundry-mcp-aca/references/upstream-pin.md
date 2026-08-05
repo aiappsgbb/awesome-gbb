@@ -25,7 +25,7 @@ packages:
     hold_below: "2.0.0"
     hold_reason: KI-001
     notes: |
-      MCP protocol package; version pulled transitively by fastmcp (fastmcp~=2.14.7 requires mcp>=1.24.0,<2.0). mcp 2.0.0 is incompatible with fastmcp 2.x.
+      MCP protocol package; version pulled transitively by fastmcp (fastmcp 3.4.5 requires mcp>=1.24.0,<2.0). Hold is independent of FastMCP hold — mcp 2.0 would be a breaking protocol change requiring separate revalidation.
   - name: azure-mgmt-appcontainers
     source: pypi
     version: "5.0.0"
@@ -70,7 +70,7 @@ docs_to_revalidate:
 
 known_issues:
   - id: KI-001
-    description: Coordinated FastMCP 3.x / MCP 2.0 major-migration hold. FastMCP 3.x changed the streamable-HTTP mount path and requires mcp>=2.0. mcp 2.0 is incompatible with fastmcp 2.x. Both packages must migrate together; neither can bump independently. Hold releases when FastMCP 3.x mount-path + MCP 2.0 protocol changes are revalidated end-to-end against the Foundry MCP client.
+    description: FastMCP 3.x mount-path and server API migration hold. FastMCP 3.x changed the streamable-HTTP mount path and server construction API. FastMCP 3.x still requires mcp>=1.24,<2 (verified 3.4.5 on 2026-08-05), so FastMCP 3 does NOT require MCP 2. The MCP <2 hold is independent — mcp 2.0 would be a breaking protocol change. Both holds release independently when revalidated against the Foundry MCP client.
     upstream_url: https://pypi.org/project/fastmcp/
     status: open
     workaround_location: SKILL.md § "Pin `fastmcp<3.0.0`"
@@ -146,6 +146,6 @@ Run the `validation.script` front-matter block. Expected output contains `ok fou
 
 ## Known issues
 
-### KI-001 — Coordinated FastMCP 3.x / MCP 2.0 migration hold
+### KI-001 — FastMCP 3.x mount-path and server API migration hold
 
-FastMCP 3.x requires mcp>=2.0 and changed the streamable-HTTP mount path. mcp 2.0 is incompatible with fastmcp 2.x. Both packages are held below their respective majors (fastmcp<3.0.0, mcp<2.0.0) until end-to-end revalidation of the new mount path and MCP protocol revision against the Foundry MCP client.
+FastMCP 3.x changed the streamable-HTTP mount path and server construction API. FastMCP 3.x still requires `mcp>=1.24,<2` (verified 3.4.5 on 2026-08-05), so FastMCP 3 does NOT require MCP 2. The MCP `<2` hold is independent — `mcp 2.0` would be a breaking protocol change requiring separate revalidation. Both holds release independently when revalidated against the Foundry MCP client.

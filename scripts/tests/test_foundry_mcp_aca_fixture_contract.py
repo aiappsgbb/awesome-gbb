@@ -174,6 +174,11 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
         self.assertIn("get", self.pin)
         self.assertIn("begin_create_or_update", self.pin)
 
+    def test_ki001_does_not_claim_fastmcp3_requires_mcp2(self) -> None:
+        """KI-001 must not claim FastMCP 3 requires MCP 2 — it still pins mcp<2."""
+        self.assertNotIn("requires mcp>=2.0", self.pin)
+        self.assertNotIn("requires mcp>=2", self.pin.split("KI-001")[1].split("KI-002")[0] if "KI-002" in self.pin else self.pin.split("KI-001")[1])
+
     # --- Skill acknowledgment (preserved from original) ---
 
     def test_fixture_acknowledges_skill_before_step_zero(self) -> None:
