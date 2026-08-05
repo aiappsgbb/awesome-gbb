@@ -42,14 +42,18 @@ def _frontmatter(text: str) -> dict:
     return yaml.safe_load(text.split("---", 2)[1])
 
 
-def _is_call_named(node: ast.AST, dotted_name: str) -> bool:
-    """Return True if `node` is a Call whose dotted callee equals `dotted_name`.
+def _call_dotted_name(node: ast.Call) -> str | None:
+    """Return the dotted callee name of a Call node, or None if unresolvable.
 
-    Matches call shapes like ``project.toolboxes.delete(...)`` or
-    ``asyncio.run(...)`` by walking the Attribute/Name chain of `node.func`.
+    Walks the Attribute/Name chain of `node.func` -- e.g. `print(...)` ->
+    `"print"`, `project.toolboxes.delete(...)` -> `"project.toolboxes.delete"`,
+    `shim.type(exc)` -> `"shim.type"`. Returns `None` when the callee isn't a
+    plain dotted-name chain (a call on a subscript, another call's return
+    value, a lambda, etc.) -- such calls can never match a fixed name
+    allowlist and are treated as unresolvable, not silently ignored, by
+    every caller below (`_is_call_named`, `_unexpected_handler_calls`,
+    `_outer_print_calls`).
     """
-    if not isinstance(node, ast.Call):
-        return False
     parts: list[str] = []
     target = node.func
     while isinstance(target, ast.Attribute):
@@ -58,9 +62,18 @@ def _is_call_named(node: ast.AST, dotted_name: str) -> bool:
     if isinstance(target, ast.Name):
         parts.append(target.id)
     else:
-        return False
+        return None
     parts.reverse()
-    return ".".join(parts) == dotted_name
+    return ".".join(parts)
+
+
+def _is_call_named(node: ast.AST, dotted_name: str) -> bool:
+    """Return True if `node` is a Call whose dotted callee equals `dotted_name`.
+
+    Matches call shapes like ``project.toolboxes.delete(...)`` or
+    ``asyncio.run(...)`` via `_call_dotted_name`.
+    """
+    return isinstance(node, ast.Call) and _call_dotted_name(node) == dotted_name
 
 
 def _calls_named(stmts: list, dotted_name: str) -> list:
@@ -126,6 +139,90 @@ def _unsafe_exception_references(handler: ast.ExceptHandler) -> list[ast.Name]:
         if not is_direct_type_arg:
             unsafe.append(node)
     return unsafe
+
+
+def _handler_calls(handler: ast.ExceptHandler) -> list[ast.Call]:
+    """Return every `ast.Call` node anywhere within `handler`'s body."""
+    module = ast.Module(body=list(handler.body), type_ignores=[])
+    return [n for n in ast.walk(module) if isinstance(n, ast.Call)]
+
+
+def _unexpected_handler_calls(handler: ast.ExceptHandler) -> list[ast.Call]:
+    """Return handler calls whose dotted callee is neither bare `print` nor bare `type`.
+
+    `_unsafe_exception_references` only classifies *references to the bound
+    exception name*. An ambient exception-state API that never mentions the
+    bound name at all -- `traceback.format_exc()`, `sys.exc_info()`, or any
+    other arbitrary helper call -- leaks the same failure detail while
+    sailing straight past that name-reference guard. The cleanup handler's
+    only permitted operations are emitting one sanitized NOTE via
+    `print(...)` and narrowing the caught exception via a nested bare
+    `type(exc)` (see `_unsafe_exception_references`); this structural
+    allowlist rejects everything else regardless of what it's named or
+    whether it references the exception at all. Reusable across both the
+    real fixture handler and synthetic mutation snippets.
+    """
+    return [call for call in _handler_calls(handler) if _call_dotted_name(call) not in ("print", "type")]
+
+
+def _outer_print_calls(handler: ast.ExceptHandler) -> list[ast.Call]:
+    """Return `print(...)` calls used as a direct top-level statement in `handler`'s body.
+
+    Distinguishes the required standalone `print(f"NOTE ...")` statement
+    from a `print` name that might appear only nested inside some other
+    expression, so the handler can be pinned to emitting *exactly one* such
+    statement -- not zero (a rewrite that silently stops reporting the
+    cleanup failure) and not several (a rewrite that duplicates/fragments
+    the NOTE) -- independent of `_unexpected_handler_calls`, which only
+    proves no *other* calls exist.
+    """
+    return [
+        stmt.value
+        for stmt in handler.body
+        if isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and _call_dotted_name(stmt.value) == "print"
+    ]
+
+
+def _rebindings_of_name(handler: ast.ExceptHandler, name: str) -> list[ast.AST]:
+    """Return every node in `handler`'s body that binds/shadows `name` as a local identifier.
+
+    `_unsafe_exception_references`'s "bare `type(...)` call" check matches
+    on AST shape (`ast.Name` with `id == "type"`), not on what `type`
+    actually resolves to at runtime. A handler that locally reassigns
+    `type` (`type = str`) satisfies that shape while `type(exc)` no longer
+    invokes the builtin at runtime -- passing the reference guard while
+    defeating its intent. This helper flags every local binding form that
+    could shadow `name` inside the handler body:
+
+    - `ast.Name` nodes with a `Store`/`Del` context and `id == name`
+      (plain assignment, augmented assignment, walrus, and `for`/`with`/
+      `except ... as` targets, all of which use `Store` context);
+    - `ast.arg` nodes named `name` (function/lambda parameters);
+    - `ast.FunctionDef`/`ast.AsyncFunctionDef`/`ast.ClassDef` nodes named
+      `name` (a local `def type(...):` or `class type:`);
+    - `ast.alias` nodes importing `name` directly or aliasing to it
+      (`import name` / `import x as name`).
+
+    Conservative false positives (e.g. flagging an unrelated nested
+    function's parameter that also happens to be called `type`) are an
+    acceptable trade-off for this fixed, hand-authored fixture snippet --
+    the contract only needs to reject the exact-name shadow, not prove the
+    absence of shadowing across arbitrary Python.
+    """
+    module = ast.Module(body=list(handler.body), type_ignores=[])
+    hits: list[ast.AST] = []
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, (ast.Store, ast.Del)):
+            hits.append(node)
+        elif isinstance(node, ast.arg) and node.arg == name:
+            hits.append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
+            hits.append(node)
+        elif isinstance(node, ast.alias) and (node.asname == name or (node.asname is None and node.name == name)):
+            hits.append(node)
+    return hits
 
 
 def _extract_python_smoke() -> str:
@@ -321,6 +418,66 @@ class FoundryToolboxCleanupContractTests(unittest.TestCase):
             "toolbox_name",
             handler_source,
             "the delete-failure NOTE must identify which toolbox failed to delete",
+        )
+
+    def _cleanup_handler(self) -> ast.ExceptHandler:
+        outer_try = self._outer_try()
+        nested_try = self._nested_cleanup_try(outer_try)
+        return nested_try.handlers[0]
+
+    def test_handler_contains_no_calls_other_than_print_and_bare_type(self) -> None:
+        """Ambient exception-state leak guard: no calls besides print/type are allowed.
+
+        `_unsafe_exception_references` only classifies references to the
+        bound exception *name*. An ambient exception-state API that never
+        mentions `exc` at all -- `traceback.format_exc()`, `sys.exc_info()`
+        -- would leak the same failure detail while sailing straight past
+        that guard. This structural allowlist closes that gap regardless of
+        what such a call is named.
+        """
+        handler = self._cleanup_handler()
+        unexpected = _unexpected_handler_calls(handler)
+        self.assertEqual(
+            unexpected,
+            [],
+            "the cleanup handler must not call anything other than print(...) and "
+            "a nested bare type(...) -- ambient exception-state APIs like "
+            "traceback.format_exc() or sys.exc_info() must never appear here even "
+            "if they never reference `exc` directly. Found unexpected call(s): "
+            + ", ".join(
+                f"{_call_dotted_name(c) or ast.unparse(c.func)}() at line {c.lineno}"
+                for c in unexpected
+            ),
+        )
+
+    def test_handler_has_exactly_one_outer_print_call(self) -> None:
+        handler = self._cleanup_handler()
+        outer_prints = _outer_print_calls(handler)
+        self.assertEqual(
+            len(outer_prints),
+            1,
+            "the cleanup handler must emit exactly one top-level print(...) NOTE "
+            f"statement, found {len(outer_prints)} at line(s) "
+            f"{[c.lineno for c in outer_prints]}",
+        )
+
+    def test_handler_does_not_rebind_the_name_type(self) -> None:
+        """Shadow guard: the handler must not locally reassign/shadow `type`.
+
+        `_unsafe_exception_references`'s bare-`type(...)` check matches on
+        AST shape, not on what `type` resolves to at runtime -- a handler
+        that reassigns `type` (`type = str`) would satisfy that shape while
+        `type(exc)` no longer calls the builtin.
+        """
+        handler = self._cleanup_handler()
+        rebindings = _rebindings_of_name(handler, "type")
+        self.assertEqual(
+            rebindings,
+            [],
+            "the cleanup handler must not rebind/shadow the builtin `type` name -- "
+            "doing so would silently defeat the bare type(exc) sanitization guard. "
+            f"Found rebinding(s) at line(s) "
+            f"{[getattr(n, 'lineno', '?') for n in rebindings]}",
         )
 
     def test_exactly_five_hard_sidecar_records_remain(self) -> None:
@@ -585,9 +742,10 @@ class ExceptionReferenceGuardUnitTests(unittest.TestCase):
         )
 
     def test_rejects_exc_passed_as_second_positional_to_type(self) -> None:
-        # Avoid nesting a dict/collection literal inside an f-string
-        # expression -- unsupported by the f-string grammar before the
-        # PEP 701 relaxation (Python < 3.12); the CI matrix runs 3.11 too.
+        # Written as a plain call (not an f-string expression) purely to
+        # keep this synthetic handler snippet simple and parser-portable/
+        # readable across whatever Python interpreter a contributor runs
+        # this suite with locally -- it has no bearing on the guard itself.
         handler = _handler_from_snippet(
             """
             try:
@@ -605,6 +763,79 @@ class ExceptionReferenceGuardUnitTests(unittest.TestCase):
             "other arguments it is no longer the accepted shape",
         )
 
+    def test_rejects_exc_as_first_positional_with_second_argument_to_type(self) -> None:
+        """Mutation case independent from the wrong-position test above.
+
+        `type("unused", exc)` exercises `exc` at the *wrong argument
+        position*; this snippet instead puts `exc` at the correct position
+        (args[0]) but adds a second positional argument, killing any mutant
+        of the guard that dropped the `len(parent.args) == 1` check while
+        keeping the `parent.args[0] is node` position check.
+        """
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                result = type(exc, "second")
+                print(result)
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(
+            len(unsafe),
+            1,
+            "exc must remain the SOLE argument of type(...) -- a second positional "
+            "argument after exc, even at the correct position, is rejected",
+        )
+
+    def test_rejects_attribute_qualified_type_call(self) -> None:
+        """Mutation case killing a guard that checked `parent.func.attr` instead of a bare Name.
+
+        `shim.type(exc)` calls an attribute named `type`, not the builtin
+        `type` -- `parent.func` is an `ast.Attribute`, never an `ast.Name`,
+        so the direct-type-arg shape must not match here.
+        """
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                result = shim.type(exc)
+                print(result)
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(
+            len(unsafe),
+            1,
+            "shim.type(exc) is an attribute-qualified call, not the bare builtin "
+            "type(...) -- it must be flagged as an unsafe leak",
+        )
+
+    def test_rejects_type_call_with_keyword_argument(self) -> None:
+        """Mutation case killing a guard that dropped the `not parent.keywords` check.
+
+        `type(exc, x=1)` still has `exc` as its sole positional argument,
+        so a guard missing the keyword check would wrongly accept this.
+        """
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                result = type(exc, x=1)
+                print(result)
+            """
+        )
+        unsafe = _unsafe_exception_references(handler)
+        self.assertEqual(
+            len(unsafe),
+            1,
+            "type(exc, x=1) carries a keyword argument -- it is no longer the bare "
+            "direct-sole-argument shape and must be flagged as an unsafe leak",
+        )
+
     def test_reference_requires_a_bound_exception_name(self) -> None:
         handler = _handler_from_snippet(
             """
@@ -616,6 +847,184 @@ class ExceptionReferenceGuardUnitTests(unittest.TestCase):
         )
         with self.assertRaises(AssertionError):
             _unsafe_exception_references(handler)
+
+
+class HandlerCallAllowlistUnitTests(unittest.TestCase):
+    """Mutation proof for `_unexpected_handler_calls`/`_outer_print_calls`.
+
+    `_unsafe_exception_references` only classifies *references to the bound
+    exception name*. An ambient exception-state API that never mentions
+    `exc` at all -- `traceback.format_exc()`, `sys.exc_info()`, or any other
+    arbitrary helper call -- leaks the same failure detail while sailing
+    straight past that guard entirely. These tests pin the structural
+    call-allowlist replacement against exactly that gap, plus the
+    "exactly one outer print" shape it must also enforce.
+    """
+
+    def test_accepts_print_and_bare_type_only(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error_type={type(exc).__name__}")
+            """
+        )
+        self.assertEqual(
+            _unexpected_handler_calls(handler),
+            [],
+            "a handler containing only print(...) and a nested bare type(...) "
+            "must not be flagged",
+        )
+        self.assertEqual(
+            len(_outer_print_calls(handler)),
+            1,
+            "the canonical handler shape has exactly one outer print(...) statement",
+        )
+
+    def test_rejects_traceback_format_exc(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(
+                    f"NOTE failed error_type={type(exc).__name__} "
+                    f"trace={traceback.format_exc()}"
+                )
+            """
+        )
+        unexpected = _unexpected_handler_calls(handler)
+        self.assertEqual(
+            [_call_dotted_name(c) for c in unexpected],
+            ["traceback.format_exc"],
+            "traceback.format_exc() must be flagged even though it never "
+            "references `exc` by name -- it still leaks ambient exception state. "
+            f"Unexpected call(s) at line(s): {[c.lineno for c in unexpected]}",
+        )
+
+    def test_rejects_sys_exc_info(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                info = sys.exc_info()
+                print(f"NOTE failed error_type={type(exc).__name__} info={info}")
+            """
+        )
+        unexpected = _unexpected_handler_calls(handler)
+        self.assertEqual(
+            [_call_dotted_name(c) for c in unexpected],
+            ["sys.exc_info"],
+            "sys.exc_info() must be flagged even though it never references `exc` "
+            f"by name. Unexpected call(s) at line(s): {[c.lineno for c in unexpected]}",
+        )
+
+    def test_rejects_arbitrary_helper_call(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                log_failure(exc)
+                print(f"NOTE failed error_type={type(exc).__name__}")
+            """
+        )
+        unexpected = _unexpected_handler_calls(handler)
+        self.assertEqual(
+            [_call_dotted_name(c) for c in unexpected],
+            ["log_failure"],
+            "an arbitrary helper call must be flagged even though it isn't one of "
+            "the well-known exception-state APIs -- the allowlist is print+type "
+            "only, not a denylist of specific known-bad calls. Unexpected call(s) "
+            f"at line(s): {[c.lineno for c in unexpected]}",
+        )
+
+    def test_rejects_a_handler_with_zero_outer_print_calls(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                note = f"NOTE failed error_type={type(exc).__name__}"
+            """
+        )
+        self.assertEqual(
+            _outer_print_calls(handler),
+            [],
+            "a handler that computes the NOTE but never prints it must be "
+            "rejected by the 'exactly one outer print' requirement",
+        )
+
+    def test_rejects_a_handler_with_two_outer_print_calls(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error_type={type(exc).__name__}")
+                print("NOTE failed again")
+            """
+        )
+        self.assertEqual(
+            len(_outer_print_calls(handler)),
+            2,
+            "a handler with two outer print(...) statements must not be mistaken "
+            "for the required single-print shape",
+        )
+
+
+class HandlerNameShadowUnitTests(unittest.TestCase):
+    """Mutation proof for `_rebindings_of_name` (the `type` shadow-bypass guard).
+
+    `_unsafe_exception_references`'s bare-`type(...)`-call check matches on
+    AST shape (`ast.Name` with `id == "type"`), not on what `type` actually
+    resolves to at runtime. A handler that locally reassigns `type`
+    (`type = str`) satisfies that shape while `type(exc)` no longer calls
+    the builtin -- passing the reference guard while defeating its intent.
+    This is a conservative, fixed-fixture check: it may flag rebindings that
+    don't actually reach the `type(exc)` call site, which is an acceptable
+    trade-off here.
+    """
+
+    def test_accepts_a_handler_that_never_touches_the_name_type(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                print(f"NOTE failed error_type={type(exc).__name__}")
+            """
+        )
+        self.assertEqual(_rebindings_of_name(handler, "type"), [])
+
+    def test_rejects_local_reassignment_of_type(self) -> None:
+        handler = _handler_from_snippet(
+            """
+            try:
+                pass
+            except Exception as exc:
+                type = str
+                print(type(exc).__name__)
+            """
+        )
+        # Sanity check documenting exactly the gap this test class closes:
+        # the shape-only reference guard alone is expected to miss this
+        # shadow, because `type(exc)` still parses as a bare Name-call.
+        self.assertEqual(
+            _unsafe_exception_references(handler),
+            [],
+            "sanity check: the shape-only reference guard is expected to miss "
+            "this shadow (that is exactly the gap this test class closes)",
+        )
+        rebindings = _rebindings_of_name(handler, "type")
+        self.assertEqual(
+            len(rebindings),
+            1,
+            "shadowing the builtin `type` name inside the handler must be "
+            f"rejected; found {len(rebindings)} rebinding(s) instead of 1",
+        )
 
 
 if __name__ == "__main__":
