@@ -175,6 +175,28 @@ echo "APP_NAME=$APP_NAME"
 Use `$APP_NAME` for the Container App name, the ACR repository tag, and
 the `azd` environment name throughout.
 
+### State persistence between Bash tool calls
+
+Copilot CLI runs each Bash tool invocation in a **fresh process** — env
+vars set in one call are NOT available in the next. You MUST persist
+`APP_NAME` and `PROJECT_DIR` to a state file and `source` it at the top
+of every subsequent Bash block:
+
+```bash
+STATE_FILE="/tmp/foundry-mcp-aca-state.env"
+echo "APP_NAME=$APP_NAME" > "$STATE_FILE"
+echo "PROJECT_DIR=${GITHUB_WORKSPACE}/.scratch/${APP_NAME}" >> "$STATE_FILE"
+```
+
+**Every subsequent Bash block in this fixture MUST begin with:**
+
+```bash
+source /tmp/foundry-mcp-aca-state.env
+cd "$PROJECT_DIR"
+```
+
+Do NOT skip this. Do NOT assume variables survive between tool calls.
+
 ### Scaffolding location
 
 The Copilot CLI's shell-tool gate rejects `cd` outside `$GITHUB_WORKSPACE`
@@ -182,6 +204,7 @@ even with `--allow-all-tools`. Scaffold everything under
 `${GITHUB_WORKSPACE}/.scratch/<APP_NAME>/`:
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
 PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"
 mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
 cd "$PROJECT_DIR"
@@ -385,6 +408,8 @@ the container image and bind it to the Bicep service. The service key
 MUST match the `azd-service-name` tag in Bicep (which uses `appName`):
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
+cd "$PROJECT_DIR"
 cat > "${PROJECT_DIR}/azure.yaml" <<AZDYAML
 name: ${APP_NAME}
 metadata:
@@ -419,8 +444,11 @@ immediately swaps to the real image.
 Initialize the `azd` env and set the required Bicep params:
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
+cd "$PROJECT_DIR"
 azd env new "$APP_NAME" --location swedencentral --subscription "$AZURE_SUBSCRIPTION_ID"
 azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci
+azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"
 azd env set APP_NAME "$APP_NAME"
 azd env set UAMI_RESOURCE_ID "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
 azd env set ACR_SERVER "$ACR_LOGIN_SERVER"
@@ -432,6 +460,8 @@ index-rebuild race (`ManagedEnvironmentNotFound`, AGENTS.md § 9.7 Pattern
 18) — wrap with a bounded retry loop:
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
+cd "$PROJECT_DIR"
 attempts=0
 max_attempts=6
 until azd up --no-prompt; do
@@ -458,6 +488,8 @@ Resolve the FQDN of the deployed Container App. Prefer the `azd env get-values`
 output, but fall back to `az containerapp show`:
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
+cd "$PROJECT_DIR"
 FQDN=$(azd env get-values | awk -F= '/^FQDN=/ {gsub(/"/, "", $2); print $2}')
 if [ -z "$FQDN" ]; then
   FQDN=$(az containerapp show -g rg-awesome-gbb-ci -n "$APP_NAME" \

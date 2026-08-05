@@ -355,5 +355,65 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
         )
 
 
+class TestStatePersistence(unittest.TestCase):
+    """Bash tool calls run in fresh processes; env vars don't persist."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = FIXTURE.read_text(encoding="utf-8")
+
+    def test_state_file_written_after_naming(self):
+        """STATE_FILE must be written immediately after APP_NAME is generated."""
+        self.assertIn('STATE_FILE="/tmp/foundry-mcp-aca-state.env"', self.fixture)
+        self.assertIn('echo "APP_NAME=$APP_NAME" > "$STATE_FILE"', self.fixture)
+
+    def test_azure_yaml_block_sources_state(self):
+        """The azure.yaml heredoc block must source state first."""
+        # Find the azure.yaml heredoc
+        azdyaml_idx = self.fixture.index("<<AZDYAML")
+        # Find the bash block start before it
+        block_start = self.fixture.rfind("```bash", 0, azdyaml_idx)
+        block_content = self.fixture[block_start:azdyaml_idx]
+        self.assertIn(
+            "source /tmp/foundry-mcp-aca-state.env", block_content,
+            "azure.yaml heredoc bash block must source state file"
+        )
+
+    def test_azd_up_block_sources_state(self):
+        """The azd up retry block must source state first."""
+        azdup_idx = self.fixture.index("until azd up --no-prompt")
+        block_start = self.fixture.rfind("```bash", 0, azdup_idx)
+        block_content = self.fixture[block_start:azdup_idx]
+        self.assertIn(
+            "source /tmp/foundry-mcp-aca-state.env", block_content,
+            "azd up block must source state file"
+        )
+
+    def test_mcp_probe_block_sources_state(self):
+        """The MCP probe block must source state for APP_NAME fallback."""
+        fqdn_idx = self.fixture.index("FQDN=$(azd env get-values")
+        block_start = self.fixture.rfind("```bash", 0, fqdn_idx)
+        block_content = self.fixture[block_start:fqdn_idx]
+        self.assertIn(
+            "source /tmp/foundry-mcp-aca-state.env", block_content,
+            "MCP probe block must source state file"
+        )
+
+    def test_azure_tenant_id_in_azd_env(self):
+        """azd env must set AZURE_TENANT_ID for federated-credential CI."""
+        self.assertIn(
+            'azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"',
+            self.fixture,
+            "AZURE_TENANT_ID must be set in the azd environment"
+        )
+
+    def test_state_persistence_documentation(self):
+        """Fixture must document the state-persistence requirement."""
+        self.assertIn(
+            "State persistence between Bash tool calls", self.fixture,
+            "Fixture must have a section explaining state persistence"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
