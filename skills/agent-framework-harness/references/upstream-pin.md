@@ -75,16 +75,21 @@ validation:
     - pypi
   script: |
     set -euo pipefail
-    python3 -m venv /tmp/agent-framework-harness-pin
-    /tmp/agent-framework-harness-pin/bin/pip install --quiet \
+    : "${PIN_VALIDATION_REPO_ROOT:?PIN_VALIDATION_REPO_ROOT must point to the canonical checkout}"
+    VENV="$PWD/agent-framework-harness-pin-venv"
+    rm -rf -- "$VENV"
+    python3 -m venv "$VENV"
+    VENV_PYTHON="$VENV/bin/python"
+    VENV_PIP="$VENV/bin/pip"
+    "$VENV_PIP" install --quiet \
       "agent-framework~=1.13.0" \
       "agent-framework-core~=1.13.0" \
       "agent-framework-foundry~=1.10.4" \
       "agent-framework-foundry-hosting==1.0.0b260730" \
       "agent-framework-tools==1.0.0b260730" \
       "azure-identity~=1.25.3"
-    /tmp/agent-framework-harness-pin/bin/python \
-      skills/agent-framework-harness/references/python/test_harness_contract.py
+    "$VENV_PYTHON" \
+      "$PIN_VALIDATION_REPO_ROOT/skills/agent-framework-harness/references/python/test_harness_contract.py"
   expected_output:
     - "HARNESS_SIGNATURE_OK"
     - "HARNESS_DEFAULTS_OK"
