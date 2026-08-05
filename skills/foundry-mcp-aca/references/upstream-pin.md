@@ -70,7 +70,7 @@ docs_to_revalidate:
 
 known_issues:
   - id: KI-001
-    description: Keep FastMCP pinned below 3.0.0 until the streamable-http mount-path change is explicitly revalidated. While this KI is open, packages[fastmcp].hold_below (3.0.0) makes the freshness detector suppress 3.x drift; closing/revalidating this KI releases the hold and re-enables 3.x drift detection.
+    description: Coordinated FastMCP 3.x / MCP 2.0 major-migration hold. FastMCP 3.x changed the streamable-HTTP mount path and requires mcp>=2.0. mcp 2.0 is incompatible with fastmcp 2.x. Both packages must migrate together; neither can bump independently. Hold releases when FastMCP 3.x mount-path + MCP 2.0 protocol changes are revalidated end-to-end against the Foundry MCP client.
     upstream_url: https://pypi.org/project/fastmcp/
     status: open
     workaround_location: SKILL.md § "Pin `fastmcp<3.0.0`"
@@ -85,6 +85,7 @@ validation:
     . .venv/bin/activate
     pip install --quiet \
       "fastmcp~=2.14.7" \
+      "mcp~=1.29.0" \
       "azure-mgmt-appcontainers~=5.0.0" \
       "azure-cosmos~=4.16.3" \
       "azure-identity~=1.25.3" \
@@ -94,13 +95,28 @@ validation:
     from fastmcp import FastMCP
     import mcp
     from azure.mgmt.appcontainers import ContainerAppsAPIClient
+    from azure.mgmt.appcontainers.operations import JobsOperations
     from azure.cosmos.aio import CosmosClient
     from azure.identity import DefaultAzureCredential
     from azure.keyvault.secrets import SecretClient
     import aiohttp
+    import importlib.metadata
+
+    # Verify mcp version is 1.29.x
+    mcp_version = importlib.metadata.version("mcp")
+    assert mcp_version.startswith("1.29"), f"Expected mcp 1.29.x, got {mcp_version}"
+    print(f"ok mcp version {mcp_version}")
+
+    # Verify azure-mgmt-appcontainers 5.x JobsOperations API preserved
+    assert hasattr(JobsOperations, 'get'), "JobsOperations.get missing in 5.x"
+    assert hasattr(JobsOperations, 'begin_create_or_update'), "JobsOperations.begin_create_or_update missing in 5.x"
+    print("ok jobs api preserved")
+
     print("ok foundry-mcp-aca imports")
     PY
   expected_output:
+    - "ok mcp version 1.29"
+    - "ok jobs api preserved"
     - "ok foundry-mcp-aca imports"
 
 last_validated: 2026-08-05
@@ -130,6 +146,6 @@ Run the `validation.script` front-matter block. Expected output contains `ok fou
 
 ## Known issues
 
-### KI-001 — FastMCP 3.x path break
+### KI-001 — Coordinated FastMCP 3.x / MCP 2.0 migration hold
 
-Keep the 2.x pin until the server and client path behavior has been revalidated against the Foundry MCP client.
+FastMCP 3.x requires mcp>=2.0 and changed the streamable-HTTP mount path. mcp 2.0 is incompatible with fastmcp 2.x. Both packages are held below their respective majors (fastmcp<3.0.0, mcp<2.0.0) until end-to-end revalidation of the new mount path and MCP protocol revision against the Foundry MCP client.

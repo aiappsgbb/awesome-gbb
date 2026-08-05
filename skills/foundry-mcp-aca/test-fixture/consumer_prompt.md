@@ -288,8 +288,8 @@ param location string = 'swedencentral'
 @description('Container App name (also used as ACR repo tag).')
 param appName string
 
-@description('Full container image reference (ACR login server + repo + tag).')
-param image string
+@description('Container image reference. Defaults to placeholder; azd deploy patches with the real image.')
+param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
 @description('Resource ID of the user-assigned managed identity used for ACR pull.')
 param uamiResourceId string
@@ -386,72 +386,48 @@ services:
 
 ---
 
-## Step 4 — pre-build image, then `azd provision` (HARD GATE)
+## Step 4 — `azd up` (HARD GATE)
 
-The MCP server listens on port 8080 and the Bicep `targetPort` is pinned
-to 8080 (see SKILL.md L489-494 — the ACA helloworld placeholder serves
-port 80, which would trap the MCP revision in `InProgress` forever).
-SKILL.md's `image` Bicep param is required and **undefaulted on purpose**
-— there is no safe placeholder for an MCP-on-ACA deploy. So build the
-real image FIRST via `az acr build` (ACR remote build — no docker
-engine needed on the runner), then run `azd provision` (NOT `azd up`)
-to deploy the Bicep referencing the real image.
+The Bicep template uses a placeholder image (`containerapps-helloworld:latest`)
+for the initial provision. `azd up` runs provision (creates the Container App
+with placeholder), then immediately builds the real image via the `azure.yaml`
+service binding and patches the Container App. The `azd-service-name: mcp` tag
+in Bicep enables `azd deploy` to locate and update the resource. The startup
+probe (`failureThreshold: 30 × periodSeconds: 3 = 90s`) tolerates the brief
+placeholder window while `azd deploy` builds and swaps the real image.
 
-```bash
-# 1) Build the MCP container image via ACR remote build. The runner
-#    needs no docker daemon — ACR's build agent compiles + pushes in
-#    one round trip. Takes ~3-5 min cold.
-IMAGE_REF="${ACR_LOGIN_SERVER}/${APP_NAME}:${SUFFIX}"
-echo "Building image: $IMAGE_REF"
-az acr build \
-  --registry "$ACR_LOGIN_SERVER" \
-  --image "${APP_NAME}:${SUFFIX}" \
-  --file src/Dockerfile \
-  src/
-echo "Image built: $IMAGE_REF"
-```
-
-Initialize the `azd` env and set the Bicep params. `azd` auto-maps
-`UPPER_SNAKE_CASE` env-var keys to `camelCase` Bicep params (so
-`APP_NAME` → `appName`, `IMAGE` → `image`, `UAMI_RESOURCE_ID` →
-`uamiResourceId`). The Container App lands in `rg-awesome-gbb-ci`
-(pre-existing):
+Initialize the `azd` env and set the required Bicep params:
 
 ```bash
 azd env new "$APP_NAME" --location swedencentral --subscription "$AZURE_SUBSCRIPTION_ID"
 azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci
 azd env set APP_NAME "$APP_NAME"
-azd env set IMAGE "$IMAGE_REF"
 azd env set UAMI_RESOURCE_ID "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
+azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$ACR_LOGIN_SERVER"
 ```
 
-Then run `azd provision` (NOT `azd up`). The image is already built and
-in ACR — we don't need the `azd deploy` swap step, just the Bicep
-deploy referencing `$IMAGE_REF`. ACA's ARM resolver has a documented
-cross-resource index-rebuild race (`ManagedEnvironmentNotFound`,
-AGENTS.md § 9.7 Pattern 18) — wrap with a bounded retry loop:
+Then run `azd up`. ACA's ARM resolver has a documented cross-resource
+index-rebuild race (`ManagedEnvironmentNotFound`, AGENTS.md § 9.7 Pattern
+18) — wrap with a bounded retry loop:
 
 ```bash
 attempts=0
 max_attempts=6
-until azd provision --no-prompt; do
+until azd up --no-prompt; do
   attempts=$((attempts + 1))
   if [ $attempts -ge $max_attempts ]; then
-    echo "azd provision failed after $max_attempts attempts"
-    printf 'SMOKE_RESULT=FAIL azd provision failed after retry exhaustion\n' > /tmp/foundry-mcp-aca-smoke-result
-    # Best-effort cleanup of any partial deploy:
+    echo "azd up failed after $max_attempts attempts"
+    printf 'SMOKE_RESULT=FAIL azd up failed after retry exhaustion\n' > /tmp/foundry-mcp-aca-smoke-result
     azd down --purge --force --no-prompt || true
     exit 1
   fi
-  echo "azd provision attempt $attempts failed, sleeping 5s before retry (Pattern 18 — ARM cross-resource race)"
+  echo "azd up attempt $attempts failed, sleeping 5s before retry (Pattern 18 — ARM cross-resource race)"
   sleep 5
 done
 ```
 
-Total budget for this step: ~8-12 min under typical conditions
-(ACR build ~3-5 min + Bicep provision ~5-7 min until revision reaches
-Running state). This is materially faster than `azd up` because we
-skip the `azd deploy` revision-swap loop entirely.
+Total budget for this step: ~8-12 min (ACR remote build ~3-5 min + Bicep
+provision ~3-5 min + image swap ~1-2 min).
 
 ---
 
@@ -475,13 +451,15 @@ echo "FQDN=$FQDN"
 
 Call `initialize`. The MCP streamable-HTTP spec requires a dual
 `Accept: application/json, text/event-stream` header so the server can
-choose single-response vs streaming. The endpoint is `/mcp/` (trailing
-slash — FastMCP 2.x mount path; see SKILL.md L580-593 + L603 critical
-gotchas). Use `curl -L` so any 307 redirect to/from `/mcp` is followed:
+choose single-response vs streaming. The endpoint is `/mcp` (FastMCP
+2.x mount path; see SKILL.md L580-593 + L603 critical gotchas).
+Capture response headers to extract `mcp-session-id` for subsequent
+requests:
 
 ```bash
-INIT_RESPONSE=$(curl -sS -L -w "\n__HTTP_CODE__:%{http_code}" \
-  -X POST "https://${FQDN}/mcp/" \
+INIT_RESPONSE=$(curl -sS -D /tmp/mcp-init-headers.txt \
+  -w "\n__HTTP_CODE__:%{http_code}" \
+  -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{
@@ -506,6 +484,10 @@ if [ "$INIT_CODE" != "200" ]; then
   exit 1
 fi
 
+# Extract mcp-session-id from response headers (case-insensitive grep)
+SESSION_ID=$(grep -i '^mcp-session-id:' /tmp/mcp-init-headers.txt | tr -d '\r' | cut -d' ' -f2)
+echo "mcp-session-id=$SESSION_ID"
+
 # Streamable-HTTP servers may return either JSON or SSE. Extract the
 # JSON object: if the body starts with `data: `, strip the SSE prefix.
 INIT_JSON=$(echo "$INIT_BODY" | sed -n 's/^data: //p' | head -1)
@@ -519,13 +501,27 @@ fi
 echo "serverInfo.name=$SERVER_NAME"
 ```
 
-Then call `tools/list`:
+Send `notifications/initialized` (required by MCP protocol before
+tools/list — no response expected):
 
 ```bash
-TOOLS_RESPONSE=$(curl -sS -L -w "\n__HTTP_CODE__:%{http_code}" \
-  -X POST "https://${FQDN}/mcp/" \
+SESSION_HEADER=""
+[ -n "$SESSION_ID" ] && SESSION_HEADER="-H \"mcp-session-id: $SESSION_ID\""
+curl -sS -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
+  ${SESSION_HEADER:+$SESSION_HEADER} \
+  -d '{ "jsonrpc": "2.0", "method": "notifications/initialized" }' || true
+```
+
+Then call `tools/list` (with session header if present):
+
+```bash
+TOOLS_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
+  -X POST "https://${FQDN}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  ${SESSION_HEADER:+$SESSION_HEADER} \
   -d '{ "jsonrpc": "2.0", "method": "tools/list", "id": 2 }')
 
 TOOLS_CODE=$(echo "$TOOLS_RESPONSE" | grep '__HTTP_CODE__' | cut -d: -f2)
@@ -548,10 +544,68 @@ if [ "$TOOL_COUNT" -lt 1 ]; then
   exit 1
 fi
 echo "tools/list returned $TOOL_COUNT tool(s)"
+
+# Pick the first tool name for the tools/call test
+FIRST_TOOL=$(echo "$TOOLS_JSON" | jq -r '.result.tools[0].name // empty')
+echo "first tool: $FIRST_TOOL"
 ```
 
-If both calls return 200 with conformant bodies, the hard gates have
-passed. Proceed IMMEDIATELY to Step 6.
+Then call `tools/call` on the first available tool to exercise a
+nontrivial round-trip. The canonical MCP smoke server exposes
+`search_orders_filtered` which returns ORD-001 (shipped). Call it
+with a filter matching status=shipped:
+
+```bash
+# Build the tools/call payload. If the first tool is search_orders_filtered,
+# call with a filter that returns ORD-001. Otherwise call with empty args
+# to exercise ANY tool's happy path (the smoke proves the wire, not business logic).
+if [ "$FIRST_TOOL" = "search_orders_filtered" ]; then
+  CALL_ARGS='{"status": "shipped"}'
+else
+  CALL_ARGS='{}'
+fi
+
+CALL_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
+  -X POST "https://${FQDN}/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  ${SESSION_HEADER:+$SESSION_HEADER} \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"method\": \"tools/call\",
+    \"id\": 3,
+    \"params\": {
+      \"name\": \"$FIRST_TOOL\",
+      \"arguments\": $CALL_ARGS
+    }
+  }")
+
+CALL_CODE=$(echo "$CALL_RESPONSE" | grep '__HTTP_CODE__' | cut -d: -f2)
+CALL_BODY=$(echo "$CALL_RESPONSE" | sed '/__HTTP_CODE__/d')
+
+echo "tools/call HTTP=$CALL_CODE"
+echo "tools/call body: $CALL_BODY"
+
+if [ "$CALL_CODE" != "200" ]; then
+  printf 'SMOKE_RESULT=FAIL tools/call returned HTTP %s\n' "$CALL_CODE" > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
+
+CALL_JSON=$(echo "$CALL_BODY" | sed -n 's/^data: //p' | head -1)
+[ -z "$CALL_JSON" ] && CALL_JSON="$CALL_BODY"
+
+# Verify the result has content (non-null, non-empty)
+CALL_CONTENT=$(echo "$CALL_JSON" | jq -r '.result.content // empty')
+if [ -z "$CALL_CONTENT" ]; then
+  printf 'SMOKE_RESULT=FAIL tools/call returned empty result.content\n' > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
+echo "tools/call result has content — nontrivial round-trip verified"
+```
+
+If all three calls (initialize, tools/list, tools/call) return 200 with
+conformant bodies, the hard gates have passed. Proceed IMMEDIATELY to
+Step 6.
 
 DO NOT use `azd ai mcp` preview-CLI subcommands or any other preview
 CLI that hides the HTTP wire protocol (Pattern 16). The HTTP endpoint
