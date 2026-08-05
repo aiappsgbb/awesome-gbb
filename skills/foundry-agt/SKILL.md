@@ -282,7 +282,7 @@ pip install --no-deps "agent-framework~=1.10.0"
 
 # 3. Smoke-check
 agt --version
-agt doctor                          # expect 6/8 packages present
+agt doctor                          # 4.1.0 legacy scan currently reports 1/8
 agt verify                          # expect 10/10 OWASP ASI 2026 PASSED
 
 # 4. Run upstream's 60-second example
@@ -291,8 +291,11 @@ python agent-governance-toolkit/examples/quickstart/govern_in_60_seconds.py
 # → 5 actions evaluated, 3 DENY / 2 ALLOW, ~0.002 ms avg
 ```
 
-If `agt doctor` reports < 6 packages, your `[full]` extra didn't resolve;
-re-run `pip install agent-governance-toolkit[full]` with `-v`.
+AGT 4.1.0's `doctor` command still scans retired pre-consolidation package
+names, so `1/8 packages installed` is expected. Use `agt verify` plus the
+canonical middleware factory smoke in
+[`references/upstream-pin.md`](references/upstream-pin.md) as the install
+gates.
 
 ---
 
