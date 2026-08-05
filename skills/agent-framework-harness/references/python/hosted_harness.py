@@ -7,19 +7,19 @@ Source of truth for the prose example in
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from agent_framework import Agent, InMemoryHistoryProvider, create_harness_agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from azure.core.credentials_async import AsyncTokenCredential
+from azure.identity.aio import DefaultAzureCredential
 
 
 def build_agent(
     *,
     project_endpoint: str | None = None,
     model: str | None = None,
-    credential: Any | None = None,
+    credential: AsyncTokenCredential | None = None,
 ) -> Agent:
     client = FoundryChatClient(
         project_endpoint=project_endpoint or os.environ["FOUNDRY_PROJECT_ENDPOINT"],
