@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.8"
+  version: "2.0.9"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -26,10 +26,18 @@ unlimited tool-loop duration.
 > **GA migration (v2.0.0).** This skill now uses the unified single-file
 > `azure.yaml` deploy shape shared with `foundry-hosted-agents` — the old
 > two-file `agent.yaml` + separately-wired `azure.yaml` contract, the
-> remote-build/manual `services:` wiring, the tenant-ID-env deploy hook,
-> and the manual account-scope `Foundry User` role grant are all retired.
+> remote-build/manual `services:` wiring, and the tenant-ID-env deploy hook
+> are all retired.
 > See § "azure.yaml (unified GA deployment)" and § "Identity & RBAC for
 > hosted agents" below.
+>
+> **RBAC correction (v2.0.9).** Real model inference requires granting the
+> hosted-agent **instance** identity the `Foundry User` role at BOTH the
+> Foundry **account** and **project** scopes before invoking. The earlier
+> "no agent role assignment needed" claim was validated only against an
+> upstream echo agent that never called a real model, so it silently
+> returned HTTP 401 on live inference. See § "Identity & RBAC for hosted
+> agents".
 
 ## When to Use GHCP SDK Instead of MAF
 
@@ -248,7 +256,7 @@ Microsoft sample's `main.py`) — see `references/container.py`.
 | Wrong scope | 401 Unauthorized | Use `ai.azure.com` not `cognitiveservices.azure.com` |
 | `type="openai"` + bare endpoint | `400 Missing api-version` | Either switch to `type="azure"` + bare, or append `/openai/v1/` |
 | Token not refreshed | 401 after ~1h | Mint fresh token per session in `_get_provider()` |
-| Permission error during deploy or invoke | 403 / `PermissionDenied` | Hard FAIL except the exact immediate-post-active readiness envelope documented under § "Invoking the Agent". That narrow case retries the same path; all others require root-cause investigation. Never grant roles to route around it |
+| Permission error during deploy or invoke | 403 / `PermissionDenied` | Hard FAIL except the exact immediate-post-active readiness envelope documented under § "Invoking the Agent". That narrow case retries the same path; all others require root-cause investigation. The two required instance grants (account + project) are a documented prerequisite, not an invoke-time workaround - do not add further grants to route around a failure |
 
 ---
 
@@ -598,34 +606,153 @@ before `azd deploy`:
 
 ## Identity & RBAC for hosted agents
 
-`azd ai agent` creates a dedicated Microsoft Entra agent identity per
-hosted agent at deploy time (visible via `azd ai agent show`) — this is
-what your running container uses to call models and tools.
+`azd ai agent` creates two distinct managed identities you must not
+confuse:
 
-### Default case: no agent role assignment needed
+- **Blueprint identity** — a stable Entra identity bound to the agent
+  definition (visible via `azd ai agent show`). It handles deploy-time
+  wiring (ACR pulls, version registration). **The blueprint identity
+  needs no data-plane role grants for inference.**
+- **Instance identity** — a per-version (per-instance) service principal
+  created for the active agent *version*. **This** identity is what the
+  running agent presents when it calls the model through the project
+  endpoint. It is the identity that must hold model-inference permission.
 
-As of the GA hosted-agent permissions model (Azure/azure-dev PR #8941,
-merged 2026-07-03), the Foundry service grants the agent identity its
-required permissions **internally** — model inferencing through the
-project endpoint and session storage read/write are available by
-default, with no client-side role assignment step.
+The blueprint identity needs no role assignments; only the instance identity does.
 
-**No explicit role assignment or additional configuration is needed for
-the standard BYOK case documented in this skill.** There is no postdeploy
-RBAC-grant hook to run, and no manual account-scope `Foundry User` grant
-for the agent identity. If you were relying on a manual account-scope
-`Foundry User` grant from a pre-GA build of this skill, delete that step —
-it's not just unnecessary now, the client-side assignment attempt is
-itself what the GA change removed (it used to fail noisily when the
-deploying user lacked `Microsoft.Authorization/roleAssignments/write`).
+### Required: grant the instance identity `Foundry User` at BOTH scopes
 
-**A permission error during deploy or invoke is a hard FAIL, except for the
-exact immediate-post-active readiness envelope documented under § "Invoking
-the Agent".** That narrow case retries the same path with bounded backoff.
-Investigate every other cause (wrong scope, expired credential, wrong project)
-and do not attempt to work around it with an ad hoc role assignment.
+Real model inference through a hosted agent requires the **instance**
+identity to hold the **`Foundry User`** role
+(GUID `53ca6127-db72-4b80-b1b0-d745d6d5456d`) at **both** of these scopes
+**before** the first invocation:
 
-**Deploying user** still needs a role to create/update the agent:
+| Role | Assignee | Scope | Why |
+|------|----------|-------|-----|
+| `Foundry User` (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) | Instance identity | Foundry **account** | Model gateway authorizes `responses/write` at account scope |
+| `Foundry User` (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) | Instance identity | Foundry **project** | Data-plane project authorization for the agent's calls |
+
+Controlled Azure testing proved this is the **minimum** working contract:
+project-scope-only failed with 401, account-scope-only failed with 401,
+and **both scopes together succeeded**. Grant one without the other and
+real inference returns `PermissionDenied` /
+`Microsoft.CognitiveServices/accounts/OpenAI/responses/write`.
+
+> **Why the earlier "no grant" contract was wrong.** A prior build of
+> this skill claimed the Foundry service granted the agent identity its
+> permissions internally with no client-side assignment. That was
+> validated only against an upstream **echo** agent that never called a
+> real model, so the missing inference permission never surfaced. On a
+> live model deployment it 401s deterministically. This is a persistent
+> **authorization** gap, not a transient — do not paper over it in a
+> retry classifier.
+
+### Scope construction (no hardcoded IDs)
+
+`AZURE_AI_PROJECT_ID` is the **full project ARM resource ID**:
+
+```
+/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>
+```
+
+Derive both scopes from it with pure string manipulation:
+
+```bash
+project_scope="$AZURE_AI_PROJECT_ID"                 # full project ARM id
+account_scope="${AZURE_AI_PROJECT_ID%/projects/*}"   # strip /projects/<name>
+```
+
+Grant the instance identity at both scopes, **capturing each assignment's
+ARM id** so teardown can revoke exactly what it created (never a standing
+grant):
+
+```bash
+account_assignment_id=$(az role assignment create \
+  --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
+  --assignee-object-id "$instance_principal_id" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "$account_scope" \
+  --query id -o tsv)
+project_assignment_id=$(az role assignment create \
+  --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
+  --assignee-object-id "$instance_principal_id" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "$project_scope" \
+  --query id -o tsv)
+```
+
+If a grant may already exist, resolve its id idempotently first and only
+create (and only later revoke) the ones you actually add:
+
+```bash
+account_assignment_id=$(az role assignment list \
+  --assignee "$instance_principal_id" \
+  --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
+  --scope "$account_scope" --query "[0].id" -o tsv)
+# empty -> create it (owned by you); non-empty -> pre-existing, do not revoke
+```
+
+### Discovering the instance identity (deterministic)
+
+`azd ai agent show --output json` exposes **both** managed identities by
+explicit field path — do not scan the object heuristically:
+
+```bash
+azd ai agent show --output json
+# .instance_identity.principal_id  -> the runtime per-version INSTANCE MI (grant this)
+# .blueprint.principal_id          -> the blueprint identity (never grant)
+# fallbacks: .versions.latest.instance_identity.principal_id
+#            .versions.latest.blueprint.principal_id
+INSTANCE_PID=$(azd ai agent show --output json | jq -er '.instance_identity.principal_id')
+BLUEPRINT_PID=$(azd ai agent show --output json | jq -er '.blueprint.principal_id')
+```
+
+Discover and log **both** so the instance-vs-blueprint distinction is explicit,
+then grant **only** `$INSTANCE_PID`. The instance identity is populated shortly
+after the version goes active; if it is briefly empty, retry `azd ai agent show`
+up to twice with a short wait. `$instance_principal_id` above is this
+`instance_identity.principal_id` — never the `blueprint.principal_id`.
+
+> **Least-privilege note.** The grantor needs
+> `Microsoft.Authorization/roleAssignments/write` scoped to grant only
+> this one role GUID at the account and its descendants. Nothing broader
+> is required.
+
+### Full-event-stream handling after granting
+
+Role assignments take time to propagate. A valid dual-scope invocation
+**may still emit an initial 401 (`model.call_failure` /
+`transient_auth_error`) before an internal retry succeeds within the same
+stream.** Therefore, **inspect the entire SSE event stream — never abort
+on the first transient event.** Accept **recovered assistant output**
+(`assistant.message` / `assistant.message_delta`) even after an earlier
+401 envelope; only treat the invocation as failed if the complete stream
+ends with no assistant output. The exact immediate-post-active readiness
+envelope and bounded backoff are documented under § "Invoking the Agent".
+
+### Cleanup / revocation
+
+The two `Foundry User` grants are the only assignments you add. When
+tearing down (or after a one-shot validation), revoke **strictly by the
+assignment id you captured at create time** — deleting by
+`--assignee`/`--role`/`--scope` can match and remove a pre-existing
+standing grant you did not create:
+
+```bash
+az role assignment delete --ids "$account_assignment_id"
+az role assignment delete --ids "$project_assignment_id"
+```
+
+Revocation is best-effort during teardown — a failed delete must not fail
+an otherwise-successful run (the instance identity is deleted with the
+agent version anyway). Never revoke an id you resolved as **pre-existing**
+in the idempotent-create step above (`az role assignment list --assignee
+... --role ... --scope ... --query "[0].id"` returned non-empty before you
+created anything) — you did not create it, so it is not yours to delete.
+
+### Deploying user
+
+The **deploying user** still needs a role to create/update the agent:
 
 | Role | Scope | Why |
 |------|-------|-----|
@@ -657,8 +784,8 @@ Reader** on the project's managed identity) automatically as part of
 | **Missing `[tool.setuptools] packages = []`** | uv resolution fails without it | Add to pyproject.toml (see `references/pyproject.toml`) |
 | **CognitiveServices API version wrong** | Using old `2024-10-01` | Use `2025-10-01-preview` for agent management APIs |
 | **Hooks fail on Windows** | `shell: sh` in a custom azd hook | Use `shell: pwsh` for cross-platform |
-| **Permission error on deploy or invoke** | Wrong scope, expired credential, wrong project, or another authorization failure | Hard FAIL except the exact immediate-post-active readiness envelope below. Investigate the real cause and never add a manual role grant |
-| **Immediate post-deploy SSE `model.call_failure` 401 / `transient_auth_error`** | Agent version is active but implicit model permission has not finished propagating | Retry the same JSON positional `azd ai agent invoke` path with bounded 15-second backoff (max six); do not grant roles. Any different permission envelope remains a hard FAIL |
+| **401 on real model inference** | Instance identity lacks `Foundry User` at the required scopes | Grant `Foundry User` (`53ca6127-db72-4b80-b1b0-d745d6d5456d`) to the **instance** identity at BOTH the Foundry account scope AND the project scope before invoking; project-only and account-only both 401. See § "Identity & RBAC for hosted agents" |
+| **Immediate post-grant SSE `model.call_failure` 401 / `transient_auth_error`** | Instance grants are correct but role-assignment propagation has not completed | Inspect the full event stream and retry the same JSON positional `azd ai agent invoke` path with bounded 15-second backoff (max six); accept recovered assistant output later in the stream. A 401 that never recovers after both grants is a hard FAIL |
 | **"responses protocol not declared" (bot 400)** | `azure.yaml`'s agent service only declares `invocations` but bot/CLI calls via Responses API (`oai.responses.create()`) | **Dual protocols don't work** — `InvocationAgentServerHost` only serves `/invocations`; the `/responses` path returns 404 even if a second protocol entry is declared. **Fix:** Rewrite the bot to POST directly to the Invocations SSE endpoint (or use `azd ai agent invoke --protocol invocations`) and parse `assistant.message` + `assistant.message_delta` events. **Alternative:** Use MAF runtime (ResponsesHostServer) which natively serves responses. |
 | **ACR push 403 / RBAC error** | Deploying user lacks `AcrPush` on the target ACR | Assign `AcrPush` on the ACR, or use the guided `azd ai agent init --deploy-mode container` path, which wires the registry automatically (Azure/azure-dev #8981) |
 | **Evals show no telemetry** | AppInsights not connected to Foundry account | Create `AppInsights` connection on the **account** (not project). Category: `AppInsights`, target: ARM resource ID, metadata: `ApiType: Azure`. `APPLICATIONINSIGHTS_CONNECTION_STRING` is reserved — platform injects it. |

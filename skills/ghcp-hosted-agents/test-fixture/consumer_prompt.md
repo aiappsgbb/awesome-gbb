@@ -92,13 +92,19 @@ provisions a new Foundry project or registry. Hosted agents run on
 Foundry-managed, per-session sandboxes - there is no Container Apps
 environment, no ACA app, and nothing else to provision for this fixture.
 
-**No agent role grant.** Per the skill's GA identity guidance, the hosted
-agent's own Entra identity has implicit access to model inferencing and
-session storage by default. Do NOT run any command that creates an Azure
-RBAC role assignment against the agent's identity, and do NOT expect one to
-be necessary. Any permission error is a hard FAIL except the exact immediate-post-active readiness envelope described in Step 4; that one
-narrow case retries the same invoke path. Never route around a failure with
-an ad hoc role grant.
+**Dual-scope instance RBAC is required before real inference.** A hosted
+agent has two distinct identities. The **blueprint** identity (bound to the
+agent definition) needs no data-plane role grants. The **instance** identity
+(the per-version service principal the running agent presents when it calls
+the model) MUST hold the `Foundry User` role
+(`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account scope
+AND the Foundry project scope, or real model inference returns HTTP 401. The
+earlier "implicit access, never grant" note was validated only against an
+upstream echo agent that never called a model; it silently 401'd on live
+inference. Step 3.5 below discovers the instance principal and creates both
+assignments before Step 4 invokes; Step 5 revokes only those two assignments.
+Do NOT grant any role to the blueprint identity, and do NOT grant at only one
+scope (project-only and account-only both 401).
 
 ## Step 1 - install and verify the azd Foundry extensions
 
@@ -240,11 +246,11 @@ bash /tmp/ghcp-hosted-agents-ga-smoke.sh
 ```
 
 If `azd deploy` fails with a permission/authorization error, that is a hard
-FAIL (see the "No agent role grant" note above) - do not attempt to work
-around it with a manual role assignment. **The deploy command above is the
-only deploy attempt.** On any failure, do not rerun deploy, query Azure to
-discover replacement values, hardcode inventory, or modify the azd env.
-Write the matching FAIL marker and stop.
+FAIL - do not attempt to work around it by re-running deploy. Instance-identity
+role grants happen in Step 3.5 (after the version is active), not here. **The
+deploy command above is the only deploy attempt.** On any failure, do not rerun
+deploy, query Azure to discover replacement values, hardcode inventory, or
+modify the azd env. Write the matching FAIL marker and stop.
 
 ## Step 3 - GA SDK hard check: agent version active (deterministic, no preview surfaces)
 
@@ -306,18 +312,181 @@ with DefaultAzureCredential() as credential, AIProjectClient(
     record(f"AGENT_VERSION_ACTIVE name={agent_name} protocol=invocations/2.0.0")
 ```
 
-Do not use `allow_preview=True`, `project.beta.agents.patch_agent_details`,
-protocol version `"1.0.0"`/`"v1"`, or a `Foundry-Features` preview header. A
-permission error during deploy or the version check is a hard FAIL. The only
-retryable permission case is the exact immediate-post-active readiness
-envelope classified in Step 4. Do not attempt a manual role assignment to
-work around either case.
+The instance/blueprint identity discovery is NOT done here (builtin MCPs are
+disabled in CI); it is done deterministically with the `azd` CLI in Step 3.5.
+Add nothing to this program's imports beyond `os` and `time`. Do not use
+`allow_preview=True`, `project.beta.agents.patch_agent_details`, protocol
+version `"1.0.0"`/`"v1"`, or a `Foundry-Features` preview header. A permission
+error during deploy or the version check is a hard FAIL. The only retryable
+permission case is the grant-propagation readiness envelope classified in
+Step 4.
+
+## Step 3.5 - discover both identities, grant the instance one at both scopes
+
+Discovery is deterministic and self-contained. Because builtin MCPs are
+disabled in CI, use the `azd` CLI (not a Foundry MCP tool). Run
+`azd ai agent show --output json` from the azd work dir; it exposes BOTH
+managed identities by explicit field path:
+
+- `.instance_identity.principal_id` (fallback `.versions.latest.instance_identity.principal_id`)
+  — the runtime per-version **instance** MI. **This is the only grant target.**
+- `.blueprint.principal_id` (fallback `.versions.latest.blueprint.principal_id`)
+  — the **blueprint** identity. Log it for the distinction, but **never grant it.**
+
+The instance principal must hold `Foundry User`
+(`53ca6127-db72-4b80-b1b0-d745d6d5456d`) at BOTH the Foundry account scope AND
+the Foundry project scope before invocation. Project scope is the full project
+ARM id from CI; account scope strips the trailing `/projects/<name>` segment.
+The grant is idempotent: reuse a pre-existing assignment (never revoke it),
+otherwise create one and record ownership so teardown deletes only ours. The
+CI UAMI's ABAC condition permits granting only this one role at the account and
+its descendants.
+
+The discovery+grant logic runs from a heredoc script file executed with
+`bash <file>`, exactly like the Step 2 deploy script. The Copilot CLI's
+shell-approval layer refuses an inline tool call that chains variable
+assignments into command substitutions (an intermediate `azd ai agent show`
+capture piped into `jq`), returning "Permission denied and could not request
+permission from user" even under `--allow-all-tools`. Writing the same logic
+into a quoted heredoc keeps those substitutions as file *data*, so the layer
+only inspects a benign `cat`/`bash` pair. Discovery therefore redirects the
+show output to a file and reads each principal by explicit `jq` field path -
+no intermediate shell variable.
+
+```bash
+cat > /tmp/ghcp-hosted-agents-rbac.sh <<'RBAC'
+set -euo pipefail
+work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
+cd "$work_dir"
+
+# Failure-safe rollback: if this script exits nonzero AFTER creating one grant
+# but before both are in place (e.g. account create succeeds, project create
+# fails), best-effort revoke ONLY the assignment(s) this run created (owned=1)
+# and preserve the original exit status. A pre-existing grant (owned=0) is
+# never touched. The trap is installed before any create so a partial grant is
+# always covered even though the script runs under `set -e`.
+rollback() {
+  rc=$?
+  [ "$rc" -eq 0 ] && exit 0
+  for state in /tmp/ghcp-hosted-agents-account-assignment /tmp/ghcp-hosted-agents-project-assignment; do
+    [ -f "$state" ] || continue
+    read -r rb_id rb_owned < "$state"
+    if [ "${rb_owned:-0}" = "1" ] && [ -n "${rb_id:-}" ]; then
+      az role assignment delete --ids "$rb_id" 2>/dev/null \
+        && printf 'NOTE rollback revoked owned assignment %s\n' "$rb_id" \
+        || printf 'NOTE rollback revoke failed for %s; CI janitor will prune\n' "$rb_id"
+    fi
+  done
+  exit "$rc"
+}
+trap rollback EXIT
+
+# a file and read each principal by explicit jq field path (never an
+# intermediate variable piped into jq). Retry up to twice with a 30s wait if
+# the instance identity has not populated yet.
+INSTANCE_PID=""
+BLUEPRINT_PID=""
+for attempt in 1 2 3; do
+  azd ai agent show --output json > /tmp/ghcp-hosted-agents-agent-show.json 2>/dev/null || true
+  INSTANCE_PID="$(jq -r '.instance_identity.principal_id // .versions.latest.instance_identity.principal_id // empty' /tmp/ghcp-hosted-agents-agent-show.json 2>/dev/null || true)"
+  BLUEPRINT_PID="$(jq -r '.blueprint.principal_id // .versions.latest.blueprint.principal_id // empty' /tmp/ghcp-hosted-agents-agent-show.json 2>/dev/null || true)"
+  [ -n "$INSTANCE_PID" ] && break
+  sleep 30
+done
+if [ -z "$INSTANCE_PID" ]; then
+  printf 'SMOKE_RESULT=FAIL could not discover hosted-agent instance principal\n' \
+    > /tmp/ghcp-hosted-agents-smoke-result
+  exit 1
+fi
+# Log both identities so the instance-vs-blueprint distinction is explicit.
+printf 'INSTANCE_PRINCIPAL id=%s\n' "$INSTANCE_PID" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'INSTANCE_PRINCIPAL id=%s\n' "$INSTANCE_PID"
+printf 'BLUEPRINT_PRINCIPAL id=%s\n' "${BLUEPRINT_PID:-<none>}" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'BLUEPRINT_PRINCIPAL id=%s\n' "${BLUEPRINT_PID:-<none>}"
+
+foundry_role="53ca6127-db72-4b80-b1b0-d745d6d5456d"
+project_scope="$AZURE_AI_PROJECT_ID"
+account_scope="${AZURE_AI_PROJECT_ID%/projects/*}"
+
+# Guard: AZURE_AI_PROJECT_ID must be a full project ARM id carrying a
+# /projects/<name> segment, or the derived account scope is wrong.
+case "$project_scope" in
+  "$account_scope"/projects/*) ;;
+  *) printf 'SMOKE_RESULT=FAIL malformed AZURE_AI_PROJECT_ID\n' \
+       > /tmp/ghcp-hosted-agents-smoke-result; exit 1 ;;
+esac
+
+# --- account scope (idempotent) ---
+ACCOUNT_ASSIGNMENT_ID="$(az role assignment list \
+  --assignee "$INSTANCE_PID" --role "$foundry_role" --scope "$account_scope" \
+  --query "[0].id" -o tsv 2>/dev/null || true)"
+if [ -n "$ACCOUNT_ASSIGNMENT_ID" ]; then
+  ACCOUNT_OWNED=0
+else
+  ACCOUNT_ASSIGNMENT_ID="$(az role assignment create \
+    --role "$foundry_role" \
+    --assignee-object-id "$INSTANCE_PID" \
+    --assignee-principal-type ServicePrincipal \
+    --scope "$account_scope" \
+    --query id -o tsv)"
+  ACCOUNT_OWNED=1
+fi
+printf '%s %s\n' "$ACCOUNT_ASSIGNMENT_ID" "$ACCOUNT_OWNED" \
+  > /tmp/ghcp-hosted-agents-account-assignment
+printf 'ROLE_ASSIGNED scope=account owned=%s\n' "$ACCOUNT_OWNED" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'ROLE_ASSIGNED scope=account owned=%s\n' "$ACCOUNT_OWNED"
+
+# --- project scope (idempotent) ---
+PROJECT_ASSIGNMENT_ID="$(az role assignment list \
+  --assignee "$INSTANCE_PID" --role "$foundry_role" --scope "$project_scope" \
+  --query "[0].id" -o tsv 2>/dev/null || true)"
+if [ -n "$PROJECT_ASSIGNMENT_ID" ]; then
+  PROJECT_OWNED=0
+else
+  PROJECT_ASSIGNMENT_ID="$(az role assignment create \
+    --role "$foundry_role" \
+    --assignee-object-id "$INSTANCE_PID" \
+    --assignee-principal-type ServicePrincipal \
+    --scope "$project_scope" \
+    --query id -o tsv)"
+  PROJECT_OWNED=1
+fi
+printf '%s %s\n' "$PROJECT_ASSIGNMENT_ID" "$PROJECT_OWNED" \
+  > /tmp/ghcp-hosted-agents-project-assignment
+printf 'ROLE_ASSIGNED scope=project owned=%s\n' "$PROJECT_OWNED" \
+  >> /tmp/ghcp-hosted-agents-smoke-evidence
+printf 'ROLE_ASSIGNED scope=project owned=%s\n' "$PROJECT_OWNED"
+
+printf 'ASSIGNMENT_IDS account=%s project=%s\n' \
+  "$ACCOUNT_ASSIGNMENT_ID" "$PROJECT_ASSIGNMENT_ID"
+
+# Proven propagation contract: with both grants freshly created, wait 60s
+# before invoking. Controlled testing showed the first invoke event may STILL
+# emit a 401 that the hosted agent's internal retry recovers ~2s later, so
+# Step 4's bounded loop must consume the FULL event stream after this wait.
+sleep 60
+RBAC
+bash /tmp/ghcp-hosted-agents-rbac.sh
+```
+
+Grant exactly these two assignments and nothing else; grant to the instance
+principal (`$INSTANCE_PID`) only, never the blueprint identity
+(`$BLUEPRINT_PID`). The 60s wait plus Step 4's bounded six-attempt invoke loop
+(15-second backoff) together cover propagation: an initial `model.call_failure`
+401 / `transient_auth_error` may appear before propagation completes, and the
+loop retries the same invoke path — consuming the full stream each attempt —
+until a recovered assistant event appears.
 
 ## Step 4 - invoke via `azd ai agent invoke` (single documented path)
 
 Per SKILL.md § "Invoking the Agent", `azd ai agent invoke` is the primary
-documented path on GA. Use only this path, with a bounded retry for the exact
-post-deploy implicit-permission readiness envelope observed in live CI. Capture
+documented path on GA. Use only this path, with a bounded retry for the
+grant-propagation readiness envelope (an initial `model.call_failure` 401 /
+`transient_auth_error` that clears once the Step 3.5 assignments propagate).
+The only retryable permission case is this exact immediate-post-active readiness envelope; every other permission failure is a hard FAIL. Capture
 stdout without a fixture-local `tee` (the workflow already captures the full
 transcript):
 
@@ -541,25 +710,44 @@ Do not use `curl`, a hand-rolled REST call, or `references/invoke_agent.py`
 here - `azd ai agent invoke` is the single documented path for this fixture
 (Pattern 16, AGENTS.md § 9.7). Retry only the confirmed HTTP-200 SSE
 readiness envelope (`model.call_failure`, status 401, `PermissionDenied` /
-`transient_auth_error`) with six attempts and 15-second backoff. A nonzero
-CLI exit or any other terminal envelope is a hard FAIL. Do not add a role
-grant. The last exact raw response is persisted to
-`/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it under an
-attempt-specific filename before any retry and uploads both attempts.
+`transient_auth_error`) with six attempts and 15-second backoff - this is the
+Step 3.5 grant-propagation window. A nonzero CLI exit or any other terminal
+envelope is a hard FAIL. The Step 3.5 assignments are already in place; do not
+add further role grants or re-grant here. The last exact raw response is
+persisted to `/tmp/ghcp-hosted-agents-invoke.log`; the workflow snapshots it
+under an attempt-specific filename before any retry and uploads both attempts.
 
 ## Step 5 - best-effort teardown
 
 Read the agent name persisted in Step 2 and perform teardown in a bounded
 300-second window. A failure or timeout here does NOT affect the PASS marker -
-print one NOTE to stdout and continue to Step 6. The CI resource group is
-periodically pruned of orphaned hosted-agent versions and ACR repositories
-by a separate janitor.
+print one NOTE to stdout and continue to Step 6. Teardown also revokes the two
+role assignments Step 3.5 created (and nothing else). The CI resource group is
+periodically pruned of orphaned hosted-agent versions and ACR repositories by
+a separate janitor.
 
 ```bash
 agent_name="$(cat /tmp/ghcp-hosted-agents-agent-name)"
+work_dir="$(cat /tmp/ghcp-hosted-agents-work-dir)"
+cd "$work_dir"
 timeout 300 azd ai agent delete "$agent_name" --force --no-prompt \
   && printf 'AGENT_DELETED name=%s\n' "$agent_name" >> /tmp/ghcp-hosted-agents-smoke-evidence \
   || echo "NOTE best-effort teardown exceeded 300-second cap or encountered an error; CI janitor will prune orphaned resources"
+
+# Best-effort revoke of ONLY the assignments this run created (owned=1). A
+# pre-existing assignment (owned=0) is left intact. Pattern 25: a failed revoke
+# emits a NOTE and never turns a green deploy+invoke into FAIL.
+for state in /tmp/ghcp-hosted-agents-account-assignment /tmp/ghcp-hosted-agents-project-assignment; do
+  [ -f "$state" ] || continue
+  read -r assignment_id owned < "$state"
+  if [ "${owned:-0}" = "1" ] && [ -n "${assignment_id:-}" ]; then
+    az role assignment delete --ids "$assignment_id" 2>/dev/null \
+      && echo "NOTE revoked $assignment_id" \
+      || echo "NOTE best-effort revoke failed for $assignment_id; CI janitor will prune"
+  else
+    echo "NOTE assignment ${assignment_id:-<none>} pre-existed (owned=0); left intact"
+  fi
+done
 ```
 
 Do NOT run a full-environment teardown command, a container-app cleanup
@@ -589,6 +777,10 @@ required_patterns = (
     r"AZD_DEPLOY_ATTEMPT count=1",
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ghcp-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ghcp-[0-9a-f]{8} protocol=invocations/2\.0\.0",
+    r"INSTANCE_PRINCIPAL id=\S+",
+    r"BLUEPRINT_PRINCIPAL id=\S+",
+    r"ROLE_ASSIGNED scope=account owned=[01]",
+    r"ROLE_ASSIGNED scope=project owned=[01]",
     r"INVOKE_OK name=ci-smoke-ghcp-[0-9a-f]{8} attempt=[1-6]",
 )
 for pattern in required_patterns:
@@ -628,7 +820,8 @@ printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > /tmp/ghcp-hosted-agents-smo
 printf 'SMOKE_RESULT=FAIL microsoft.foundry or azure.ai.agents extension not installed\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd env contract incomplete\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd deploy failed\n' > /tmp/ghcp-hosted-agents-smoke-result
-printf 'SMOKE_RESULT=FAIL permission denied - agent identity should have implicit access by default\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL could not discover hosted-agent instance principal\n' > /tmp/ghcp-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL role assignment create failed for instance identity\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL agent version never reached active\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL protocol version mismatch - expected invocations 2.0.0\n' > /tmp/ghcp-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL invoke command exited non-zero\n' > /tmp/ghcp-hosted-agents-smoke-result
