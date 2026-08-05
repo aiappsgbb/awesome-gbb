@@ -36,6 +36,20 @@ FIXTURE = ROOT / "skills" / "foundry-toolbox" / "test-fixture" / "consumer_promp
 
 PYTHON_FENCE_RE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
+# PR #437 fixture correction — the Copilot CLI shell-tool permission gate
+# rejects file creation OUTSIDE `$GITHUB_WORKSPACE`, even with
+# `--allow-all-tools` (AGENTS.md § 9.7 Pattern 20). The two programs the
+# fixture authors through OUTER Bash heredocs — the azd smoke shell script and
+# the Python smoke program — must therefore be written to and executed from a
+# workspace-local scratch directory, not `/tmp`. Marker/evidence workflow
+# contracts and the inner script's own runtime work dirs (venv, azd env, delete
+# logs) legitimately stay in `/tmp` and are NOT policed by these constants.
+SCRATCH_DIR = "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox"
+AZD_SMOKE_SCRIPT = f"{SCRATCH_DIR}/foundry-toolbox-azd-smoke.sh"
+PY_SMOKE_PROGRAM = f"{SCRATCH_DIR}/foundry-toolbox-smoke.py"
+TMP_AZD_SMOKE_SCRIPT = "/tmp/foundry-toolbox-azd-smoke.sh"
+TMP_PY_SMOKE_PROGRAM = "/tmp/foundry-toolbox-smoke.py"
+
 
 def _frontmatter(text: str) -> dict:
     """Parse the YAML frontmatter block delimited by the first two `---` lines."""
@@ -503,6 +517,99 @@ class FoundryToolboxCleanupContractTests(unittest.TestCase):
             "the fixture's hard sidecar-evidence contract requires exactly five "
             "record emissions total; the cleanup-path fix must not change this",
         )
+
+
+class FoundryToolboxScratchPathContractTests(unittest.TestCase):
+    """PR #437 T3 fixture fix — heredoc-authored programs must live in `.scratch`.
+
+    Live run 30963119751 (job 92171181413) proved the azd smoke passed and then
+    the Bash tool was DENIED when it tried `cat > /tmp/foundry-toolbox-smoke.py
+    <<'PY'` — "Permission denied and could not request permission from user" —
+    so the GA SDK call never ran. The Copilot CLI shell permission gate rejects
+    file creation outside `$GITHUB_WORKSPACE` even with `--allow-all-tools`
+    (AGENTS.md § 9.7 Pattern 20; canonical form in the azd-patterns fixture).
+
+    Both programs the fixture authors through OUTER Bash heredocs — the azd
+    smoke shell script and the Python smoke program — must be authored at and
+    executed from `${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/`. These tests
+    deliberately do NOT police the `/tmp` marker/evidence workflow contracts or
+    the inner script's own runtime work dirs (venv, `azd env`, delete logs) —
+    only the two outer heredoc-authored program files must move.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = FIXTURE.read_text(encoding="utf-8")
+
+    def test_scratch_dir_is_created_before_use(self) -> None:
+        self.assertRegex(
+            self.text,
+            r"mkdir\s+-p\s+[\"']?\$\{GITHUB_WORKSPACE\}/\.scratch/foundry-toolbox\b",
+            "the fixture must `mkdir -p ${GITHUB_WORKSPACE}/.scratch/foundry-toolbox` "
+            "before authoring either heredoc program there",
+        )
+
+    def test_azd_smoke_script_lives_under_scratch_not_tmp(self) -> None:
+        self.assertNotIn(
+            TMP_AZD_SMOKE_SCRIPT,
+            self.text,
+            "the azd smoke shell script is authored by an outer Bash heredoc, so "
+            f"it must NOT target {TMP_AZD_SMOKE_SCRIPT!r} (the permission gate "
+            "denies heredoc writes outside $GITHUB_WORKSPACE)",
+        )
+        self.assertIn(
+            AZD_SMOKE_SCRIPT,
+            self.text,
+            f"the azd smoke shell script must be authored at {AZD_SMOKE_SCRIPT!r}",
+        )
+
+    def test_azd_smoke_script_is_executed_from_scratch(self) -> None:
+        self.assertRegex(
+            self.text,
+            r"bash\s+[\"']?\$\{GITHUB_WORKSPACE\}/\.scratch/foundry-toolbox/"
+            r"foundry-toolbox-azd-smoke\.sh",
+            "the azd smoke script must be executed from its workspace-local scratch "
+            "path via an explicit `${GITHUB_WORKSPACE}` reference (shell vars do not "
+            "persist across separate Copilot tool calls)",
+        )
+
+    def test_python_smoke_program_lives_under_scratch_not_tmp(self) -> None:
+        self.assertNotIn(
+            TMP_PY_SMOKE_PROGRAM,
+            self.text,
+            "the Python smoke program is authored by an outer Bash heredoc, so it "
+            f"must NOT target {TMP_PY_SMOKE_PROGRAM!r} — this is the exact write "
+            "that was denied in live run 30963119751",
+        )
+        self.assertIn(
+            PY_SMOKE_PROGRAM,
+            self.text,
+            f"the Python smoke program must be authored at {PY_SMOKE_PROGRAM!r}",
+        )
+
+    def test_python_smoke_program_is_executed_from_scratch(self) -> None:
+        self.assertRegex(
+            self.text,
+            r"/tmp/foundry-toolbox-venv/bin/python\s+[\"']?\$\{GITHUB_WORKSPACE\}/"
+            r"\.scratch/foundry-toolbox/foundry-toolbox-smoke\.py",
+            "the Python smoke program must be executed with the venv interpreter "
+            "from its workspace-local scratch path via an explicit "
+            "`${GITHUB_WORKSPACE}` reference",
+        )
+
+    def test_marker_and_evidence_contracts_remain_in_tmp(self) -> None:
+        """Guard against over-correction: workflow contract paths must NOT move."""
+        for contract in (
+            "/tmp/foundry-toolbox-smoke-result",
+            "/tmp/foundry-toolbox-smoke-evidence",
+        ):
+            self.assertIn(
+                contract,
+                self.text,
+                f"the workflow marker/evidence contract {contract!r} must stay in "
+                "/tmp; only the outer heredoc-authored program files move to "
+                ".scratch",
+            )
 
 
 class FoundryToolboxTroubleshootingContractTests(unittest.TestCase):

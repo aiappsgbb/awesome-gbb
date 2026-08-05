@@ -45,9 +45,22 @@ authentication gate; if it fails, use the matching final-step marker.
 
 ## Step 1 - execute the azd and GA SDK Toolbox contracts
 
+The Copilot CLI shell-tool permission gate rejects file creation OUTSIDE
+`$GITHUB_WORKSPACE`, even with `--allow-all-tools` (a heredoc write to `/tmp`
+fails with "Permission denied and could not request permission from user"), so
+every program you author through a Bash heredoc must live under a
+workspace-local scratch directory. Shell variables do not persist across
+separate Copilot tool calls, so always spell out the explicit
+`${GITHUB_WORKSPACE}` path in each command. Create the scratch directory first:
+
+```bash
+mkdir -p "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox"
+```
+
 First, run the exact service-target and standalone-file shapes documented by
 the skill. Use a Bash heredoc to write this script to
-`/tmp/foundry-toolbox-azd-smoke.sh`, then run it once:
+`${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-azd-smoke.sh`,
+then run it once:
 
 ```bash
 #!/usr/bin/env bash
@@ -123,7 +136,7 @@ record "AZD_CLI_CREATED name=${cli_name}"
 ```
 
 ```bash
-bash /tmp/foundry-toolbox-azd-smoke.sh
+bash "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-azd-smoke.sh"
 ```
 
 After that script exits `0`, both azd Toolboxes have been cleaned up
@@ -141,8 +154,8 @@ python3 -m venv /tmp/foundry-toolbox-venv
 ```
 
 Use a Bash heredoc to write the following program to
-`/tmp/foundry-toolbox-smoke.py`, then run it once with
-`/tmp/foundry-toolbox-venv/bin/python`:
+`${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-smoke.py`, then
+run it once with the venv interpreter:
 
 ```python
 import asyncio
@@ -243,6 +256,12 @@ with (
                 f"NOTE Toolbox delete failed name={toolbox_name} "
                 f"error_type={type(exc).__name__}"
             )
+```
+
+Run it once:
+
+```bash
+/tmp/foundry-toolbox-venv/bin/python "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-smoke.py"
 ```
 
 Every management call in this Python smoke must stay under stable
