@@ -141,6 +141,15 @@ belong to Agent definitions and are not the canonical Toolbox 2.4 models.
 | `BrowserAutomationPreviewToolboxTool` | `browser_automation_preview` | Preview | Browser Automation connection parameters |
 | `ReminderPreviewToolboxTool` | `reminder_preview` | Preview | No required fields |
 
+> **Identifier requirement (live invariant):** the per-tool `name` above is
+> otherwise optional, but a Toolbox version may contain **at most one** tool
+> without an identifier. As soon as a version bundles two or more tools, every
+> tool beyond that single unnamed allowance **must** carry a unique identifier —
+> `name` for built-in tools, or `server_label` for `MCPToolboxTool`. Omitting it
+> makes `create_version` fail with `400 invalid_payload: Multiple tools without
+> identifiers found`. This is not limited to duplicate instances of the same
+> tool type — two unnamed tools of any types collide.
+
 ### Per-tool anti-patterns
 
 - **`azure_ai_search` tool:** DO NOT use when you need vector + keyword hybrid search in a VNet-injected agent (file_search VNet support is broken as of May 2026). DO use a custom MCP-wrapped AI Search in those cases, wired via the `mcp` tool type.
@@ -274,8 +283,9 @@ with (
         name="agent-tools",
         description="Web search + product index + Microsoft Learn MCP",
         tools=[
-            WebSearchToolboxTool(),
+            WebSearchToolboxTool(name="web-search"),
             AzureAISearchToolboxTool(
+                name="product-index",
                 azure_ai_search=AzureAISearchToolResource(
                     indexes=[
                         AISearchIndexResource(
@@ -649,7 +659,10 @@ from azure.ai.projects.models import (
 new_version = project.toolboxes.create_version(
     name="agent-tools",
     description="Added code interpreter",
-    tools=[WebSearchToolboxTool(), CodeInterpreterToolboxTool()],
+    tools=[
+        WebSearchToolboxTool(name="web-search"),
+        CodeInterpreterToolboxTool(name="code-interpreter"),
+    ],
 )
 
 toolbox = project.toolboxes.update(
@@ -1015,15 +1028,18 @@ When using `auth.type: managed_identity`, the Foundry **project's** MI
 the target service to that MI before deploying or every call returns
 `401 Unauthorized`.
 
-### Multi-instance — `name` field required
+### Multiple tools — one unnamed allowance, `name` / `server_label` otherwise
 
 ```
 400 invalid_payload: Multiple tools without identifiers found...
 ```
 
-Add a unique `name` field to each instance of the same tool type. The
-`name` doubles as the user-facing tool name (without `server_label`
-prefix for MCP).
+A Toolbox version may leave **at most one** tool without an identifier. The
+error fires whenever a second tool lacks one — regardless of whether the two
+unnamed tools share a type. Give every tool beyond that single unnamed
+allowance a unique identifier: a `name` field for built-in tools, or
+`server_label` for `MCPToolboxTool`. The `name` doubles as the user-facing tool
+name (without the `server_label` prefix that MCP tools carry).
 
 ---
 
@@ -1096,7 +1112,7 @@ SPEC § 7c).
 | `tools/list` returns 0 tools (OpenAPI) | Malformed OpenAPI spec | Validate spec is OpenAPI 3.0 / 3.1 with `paths`, `operationId`, parameter schemas |
 | `tools/list` returns 0 tools (built-in) | Toolbox not provisioned yet, or tool unsupported in region | Wait 10s and retry; check region compatibility table |
 | `tools/list` returns fewer tools than expected | `allowed_tools` filter has wrong / misspelled names (case-sensitive) | Remove filter, list all, set exact names from response |
-| `400 Multiple tools without identifiers` | Two unnamed instances of same type | Add unique `name` field |
+| `400 Multiple tools without identifiers` | More than one unnamed tool in the version (any types) | Leave at most one tool unnamed; give the rest a unique `name` (or `server_label` for MCP) |
 | `CONSENT_REQUIRED` (`-32006`) | First-time OAuth flow | Open URL from `error.message`, complete consent, retry |
 | `401` on MCP calls | Expired token or wrong scope | Use `https://ai.azure.com/.default`; refresh token |
 | Tool name not found | MCP names are prefixed with `server_label` | Use `{server_label}.{tool_name}` (or `_` for Copilot SDK) |
@@ -1126,7 +1142,12 @@ SPEC § 7c).
   sanitized (toolbox name + exception type only) and transcript-only; removed
   a dangling troubleshooting remediation clause left over from removed
   tool-pinning guidance (no ToolConfig support exists in this skill);
-  realigned `metadata.validated` to the upstream pin's `last_validated`.
+  realigned `metadata.validated` to the upstream pin's `last_validated`; and
+  gave every tool in the fixture's live `create_version` payload and the
+  multi-tool SKILL examples a unique identifier (`name`, or `server_label` for
+  MCP) so a second unnamed tool no longer trips
+  `400 Multiple tools without identifiers` — the live invariant allows at most
+  one unnamed tool per Toolbox version regardless of tool type.
 - `2.1.0` - stabilized Tool Search with `ToolSearchToolboxTool` /
   `toolbox_search`, refreshed the supported package lines, and kept skills in
   Toolboxes preview-only.

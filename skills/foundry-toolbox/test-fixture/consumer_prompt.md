@@ -214,8 +214,8 @@ with (
         name=toolbox_name,
         description="CI stable Tool Search smoke",
         tools=[
-            ToolSearchToolboxTool(),
-            CodeInterpreterToolboxTool(),
+            ToolSearchToolboxTool(name="tool-search"),
+            CodeInterpreterToolboxTool(name="code-interpreter"),
         ],
     )
     try:

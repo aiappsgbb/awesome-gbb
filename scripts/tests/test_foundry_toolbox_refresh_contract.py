@@ -1134,5 +1134,424 @@ class HandlerNameShadowUnitTests(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# PR #437 second live failure — tool-identifier contract.
+#
+# Live evidence (run 30964266881, job 92174754376): the fixture's Python smoke
+# reached Azure and `project.toolboxes.create_version(...)` returned
+# `400 invalid_payload: Multiple tools without identifiers found. All tools
+# except a single tool must have unique identifiers ('name' or 'server_label')`
+# because the payload carried both `ToolSearchToolboxTool()` and
+# `CodeInterpreterToolboxTool()` with neither named.
+#
+# The live invariant (authoritative over the internally-inconsistent Learn
+# page): a Toolbox version may contain AT MOST ONE tool without an identifier;
+# every remaining tool needs a unique `name` (or `server_label` for MCP). The
+# error is NOT limited to duplicate instances of the same tool type.
+#
+# These tests are structural (AST of the create_version payloads, parsed
+# guidance rows) rather than fragile global substring scans.
+# ---------------------------------------------------------------------------
+
+
+def _keyword_value(call: ast.Call, name: str) -> ast.AST | None:
+    """Return the AST value node bound to keyword `name` on `call`, or None."""
+    for kw in call.keywords:
+        if kw.arg == name:
+            return kw.value
+    return None
+
+
+def _const_str(node: ast.AST | None) -> str | None:
+    """Return the string value of a constant-string AST node, else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _tool_identifier(call: ast.Call) -> str | None:
+    """Return a tool's non-empty identifier — `name=` or (MCP) `server_label=`.
+
+    Mirrors the live service invariant: a Toolbox tool is "identified" when it
+    carries a non-empty `name` string, or — for `MCPToolboxTool` — a non-empty
+    `server_label`. Returns None when the tool constructor supplies neither
+    (an "unnamed" tool), of which the service permits at most one per version.
+    """
+    for key in ("name", "server_label"):
+        value = _const_str(_keyword_value(call, key))
+        if value:
+            return value
+    return None
+
+
+def _tools_list_elements(call: ast.Call) -> list[ast.Call]:
+    """Return the tool-constructor `ast.Call` elements of a `tools=[...]` kwarg.
+
+    Asserts `tools=` is present as a list literal so a refactor that stops
+    passing a literal list (defeating this structural check) fails loudly
+    rather than silently reporting zero tools.
+    """
+    tools = _keyword_value(call, "tools")
+    if not isinstance(tools, ast.List):
+        raise AssertionError("create_version(...) `tools=` must be a list literal")
+    return [element for element in tools.elts if isinstance(element, ast.Call)]
+
+
+def _create_version_calls(tree: ast.AST) -> list[ast.Call]:
+    """Return every `project.toolboxes.create_version(...)` call under `tree`."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if _is_call_named(node, "project.toolboxes.create_version")
+    ]
+
+
+def _skill_python_blocks() -> list[str]:
+    """Return every ```python fenced block body in SKILL.md."""
+    return PYTHON_FENCE_RE.findall(SKILL.read_text(encoding="utf-8"))
+
+
+def _skill_subsection(heading_prefix: str) -> str:
+    """Return the SKILL.md section body whose heading starts with `heading_prefix`.
+
+    Level-aware: slices from the matching heading to the next heading of the
+    same-or-higher level (fewer/equal `#`) or the next `---` rule — so a `##`
+    section keeps its own `###` subsections instead of stopping at the first
+    one. Scopes substring/AST assertions to the intended section rather than
+    the whole document.
+    """
+    text = SKILL.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = None
+    start_level = 0
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if stripped[level:].strip().startswith(heading_prefix):
+                start, start_level = i, level
+                break
+    if start is None:
+        raise AssertionError(f"could not find a heading starting with {heading_prefix!r}")
+    body: list[str] = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if level <= start_level:
+                break
+        body.append(line)
+    return "\n".join(body)
+
+
+def _identifier_error_section() -> str:
+    """Return the SKILL.md subsection that documents the identifier `400` error.
+
+    Anchors on the stable `400 invalid_payload: Multiple tools without
+    identifiers` fenced snippet rather than a heading string, so the guidance
+    assertions survive a heading rename. Returns the body from the heading
+    directly above that fence down to the next same-or-higher heading / `---`.
+    """
+    text = SKILL.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    anchor = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if "400 invalid_payload: Multiple tools without identifiers" in line
+        ),
+        None,
+    )
+    if anchor is None:
+        raise AssertionError(
+            "could not find the '400 invalid_payload: Multiple tools without "
+            "identifiers' snippet in SKILL.md"
+        )
+    heading_idx = None
+    heading_level = 0
+    for i in range(anchor, -1, -1):
+        stripped = lines[i].lstrip()
+        if stripped.startswith("#"):
+            heading_idx = i
+            heading_level = len(stripped) - len(stripped.lstrip("#"))
+            break
+    if heading_idx is None:
+        raise AssertionError("no heading found above the identifier-error snippet")
+    body: list[str] = []
+    for line in lines[heading_idx + 1 :]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if level <= heading_level:
+                break
+        body.append(line)
+    return "\n".join(body)
+
+
+class FoundryToolboxFixtureIdentifierContractTests(unittest.TestCase):
+    """The live create_version payload must name both stable tools distinctly."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tree = ast.parse(_extract_python_smoke())
+
+    def test_single_create_version_call_in_fixture(self) -> None:
+        calls = _create_version_calls(self.tree)
+        self.assertEqual(
+            len(calls),
+            1,
+            "expected exactly one project.toolboxes.create_version(...) call in "
+            f"the fixture smoke, found {len(calls)}",
+        )
+
+    def test_both_stable_tools_have_distinct_non_empty_names(self) -> None:
+        call = _create_version_calls(self.tree)[0]
+        tools = _tools_list_elements(call)
+        by_type = {}
+        for tool in tools:
+            type_name = _call_dotted_name(tool)
+            by_type.setdefault(type_name, []).append(tool)
+
+        self.assertEqual(
+            set(by_type),
+            {"ToolSearchToolboxTool", "CodeInterpreterToolboxTool"},
+            "the fixture must construct exactly a Tool Search + Code Interpreter "
+            f"payload, found tool types {sorted(by_type)}",
+        )
+
+        names: dict[str, str] = {}
+        for type_name in ("ToolSearchToolboxTool", "CodeInterpreterToolboxTool"):
+            (tool,) = by_type[type_name]
+            name_value = _const_str(_keyword_value(tool, "name"))
+            self.assertTrue(
+                name_value,
+                f"{type_name}(...) must pass a non-empty name= keyword so the "
+                "service does not reject the payload with 'Multiple tools "
+                "without identifiers found'",
+            )
+            names[type_name] = name_value
+
+        self.assertNotEqual(
+            names["ToolSearchToolboxTool"],
+            names["CodeInterpreterToolboxTool"],
+            "the two named tools must have distinct identifiers -- identical "
+            "names collide on the 'unique identifiers' requirement too",
+        )
+
+    def test_no_tool_in_the_live_payload_is_left_unnamed(self) -> None:
+        call = _create_version_calls(self.tree)[0]
+        tools = _tools_list_elements(call)
+        unnamed = [t for t in tools if _tool_identifier(t) is None]
+        self.assertEqual(
+            unnamed,
+            [],
+            "the fixture's live payload mixes two built-in tool types, so NONE "
+            "may rely on the single-unnamed-tool allowance -- every tool needs "
+            "its own identifier",
+        )
+
+
+class FoundryToolboxSkillMultiToolExampleTests(unittest.TestCase):
+    """SKILL.md multi-tool create examples must obey the live identifier invariant."""
+
+    def test_every_multi_tool_create_example_keeps_at_most_one_unnamed_tool(self) -> None:
+        offenders: list[tuple[str, int]] = []
+        for block in _skill_python_blocks():
+            try:
+                tree = ast.parse(block)
+            except SyntaxError:
+                continue
+            for call in _create_version_calls(tree):
+                tools = _tools_list_elements(call)
+                if len(tools) < 2:
+                    continue
+                unnamed = sum(1 for tool in tools if _tool_identifier(tool) is None)
+                if unnamed > 1:
+                    name_kw = _const_str(_keyword_value(call, "name")) or "<unknown>"
+                    offenders.append((name_kw, unnamed))
+        self.assertEqual(
+            offenders,
+            [],
+            "every multi-tool create_version example must leave at most one tool "
+            "without a name/server_label identifier (live invariant); offending "
+            f"examples (toolbox name, unnamed count): {offenders}",
+        )
+
+    def test_versioning_workflow_example_names_both_tools_distinctly(self) -> None:
+        section = _skill_subsection("Versioning workflow")
+        blocks = PYTHON_FENCE_RE.findall(section)
+        create_calls: list[ast.Call] = []
+        for block in blocks:
+            try:
+                tree = ast.parse(block)
+            except SyntaxError:
+                continue
+            create_calls.extend(_create_version_calls(tree))
+        self.assertEqual(
+            len(create_calls),
+            1,
+            "expected exactly one create_version example in the Versioning "
+            f"workflow section, found {len(create_calls)}",
+        )
+        tools = _tools_list_elements(create_calls[0])
+        self.assertGreaterEqual(
+            len(tools), 2, "the Versioning workflow example must stay multi-tool"
+        )
+        identifiers = [_tool_identifier(tool) for tool in tools]
+        self.assertNotIn(
+            None,
+            identifiers,
+            "the Versioning workflow multi-tool example must not construct any "
+            "unnamed tool -- give each a distinct name",
+        )
+        self.assertEqual(
+            len(set(identifiers)),
+            len(identifiers),
+            f"the Versioning workflow example's tool identifiers must be unique, "
+            f"got {identifiers}",
+        )
+
+
+class FoundryToolboxIdentifierGuidanceTests(unittest.TestCase):
+    """Public guidance and troubleshooting must state the live invariant accurately."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = SKILL.read_text(encoding="utf-8")
+
+    def test_multi_instance_section_no_longer_scopes_error_to_same_type(self) -> None:
+        section = _identifier_error_section()
+        self.assertNotIn(
+            "each instance of the same tool type",
+            section,
+            "the identifier-error guidance must stop claiming the error only "
+            "concerns duplicate instances of the SAME tool type -- the live "
+            "service rejects any second unnamed tool of any type",
+        )
+
+    def test_multi_instance_section_states_the_at_most_one_unnamed_invariant(self) -> None:
+        section = _identifier_error_section().lower()
+        self.assertIn(
+            "at most one",
+            section,
+            "the identifier-error guidance must state that at most one tool may be "
+            "left unnamed per Toolbox version",
+        )
+        self.assertIn(
+            "server_label",
+            section,
+            "the identifier-error guidance must state that remaining tools need a "
+            "unique name or server_label identifier",
+        )
+
+    def test_troubleshooting_row_cause_matches_live_invariant(self) -> None:
+        match = re.search(
+            r"\|\s*`400 Multiple tools without identifiers`\s*\|([^|]*)\|([^|]*)\|",
+            self.text,
+        )
+        self.assertIsNotNone(
+            match,
+            "could not locate the '400 Multiple tools without identifiers' "
+            "troubleshooting row",
+        )
+        cause, fix = match.group(1).strip(), match.group(2).strip()
+        self.assertNotIn(
+            "same type",
+            cause.lower(),
+            "the troubleshooting cause must not restrict the error to two unnamed "
+            f"instances of the SAME type; got cause={cause!r}",
+        )
+        self.assertIn(
+            "unnamed",
+            cause.lower(),
+            f"the troubleshooting cause must describe more than one unnamed tool; "
+            f"got cause={cause!r}",
+        )
+        self.assertTrue(
+            "name" in fix.lower() and "server_label" in fix.lower(),
+            "the troubleshooting fix must point at adding a unique name or "
+            f"server_label identifier; got fix={fix!r}",
+        )
+
+    def test_tool_type_reference_notes_identifier_requirement_for_multi_tool(self) -> None:
+        """The otherwise-optional `name` becomes required beyond one unnamed tool."""
+        # Scope to the region between the Tool type reference table and the next
+        # top-level heading so the note lives with the matrix it qualifies.
+        text = self.text
+        start = text.index("## Tool type reference")
+        end = text.index("## Stable Toolbox request contract", start)
+        region = text[start:end].lower()
+        self.assertIn(
+            "at most one",
+            region,
+            "the Tool type reference matrix must clarify that although `name` is "
+            "otherwise optional, at most one tool per Toolbox may omit an "
+            "identifier -- every other tool needs a unique name/server_label",
+        )
+        self.assertIn(
+            "server_label",
+            region,
+            "the identifier clarification must mention server_label as the MCP "
+            "identifier alternative to name",
+        )
+
+    def test_standalone_tool_search_serialization_proof_is_preserved(self) -> None:
+        """The migration/serialization proof must remain byte-for-byte intact."""
+        self.assertIn(
+            'assert tool_search.as_dict() == {"type": "toolbox_search"}',
+            self.text,
+            "the standalone ToolSearchToolboxTool().as_dict() migration proof "
+            "must be preserved exactly -- a lone unnamed tool still serializes "
+            "to {'type': 'toolbox_search'}",
+        )
+        self.assertIn(
+            "tool_search = ToolSearchToolboxTool()",
+            self.text,
+            "the standalone (single, unnamed) ToolSearchToolboxTool() "
+            "construction that the serialization proof asserts on must remain",
+        )
+
+
+class FoundryToolboxCatalogHistoryIdentifierTests(unittest.TestCase):
+    """The 2.1.1 catalog-history entry must record the identifier correction."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = SKILL.read_text(encoding="utf-8")
+
+    def test_version_stays_at_the_unmerged_corrective_release(self) -> None:
+        version = str(_frontmatter(self.text)["metadata"]["version"])
+        self.assertEqual(
+            version,
+            "2.1.1",
+            "this corrective release is still unmerged -- metadata.version must "
+            "stay at 2.1.1 and must not bump further",
+        )
+
+    def test_catalog_history_2_1_1_entry_mentions_identifier_fix(self) -> None:
+        match = re.search(
+            r"^- `2\.1\.1`([^\n]*(?:\n(?!- `)[^\n]*)*)",
+            self.text,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(match, "could not locate the 2.1.1 catalog-history entry")
+        entry = match.group(0).lower()
+        self.assertIn(
+            "identifier",
+            entry,
+            "the 2.1.1 catalog-history entry must record the tool-identifier "
+            "correction for the create_version payload",
+        )
+        self.assertTrue(
+            "name" in entry and ("server_label" in entry or "unnamed" in entry),
+            "the 2.1.1 entry must reference naming tools / the unnamed-tool "
+            "invariant so the history explains the fix",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
