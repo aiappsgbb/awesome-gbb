@@ -53,6 +53,10 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         self.assertNotIn("- agent-framework-core ~= 1.11.0", self.timeout)
         self.assertNotIn("- agent-framework-foundry ~= 1.10.1", self.timeout)
 
+    def test_pin_records_final_live_validation_date(self) -> None:
+        self.assertEqual(str(self.pin_frontmatter["last_validated"]), "2026-08-05")
+        self.assertNotIn("this 2026-08-04 validation", self.pin)
+
     def _run_dependency_guard(
         self, pyproject: str, dependency: str
     ) -> tuple[subprocess.CompletedProcess[str], str | None]:

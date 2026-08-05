@@ -33,7 +33,7 @@ packages:
     notes: |
       Beta pre-release pinned EXACT per AGENTS.md § 9.5. PEP 440 treats
       ~=1.0.0bN as >=1.0.0bN, <1.1 — pip drifts to later betas. Keep the
-      exact ==1.0.0b260730 pin for this 2026-08-04 validation. Do NOT
+      exact ==1.0.0b260730 pin for this 2026-08-05 validation. Do NOT
       change the specifier shape from ==1.0.0bN to ~= without a
       corresponding AGENTS.md § 9.5 amendment.
   - name: azure-ai-projects
@@ -332,7 +332,7 @@ validation:
     - "ok update_details"
     - "ok otel bundle"
 
-last_validated: 2026-08-04
+last_validated: 2026-08-05
 validated_by: ricchi
 known_issues_count: 9
 ---
