@@ -50,3 +50,22 @@ MCP-Protocol-Version header), session ID FAIL gate, synchronized gates.
 - `docs/superpowers/specs/foundry-mcp-aca-refresh-1.2.4.md` — design spec
 - `docs/superpowers/plans/foundry-mcp-aca-refresh-1.2.4.md` — this plan
 - `docs/` — rebuilt static site
+
+## Round-4: State persistence (2026-08-05)
+
+### RED (pre-fix)
+Run 30996359268 transcript showed agent fixing azure.yaml placeholders
+(unresolved `${APP_NAME}`) and manually adding AZURE_TENANT_ID. Root cause:
+Copilot CLI Bash tool process isolation — env vars don't persist.
+
+### Fix
+- STATE_FILE (`/tmp/foundry-mcp-aca-state.env`) written after naming
+- `source` at top of azure.yaml, azd up, and MCP probe blocks
+- `azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"` added to Step 4
+- 6 contract tests added (TestStatePersistence class)
+
+### GREEN
+- 34/34 tests pass
+- validate-skills.py ✅
+- build-plugins.py --check ✅
+- T3 run 30998053808 GREEN — zero improvisation, full MCP roundtrip

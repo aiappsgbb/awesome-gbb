@@ -62,3 +62,20 @@ PATCH refresh of `foundry-mcp-aca` covering:
 - Deterministic marker file written (Pattern 12)
 - `azd-service-name` tag and azure.yaml service key both use `$APP_NAME`
   (per-run unique, avoiding shared-RG collision)
+
+## Round-4 correction (2026-08-05): Bash tool process isolation
+
+**Root cause:** Copilot CLI runs each Bash tool invocation in a FRESH
+process. Environment variables set in one call (e.g. `APP_NAME`) are lost
+in subsequent calls. The fixture's azure.yaml heredoc and azd up blocks
+referenced `${APP_NAME}` in a shell where it was unset.
+
+**Fix:** Write `/tmp/foundry-mcp-aca-state.env` after Step 1 naming and
+`source` it at the top of every subsequent bash block (azure.yaml, azd up,
+MCP probe). Additionally added `azd env set AZURE_TENANT_ID` which was
+missing for OIDC-based azd auth.
+
+**Evidence:** Run 30998053808 / job 92279922520 — agent sources state file
+at line 172 (`source /tmp/foundry-mcp-aca-state.env`), `azd up` succeeds
+without intervention, full MCP roundtrip passes. Zero improvisation signals
+in transcript grep.
