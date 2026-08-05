@@ -214,6 +214,7 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
                 "fastrtc OK",
                 "gradio OK",
                 "voicelive-sdk-13-default-2026-07-15",
+                "voicelive-mcp-approval-type-surface",
                 "openai-253-realtime-surface",
                 "fastrtc-gradio5-compatible",
                 "VALIDATION_PASSED",
@@ -236,6 +237,24 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
             "`gradio~=5.50.0` and records the hold with `hold_below: \"6.0.0\"` "
             "+ `hold_reason: KI-001` until upstream issue #428 resolves.",
             " ".join(self.pin.split()),
+        )
+
+    def test_pin_smoke_imports_real_mcp_approval_symbols(self) -> None:
+        for token in (
+            "from azure.ai.voicelive.models import AzureSemanticVad, MCPApprovalType, MCPServer",
+            "assert MCPServer is not None",
+            "assert MCPApprovalType is not None",
+            "assert MCPApprovalType.NEVER",
+            "assert MCPApprovalType.ALWAYS",
+            'print("voicelive-mcp-approval-type-surface")',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.validation_python)
+
+        self.assertNotIn("MCPApprovalMode", self.validation_python)
+        self.assertIn(
+            "voicelive-mcp-approval-type-surface",
+            self.frontmatter["validation"]["expected_output"],
         )
 
 
@@ -333,6 +352,41 @@ class FoundryVoiceLiveSkillContractTests(unittest.TestCase):
             with self.subTest(stale=stale):
                 self.assertNotIn(stale, self.skill)
 
+    def test_mcp_approval_uses_sdk_13_symbol_and_wire_event_name(self) -> None:
+        section_12_2 = re.search(
+            r"### 12\.2 · MCP server tools mid-turn\n\n(?P<body>.*?)(?:\n### 12\.3)",
+            self.skill,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(section_12_2)
+        body = section_12_2.group("body")
+
+        for required in (
+            "MCPApprovalType",
+            "require_approval=MCPApprovalType.NEVER",
+            "require_approval=MCPApprovalType.ALWAYS",
+            "mcp_tool_approval_request",
+            "mcp_tool_approval_response",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, body)
+
+        for stale in ("MCPApprovalMode", "MCPToolApprovalRequest"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, self.skill)
+
+    def test_aiohttp_missing_extra_error_uses_real_sdk_13_importerror(self) -> None:
+        real_prefix = "ImportError: aiohttp is required for azure-ai-voicelive"
+        self.assertIn(real_prefix, self.skill)
+        for stale in (
+            "RuntimeError: aiohttp not installed",
+            "RuntimeError: aiohttp",
+            "aiohttp not installed",
+            "aiohttp transport is required",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, self.skill)
+
 
 class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
     @classmethod
@@ -383,6 +437,11 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         self.assertIn(expected_install, self.fixture)
         self.assertEqual(self.fixture.count("python3 -m pip install --quiet"), 1)
         self.assertNotIn("python3 -m pip install --quiet --upgrade pip", self.fixture)
+        self.assertIn(
+            "ImportError: aiohttp is required for azure-ai-voicelive",
+            self.fixture,
+        )
+        self.assertNotIn("aiohttp transport is required", self.fixture)
 
     def test_fixture_documents_explicit_ga_api_version_for_sdk_13(self) -> None:
         for required in (

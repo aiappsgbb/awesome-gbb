@@ -101,7 +101,7 @@ python3 -m pip install --quiet \
 ```
 
 The `[aiohttp]` extra is REQUIRED for the async `connect()` path — without
-it the SDK raises `ImportError: aiohttp transport is required` (see
+it the SDK raises `ImportError: aiohttp is required for azure-ai-voicelive` (see
 SKILL.md § 11 "Troubleshooting" for the corresponding row).
 
 ---

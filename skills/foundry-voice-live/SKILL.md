@@ -245,8 +245,8 @@ endpoint = os.environ["AZURE_AI_ENDPOINT"].replace(
 
 > **Install:** `pip install "azure-ai-voicelive[aiohttp]~=1.3.0"`.
 > The `[aiohttp]` extra is **required** for the async `connect`
-> path — without it the import raises `RuntimeError: aiohttp not
-> installed`.
+> path — without it the import raises `ImportError: aiohttp is
+> required for azure-ai-voicelive`.
 
 ---
 
@@ -890,8 +890,8 @@ together until the upstream FastRTC issue lifts the upper bound.
 | `"Model … is not supported in this region"` | Region doesn't serve that managed model | Check the [Voice Live region/model matrix](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions) |
 | User gets cut off mid-sentence in a non-English call | English-tuned `azure_semantic_vad` ends the turn early on a hesitation/pause | Use the multilingual VAD + multilingual end-of-utterance model; raise `silence_duration_ms` to the locale's pausing (see §3) |
 | A tool/KB turn takes several seconds | The **agentic KB planner** (query decomposition / multi-hop reasoning LLM) can dominate — not necessarily the store | Measure the retrieval legs (planner vs search/store vs model vs TTS) separately first. For single-intent lookups, query the index **directly** (semantic search, no planner); reserve the agentic planner for genuine multi-hop |
-| `RuntimeError: aiohttp not installed` from `azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.3.0"` (async path requires it) |
-| `MCPToolApprovalRequest` event mid-turn but no approval reply | `require_approval` set on `MCPServer` | Send `mcp_tool_approval_response` event back; see §12.2 |
+| `ImportError: aiohttp is required for azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.3.0"` (async path requires it) |
+| `mcp_tool_approval_request` event mid-turn but no approval reply | `require_approval` set on `MCPServer` | Send `mcp_tool_approval_response` event back; see §12.2 |
 
 ---
 
@@ -965,7 +965,7 @@ response flows back into the same turn (no client round-trip).
 ```python
 from azure.ai.voicelive.models import (
     MCPServer,
-    MCPApprovalMode,
+    MCPApprovalType,
     RequestSession,
 )
 
@@ -974,7 +974,7 @@ mcp_inventory = MCPServer(
     server_url="https://ca-inventory-mcp.<region>.azurecontainerapps.io/mcp",
     authorization="Bearer <token-from-aca-managed-identity>",   # or Entra
     allowed_tools=["check_stock", "list_skus"],
-    require_approval=MCPApprovalMode.NEVER,                     # auto-execute
+    require_approval=MCPApprovalType.NEVER,                     # auto-execute
 )
 
 session = RequestSession(
@@ -985,7 +985,7 @@ session = RequestSession(
 await conn.session.update(session=session)
 ```
 
-**Approval flow.** When `require_approval=MCPApprovalMode.ALWAYS`,
+**Approval flow.** When `require_approval=MCPApprovalType.ALWAYS`,
 the server emits `mcp_tool_approval_request`. Reply with an
 `mcp_tool_approval_response` event carrying `approve: true|false`
 before the turn continues. Cache approvals in the client to avoid
