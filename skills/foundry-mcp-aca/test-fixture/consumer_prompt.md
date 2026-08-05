@@ -441,18 +441,39 @@ and update the resource. No probes are configured — the placeholder revision
 starts regardless of port mismatch (port 80 vs targetPort 8080) and `azd deploy`
 immediately swaps to the real image.
 
-Initialize the `azd` env and set the required Bicep params:
+Initialize the `azd` env by creating the directory structure directly.
+Do NOT use `azd env new` or `azd env set` — they require interactive
+prompts that fail in headless CI. Write the `.azure/` structure and
+`.env` file explicitly:
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
 cd "$PROJECT_DIR"
-azd env new "$APP_NAME" --location swedencentral --subscription "$AZURE_SUBSCRIPTION_ID"
-azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci
-azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"
-azd env set APP_NAME "$APP_NAME"
-azd env set UAMI_RESOURCE_ID "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
-azd env set ACR_SERVER "$ACR_LOGIN_SERVER"
-azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$ACR_LOGIN_SERVER"
+
+# Create azd environment directory structure
+AZD_ENV_DIR="${PROJECT_DIR}/.azure/${APP_NAME}"
+mkdir -p "$AZD_ENV_DIR"
+
+# Write the config.json (selects this env as default)
+cat > "${PROJECT_DIR}/.azure/config.json" <<EOF
+{ "version": 1, "defaultEnvironment": "${APP_NAME}" }
+EOF
+
+# Write the .env file with all required Bicep parameter values
+cat > "${AZD_ENV_DIR}/.env" <<EOF
+AZURE_ENV_NAME=${APP_NAME}
+AZURE_LOCATION=swedencentral
+AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+AZURE_RESOURCE_GROUP=rg-awesome-gbb-ci
+AZURE_TENANT_ID=${AZURE_TENANT_ID}
+APP_NAME=${APP_NAME}
+UAMI_RESOURCE_ID=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci
+ACR_SERVER=${ACR_LOGIN_SERVER}
+AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_LOGIN_SERVER}
+EOF
+
+echo "azd env created at $AZD_ENV_DIR"
+cat "${AZD_ENV_DIR}/.env"
 ```
 
 Then run `azd up`. ACA's ARM resolver has a documented cross-resource

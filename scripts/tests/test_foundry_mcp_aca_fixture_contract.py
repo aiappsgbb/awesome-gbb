@@ -400,11 +400,27 @@ class TestStatePersistence(unittest.TestCase):
         )
 
     def test_azure_tenant_id_in_azd_env(self):
-        """azd env must set AZURE_TENANT_ID for federated-credential CI."""
+        """azd env .env must include AZURE_TENANT_ID for federated-credential CI."""
         self.assertIn(
-            'azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"',
+            'AZURE_TENANT_ID=${AZURE_TENANT_ID}',
             self.fixture,
-            "AZURE_TENANT_ID must be set in the azd environment"
+            "AZURE_TENANT_ID must be written to the azd .env file"
+        )
+
+    def test_no_azd_env_new_or_set(self):
+        """Fixture bash blocks must NOT use 'azd env new' or 'azd env set'."""
+        import re
+        blocks = re.findall(r'```bash\n(.*?)```', self.fixture, re.DOTALL)
+        combined = '\n'.join(blocks)
+        self.assertNotIn(
+            'azd env new',
+            combined,
+            "azd env new requires interactive prompts; use direct file creation"
+        )
+        self.assertNotIn(
+            'azd env set ',
+            combined,
+            "azd env set requires interactive prompts; write .env directly"
         )
 
     def test_state_persistence_documentation(self):
