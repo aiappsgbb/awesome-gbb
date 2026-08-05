@@ -1,7 +1,7 @@
 # Plan: foundry-mcp-aca refresh 1.2.4
 
 **Design:** [specs/foundry-mcp-aca-refresh-1.2.4.md](../specs/foundry-mcp-aca-refresh-1.2.4.md)
-**Status:** Round 13 implemented; exact-head T3 pending
+**Status:** Round 14 implemented; exact-head T3 pending
 
 ## Correction rounds
 
@@ -323,3 +323,71 @@ Edit/Create/Write, one state Bash (the Step 1 state-writing invocation), one
 combined scaffold Bash sourced from state, no repair or inspection, one `azd`
 path, one MCP roundtrip, deterministic marker, and audit echo only (the
 required `SKILL.md` audit-path echo, with no catalog reads beyond it).
+
+## Round-14 corrections (2026-08-05)
+
+### Exact-head rejection and root cause
+
+Run `31026453627`, job `92376101138`, head
+`d250c8feb0f8721c10a2f7513fe5164361eaca1d`, artifact `8939043595`,
+transcript SHA-256
+`4c73d6a94805fb40e443932bfd558b351147d64c712aa83725c373df1fd085b9`
+is explicitly rejected. The transcript shows:
+
+1. lines 1–2: Edit/Create writes a session `plan.md`;
+2. lines 6–12: audit and state run without Step 0 auth;
+3. lines 26–32: the first provision path runs unauthenticated; and
+4. lines 34–42: auth is repaired and provision is rerun.
+
+The Step 2 deterministic scaffold correction worked, but the fixture still
+encoded audit, auth, and state as independent prose fragments. State could
+therefore exist without successful auth, and the scaffold/provision dependency
+could not enforce ordering. The file-tool guard covered only scaffold files,
+not session planning.
+
+### Architectural correction
+
+1. Replace Step -1, the separate Step 0 command fragments, and the Step 1
+   state fragment with one exact first-action bootstrap Bash block.
+2. The block performs audit echo, required-env validation, optional-auth
+   inventory, show-don't-assert `az account show`, and the sole
+   `azd auth login`.
+3. Remove stale state before validation; on failure write deterministic FAIL
+   and leave no state; after auth, write a temporary four-line state file and
+   atomically publish it with `mv`.
+4. Keep the exact six-file Step 2 scaffold block unchanged. Its state source
+   is now an executable dependency on successful bootstrap auth.
+5. Keep provision separate but make it one exact block that sources the
+   authenticated bootstrap state before creating the azd env or running
+   `azd up`.
+6. Apply the file-tool prohibition globally: no Edit/Create/Write or other
+   file-editing tools for any purpose, no session-state `plan.md`, and only
+   prescribed Bash actions.
+
+### RED and GREEN
+
+- RED on `d250c8`: 4 new tests, 7 assertion failures (missing bootstrap and
+  four missing global guard sentences).
+- GREEN: 73 fixture contract tests.
+- Execution proof: stubbed `az`/`azd` call log verifies audit and auth order;
+  auth failure leaves no state and writes FAIL; every required-env omission
+  fails before Azure calls; successful auth publishes exact state.
+- Fresh-shell scaffold proof: exact bootstrap followed by the unchanged exact
+  scaffold creates and validates all six files.
+- Provision structure proof: exactly one prescribed provision fence contains
+  the sole executable `azd up` and begins by requiring bootstrap state. The
+  scanner covers alternate fences, compound/subshell/continued and
+  path-qualified commands, while ignoring actual heredoc bodies.
+- Review RED: 3 focused tests produced 6 failures. Compound duplicate auth and
+  provision commands counted as one path, and four fresh MCP/Easy Auth Bash
+  blocks consumed persisted state without sourcing it.
+- Review GREEN: all four blocks source state first and every matching command
+  occurrence counts toward the single-path invariant.
+- Full `scripts/tests`: 393 tests.
+
+### Acceptance pending
+
+Exact-head T3 must prove zero Edit/Create/Write actions; exact bootstrap first;
+one unchanged scaffold Bash action; one authenticated provision path after
+bootstrap; one MCP roundtrip; no repair or generated-file/catalog inspection
+beyond the audit echo; and deterministic marker output.

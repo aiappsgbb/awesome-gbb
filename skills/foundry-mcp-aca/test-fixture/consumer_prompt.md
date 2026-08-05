@@ -15,27 +15,26 @@ whether a customer following the skill verbatim ends up with a working
 MCP server reachable from Foundry hosted agents over the network. Pretend
 you are that customer.
 
-## Step -1 — acknowledge the skill contract
-
-Your first Bash action must be:
-
-```bash
-echo "skills/foundry-mcp-aca/SKILL.md"
-```
-
-This lightweight line is the workflow's skill-usage audit evidence. Do not
-open the whole file.
-
 **CRITICAL — this is an EXECUTION smoke, not a catalog inspection.**
 Do NOT read, view, grep, glob, or open ANY repository file other than
 what you create in the scratch project. Specifically forbidden:
-- `skills/foundry-mcp-aca/SKILL.md` (the echo in Step -1 is audit
+- `skills/foundry-mcp-aca/SKILL.md` (the bootstrap echo is audit
   evidence only — do NOT `cat`/`view` the file)
 - `scripts/tests/*.py` (test files)
 - `.github/workflows/*.yml` (workflow definitions)
 - `skills/foundry-mcp-aca/references/*` (audit trail, pin files)
 - `.github/skill-deps.yml`, `.github/ci-shared-preamble.md`
 - Any file under `skills/`, `docs/`, or `scripts/`
+
+**CRITICAL — Bash-only execution and deterministic authoring (MANDATORY).**
+NEVER use Edit, Create, Write, or any other file-editing tool anywhere in this smoke, for any purpose.
+This includes `~/.copilot/session-state/*/plan.md`.
+Do not create a plan file.
+Every action in this smoke must be one of the prescribed Bash tool actions.
+Your FIRST action must be one Bash tool invocation executing the complete
+Step 0 bootstrap block exactly as written. Do not prepend, append, split,
+merge, or reorder that block. Only after it returns zero may you invoke
+the prescribed Step 2 scaffold block.
 
 **CRITICAL — deterministic scaffold authoring (MANDATORY).**
 Invoke only the prescribed Bash block in Step 2 to author the six scaffold files.
@@ -60,7 +59,7 @@ information found" and (b) overwrite this run's transcript at
 `/tmp/foundry-mcp-aca-transcript.log`, defeating the workflow's retry
 classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow ALREADY
 captures your output via the outer `tee` — your job is to EXECUTE Steps
--1–7 directly in Bash tool calls, not to "run the smoke".
+0–7 directly in Bash tool calls, not to "run the smoke".
 
 ---
 
@@ -116,63 +115,68 @@ bugs):
 
 ---
 
-## Step 0 — verify CI auth contract (Pattern 11 + Pattern 17)
+## Step 0 — deterministic audit + auth + state bootstrap (FIRST ACTION)
 
-Run these checks FIRST. They must all succeed before you proceed to any
-other step. If any of the env-var inventory checks fails, the workflow's
-env contract is broken (AGENTS.md § 9.7 Pattern 11) — that is a workflow
-bug, not a skill bug. Emit `SMOKE_RESULT=FAIL auth context missing:
-<var-name>` and stop.
+The block below is the sole audit, authentication, naming, and initial-state
+path. Its state file is deliberately removed before validation and published
+with `mv` only after `azd auth login` succeeds. Therefore Step 2 cannot run
+from state created by an unauthenticated invocation.
 
-1. **Non-secret env-var inventory** (Pattern 11). Each line MUST print
-   `…=set`:
-
-   ```bash
-   echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
-   echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
-   echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
-   echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER:+set}"
-   ```
-
-   Then show the OPTIONAL auth-proof var (Pattern 17 — show-don't-assert;
-   an empty value here is EXPECTED and MUST NOT fail the run):
-
-   ```bash
-   echo "MCP_AUTH_APP_CLIENT_ID=${MCP_AUTH_APP_CLIENT_ID:+set}"
-   ```
-
-   `MCP_AUTH_APP_CLIENT_ID` is OPTIONAL. When set, it is the client id of a
-   standing pre-registered Entra app whose `api://<id>` audience this smoke
-   uses to prove the 401→200 Easy Auth contract (Step 5b). When unset, the
-   auth sub-test (Step 5b) is SKIPPED with a NOTE — that is expected and
-   MUST NOT fail the run; the base smoke (Steps 1–5) already proves the
-   server works.
-
-2. **Show-don't-assert on `az` cache** (Pattern 17). The copilot CLI
-   subprocess MAY or MAY NOT inherit `~/.azure/` from the runner. Print
-   for the audit log; do NOT gate flow on this:
-
-   ```bash
-   az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
-   ```
-
-3. **Explicit `azd auth login`** (Pattern 6). This is the deterministic
-   OIDC exchange that produces a fresh `azd` token from the inherited
-   `AZURE_*` env vars. It is the auth gate — if it fails, the OIDC
-   federation is broken (workflow bug):
-
-   ```bash
-   azd auth login \
-     --federated-credential-provider github \
-     --client-id "$AZURE_CLIENT_ID" \
-     --tenant-id "$AZURE_TENANT_ID"
-   ```
+`MCP_AUTH_APP_CLIENT_ID` is OPTIONAL. When set, it is the client id of a
+standing pre-registered Entra app whose `api://<id>` audience this smoke
+uses to prove the 401→200 Easy Auth contract (Step 5b). When unset, the
+auth sub-test is SKIPPED with a NOTE and the base smoke remains valid.
 
 Do NOT invent additional credential checks (no `az ad sp show`, no
 `az role assignment list`, no `az login --service-principal`). Do NOT
-strict-equality-compare the subscription ID against env (Pattern 16/17 —
-shell quoting flap risk). Existence checks via `${VAR:+set}` only, and
-trust `azd auth login` as the gate.
+strict-equality-compare the subscription ID against env (Pattern 16/17).
+The `az account show` command is show-don't-assert; explicit
+`azd auth login` is the authentication gate.
+
+### Deterministic bootstrap Bash block (MANDATORY)
+
+```bash
+set -Eeuo pipefail
+STATE_FILE="/tmp/foundry-mcp-aca-state.env"
+STATE_TMP="${STATE_FILE}.tmp.$$"
+FAIL() {
+  trap - ERR
+  rm -f "$STATE_TMP" "$STATE_FILE"
+  printf 'SMOKE_RESULT=FAIL %s\n' "$1" > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+}
+trap 'FAIL "bootstrap block failed"' ERR
+rm -f "$STATE_TMP" "$STATE_FILE"
+
+echo "skills/foundry-mcp-aca/SKILL.md"
+for REQUIRED_VAR in GITHUB_WORKSPACE AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID ACR_LOGIN_SERVER; do
+  if [[ -z "${!REQUIRED_VAR:-}" ]]; then
+    FAIL "auth context missing: ${REQUIRED_VAR}"
+  fi
+  echo "${REQUIRED_VAR}=set"
+done
+echo "MCP_AUTH_APP_CLIENT_ID=${MCP_AUTH_APP_CLIENT_ID:+set}"
+az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
+azd auth login \
+  --federated-credential-provider github \
+  --client-id "$AZURE_CLIENT_ID" \
+  --tenant-id "$AZURE_TENANT_ID" || FAIL "azd auth login failed"
+
+SUFFIX=$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)
+APP_NAME="ci-smoke-mcp-${SUFFIX}"
+PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"
+UAMI_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
+ACR_SERVER="$ACR_LOGIN_SERVER"
+{
+  printf 'APP_NAME=%s\n' "$APP_NAME"
+  printf 'PROJECT_DIR=%s\n' "$PROJECT_DIR"
+  printf 'UAMI_RESOURCE_ID=%s\n' "$UAMI_RESOURCE_ID"
+  printf 'ACR_SERVER=%s\n' "$ACR_SERVER"
+} > "$STATE_TMP"
+mv "$STATE_TMP" "$STATE_FILE"
+trap - ERR
+echo "APP_NAME=$APP_NAME"
+```
 
 ---
 
@@ -184,41 +188,17 @@ Container Apps using `azd up`. The server exposes one `echo` tool and a
 deployed FQDN and call the MCP HTTP endpoint with three JSON-RPC requests
 (`initialize` + `tools/list` + `tools/call`) to prove the wire protocol works.
 
-### Naming
-
-Generate the short UUID suffix and application name inside the state-persistence
-block below. Do not run naming as a separate Bash tool invocation: the next
-invocation would not inherit `APP_NAME`.
-
-Use `$APP_NAME` for the Container App name, the ACR repository tag, and
-the `azd` environment name throughout.
-
 ### State persistence between Bash tool calls
 
 Copilot CLI runs each Bash tool invocation in a **fresh process** — env
-vars set in one call are NOT available in the next. You MUST persist
-`APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER` to a state
-file in the same Bash tool invocation that generates `APP_NAME`, then `source`
-it at the top of every subsequent Bash block:
-
-```bash
-SUFFIX=$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)
-APP_NAME="ci-smoke-mcp-${SUFFIX}"
-STATE_FILE="/tmp/foundry-mcp-aca-state.env"
-UAMI_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
-ACR_SERVER="$ACR_LOGIN_SERVER"
-echo "APP_NAME=$APP_NAME"
-echo "APP_NAME=$APP_NAME" > "$STATE_FILE"
-echo "PROJECT_DIR=${GITHUB_WORKSPACE}/.scratch/${APP_NAME}" >> "$STATE_FILE"
-echo "UAMI_RESOURCE_ID=$UAMI_RESOURCE_ID" >> "$STATE_FILE"
-echo "ACR_SERVER=$ACR_SERVER" >> "$STATE_FILE"
-```
-
-The next Bash tool invocation is the single deterministic scaffold block
-in Step 2. It restores state, creates the scaffold directories, and enters
-`$PROJECT_DIR` in the prescribed `source; mkdir; cd` order. All later Bash
-blocks retain their explicit state restoration as written. Do NOT assume
-variables survive between tool calls.
+vars set in one call are NOT available in the next. Step 0 atomically
+publishes `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER`
+only after authentication succeeds. The next Bash tool invocation is the
+single deterministic scaffold block in Step 2. It restores that state,
+creates the scaffold directories, and enters `$PROJECT_DIR` in the
+prescribed `source; mkdir; cd` order. All later Bash blocks retain their
+explicit state restoration as written. Do NOT assume variables survive
+between tool calls and do not create or replace initial state anywhere else.
 
 ### Scaffolding location
 
@@ -426,25 +406,27 @@ and update the resource. No probes are configured — the placeholder revision
 starts regardless of port mismatch (port 80 vs targetPort 8080) and `azd deploy`
 immediately swaps to the real image.
 
-Initialize the `azd` env by creating the directory structure directly.
-Do NOT use `azd env new` or `azd env set` — they require interactive
-prompts that fail in headless CI. Write the `.azure/` structure and
-`.env` file explicitly:
+The exact provision block below creates the `azd` environment structure
+directly and then runs `azd up`. Do NOT use `azd env new` or `azd env set`;
+they require interactive prompts that fail in headless CI. The block sources
+the state that Step 0 publishes only after successful `azd auth login`, so
+provision cannot begin on an unauthenticated path. ACA's ARM resolver has a
+documented cross-resource index-rebuild race (`ManagedEnvironmentNotFound`,
+AGENTS.md § 9.7 Pattern 18), so `azd up` uses a bounded retry loop.
+
+### Deterministic provision Bash block (MANDATORY)
 
 ```bash
-source /tmp/foundry-mcp-aca-state.env
+source /tmp/foundry-mcp-aca-state.env || { printf 'SMOKE_RESULT=FAIL provision state missing\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; }
+set -Eeuo pipefail
+trap 'printf "SMOKE_RESULT=FAIL provision block failed\n" > /tmp/foundry-mcp-aca-smoke-result' ERR
 cd "$PROJECT_DIR"
 
-# Create azd environment directory structure
 AZD_ENV_DIR="${PROJECT_DIR}/.azure/${APP_NAME}"
 mkdir -p "$AZD_ENV_DIR"
-
-# Write the config.json (selects this env as default)
 cat > "${PROJECT_DIR}/.azure/config.json" <<EOF
 { "version": 1, "defaultEnvironment": "${APP_NAME}" }
 EOF
-
-# Write the .env file with all required Bicep parameter values
 cat > "${AZD_ENV_DIR}/.env" <<EOF
 AZURE_ENV_NAME=${APP_NAME}
 AZURE_LOCATION=swedencentral
@@ -456,18 +438,8 @@ UAMI_RESOURCE_ID=${UAMI_RESOURCE_ID}
 ACR_SERVER=${ACR_SERVER}
 AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_SERVER}
 EOF
-
 echo "azd env created at $AZD_ENV_DIR"
-cat "${AZD_ENV_DIR}/.env"
-```
 
-Then run `azd up`. ACA's ARM resolver has a documented cross-resource
-index-rebuild race (`ManagedEnvironmentNotFound`, AGENTS.md § 9.7 Pattern
-18) — wrap with a bounded retry loop:
-
-```bash
-source /tmp/foundry-mcp-aca-state.env
-cd "$PROJECT_DIR"
 attempts=0
 max_attempts=6
 until azd up --no-prompt; do
@@ -517,6 +489,7 @@ Capture response headers to extract `mcp-session-id` for subsequent
 requests:
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
 INIT_RESPONSE=$(curl -sS -D /tmp/mcp-init-headers.txt \
   -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
@@ -736,6 +709,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
    resource group `rg-awesome-gbb-ci`, tenant `$AZURE_TENANT_ID`):
 
    ```bash
+   source /tmp/foundry-mcp-aca-state.env
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
      # `--allowed-token-audiences` is a SINGLE-value flag (argparse nargs=None):
      # two space-separated values fail at PARSE time ("unrecognized arguments").
@@ -760,6 +734,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
    ACA-control-plane race guidance in AGENTS.md § 9.7 Pattern 9):
 
    ```bash
+   source /tmp/foundry-mcp-aca-state.env
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
      CODE=""
      for i in $(seq 1 6); do
@@ -783,6 +758,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
    `initialize` round-trip WITH the bearer header:
 
    ```bash
+   source /tmp/foundry-mcp-aca-state.env
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
      TOKEN=$(az account get-access-token \
        --resource "api://$MCP_AUTH_APP_CLIENT_ID" \

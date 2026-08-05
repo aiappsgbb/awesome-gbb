@@ -40,6 +40,8 @@ SMOKE_MARKER_PATH = pathlib.Path("/tmp/foundry-mcp-aca-smoke-result")
 SMOKE_MARKER_LOCK_PATH = pathlib.Path("/tmp/foundry-mcp-aca-smoke-result.lock")
 STATE_MARKER = 'STATE_FILE="/tmp/foundry-mcp-aca-state.env"'
 SMOKE_MARKER_LITERAL = "/tmp/foundry-mcp-aca-smoke-result"
+BOOTSTRAP_BLOCK_HEADING = "### Deterministic bootstrap Bash block (MANDATORY)"
+PROVISION_BLOCK_HEADING = "### Deterministic provision Bash block (MANDATORY)"
 SCAFFOLD_BLOCK_HEADING = (
     "### Deterministic scaffold-authoring Bash block (MANDATORY)"
 )
@@ -101,6 +103,22 @@ SCAFFOLD_STATE_VARIABLES = (
     "UAMI_RESOURCE_ID",
     "ACR_SERVER",
 )
+
+
+def _bootstrap_stub_bin(root: pathlib.Path) -> pathlib.Path:
+    """Install deterministic no-network az/azd/uuidgen stubs for block replay."""
+    bin_dir = root / "bootstrap-bin"
+    bin_dir.mkdir()
+    scripts = {
+        "az": "#!/usr/bin/env bash\nexit 0\n",
+        "azd": "#!/usr/bin/env bash\nexit 0\n",
+        "uuidgen": "#!/usr/bin/env bash\nprintf 'ABCDEF12-3456-7890\\n'\n",
+    }
+    for name, content in scripts.items():
+        path = bin_dir / name
+        path.write_text(content, encoding="utf-8")
+        path.chmod(0o755)
+    return bin_dir
 
 
 def _scaffold_state_gate(variables: tuple[str, ...]) -> str:
@@ -330,48 +348,249 @@ def _standard_bash_block_containing(markdown: str, marker: str) -> str:
     return markdown[block_start + len("```bash\n") : block_end]
 
 
+def _shell_fences(markdown: str) -> list[tuple[int, str]]:
+    """Extract Bash-compatible fences across backtick/tilde and indentation forms."""
+    lines = markdown.splitlines(keepends=True)
+    offsets: list[int] = []
+    offset = 0
+    for line in lines:
+        offsets.append(offset)
+        offset += len(line)
+
+    opener = re.compile(
+        r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})"
+        r"[ \t]*(?:bash|sh|shell)[ \t]*\r?\n?$",
+        re.IGNORECASE,
+    )
+    fences: list[tuple[int, str]] = []
+    index = 0
+    while index < len(lines):
+        match = opener.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+        marker = match.group("marker")
+        indent = match.group("indent")
+        closing = re.compile(
+            rf"^{re.escape(indent)}{re.escape(marker[0])}"
+            rf"{{{len(marker)},}}[ \t]*\r?\n?$"
+        )
+        body_start = index + 1
+        index = body_start
+        while index < len(lines) and closing.match(lines[index]) is None:
+            index += 1
+        if index == len(lines):
+            raise AssertionError(
+                f"unterminated {marker[0]!r} shell fence at offset "
+                f"{offsets[body_start - 1]}"
+            )
+        fences.append((offsets[body_start - 1], "".join(lines[body_start:index])))
+        index += 1
+    return fences
+
+
+def _bootstrap_block(markdown: str) -> str:
+    """Extract the sole first-action bootstrap Bash block."""
+    headings = list(
+        re.finditer(rf"(?m)^{re.escape(BOOTSTRAP_BLOCK_HEADING)}$", markdown)
+    )
+    if len(headings) != 1:
+        raise AssertionError(
+            "expected the exact mandatory bootstrap heading exactly once"
+        )
+
+    bash_fences = list(
+        re.finditer(r"(?m)^```bash\n(?P<body>.*?)^```(?:\n|$)", markdown, re.DOTALL)
+    )
+    if not bash_fences:
+        raise AssertionError("fixture must contain a standard Bash fence")
+    first_fence = bash_fences[0]
+    shell_fences = _shell_fences(markdown)
+    if not shell_fences or shell_fences[0][0] != first_fence.start():
+        raise AssertionError(
+            "the mandatory bootstrap must be the first shell action regardless "
+            "of Markdown fence style"
+        )
+    if headings[0].end() > first_fence.start():
+        raise AssertionError(
+            "the mandatory bootstrap heading must immediately precede the first "
+            "Bash action"
+        )
+    between = markdown[headings[0].end():first_fence.start()]
+    if between != "\n\n":
+        raise AssertionError(
+            "the mandatory bootstrap heading must be followed only by one blank "
+            "line and the first Bash fence"
+        )
+    return first_fence.group("body")
+
+
 def _step_1_state_block(markdown: str) -> str:
-    """Extract the sole standard Bash fence containing the sole state marker."""
-    if markdown.count(STATE_MARKER) != 1:
-        raise AssertionError(
-            "expected the exact STATE_FILE marker exactly once in the fixture"
-        )
+    """Compatibility wrapper for tests that replay initial state creation."""
+    return _bootstrap_block(markdown)
 
-    step_starts = list(
-        re.finditer(rf"(?m)^{re.escape(STEP_1_HEADING)}$", markdown)
-    )
-    step_2_boundaries = [
-        match
-        for match in re.finditer(
-            rf"(?m)^{re.escape(STEP_2_BOUNDARY_PREFIX)}", markdown
-        )
-        if match.start() > (step_starts[0].start() if step_starts else -1)
-    ]
-    if len(step_starts) != 1 or len(step_2_boundaries) != 1:
-        raise AssertionError(
-            "expected one exact Step 1 heading followed by one Step 2 boundary"
-        )
-    step_1 = markdown[step_starts[0].start():step_2_boundaries[0].start()]
 
-    standard_bash_fence = re.compile(
-        r"(?m)^```bash\n(?P<body>.*?)^```(?:\n|$)", re.DOTALL
+def _provision_block(markdown: str) -> str:
+    """Extract the sole prescribed provision Bash block."""
+    headings = list(
+        re.finditer(rf"(?m)^{re.escape(PROVISION_BLOCK_HEADING)}$", markdown)
     )
-    global_matches = [
-        match.group("body")
-        for match in standard_bash_fence.finditer(markdown)
-        if STATE_MARKER in match.group("body")
-    ]
-    step_matches = [
-        match.group("body")
-        for match in standard_bash_fence.finditer(step_1)
-        if STATE_MARKER in match.group("body")
-    ]
-    if len(global_matches) != 1 or len(step_matches) != 1:
+    if len(headings) != 1:
         raise AssertionError(
-            "the sole STATE_FILE marker must be inside one standard Bash fence "
-            "within exact Step 1"
+            "expected the exact mandatory provision heading exactly once"
         )
-    return global_matches[0]
+    next_step = markdown.find("\n---\n\n## Step 5 ", headings[0].end())
+    if next_step < 0:
+        raise AssertionError("provision block must end before the exact Step 5 boundary")
+    section = markdown[headings[0].start():next_step]
+    shape = re.match(
+        rf"{re.escape(PROVISION_BLOCK_HEADING)}\n\n"
+        r"```bash\n(?P<body>.*?)```\n\n",
+        section,
+        re.DOTALL,
+    )
+    if shape is None:
+        raise AssertionError(
+            "the prescribed provision section must contain exactly one standard "
+            "Bash fence and no alternate command path"
+        )
+    if len(_shell_fences(section)) != 1:
+        raise AssertionError(
+            "the prescribed provision section must not expose a second command path"
+        )
+    return shape.group("body")
+
+
+def _heredoc_spec(raw_line: str) -> tuple[str, bool] | None:
+    """Return an unquoted heredoc delimiter and whether tab stripping is active."""
+    single_quoted = False
+    double_quoted = False
+    escaped = False
+    arithmetic_depth = 0
+    index = 0
+    while index < len(raw_line):
+        char = raw_line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and not single_quoted:
+            escaped = True
+            index += 1
+            continue
+        if char == "'" and not double_quoted:
+            single_quoted = not single_quoted
+            index += 1
+            continue
+        if char == '"' and not single_quoted:
+            double_quoted = not double_quoted
+            index += 1
+            continue
+        if char == "#" and not single_quoted and not double_quoted:
+            break
+        if (
+            not single_quoted
+            and not double_quoted
+            and raw_line[index : index + 2] == "(("
+        ):
+            arithmetic_depth += 1
+            index += 2
+            continue
+        if (
+            arithmetic_depth
+            and not single_quoted
+            and not double_quoted
+            and raw_line[index : index + 2] == "))"
+        ):
+            arithmetic_depth -= 1
+            index += 2
+            continue
+        if (
+            char == "<"
+            and not single_quoted
+            and not double_quoted
+            and arithmetic_depth == 0
+            and raw_line[index : index + 2] == "<<"
+            and raw_line[index : index + 3] != "<<<"
+        ):
+            cursor = index + 2
+            strip_tabs = cursor < len(raw_line) and raw_line[cursor] == "-"
+            cursor += int(strip_tabs)
+            while cursor < len(raw_line) and raw_line[cursor] in " \t":
+                cursor += 1
+            quote = raw_line[cursor] if cursor < len(raw_line) else ""
+            if quote in ("'", '"'):
+                cursor += 1
+                end = raw_line.find(quote, cursor)
+                if end < 0:
+                    return None
+                delimiter = raw_line[cursor:end]
+            else:
+                match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", raw_line[cursor:])
+                if match is None:
+                    return None
+                delimiter = match.group(0)
+            return delimiter, strip_tabs
+        index += 1
+    return None
+
+
+def _shell_lines_without_heredoc_bodies(shell: str) -> list[str]:
+    """Return logical command lines while excluding actual heredoc bodies."""
+    command_lines: list[str] = []
+    heredoc_delimiter: str | None = None
+    strip_tabs = False
+    for raw_line in shell.replace("\\\n", " ").splitlines():
+        if heredoc_delimiter is not None:
+            candidate = raw_line.lstrip("\t") if strip_tabs else raw_line
+            if candidate == heredoc_delimiter:
+                heredoc_delimiter = None
+                strip_tabs = False
+            continue
+
+        command_lines.append(raw_line)
+        spec = _heredoc_spec(raw_line)
+        if spec is not None:
+            heredoc_delimiter, strip_tabs = spec
+    if heredoc_delimiter is not None:
+        raise AssertionError(f"unterminated heredoc delimiter: {heredoc_delimiter}")
+    return command_lines
+
+
+def _command_lines_with_tokens(shell: str, expected: tuple[str, ...]) -> list[str]:
+    """Return executable logical lines containing an adjacent token sequence."""
+    commands: list[str] = []
+    for raw_line in _shell_lines_without_heredoc_bodies(shell):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            lexer = shlex.shlex(
+                stripped,
+                posix=True,
+                punctuation_chars="();|&$",
+            )
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            tokens = list(lexer)
+        except ValueError:
+            tokens = stripped.split()
+        for index in range(len(tokens) - len(expected) + 1):
+            candidate = tokens[index : index + len(expected)]
+            executable = pathlib.PurePosixPath(candidate[0]).name
+            if executable == expected[0] and tuple(candidate[1:]) == expected[1:]:
+                commands.append(stripped)
+    return commands
+
+
+def _azd_up_command_lines(shell: str) -> list[str]:
+    """Return executable lines that invoke `azd up`, excluding heredoc bodies."""
+    return _command_lines_with_tokens(shell, ("azd", "up"))
+
+
+def _azd_auth_login_command_lines(shell: str) -> list[str]:
+    """Return executable lines that invoke `azd auth login`."""
+    return _command_lines_with_tokens(shell, ("azd", "auth", "login"))
 
 
 def _scaffold_block(markdown: str) -> str:
@@ -1042,13 +1261,12 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
 
     # --- Skill acknowledgment (preserved from original) ---
 
-    def test_fixture_acknowledges_skill_before_step_zero(self) -> None:
+    def test_fixture_acknowledges_skill_inside_step_zero_bootstrap(self) -> None:
         acknowledgement = 'echo "skills/foundry-mcp-aca/SKILL.md"'
-        self.assertIn("## Step -1", self.fixture)
-        self.assertIn(acknowledgement, self.fixture)
-        self.assertLess(
-            self.fixture.index(acknowledgement), self.fixture.index("## Step 0")
-        )
+        bootstrap = _bootstrap_block(self.fixture)
+        self.assertNotIn("## Step -1", self.fixture)
+        self.assertIn("## Step 0", self.fixture)
+        self.assertIn(acknowledgement, bootstrap)
 
 
 class TestStatePersistence(unittest.TestCase):
@@ -1058,15 +1276,406 @@ class TestStatePersistence(unittest.TestCase):
     def setUpClass(cls):
         cls.fixture = FIXTURE.read_text(encoding="utf-8")
 
+    def test_bootstrap_is_the_only_auth_and_initial_state_path(self):
+        """Audit, auth, and initial state must share the first Bash action."""
+        bootstrap = _bootstrap_block(self.fixture)
+        first_bash = re.search(
+            r"(?m)^```bash\n(?P<body>.*?)^```(?:\n|$)",
+            self.fixture,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(first_bash)
+        self.assertEqual(bootstrap, first_bash.group("body"))
+        self.assertIn('echo "skills/foundry-mcp-aca/SKILL.md"', bootstrap)
+        self.assertIn("set -Eeuo pipefail", bootstrap)
+        self.assertIn("FAIL()", bootstrap)
+        bash_bodies = [body for _start, body in _shell_fences(self.fixture)]
+        auth_commands = [
+            command
+            for body in bash_bodies
+            for command in _azd_auth_login_command_lines(body)
+        ]
+        self.assertEqual(
+            1,
+            len(auth_commands),
+            "the fixture must expose exactly one authenticated azd bootstrap path",
+        )
+        self.assertEqual(
+            auth_commands,
+            _azd_auth_login_command_lines(bootstrap),
+            "the sole azd auth login command must be inside the bootstrap block",
+        )
+        self.assertEqual(
+            1,
+            self.fixture.count(STATE_MARKER),
+            "the initial state path must be declared only in the bootstrap block",
+        )
+        self.assertIn(STATE_MARKER, bootstrap)
+        self.assertNotIn("## Step -1", self.fixture)
+        before_scaffold = self.fixture[:self.fixture.index(STEP_2_HEADING)]
+        self.assertEqual(
+            1,
+            len(_shell_fences(before_scaffold)),
+            "bootstrap must be the only shell command fragment before scaffolding",
+        )
+        for case, command in {
+            "direct": "azd auth login --client-id test",
+            "if": "if azd auth login --client-id test; then",
+            "compound": "echo ready; azd auth login --client-id test",
+            "subshell": "(azd auth login --client-id test)",
+            "command substitution": "result=$(azd auth login --client-id test)",
+            "line continuation": "azd auth \\\n  login --client-id test",
+            "path-qualified": "/usr/local/bin/azd auth login --client-id test",
+        }.items():
+            with self.subTest(azd_auth_form=case):
+                self.assertEqual(
+                    1,
+                    len(_azd_auth_login_command_lines(command)),
+                    f"{case} must be classified as an executable azd auth path",
+                )
+        self.assertEqual(
+            2,
+            len(
+                _azd_auth_login_command_lines(
+                    "azd auth login --client-id one; "
+                    "azd auth login --client-id two"
+                )
+            ),
+            "two auth invocations on one compound line must count as two paths",
+        )
+
+    def test_bootstrap_executes_auth_before_atomically_publishing_state(self):
+        """Execute the exact bootstrap with stubbed Azure CLIs and verify order."""
+        bootstrap = _bootstrap_block(self.fixture)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            _isolated_shipped_state_file(),
+            _isolated_shipped_smoke_marker(),
+        ):
+            temp = pathlib.Path(temp_dir)
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            call_log = temp / "calls.log"
+
+            (bin_dir / "az").write_text(
+                "#!/usr/bin/env bash\n"
+                'printf "az %s\\n" "$*" >> "$CALL_LOG"\n'
+                "printf '__EVENT__:az account show\\n'\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "azd").write_text(
+                "#!/usr/bin/env bash\n"
+                'printf "azd %s\\n" "$*" >> "$CALL_LOG"\n'
+                "printf '__EVENT__:azd auth login\\n'\n"
+                '[ ! -e "$BOOTSTRAP_STATE_PATH" ] || exit 91\n'
+                '[ "${AZD_AUTH_RESULT:-success}" = success ] || exit 42\n'
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "uuidgen").write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'ABCDEF12-3456-7890-ABCD-EF1234567890\\n'\n",
+                encoding="utf-8",
+            )
+            for stub in ("az", "azd", "uuidgen"):
+                (bin_dir / stub).chmod(0o755)
+
+            base_env = {
+                "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin",
+                "CALL_LOG": str(call_log),
+                "BOOTSTRAP_STATE_PATH": str(STATE_PATH),
+                "GITHUB_WORKSPACE": str(temp),
+                "AZURE_CLIENT_ID": "test-client",
+                "AZURE_TENANT_ID": "test-tenant",
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "ACR_LOGIN_SERVER": "test.azurecr.io",
+            }
+
+            failed_auth = _run_bash(
+                bootstrap,
+                {**base_env, "AZD_AUTH_RESULT": "fail"},
+                cwd=temp,
+            )
+            self.assertNotEqual(0, failed_auth.returncode)
+            self.assertFalse(
+                STATE_PATH.exists(),
+                "failed azd auth must leave no published state from this invocation",
+            )
+            self.assertTrue(
+                SMOKE_MARKER_PATH.read_bytes().startswith(
+                    b"SMOKE_RESULT=FAIL azd auth login failed"
+                ),
+                f"failed auth must write a precise FAIL marker: "
+                f"stdout={failed_auth.stdout!r} stderr={failed_auth.stderr!r}",
+            )
+            self.assertIn("skills/foundry-mcp-aca/SKILL.md", failed_auth.stdout)
+            self.assertEqual(
+                [
+                    "az account show --output table",
+                    (
+                        "azd auth login --federated-credential-provider github "
+                        "--client-id test-client --tenant-id test-tenant"
+                    ),
+                ],
+                call_log.read_text(encoding="utf-8").splitlines(),
+            )
+
+            call_log.unlink()
+            SMOKE_MARKER_PATH.unlink()
+            succeeded = _run_bash(bootstrap, base_env, cwd=temp)
+            self.assertEqual(
+                0,
+                succeeded.returncode,
+                f"bootstrap failed: stdout={succeeded.stdout!r} "
+                f"stderr={succeeded.stderr!r}",
+            )
+            self.assertIn("skills/foundry-mcp-aca/SKILL.md", succeeded.stdout)
+            self.assertEqual(
+                [
+                    "az account show --output table",
+                    (
+                        "azd auth login --federated-credential-provider github "
+                        "--client-id test-client --tenant-id test-tenant"
+                    ),
+                ],
+                call_log.read_text(encoding="utf-8").splitlines(),
+            )
+            self.assertLess(
+                succeeded.stdout.index("skills/foundry-mcp-aca/SKILL.md"),
+                succeeded.stdout.index("__EVENT__:az account show"),
+            )
+            self.assertLess(
+                succeeded.stdout.index("__EVENT__:az account show"),
+                succeeded.stdout.index("__EVENT__:azd auth login"),
+            )
+            self.assertLess(
+                succeeded.stdout.index("__EVENT__:azd auth login"),
+                succeeded.stdout.index("APP_NAME=ci-smoke-mcp-abcdef12"),
+            )
+            expected_uami = (
+                "/subscriptions/test-subscription/resourceGroups/rg-awesome-gbb-ci/"
+                "providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+                "uami-awesome-gbb-ci"
+            )
+            self.assertEqual(
+                [
+                    "APP_NAME=ci-smoke-mcp-abcdef12",
+                    f"PROJECT_DIR={temp}/.scratch/ci-smoke-mcp-abcdef12",
+                    f"UAMI_RESOURCE_ID={expected_uami}",
+                    "ACR_SERVER=test.azurecr.io",
+                ],
+                STATE_PATH.read_text(encoding="utf-8").splitlines(),
+            )
+
+    def test_bootstrap_rejects_each_missing_required_env_before_auth(self):
+        """Required workflow inputs must fail before azd auth or state publication."""
+        bootstrap = _bootstrap_block(self.fixture)
+        required = (
+            "GITHUB_WORKSPACE",
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "ACR_LOGIN_SERVER",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            bin_dir = temp / "bin"
+            bin_dir.mkdir()
+            call_log = temp / "calls.log"
+            for name in ("az", "azd"):
+                stub = bin_dir / name
+                stub.write_text(
+                    "#!/usr/bin/env bash\n"
+                    f"printf '{name} called\\n' >> \"$CALL_LOG\"\n",
+                    encoding="utf-8",
+                )
+                stub.chmod(0o755)
+            uuidgen = bin_dir / "uuidgen"
+            uuidgen.write_text(
+                "#!/usr/bin/env bash\nprintf 'abcdef12\\n'\n",
+                encoding="utf-8",
+            )
+            uuidgen.chmod(0o755)
+            complete_env = {
+                "PATH": f"{bin_dir}:/usr/bin:/bin",
+                "CALL_LOG": str(call_log),
+                "GITHUB_WORKSPACE": str(temp),
+                "AZURE_CLIENT_ID": "test-client",
+                "AZURE_TENANT_ID": "test-tenant",
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "ACR_LOGIN_SERVER": "test.azurecr.io",
+            }
+
+            for missing in required:
+                with (
+                    self.subTest(missing=missing),
+                    _isolated_shipped_state_file(),
+                    _isolated_shipped_smoke_marker(),
+                ):
+                    call_log.unlink(missing_ok=True)
+                    result = _run_bash(
+                        bootstrap,
+                        {
+                            key: value
+                            for key, value in complete_env.items()
+                            if key != missing
+                        },
+                        cwd=temp,
+                    )
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertFalse(STATE_PATH.exists())
+                    self.assertFalse(
+                        call_log.exists(),
+                        f"missing {missing} must fail before az or azd is called",
+                    )
+                    self.assertEqual(
+                        f"SMOKE_RESULT=FAIL auth context missing: {missing}\n",
+                        SMOKE_MARKER_PATH.read_text(encoding="utf-8"),
+                    )
+
+    def test_global_guard_forbids_all_non_bash_file_tools_and_plan_files(self):
+        """The first-page guard applies globally, including session plan files."""
+        first_page = self.fixture[:3000]
+        required_guard = (
+            "NEVER use Edit, Create, Write, or any other file-editing tool "
+            "anywhere in this smoke, for any purpose.",
+            "This includes `~/.copilot/session-state/*/plan.md`.",
+            "Do not create a plan file.",
+            "Every action in this smoke must be one of the prescribed Bash tool actions.",
+        )
+        for sentence in required_guard:
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, first_page)
+
+    def test_provision_is_one_state_dependent_prescribed_block(self):
+        """The fixture must expose one provision path after bootstrap state."""
+        provision = _provision_block(self.fixture)
+        bash_bodies = [body for _start, body in _shell_fences(self.fixture)]
+        executable_azd_up = [
+            command
+            for body in bash_bodies
+            for command in _azd_up_command_lines(body)
+        ]
+        self.assertEqual(
+            ["until azd up --no-prompt; do"],
+            executable_azd_up,
+            "there must be exactly one executable azd up path globally",
+        )
+        self.assertEqual(
+            executable_azd_up,
+            _azd_up_command_lines(provision),
+            "the sole executable azd up must be inside the prescribed provision block",
+        )
+        self.assertTrue(
+            provision.startswith(
+                "source /tmp/foundry-mcp-aca-state.env || "
+                "{ printf 'SMOKE_RESULT=FAIL provision state missing\\n'"
+            ),
+            "the sole provision path must begin by requiring bootstrap state",
+        )
+        self.assertLess(
+            self.fixture.index(BOOTSTRAP_BLOCK_HEADING),
+            self.fixture.index(PROVISION_BLOCK_HEADING),
+        )
+        invocation_cases = {
+            "direct": "azd up --no-prompt",
+            "until": "until azd up --no-prompt; do",
+            "if": "if azd up --no-prompt; then",
+            "timeout": "timeout 60 azd up --no-prompt",
+            "compound": "echo ready; azd up --no-prompt",
+            "subshell": "(azd up --no-prompt)",
+            "command substitution": "result=$(azd up --no-prompt)",
+            "line continuation": "azd \\\n  up --no-prompt",
+            "path-qualified": "/usr/local/bin/azd up --no-prompt",
+        }
+        for case, command in invocation_cases.items():
+            with self.subTest(azd_up_form=case):
+                self.assertEqual(
+                    1,
+                    len(_azd_up_command_lines(command)),
+                    f"{case} must be classified as an executable azd up path",
+                )
+        self.assertEqual(
+            2,
+            len(
+                _azd_up_command_lines(
+                    "azd up --no-prompt || azd up --no-prompt"
+                )
+            ),
+            "two provision invocations on one compound line must count as two paths",
+        )
+        self.assertEqual(
+            [],
+            _azd_up_command_lines(
+                "echo 'azd up failed'\n"
+                "cat > script.sh <<'SH'\n"
+                "azd up --no-prompt\n"
+                "SH\n"
+            ),
+            "quoted diagnostics and heredoc content are not executable azd paths",
+        )
+        self.assertEqual(
+            ["azd up --no-prompt"],
+            _azd_up_command_lines(
+                'echo "<<NOT_A_HEREDOC"\n'
+                "azd up --no-prompt\n"
+            ),
+            "a quoted heredoc-like token must not hide the next executable path",
+        )
+        self.assertEqual(
+            ["azd up --no-prompt"],
+            _azd_up_command_lines(
+                'echo "<<" STOP\n'
+                "azd up --no-prompt\n"
+                "STOP\n"
+            ),
+            "a separately quoted heredoc operator must not hide executable paths",
+        )
+        self.assertEqual(
+            ["azd up --no-prompt"],
+            _azd_up_command_lines(
+                "echo $((1 << STOP))\n"
+                "azd up --no-prompt\n"
+            ),
+            "an arithmetic shift must not be mistaken for a heredoc opener",
+        )
+        alternate_fence = "~~~sh\nazd up --no-prompt\n~~~\n"
+        self.assertEqual(
+            ["azd up --no-prompt"],
+            [
+                command
+                for _start, body in _shell_fences(alternate_fence)
+                for command in _azd_up_command_lines(body)
+            ],
+            "alternate shell fences must participate in global path discovery",
+        )
+        self.assertEqual(
+            ["azd up --no-prompt"],
+            [
+                command
+                for _start, body in _shell_fences(
+                    "```Bash\nazd up --no-prompt\n```\n"
+                )
+                for command in _azd_up_command_lines(body)
+            ],
+            "case-variant shell fences must participate in path discovery",
+        )
+
     def test_state_file_written_after_naming(self):
-        """All cross-shell deployment values must be persisted after naming."""
-        self.assertIn('STATE_FILE="/tmp/foundry-mcp-aca-state.env"', self.fixture)
+        """Bootstrap must atomically persist every cross-shell deployment value."""
+        bootstrap = _bootstrap_block(self.fixture)
+        self.assertIn('STATE_FILE="/tmp/foundry-mcp-aca-state.env"', bootstrap)
         for variable in ("APP_NAME", "PROJECT_DIR", "UAMI_RESOURCE_ID", "ACR_SERVER"):
-            self.assertRegex(
-                self.fixture,
-                rf'echo "{variable}=.*" >{{1,2}} "\$STATE_FILE"',
+            self.assertIn(
+                f"printf '{variable}=%s\\n'",
+                bootstrap,
                 f"{variable} must be persisted to the fixture state file.",
             )
+        self.assertIn('} > "$STATE_TMP"', bootstrap)
+        self.assertIn('mv "$STATE_TMP" "$STATE_FILE"', bootstrap)
 
     def test_scaffolding_block_uses_restored_state_without_reassignment(self):
         """The fresh-shell scaffold must trust every persisted Step 1 value."""
@@ -1102,10 +1711,13 @@ class TestStatePersistence(unittest.TestCase):
             _isolated_shipped_state_file(),
         ):
             workspace = pathlib.Path(temp_dir)
+            stub_bin = _bootstrap_stub_bin(workspace)
             restored_project_dir = workspace / "restored-from-state"
             workflow_env = {
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "PATH": f"{stub_bin}:/usr/bin:/bin:/usr/local/bin",
                 "GITHUB_WORKSPACE": str(workspace),
+                "AZURE_CLIENT_ID": "test-client",
+                "AZURE_TENANT_ID": "test-tenant",
                 "AZURE_SUBSCRIPTION_ID": "test-subscription",
                 "ACR_LOGIN_SERVER": "test.azurecr.io",
             }
@@ -1175,6 +1787,23 @@ class TestStatePersistence(unittest.TestCase):
             "MCP probe block must source state file"
         )
 
+    def test_every_fresh_mcp_and_auth_block_sources_persisted_state_first(self):
+        """Fresh Bash calls that consume deployment state must restore it first."""
+        for marker in (
+            "INIT_RESPONSE=$(curl",
+            "SUB=$(az account show",
+            "CODE=$(curl",
+            "TOKEN=$(az account get-access-token",
+        ):
+            with self.subTest(marker=marker):
+                block = _standard_bash_block_containing(self.fixture, marker)
+                self.assertTrue(
+                    block.lstrip().startswith(
+                        "source /tmp/foundry-mcp-aca-state.env\n"
+                    ),
+                    f"fresh block containing {marker!r} must source state first",
+                )
+
     def test_azure_tenant_id_in_azd_env(self):
         """azd env .env must include AZURE_TENANT_ID for federated-credential CI."""
         self.assertIn(
@@ -1234,9 +1863,12 @@ class TestStatePersistence(unittest.TestCase):
             _isolated_shipped_state_file(),
         ):
             workspace = pathlib.Path(temp_dir)
+            stub_bin = _bootstrap_stub_bin(workspace)
             workflow_env = {
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "PATH": f"{stub_bin}:/usr/bin:/bin:/usr/local/bin",
                 "GITHUB_WORKSPACE": str(workspace),
+                "AZURE_CLIENT_ID": "test-client",
+                "AZURE_TENANT_ID": "test-tenant",
                 "AZURE_SUBSCRIPTION_ID": "test-subscription",
                 "ACR_LOGIN_SERVER": "test.azurecr.io",
             }
@@ -1439,38 +2071,46 @@ AZDYAML
                 synthetic_scaffold,
             )
 
-        synthetic_step_1 = (
-            f"{STEP_1_HEADING}\n\n```bash\n{STATE_MARKER}\n```\n\n---\n\n"
-            f"{STEP_2_HEADING}\n"
+        synthetic_bootstrap = (
+            f"{BOOTSTRAP_BLOCK_HEADING}\n\n"
+            f"```bash\n{STATE_MARKER}\n```\n\n"
+            f"{STEP_1_HEADING}\n"
         )
-        with self.subTest(state_marker_scope="unique in exact Step 1"):
+        with self.subTest(state_marker_scope="unique in exact bootstrap"):
             self.assertEqual(
                 f"{STATE_MARKER}\n",
-                _step_1_state_block(synthetic_step_1),
+                _bootstrap_block(synthetic_bootstrap),
             )
         invalid_state_documents = {
-            "duplicate in later Bash block": (
-                synthetic_step_1
-                + f"\n```bash\n{STATE_MARKER}\n```\n"
+            "duplicate bootstrap heading": (
+                synthetic_bootstrap
+                + f"\n{BOOTSTRAP_BLOCK_HEADING}\n\n```bash\necho duplicate\n```\n"
             ),
-            "sole marker in prose": (
-                f"{STEP_1_HEADING}\n\n{STATE_MARKER}\n\n---\n\n"
-                f"{STEP_2_HEADING}\n"
-            ),
-            "sole marker in an indented fence": (
-                f"{STEP_1_HEADING}\n\n    ```bash\n    {STATE_MARKER}\n"
-                f"    ```\n\n---\n\n{STEP_2_HEADING}\n"
-            ),
-            "only outside Step 1": (
-                f"{STEP_1_HEADING}\n\n```bash\necho step-1\n```\n\n"
-                f"---\n\n{STEP_2_HEADING}\n\n"
+            "prose between heading and fence": (
+                f"{BOOTSTRAP_BLOCK_HEADING}\n\nDo this first.\n\n"
                 f"```bash\n{STATE_MARKER}\n```\n"
+            ),
+            "earlier Bash action": (
+                "```bash\necho too-early\n```\n\n"
+                f"{BOOTSTRAP_BLOCK_HEADING}\n\n```bash\n{STATE_MARKER}\n```\n"
+            ),
+            "earlier tilde-fenced shell action": (
+                "~~~bash\necho too-early\n~~~\n\n"
+                f"{BOOTSTRAP_BLOCK_HEADING}\n\n```bash\n{STATE_MARKER}\n```\n"
+            ),
+            "earlier indented shell action": (
+                "   ```sh\n   echo too-early\n   ```\n\n"
+                f"{BOOTSTRAP_BLOCK_HEADING}\n\n```bash\n{STATE_MARKER}\n```\n"
+            ),
+            "earlier case-variant shell action": (
+                "```Bash\necho too-early\n```\n\n"
+                f"{BOOTSTRAP_BLOCK_HEADING}\n\n```bash\n{STATE_MARKER}\n```\n"
             ),
         }
         for case, document in invalid_state_documents.items():
             with self.subTest(state_marker_scope=case):
                 with self.assertRaises(AssertionError):
-                    _step_1_state_block(document)
+                    _bootstrap_block(document)
 
         with self.subTest(scaffold_heading_scope="duplicate outside Step 2"):
             with self.assertRaises(AssertionError):
@@ -1488,9 +2128,12 @@ AZDYAML
             _isolated_shipped_state_file(),
         ):
             workspace = pathlib.Path(temp_dir)
+            stub_bin = _bootstrap_stub_bin(workspace)
             workflow_env = {
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "PATH": f"{stub_bin}:/usr/bin:/bin:/usr/local/bin",
                 "GITHUB_WORKSPACE": str(workspace),
+                "AZURE_CLIENT_ID": "test-client",
+                "AZURE_TENANT_ID": "test-tenant",
                 "AZURE_SUBSCRIPTION_ID": "test-subscription",
                 "ACR_LOGIN_SERVER": "test.azurecr.io",
             }
@@ -1915,7 +2558,7 @@ AZDYAML
 
     def test_first_page_guard_forbids_nondeterministic_file_authoring(self):
         """The critical guard must make the one Bash scaffold path mandatory."""
-        first_page = self.fixture[:2000]
+        first_page = self.fixture[:3000]
         guard_matches = list(
             re.finditer(
                 rf"(?m)^{re.escape(DETERMINISTIC_GUARD_HEADING)}$",
@@ -1933,7 +2576,7 @@ AZDYAML
             guard_start,
             len(first_page),
             "the exact deterministic scaffold-authoring guard heading must begin "
-            "within the fixture's first 2000 characters",
+            "within the fixture's first 3000 characters",
         )
         following = self.fixture[guard_matches[0].end():]
         guard_end = re.search(

@@ -1,6 +1,6 @@
 # Design Spec: foundry-mcp-aca refresh 1.2.4
 
-**Status:** Round 13 implemented; exact-head T3 pending
+**Status:** Round 14 implemented; exact-head T3 pending
 **Date:** 2026-08-05
 **Base version:** 1.2.3
 **Target version:** 1.2.4 (PATCH — pin refresh + wording + deployment corrections)
@@ -290,3 +290,61 @@ state-writing invocation), one combined scaffold Bash sourced from state, no
 repair or inspection, one `azd` path, one MCP roundtrip, deterministic marker,
 and audit echo only (the required `SKILL.md` audit-path echo, with no catalog
 reads beyond it).
+
+## Round-14 correction (2026-08-05): auth-ordered atomic bootstrap
+
+**Rejected exact-head T3:** Run `31026453627`, job `92376101138`, head
+`d250c8feb0f8721c10a2f7513fe5164361eaca1d`, artifact `8939043595`,
+transcript SHA-256
+`4c73d6a94805fb40e443932bfd558b351147d64c712aa83725c373df1fd085b9`.
+Transcript lines 1–2 use Edit/Create for
+`~/.copilot/session-state/90ffa132-ffd8-4fbb-b149-a9c76da90f88/plan.md`.
+Lines 6–12 merge audit and state while skipping Step 0 auth. Lines 26–32
+then enter the provision path unauthenticated; lines 34–42 repair auth and
+reprovision. The deterministic scaffold itself succeeded with one prescribed
+Bash call and no generated-file repair, but the two provision paths make the
+green run false evidence.
+
+**Root cause:** Authentication, audit acknowledgement, and state publication
+were three independent prose-directed fragments. The scaffold required state,
+but state did not require successful authentication. The file-tool prohibition
+also applied only to scaffold authoring, leaving session plan files outside its
+scope. "Step 0 first" prose could not enforce either dependency.
+
+**Architecture:** The fixture's first Bash action is now one exact bootstrap
+block. It uses `set -Eeuo pipefail`, a deterministic `FAIL` helper, the audit
+echo, required-env existence checks, optional-auth inventory, show-don't-assert
+`az account show`, and the sole explicit `azd auth login`. It removes stale
+state before validation, writes new state to a process-unique temporary file
+only after login succeeds, and atomically publishes it with `mv`. The unchanged
+Step 2 scaffold fails immediately if that state is absent. Provision remains
+one separate prescribed Bash block whose first operation sources the
+bootstrap-created state. The first-page guard now forbids Edit/Create/Write
+and every other file-editing tool globally, including session-state plan files.
+
+**TDD evidence:**
+- RED on parent `d250c8`: 4 new tests produced 7 assertion failures. The
+  bootstrap heading/block was absent, auth and state were split, and all four
+  global file-tool/plan guard sentences were missing.
+- GREEN: 73 fixture contract tests pass. Execution-level tests stub `az`,
+  `azd`, and `uuidgen`, assert audit and call order, prove auth failure writes
+  FAIL and leaves no state, prove all required env omissions fail before Azure
+  calls, and prove successful auth publishes the exact four-line state.
+- The existing fresh-shell execution contract then runs the exact unchanged
+  scaffold block and validates all six generated files.
+- A provision-structure oracle requires one prescribed provision fence, the
+  sole executable `azd up`, and bootstrap state as its first dependency. It
+  recognizes alternate shell fences, compound/subshell/continued and
+  path-qualified commands, while excluding actual heredoc bodies.
+- Review RED: 3 focused tests produced 6 failures: compound duplicate auth and
+  provision commands were undercounted, and four fresh MCP/Easy Auth Bash
+  blocks consumed persisted deployment state without sourcing it.
+- Review GREEN: every state-consuming MCP/Easy Auth block now sources the state
+  file first, and the oracle counts every executable command occurrence.
+- Full `scripts/tests`: 393 tests pass.
+
+**Acceptance remains open:** The next exact-head T3 must show zero
+Edit/Create/Write actions, the exact bootstrap as the first action, one
+unchanged scaffold Bash action, exactly one authenticated provision path, one
+MCP roundtrip, no repair or generated-file/catalog inspection beyond the audit
+echo, and the deterministic marker.
