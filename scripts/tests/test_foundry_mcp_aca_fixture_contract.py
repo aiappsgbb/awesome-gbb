@@ -597,6 +597,98 @@ class TestStatePersistence(unittest.TestCase):
             "Fixture must have a section explaining state persistence"
         )
 
+    # --- Round 7: Heredoc, state, protocol, anchoring ---
+
+    def test_parameters_json_uses_quoted_heredoc(self):
+        """main.parameters.json must be written via quoted heredoc to prevent $schema expansion."""
+        # The fixture must contain a cat <<'PARAMS' or cat <<'EOF' style command
+        # for the parameters.json file, not just a JSON code fence
+        blocks = re.findall(r'```bash\n(.*?)```', self.fixture, re.DOTALL)
+        combined = '\n'.join(blocks)
+        # Must contain a safe write of parameters.json with quoted heredoc
+        self.assertRegex(
+            combined,
+            r"cat\s*>\s*.*parameters\.json.*<<\s*'",
+            "main.parameters.json must use a quoted heredoc (<<'DELIM') to prevent "
+            "$schema shell expansion. A JSON code fence is ambiguous.",
+        )
+
+    def test_protocol_version_fails_if_empty(self):
+        """Fixture must FAIL if negotiated protocolVersion is empty."""
+        blocks = re.findall(r'```bash\n(.*?)```', self.fixture, re.DOTALL)
+        combined = '\n'.join(blocks)
+        # Must have an explicit fail gate on empty PROTOCOL_VERSION
+        self.assertRegex(
+            combined,
+            r'(if\s+\[\s+-z\s+"\$PROTOCOL_VERSION"\s*\]|'
+            r'\[\s+-z\s+"\$PROTOCOL_VERSION"\s*\]\s*&&)',
+            "Fixture must FAIL deterministically when protocolVersion is empty — "
+            "the MCP spec requires a negotiated version.",
+        )
+
+    def test_protocol_version_header_unconditional(self):
+        """MCP-Protocol-Version header must be added unconditionally (not gated on -n)."""
+        blocks = re.findall(r'```bash\n(.*?)```', self.fixture, re.DOTALL)
+        combined = '\n'.join(blocks)
+        # The conditional pattern `[ -n "$PROTOCOL_VERSION" ] && SESSION_ARGS+=` is wrong
+        self.assertNotRegex(
+            combined,
+            r'\[\s+-n\s+"\$PROTOCOL_VERSION"\s*\]\s*&&\s*SESSION_ARGS',
+            "MCP-Protocol-Version header must be unconditional — protocol version "
+            "is mandatory per MCP 2025-06-18; conditional add defeats the FAIL gate.",
+        )
+
+    def test_mcp_exchange_state_persisted_to_file(self):
+        """FQDN, SESSION_ID, PROTOCOL_VERSION must be persisted to STATE_FILE."""
+        blocks = re.findall(r'```bash\n(.*?)```', self.fixture, re.DOTALL)
+        combined = '\n'.join(blocks)
+        for var in ("FQDN", "SESSION_ID", "PROTOCOL_VERSION"):
+            self.assertRegex(
+                combined,
+                rf'echo\s+"?{var}=',
+                f"{var} must be appended/written to STATE_FILE for cross-fence persistence",
+            )
+
+    def test_initialized_notification_captures_status_scoped(self):
+        """notifications/initialized status gate must be in the actual enforcement block."""
+        # Find the bash block containing the actual curl for notifications/initialized
+        method_marker = '"method": "notifications/initialized"'
+        idx = self.fixture.find(method_marker)
+        self.assertGreater(idx, 100, "enforcement block for notifications/initialized not found")
+        # Find the containing bash block
+        block_start = self.fixture.rfind("```bash", 0, idx)
+        block_end = self.fixture.find("```", idx)
+        enforcement_block = self.fixture[block_start:block_end]
+        # Must contain the 202 status check
+        self.assertIn("!= \"202\"", enforcement_block,
+                      "The enforcement block must assert HTTP 202 for notifications/initialized")
+        # Must NOT contain || true
+        self.assertNotIn("|| true", enforcement_block,
+                         "notifications/initialized must not swallow failures with || true")
+
+    def test_initialized_requires_http_202_scoped(self):
+        """HTTP 202 gate must be in the enforcement block, not just mentioned in prose."""
+        method_marker = '"method": "notifications/initialized"'
+        idx = self.fixture.find(method_marker)
+        self.assertGreater(idx, 100)
+        block_start = self.fixture.rfind("```bash", 0, idx)
+        block_end = self.fixture.find("```", idx)
+        enforcement_block = self.fixture[block_start:block_end]
+        # Must have FAIL on non-202
+        self.assertIn("SMOKE_RESULT=FAIL", enforcement_block,
+                      "notifications/initialized must write FAIL marker on non-202")
+
+    def test_skill_consumer_config_no_trailing_slash(self):
+        """SKILL.md consumer config must use /mcp (no trailing slash) for FastMCP 2.x."""
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        # Find the consumer config JSON block with url field
+        config_match = re.search(r'"url":\s*"https://[^"]+/mcp/"', skill)
+        self.assertIsNone(
+            config_match,
+            "SKILL.md consumer config uses /mcp/ (trailing slash) but pinned FastMCP 2.x "
+            "returns 307 for trailing slash. Use /mcp (no slash).",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

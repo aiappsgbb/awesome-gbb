@@ -389,9 +389,13 @@ output appName string = app.name
 ```
 
 Then write `${PROJECT_DIR}/infra/main.parameters.json` to map azd env vars
-to Bicep params:
+to Bicep params. **Use a quoted heredoc** (`<<'PARAMS'`) so that `$schema`
+is preserved literally without shell expansion:
 
-```json
+```bash
+source /tmp/foundry-mcp-aca-state.env
+cd "$PROJECT_DIR"
+cat > "${PROJECT_DIR}/infra/main.parameters.json" <<'PARAMS'
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
@@ -401,6 +405,7 @@ to Bicep params:
     "acrServer": { "value": "${ACR_SERVER}" }
   }
 }
+PARAMS
 ```
 
 Then write `${PROJECT_DIR}/azure.yaml` so `azd` knows how to build + push
@@ -521,6 +526,7 @@ echo "FQDN=$FQDN"
   printf 'SMOKE_RESULT=FAIL could not resolve FQDN for %s\n' "$APP_NAME" > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 }
+echo "FQDN=$FQDN" >> /tmp/foundry-mcp-aca-state.env
 ```
 
 Call `initialize`. The MCP streamable-HTTP spec requires a dual
@@ -578,11 +584,21 @@ echo "serverInfo.name=$SERVER_NAME"
 PROTOCOL_VERSION=$(echo "$INIT_JSON" | jq -r '.result.protocolVersion // empty')
 echo "protocolVersion=$PROTOCOL_VERSION"
 
+# Protocol version is mandatory per MCP 2025-06-18
+if [ -z "$PROTOCOL_VERSION" ]; then
+  printf 'SMOKE_RESULT=FAIL initialize did not return result.protocolVersion\n' > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
+
 # Session ID is required for this fixture — FastMCP always assigns one
 if [ -z "$SESSION_ID" ]; then
   printf 'SMOKE_RESULT=FAIL initialize did not return Mcp-Session-Id header\n' > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 fi
+
+# Persist MCP exchange state for subsequent Bash fences
+echo "SESSION_ID=$SESSION_ID" >> /tmp/foundry-mcp-aca-state.env
+echo "PROTOCOL_VERSION=$PROTOCOL_VERSION" >> /tmp/foundry-mcp-aca-state.env
 ```
 
 Send `notifications/initialized` (required by MCP protocol before
@@ -590,8 +606,8 @@ tools/list). Per MCP 2025-06-18, notifications MUST return HTTP 202
 Accepted. Capture and assert the exact status code:
 
 ```bash
-SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID")
-[ -n "$PROTOCOL_VERSION" ] && SESSION_ARGS+=(-H "MCP-Protocol-Version: $PROTOCOL_VERSION")
+source /tmp/foundry-mcp-aca-state.env
+SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID" -H "MCP-Protocol-Version: $PROTOCOL_VERSION")
 
 INIT_NOTIFY_BODY=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
@@ -614,9 +630,11 @@ if [ -n "$INIT_NOTIFY_CONTENT" ]; then
 fi
 ```
 
-Then call `tools/list` (with session header if present):
+Then call `tools/list` (with session and protocol version headers):
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
+SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID" -H "MCP-Protocol-Version: $PROTOCOL_VERSION")
 TOOLS_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
@@ -651,6 +669,8 @@ The scaffolded server's `echo` tool returns `"echoed: <message>"`. Assert
 the exact payload and verify `isError` is not `true`:
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
+SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID" -H "MCP-Protocol-Version: $PROTOCOL_VERSION")
 CALL_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \

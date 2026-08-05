@@ -103,3 +103,25 @@ config and env files directly instead of using `azd env` commands.
 - RED (2 failures): `test_initialized_asserts_empty_body_or_no_body`,
   `test_failure_list_includes_protocol_version` — ran before fixture fix
 - GREEN: all 47 tests pass after minimal source corrections
+
+## Round-7 correction (2026-08-05): state persistence, protocol gates, SKILL trailing slash
+
+**Root cause:** Coordinator rejected head 6f7c7dc0 citing 5 genuine remaining gaps
+from run 30999760430 (head 6ceda5bc, one prior commit):
+1. `$schema` in main.parameters.json expanded under unquoted heredoc
+2. PROTOCOL_VERSION gate was optional (`[ -n ... ] &&` conditional)
+3. MCP state (FQDN/SESSION_ID/PROTOCOL_VERSION) not persisted across bash fences
+4. SKILL.md L719 consumer config used `/mcp/` (trailing slash → 307 under FastMCP 2.x)
+5. Scoped initialized tests needed to anchor on enforcement block, not intro prose
+
+**Fixes:**
+1. Parameters.json creation uses `<<'PARAMS'` quoted heredoc (preserves `$schema` literal)
+2. Empty PROTOCOL_VERSION now writes FAIL marker immediately; header is unconditional
+3. STATE_FILE persists FQDN + SESSION_ID + PROTOCOL_VERSION; tools/list and tools/call
+   source it and rebuild SESSION_ARGS from persisted values
+4. SKILL.md consumer config example corrected to `/mcp` (no trailing slash)
+5. Two scoped tests anchored on `'"method": "notifications/initialized"'` (already correct at 6f7c7dc0)
+
+**TDD evidence:**
+- RED: 5 of 7 new tests failed at round-6 head (2 scoped tests already passed)
+- GREEN: all 54 tests pass after fixes

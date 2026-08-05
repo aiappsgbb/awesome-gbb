@@ -716,7 +716,7 @@ distributed tracing.
   "servers": {
     "my-mcp": {
       "type": "http",
-      "url": "https://<aca-fqdn>/mcp/",
+      "url": "https://<aca-fqdn>/mcp",
       "headers": { "Authorization": "Bearer ${input:mcpToken}" }
     }
   }

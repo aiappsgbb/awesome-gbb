@@ -84,3 +84,23 @@ Copilot CLI Bash tool process isolation — env vars don't persist.
 
 ### GREEN
 All 47 tests pass.
+
+## Round-7 corrections (2026-08-05)
+
+### RED (5 failures on 6f7c7dc0)
+- `test_parameters_json_uses_quoted_heredoc` — no `<<'` heredoc found
+- `test_protocol_version_fails_if_empty` — no FAIL gate on empty version
+- `test_protocol_version_header_unconditional` — found `[ -n "$PROTOCOL_VERSION" ] &&`
+- `test_mcp_exchange_state_persisted_to_file` — FQDN/SESSION_ID/PROTOCOL_VERSION not in STATE_FILE writes
+- `test_skill_consumer_config_no_trailing_slash` — found `/mcp/` in consumer config
+
+### Corrections applied
+1. main.parameters.json: `<<'PARAMS'` quoted heredoc (preserves `$schema`)
+2. PROTOCOL_VERSION empty → FAIL marker immediately
+3. MCP-Protocol-Version header unconditional (removed conditional)
+4. STATE_FILE persists FQDN, SESSION_ID, PROTOCOL_VERSION
+5. tools/list and tools/call source STATE_FILE and rebuild SESSION_ARGS
+6. SKILL.md L719: `/mcp/` → `/mcp`
+
+### GREEN
+All 54 tests pass.
