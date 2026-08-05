@@ -173,7 +173,9 @@ require_canonical_dependency "agent-framework-core~=1.13.0"
 require_canonical_dependency "agent-framework-foundry~=1.10.4"
 require_canonical_dependency "agent-framework-foundry-hosting==1.0.0b260730"
 require_canonical_dependency "azure-ai-projects~=2.3.0"
+require_canonical_dependency "azure-identity~=1.25.3"
 require_canonical_dependency "mcp~=1.29.0"
+require_canonical_dependency "python-dotenv~=1.2.2"
 record "CANONICAL_PYPROJECT_OK"
 
 # Preserve the canonical YAML byte-for-byte except for the two exact

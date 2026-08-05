@@ -338,6 +338,26 @@ class TestValidatePinFile(unittest.TestCase):
             errs = vs.validate_pin_file(p)
             self.assertTrue(any("pip cap policy" in e and "unbounded" in e for e in errs))
 
+    def test_pip_multiline_continuation_rejects_unsafe_specs(self):
+        unsafe_specs = {
+            "some-unbounded>=1.2.3": "unbounded",
+            "some-bare": "unpinned",
+            "some-stable==1.2.3": "bare `==`",
+        }
+        for package_spec, expected_error in unsafe_specs.items():
+            with self.subTest(package_spec=package_spec), tempfile.TemporaryDirectory() as tmp:
+                p = pathlib.Path(tmp) / "upstream-pin.md"
+                script = f'pip install --quiet \\\n  "{package_spec}"'
+                _write(p, _pin_md(script=script))
+                errs = vs.validate_pin_file(p)
+                self.assertTrue(
+                    any(
+                        "pip cap policy" in error and expected_error in error
+                        for error in errs
+                    ),
+                    errs,
+                )
+
     def test_pip_shell_var_with_default_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pathlib.Path(tmp) / "upstream-pin.md"

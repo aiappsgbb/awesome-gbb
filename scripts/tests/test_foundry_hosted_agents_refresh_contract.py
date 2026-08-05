@@ -17,6 +17,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "skills" / "foundry-hosted-agents"
+SKILL = SKILL_DIR / "SKILL.md"
 FIXTURE = SKILL_DIR / "test-fixture" / "consumer_prompt.md"
 PIN = SKILL_DIR / "references" / "upstream-pin.md"
 TIMEOUT = SKILL_DIR / "references" / "python" / "foundry_agent_timeout.py"
@@ -25,6 +26,7 @@ TIMEOUT = SKILL_DIR / "references" / "python" / "foundry_agent_timeout.py"
 class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls.skill = SKILL.read_text(encoding="utf-8")
         cls.fixture = FIXTURE.read_text(encoding="utf-8")
         cls.pin = PIN.read_text(encoding="utf-8")
         cls.timeout = TIMEOUT.read_text(encoding="utf-8")
@@ -56,6 +58,69 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
     def test_pin_records_final_live_validation_date(self) -> None:
         self.assertEqual(str(self.pin_frontmatter["last_validated"]), "2026-08-05")
         self.assertNotIn("this 2026-08-04 validation", self.pin)
+
+    def test_historical_upgrade_recipes_are_guarded_from_copying(self) -> None:
+        guard = (
+            "> **Historical boundary only — do not copy these pins; use "
+            "[`references/python/pyproject.toml`](references/python/pyproject.toml).**"
+        )
+        for target in ("1.7.0", "1.8.0"):
+            with self.subTest(target=target):
+                recipe = re.search(
+                    rf"### Upgrade recipe \(→ {re.escape(target)}\)\n\n"
+                    rf"(?P<guard>.*?)\n\n```bash",
+                    self.skill,
+                    flags=re.DOTALL,
+                )
+                self.assertIsNotNone(recipe, f"missing {target} upgrade recipe")
+                self.assertEqual(recipe.group("guard"), guard)
+        self.assertNotIn(
+            "Exact pin per AGENTS.md § 9.5 alpha\npre-release discipline.",
+            self.skill,
+        )
+        self.assertIn(
+            "current operators must use the exact beta "
+            "`agent-framework-foundry-hosting==1.0.0b260730`",
+            self.skill,
+        )
+
+    def test_pin_validation_checks_all_selected_installed_versions(self) -> None:
+        required = (
+            'assert version("agent-framework-foundry-hosting") == "1.0.0b260730"',
+            'assert version("azure-identity").startswith("1.25.")',
+            'assert version("python-dotenv").startswith("1.2.")',
+        )
+        for assertion in required:
+            with self.subTest(assertion=assertion):
+                self.assertIn(assertion, self.validation_python)
+
+    def test_pin_validation_guards_removed_surfaces_and_ga_models(self) -> None:
+        required = (
+            "from azure.ai.projects.models import (",
+            "ContainerConfiguration,",
+            "HostedAgentDefinition,",
+            "ProtocolVersionRecord,",
+            "from azure.ai.projects.operations import BetaAgentsOperations",
+            "assert not hasattr(BetaAgentsOperations, \"patch_agent_details\")",
+            "from agent_framework.azure import AzureOpenAIChatClient",
+            "FAIL: AzureOpenAIChatClient unexpectedly still importable",
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, self.validation_python)
+
+    def test_fixture_guards_all_canonical_runtime_dependencies(self) -> None:
+        required = (
+            "agent-framework-core~=1.13.0",
+            "agent-framework-foundry~=1.10.4",
+            "agent-framework-foundry-hosting==1.0.0b260730",
+            "azure-ai-projects~=2.3.0",
+            "azure-identity~=1.25.3",
+            "mcp~=1.29.0",
+            "python-dotenv~=1.2.2",
+        )
+        calls = re.findall(r'^require_canonical_dependency "([^"]+)"$', self.fixture, re.MULTILINE)
+        self.assertEqual(calls, list(required))
 
     def _run_dependency_guard(
         self, pyproject: str, dependency: str

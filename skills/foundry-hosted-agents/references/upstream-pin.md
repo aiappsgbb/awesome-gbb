@@ -212,6 +212,12 @@ validation:
     from agent_framework.foundry import FoundryChatClient
     from agent_framework_foundry_hosting import ResponsesHostServer
     from azure.ai.projects import AIProjectClient
+    from azure.ai.projects.models import (
+        ContainerConfiguration,
+        HostedAgentDefinition,
+        ProtocolVersionRecord,
+    )
+    from azure.ai.projects.operations import BetaAgentsOperations
     from microsoft.opentelemetry import use_microsoft_opentelemetry
     from mcp import McpError
     from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
@@ -314,11 +320,21 @@ validation:
         credential=OfflineCredential(),
     )
     assert callable(client.agents.update_details)
+    assert not hasattr(BetaAgentsOperations, "patch_agent_details")
+    try:
+        from agent_framework.azure import AzureOpenAIChatClient  # noqa: F401
+        raise AssertionError("FAIL: AzureOpenAIChatClient unexpectedly still importable")
+    except ImportError:
+        pass
+    assert ContainerConfiguration and HostedAgentDefinition and ProtocolVersionRecord
     assert Agent and FoundryChatClient and ResponsesHostServer and McpError
     assert version("agent-framework-core").startswith("1.13.")
     assert version("agent-framework-foundry").startswith("1.10.")
+    assert version("agent-framework-foundry-hosting") == "1.0.0b260730"
     assert version("azure-ai-projects").startswith("2.3.")
+    assert version("azure-identity").startswith("1.25.")
     assert version("mcp").startswith("1.29.")
+    assert version("python-dotenv").startswith("1.2.")
     client.close()
     assert callable(use_microsoft_opentelemetry)
     assert OpenAIInstrumentor

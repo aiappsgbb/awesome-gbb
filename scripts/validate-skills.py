@@ -74,6 +74,7 @@ _PIP_SPEC_RE = re.compile(
     r'(~=|==|>=|<=|!=|>|<)'                     # operator
     r'([^"]*)"'                                 # version
 )
+_PIP_BARE_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.\[\]-]*$')
 
 FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("PoC name `kyc-poc`", re.compile(r"\bkyc-poc\b", re.I)),
@@ -218,7 +219,19 @@ def validate_pin_pip_caps(path: pathlib.Path, fm: dict[str, Any]) -> list[str]:
     if not isinstance(script, str):
         return errors
 
-    for line in script.split("\n"):
+    logical_lines: list[str] = []
+    continuation = ""
+    for line in script.splitlines():
+        right_stripped = line.rstrip()
+        if right_stripped.endswith("\\"):
+            continuation += right_stripped[:-1] + " "
+            continue
+        logical_lines.append(continuation + line)
+        continuation = ""
+    if continuation:
+        logical_lines.append(continuation)
+
+    for line in logical_lines:
         stripped = line.strip()
         # Skip comments and non-pip lines
         if stripped.startswith("#") or "pip install" not in stripped:
@@ -252,6 +265,16 @@ def validate_pin_pip_caps(path: pathlib.Path, fm: dict[str, Any]) -> list[str]:
                     f"is unbounded (`>=`). Use `~=` to cap at the next minor (AGENTS.md § 9.5)"
                 )
             # <=, !=, <, > are unusual but not explicitly forbidden — skip
+
+        install_args = stripped.split("pip install", 1)[1]
+        for quoted_arg in re.findall(r'"([^"]+)"', install_args):
+            if _PIP_SPEC_RE.fullmatch(f'"{quoted_arg}"'):
+                continue
+            if _PIP_BARE_RE.fullmatch(quoted_arg):
+                errors.append(
+                    f"{path}: pip cap policy violation — `{quoted_arg}` is unpinned. "
+                    f"Use a bounded specifier (AGENTS.md § 9.5)"
+                )
 
     return errors
 

@@ -222,6 +222,8 @@ dependencies
 
 ### Upgrade recipe (→ 1.7.0)
 
+> **Historical boundary only — do not copy these pins; use [`references/python/pyproject.toml`](references/python/pyproject.toml).**
+
 ```bash
 sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.7.0"/' pyproject.toml
 sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.7.0"/' pyproject.toml
@@ -333,6 +335,8 @@ apply HTTP-layer transport timeouts on the underlying client instead.
 
 ### Upgrade recipe (→ 1.8.0)
 
+> **Historical boundary only — do not copy these pins; use [`references/python/pyproject.toml`](references/python/pyproject.toml).**
+
 ```bash
 sed -i.bak 's/"agent-framework-core[^"]*"/"agent-framework-core~=1.8.0"/' pyproject.toml
 sed -i.bak 's/"agent-framework-foundry[^"]*"/"agent-framework-foundry~=1.8.0"/' pyproject.toml
@@ -340,11 +344,11 @@ sed -i.bak 's/"agent-framework-foundry-hosting[^"]*"/"agent-framework-foundry-ho
 # Telemetry bundling from MAF 1.6.0 is unchanged in 1.8.0 — no other deps to touch.
 ```
 
-Note: the hosting package is pinned **exact** (`==1.0.0a260528`), not
-compatible-release (`~=`). PEP 440 treats `~=1.0.0aN` as
-`>=1.0.0aN, <1.1` — pip will happily drift to a later alpha
-(`a260609`, `a260612`, …). Exact pin per AGENTS.md § 9.5 alpha
-pre-release discipline.
+Historical note: this recipe used an exact alpha pin because PEP 440
+compatible-release syntax could drift to a later pre-release. It is not
+current guidance; current operators must use the exact beta `agent-framework-foundry-hosting==1.0.0b260730`
+from the canonical
+[`references/python/pyproject.toml`](references/python/pyproject.toml).
 
 ---
 
