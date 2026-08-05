@@ -47,41 +47,27 @@ def _python_heredoc(markdown: str) -> str:
     raise AssertionError("fixture Python heredoc not found")
 
 
-def _version_fields(value: object, path: str = "$") -> dict[str, str]:
-    if isinstance(value, dict):
-        found: dict[str, str] = {}
-        for key, child in value.items():
-            child_path = f"{path}.{key}"
-            if key == "version":
-                found[child_path] = child
-            found.update(_version_fields(child, child_path))
-        return found
-    if isinstance(value, list):
-        found = {}
-        for index, child in enumerate(value):
-            found.update(_version_fields(child, f"{path}[{index}]"))
-        return found
-    return {}
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*"
+    r")?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 class FoundryVoiceLivePublicationContractTests(unittest.TestCase):
-    def test_root_plugin_version_is_4296(self) -> None:
+    def test_catalog_versions_are_semver_and_match_marketplace(self) -> None:
         plugin = json.loads(PLUGIN.read_text(encoding="utf-8"))
-
-        self.assertEqual(plugin["version"], "4.29.6")
-
-    def test_all_marketplace_version_fields_are_4296(self) -> None:
         marketplace = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
-        version_fields = _version_fields(marketplace)
 
-        self.assertTrue(version_fields)
+        self.assertRegex(plugin["version"], SEMVER_RE)
         self.assertEqual(
-            version_fields,
-            {
-                "$.metadata.version": "4.29.6",
-                "$.plugins[0].version": "4.29.6",
-            },
+            marketplace["metadata"]["version"],
+            plugin["version"],
         )
+        for index, entry in enumerate(marketplace["plugins"]):
+            with self.subTest(plugin_index=index):
+                self.assertEqual(entry["version"], plugin["version"])
 
     def test_readme_contains_exact_foundry_voice_live_publication_row(self) -> None:
         readme = README.read_text(encoding="utf-8")
