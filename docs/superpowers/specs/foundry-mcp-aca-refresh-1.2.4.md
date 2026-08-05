@@ -1,7 +1,7 @@
 # Design Spec: foundry-mcp-aca refresh 1.2.4
 
 **Status:** Implemented (correction-phase artifact)
-**Date:** 2025-08-05
+**Date:** 2026-08-05
 **Base version:** 1.2.3
 **Target version:** 1.2.4 (PATCH — pin refresh + wording + deployment corrections)
 
@@ -38,15 +38,19 @@ PATCH refresh of `foundry-mcp-aca` covering:
 ## Deployment model
 
 `azd up` is the single documented deployment path (AGENTS.md §2.6):
-- Bicep uses placeholder image with default; `azd deploy` swaps via `azd-service-name` tag
+- Bicep uses placeholder image; `azd deploy` swaps via `azd-service-name` tag
 - `azure.yaml` service binding handles image build + push
-- Startup probe tolerance (90s) accommodates the brief placeholder window
+- Probes are omitted during first provision to avoid port mismatch with the
+  placeholder image (serves port 80 vs real server port 8080). Production
+  deployments add probes after the first successful `azd deploy`.
 
 ## Live Azure success criteria (T3)
 
 - `azd up` completes successfully against `rg-awesome-gbb-ci`
 - MCP `initialize` returns 200 with `serverInfo.name`
-- `mcp-session-id` header captured and replayed
+- `mcp-session-id` header captured and replayed via Bash array
+- `notifications/initialized` returns HTTP 2xx (status-gated, not swallowed)
 - `tools/list` returns ≥1 tool
-- `tools/call` on first tool returns non-empty `result.content`
+- `tools/call` on `echo` with `"ci-probe"` returns exact `"echoed: ci-probe"` payload
+- `isError` is not `true` on the tools/call response
 - Deterministic marker file written (Pattern 12)

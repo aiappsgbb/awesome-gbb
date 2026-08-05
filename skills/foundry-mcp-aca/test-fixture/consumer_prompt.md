@@ -4,10 +4,10 @@ You are running an end-to-end smoke for the `foundry-mcp-aca` skill on the
 GitHub Actions runner. The goal is to **prove the documented deployment +
 wire-protocol contract works**: deploy a minimal FastMCP server to Azure
 Container Apps via `azd up`, then perform an MCP-over-HTTP roundtrip
-(`initialize` + `tools/list`) against the deployed FQDN and verify both
-JSON-RPC calls return HTTP 200 with conformant bodies. The MCP HTTP
-roundtrip is the value contract this skill exists to enable — everything
-else is plumbing.
+(`initialize` + `tools/list` + `tools/call`) against the deployed FQDN
+and verify all three JSON-RPC calls return HTTP 200 with conformant
+bodies. The MCP HTTP roundtrip is the value contract this skill exists
+to enable — everything else is plumbing.
 
 You are NOT testing a tutorial, README, or design doc. You are testing
 whether a customer following the skill verbatim ends up with a working
@@ -157,8 +157,8 @@ trust `azd auth login` as the gate.
 You will deploy a **tiny, self-contained FastMCP server** to Azure
 Container Apps using `azd up`. The server exposes one `echo` tool and a
 `/health` route. After `azd up` returns 0, you will resolve the
-deployed FQDN and call the MCP HTTP endpoint with two JSON-RPC requests
-(`initialize` + `tools/list`) to prove the wire protocol works.
+deployed FQDN and call the MCP HTTP endpoint with three JSON-RPC requests
+(`initialize` + `tools/list` + `tools/call`) to prove the wire protocol works.
 
 ### Naming
 
@@ -198,7 +198,8 @@ shape (AGENTS.md § 9.7 Pattern 25). The hard gates of this smoke are:
    reaches Running state)
 2. **MCP HTTP roundtrip succeeds** (`initialize` returns 200 with
    `result.serverInfo.name`; `tools/list` returns 200 with at least one
-   tool in `result.tools[]`)
+   tool in `result.tools[]`; `tools/call` on `echo` returns 200 with
+   exact payload `"echoed: ci-probe"` and `isError` is not `true`)
 
 Once BOTH hard gates pass, you write the PASS marker file **IMMEDIATELY
 via the Bash tool** (see Step 5 below). Cleanup is hygiene — it happens
@@ -339,20 +340,13 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: { path: '/health', port: 8080 }
-              initialDelaySeconds: 10
-              periodSeconds: 10
-            }
-            {
-              type: 'Startup'
-              httpGet: { path: '/health', port: 8080 }
-              periodSeconds: 3
-              failureThreshold: 30
-            }
-          ]
+          // Note: probes are omitted for the placeholder→deploy lifecycle.
+          // The placeholder image (containerapps-helloworld) serves on port 80
+          // while the real server serves on 8080. Probes targeting 8080 would
+          // prevent the placeholder revision from becoming healthy, potentially
+          // blocking azd provision. azd deploy immediately swaps the image to
+          // the real server which does serve on 8080. Production deployments
+          // should add liveness/startup probes after the first successful deploy.
         }
       ]
       scale: {
@@ -502,16 +496,24 @@ echo "serverInfo.name=$SERVER_NAME"
 ```
 
 Send `notifications/initialized` (required by MCP protocol before
-tools/list — no response expected):
+tools/list). Capture HTTP status to verify the server accepts it:
 
 ```bash
-SESSION_HEADER=""
-[ -n "$SESSION_ID" ] && SESSION_HEADER="-H \"mcp-session-id: $SESSION_ID\""
-curl -sS -X POST "https://${FQDN}/mcp" \
+SESSION_ARGS=()
+[ -n "$SESSION_ID" ] && SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID")
+
+INIT_NOTIFY_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+  -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  ${SESSION_HEADER:+$SESSION_HEADER} \
-  -d '{ "jsonrpc": "2.0", "method": "notifications/initialized" }' || true
+  "${SESSION_ARGS[@]}" \
+  -d '{ "jsonrpc": "2.0", "method": "notifications/initialized", "params": {} }')
+
+echo "notifications/initialized HTTP=$INIT_NOTIFY_CODE"
+if [ "$INIT_NOTIFY_CODE" -lt 200 ] || [ "$INIT_NOTIFY_CODE" -ge 300 ]; then
+  printf 'SMOKE_RESULT=FAIL notifications/initialized returned HTTP %s\n' "$INIT_NOTIFY_CODE" > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
 ```
 
 Then call `tools/list` (with session header if present):
@@ -521,7 +523,7 @@ TOOLS_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  ${SESSION_HEADER:+$SESSION_HEADER} \
+  "${SESSION_ARGS[@]}" \
   -d '{ "jsonrpc": "2.0", "method": "tools/list", "id": 2 }')
 
 TOOLS_CODE=$(echo "$TOOLS_RESPONSE" | grep '__HTTP_CODE__' | cut -d: -f2)
@@ -544,41 +546,27 @@ if [ "$TOOL_COUNT" -lt 1 ]; then
   exit 1
 fi
 echo "tools/list returned $TOOL_COUNT tool(s)"
-
-# Pick the first tool name for the tools/call test
-FIRST_TOOL=$(echo "$TOOLS_JSON" | jq -r '.result.tools[0].name // empty')
-echo "first tool: $FIRST_TOOL"
 ```
 
-Then call `tools/call` on the first available tool to exercise a
-nontrivial round-trip. The canonical MCP smoke server exposes
-`search_orders_filtered` which returns ORD-001 (shipped). Call it
-with a filter matching status=shipped:
+Then call `tools/call` on the `echo` tool with a known probe message.
+The scaffolded server's `echo` tool returns `"echoed: <message>"`. Assert
+the exact payload and verify `isError` is not `true`:
 
 ```bash
-# Build the tools/call payload. If the first tool is search_orders_filtered,
-# call with a filter that returns ORD-001. Otherwise call with empty args
-# to exercise ANY tool's happy path (the smoke proves the wire, not business logic).
-if [ "$FIRST_TOOL" = "search_orders_filtered" ]; then
-  CALL_ARGS='{"status": "shipped"}'
-else
-  CALL_ARGS='{}'
-fi
-
 CALL_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  ${SESSION_HEADER:+$SESSION_HEADER} \
-  -d "{
-    \"jsonrpc\": \"2.0\",
-    \"method\": \"tools/call\",
-    \"id\": 3,
-    \"params\": {
-      \"name\": \"$FIRST_TOOL\",
-      \"arguments\": $CALL_ARGS
+  "${SESSION_ARGS[@]}" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "id": 3,
+    "params": {
+      "name": "echo",
+      "arguments": { "message": "ci-probe" }
     }
-  }")
+  }')
 
 CALL_CODE=$(echo "$CALL_RESPONSE" | grep '__HTTP_CODE__' | cut -d: -f2)
 CALL_BODY=$(echo "$CALL_RESPONSE" | sed '/__HTTP_CODE__/d')
@@ -594,13 +582,20 @@ fi
 CALL_JSON=$(echo "$CALL_BODY" | sed -n 's/^data: //p' | head -1)
 [ -z "$CALL_JSON" ] && CALL_JSON="$CALL_BODY"
 
-# Verify the result has content (non-null, non-empty)
-CALL_CONTENT=$(echo "$CALL_JSON" | jq -r '.result.content // empty')
-if [ -z "$CALL_CONTENT" ]; then
-  printf 'SMOKE_RESULT=FAIL tools/call returned empty result.content\n' > /tmp/foundry-mcp-aca-smoke-result
+# Verify isError is not true
+IS_ERROR=$(echo "$CALL_JSON" | jq -r '.result.isError // false')
+if [ "$IS_ERROR" = "true" ]; then
+  printf 'SMOKE_RESULT=FAIL tools/call returned isError=true\n' > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 fi
-echo "tools/call result has content — nontrivial round-trip verified"
+
+# Verify exact echo payload: "echoed: ci-probe"
+ECHO_TEXT=$(echo "$CALL_JSON" | jq -r '.result.content[0].text // empty')
+if [ "$ECHO_TEXT" != "echoed: ci-probe" ]; then
+  printf 'SMOKE_RESULT=FAIL tools/call echo expected "echoed: ci-probe" got "%s"\n' "$ECHO_TEXT" > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
+echo "tools/call echo payload verified: $ECHO_TEXT"
 ```
 
 If all three calls (initialize, tools/list, tools/call) return 200 with
