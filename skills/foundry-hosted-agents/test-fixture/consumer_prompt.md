@@ -143,6 +143,16 @@ record() {
   printf '%s\n' "$1"
 }
 
+require_canonical_dependency() {
+  local dependency="$1"
+  local result_marker="${SMOKE_RESULT_MARKER:-/tmp/foundry-hosted-agents-smoke-result}"
+  if ! grep -Fq "\"$dependency\"" "$work_dir/pyproject.toml"; then
+    printf 'SMOKE_RESULT=FAIL canonical pyproject dependency drift: %s\n' "$dependency" \
+      > "$result_marker"
+    exit 1
+  fi
+}
+
 suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 agent_name="ci-smoke-ha-${suffix}"
 work_dir="/tmp/foundry-hosted-agents-${suffix}"
@@ -158,6 +168,15 @@ cp "$skill_refs/python/container.py" "$work_dir/container.py"
 cp "$skill_refs/python/pyproject.toml" "$work_dir/pyproject.toml"
 cp "$skill_refs/yaml/azure.yaml" "$work_dir/azure.yaml"
 printf 'You are a customer-support triage assistant.\n' > "$work_dir/copilot-instructions.md"
+
+require_canonical_dependency "agent-framework-core~=1.13.0"
+require_canonical_dependency "agent-framework-foundry~=1.10.4"
+require_canonical_dependency "agent-framework-foundry-hosting==1.0.0b260730"
+require_canonical_dependency "azure-ai-projects~=2.3.0"
+require_canonical_dependency "azure-identity~=1.25.3"
+require_canonical_dependency "mcp~=1.29.0"
+require_canonical_dependency "python-dotenv~=1.2.2"
+record "CANONICAL_PYPROJECT_OK"
 
 # Preserve the canonical YAML byte-for-byte except for the two exact
 # UUID-bearing agent identifiers. Count each source token before replacing so
@@ -459,6 +478,7 @@ lines = Path("/tmp/foundry-hosted-agents-smoke-evidence").read_text(
 required_patterns = (
     r"AZD_EXTENSION_VERSION id=microsoft\.foundry installedVersion=\S+",
     r"AZD_EXTENSION_VERSION id=azure\.ai\.agents installedVersion=\S+",
+    r"CANONICAL_PYPROJECT_OK",
     r"AZD_ENV_CONTRACT_OK",
     r"AZD_DEPLOY_ATTEMPT count=1",
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ha-[0-9a-f]{8}",
@@ -495,6 +515,7 @@ printf 'SMOKE_RESULT=FAIL missing FOUNDRY_PROJECT_ENDPOINT\n' > /tmp/foundry-hos
 printf 'SMOKE_RESULT=FAIL missing AZURE_AI_PROJECT_ID\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL missing ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL malformed ACR_LOGIN_SERVER\n' > /tmp/foundry-hosted-agents-smoke-result
+printf 'SMOKE_RESULT=FAIL canonical pyproject dependency drift: <dependency>\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL microsoft.foundry or azure.ai.agents extension not installed\n' > /tmp/foundry-hosted-agents-smoke-result
 printf 'SMOKE_RESULT=FAIL azd env contract incomplete\n' > /tmp/foundry-hosted-agents-smoke-result
