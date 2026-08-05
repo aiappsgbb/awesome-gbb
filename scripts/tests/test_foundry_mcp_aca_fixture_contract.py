@@ -179,6 +179,32 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
         self.assertNotIn("requires mcp>=2.0", self.pin)
         self.assertNotIn("requires mcp>=2", self.pin.split("KI-001")[1].split("KI-002")[0] if "KI-002" in self.pin else self.pin.split("KI-001")[1])
 
+    # --- Issue #8: Registry must not derive server from placeholder image ---
+
+    def test_registry_uses_explicit_acr_param_not_image_split(self) -> None:
+        """Registries must use an explicit ACR server param, not split(image, '/')[0].
+
+        When the default image is mcr.microsoft.com/..., split(image, '/')[0]
+        resolves to 'mcr.microsoft.com' — registering MCR as a managed-identity
+        registry, which fails because MCR is public and doesn't accept MI tokens.
+        """
+        self.assertNotIn(
+            "split(image, '/')[0]",
+            self.fixture,
+            "Bicep uses split(image, '/')[0] for registry server — this resolves "
+            "to mcr.microsoft.com when image is the MCR placeholder, causing "
+            "managed-identity pull failure. Use an explicit acrServer param.",
+        )
+
+    def test_registry_server_references_acr_param(self) -> None:
+        """Registries block must reference an explicit ACR server parameter."""
+        # Must have an acrServer or acrLoginServer param in the Bicep
+        self.assertRegex(
+            self.fixture,
+            r"param\s+acr(Server|LoginServer)\s+string",
+            "Bicep must declare an explicit ACR server parameter for registries.",
+        )
+
     # --- Skill acknowledgment (preserved from original) ---
 
     def test_fixture_acknowledges_skill_before_step_zero(self) -> None:

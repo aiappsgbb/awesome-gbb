@@ -295,6 +295,9 @@ param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:lates
 @description('Resource ID of the user-assigned managed identity used for ACR pull.')
 param uamiResourceId string
 
+@description('ACR login server (e.g. myacr.azurecr.io). Must be explicit — do NOT derive from image param.')
+param acrServer string
+
 @description('Name of the pre-provisioned Container Apps Environment.')
 param caeName string = 'cae-awesome-gbb-ci'
 
@@ -326,7 +329,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       }
       registries: [
         {
-          server: split(image, '/')[0]
+          server: acrServer
           identity: uamiResourceId
         }
       ]
@@ -361,6 +364,21 @@ output fqdn string = app.properties.configuration.ingress.fqdn
 output appName string = app.name
 ```
 
+Then write `${PROJECT_DIR}/infra/main.parameters.json` to map azd env vars
+to Bicep params:
+
+```json
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": { "value": "${APP_NAME}" },
+    "uamiResourceId": { "value": "${UAMI_RESOURCE_ID}" },
+    "acrServer": { "value": "${ACR_SERVER}" }
+  }
+}
+```
+
 Then write `${PROJECT_DIR}/azure.yaml` so `azd` knows how to build + push
 the container image and bind it to the Bicep service:
 
@@ -383,12 +401,15 @@ services:
 ## Step 4 — `azd up` (HARD GATE)
 
 The Bicep template uses a placeholder image (`containerapps-helloworld:latest`)
-for the initial provision. `azd up` runs provision (creates the Container App
+for the initial provision. The `registries` block explicitly references the ACR
+server (not derived from the image) so ACA only uses managed-identity auth for
+ACR pulls — the MCR placeholder is pulled anonymously since its server doesn't
+match any configured registry. `azd up` runs provision (creates the Container App
 with placeholder), then immediately builds the real image via the `azure.yaml`
 service binding and patches the Container App. The `azd-service-name: mcp` tag
-in Bicep enables `azd deploy` to locate and update the resource. The startup
-probe (`failureThreshold: 30 × periodSeconds: 3 = 90s`) tolerates the brief
-placeholder window while `azd deploy` builds and swaps the real image.
+in Bicep enables `azd deploy` to locate and update the resource. No probes are
+configured — the placeholder revision starts regardless of port mismatch (port
+80 vs targetPort 8080) and `azd deploy` immediately swaps to the real image.
 
 Initialize the `azd` env and set the required Bicep params:
 
@@ -397,6 +418,7 @@ azd env new "$APP_NAME" --location swedencentral --subscription "$AZURE_SUBSCRIP
 azd env set AZURE_RESOURCE_GROUP rg-awesome-gbb-ci
 azd env set APP_NAME "$APP_NAME"
 azd env set UAMI_RESOURCE_ID "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
+azd env set ACR_SERVER "$ACR_LOGIN_SERVER"
 azd env set AZURE_CONTAINER_REGISTRY_ENDPOINT "$ACR_LOGIN_SERVER"
 ```
 
