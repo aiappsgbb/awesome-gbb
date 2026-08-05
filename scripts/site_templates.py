@@ -696,7 +696,7 @@ def render_home(
             f'{SITE_BASE}/skills/', _ICON_SKILLS, 'Skills',
             'Self-contained Copilot skills for Azure AI, Microsoft Foundry, '
             'governance, and cross-cutting helpers. Install the plugin to get '
-            'all 27 skills, or pick individual ones.',
+            f'all {len(skills)} skills, or pick individual ones.',
             count=len(skills),
         ),
         _browse_card(
