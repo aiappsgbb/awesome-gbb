@@ -12,9 +12,14 @@ PATCH refresh of `foundry-mcp-aca` covering:
 1. Pin bumps: azure-mgmt-appcontainers 4.0→5.0 (MAJOR, API preserved),
    azure-cosmos 4.15→4.16.3, aiohttp 3.13.5→3.14.3, explicit mcp 1.29.0 pin
 2. Agnostic prose rewrites (remove engagement-specific phrases per AGENTS.md §2.1)
-3. Deployment model coherence: fixture aligned to `azd up` (matching SKILL.md guidance)
-4. MCP protocol conformance: session-id capture/replay + tools/call in fixture
-5. KI-001 expanded to cover coordinated fastmcp 3.x / mcp 2.0 hold
+3. Deployment model coherence: fixture aligned to `azd up` with unique per-run
+   service identity (`$APP_NAME` as both Bicep `azd-service-name` tag and
+   azure.yaml service key)
+4. MCP 2025-06-18 protocol conformance: session-id required (FAIL on empty),
+   `protocolVersion` captured, `MCP-Protocol-Version` header on subsequent
+   requests, `notifications/initialized` requires HTTP 202, named `echo`
+   tools/call with exact payload assertion
+5. KI-001: independent FastMCP <3 (mount/server API) and MCP <2 (protocol) holds
 
 ## Compatibility matrix
 
@@ -47,10 +52,13 @@ PATCH refresh of `foundry-mcp-aca` covering:
 ## Live Azure success criteria (T3)
 
 - `azd up` completes successfully against `rg-awesome-gbb-ci`
-- MCP `initialize` returns 200 with `serverInfo.name`
-- `mcp-session-id` header captured and replayed via Bash array
-- `notifications/initialized` returns HTTP 2xx (status-gated, not swallowed)
+- MCP `initialize` returns 200 with `serverInfo.name` and `protocolVersion`
+- `Mcp-Session-Id` header captured; FAIL if empty (required by MCP spec)
+- `MCP-Protocol-Version` header sent on all subsequent HTTP requests
+- `notifications/initialized` returns HTTP 202 exactly (MCP 2025-06-18)
 - `tools/list` returns ≥1 tool
 - `tools/call` on `echo` with `"ci-probe"` returns exact `"echoed: ci-probe"` payload
 - `isError` is not `true` on the tools/call response
 - Deterministic marker file written (Pattern 12)
+- `azd-service-name` tag and azure.yaml service key both use `$APP_NAME`
+  (per-run unique, avoiding shared-RG collision)

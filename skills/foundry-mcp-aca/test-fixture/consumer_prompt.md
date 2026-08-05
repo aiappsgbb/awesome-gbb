@@ -5,8 +5,9 @@ GitHub Actions runner. The goal is to **prove the documented deployment +
 wire-protocol contract works**: deploy a minimal FastMCP server to Azure
 Container Apps via `azd up`, then perform an MCP-over-HTTP roundtrip
 (`initialize` + `tools/list` + `tools/call`) against the deployed FQDN
-and verify all three JSON-RPC calls return HTTP 200 with conformant
-bodies. The MCP HTTP roundtrip is the value contract this skill exists
+and verify the MCP 2025-06-18 wire protocol (`initialize` → 200,
+`notifications/initialized` → 202, `tools/list` → 200, `tools/call` → 200
+with exact payload). The MCP HTTP roundtrip is the value contract this skill exists
 to enable — everything else is plumbing.
 
 You are NOT testing a tutorial, README, or design doc. You are testing
@@ -197,9 +198,11 @@ shape (AGENTS.md § 9.7 Pattern 25). The hard gates of this smoke are:
 1. **`azd up` returns 0** (Bicep deploy + ACR remote build + revision
    reaches Running state)
 2. **MCP HTTP roundtrip succeeds** (`initialize` returns 200 with
-   `result.serverInfo.name`; `tools/list` returns 200 with at least one
-   tool in `result.tools[]`; `tools/call` on `echo` returns 200 with
-   exact payload `"echoed: ci-probe"` and `isError` is not `true`)
+   `result.serverInfo.name` and `result.protocolVersion`; server assigns
+   a non-empty `Mcp-Session-Id`; `notifications/initialized` returns
+   HTTP 202; `tools/list` returns 200 with at least one tool in
+   `result.tools[]`; `tools/call` on `echo` returns 200 with exact
+   payload `"echoed: ci-probe"` and `isError` is not `true`)
 
 Once BOTH hard gates pass, you write the PASS marker file **IMMEDIATELY
 via the Bash tool** (see Step 5 below). Cleanup is hygiene — it happens
@@ -217,12 +220,10 @@ cleanup is best-effort.
 
 Write this exact server body to `${PROJECT_DIR}/src/server.py`. The
 canonical `references/python/server.py` in the skill does NOT register
-a `/health` route, but the canonical `references/bicep/mcp-aca.bicep`
-configures both liveness AND startup probes against `/health:8080` —
-which means a server without that route crash-loops on startup. The
-explicit `mcp.custom_route("/health", …)` decorator below is the
-documented FastMCP 2.x workaround (see the foundry-mcp-aca audit trail's
-HIT-1 entry):
+a `/health` route, but production deployments may add liveness probes —
+the explicit `mcp.custom_route("/health", …)` decorator below is the
+documented FastMCP 2.x health-check pattern (see the foundry-mcp-aca
+audit trail's HIT-1 entry):
 
 ```python
 """Tiny MCP server for the CI smoke — single `echo` tool + /health route."""
@@ -309,7 +310,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
   tags: {
-    'azd-service-name': 'mcp'
+    'azd-service-name': appName
   }
   identity: {
     type: 'UserAssigned'
@@ -380,20 +381,23 @@ to Bicep params:
 ```
 
 Then write `${PROJECT_DIR}/azure.yaml` so `azd` knows how to build + push
-the container image and bind it to the Bicep service:
+the container image and bind it to the Bicep service. The service key
+MUST match the `azd-service-name` tag in Bicep (which uses `appName`):
 
-```yaml
-name: ci-smoke-mcp
+```bash
+cat > "${PROJECT_DIR}/azure.yaml" <<AZDYAML
+name: ${APP_NAME}
 metadata:
   template: ci-smoke-mcp@0.0.1
 services:
-  mcp:
+  ${APP_NAME}:
     project: ./src
     language: python
     host: containerapp
     docker:
       path: Dockerfile
       context: .
+AZDYAML
 ```
 
 ---
@@ -406,10 +410,11 @@ server (not derived from the image) so ACA only uses managed-identity auth for
 ACR pulls — the MCR placeholder is pulled anonymously since its server doesn't
 match any configured registry. `azd up` runs provision (creates the Container App
 with placeholder), then immediately builds the real image via the `azure.yaml`
-service binding and patches the Container App. The `azd-service-name: mcp` tag
-in Bicep enables `azd deploy` to locate and update the resource. No probes are
-configured — the placeholder revision starts regardless of port mismatch (port
-80 vs targetPort 8080) and `azd deploy` immediately swaps to the real image.
+service binding and patches the Container App. The `azd-service-name: $APP_NAME`
+tag in Bicep (matching the azure.yaml service key) enables `azd deploy` to locate
+and update the resource. No probes are configured — the placeholder revision
+starts regardless of port mismatch (port 80 vs targetPort 8080) and `azd deploy`
+immediately swaps to the real image.
 
 Initialize the `azd` env and set the required Bicep params:
 
@@ -515,14 +520,25 @@ if [ -z "$SERVER_NAME" ]; then
   exit 1
 fi
 echo "serverInfo.name=$SERVER_NAME"
+
+# Capture negotiated protocol version (MCP 2025-06-18 lifecycle spec)
+PROTOCOL_VERSION=$(echo "$INIT_JSON" | jq -r '.result.protocolVersion // empty')
+echo "protocolVersion=$PROTOCOL_VERSION"
+
+# Session ID is required for this fixture — FastMCP always assigns one
+if [ -z "$SESSION_ID" ]; then
+  printf 'SMOKE_RESULT=FAIL initialize did not return Mcp-Session-Id header\n' > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
+fi
 ```
 
 Send `notifications/initialized` (required by MCP protocol before
-tools/list). Capture HTTP status to verify the server accepts it:
+tools/list). Per MCP 2025-06-18, notifications MUST return HTTP 202
+Accepted. Capture and assert the exact status code:
 
 ```bash
-SESSION_ARGS=()
-[ -n "$SESSION_ID" ] && SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID")
+SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID")
+[ -n "$PROTOCOL_VERSION" ] && SESSION_ARGS+=(-H "MCP-Protocol-Version: $PROTOCOL_VERSION")
 
 INIT_NOTIFY_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
@@ -532,8 +548,8 @@ INIT_NOTIFY_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
   -d '{ "jsonrpc": "2.0", "method": "notifications/initialized", "params": {} }')
 
 echo "notifications/initialized HTTP=$INIT_NOTIFY_CODE"
-if [ "$INIT_NOTIFY_CODE" -lt 200 ] || [ "$INIT_NOTIFY_CODE" -ge 300 ]; then
-  printf 'SMOKE_RESULT=FAIL notifications/initialized returned HTTP %s\n' "$INIT_NOTIFY_CODE" > /tmp/foundry-mcp-aca-smoke-result
+if [ "$INIT_NOTIFY_CODE" != "202" ]; then
+  printf 'SMOKE_RESULT=FAIL notifications/initialized returned HTTP %s (expected 202)\n' "$INIT_NOTIFY_CODE" > /tmp/foundry-mcp-aca-smoke-result
   exit 1
 fi
 ```
@@ -784,8 +800,13 @@ any circumstance.
 - `azd up` failed after 6 retry attempts (Pattern 18 budget exhausted —
   infra or skill bug)
 - MCP `initialize` returned non-200 or missing `result.serverInfo.name`
+- MCP `initialize` did not return a `Mcp-Session-Id` header (empty session ID)
+- MCP `notifications/initialized` returned non-202 (expected HTTP 202 per
+  MCP 2025-06-18 spec)
 - MCP `tools/list` returned non-200 or returned 0 tools
-- JSON parse failed on either MCP response body
+- MCP `tools/call` on `echo` returned non-200, `isError=true`, or
+  payload did not match `"echoed: ci-probe"`
+- JSON parse failed on any MCP response body
 - FQDN could not be resolved post-deploy
 - Step 5b auth proof: unauth call not 401, or valid-token call still 401
   (only when `MCP_AUTH_APP_CLIENT_ID` is set; SKIPPED and never a FAIL when

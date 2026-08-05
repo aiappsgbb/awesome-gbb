@@ -205,6 +205,145 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
             "Bicep must declare an explicit ACR server parameter for registries.",
         )
 
+    # --- Issue #9: Unique service identity per run ---
+
+    def test_service_tag_uses_app_name_variable(self) -> None:
+        """azd-service-name must use $APP_NAME, not static 'mcp'."""
+        # Find the Bicep tags block; static 'mcp' causes collision in shared RG
+        bicep_match = re.search(
+            r"tags:\s*\{[^}]*azd-service-name[^}]*\}",
+            self.fixture, re.DOTALL
+        )
+        self.assertIsNotNone(bicep_match, "azd-service-name tag not found in Bicep")
+        tag_block = bicep_match.group(0)
+        # Must NOT be hardcoded 'mcp' — must reference appName param
+        self.assertNotIn(
+            "'mcp'",
+            tag_block,
+            "azd-service-name uses static 'mcp' — causes collision in shared CI RG. "
+            "Must use appName parameter for per-run uniqueness.",
+        )
+
+    def test_azure_yaml_service_key_matches_bicep_tag(self) -> None:
+        """azure.yaml service key must not be static 'mcp' if Bicep uses variable tag."""
+        # The azure.yaml is now generated via heredoc with ${APP_NAME} as service key
+        # Verify the fixture uses $APP_NAME (or ${APP_NAME}) in the services block
+        self.assertRegex(
+            self.fixture,
+            r"\$\{?APP_NAME\}?:\s*\n\s+project:",
+            "azure.yaml service key must use $APP_NAME (dynamic) not a static string. "
+            "Must match dynamic Bicep azd-service-name for per-run uniqueness.",
+        )
+
+    # --- Issue #10: Session ID must be required, not optional ---
+
+    def test_session_id_empty_is_fail(self) -> None:
+        """Fixture must FAIL if Mcp-Session-Id is empty after initialize."""
+        # Must contain an explicit empty-session-ID check that writes FAIL
+        session_section = self.fixture[self.fixture.index("SESSION_ID="):]
+        session_section = session_section[:session_section.index("```", 100)]
+        self.assertRegex(
+            session_section,
+            r'-z.*SESSION_ID|SESSION_ID.*empty|FAIL.*session',
+            "Fixture does not FAIL on empty session ID — FastMCP always assigns one, "
+            "so empty means the protocol handshake is broken.",
+        )
+
+    # --- Issue #11: MCP 2025-06-18 protocol conformance ---
+
+    def test_initialized_requires_http_202(self) -> None:
+        """notifications/initialized must require HTTP 202, not any 2xx."""
+        init_section = self.fixture[self.fixture.index("notifications/initialized"):]
+        init_section = init_section[:init_section.index("```", 200)]
+        # Must check for exactly 202, not a range
+        self.assertIn(
+            "202",
+            init_section,
+            "notifications/initialized must require HTTP 202 per MCP spec — "
+            "notifications return 202 Accepted, not 200 OK.",
+        )
+
+    def test_protocol_version_captured_from_initialize(self) -> None:
+        """Initialize response must capture result.protocolVersion."""
+        # Must extract protocolVersion into a variable (between initialize and Step 5b)
+        init_section = self.fixture[self.fixture.index("## Step 5"):]
+        init_section = init_section[:init_section.index("## Step 5b")]
+        self.assertIn(
+            "protocolVersion",
+            init_section,
+            "protocolVersion not captured from initialize response.",
+        )
+        # Must extract it into a variable for subsequent headers
+        self.assertRegex(
+            self.fixture,
+            r"PROTOCOL_VERSION.*protocolVersion|protocolVersion.*PROTOCOL_VERSION",
+            "protocolVersion not extracted into PROTOCOL_VERSION variable.",
+        )
+
+    def test_protocol_version_header_on_subsequent_requests(self) -> None:
+        """MCP-Protocol-Version header required on tools/list and tools/call."""
+        after_init = self.fixture[self.fixture.index("tools/list"):]
+        self.assertIn(
+            "MCP-Protocol-Version",
+            after_init,
+            "MCP-Protocol-Version header missing from subsequent requests — "
+            "required by MCP 2025-06-18 spec for HTTP transport.",
+        )
+
+    # --- Issue #12: Stale probe prose ---
+
+    def test_no_stale_probe_prose(self) -> None:
+        """No references to probe configuration that was removed."""
+        # Step 2 area should not claim probes are configured
+        step2_match = re.search(r"## Step 2.*?## Step", self.fixture, re.DOTALL)
+        if step2_match:
+            step2 = step2_match.group(0)
+            self.assertNotIn(
+                "startup probes against",
+                step2,
+                "Step 2 still references startup probes — probes were removed.",
+            )
+
+    # --- Issue #13: Failure list synchronized ---
+
+    def test_failure_list_includes_session_id(self) -> None:
+        """Failure summary must include missing session ID."""
+        fail_section = self.fixture[self.fixture.rindex("## Summary of FAIL"):]
+        self.assertRegex(
+            fail_section,
+            r"[Ss]ession|Mcp-Session-Id",
+            "Failure list does not mention missing session ID.",
+        )
+
+    def test_failure_list_includes_tools_call(self) -> None:
+        """Failure summary must include tools/call failures."""
+        fail_section = self.fixture[self.fixture.rindex("## Summary of FAIL"):]
+        self.assertIn(
+            "tools/call",
+            fail_section,
+            "Failure list does not mention tools/call failures.",
+        )
+
+    def test_failure_list_includes_initialized_status(self) -> None:
+        """Failure summary must include initialized notification status."""
+        fail_section = self.fixture[self.fixture.rindex("## Summary of FAIL"):]
+        self.assertRegex(
+            fail_section,
+            r"initialized.*202|notifications/initialized",
+            "Failure list does not mention initialized notification status.",
+        )
+
+    # --- Issue #14: No search_orders_filtered fallback ---
+
+    def test_no_search_orders_filtered_fallback(self) -> None:
+        """Fixture must not reference search_orders_filtered (server only has echo)."""
+        self.assertNotIn(
+            "search_orders_filtered",
+            self.fixture,
+            "Fixture references search_orders_filtered but the deployed server "
+            "only exposes 'echo'. Remove unreachable fallback.",
+        )
+
     # --- Skill acknowledgment (preserved from original) ---
 
     def test_fixture_acknowledges_skill_before_step_zero(self) -> None:
