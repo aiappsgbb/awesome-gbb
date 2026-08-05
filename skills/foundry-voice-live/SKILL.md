@@ -17,7 +17,7 @@ description: >
   ingestion (use foundry-observability), authoring an MCP server (use
   foundry-mcp-aca or ui-widget-developer).
 metadata:
-  version: "1.3.1"
+  version: "1.4.0"
 ---
 
 # Foundry Voice Live
@@ -161,11 +161,13 @@ async def connect_agent(*, settings, token_provider, agent_token_provider):
 
 ### Rung 4 — native `azure-ai-voicelive` SDK
 
-The `azure-ai-voicelive` Python SDK (stable `1.2.0`; latest preview
-`1.3.0b1`) is the **first-party path** for Voice Live. It speaks the
-same wire protocol as Rungs 2–3 (so the event-handling code in §9
-still works verbatim), but replaces the `openai`-shim plumbing with
-a typed, Voice-Live-native client.
+The validated native stack is `azure-ai-voicelive[aiohttp]~=1.3.0`.
+SDK 1.3 defaults `connect()` to `2026-07-15`; this skill deliberately
+passes `api_version="2026-04-10"` to preserve the live-proven GA
+contract; do not remove until a separate `2026-07-15` migration is
+tested end-to-end. The SDK speaks the same wire protocol as Rungs 2–3
+(so the event-handling code in §9 still works verbatim), but replaces
+the `openai`-shim plumbing with a typed, Voice-Live-native client.
 
 ```python
 from contextlib import asynccontextmanager
@@ -192,7 +194,7 @@ async def connect_voicelive_sdk(*, settings):
         async with connect(
             credential=credential,
             endpoint=settings.azure_voice_live_endpoint,   # https://, NOT wss://
-            api_version="2026-04-10",                       # default in 1.2.0
+            api_version="2026-04-10",                       # live-proven GA contract
             model=settings.azure_deployment_name,           # e.g. "gpt-realtime"
             # credential_scopes default = ["https://ai.azure.com/.default"]
         ) as conn:
@@ -241,7 +243,7 @@ endpoint = os.environ["AZURE_AI_ENDPOINT"].replace(
 # Or set AZURE_VOICELIVE_ENDPOINT directly to the services.ai host.
 ```
 
-> **Install:** `pip install "azure-ai-voicelive[aiohttp]~=1.2.0"`.
+> **Install:** `pip install "azure-ai-voicelive[aiohttp]~=1.3.0"`.
 > The `[aiohttp]` extra is **required** for the async `connect`
 > path — without it the import raises `RuntimeError: aiohttp not
 > installed`.
@@ -852,10 +854,11 @@ uv run app.py                           # http://localhost:7860
 [project]
 requires-python = ">=3.13"
 dependencies = [
-    "openai>=2.0.0",
-    "azure-identity>=1.24.0",
-    "fastrtc>=0.0.34",
-    "gradio>=5.42.0",
+    "openai~=2.53.0",
+    "azure-identity~=1.25.3",
+    "fastrtc~=0.0.34",
+    "gradio~=5.50.0",
+    "azure-ai-voicelive[aiohttp]~=1.3.0",
     "av>=16.0.0,<17.0.0",
     "pydantic-settings>=2.10.1",
     "aiohttp>=3.12.15",
@@ -863,6 +866,11 @@ dependencies = [
     "uvicorn>=0.35.0",
 ]
 ```
+
+**Compatibility hold:** FastRTC `0.0.34` requires Gradio `<6`, so
+`gradio~=5.50.0` remains pinned until KI-001 closes. Gradio 6 is not
+independently installable for this stack; keep the FastRTC/Gradio pair
+together until the upstream FastRTC issue lifts the upper bound.
 
 ---
 
@@ -882,17 +890,18 @@ dependencies = [
 | `"Model … is not supported in this region"` | Region doesn't serve that managed model | Check the [Voice Live region/model matrix](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions) |
 | User gets cut off mid-sentence in a non-English call | English-tuned `azure_semantic_vad` ends the turn early on a hesitation/pause | Use the multilingual VAD + multilingual end-of-utterance model; raise `silence_duration_ms` to the locale's pausing (see §3) |
 | A tool/KB turn takes several seconds | The **agentic KB planner** (query decomposition / multi-hop reasoning LLM) can dominate — not necessarily the store | Measure the retrieval legs (planner vs search/store vs model vs TTS) separately first. For single-intent lookups, query the index **directly** (semantic search, no planner); reserve the agentic planner for genuine multi-hop |
-| `RuntimeError: aiohttp not installed` from `azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.2.0"` (async path requires it) |
+| `RuntimeError: aiohttp not installed` from `azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.3.0"` (async path requires it) |
 | `MCPToolApprovalRequest` event mid-turn but no approval reply | `require_approval` set on `MCPServer` | Send `mcp_tool_approval_response` event back; see §12.2 |
 
 ---
 
 ## 12 · 2026-04-10 GA Deltas
 
-Four features that **only exist on the `2026-04-10` API version** —
-all reachable from Rung 4's `azure-ai-voicelive` SDK, all surfaceable
-in `session.update` payloads on Rungs 2–3 (typed in SDK, raw JSON in
-the openai shim).
+These features are live-proven on API `2026-04-10`. SDK 1.3 defaults
+to `2026-07-15`, so every Rung 4 `connect(...)` call passes
+`2026-04-10` explicitly to preserve the GA contract. Rungs 2-3 send
+equivalent payloads through the OpenAI shim (raw JSON instead of typed
+SDK models).
 
 ### 12.1 · Proactive turn control
 
@@ -1039,6 +1048,7 @@ same trace ID:
 async with connect(
     credential=credential,
     endpoint=endpoint,
+    api_version="2026-04-10",
     model="gpt-realtime",
     headers={"traceparent": current_traceparent()},
 ) as conn:

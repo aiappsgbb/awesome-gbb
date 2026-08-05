@@ -12,6 +12,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PIN = ROOT / "skills" / "foundry-voice-live" / "references" / "upstream-pin.md"
+SKILL = ROOT / "skills" / "foundry-voice-live" / "SKILL.md"
 
 
 class FoundryVoiceLivePinContractTests(unittest.TestCase):
@@ -171,6 +172,101 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
             "+ `hold_reason: KI-001` until upstream issue #428 resolves.",
             " ".join(self.pin.split()),
         )
+
+
+class FoundryVoiceLiveSkillContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.skill = SKILL.read_text(encoding="utf-8")
+        cls.skill_flat = " ".join(cls.skill.split())
+        cls.frontmatter = yaml.safe_load(cls.skill.split("---", 2)[1])
+
+    def test_frontmatter_version_and_description_contract(self) -> None:
+        self.assertEqual(
+            list(self.frontmatter.keys()),
+            ["name", "description", "metadata"],
+        )
+        self.assertEqual(self.frontmatter["name"], "foundry-voice-live")
+        self.assertEqual(self.frontmatter["metadata"], {"version": "1.4.0"})
+        self.assertLessEqual(len(self.frontmatter["description"]), 1024)
+
+    def test_sdk_13_ga_api_contract_is_explicit(self) -> None:
+        for phrase in (
+            "validated native stack is `azure-ai-voicelive[aiohttp]~=1.3.0`",
+            "SDK 1.3 defaults `connect()` to `2026-07-15`",
+            'this skill deliberately passes `api_version="2026-04-10"`',
+            "do not remove until a separate `2026-07-15` migration is tested end-to-end",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.skill_flat)
+
+        for connect_call in re.findall(
+            r"async with connect\(\n(?P<body>.*?\n)\s*\) as conn:",
+            self.skill,
+            flags=re.DOTALL,
+        ):
+            with self.subTest(connect_call=connect_call[:80]):
+                self.assertRegex(
+                    connect_call,
+                    r"(?s)credential=.*?api_version=\"2026-04-10\".*?model=",
+                )
+
+        self.assertNotIn('api_version="2026-07-15"', self.skill)
+
+    def test_dependencies_and_compatibility_hold(self) -> None:
+        for dependency in (
+            '"openai~=2.53.0"',
+            '"azure-identity~=1.25.3"',
+            '"fastrtc~=0.0.34"',
+            '"gradio~=5.50.0"',
+            '"azure-ai-voicelive[aiohttp]~=1.3.0"',
+            '"av>=16.0.0,<17.0.0"',
+            '"pydantic-settings>=2.10.1"',
+            '"aiohttp>=3.12.15"',
+            '"fastapi>=0.116.1"',
+            '"uvicorn>=0.35.0"',
+        ):
+            with self.subTest(dependency=dependency):
+                self.assertIn(dependency, self.skill)
+
+        for phrase in (
+            "FastRTC `0.0.34` requires Gradio `<6`",
+            "`gradio~=5.50.0` remains pinned until KI-001 closes",
+            "Gradio 6 is not independently installable for this stack",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.skill_flat)
+
+    def test_section_12_opening_states_ga_and_shim_contract(self) -> None:
+        section_12_opening = re.search(
+            r"## 12 · 2026-04-10 GA Deltas\n\n(?P<body>.*?)(?:\n### 12\.1)",
+            self.skill,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(section_12_opening)
+        body = " ".join(section_12_opening.group("body").split())
+        for phrase in (
+            "live-proven on API `2026-04-10`",
+            "SDK 1.3 defaults to `2026-07-15`",
+            "every Rung 4 `connect(...)` call passes `2026-04-10` explicitly",
+            "Rungs 2-3 send equivalent payloads through the OpenAI shim",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, body)
+
+    def test_stale_dependency_and_version_claims_are_absent(self) -> None:
+        for stale in (
+            '"openai>=2.0.0"',
+            '"azure-identity>=1.24.0"',
+            '"fastrtc>=0.0.34"',
+            '"gradio>=5.42.0"',
+            "azure-ai-voicelive[aiohttp]~=1.2.0",
+            "stable `1.2.0`",
+            "# default in 1.2.0",
+            "~=1.2.0",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, self.skill)
 
 
 if __name__ == "__main__":
