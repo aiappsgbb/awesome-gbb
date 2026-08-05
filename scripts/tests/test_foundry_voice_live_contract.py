@@ -180,6 +180,8 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
             "from openai import AsyncAzureOpenAI",
             "from azure.ai.voicelive.aio import connect",
             "from azure.ai.voicelive.models import AzureSemanticVad",
+            "ItemType",
+            "MCPApprovalResponseRequestItem",
             'assert "endpoint" in connect_sig.parameters',
             'assert "credential" in connect_sig.parameters',
             'assert "api_version" in connect_sig.parameters',
@@ -214,7 +216,7 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
                 "fastrtc OK",
                 "gradio OK",
                 "voicelive-sdk-13-default-2026-07-15",
-                "voicelive-mcp-approval-type-surface",
+                "voicelive-mcp-approval-request-response-surface",
                 "openai-253-realtime-surface",
                 "fastrtc-gradio5-compatible",
                 "VALIDATION_PASSED",
@@ -226,7 +228,7 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
             "| `azure-identity` | `~=1.25.3` | `DefaultAzureCredential` + `get_bearer_token_provider` async |",
             "| `fastrtc` | `~=0.0.34` | `AsyncStreamHandler`, `WebRTC`, `wait_for_item`; requires `gradio>=4,<6` |",
             "| `gradio` | `~=5.50.0` | Blocks UI, state management; held below 6 by KI-001 |",
-            "| `azure-ai-voicelive` | `~=1.3.0` | Native `connect()` default API version `2026-07-15` + `AzureSemanticVad` GA fields |",
+            "| `azure-ai-voicelive` | `~=1.3.0` | Native `connect()` default API version `2026-07-15`, `AzureSemanticVad` GA fields, and MCP approval request/response item models |",
         ):
             with self.subTest(row=row):
                 self.assertIn(row, self.pin)
@@ -241,19 +243,24 @@ class FoundryVoiceLivePinContractTests(unittest.TestCase):
 
     def test_pin_smoke_imports_real_mcp_approval_symbols(self) -> None:
         for token in (
-            "from azure.ai.voicelive.models import AzureSemanticVad, MCPApprovalType, MCPServer",
+            "ItemType",
+            "MCPApprovalResponseRequestItem",
             "assert MCPServer is not None",
             "assert MCPApprovalType is not None",
+            "assert MCPApprovalResponseRequestItem is not None",
             "assert MCPApprovalType.NEVER",
             "assert MCPApprovalType.ALWAYS",
-            'print("voicelive-mcp-approval-type-surface")',
+            'assert ItemType.MCP_APPROVAL_REQUEST.value == "mcp_approval_request"',
+            'assert ItemType.MCP_APPROVAL_RESPONSE.value == "mcp_approval_response"',
+            'print("voicelive-mcp-approval-request-response-surface")',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.validation_python)
 
         self.assertNotIn("MCPApprovalMode", self.validation_python)
+        self.assertNotIn("mcp_" + "tool_approval", self.validation_python)
         self.assertIn(
-            "voicelive-mcp-approval-type-surface",
+            "voicelive-mcp-approval-request-response-surface",
             self.frontmatter["validation"]["expected_output"],
         )
 
@@ -363,15 +370,32 @@ class FoundryVoiceLiveSkillContractTests(unittest.TestCase):
 
         for required in (
             "MCPApprovalType",
+            "MCPApprovalResponseRequestItem",
+            "ItemType.MCP_APPROVAL_REQUEST",
+            "ItemType.MCP_APPROVAL_RESPONSE",
             "require_approval=MCPApprovalType.NEVER",
             "require_approval=MCPApprovalType.ALWAYS",
-            "mcp_tool_approval_request",
-            "mcp_tool_approval_response",
+            "mcp_approval_request",
+            "mcp_approval_response",
+            "await conn.conversation.item.create(",
+            "item=MCPApprovalResponseRequestItem(",
+            "approval_request_id=event.item.id",
+            "approve=True",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, body)
 
-        for stale in ("MCPApprovalMode", "MCPToolApprovalRequest"):
+        self.assertRegex(
+            body,
+            r"await conn\.conversation\.item\.create\(\s*"
+            r"item=MCPApprovalResponseRequestItem\(\s*"
+            r"approval_request_id=event\.item\.id,\s*"
+            r"approve=True,\s*"
+            r"\)\s*"
+            r"\)",
+        )
+
+        for stale in ("MCPApprovalMode", "MCPToolApprovalRequest", "mcp_" + "tool_approval"):
             with self.subTest(stale=stale):
                 self.assertNotIn(stale, self.skill)
 

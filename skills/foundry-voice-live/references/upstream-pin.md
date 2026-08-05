@@ -74,7 +74,7 @@ validation:
     import fastrtc
     import gradio
     from azure.ai.voicelive.aio import connect
-    from azure.ai.voicelive.models import AzureSemanticVad, MCPApprovalType, MCPServer
+    from azure.ai.voicelive.models import AzureSemanticVad, ItemType, MCPApprovalResponseRequestItem, MCPApprovalType, MCPServer
     from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
     from fastrtc import AsyncStreamHandler, WebRTC, wait_for_item
     from openai import AsyncAzureOpenAI
@@ -114,6 +114,15 @@ validation:
 
     assert MCPServer is not None, "MCPServer missing from azure-ai-voicelive models"
     assert MCPApprovalType is not None, "MCPApprovalType missing from azure-ai-voicelive models"
+    assert MCPApprovalResponseRequestItem is not None, (
+        "MCPApprovalResponseRequestItem missing from azure-ai-voicelive models"
+    )
+    assert ItemType.MCP_APPROVAL_REQUEST.value == "mcp_approval_request", (
+        "ItemType.MCP_APPROVAL_REQUEST wire value drifted"
+    )
+    assert ItemType.MCP_APPROVAL_RESPONSE.value == "mcp_approval_response", (
+        "ItemType.MCP_APPROVAL_RESPONSE wire value drifted"
+    )
     approval_members = getattr(MCPApprovalType, "__members__", {})
     assert "NEVER" in approval_members, "MCPApprovalType.NEVER missing"
     assert "ALWAYS" in approval_members, "MCPApprovalType.ALWAYS missing"
@@ -127,7 +136,7 @@ validation:
     assert version("azure-ai-voicelive").startswith("1.3.")
 
     print("voicelive-sdk-13-default-2026-07-15")
-    print("voicelive-mcp-approval-type-surface")
+    print("voicelive-mcp-approval-request-response-surface")
     print("openai-253-realtime-surface")
     print("fastrtc-gradio5-compatible")
     PY
@@ -140,7 +149,7 @@ validation:
     - "fastrtc OK"
     - "gradio OK"
     - "voicelive-sdk-13-default-2026-07-15"
-    - "voicelive-mcp-approval-type-surface"
+    - "voicelive-mcp-approval-request-response-surface"
     - "openai-253-realtime-surface"
     - "fastrtc-gradio5-compatible"
     - "VALIDATION_PASSED"
@@ -166,7 +175,7 @@ the `openai` SDK's realtime API surface for Azure Voice Live (GA
 | `azure-identity` | `~=1.25.3` | `DefaultAzureCredential` + `get_bearer_token_provider` async |
 | `fastrtc` | `~=0.0.34` | `AsyncStreamHandler`, `WebRTC`, `wait_for_item`; requires `gradio>=4,<6` |
 | `gradio` | `~=5.50.0` | Blocks UI, state management; held below 6 by KI-001 |
-| `azure-ai-voicelive` | `~=1.3.0` | Native `connect()` default API version `2026-07-15` + `AzureSemanticVad` GA fields |
+| `azure-ai-voicelive` | `~=1.3.0` | Native `connect()` default API version `2026-07-15`, `AzureSemanticVad` GA fields, and MCP approval request/response item models |
 
 ### Known issues
 
@@ -183,7 +192,8 @@ The validation script verifies:
    with the `[aiohttp]` extra required for the async `connect` path).
 2. Key imports succeed (`AsyncAzureOpenAI`, `DefaultAzureCredential`,
    `AsyncStreamHandler`, `gradio`, `azure.ai.voicelive.aio.connect`,
-   `MCPServer`, `MCPApprovalType`).
+   `MCPServer`, `MCPApprovalType`, `ItemType`,
+   `MCPApprovalResponseRequestItem`).
 3. The `websocket_base_url` kwarg exists on `AsyncAzureOpenAI.__init__`
    (the critical Voice Live parameter for Rungs 2–3).
 4. The `.realtime` attribute exists on the openai client class.
@@ -193,8 +203,10 @@ The validation script verifies:
 6. `AzureSemanticVad` exposes the 2026-04-10 GA fields
    `create_response`, `auto_truncate`, and `interrupt_response`
    (catches preview→GA field drift).
-7. `MCPApprovalType.NEVER` and `.ALWAYS` exist alongside `MCPServer`
-   (catches SDK item-model symbol drift).
+7. `MCPApprovalType.NEVER` and `.ALWAYS` exist alongside `MCPServer`,
+   `MCPApprovalResponseRequestItem`, and exact `ItemType` wire values
+   `mcp_approval_request` / `mcp_approval_response` (catches SDK
+   item-model symbol drift).
 
 ### Audit trail
 
@@ -202,4 +214,4 @@ The validation script verifies:
 |------|----|------|
 | 2026-05-28 | ricchi | Initial pin. Verified against voice-live-gradio v0.3.0 (ad612a6). All imports pass, websocket_base_url confirmed in openai SDK. |
 | 2026-06-08 | ricchi | Add `azure-ai-voicelive ~=1.2.0` (Rung 4). Bump docs URL to `voice-live-api-reference-2026-04-10` (302 OK). Extend validation.script with native SDK import + `AzureSemanticVad` GA field probe. Other 4 package versions unchanged (no upstream drift). |
-| 2026-08-05 | ricchi | Refresh compatible SDK stack: `openai ~=2.53.0`, `azure-ai-voicelive ~=1.3.0`, and keep `gradio ~=5.50.0` below 6 per FastRTC KI-001. Migrate Realtime concepts docs URL to `foundry-classic`. |
+| 2026-08-05 | ricchi | Refresh compatible SDK stack: `openai ~=2.53.0`, `azure-ai-voicelive ~=1.3.0`, and keep `gradio ~=5.50.0` below 6 per FastRTC KI-001. Migrate Realtime concepts docs URL to `foundry-classic`. Correct MCP approval validation to smoke `ItemType.MCP_APPROVAL_REQUEST` / `.MCP_APPROVAL_RESPONSE` exact wire values and `MCPApprovalResponseRequestItem`. |

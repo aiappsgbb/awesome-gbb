@@ -891,7 +891,7 @@ together until the upstream FastRTC issue lifts the upper bound.
 | User gets cut off mid-sentence in a non-English call | English-tuned `azure_semantic_vad` ends the turn early on a hesitation/pause | Use the multilingual VAD + multilingual end-of-utterance model; raise `silence_duration_ms` to the locale's pausing (see §3) |
 | A tool/KB turn takes several seconds | The **agentic KB planner** (query decomposition / multi-hop reasoning LLM) can dominate — not necessarily the store | Measure the retrieval legs (planner vs search/store vs model vs TTS) separately first. For single-intent lookups, query the index **directly** (semantic search, no planner); reserve the agentic planner for genuine multi-hop |
 | `ImportError: aiohttp is required for azure-ai-voicelive` | Missing `[aiohttp]` extra | `pip install "azure-ai-voicelive[aiohttp]~=1.3.0"` (async path requires it) |
-| `mcp_tool_approval_request` event mid-turn but no approval reply | `require_approval` set on `MCPServer` | Send `mcp_tool_approval_response` event back; see §12.2 |
+| `mcp_approval_request` item mid-turn but no approval reply | `require_approval` set on `MCPServer` | Create an `mcp_approval_response` conversation item; see §12.2 |
 
 ---
 
@@ -964,9 +964,11 @@ response flows back into the same turn (no client round-trip).
 
 ```python
 from azure.ai.voicelive.models import (
-    MCPServer,
-    MCPApprovalType,
+    ItemType,
+    MCPApprovalResponseRequestItem,
     RequestSession,
+    MCPApprovalType,
+    MCPServer,
 )
 
 mcp_inventory = MCPServer(
@@ -976,6 +978,7 @@ mcp_inventory = MCPServer(
     allowed_tools=["check_stock", "list_skus"],
     require_approval=MCPApprovalType.NEVER,                     # auto-execute
 )
+# Use require_approval=MCPApprovalType.ALWAYS for tools that need user consent.
 
 session = RequestSession(
     modalities=["text", "audio"],
@@ -986,10 +989,23 @@ await conn.session.update(session=session)
 ```
 
 **Approval flow.** When `require_approval=MCPApprovalType.ALWAYS`,
-the server emits `mcp_tool_approval_request`. Reply with an
-`mcp_tool_approval_response` event carrying `approve: true|false`
-before the turn continues. Cache approvals in the client to avoid
-re-prompting per turn.
+Voice Live raises a `CONVERSATION_ITEM_CREATED` event whose item type is
+`ItemType.MCP_APPROVAL_REQUEST` (`mcp_approval_request`). The reply is
+not a standalone event: create an `MCPApprovalResponseRequestItem`
+conversation item. The SDK serializes it as `ItemType.MCP_APPROVAL_RESPONSE`
+(`mcp_approval_response`) and resumes the turn:
+
+```python
+if event.item.type == ItemType.MCP_APPROVAL_REQUEST:
+    await conn.conversation.item.create(
+        item=MCPApprovalResponseRequestItem(
+            approval_request_id=event.item.id,
+            approve=True,
+        )
+    )
+```
+
+Cache approvals in the client to avoid re-prompting per turn.
 
 **Cross-refs:**
 
