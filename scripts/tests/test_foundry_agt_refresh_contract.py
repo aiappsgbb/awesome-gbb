@@ -869,24 +869,33 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
                 "correct, non-defensive form",
             )
 
-        # The v4 audit helper must claim only the observable contract
-        # (event source equals requested agent name) and must NOT assert
-        # differential knowledge of which internal field upstream reads.
-        # Since agent_id equals name in all four constructions, the probe
-        # cannot discriminate between _agent_id and context.agent.name as
-        # the source of the CloudEvent — overclaiming that breaks the
-        # "narrow to observable" rule.
-        for forbidden_differential_claim in (
-            "never from GovernancePolicyMiddleware._agent_id",
-            "comes from context.agent.name, never",
+        # The module rationale must state why the v4 audit proof now
+        # discriminates the internal source field: all four replacement
+        # GovernancePolicyMiddleware instances retain the fixed default
+        # _agent_id while their Agents have distinct requested names, and
+        # each emitted CloudEvent source follows the latter.
+        module_rationale = foundry_agt_contract_probe.__doc__ or ""
+        for required_differential_claim in (
+            'default internal ``_agent_id == "maf-agent"``',
+            "four distinct requested agent names",
+            "discriminates ``_agent_id`` from ``context.agent.name``",
+            "evaluator-backed ``_process_v4`` serializes the latter",
+        ):
+            self.assertIn(
+                required_differential_claim,
+                module_rationale,
+                "contract_probe.py's module rationale must explain the "
+                "differential v4 audit-attribution proof — missing "
+                f"{required_differential_claim!r}",
+            )
+        for stale_hedge in (
+            "``agent_id`` equals ``name`` in every construction this skill builds",
+            "this probe cannot discriminate which equal internal field upstream reads",
         ):
             self.assertNotIn(
-                forbidden_differential_claim,
-                local_probe,
-                f"contract_probe.py must not claim {forbidden_differential_claim!r} — "
-                "the observable is only that event source equals the requested "
-                "agent name; agent_id==name in all four constructions, so the "
-                "probe cannot discriminate which equal internal field upstream reads",
+                stale_hedge,
+                module_rationale,
+                f"contract_probe.py must not retain the stale hedge {stale_hedge!r}",
             )
         self.assertIn(
             "requested agent name",

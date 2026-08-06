@@ -33,9 +33,11 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
     AUDIT event source — driven with a dedicated ``AuditLog`` bound to each
     of the snippet's four canonical constructions — really does equal that
     construction's own requested agent name (serialized from
-    ``AuditEntry.agent_did`` into the CloudEvent ``source`` field); since
-    ``agent_id`` equals ``name`` in every construction this skill builds,
-    this probe cannot discriminate which equal internal field upstream reads
+    ``AuditEntry.agent_did`` into the CloudEvent ``source`` field); each
+    replacement middleware retains its default internal ``_agent_id == "maf-agent"``
+    while the Agents have four distinct requested agent names, so the emitted
+    source proof discriminates ``_agent_id`` from ``context.agent.name`` and
+    proves evaluator-backed ``_process_v4`` serializes the latter
   - the real ``CapabilityGuardMiddleware.process`` hook allows exactly the
     allowed tool and denies exactly the denied tool
   - calling ``../maf-middleware-snippet.py``'s ``build_governed_agent`` with
