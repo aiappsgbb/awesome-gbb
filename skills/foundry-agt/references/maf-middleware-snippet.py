@@ -90,7 +90,11 @@ def build_governed_agent(
     # ahead of AuditTrailMiddleware and break the documented
     # AuditTrail -> GovernancePolicy -> CapabilityGuard factory order.
     stack = [
-        GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log, agent_id=name)
+        # No agent_id= kwarg here: v4's audit writer reads agent_did from
+        # context.agent.name at call time, not from anything passed to
+        # this constructor, so an agent_id kwarg would be accepted but
+        # silently ignored on this path.
+        GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log)
         if isinstance(m, GovernancePolicyMiddleware)
         else m
         for m in stack

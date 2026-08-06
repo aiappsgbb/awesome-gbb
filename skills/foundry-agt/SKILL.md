@@ -76,8 +76,13 @@ other.
   delete / transfer — not just read-only lookups).
 - You need a deterministic, pre-execution allow/deny decision that
   holds even when the model tries to route around it.
-- You need a tamper-evident record of every tool call the agent made,
-  independent of what the model's own transcript claims.
+- You need tamper-evident evidence, independent of what the model's
+  own transcript claims: `AuditTrailMiddleware` always writes a
+  hash-chained agent-invocation start/complete entry into `AuditLog`
+  for every run. `CapabilityGuardMiddleware`, when explicitly configured
+  with `allowed_tools` / `denied_tools`, additionally writes a
+  tool-invoked or tool-blocked entry to the same `AuditLog` for every
+  gated tool call — that per-tool coverage is not automatic.
 
 ## When NOT to use this skill
 
@@ -157,8 +162,10 @@ preserved end-to-end through `build_governed_agent(...)`, alongside
 `allowed_tools=None` / `denied_tools=None` default (no-guard) semantics
 passthrough.
 
-1. **`AuditTrailMiddleware`** *(always)* — every tool call becomes a
-   hash-chained entry in `AuditLog`.
+1. **`AuditTrailMiddleware`** *(always)* — hash-chains one
+   agent-invocation start entry and one agent-invocation complete
+   entry into `AuditLog` per run; it hooks the agent invocation, not
+   individual tool calls.
 2. **`GovernancePolicyMiddleware`** *(always)* — evaluates the loaded
    YAML policy set against a flat `{agent, message, timestamp, stream,
    message_count}` context built from the *message text*; ALLOW / DENY
@@ -167,15 +174,23 @@ passthrough.
 3. **`CapabilityGuardMiddleware`** *(conditional)* — the factory adds
    this middleware to the stack only when `allowed_tools` or
    `denied_tools` is not `None`; explicit allow/deny lists on
-   `tool_name` are, when configured, the deterministic tool-action gate
-   (not YAML policy).
+   `tool_name` are, in that configuration, the deterministic
+   tool-action gate (not YAML policy). When configured, it also
+   hash-chains a tool-invoked or tool-blocked entry into the same
+   `AuditLog` for every gated tool call — in addition to the allow/deny
+   gate itself.
 
 Both `allowed_tools=None` and `denied_tools=None` (the snippet's
-default) mean **no capability guard at all** — every tool call is
-allowed by whichever of the two always-on middleware remain. Passing
-`allowed_tools=[]` is not the same as `None`: an empty list is not
-`None`, so it turns the guard on, and an empty allowlist matches no
-tool — deny-all. The canonical snippet,
+default) mean **no capability guard at all**: with no
+`CapabilityGuardMiddleware` in the stack, every tool call is allowed
+(nothing is left to deny it), and none of them get a tool-invoked or
+tool-blocked entry in `AuditLog` — tools still execute normally
+through the runtime's own dispatch, they are simply not guard-audited
+at the tool level. `AuditTrailMiddleware`'s agent-invocation
+start/complete entries still fire regardless, since that middleware is
+always present. Passing `allowed_tools=[]` is not the same as `None`:
+an empty list is not `None`, so it turns the guard on, and an empty
+allowlist matches no tool — deny-all. The canonical snippet,
 [`references/maf-middleware-snippet.py`](references/maf-middleware-snippet.py),
 passes `allowed_tools` / `denied_tools` straight through to the
 factory — never coerced with `or []` — so it preserves whichever of
