@@ -590,7 +590,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError("build_governed_agent returned an Agent with no middleware")
 
     assert_policy_middleware_agent_identity(ns, agent, "compat-probe")
-    await assert_v4_audit_attribution(ns, agent, compat_audit_log)
+    await assert_v4_audit_attribution(ns, agent, compat_audit_log, "compat-probe")
 
     print("SNIPPET_IMPORT=PASS")
 
@@ -623,7 +623,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         )
 
     assert_policy_middleware_agent_identity(ns, no_guard_agent, "default-no-guard-probe")
-    await assert_v4_audit_attribution(ns, no_guard_agent, no_guard_audit_log)
+    await assert_v4_audit_attribution(ns, no_guard_agent, no_guard_audit_log, "default-no-guard-probe")
 
     print("SNIPPET_DEFAULT_NO_GUARD=PASS")
 
@@ -678,7 +678,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError("default-semantics dangerous tool was not denied")
 
     assert_policy_middleware_agent_identity(ns, default_agent, "default-semantics-probe")
-    await assert_v4_audit_attribution(ns, default_agent, default_audit_log)
+    await assert_v4_audit_attribution(ns, default_agent, default_audit_log, "default-semantics-probe")
 
     print("SNIPPET_DEFAULT_SEMANTICS=PASS")
 
@@ -744,7 +744,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError(f"empty-allowlist tool executed {executions} times, expected exactly 0")
 
     assert_policy_middleware_agent_identity(ns, empty_allowlist_agent, "empty-allowlist-probe")
-    await assert_v4_audit_attribution(ns, empty_allowlist_agent, empty_allowlist_audit_log)
+    await assert_v4_audit_attribution(ns, empty_allowlist_agent, empty_allowlist_audit_log, "empty-allowlist-probe")
 
     print("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS")
     print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")
@@ -752,33 +752,48 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
 
 
 async def assert_v4_audit_attribution(
-    ns: SimpleNamespace, agent: object, audit_log: object
+    ns: SimpleNamespace, agent: object, audit_log: object, expected_name: str
 ) -> None:
     """Drive the real legacy-v4 GovernancePolicyMiddleware.process hook and
-    prove the CloudEvent it emits sets ``source`` to the requested agent name.
+    prove BOTH the returned Agent's own name AND the CloudEvent it emits are
+    independently attributed to the exact ``expected_name`` the caller
+    requested from ``build_governed_agent`` — never by comparing the
+    CloudEvent's ``source`` against ``agent.name`` itself. That
+    self-referential compare cannot catch either field drifting away from
+    what was actually requested (e.g. a construction bug that silently
+    renames the returned ``Agent`` post-hoc while the audit trail still
+    faithfully echoes that same, already-wrong, ``agent.name``).
 
-    Observable contract: the CloudEvent ``source`` field (serialized from
-    ``AuditEntry.agent_did``) equals the requested agent name passed into
-    ``build_governed_agent`` — for all four canonical snippet constructions.
+    Observable contract, checked independently — both against the same
+    requested agent name (``expected_name``):
 
-    IMPORTANT — scope of this proof: since ``agent_id`` equals ``name`` in
-    every construction this skill builds, this helper verifies the observable
-    output only. It cannot discriminate which equal internal field upstream
-    reads (whether ``_process_v4`` resolves the name from ``context.agent.name``,
-    from ``self._agent_id``, or any other equal source). See
+    1. ``agent.name == expected_name`` — the returned Agent really is the
+       one that was asked for.
+    2. The CloudEvent ``source`` field (serialized from
+       ``AuditEntry.agent_did``) also equals ``expected_name`` — the audit
+       trail really attributes the policy decision to that same requested
+       name, not to whatever ``agent.name`` happens to hold.
+
+    Empirically confirmed against the real installed 4.1.0
+    ``agent_os.integrations.maf_adapter.GovernancePolicyMiddleware`` in a
+    fresh venv (built exactly per this skill's pinned
+    ``agent-governance-toolkit[full]~=4.1.0`` dependency), via
+    ``inspect.getsource(GovernancePolicyMiddleware.__init__)``:
+    ``self.audit_log = audit_log`` is a genuine public instance attribute —
+    not a defensive fallback for an attribute that might not exist, so the
+    direct ``policy_middleware.audit_log is not audit_log`` read below
+    needs no ``getattr``/``hasattr`` guard. The same fresh-venv
+    ``inspect.getsource`` pass over
+    ``GovernancePolicyMiddleware._process_v4`` confirms it resolves
+    ``agent_name = getattr(context.agent, "name", "unknown")`` and
+    serializes that same name into the CloudEvent ``source`` via
+    ``AuditEntry.to_cloudevent()`` (``"policy_evaluation"`` ->
+    ``"ai.agentmesh.policy.evaluation"``). Every ``GovernancePolicyMiddleware``
+    this skill constructs passes ``evaluator=`` and never ``kernel=``, so
+    ``.process()`` always dispatches to ``_process_v4`` — never
+    ``_process_v5``, the only method that reads ``self._agent_id``. See
     ``assert_policy_middleware_agent_identity`` for the separate v5
     forward-compat ``_agent_id`` construction contract.
-
-    Empirically re-verified against the real installed 4.1.0
-    ``agent_os.integrations.maf_adapter.GovernancePolicyMiddleware._process_v4``
-    and ``agentmesh.governance.audit.AuditEntry``: every
-    ``GovernancePolicyMiddleware`` this skill constructs passes
-    ``evaluator=`` and never ``kernel=``, so ``.process()`` always
-    dispatches to ``_process_v4`` — never ``_process_v5``, the only method
-    that reads ``self._agent_id``. ``_process_v4`` resolves the agent name
-    and serializes it into the CloudEvent ``source`` via
-    ``AuditEntry.to_cloudevent()`` (``"policy_evaluation"`` ->
-    ``"ai.agentmesh.policy.evaluation"``).
 
     Requires the caller to have constructed ``agent`` with THIS
     ``audit_log`` already threaded all the way to its own
@@ -797,18 +812,24 @@ async def assert_v4_audit_attribution(
     if len(policy_middlewares) != 1:
         raise AssertionError(
             f"expected exactly one GovernancePolicyMiddleware in agent.middleware "
-            f"for the v4 audit-attribution proof of {agent.name!r}, found "
+            f"for the v4 audit-attribution proof of {expected_name!r}, found "
             f"{len(policy_middlewares)}: "
             f"{[type(middleware).__name__ for middleware in agent.middleware]}"
         )
     (policy_middleware,) = policy_middlewares
     if policy_middleware.audit_log is not audit_log:
         raise AssertionError(
-            f"GovernancePolicyMiddleware.audit_log for {agent.name!r} is not "
+            f"GovernancePolicyMiddleware.audit_log for {expected_name!r} is not "
             "the dedicated AuditLog this proof needs — build_governed_agent "
             "must be called with audit_log=<this dedicated AuditLog> so its "
             "own newly emitted CloudEvent(s) can be isolated for real "
             "inspection, not shared with any other construction's events"
+        )
+    if agent.name != expected_name:
+        raise AssertionError(
+            "the returned Agent's own name does not equal the requested "
+            f"expected_name — build_governed_agent(name={expected_name!r}, "
+            f"...) returned an Agent whose .name is {agent.name!r} instead"
         )
 
     events_before = len(audit_log.export_cloudevents())
@@ -824,7 +845,7 @@ async def assert_v4_audit_attribution(
 
     if calls != 1:
         raise AssertionError(
-            f"benign 'hello' message for {agent.name!r} called call_next "
+            f"benign 'hello' message for {expected_name!r} called call_next "
             f"{calls} times, expected exactly 1"
         )
 
@@ -832,22 +853,22 @@ async def assert_v4_audit_attribution(
     if len(new_events) != 1:
         raise AssertionError(
             "expected exactly one newly emitted CloudEvent from this real "
-            f"GovernancePolicyMiddleware.process call for {agent.name!r}, "
+            f"GovernancePolicyMiddleware.process call for {expected_name!r}, "
             f"got {len(new_events)}: {new_events}"
         )
     (event,) = new_events
     if event["type"] != "ai.agentmesh.policy.evaluation":
         raise AssertionError(
-            f"newly emitted CloudEvent 'type' for {agent.name!r} was "
+            f"newly emitted CloudEvent 'type' for {expected_name!r} was "
             f"{event['type']!r}, expected 'ai.agentmesh.policy.evaluation'"
         )
-    if event["source"] != agent.name:
+    if event["source"] != expected_name:
         raise AssertionError(
             "legacy-v4 policy audit event source does not equal the "
-            f"requested agent name — the CloudEvent 'source' field "
+            f"requested expected_name — the CloudEvent 'source' field "
             f"(serialized from AuditEntry.agent_did) was "
-            f"{event['source']!r}, expected requested agent name "
-            f"{agent.name!r}"
+            f"{event['source']!r}, expected requested expected_name "
+            f"{expected_name!r}"
         )
 
 
