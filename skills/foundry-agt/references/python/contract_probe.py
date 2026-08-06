@@ -18,7 +18,11 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
     inputs SKILL.md documents, including all four SSN separator forms, when
     evaluated in isolation via ``PolicyEvaluator.evaluate``
   - ``AuditLog`` integrity verification and CloudEvents export both work
-  - the three-middleware governance factory stack assembles correctly
+  - the governance factory stack assembles correctly: ``AuditTrailMiddleware``
+    and ``GovernancePolicyMiddleware`` are unconditional, and a third,
+    ``CapabilityGuardMiddleware``, is added only when ``allowed_tools`` or
+    ``denied_tools`` is not ``None`` — the true default (both omitted)
+    is a two-middleware stack with no capability guard at all
   - the real ``GovernancePolicyMiddleware.process`` hook — driven through a
     real ``AgentContext`` built from a real ``Agent``/``Message``, the exact
     shape the legacy v4 evaluation context actually has — calls ``call_next``
@@ -27,6 +31,11 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
     policy patterns
   - the real ``CapabilityGuardMiddleware.process`` hook allows exactly the
     allowed tool and denies exactly the denied tool
+  - calling ``../maf-middleware-snippet.py``'s ``build_governed_agent`` with
+    **both** ``allowed_tools`` and ``denied_tools`` omitted (the factory's
+    true no-argument default) returns an ``Agent`` whose middleware is
+    exactly ``[AuditTrailMiddleware, GovernancePolicyMiddleware]`` — no
+    ``CapabilityGuardMiddleware`` at all
   - ``../maf-middleware-snippet.py``'s ``build_governed_agent`` factory
     still returns a real, middleware-wired ``Agent`` whose
     ``allowed_tools=None`` default is preserved as "no allowlist" (not
@@ -489,7 +498,35 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
 
     print("SNIPPET_IMPORT=PASS")
 
-    # Default-semantics + order proof: allowed_tools=None must remain "no
+    # True-default proof: calling build_governed_agent with BOTH
+    # allowed_tools and denied_tools OMITTED (the function's actual
+    # default — not just allowed_tools=None with denied_tools set) must
+    # produce the always-on two-middleware baseline
+    # (AuditTrailMiddleware + GovernancePolicyMiddleware) with NO
+    # CapabilityGuardMiddleware at all. create_governance_middleware
+    # only adds the guard when at least one of the two parameters is
+    # not None; this is the no-guard path that proof must cover.
+    no_guard_agent = snippet.build_governed_agent(
+        name="default-no-guard-probe",
+        instructions="Default no-guard probe.",
+        chat_client=object(),
+        policy_dir=POLICY_DIR,
+    )
+    no_guard_type_names = [type(middleware).__name__ for middleware in no_guard_agent.middleware]
+    expected_no_guard_order = ["AuditTrailMiddleware", "GovernancePolicyMiddleware"]
+    if no_guard_type_names != expected_no_guard_order:
+        raise AssertionError(
+            f"default (both-omitted) agent middleware types were {no_guard_type_names}, "
+            f"expected {expected_no_guard_order}"
+        )
+    if any(isinstance(middleware, ns.CapabilityGuardMiddleware) for middleware in no_guard_agent.middleware):
+        raise AssertionError(
+            "default (both-omitted) agent unexpectedly has a CapabilityGuardMiddleware"
+        )
+
+    print("SNIPPET_DEFAULT_NO_GUARD=PASS")
+
+    # Configured-denylist default-semantics + order proof: allowed_tools=None must remain "no
     # allowlist" (allow every tool not on denied_tools), never coerced to a
     # deny-all [] — and the factory's
     # AuditTrail -> GovernancePolicy -> CapabilityGuard order must be

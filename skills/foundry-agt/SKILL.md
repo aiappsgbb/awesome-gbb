@@ -369,8 +369,8 @@ shape with `detection_confidence: 0.0`.
 | `AuditLog.verify_integrity()` + `export_cloudevents()` | ✅ locally proved | `contract_probe.py::check_audit_log` |
 | Middleware factory stack assembly (AuditTrail + GovernancePolicy + CapabilityGuard membership once capability gating is configured; sequence not claimed here) | ✅ locally proved | `contract_probe.py::build_factory_stack` |
 | `CapabilityGuardMiddleware.process` allow/deny hook | ✅ locally proved | `contract_probe.py::check_capability_hook` |
-| `build_governed_agent(...)` snippet import + wiring: `allowed_tools=None` / `denied_tools=None` default (no-guard) semantics preserved (not coerced to deny-all), and the factory's `AuditTrail -> GovernancePolicy -> CapabilityGuard` order preserved once the guard is configured | ✅ locally proved | `contract_probe.py::check_snippet_import` |
-| Live Foundry inference through a real deployed model (T3) | ✅ proved at the exact-head commit via the CI `copilot-cli-matrix` fixture | `references/python/live_t3_probe.py` run against a real Foundry project; required artifact evidence at `/tmp/foundry-agt-smoke-evidence` in the fixture, re-run and re-accepted at every source-touching commit — see [`test-fixture/consumer_prompt.md`](test-fixture/consumer_prompt.md) |
+| `build_governed_agent(...)` snippet import + wiring: with **both** `allowed_tools` and `denied_tools` omitted (the function's true default), the stack is exactly `AuditTrailMiddleware` -> `GovernancePolicyMiddleware`, with no `CapabilityGuardMiddleware` at all; once capability gating is configured, `allowed_tools=None` is preserved as no-allowlist (not coerced to deny-all) and the factory's `AuditTrail -> GovernancePolicy -> CapabilityGuard` order holds | ✅ locally proved | `contract_probe.py::check_snippet_import` |
+| Live Foundry inference through a real deployed model (T3) | 🔒 required before merge — exact-head CI gate, not a standing proof | `references/python/live_t3_probe.py` run against a real Foundry project in the CI `copilot-cli-matrix` fixture; merge acceptance requires a successful run at the exact-head commit whose downloaded artifact at `/tmp/foundry-agt-smoke-evidence` a reviewer inspects line-for-line before approving — see [`test-fixture/consumer_prompt.md`](test-fixture/consumer_prompt.md) |
 
 ---
 
@@ -424,8 +424,17 @@ shape with `detection_confidence: 0.0`.
   `AgentContext` instead of asserting against synthetic evaluator
   dicts. Live Foundry inference against a real deployed model (T3) is
   part of this release: `references/python/live_t3_probe.py` runs in
-  the CI `copilot-cli-matrix` fixture, and exact-head fixture-artifact
-  evidence is a required merge gate, not a pending follow-up.
+  the CI `copilot-cli-matrix` fixture, and merge acceptance requires a
+  successful run at the exact-head commit whose downloaded artifact a
+  reviewer inspects — a required gate on every PR, not a standing
+  proof already banked for whatever commit is HEAD right now.
+  `contract_probe.py::check_snippet_import` also now constructs
+  `build_governed_agent(...)` with both `allowed_tools` and
+  `denied_tools` omitted (not just `allowed_tools=None`) and asserts
+  the resulting stack is exactly `AuditTrailMiddleware` ->
+  `GovernancePolicyMiddleware` with no `CapabilityGuardMiddleware` —
+  the factory's true no-argument default, previously only exercised
+  with `denied_tools` configured.
 - **v1.2.0** — MAF 1.8.0 compat refresh. Bumped `agent-framework` pin
   `1.7.0` → `1.8.0` (PyPI release 2026-06-04). AGT pin held at `3.7.0`
   — the AGT 4.0.0 GA package-reorg (5 distributions replacing 45
