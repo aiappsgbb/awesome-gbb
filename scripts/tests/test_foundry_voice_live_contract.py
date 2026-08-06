@@ -77,6 +77,40 @@ def _load_fixture_event_helpers() -> dict[str, object]:
     return namespace
 
 
+def _fixture_python_ast() -> ast.Module:
+    return ast.parse(_python_heredoc(FIXTURE.read_text(encoding="utf-8")))
+
+
+def _is_name(node: ast.AST | None, *names: str) -> bool:
+    return isinstance(node, ast.Name) and node.id in names
+
+
+def _handler_matches_runtime_error_or_broader(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True
+    if _is_name(handler.type, "RuntimeError", "Exception", "BaseException"):
+        return True
+    if isinstance(handler.type, ast.Tuple):
+        return any(
+            _is_name(elt, "RuntimeError", "Exception", "BaseException")
+            for elt in handler.type.elts
+        )
+    return False
+
+
+def _handler_reraises(handler: ast.ExceptHandler) -> bool:
+    return any(isinstance(node, ast.Raise) and node.exc is None for node in ast.walk(handler))
+
+
+def _position_after(left: ast.AST, right: ast.AST) -> bool:
+    left_pos = (getattr(left, "lineno", 0), getattr(left, "col_offset", 0))
+    right_pos = (
+        getattr(right, "end_lineno", getattr(right, "lineno", 0)),
+        getattr(right, "end_col_offset", getattr(right, "col_offset", 0)),
+    )
+    return left_pos > right_pos
+
+
 class FakeServerEventType(Enum):
     SESSION_CREATED = "session.created"
     RESPONSE_DONE = "response.done"
@@ -533,6 +567,32 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
         with self.assertRaisesRegex(RuntimeError, "stream ended before response.done"):
             await self._run([_event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE)])
 
+    async def test_response_done_completed_before_session_created_fails_specifically(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "response.done received before session.created"):
+            await self._run([_event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.COMPLETED)])
+
+    async def test_immediately_empty_stream_fails_before_session_created_specifically(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "stream ended before session.created"):
+            await self._run([])
+
+    async def test_unrelated_first_event_does_not_record_fake_session_evidence(self) -> None:
+        result, records = await self._run(
+            [
+                _event("response.created", status=_NO_RESPONSE),
+                _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.COMPLETED),
+            ],
+        )
+
+        self.assertEqual(result, "completed")
+        self.assertEqual(
+            records,
+            [
+                "VOICELIVE_EVENT type=session.created",
+                "VOICELIVE_TERMINAL type=response.done status=completed",
+            ],
+        )
+
     async def test_response_done_failed_fails(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "status=failed"):
             await self._run(
@@ -552,9 +612,15 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
             )
 
     async def test_response_done_non_completed_statuses_fail(self) -> None:
-        for status in (FakeStatus.INCOMPLETE, FakeStatus.IN_PROGRESS, None):
-            with self.subTest(status=status):
-                with self.assertRaisesRegex(RuntimeError, "response.done"):
+        cases = (
+            (FakeStatus.INCOMPLETE, "incomplete"),
+            (FakeStatus.IN_PROGRESS, "in_progress"),
+            (None, "None"),
+        )
+        for status, status_label in cases:
+            with self.subTest(status=status_label):
+                expected = rf"response\.done status={re.escape(status_label)} is not completed"
+                with self.assertRaisesRegex(RuntimeError, expected):
                     await self._run(
                         [
                             _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
@@ -669,6 +735,81 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         ):
             with self.subTest(prose_only_token=prose_only_token):
                 self.assertNotIn(prose_only_token, self.fixture_without_python)
+
+    def test_fixture_main_awaits_completed_response_before_success_print(self) -> None:
+        tree = _fixture_python_ast()
+        mains = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "main"
+        ]
+        self.assertEqual(len(mains), 1)
+        main = mains[0]
+
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(main):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+
+        awaited_calls = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.Await)
+            and isinstance(node.value, ast.Call)
+            and _is_name(node.value.func, "await_completed_response")
+        ]
+        self.assertEqual(len(awaited_calls), 1)
+        await_node = awaited_calls[0]
+        call = await_node.value
+
+        self.assertEqual(len(call.args), 1)
+        self.assertIsInstance(call.args[0], ast.Name)
+        self.assertEqual(call.args[0].id, "conn")
+        self.assertEqual(len(call.keywords), 1)
+        timeout_keyword = call.keywords[0]
+        self.assertEqual(timeout_keyword.arg, "timeout_seconds")
+        self.assertIsInstance(timeout_keyword.value, ast.Constant)
+        self.assertEqual(timeout_keyword.value.value, 60.0)
+
+        current: ast.AST = await_node
+        while current in parents:
+            current = parents[current]
+            if not isinstance(current, ast.Try):
+                continue
+            swallowing_handlers = [
+                handler
+                for handler in current.handlers
+                if _handler_matches_runtime_error_or_broader(handler)
+                and not _handler_reraises(handler)
+            ]
+            self.assertEqual(
+                swallowing_handlers,
+                [],
+                "await_completed_response must not be inside a Try that can swallow "
+                "RuntimeError/Exception",
+            )
+
+        success_prints = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.Call)
+            and _is_name(node.func, "print")
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "voice-live-roundtrip-ok"
+        ]
+        self.assertEqual(len(success_prints), 1)
+        success_literals = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.Constant) and node.value == "voice-live-roundtrip-ok"
+        ]
+        self.assertEqual(success_literals, success_prints[0].args)
+        self.assertTrue(
+            _position_after(success_prints[0], await_node),
+            "voice-live-roundtrip-ok must be printed only after awaiting "
+            "await_completed_response",
+        )
 
     def test_fixture_python_persists_fresh_runtime_evidence_file(self) -> None:
         evidence_path = "EVIDENCE_PATH = Path('/tmp/foundry-voice-live-smoke-evidence')"
