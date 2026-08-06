@@ -99,6 +99,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         changelog_index = body.find("## GBB Changelog")
         self.assertNotEqual(changelog_index, -1, "GBB Changelog heading not found")
         active_body = body[:changelog_index]
+        changelog_body = body[changelog_index:]
 
         self.assertIn("self-assessment", active_body)
         self.assertIn("not certification", active_body)
@@ -113,6 +114,45 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "pending a live probe run",
         ):
             self.assertNotIn(forbidden, active_body.lower())
+
+        # Verification-status T3 row: the durable skill body must state a
+        # PROCESS REQUIREMENT that is truthful both before and after any
+        # given CI run — "exact-head" + "required before merge"/
+        # "acceptance" wording — never a pre-claim that every local source
+        # commit has already been proved live (that overclaims the instant
+        # a new commit lands, which is exactly the bug this locks down).
+        active_body_lower = active_body.lower()
+        self.assertIn("exact-head", active_body_lower)
+        self.assertRegex(
+            active_body_lower,
+            re.compile(r"required before merge|acceptance"),
+            "T3 verification row must require exact-head merge "
+            "acceptance, not predeclare it as already proved",
+        )
+        for forbidden in (
+            "proved at the exact-head commit",
+            "re-run and re-accepted at every source-touching commit",
+        ):
+            self.assertNotIn(forbidden, active_body_lower)
+
+        # The GBB Changelog entry for this release must describe the same
+        # requirement (live T3 landed + exact-head artifact acceptance is
+        # a merge gate), not an already-banked proof that ages the moment
+        # the next source commit lands.
+        changelog_lower = changelog_body.lower()
+        self.assertIn("live_t3_probe.py", changelog_lower)
+        self.assertIn("exact-head", changelog_lower)
+        self.assertRegex(
+            changelog_lower,
+            re.compile(r"required before merge|acceptance"),
+            "Changelog v2.0.0 entry must require exact-head artifact "
+            "acceptance before merge, not predeclare it as already proved",
+        )
+        for forbidden in (
+            "proved at the exact-head commit",
+            "re-run and re-accepted at every source-touching commit",
+        ):
+            self.assertNotIn(forbidden, changelog_lower)
 
     def test_pin_uses_released_source_and_selective_set(self) -> None:
         pin_meta, _ = frontmatter(SKILL / "references" / "upstream-pin.md")
@@ -188,11 +228,70 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "AgentContext",
             "POLICY_MIDDLEWARE=PASS",
             ".invoke(arguments={}, context=",
+            "SNIPPET_DEFAULT_NO_GUARD=PASS",
         ):
             self.assertIn(expected_substring, local_probe)
 
         self.assertNotIn("HITL_POLICY=PASS", local_probe)
         self.assertNotIn("tool_args.amount", local_probe)
+
+        # True-default (both allowed_tools and denied_tools OMITTED, not
+        # just allowed_tools=None) construction must be exercised for
+        # real, not merely asserted from docs: locate the call block and
+        # confirm neither kwarg is passed to it.
+        no_guard_call_match = re.search(
+            r"no_guard_agent\s*=\s*snippet\.build_governed_agent\((.*?)\)\n",
+            local_probe,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            no_guard_call_match,
+            "contract_probe.py must construct a no_guard_agent via "
+            "build_governed_agent with both allowed_tools and "
+            "denied_tools omitted",
+        )
+        no_guard_call_args = no_guard_call_match.group(1)
+        self.assertNotIn("allowed_tools", no_guard_call_args)
+        self.assertNotIn("denied_tools", no_guard_call_args)
+
+        # The proof must assert the exact two-item middleware stack and
+        # the explicit absence of CapabilityGuardMiddleware — not just
+        # print the marker.
+        self.assertIn(
+            'expected_no_guard_order = ["AuditTrailMiddleware", "GovernancePolicyMiddleware"]',
+            local_probe,
+        )
+        self.assertIn("CapabilityGuardMiddleware)", local_probe)
+
+        # The module docstring must describe the factory stack as
+        # conditional (CapabilityGuardMiddleware only when configured),
+        # never as an unconditional "three-middleware" assembly — that
+        # phrasing is the same overclaim class §2.1/§9.7 guard against
+        # for the snippet's own docstring, applied here to the probe's.
+        self.assertNotIn(
+            "the three-middleware governance factory stack assembles correctly",
+            local_probe,
+        )
+        conditional_guard_in_probe_docstring = re.compile(
+            r"capabilityguardmiddleware.{0,300}only when.{0,200}"
+            r"(allowed_tools|denied_tools)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        self.assertRegex(
+            local_probe,
+            conditional_guard_in_probe_docstring,
+            "contract_probe.py's module docstring must describe "
+            "CapabilityGuardMiddleware as conditional, not an "
+            "unconditional three-middleware stack",
+        )
+
+        # Durable validation must require the new marker at every pin
+        # refresh, not just as a local nicety.
+        pin_meta, _ = frontmatter(SKILL / "references" / "upstream-pin.md")
+        self.assertIn(
+            "SNIPPET_DEFAULT_NO_GUARD=PASS",
+            pin_meta["validation"]["expected_output"],
+        )
 
         for expected_substring in (
             "FoundryChatClient",
