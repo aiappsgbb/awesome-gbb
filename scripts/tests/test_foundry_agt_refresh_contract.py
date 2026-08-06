@@ -94,6 +94,50 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         self.assertIn("order", snippet_row_lower)
         self.assertIn("default", snippet_row_lower)
 
+        # Rogue-detection upstream-default must be qualified in the active SKILL.
+        # The SKILL must NOT make the unqualified claim "always assembles two
+        # middleware when a policy_directory is supplied" — that is only true for
+        # the snippet's proved path (enable_rogue_detection=False); upstream AGT
+        # 4.1 factory default is True, which adds RogueDetection as a third
+        # unconditional member.  The active SKILL must also: (a) state the
+        # upstream AGT 4.1 factory default for enable_rogue_detection is True
+        # (omitting the flag adds RogueDetectionMiddleware); and (b) state that
+        # the canonical snippet explicitly overrides this to False until the
+        # caller establishes a capability profile.
+        self.assertNotRegex(
+            active_body,
+            re.compile(
+                r"always assembles two middleware.{0,30}when.{0,20}policy_directory",
+                re.DOTALL,
+            ),
+            "Active SKILL must not make the unqualified claim 'always assembles "
+            "two middleware when a policy_directory is supplied' — that is only "
+            "true for the snippet's proved path (enable_rogue_detection=False); "
+            "upstream AGT 4.1 factory default is True, which adds RogueDetection.",
+        )
+        self.assertRegex(
+            active_body,
+            re.compile(
+                r"(agt 4\.1|upstream).{0,400}enable_rogue_detection.{0,200}true",
+                re.DOTALL,
+            ),
+            "Active SKILL must state that the upstream AGT 4.1 factory default "
+            "for enable_rogue_detection is True; omitting the flag adds "
+            "RogueDetectionMiddleware.",
+        )
+        self.assertRegex(
+            active_body,
+            re.compile(
+                r"(snippet|canonical).{0,600}"
+                r"(explicit|intentional|override).{0,300}"
+                r"(false|enable_rogue_detection=false)",
+                re.DOTALL,
+            ),
+            "Active SKILL must state that the canonical snippet explicitly "
+            "overrides enable_rogue_detection to False until the caller "
+            "establishes a capability profile.",
+        )
+
     def test_compliance_wording_is_precise(self) -> None:
         _, body = frontmatter(SKILL / "SKILL.md")
         changelog_index = body.find("## GBB Changelog")
