@@ -90,6 +90,7 @@ import asyncio
 import importlib.metadata
 import os
 import sys
+from contextlib import AsyncExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -114,13 +115,29 @@ REQUIRED_ENV_VARS = (
 # Exact distribution -> printed-line mapping for the approved pin. Values
 # installed are re-validated against cp.EXPECTED_VERSIONS (the schema-
 # validated source of truth); these are only the extra exact print lines
-# this live probe's contract additionally requires.
+# this live probe's contract additionally requires. These literals are a
+# static contract (grepped verbatim elsewhere) and must NOT be derived away
+# -- check_exact_pinned_versions() below instead re-derives the expected
+# line from EXACT_VERSION_LABELS + cp.EXPECTED_VERSIONS and asserts it
+# equals the literal here, so a pin bump that forgets to update this dict
+# fails loudly instead of silently printing stale evidence.
 EXACT_VERSION_LINES = {
     "agent-governance-toolkit": "AGT_VERSION=4.1.0",
     "agent-framework-core": "AF_CORE_VERSION=1.13.0",
     "agent-framework-foundry": "AF_FOUNDRY_VERSION=1.10.4",
     "agent-framework-openai": "AF_OPENAI_VERSION=1.12.0",
     "azure-identity": "AZURE_IDENTITY_VERSION=1.25.3",
+}
+
+# Label prefix for each EXACT_VERSION_LINES entry (same keys). Used only to
+# recompute f"{label}={cp.EXPECTED_VERSIONS[distribution]}" at runtime for
+# the drift check -- never printed directly.
+EXACT_VERSION_LABELS = {
+    "agent-governance-toolkit": "AGT_VERSION",
+    "agent-framework-core": "AF_CORE_VERSION",
+    "agent-framework-foundry": "AF_FOUNDRY_VERSION",
+    "agent-framework-openai": "AF_OPENAI_VERSION",
+    "azure-identity": "AZURE_IDENTITY_VERSION",
 }
 
 ENTRA_SCOPE = "https://ai.azure.com/.default"
@@ -156,18 +173,38 @@ def check_exact_pinned_versions() -> None:
     exact ``*_VERSION=`` lines this probe's contract requires on top of
     that reused evidence, re-checking the same installed versions rather
     than trusting cp's assertion alone.
+
+    Before printing each hardcoded EXACT_VERSION_LINES literal, this also
+    recomputes ``f"{label}={expected}"`` from EXACT_VERSION_LABELS and the
+    CURRENT cp.EXPECTED_VERSIONS pin and asserts it equals the literal.
+    Without this, a pin bump (cp.EXPECTED_VERSIONS changes, and the real
+    installed package correctly moves with it) would satisfy the
+    installed-vs-expected check below while this file's own hardcoded
+    evidence string silently kept asserting the OLD version -- i.e. the
+    pin could drift out from under the printed evidence with no failure
+    anywhere. This check makes that drift fail loudly instead.
     """
     cp.check_versions()
 
     for distribution, exact_line in EXACT_VERSION_LINES.items():
-        installed = importlib.metadata.version(distribution)
         expected = cp.EXPECTED_VERSIONS[distribution]
+        label = EXACT_VERSION_LABELS[distribution]
+        computed_line = f"{label}={expected}"
+        if exact_line != computed_line:
+            raise AssertionError(
+                f"EXACT_VERSION_LINES[{distribution!r}] is stale: hardcoded "
+                f"{exact_line!r} != {computed_line!r} recomputed from the "
+                f"current cp.EXPECTED_VERSIONS pin ({expected!r}); update the "
+                "literal in EXACT_VERSION_LINES to match the new pin"
+            )
+
+        installed = importlib.metadata.version(distribution)
         if installed != expected:
             raise AssertionError(f"{distribution} installed {installed!r} != pinned {expected!r}")
         print(exact_line)
 
 
-async def acquire_entra_token():
+async def acquire_entra_token(cleanup: AsyncExitStack):
     """Construct a real async DefaultAzureCredential and acquire a real token.
 
     Uses the workflow-provided OIDC environment contract (AZURE_CLIENT_ID /
@@ -176,10 +213,17 @@ async def acquire_entra_token():
     reads these from the environment itself; this probe passes no explicit
     kwargs so it takes the same code path a real consumer following SKILL.md
     would. Never prints the token itself.
+
+    ``credential.close`` is registered on the shared ``cleanup`` stack
+    immediately after construction and BEFORE ``get_token`` is awaited, so a
+    raised or empty-token failure here still closes the credential exactly
+    once via the stack's own unwind -- no broad try/except needed in this
+    function, and no risk of the credential leaking if ``get_token`` fails.
     """
     from azure.identity.aio import DefaultAzureCredential
 
     credential = DefaultAzureCredential()
+    cleanup.push_async_callback(credential.close)
     token = await credential.get_token(ENTRA_SCOPE)
     if not token.token:
         raise AssertionError("acquired Entra token was empty")
@@ -303,9 +347,33 @@ async def _run() -> None:
     check_oidc_env_present()
     check_exact_pinned_versions()
 
-    credential = await acquire_entra_token()
-    client = None
-    try:
+    # A single AsyncExitStack covers token acquisition, setup (imports,
+    # factory stack, FoundryChatClient construction), and inference/hook/
+    # audit -- every cleanup is registered via push_async_callback right
+    # after the resource it belongs to is constructed, so a failure at ANY
+    # point (including inside acquire_entra_token's own get_token call)
+    # still triggers every callback registered so far, in LIFO order, with
+    # no broad try/except and no risk of skipping a close because an
+    # earlier step raised. AsyncExitStack also guarantees that if one
+    # callback itself raises, the remaining registered callbacks still run
+    # before the (possibly chained) exception propagates -- no double-close
+    # risk either, since each resource registers its own close exactly
+    # once.
+    #
+    # Released async close/context-manager semantics, re-verified live
+    # against the exact pinned FoundryChatClient MRO (FunctionInvocationLayer,
+    # ChatMiddlewareLayer, ChatTelemetryLayer, RawFoundryChatClient,
+    # RawOpenAIChatClient, BaseChatClient): none of those classes define
+    # __aenter__, __aexit__, or close -- Agent's own async-context-manager
+    # support therefore has nothing client-side to close here, so it is
+    # correctly NOT used. Because no `project_client=` kwarg is passed
+    # below, FoundryChatClient constructs (and thus owns) its own real
+    # async `AIProjectClient` internally, stored on `client.project_client`;
+    # both it and `azure.identity.aio.DefaultAzureCredential` are confirmed
+    # real, independent async context managers with their own `close()`.
+    async with AsyncExitStack() as cleanup:
+        credential = await acquire_entra_token(cleanup)
+
         ns = cp.check_imports()
         audit_log = ns.AuditLog()
         guard, audit_log, stack = cp.build_factory_stack(ns, audit_log=audit_log, agent_id="live-t3-probe-agent")
@@ -315,28 +383,19 @@ async def _run() -> None:
             model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
             credential=credential,
         )
+        # Pushed AFTER credential.close, so the stack's LIFO unwind closes
+        # the project client BEFORE the credential -- exactly once each.
+        cleanup.push_async_callback(client.project_client.close)
+
         await run_live_inference(ns, client, stack)
         await check_capability_hook_live(ns, guard)
         check_audit_integrity(audit_log)
-    finally:
-        # Released async close/context-manager semantics, re-verified live
-        # against the exact pinned FoundryChatClient MRO (FunctionInvocationLayer,
-        # ChatMiddlewareLayer, ChatTelemetryLayer, RawFoundryChatClient,
-        # RawOpenAIChatClient, BaseChatClient): none of those classes define
-        # __aenter__, __aexit__, or close -- Agent's own async-context-manager
-        # support therefore has nothing client-side to close here, so it is
-        # correctly NOT used. Because no `project_client=` kwarg is passed
-        # above, FoundryChatClient constructs (and thus owns) its own real
-        # async `AIProjectClient` internally, stored on `client.project_client`;
-        # both it and `azure.identity.aio.DefaultAzureCredential` are confirmed
-        # real, independent async context managers with their own `close()`,
-        # so this probe -- which created both the credential and (indirectly)
-        # the project client -- is responsible for closing both explicitly,
-        # exactly once each, with no double-close risk.
-        if client is not None:
-            await client.project_client.close()
-        await credential.close()
 
+    # Printed only after the AsyncExitStack has fully and successfully
+    # unwound both real close() calls. If either raises, AsyncExitStack
+    # still runs the other registered callback (LIFO) but then re-raises
+    # before this line is reached, so PASS is never emitted on a cleanup
+    # failure and the process still exits nonzero.
     print("T3_PROBE=PASS")
 
 
