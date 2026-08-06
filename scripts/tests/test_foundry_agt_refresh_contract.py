@@ -170,6 +170,23 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "establishes a capability profile.",
         )
 
+        # Ownership-table AGT row: must NOT claim argument-level gating.
+        body_plain = re.sub(r"[*_]", "", active_body)
+        self.assertNotIn(
+            "allowed to invoke this tool with these arguments",
+            body_plain,
+            "Ownership-table AGT row must not claim argument-level gating; "
+            "AGT gates by tool name, not by argument values.",
+        )
+
+        # Ownership-table AGT row: must describe named-tool pre-execution gating.
+        has_named_tool = "named tool" in body_plain or "tool name" in body_plain or "named-tool" in body_plain
+        self.assertTrue(
+            has_named_tool,
+            "Ownership-table AGT row must describe pre-execution gating by "
+            "tool name (e.g. 'named tool', 'tool name', or 'named-tool').",
+        )
+
     def test_compliance_wording_is_precise(self) -> None:
         _, body = frontmatter(SKILL / "SKILL.md")
         changelog_index = body.find("## GBB Changelog")
@@ -553,37 +570,6 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "HITL-gate",
         ):
             self.assertNotIn(forbidden, readme_line)
-
-    def test_ownership_table_agt_row_no_argument_level_claim(self) -> None:
-        """AGT governs tool-name gating, NOT argument-level validation.
-
-        The ownership table must NOT claim AGT gates on specific argument
-        values; that is the caller's / tool-body's responsibility.  The row
-        must correctly describe AGT as controlling whether the named tool may
-        be invoked at all (pre-execution, by tool name).
-        """
-        _, body = frontmatter(SKILL / "SKILL.md")
-        body_stripped = body.lower()
-        # Strip Markdown emphasis markers so *allowed*, **allowed**, _allowed_
-        # etc. do not hide the forbidden phrase.
-        body_plain = re.sub(r"[*_]", "", body_stripped)
-
-        # Forbidden: argument-aware gating claim in the ownership table.
-        self.assertNotIn(
-            "allowed to invoke this tool with these arguments",
-            body_plain,
-            "Ownership-table AGT row must not claim argument-level gating; "
-            "AGT gates by tool name, not by argument values.",
-        )
-
-        # Required: the AGT row must describe named-tool / tool-name
-        # pre-execution gating (check for either phrasing).
-        has_named_tool = "named tool" in body_plain or "tool name" in body_plain or "named-tool" in body_plain
-        self.assertTrue(
-            has_named_tool,
-            "Ownership-table AGT row must describe pre-execution gating by "
-            "tool name (e.g. 'named tool', 'tool name', or 'named-tool').",
-        )
 
     def test_ssn_policy_exact_yaml_bytes(self) -> None:
         policy = (
