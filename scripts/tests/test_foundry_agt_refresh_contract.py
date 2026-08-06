@@ -652,14 +652,19 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         # The approved regex's `[\s.-]?` separators are each optional, so
         # the rule also matches the fully unseparated digit run. That form
         # is indistinguishable from any other standalone 9-digit number
-        # (order/invoice IDs) and from a ZIP+4 code once its separator is
-        # stripped -- both collapse into the same nine contiguous digits
-        # the regex accepts. This is a false-positive/false-deny class the
+        # (order/invoice IDs). An ordinary hyphenated ZIP+4 also matches
+        # because the first separator is optional and the second accepts its
+        # hyphen. This is a false-positive/false-deny class the
         # policy file must disclose immediately, not a hypothetical.
         false_positive_pattern = re.compile(
             r"unseparated.{0,400}"
             r"(standalone|any).{0,80}9-digit.{0,250}"
             r"zip\+4",
+            re.DOTALL,
+        )
+        ordinary_zip_pattern = re.compile(
+            r"(ordinary|normal|conventional).{0,80}hyphenated.{0,80}zip\+4"
+            r".{0,180}(first separator|optional)",
             re.DOTALL,
         )
         policy_lower = policy.lower()
@@ -670,6 +675,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "false-positives/false-denies on any standalone 9-digit "
             "number and on ZIP+4 codes",
         )
+        self.assertRegex(policy_lower, ordinary_zip_pattern)
         self.assertRegex(
             policy_lower,
             re.compile(
@@ -701,6 +707,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "unseparated SSN form false-positives/false-denies on any "
             "standalone 9-digit number and on ZIP+4 codes",
         )
+        self.assertRegex(active_skill_body, ordinary_zip_pattern)
         self.assertRegex(
             active_skill_body,
             re.compile(
