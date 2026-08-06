@@ -56,7 +56,7 @@ not just asserted from upstream documentation.
 
 | Concern | Owner | Notes |
 |---|---|---|
-| Action / tool-call plane — is the agent *allowed* to invoke this tool with these arguments? | **This skill (AGT)** | Deterministic, in-process, pre-execution. |
+| Action / tool-call plane — may the agent invoke this named tool at all? | **This skill (AGT)** | Deterministic, in-process, pre-execution by tool name. Argument validation remains the caller's / tool-body's responsibility. |
 | Message / token content — is this text safe to send or show? | [Azure AI Content Safety](https://learn.microsoft.com/azure/ai-services/content-safety/) | A different plane entirely; pair with AGT, don't substitute for it. |
 | Edge auth, rate limiting, product policy | APIM / gateway — see [`citadel-spoke-onboarding`](../citadel-spoke-onboarding/SKILL.md) | Gates the HTTP edge; AGT gates inside the tool loop. |
 | Network isolation (VNet, private endpoints) | [`foundry-vnet-deploy`](../foundry-vnet-deploy/SKILL.md) | Network plane, not policy plane. |
