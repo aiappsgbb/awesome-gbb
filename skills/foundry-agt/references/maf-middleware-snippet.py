@@ -90,7 +90,7 @@ def build_governed_agent(
     # ahead of AuditTrailMiddleware and break the documented
     # AuditTrail -> GovernancePolicy -> CapabilityGuard factory order.
     stack = [
-        GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log)
+        GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log, agent_id=name)
         if isinstance(m, GovernancePolicyMiddleware)
         else m
         for m in stack
