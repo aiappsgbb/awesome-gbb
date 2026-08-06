@@ -534,7 +534,7 @@ def assert_policy_middleware_agent_identity(
     into forward-compatible v5 construction metadata; it says nothing
     about what the real legacy v4 audit trail attributes an action to.
     See ``assert_v4_audit_attribution`` (and its
-    ``SNIPPET_V4_AUDIT_ATTRIBUTION=PASS`` marker) below for the real,
+    ``SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS`` marker) below for the real,
     behavioural v4 audit-attribution proof that drives
     ``GovernancePolicyMiddleware.process`` and inspects the emitted
     CloudEvent.
