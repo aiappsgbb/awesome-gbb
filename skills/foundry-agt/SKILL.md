@@ -145,20 +145,40 @@ below).
 
 ### Middleware factory stack
 
-`create_governance_middleware(...)` assembles the following three
-middleware (`contract_probe.py` proves membership and types, not
-ordering):
+`create_governance_middleware(...)` always assembles two middleware
+when a `policy_directory` is supplied; a third is conditional on
+caller-configured capability gating.
+`contract_probe.py::build_factory_stack` proves middleware-type
+*membership* for a configured stack — it does not assert ordering;
+`contract_probe.py::check_snippet_import` is the probe that proves the
+factory's `AuditTrail -> GovernancePolicy -> CapabilityGuard` order is
+preserved end-to-end through `build_governed_agent(...)`, alongside
+`allowed_tools=None` / `denied_tools=None` default (no-guard) semantics
+passthrough.
 
-1. **`AuditTrailMiddleware`** — every tool call becomes a hash-chained
-   entry in `AuditLog`.
-2. **`GovernancePolicyMiddleware`** — evaluates the loaded YAML policy
-   set against a flat `{agent, message, timestamp, stream,
+1. **`AuditTrailMiddleware`** *(always)* — every tool call becomes a
+   hash-chained entry in `AuditLog`.
+2. **`GovernancePolicyMiddleware`** *(always)* — evaluates the loaded
+   YAML policy set against a flat `{agent, message, timestamp, stream,
    message_count}` context built from the *message text*; ALLOW / DENY
    per message. It has no visibility into `tool_name` or `tool_args` —
    see "Policy YAML" below for what that means for policy authoring.
-3. **`CapabilityGuardMiddleware`** — explicit allow/deny lists on
-   `tool_name`; this, not YAML policy, is the deterministic tool-action
-   gate.
+3. **`CapabilityGuardMiddleware`** *(conditional)* — the factory adds
+   this middleware to the stack only when `allowed_tools` or
+   `denied_tools` is not `None`; explicit allow/deny lists on
+   `tool_name` are, when configured, the deterministic tool-action gate
+   (not YAML policy).
+
+Both `allowed_tools=None` and `denied_tools=None` (the snippet's
+default) mean **no capability guard at all** — every tool call is
+allowed by whichever of the two always-on middleware remain. Passing
+`allowed_tools=[]` is not the same as `None`: an empty list is not
+`None`, so it turns the guard on, and an empty allowlist matches no
+tool — deny-all. The canonical snippet,
+[`references/maf-middleware-snippet.py`](references/maf-middleware-snippet.py),
+passes `allowed_tools` / `denied_tools` straight through to the
+factory — never coerced with `or []` — so it preserves whichever of
+these the caller actually asked for.
 
 A fourth middleware, `RogueDetectionMiddleware`, exists upstream, but
 this skill keeps `enable_rogue_detection=False` by default — it needs a
@@ -347,9 +367,9 @@ shape with `detection_confidence: 0.0`.
 | Isolated `PolicyEvaluator.evaluate(...)` coverage (default / PII-deny inbound, all four SSN separator forms) — evaluator-level only, not the middleware's real dispatch path | ✅ locally proved | `contract_probe.py::check_policies` |
 | Real `GovernancePolicyMiddleware.process(...)` message path: benign text calls `call_next()` once; a destructive-SQL message and an inbound-SSN message each raise `MiddlewareTermination` and call `call_next()` zero times | ✅ locally proved | `contract_probe.py::check_policy_middleware` |
 | `AuditLog.verify_integrity()` + `export_cloudevents()` | ✅ locally proved | `contract_probe.py::check_audit_log` |
-| Middleware factory stack assembly (3 middleware types, factory-preserved order) | ✅ locally proved | `contract_probe.py::build_factory_stack` |
+| Middleware factory stack assembly (AuditTrail + GovernancePolicy + CapabilityGuard membership once capability gating is configured; sequence not claimed here) | ✅ locally proved | `contract_probe.py::build_factory_stack` |
 | `CapabilityGuardMiddleware.process` allow/deny hook | ✅ locally proved | `contract_probe.py::check_capability_hook` |
-| `build_governed_agent(...)` snippet import + wiring, including `allowed_tools=None` default-allowlist semantics preserved (not coerced to deny-all) | ✅ locally proved | `contract_probe.py::check_snippet_import` |
+| `build_governed_agent(...)` snippet import + wiring: `allowed_tools=None` / `denied_tools=None` default (no-guard) semantics preserved (not coerced to deny-all), and the factory's `AuditTrail -> GovernancePolicy -> CapabilityGuard` order preserved once the guard is configured | ✅ locally proved | `contract_probe.py::check_snippet_import` |
 | Live Foundry inference through a real deployed model (T3) | ✅ proved at the exact-head commit via the CI `copilot-cli-matrix` fixture | `references/python/live_t3_probe.py` run against a real Foundry project; required artifact evidence at `/tmp/foundry-agt-smoke-evidence` in the fixture, re-run and re-accepted at every source-touching commit — see [`test-fixture/consumer_prompt.md`](test-fixture/consumer_prompt.md) |
 
 ---

@@ -33,10 +33,15 @@ def build_governed_agent(
     """
     Wire AGT governance middleware onto a MAF Agent.
 
-    Returns a ready-to-run Agent with the three-middleware stack assembled
-    by ``create_governance_middleware`` plus an explicit
+    Returns a ready-to-run Agent with the default two-middleware stack
+    (``AuditTrailMiddleware`` + ``GovernancePolicyMiddleware``) assembled
+    by ``create_governance_middleware``, plus an explicit
     ``GovernancePolicyMiddleware`` bound to a YAML-loaded
-    ``PolicyEvaluator``.
+    ``PolicyEvaluator``. ``create_governance_middleware`` adds a third,
+    ``CapabilityGuardMiddleware``, only when ``allowed_tools`` or
+    ``denied_tools`` is not ``None`` — pass both as ``None`` (this
+    function's default) to get the two-middleware stack with no
+    capability guard at all.
 
     Parameters
     ----------
