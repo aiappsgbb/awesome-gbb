@@ -145,8 +145,9 @@ below).
 
 ### Middleware factory stack
 
-`create_governance_middleware(...)` always assembles two middleware
-when a `policy_directory` is supplied; a third is conditional on
+`create_governance_middleware(...)` assembles two always-on middleware
+in this skill's canonical snippet and proved path, which passes
+`enable_rogue_detection=False`; a third middleware is conditional on
 caller-configured capability gating.
 `contract_probe.py::build_factory_stack` proves middleware-type
 *membership* for a configured stack — it does not assert ordering;
@@ -180,11 +181,13 @@ passes `allowed_tools` / `denied_tools` straight through to the
 factory — never coerced with `or []` — so it preserves whichever of
 these the caller actually asked for.
 
-A fourth middleware, `RogueDetectionMiddleware`, exists upstream, but
-this skill keeps `enable_rogue_detection=False` by default — it needs a
-baselined capability profile this skill has not established, not
-because the factory errors without one. Enable it explicitly once your
-agent has a behavioral baseline to compare against.
+AGT 4.1's factory default for `enable_rogue_detection` is `True`;
+omitting the flag adds `RogueDetectionMiddleware` as a third
+unconditional member (fourth when a tool list is also configured —
+see the upstream pin's four-case table in
+[`references/upstream-pin.md`](references/upstream-pin.md)).
+The canonical snippet intentionally overrides this to `False` until
+the caller has established a capability profile to compare against.
 
 ### Policy YAML
 
@@ -435,6 +438,15 @@ shape with `detection_confidence: 0.0`.
   `GovernancePolicyMiddleware` with no `CapabilityGuardMiddleware` —
   the factory's true no-argument default, previously only exercised
   with `denied_tools` configured.
+  **Rogue-detection factory-default correction:** the opening
+  "always assembles two middleware when a policy_directory is supplied"
+  claim was unqualified — it was only true for the snippet's proved
+  path (which passes `enable_rogue_detection=False`). AGT 4.1's
+  factory default for `enable_rogue_detection` is `True`; omitting the
+  flag adds `RogueDetectionMiddleware` as a third unconditional member.
+  The canonical snippet intentionally overrides this to `False` until
+  the caller establishes a capability profile (see the upstream pin's
+  four-case table).
 - **v1.2.0** — MAF 1.8.0 compat refresh. Bumped `agent-framework` pin
   `1.7.0` → `1.8.0` (PyPI release 2026-06-04). AGT pin held at `3.7.0`
   — the AGT 4.0.0 GA package-reorg (5 distributions replacing 45
