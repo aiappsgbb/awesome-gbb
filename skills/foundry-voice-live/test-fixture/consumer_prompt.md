@@ -107,11 +107,13 @@ SKILL.md § 11 "Troubleshooting" for the corresponding row).
 ## Step 3 — Open the WSS session
 
 Run the Python script below. It MUST complete without exception, print
-`voice-live-roundtrip-ok` on success, persist the successful runtime audit
-records to `/tmp/foundry-voice-live-smoke-evidence`, and exit 0. The
+`voice-live-roundtrip-ok` on success, persist and lock the successful runtime
+audit records to `/tmp/foundry-voice-live-smoke-evidence`, and exit 0. The
 workflow uploads the evidence file; it is the authoritative audit trail for
 the runtime connect record, session-created record, and completed terminal
-record when the Copilot CLI transcript collapses long shell output.
+record when the Copilot CLI transcript collapses long shell output. The
+evidence file's final newline is canonical record termination, NOT a blank
+fourth record.
 
 **Do NOT redirect the script's stdout anywhere.** The workflow harness
 already captures all output via its own `tee` pipeline (so the
@@ -142,12 +144,26 @@ from azure.ai.voicelive.models import (
 )
 
 EVIDENCE_PATH = Path('/tmp/foundry-voice-live-smoke-evidence')
+EVIDENCE_PATH.unlink(missing_ok=True)
 EVIDENCE_PATH.write_text('', encoding='utf-8')
+EXPECTED_EVIDENCE_BYTES = (
+    b"VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3\n"
+    b"VOICELIVE_EVENT type=session.created\n"
+    b"VOICELIVE_TERMINAL type=response.done status=completed\n"
+)
 
 def record(message: str) -> None:
     with EVIDENCE_PATH.open("a", encoding="utf-8") as evidence:
         evidence.write(message + "\n")
     print(message)
+
+def finalize_evidence() -> None:
+    if EVIDENCE_PATH.read_bytes() != EXPECTED_EVIDENCE_BYTES:
+        raise RuntimeError(
+            "evidence mismatch: expected exactly three canonical records "
+            "with final newline"
+        )
+    EVIDENCE_PATH.chmod(0o444)
 
 # Derive the Voice Live WSS host from AZURE_AI_ENDPOINT (the
 # cognitiveservices.azure.com surface). Voice Live lives on
@@ -248,6 +264,7 @@ async def main() -> None:
             # attempt, regardless of final state. Only status=completed is
             # success for this smoke.
             await await_completed_response(conn, timeout_seconds=60.0)
+            finalize_evidence()
 
     print("voice-live-roundtrip-ok")
 
@@ -261,7 +278,10 @@ Success criteria for Step 3:
 - Stdout contains the literal string `voice-live-roundtrip-ok`.
 - The evidence file contains exactly the successful runtime audit records:
   one connect record, one session-created record, and one terminal completed
-  record.
+  record, with the canonical final newline after the terminal record.
+- After Step 3 succeeds, the evidence file is read-only. You MUST NOT
+  normalize, rewrite, chmod, truncate, remove the final newline from, or
+  otherwise modify it. Only the workflow may copy/upload it.
 - The terminal event was `response.done` and its final
   `response.status` was exactly `completed`.
 
@@ -284,7 +304,8 @@ match the workflow's anchored grep — substitute the leading `_` back to
 
 On success (Step 3's script exited 0 AND its stdout contained
 `voice-live-roundtrip-ok` AND the evidence file contains exactly three
-runtime records: connect, session-created, and terminal completed):
+runtime records: connect, session-created, and terminal completed, with its
+canonical final newline intact, and is read-only):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-live-smoke-result
@@ -299,6 +320,11 @@ terminal status, or explicit server-side `error` event):
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-voice-live-smoke-result
 ```
+
+After Step 3, Step 4 may verify the evidence file exists and can be read, but
+it MUST NOT normalize, rewrite, chmod, truncate, remove the canonical final
+newline from, or otherwise modify the evidence file. Only the workflow may
+copy/upload the read-only evidence file.
 
 The marker file is single-source-of-truth. Do NOT print the marker
 token anywhere else in your reply — no echoes, no summaries, no fenced

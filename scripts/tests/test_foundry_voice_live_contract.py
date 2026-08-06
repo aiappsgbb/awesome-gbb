@@ -192,6 +192,50 @@ def _event(event_type: object, *, status: object = None, error: object = None) -
 
 _NO_RESPONSE = object()
 
+EXPECTED_EVIDENCE_BYTES = (
+    b"VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3\n"
+    b"VOICELIVE_EVENT type=session.created\n"
+    b"VOICELIVE_TERMINAL type=response.done status=completed\n"
+)
+
+
+def _load_fixture_evidence_helpers() -> dict[str, object]:
+    python = _python_heredoc(FIXTURE.read_text(encoding="utf-8"))
+    tree = ast.parse(python)
+    helper_defs: list[ast.stmt] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "EXPECTED_EVIDENCE_BYTES"
+            for target in node.targets
+        ):
+            helper_defs.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name == "finalize_evidence":
+            helper_defs.append(node)
+    module = ast.Module(body=helper_defs, type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace: dict[str, object] = {
+        "RuntimeError": RuntimeError,
+    }
+    exec(compile(module, "<foundry-voice-live-fixture-evidence-helpers>", "exec"), namespace)
+    if "finalize_evidence" not in namespace:
+        raise AssertionError("fixture helper finalize_evidence not found")
+    return namespace
+
+
+def _scratch_evidence_path(name: str) -> pathlib.Path:
+    path = ROOT / ".pytest-cache" / "foundry-voice-live-evidence" / f"{name}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.chmod(0o666)
+        path.unlink()
+    return path
+
+
+def _cleanup_evidence_path(path: pathlib.Path) -> None:
+    if path.exists():
+        path.chmod(0o666)
+        path.unlink()
+
 
 SEMVER_RE = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -736,6 +780,89 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
                 self.assertEqual(records, ["VOICELIVE_EVENT type=session.created"])
 
 
+class FoundryVoiceLiveFixtureEvidenceFinalizationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.helpers = _load_fixture_evidence_helpers()
+
+    def _path(self) -> pathlib.Path:
+        path = _scratch_evidence_path(self.id().rsplit(".", 1)[-1])
+        self.addCleanup(_cleanup_evidence_path, path)
+        self.helpers["EVIDENCE_PATH"] = path
+        return path
+
+    def test_exact_canonical_three_records_with_final_newline_passes_and_locks_read_only(
+        self,
+    ) -> None:
+        self.assertEqual(self.helpers["EXPECTED_EVIDENCE_BYTES"], EXPECTED_EVIDENCE_BYTES)
+        path = self._path()
+        path.write_bytes(EXPECTED_EVIDENCE_BYTES)
+        path.chmod(0o666)
+
+        self.helpers["finalize_evidence"]()
+
+        self.assertEqual(path.read_bytes(), EXPECTED_EVIDENCE_BYTES)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o444)
+        self.assertEqual(path.stat().st_mode & 0o222, 0)
+
+    def test_missing_record_fails_and_does_not_lock(self) -> None:
+        path = self._path()
+        path.write_bytes(
+            b"VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3\n"
+            b"VOICELIVE_TERMINAL type=response.done status=completed\n"
+        )
+        path.chmod(0o666)
+
+        with self.assertRaisesRegex(RuntimeError, "evidence mismatch"):
+            self.helpers["finalize_evidence"]()
+
+        self.assertNotEqual(path.stat().st_mode & 0o222, 0)
+
+    def test_trailing_blank_record_fails_and_does_not_lock(self) -> None:
+        path = self._path()
+        path.write_bytes(EXPECTED_EVIDENCE_BYTES + b"\n")
+        path.chmod(0o666)
+
+        with self.assertRaisesRegex(RuntimeError, "evidence mismatch"):
+            self.helpers["finalize_evidence"]()
+
+        self.assertNotEqual(path.stat().st_mode & 0o222, 0)
+
+    def test_extra_nonblank_record_fails_and_does_not_lock(self) -> None:
+        path = self._path()
+        path.write_bytes(EXPECTED_EVIDENCE_BYTES + b"VOICELIVE_EXTRA type=unexpected\n")
+        path.chmod(0o666)
+
+        with self.assertRaisesRegex(RuntimeError, "evidence mismatch"):
+            self.helpers["finalize_evidence"]()
+
+        self.assertNotEqual(path.stat().st_mode & 0o222, 0)
+
+    def test_wrong_terminal_status_fails_and_does_not_lock(self) -> None:
+        path = self._path()
+        path.write_bytes(
+            b"VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3\n"
+            b"VOICELIVE_EVENT type=session.created\n"
+            b"VOICELIVE_TERMINAL type=response.done status=failed\n"
+        )
+        path.chmod(0o666)
+
+        with self.assertRaisesRegex(RuntimeError, "evidence mismatch"):
+            self.helpers["finalize_evidence"]()
+
+        self.assertNotEqual(path.stat().st_mode & 0o222, 0)
+
+    def test_missing_final_newline_fails_and_does_not_lock(self) -> None:
+        path = self._path()
+        path.write_bytes(EXPECTED_EVIDENCE_BYTES.rstrip(b"\n"))
+        path.chmod(0o666)
+
+        with self.assertRaisesRegex(RuntimeError, "evidence mismatch"):
+            self.helpers["finalize_evidence"]()
+
+        self.assertNotEqual(path.stat().st_mode & 0o222, 0)
+
+
 class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -964,10 +1091,108 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
             "await_completed_response",
         )
 
+    def test_fixture_main_finalizes_evidence_immediately_after_terminal_helper_before_success_print(
+        self,
+    ) -> None:
+        tree = _fixture_python_ast()
+        mains = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "main"
+        ]
+        self.assertEqual(len(mains), 1)
+        main = mains[0]
+
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+
+        awaited_calls = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.Await)
+            and isinstance(node.value, ast.Call)
+            and _is_name(node.value.func, "await_completed_response")
+        ]
+        self.assertEqual(len(awaited_calls), 1)
+        await_node = awaited_calls[0]
+        await_stmt: ast.AST = await_node
+        while await_stmt in parents and not isinstance(await_stmt, ast.Expr):
+            await_stmt = parents[await_stmt]
+        self.assertIsInstance(await_stmt, ast.Expr)
+
+        finalize_calls = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.Call) and _is_name(node.func, "finalize_evidence")
+        ]
+        self.assertEqual(len(finalize_calls), 1)
+        finalize_call = finalize_calls[0]
+        self.assertEqual(finalize_call.args, [])
+        self.assertEqual(finalize_call.keywords, [])
+        finalize_stmt: ast.AST = finalize_call
+        while finalize_stmt in parents and not isinstance(finalize_stmt, ast.Expr):
+            finalize_stmt = parents[finalize_stmt]
+        self.assertIsInstance(finalize_stmt, ast.Expr)
+
+        connect_blocks = [node for node in ast.walk(main) if _is_connect_async_with(node)]
+        self.assertEqual(len(connect_blocks), 1)
+        connect_body = connect_blocks[0].body
+        self.assertIn(await_stmt, connect_body)
+        self.assertIn(finalize_stmt, connect_body)
+        self.assertEqual(
+            connect_body.index(finalize_stmt),
+            connect_body.index(await_stmt) + 1,
+            "finalize_evidence() must be the direct next statement after "
+            "await await_completed_response(...)",
+        )
+
+        forbidden_control_flow = (
+            ast.If,
+            ast.IfExp,
+            ast.Try,
+            ast.While,
+            ast.For,
+            ast.AsyncFor,
+            ast.Match,
+        )
+        for guarded_stmt, label in (
+            (await_stmt, "await_completed_response"),
+            (finalize_stmt, "finalize_evidence"),
+        ):
+            current: ast.AST = guarded_stmt
+            while current is not main:
+                self.assertIn(current, parents, f"{label} is not inside main")
+                current = parents[current]
+                self.assertFalse(
+                    isinstance(current, forbidden_control_flow)
+                    or _is_suppressing_with(current),
+                    f"{label} must be unconditional: no If/IfExp/Try/loop/Match/"
+                    "suppressing-with ancestor may sit between it and main",
+                )
+
+        success_prints = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _is_name(node.func, "print")
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "voice-live-roundtrip-ok"
+        ]
+        self.assertEqual(len(success_prints), 1)
+        self.assertTrue(
+            _position_after(success_prints[0], finalize_call),
+            "voice-live-roundtrip-ok must be printed only after evidence is finalized",
+        )
+
     def test_fixture_python_persists_fresh_runtime_evidence_file(self) -> None:
         evidence_path = "EVIDENCE_PATH = Path('/tmp/foundry-voice-live-smoke-evidence')"
+        unlink_file = "EVIDENCE_PATH.unlink(missing_ok=True)"
         clear_file = "EVIDENCE_PATH.write_text('', encoding='utf-8')"
         record_signature = "def record(message: str) -> None:"
+        finalize_signature = "def finalize_evidence() -> None:"
         append_file = 'with EVIDENCE_PATH.open("a", encoding="utf-8") as evidence:'
         append_line = 'evidence.write(message + "\\n")'
         print_line = "print(message)"
@@ -975,8 +1200,14 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         for token in (
             "from pathlib import Path",
             evidence_path,
+            unlink_file,
             clear_file,
+            "EXPECTED_EVIDENCE_BYTES = (",
+            "EVIDENCE_PATH.read_bytes()",
+            "raise RuntimeError(",
+            "EVIDENCE_PATH.chmod(0o444)",
             record_signature,
+            finalize_signature,
             append_file,
             append_line,
             print_line,
@@ -987,8 +1218,11 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.python)
 
+        self.assertLess(self.python.index(evidence_path), self.python.index(unlink_file))
+        self.assertLess(self.python.index(unlink_file), self.python.index(clear_file))
         self.assertLess(self.python.index(clear_file), self.python.index(record_signature))
-        self.assertLess(self.python.index(record_signature), self.python.index("async def main() -> None:"))
+        self.assertLess(self.python.index(record_signature), self.python.index(finalize_signature))
+        self.assertLess(self.python.index(finalize_signature), self.python.index("async def main() -> None:"))
         self.assertLess(self.python.index(clear_file), self.python.index("async with connect("))
 
         self.assertIn("/tmp/foundry-voice-live-smoke-evidence", self.fixture)
@@ -1021,7 +1255,8 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         self.assertIn(
             "On success (Step 3's script exited 0 AND its stdout contained\n"
             "`voice-live-roundtrip-ok` AND the evidence file contains exactly three\n"
-            "runtime records: connect, session-created, and terminal completed):",
+            "runtime records: connect, session-created, and terminal completed, with its\n"
+            "canonical final newline intact, and is read-only):",
             self.fixture,
         )
         for forbidden in (
