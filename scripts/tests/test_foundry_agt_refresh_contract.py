@@ -37,6 +37,8 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "mcr.microsoft.com/agentmesh/enforcer",
             "26.67% policy-violation rate",
             "0.00% violation",
+            "hitl-gate",
+            "outbound text",
         ):
             self.assertNotIn(forbidden, active_body)
 
@@ -48,12 +50,15 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
 
         self.assertIn("self-assessment", active_body)
         self.assertIn("not certification", active_body)
+        self.assertIn("live_t3_probe.py", active_body)
         for forbidden in (
             "certifies compliance",
             "certification proof",
             "independent audit proof",
             "ci-gateable proof of compliance",
             "guarantees owasp compliance",
+            "not yet proved at this pin",
+            "pending a live probe run",
         ):
             self.assertNotIn(forbidden, active_body.lower())
 
@@ -90,16 +95,31 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "references/python/contract_probe.py",
         ):
             self.assertIn(expected_substring, validation_script)
+        self.assertNotIn("HITL_POLICY=PASS", validation_script)
+
+        expected_output = pin_meta["validation"]["expected_output"]
+        self.assertIn("POLICY_MIDDLEWARE=PASS", expected_output)
+        self.assertNotIn("HITL_POLICY=PASS", expected_output)
+
+        known_issues = pin_meta["known_issues"]
+        self.assertEqual(len(known_issues), 2)
+        self.assertEqual(pin_meta["known_issues_count"], 2)
+        for issue in known_issues:
+            self.assertIsNone(issue.get("upstream_url"))
+            self.assertNotEqual(issue["id"], "KI-001")
 
     def test_probes_cover_shapes_hook_and_live_inference(self) -> None:
         local_probe_path = SKILL / "references" / "python" / "contract_probe.py"
         live_probe_path = SKILL / "references" / "python" / "live_t3_probe.py"
+        snippet_path = SKILL / "references" / "maf-middleware-snippet.py"
 
         self.assertTrue(local_probe_path.is_file())
         self.assertTrue(live_probe_path.is_file())
+        self.assertTrue(snippet_path.is_file())
 
         local_probe = local_probe_path.read_text(encoding="utf-8")
         live_probe = live_probe_path.read_text(encoding="utf-8")
+        snippet = snippet_path.read_text(encoding="utf-8")
 
         for expected_substring in (
             "FoundryChatClient",
@@ -113,8 +133,14 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "CAPABILITY_HOOK_ALLOW_EXECUTIONS=1",
             "CAPABILITY_HOOK_DENY_EXECUTIONS=0",
             "CONTRACT_PROBE=PASS",
+            "AgentContext",
+            "POLICY_MIDDLEWARE=PASS",
+            ".invoke(arguments={}, context=",
         ):
             self.assertIn(expected_substring, local_probe)
+
+        self.assertNotIn("HITL_POLICY=PASS", local_probe)
+        self.assertNotIn("tool_args.amount", local_probe)
 
         for expected_substring in (
             "FoundryChatClient",
@@ -131,9 +157,23 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
 
         self.assertNotIn('agent.run("DROP TABLE users")', live_probe)
 
+        for expected_substring in (
+            "allowed_tools=allowed_tools",
+            "denied_tools=denied_tools",
+        ):
+            self.assertIn(expected_substring, snippet)
+        for forbidden_substring in (
+            "allowed_tools or []",
+            "denied_tools or []",
+        ):
+            self.assertNotIn(forbidden_substring, snippet)
+
     def test_unsupported_sidecar_is_removed(self) -> None:
         sidecar_path = SKILL / "references" / "aca-sidecar-snippet.bicep"
         self.assertFalse(sidecar_path.exists())
+
+        hitl_gate_path = SKILL / "references" / "policies" / "hitl-gate.yaml"
+        self.assertFalse(hitl_gate_path.exists())
 
     def test_fixture_is_live_and_marker_safe(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
@@ -147,6 +187,9 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "references/python/live_t3_probe.py",
             "/tmp/foundry-agt-smoke-evidence",
             "_MOKE_RESULT=PASS",
+            "SKILL_CONTRACT=OK",
+            "sed -n",
+            r'"agent-governance-toolkit\[full\]~=4\.1\.0"',
         ):
             self.assertIn(expected_substring, fixture)
 
@@ -180,6 +223,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "Path C",
             "26.67%",
             "5 field-tested Known Issues",
+            "HITL-gate",
         ):
             self.assertNotIn(forbidden, readme_line)
 
@@ -189,7 +233,8 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         expected = r"value: '\b\d{3}[\s.-]?\d{2}[\s.-]?\d{4}\b'"
-        self.assertGreaterEqual(policy.count(expected), 2)
+        self.assertEqual(policy.count(expected), 1)
+        self.assertNotIn("field: response", policy)
 
 
 if __name__ == "__main__":
