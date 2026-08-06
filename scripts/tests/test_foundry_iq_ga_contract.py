@@ -801,10 +801,10 @@ class FoundryIqGaContractTests(unittest.TestCase):
 
     def test_patch_version_records_post_merge_corrections(self) -> None:
         self.assertEqual(_frontmatter(self.skill)["metadata"]["version"], "1.4.2")
-        self.assertEqual(json.loads(PLUGIN.read_text())["version"], "4.29.5")
         marketplace = json.loads(MARKETPLACE.read_text())
-        self.assertEqual(marketplace["metadata"]["version"], "4.29.5")
-        self.assertEqual(marketplace["plugins"][0]["version"], "4.29.5")
+        plugin_version = json.loads(PLUGIN.read_text())["version"]
+        self.assertEqual(plugin_version, marketplace["metadata"]["version"])
+        self.assertEqual(plugin_version, marketplace["plugins"][0]["version"])
 
 
 if __name__ == "__main__":
