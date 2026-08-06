@@ -1,16 +1,10 @@
-"""
-GBB-verified MAF middleware wiring for the Microsoft Agent Governance
-Toolkit (AGT v3.7.0) on top of agent-framework v1.8.0.
+"""Canonical MAF middleware wiring for Agent Governance Toolkit 4.1.0
+with Agent Framework Core 1.13.0.
 
-This is the **working** version — the upstream Foundry deployment doc
-(`docs/deployment/azure-foundry-agent-service.md`) shows manual
-construction with kwargs that no longer exist in 3.7.0. Use this
-factory instead.
+Source of truth for the prose example in `../../SKILL.md § Wiring snippet`.
 
-References:
-  - upstream-pin.md (this skill) — full API surface + Known Issues
-  - https://github.com/microsoft/agent-governance-toolkit/blob/main/
-      agent-governance-python/agent-os/src/agent_os/integrations/maf_adapter.py
+The pin validation probe imports this module and constructs an Agent from it
+on every refresh.
 """
 from __future__ import annotations
 
@@ -54,9 +48,10 @@ def build_governed_agent(
 
     Notes
     -----
-    - ``enable_rogue_detection=False`` because RogueDetectionMiddleware
-      requires a pre-built capability profile (see Known Issue #4 in
-      upstream-pin.md). Switch to True after baselining the agent.
+    - ``enable_rogue_detection=False`` by default: RogueDetectionMiddleware
+      is most useful once the agent has a baselined capability profile
+      (see upstream-pin.md for current rogue-detection guidance). Switch
+      to True after baselining the agent.
     - The factory's auto-built GovernancePolicyMiddleware is replaced with
       one bound to a PolicyEvaluator we control, so we can inspect
       decisions in tests and CI.
@@ -71,7 +66,10 @@ def build_governed_agent(
         allowed_tools=allowed_tools or [],
         denied_tools=denied_tools or [],
         agent_id=name,
-        enable_rogue_detection=False,             # see upstream-pin.md Known Issue #4
+        enable_rogue_detection=False,             # rogue detection is most useful
+                                                   # once the agent has a baselined
+                                                   # capability profile — see
+                                                   # upstream-pin.md
         audit_log=audit_log,
     )
 
