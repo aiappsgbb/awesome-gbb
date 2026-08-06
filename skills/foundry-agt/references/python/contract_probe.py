@@ -41,6 +41,12 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
     ``allowed_tools=None`` default is preserved as "no allowlist" (not
     coerced to a deny-all ``[]``) and whose middleware stack keeps the
     factory's ``AuditTrail -> GovernancePolicy -> CapabilityGuard`` order
+  - an explicit, non-default ``allowed_tools=[]`` (an empty allowlist,
+    not the both-omitted default) really does deny every tool — driven
+    through a real ``CapabilityGuardMiddleware.process`` hook with a
+    real ``FunctionTool``/``FunctionInvocationContext``, asserting
+    ``MiddlewareTermination`` is raised and the tool's own execution
+    counter never advances past 0
 
 Run directly after installing the exact bounded package set from
 ``../upstream-pin.md`` into an active virtual environment:
@@ -589,6 +595,67 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError("default-semantics dangerous tool was not denied")
 
     print("SNIPPET_DEFAULT_SEMANTICS=PASS")
+
+    # Empty-allowlist deny-all proof: the snippet's docstring says an
+    # explicit allowed_tools=[] (NOT the both-omitted default, and NOT
+    # allowed_tools=None) means deny-all to CapabilityGuardMiddleware.
+    # Construct that exact shape for real and drive a real tool through
+    # the real guard.process/FunctionTool.invoke round trip — a tool that
+    # is not even named in any allow/deny list must still be denied,
+    # because the allowlist is empty rather than absent.
+    empty_allowlist_agent = snippet.build_governed_agent(
+        name="empty-allowlist-probe",
+        instructions="Empty-allowlist deny-all probe.",
+        chat_client=object(),
+        policy_dir=POLICY_DIR,
+        allowed_tools=[],
+    )
+    empty_allowlist_guard = next(
+        (
+            middleware
+            for middleware in empty_allowlist_agent.middleware
+            if isinstance(middleware, ns.CapabilityGuardMiddleware)
+        ),
+        None,
+    )
+    if empty_allowlist_guard is None:
+        raise AssertionError("empty-allowlist agent has no CapabilityGuardMiddleware")
+    if empty_allowlist_guard.allowed_tools != []:
+        raise AssertionError(
+            f"allowed_tools=[] was coerced to {empty_allowlist_guard.allowed_tools!r}, expected [] (deny-all)"
+        )
+
+    executions = 0
+
+    def _unlisted_tool_fn() -> str:
+        nonlocal executions
+        executions += 1
+        return "unlisted-result"
+
+    unlisted_tool = ns.FunctionTool(
+        name="unlisted_tool", description="empty-allowlist probe tool", func=_unlisted_tool_fn
+    )
+    deny_all_context = ns.FunctionInvocationContext(function=unlisted_tool, arguments={})
+
+    async def deny_all_call_next() -> None:
+        deny_all_context.result = await unlisted_tool.invoke(
+            arguments={}, context=deny_all_context, skip_parsing=True
+        )
+
+    deny_all_observed = False
+    try:
+        await empty_allowlist_guard.process(deny_all_context, deny_all_call_next)
+    except ns.MiddlewareTermination:
+        deny_all_observed = True
+
+    if not deny_all_observed:
+        raise AssertionError(
+            "empty allowed_tools=[] did not deny a tool absent from any allow/deny list"
+        )
+    if executions != 0:
+        raise AssertionError(f"empty-allowlist tool executed {executions} times, expected exactly 0")
+
+    print("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS")
 
 
 async def run_probe(ns: SimpleNamespace) -> None:

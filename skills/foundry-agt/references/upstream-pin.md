@@ -131,6 +131,7 @@ validation:
     - "CAPABILITY_HOOK=PASS"
     - "POLICY_MIDDLEWARE=PASS"
     - "SNIPPET_DEFAULT_NO_GUARD=PASS"
+    - "SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS"
     - "CONTRACT_PROBE=PASS"
     - "OWASP ASI 2026"
 
@@ -214,7 +215,7 @@ names (`agent_os_kernel`, `agentmesh_platform`, `agentmesh_runtime`,
 `agent_hypervisor`) — none of which are separate installable
 distributions any more under the 4.1.0 package split. Only the meta-package
 itself (`agent_governance_toolkit`) matches, hence "1/8". This is a
-**known, upstream-tracked cosmetic gap** (KI-002) in the doctor
+**known, empirically observed cosmetic gap** (KI-002) in the doctor
 subcommand, not evidence of a broken install: `contract_probe.py`'s
 version and import checks are the authoritative signal for "is 4.1.0
 actually installed and importable", and they pass.
@@ -232,7 +233,7 @@ Toolkit: 3.2.2
 
 `agt verify` self-reports its own compliance-schema version
 (`Toolkit: 3.2.2`), independent of the installed meta-package version
-(4.1.0). This is a **known, upstream-tracked skew** (KI-003) between the
+(4.1.0). This is a **known, empirically observed skew** (KI-003) between the
 verifier's internal schema numbering and the package release cadence —
 the OWASP ASI 2026 coverage result (10/10) is what this skill's
 validation script actually gates on, and it is unaffected by the skew.
