@@ -25,8 +25,9 @@ defaults:
 rules:
   # FALSE-POSITIVE DISCLOSURE: every separator below is optional, so this
   # rule also matches the fully unseparated 9-digit run -- the same shape
-  # as any other standalone 9-digit number (order/invoice IDs) or a ZIP+4
-  # code with its hyphen stripped. The middleware fails closed: a deny
+  # as any other standalone 9-digit number (order/invoice IDs). An ordinary
+  # hyphenated ZIP+4 also matches because the first separator is optional
+  # and the second accepts its hyphen. The middleware fails closed: a deny
   # raises MiddlewareTermination and blocks the message before the agent
   # ever sees it, so an unseparated false positive is a false DENY, not
   # just a false flag. Tune or remove this rule before production and

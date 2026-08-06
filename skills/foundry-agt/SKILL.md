@@ -202,8 +202,9 @@ Two starter policies ship in
 `pii-deny.yaml`'s `block-us-ssn` rule accepts hyphen, space, dot, or no
 separator at all between digit groups. That last, unseparated form is
 indistinguishable from any other standalone 9-digit number
-(order/invoice IDs) or from a ZIP+4 code with its hyphen stripped, so
-it can false-positive/false-deny on either. This is not cosmetic: a
+(order/invoice IDs). An ordinary hyphenated ZIP+4 also matches because
+the first separator is optional and the second accepts its hyphen, so it
+can false-positive/false-deny on either. This is not cosmetic: a
 deny terminates the message path (`GovernancePolicyMiddleware.process`
 raises `MiddlewareTermination` before the agent ever sees it), and
 `load_policies(...)` loads every file in the default policy directory
