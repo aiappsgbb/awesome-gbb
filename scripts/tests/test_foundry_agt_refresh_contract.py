@@ -293,6 +293,22 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             self.assertIsNone(issue.get("upstream_url"))
             self.assertNotEqual(issue["id"], "KI-001")
 
+        # Every remaining known issue has upstream_url: null — there is no
+        # linked upstream report to track. The prose body must not describe
+        # these findings as "upstream-tracked"/"upstream-reported" (both
+        # phrases claim an upstream-side record that does not exist); it
+        # must say the finding was empirically observed against the pinned
+        # release instead, matching the frontmatter notes above.
+        pin_body_lower = pin_body.lower()
+        self.assertNotIn("upstream-tracked", pin_body_lower)
+        self.assertNotIn("upstream-reported", pin_body_lower)
+        self.assertIn(
+            "empirically observed",
+            pin_body_lower,
+            "pin body must describe untracked findings as empirically "
+            "observed, not implied to be upstream-tracked/upstream-reported",
+        )
+
         # Upstream release note: create_governance_middleware's factory
         # default for enable_rogue_detection flipped to True at 4.1.0 (it
         # was False in the prior AGT 3.x pin). Empirically re-verified live
@@ -455,6 +471,56 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         self.assertIn(
             "SNIPPET_DEFAULT_NO_GUARD=PASS",
             pin_meta["validation"]["expected_output"],
+        )
+
+        # Empty-allowlist deny-all proof: the snippet's own docstring says
+        # allowed_tools=[] means deny-all to CapabilityGuardMiddleware — but
+        # nothing in the probe actually constructs that shape and drives it
+        # through a real guard.process/FunctionTool.invoke round trip. A
+        # hardcoded print("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS") would
+        # trivially satisfy a plain substring check, so this requires the
+        # real construction path (an explicit empty allowed_tools=[], no
+        # denied_tools) and the real invocation surface (FunctionTool,
+        # FunctionInvocationContext, guard.process, MiddlewareTermination,
+        # and an execution counter asserted == 0) to appear in the same
+        # block that precedes the marker print.
+        self.assertIn("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS", local_probe)
+        self.assertIn(
+            "SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS",
+            pin_meta["validation"]["expected_output"],
+        )
+
+        empty_allowlist_block_match = re.search(
+            r"allowed_tools=\[\].*?"
+            r'print\("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS"\)',
+            local_probe,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            empty_allowlist_block_match,
+            "contract_probe.py must construct build_governed_agent (or the "
+            "factory directly) with an explicit empty allowed_tools=[] and "
+            "prove deny-all in the same block that prints the marker, not "
+            "print the marker independent of that construction",
+        )
+        empty_allowlist_block = empty_allowlist_block_match.group(0)
+        for required_symbol in (
+            "FunctionTool(",
+            "FunctionInvocationContext(",
+            "guard.process(",
+            "MiddlewareTermination",
+        ):
+            self.assertIn(
+                required_symbol,
+                empty_allowlist_block,
+                "empty-allowlist deny-all proof must exercise the real "
+                f"{required_symbol} path, not fake list-membership alone",
+            )
+        self.assertIsNotNone(
+            re.search(r"\bexecutions\b\s*!=\s*0", empty_allowlist_block),
+            "empty-allowlist deny-all proof must assert a real execution "
+            "counter is exactly 0 (the tool function was never called), "
+            "not just that MiddlewareTermination was raised",
         )
 
         for expected_substring in (
