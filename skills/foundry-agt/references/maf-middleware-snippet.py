@@ -62,9 +62,15 @@ def build_governed_agent(
     evaluator.load_policies(str(policy_dir))
 
     stack = create_governance_middleware(
-        policy_directory=None,                    # we attach our own evaluator below
-        allowed_tools=allowed_tools or [],
-        denied_tools=denied_tools or [],
+        policy_directory=str(policy_dir),          # factory builds its own evaluator
+                                                   # bound to this dir; replaced below
+                                                   # with OUR evaluator instance so
+                                                   # callers can inspect decisions
+        allowed_tools=allowed_tools,               # None means no allowlist (allow
+                                                   # every tool not on denied_tools);
+                                                   # do NOT coerce to [] — [] means
+                                                   # deny-all to CapabilityGuardMiddleware
+        denied_tools=denied_tools,
         agent_id=name,
         enable_rogue_detection=False,             # rogue detection is most useful
                                                    # once the agent has a baselined
@@ -73,9 +79,17 @@ def build_governed_agent(
         audit_log=audit_log,
     )
 
-    # Replace the factory's policy mw with one bound to OUR evaluator
-    stack = [m for m in stack if not isinstance(m, GovernancePolicyMiddleware)]
-    stack.insert(0, GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log))
+    # Replace the factory's own GovernancePolicyMiddleware with one bound to OUR
+    # evaluator instance, IN PLACE at its original factory index. Do NOT
+    # filter-then-insert(0, ...) — that would place GovernancePolicyMiddleware
+    # ahead of AuditTrailMiddleware and break the documented
+    # AuditTrail -> GovernancePolicy -> CapabilityGuard factory order.
+    stack = [
+        GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log)
+        if isinstance(m, GovernancePolicyMiddleware)
+        else m
+        for m in stack
+    ]
 
     return Agent(
         chat_client,                              # NB: first positional is `client`, NOT `chat_client=`

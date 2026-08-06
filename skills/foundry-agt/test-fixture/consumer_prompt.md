@@ -41,15 +41,28 @@ clean up when the smoke finishes.
 
 ## Step −1 — Acknowledge skill contract (mandatory FIRST action)
 
-Run this echo as your first Bash tool call. It is the audit evidence the
-workflow's post-hoc step grades on as "agent loaded the skill". Do NOT use
+Run this single Bash block as your first tool call. It performs a bounded
+`sed -n` / `grep` read of the load-bearing parts of `SKILL.md` — its
+identity line, its pinned `pip install` block, and its SSOT
+Copy-verbatim pointer — and asserts each one, rather than merely printing
+a path. This is real audit evidence, not a manufactured string: the block
+FAILs loudly if the skill's pin or SSOT contract has drifted. Do NOT use
 the `view` tool on `SKILL.md` — the file is large and chunked reads inflate
 per-turn context past the CI model deployment's per-minute TPM ceiling
-(AGENTS.md § 9.7 Pattern 19). This fixture is fully self-contained and does
-not require `SKILL.md` to be loaded into context.
+(AGENTS.md § 9.7 Pattern 19). This bounded read stays well under that
+budget while still proving the contract, unlike a bare `echo` of the path.
 
 ```bash
-echo "skills/foundry-agt/SKILL.md"
+S=skills/foundry-agt/SKILL.md
+sed -n '/^name: /p' "$S"
+sed -n '/^pip install/,/^```$/p' "$S"
+sed -n '/^> \*\*MUST:\*\* Copy verbatim/,+1p' "$S"
+grep -q '^name: foundry-agt$' "$S" || { echo "SKILL_CONTRACT=FAIL identity"; exit 1; }
+grep -q '"agent-governance-toolkit\[full\]~=4\.1\.0"' "$S" || { echo "SKILL_CONTRACT=FAIL agt-pin"; exit 1; }
+grep -q '"agent-framework-core~=1\.13\.0"' "$S" || { echo "SKILL_CONTRACT=FAIL maf-pin"; exit 1; }
+grep -q 'references/maf-middleware-snippet\.py' "$S" || { echo "SKILL_CONTRACT=FAIL ssot-ref"; exit 1; }
+test -f skills/foundry-agt/references/maf-middleware-snippet.py || { echo "SKILL_CONTRACT=FAIL ssot-file"; exit 1; }
+echo "SKILL_CONTRACT=OK skills/foundry-agt/SKILL.md"
 ```
 
 ---

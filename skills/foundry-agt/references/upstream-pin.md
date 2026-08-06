@@ -84,21 +84,18 @@ docs_to_revalidate:
   - https://pypi.org/project/agent-framework-openai/
 
 known_issues:
-  - id: KI-001
-    description: PYTHONUTF8=1 mandatory on Windows for agt CLI Rich glyphs
-    upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/1
-    status: closed_upstream_fixed
-    workaround_location: removed from SKILL.md in v1.0.5
   - id: KI-002
     description: agt doctor's package table only recognizes pre-split legacy distribution names, so it undercounts a correctly installed 4.1.0 candidate set
-    upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/2
+    upstream_url: null
     status: open_documented_workaround
     workaround_location: "See 'agt doctor legacy package-table lag' below — cosmetic, not a functional failure"
+    note: No upstream issue is filed for this. The finding is empirical — observed live against the pinned v4.1.0 release — not a linked or tracked upstream report.
   - id: KI-003
     description: agt verify self-reports a stale Toolkit compliance-schema version independent of the installed meta-package version
-    upstream_url: https://github.com/microsoft/agent-governance-toolkit/issues/3
+    upstream_url: null
     status: open_documented_workaround
     workaround_location: "See 'agt verify version skew' below — cosmetic, not a functional failure"
+    note: No upstream issue is filed for this. The finding is empirical — observed live against the pinned v4.1.0 release — not a linked or tracked upstream report.
 
 validation:
   requires:
@@ -132,13 +129,13 @@ validation:
     - "CAPABILITY_HOOK_ALLOW_EXECUTIONS=1"
     - "CAPABILITY_HOOK_DENY_EXECUTIONS=0"
     - "CAPABILITY_HOOK=PASS"
-    - "HITL_POLICY=PASS"
+    - "POLICY_MIDDLEWARE=PASS"
     - "CONTRACT_PROBE=PASS"
     - "OWASP ASI 2026"
 
 last_validated: 2026-08-06
 validated_by: copilot-bot
-known_issues_count: 3
+known_issues_count: 2
 ---
 
 # Upstream pin — `foundry-agt` skill
@@ -314,28 +311,13 @@ from agent_os.policies import PolicyEvaluator
 These belong in the SKILL.md "Known Issues" section, but are pinned
 here so the next refresh remembers to re-test them.
 
-### Issue 1 — Windows CLI breaks without UTF-8 mode
-
-`agt doctor`, `agt verify`, `agt --version` (anything that emits a
-Rich glyph) raise `UnicodeEncodeError: 'charmap' codec can't encode
-character` on a default Windows PowerShell host (cp1252).
-
-**Mandatory fix** (per shell, before the first `agt` invocation):
-
-```powershell
-$env:PYTHONUTF8 = "1"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-```
-
-Bake `PYTHONUTF8=1` into every CI runner that calls `agt verify`.
-
-### Issue 2 — `agt doctor` legacy package-table lag
+### Issue 1 — `agt doctor` legacy package-table lag
 
 See "`agt doctor` legacy package-table lag" above (KI-002). Do not
 treat "N/8 packages installed" as a failed install; it only reflects
 the pre-split package names the doctor subcommand still checks for.
 
-### Issue 3 — Rogue detection needs an explicit opt-in, not an error
+### Issue 2 — Rogue detection needs an explicit opt-in, not an error
 
 In the AGT 3.x pin, `enable_rogue_detection=True` was documented as
 raising without an explicit `RogueAgentDetector` + `capability_profile`.
@@ -346,7 +328,7 @@ defaults to `enable_rogue_detection=False`, as a deliberate choice (a
 freshly deployed agent has no behavioral baseline for the detector to
 compare against yet), not because the toolkit errors without one.
 
-### Issue 4 — `agt verify` version skew
+### Issue 3 — `agt verify` version skew
 
 See "`agt verify` version skew" above (KI-003).
 

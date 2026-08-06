@@ -15,13 +15,23 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
   - a stub ``FoundryChatClient`` constructs with no network access
   - a stub chat response round-trips through a real ``Agent.run``
   - every current policy YAML (``../policies/*.yaml``) denies/allows the
-    inputs SKILL.md documents, including all four SSN separator forms
+    inputs SKILL.md documents, including all four SSN separator forms, when
+    evaluated in isolation via ``PolicyEvaluator.evaluate``
   - ``AuditLog`` integrity verification and CloudEvents export both work
   - the three-middleware governance factory stack assembles correctly
+  - the real ``GovernancePolicyMiddleware.process`` hook — driven through a
+    real ``AgentContext`` built from a real ``Agent``/``Message``, the exact
+    shape the legacy v4 evaluation context actually has — calls ``call_next``
+    exactly once for a benign message and raises ``MiddlewareTermination``
+    with zero ``call_next`` calls for the destructive-SQL and inbound-SSN
+    policy patterns
   - the real ``CapabilityGuardMiddleware.process`` hook allows exactly the
     allowed tool and denies exactly the denied tool
   - ``../maf-middleware-snippet.py``'s ``build_governed_agent`` factory
-    still returns a real, middleware-wired ``Agent``
+    still returns a real, middleware-wired ``Agent`` whose
+    ``allowed_tools=None`` default is preserved as "no allowlist" (not
+    coerced to a deny-all ``[]``) and whose middleware stack keeps the
+    factory's ``AuditTrail -> GovernancePolicy -> CapabilityGuard`` order
 
 Run directly after installing the exact bounded package set from
 ``../upstream-pin.md`` into an active virtual environment:
@@ -90,6 +100,7 @@ def check_imports() -> SimpleNamespace:
     """Import every real symbol SKILL.md tells consumers to import."""
     from agent_framework import (
         Agent,
+        AgentContext,
         ChatResponse,
         FunctionInvocationContext,
         FunctionTool,
@@ -109,6 +120,7 @@ def check_imports() -> SimpleNamespace:
 
     return SimpleNamespace(
         Agent=Agent,
+        AgentContext=AgentContext,
         ChatResponse=ChatResponse,
         FunctionInvocationContext=FunctionInvocationContext,
         FunctionTool=FunctionTool,
@@ -223,44 +235,6 @@ def check_policies(ns: SimpleNamespace) -> None:
 
     print("POLICY_EVALUATION=PASS")
 
-    # hitl-gate.yaml: the real PolicyEvaluator._match_condition resolves each
-    # PolicyCondition.field as a LITERAL flat dict key via context.get(field)
-    # — it does NOT traverse nested dicts. So "tool_args.amount" in
-    # hitl-gate.yaml requires that exact dotted string as a context key, not
-    # a nested {"tool_args": {"amount": ...}} structure. Verified live
-    # against the real PolicyEvaluator before writing these assertions.
-    benign_lookup = evaluator.evaluate({"tool_name": "get_account_balance"})
-    if benign_lookup.action != "allow":
-        raise AssertionError(f"benign lookup tool was not allowed: {benign_lookup.action!r}")
-
-    write_tool = evaluator.evaluate({"tool_name": "send_email"})
-    if write_tool.action != "deny" or write_tool.reason != "HITL_REQUIRED:write-tool":
-        raise AssertionError(
-            "write tool was not HITL-gated: "
-            f"action={write_tool.action!r} reason={write_tool.reason!r}"
-        )
-
-    amount_over_threshold = evaluator.evaluate(
-        {"tool_name": "check_account_balance", "tool_args.amount": 5000}
-    )
-    if (
-        amount_over_threshold.action != "deny"
-        or amount_over_threshold.reason != "HITL_REQUIRED:amount-over-threshold"
-    ):
-        raise AssertionError(
-            "amount-over-threshold was not HITL-gated: "
-            f"action={amount_over_threshold.action!r} reason={amount_over_threshold.reason!r}"
-        )
-
-    pii_write = evaluator.evaluate({"tool_name": "patch_customer_record"})
-    if pii_write.action != "deny" or pii_write.reason != "HITL_REQUIRED:pii-write":
-        raise AssertionError(
-            "patch_customer_record was not HITL-gated: "
-            f"action={pii_write.action!r} reason={pii_write.reason!r}"
-        )
-
-    print("HITL_POLICY=PASS")
-
 
 def check_audit_log(ns: SimpleNamespace) -> None:
     """Log two probe events and assert integrity + CloudEvents export."""
@@ -328,6 +302,75 @@ def build_factory_stack(ns: SimpleNamespace, *, audit_log=None, agent_id: str = 
 
     print("FACTORY_STACK=PASS")
     return guard, audit_log, stack
+
+
+async def check_policy_middleware(ns: SimpleNamespace, stack) -> None:
+    """Drive the real ``GovernancePolicyMiddleware.process`` hook end to end.
+
+    Selects the ``GovernancePolicyMiddleware`` instance ``build_factory_stack``
+    already assembled (no duplicate factory construction) and drives it
+    through a real ``AgentContext`` built from a real ``Agent`` and a real
+    ``Message`` — the exact legacy v4 evaluation-context shape
+    (``agent``/``message``/``timestamp``/``stream``/``message_count``, built
+    internally by ``GovernancePolicyMiddleware._process_v4``), not a
+    synthetic dict shaped like a tool-call payload. This is what makes the
+    proof real: the deleted ``hitl-gate.yaml`` policy's ``tool_name`` /
+    per-tool-argument fields never appear in that context, so a rule keyed
+    on them could never match here or in a real deployed agent.
+    """
+    policy_middleware = next(
+        (middleware for middleware in stack if isinstance(middleware, ns.GovernancePolicyMiddleware)),
+        None,
+    )
+    if policy_middleware is None:
+        raise AssertionError("factory stack has no GovernancePolicyMiddleware to exercise")
+
+    class StubChatClient:
+        async def get_response(self, messages, **kwargs: object):
+            raise AssertionError("call_next should be stubbed, not the real chat client")
+
+    agent = ns.Agent(StubChatClient(), "You are a probe agent.", name="policy-middleware-probe")
+
+    async def drive(text: str) -> tuple[int, bool, str | None]:
+        calls = 0
+
+        async def call_next() -> None:
+            nonlocal calls
+            calls += 1
+
+        context = ns.AgentContext(agent=agent, messages=[ns.Message("user", [text])])
+        terminated = False
+        reason: str | None = None
+        try:
+            await policy_middleware.process(context, call_next)
+        except ns.MiddlewareTermination as exc:
+            terminated = True
+            reason = str(exc)
+        return calls, terminated, reason
+
+    hello_calls, hello_terminated, _ = await drive("hello")
+    if hello_calls != 1:
+        raise AssertionError(f"benign message called call_next {hello_calls} times, expected exactly 1")
+    if hello_terminated:
+        raise AssertionError("benign message was terminated by policy middleware, expected allow")
+
+    sql_calls, sql_terminated, sql_reason = await drive("DROP TABLE users")
+    if sql_calls != 0:
+        raise AssertionError(f"destructive SQL called call_next {sql_calls} times, expected exactly 0")
+    if not sql_terminated:
+        raise AssertionError("destructive SQL was not terminated by policy middleware")
+    if sql_reason != "Destructive SQL pattern blocked by default policy.":
+        raise AssertionError(f"destructive SQL termination reason was {sql_reason!r}")
+
+    ssn_calls, ssn_terminated, ssn_reason = await drive("my ssn is 123-45-6789")
+    if ssn_calls != 0:
+        raise AssertionError(f"inbound SSN called call_next {ssn_calls} times, expected exactly 0")
+    if not ssn_terminated:
+        raise AssertionError("inbound SSN was not terminated by policy middleware")
+    if ssn_reason != "US SSN pattern detected.":
+        raise AssertionError(f"inbound SSN termination reason was {ssn_reason!r}")
+
+    print("POLICY_MIDDLEWARE=PASS")
 
 
 @dataclass(frozen=True)
@@ -423,8 +466,8 @@ async def check_capability_hook(ns: SimpleNamespace, guard) -> None:
     print("CAPABILITY_HOOK=PASS")
 
 
-def check_snippet_import(ns: SimpleNamespace) -> None:
-    """Import ../maf-middleware-snippet.py and build a real governed Agent from it."""
+async def check_snippet_import(ns: SimpleNamespace) -> None:
+    """Import ../maf-middleware-snippet.py and build real governed Agents from it."""
     spec = importlib.util.spec_from_file_location("maf_middleware_snippet", SNIPPET)
     if spec is None or spec.loader is None:
         raise AssertionError(f"could not load a module spec from {SNIPPET}")
@@ -446,15 +489,66 @@ def check_snippet_import(ns: SimpleNamespace) -> None:
 
     print("SNIPPET_IMPORT=PASS")
 
+    # Default-semantics + order proof: allowed_tools=None must remain "no
+    # allowlist" (allow every tool not on denied_tools), never coerced to a
+    # deny-all [] — and the factory's
+    # AuditTrail -> GovernancePolicy -> CapabilityGuard order must be
+    # preserved by the in-place replacement inside build_governed_agent
+    # (no insert(0, ...) reordering ahead of AuditTrailMiddleware).
+    default_agent = snippet.build_governed_agent(
+        name="default-semantics-probe",
+        instructions="Default-semantics probe.",
+        chat_client=object(),
+        policy_dir=POLICY_DIR,
+        allowed_tools=None,
+        denied_tools=["dangerous_tool"],
+    )
+    middleware_type_names = [type(middleware).__name__ for middleware in default_agent.middleware]
+    expected_order = ["AuditTrailMiddleware", "GovernancePolicyMiddleware", "CapabilityGuardMiddleware"]
+    if middleware_type_names != expected_order:
+        raise AssertionError(
+            f"default-semantics agent middleware order was {middleware_type_names}, expected {expected_order}"
+        )
+
+    default_guard = next(
+        (
+            middleware
+            for middleware in default_agent.middleware
+            if isinstance(middleware, ns.CapabilityGuardMiddleware)
+        ),
+        None,
+    )
+    if default_guard is None:
+        raise AssertionError("default-semantics agent has no CapabilityGuardMiddleware")
+    if default_guard.allowed_tools is not None:
+        raise AssertionError(
+            f"allowed_tools=None was coerced to {default_guard.allowed_tools!r}, expected None (no allowlist)"
+        )
+
+    result = await exercise_capability_hook(ns, default_guard)
+    if result.allow_executions != 1:
+        raise AssertionError(
+            f"default-semantics safe tool executed {result.allow_executions} times, expected exactly 1"
+        )
+    if result.deny_executions != 0:
+        raise AssertionError(
+            f"default-semantics dangerous tool executed {result.deny_executions} times, expected exactly 0"
+        )
+    if not result.denial_observed:
+        raise AssertionError("default-semantics dangerous tool was not denied")
+
+    print("SNIPPET_DEFAULT_SEMANTICS=PASS")
+
 
 async def run_probe(ns: SimpleNamespace) -> None:
     await check_stub_foundry_construction(ns)
     await check_stub_response_shape(ns)
     check_policies(ns)
     check_audit_log(ns)
-    guard, _audit_log, _stack = build_factory_stack(ns)
+    guard, _audit_log, stack = build_factory_stack(ns)
     await check_capability_hook(ns, guard)
-    check_snippet_import(ns)
+    await check_policy_middleware(ns, stack)
+    await check_snippet_import(ns)
 
 
 def main() -> None:

@@ -4,8 +4,8 @@ description: >
   Wrap Microsoft's Agent Governance Toolkit (AGT) 4.1 around a Foundry
   hosted or custom agent's Microsoft Agent Framework (MAF) runtime:
   in-process middleware that deterministically allows or denies each
-  tool call before it executes. Loads YAML policies (default / HITL-gate
-  / PII-deny) into a PolicyEvaluator, wires AuditTrailMiddleware,
+  tool call before it executes. Loads YAML policies (default / PII-deny,
+  inbound message text only) into a PolicyEvaluator, wires AuditTrailMiddleware,
   GovernancePolicyMiddleware, and CapabilityGuardMiddleware onto the
   agent, and exposes a tamper-evident AuditLog with integrity
   verification and CloudEvents export. `agt verify` is a toolkit
@@ -152,9 +152,13 @@ ordering):
 1. **`AuditTrailMiddleware`** — every tool call becomes a hash-chained
    entry in `AuditLog`.
 2. **`GovernancePolicyMiddleware`** — evaluates the loaded YAML policy
-   set; ALLOW / DENY per action.
+   set against a flat `{agent, message, timestamp, stream,
+   message_count}` context built from the *message text*; ALLOW / DENY
+   per message. It has no visibility into `tool_name` or `tool_args` —
+   see "Policy YAML" below for what that means for policy authoring.
 3. **`CapabilityGuardMiddleware`** — explicit allow/deny lists on
-   `tool_name`.
+   `tool_name`; this, not YAML policy, is the deterministic tool-action
+   gate.
 
 A fourth middleware, `RogueDetectionMiddleware`, exists upstream, but
 this skill keeps `enable_rogue_detection=False` by default — it needs a
@@ -164,14 +168,25 @@ agent has a behavioral baseline to compare against.
 
 ### Policy YAML
 
-Three starter policies ship in
+Two starter policies ship in
 [`references/policies/`](references/policies/):
 
 | File | Purpose |
 |---|---|
 | `default.yaml` | Conservative default — blocks destructive SQL / shell-exec patterns, caps message length |
-| `hitl-gate.yaml` | Routes high-impact tool calls (write / send / transfer) to a `HITL_REQUIRED:*` deny reason your app treats as an approval ticket, not a failure |
-| `pii-deny.yaml` | Regex PII guardrail (SSN, credit card, IBAN) on inbound and outbound text |
+| `pii-deny.yaml` | Regex PII guardrail (SSN, credit card, IBAN) on **inbound message text only** |
+
+`GovernancePolicyMiddleware`'s evaluation context is the flat
+`{agent, message, timestamp, stream, message_count}` dict described
+above — it is built from the inbound *message text*, never from
+`tool_name` or `tool_args`. A policy rule with a `field: tool_name` or
+`field: tool_args.<key>` condition, or a `field: response` condition
+targeting the assistant's outgoing reply, can never match against the
+real middleware in this release; such rules are permanently inert
+regardless of how they read in YAML. Deterministic tool-action gating
+(which tool may or may not run) is `CapabilityGuardMiddleware`'s
+explicit `allowed_tools` / `denied_tools` lists — not a YAML policy
+field. See "Deterministic capability allow/deny hook" below.
 
 Load every policy file in the directory at once:
 
@@ -184,7 +199,7 @@ evaluator.load_policies("skills/foundry-agt/references/policies")
 
 `load_policies(...)` is the only loader this skill exercises and pins —
 [`references/python/contract_probe.py`](references/python/contract_probe.py)
-proves this exact call against the three starter policies above.
+proves this exact call against the two starter policies above.
 
 ---
 
@@ -326,15 +341,16 @@ shape with `detection_confidence: 0.0`.
 | Surface | Status | Evidence |
 |---|---|---|
 | Package install at the exact pinned versions | ✅ locally proved | `contract_probe.py::check_versions` |
-| Public symbol imports (`Agent`, `FoundryChatClient`, the three middleware classes, `AuditLog`, `PolicyEvaluator`, …) | ✅ locally proved | `contract_probe.py::check_imports` |
+| Public symbol imports (`Agent`, `FoundryChatClient`, the three middleware classes, `AuditLog`, `PolicyEvaluator`, `AgentContext`, …) | ✅ locally proved | `contract_probe.py::check_imports` |
 | Factory / constructor signatures this prose depends on | ✅ locally proved | `contract_probe.py::check_signatures` |
 | Stub `FoundryChatClient` construction + `Agent.run` response shape | ✅ locally proved | `contract_probe.py::check_stub_*` |
-| Policy evaluation (default / HITL-gate / PII-deny, all four SSN separator forms) | ✅ locally proved | `contract_probe.py::check_policies` |
+| Isolated `PolicyEvaluator.evaluate(...)` coverage (default / PII-deny inbound, all four SSN separator forms) — evaluator-level only, not the middleware's real dispatch path | ✅ locally proved | `contract_probe.py::check_policies` |
+| Real `GovernancePolicyMiddleware.process(...)` message path: benign text calls `call_next()` once; a destructive-SQL message and an inbound-SSN message each raise `MiddlewareTermination` and call `call_next()` zero times | ✅ locally proved | `contract_probe.py::check_policy_middleware` |
 | `AuditLog.verify_integrity()` + `export_cloudevents()` | ✅ locally proved | `contract_probe.py::check_audit_log` |
-| Middleware factory stack assembly (3 middleware types) | ✅ locally proved | `contract_probe.py::build_factory_stack` |
+| Middleware factory stack assembly (3 middleware types, factory-preserved order) | ✅ locally proved | `contract_probe.py::build_factory_stack` |
 | `CapabilityGuardMiddleware.process` allow/deny hook | ✅ locally proved | `contract_probe.py::check_capability_hook` |
-| `build_governed_agent(...)` snippet import + wiring | ✅ locally proved | `contract_probe.py::check_snippet_import` |
-| Live Foundry inference through a real deployed model | 📖 not yet proved at this pin | pending a live probe run against a real project |
+| `build_governed_agent(...)` snippet import + wiring, including `allowed_tools=None` default-allowlist semantics preserved (not coerced to deny-all) | ✅ locally proved | `contract_probe.py::check_snippet_import` |
+| Live Foundry inference through a real deployed model (T3) | ✅ proved at the exact-head commit via the CI `copilot-cli-matrix` fixture | `references/python/live_t3_probe.py` run against a real Foundry project; required artifact evidence at `/tmp/foundry-agt-smoke-evidence` in the fixture, re-run and re-accepted at every source-touching commit — see [`test-fixture/consumer_prompt.md`](test-fixture/consumer_prompt.md) |
 
 ---
 
@@ -372,9 +388,24 @@ shape with `detection_confidence: 0.0`.
   commands, and language that overstated what a Public Preview
   self-assessment tool guarantees (fixed red-team percentages,
   "CI-gateable proof" framing for `agt verify --evidence ...
-  --strict`). Live Foundry inference against a real deployed model
-  (tracked separately as T3) remains pending until it lands with
-  exact-head evidence.
+  --strict`). **Final-review remediation (this release):** the real
+  `GovernancePolicyMiddleware` evaluation context is a flat `{agent,
+  message, timestamp, stream, message_count}` dict built from message
+  text only, so `hitl-gate.yaml`'s `tool_name` / `tool_args.amount`
+  rules and `pii-deny.yaml`'s outbound `field: response` rule could
+  never match in the real runtime — `hitl-gate.yaml` is deleted and
+  `pii-deny.yaml` is now documented as inbound-message-text-only.
+  `maf-middleware-snippet.py`'s `allowed_tools` / `denied_tools`
+  handling no longer coerces `None` (no allowlist) to `[]` (deny-all)
+  via `or []`, and the factory's `GovernancePolicyMiddleware` is spliced
+  back in at its original stack index instead of `insert(0, ...)`, so
+  `AuditTrailMiddleware` stays outermost. `contract_probe.py` now drives
+  the real `GovernancePolicyMiddleware.process(...)` with a real
+  `AgentContext` instead of asserting against synthetic evaluator
+  dicts. Live Foundry inference against a real deployed model (T3) is
+  part of this release: `references/python/live_t3_probe.py` runs in
+  the CI `copilot-cli-matrix` fixture, and exact-head fixture-artifact
+  evidence is a required merge gate, not a pending follow-up.
 - **v1.2.0** — MAF 1.8.0 compat refresh. Bumped `agent-framework` pin
   `1.7.0` → `1.8.0` (PyPI release 2026-06-04). AGT pin held at `3.7.0`
   — the AGT 4.0.0 GA package-reorg (5 distributions replacing 45
