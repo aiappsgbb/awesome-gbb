@@ -1,21 +1,21 @@
 ---
 name: foundry-agt
 description: >
-  Wrap Microsoft's Agent Governance Toolkit (AGT) 4.1 around a Foundry
-  hosted or custom agent's Microsoft Agent Framework (MAF) runtime:
-  in-process middleware that deterministically allows or denies each
-  tool call before it executes. Loads YAML policies (default / PII-deny,
-  inbound message text only) into a PolicyEvaluator, wires AuditTrailMiddleware,
-  GovernancePolicyMiddleware, and CapabilityGuardMiddleware onto the
-  agent, and exposes a tamper-evident AuditLog with integrity
-  verification and CloudEvents export. `agt verify` is a toolkit
+  AGT 4.1 in-process message-policy and tool-governance middleware for
+  Microsoft Agent Framework (MAF) agents on Foundry. Loads YAML policies
+  (default / PII-deny, inbound message text only) into a PolicyEvaluator;
+  AuditTrailMiddleware and GovernancePolicyMiddleware are always in the
+  canonical policy path. CapabilityGuardMiddleware — the deterministic
+  per-tool-call allow/deny gate — is added only when allowed_tools or
+  denied_tools is configured. Exposes a tamper-evident AuditLog with
+  integrity verification and CloudEvents export. `agt verify` is a toolkit
   self-assessment, not a certification. USE FOR: agent action/tool
   governance, AGT, agent-governance-toolkit, MAF middleware, capability
-  allow/deny, policy enforcement, audit trail, deterministic tool
-  gating, agt verify, agt doctor. DO NOT USE FOR: Foundry agent
-  deployment (use foundry-hosted-agents), message/content moderation
-  (use Azure AI Content Safety), eval scoring (use foundry-evals),
-  telemetry pipeline wiring (use foundry-observability).
+  allow/deny, policy enforcement, audit trail, deterministic tool gating,
+  agt verify, agt doctor. DO NOT USE FOR: Foundry agent deployment (use
+  foundry-hosted-agents), message/content moderation (use Azure AI Content
+  Safety), eval scoring (use foundry-evals), telemetry pipeline wiring
+  (use foundry-observability).
 metadata:
   version: "2.0.0"
 ---
