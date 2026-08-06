@@ -151,16 +151,17 @@ defence-in-depth for production agent platforms:
 1. **Layer 1 (gateway infra)** — `citadel-hub-deploy` stands up the
    shared APIM AI gateway + Foundry control plane + telemetry sink.
 2. **Layer 1 (per-spoke wiring)** — `citadel-spoke-onboarding` connects
-   each agent project to the hub via per-team Access Contracts.
-3. **Layer 1.5 (in-process)** — `foundry-agt` wraps the Microsoft Agent
-   Governance Toolkit around the agent runtime itself, catching attacks
-   the gateway can't see (intent classification, capability allow/deny,
-   hash-chained audit, OWASP ASI 2026 coverage). The 26.67% (prompt-only)
-   vs 0.00% (deterministic AGT) red-team gap is why both layers matter.
+   each agent project to the hub via per-team Access Contracts, gateway
+   routing, and product policies.
+3. **Layer 1.5 (in-process)** — `foundry-agt` is a separate action/tool
+   enforcement layer that runs inside the agent runtime itself:
+   deterministic per-tool-call capability allow/deny before the tool body
+   executes, plus a tamper-evident, hash-chained audit trail. It
+   complements the gateway and network isolation rather than adapting
+   into Citadel.
 
-Compose with `foundry-hosted-agents` / [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills) (in-process
-middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
-`azd-patterns` (sidecar pattern).
+Compose with `foundry-hosted-agents` / [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills) for
+MAF middleware, and `foundry-vnet-deploy` for network isolation.
 
 | Skill | Description |
 |-------|-------------|
