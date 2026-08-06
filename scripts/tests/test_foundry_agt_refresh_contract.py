@@ -491,7 +491,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
 
         empty_allowlist_block_match = re.search(
-            r"allowed_tools=\[\].*?"
+            r"empty_allowlist_agent\s*=\s*snippet\.build_governed_agent\(.*?"
             r'print\("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS"\)',
             local_probe,
             re.DOTALL,
@@ -505,9 +505,12 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         empty_allowlist_block = empty_allowlist_block_match.group(0)
         for required_symbol in (
+            "allowed_tools=[]",
+            "empty_allowlist_guard.allowed_tools != []",
             "FunctionTool(",
             "FunctionInvocationContext(",
-            "guard.process(",
+            "await empty_allowlist_guard.process(",
+            "unlisted_tool.invoke(",
             "MiddlewareTermination",
         ):
             self.assertIn(
