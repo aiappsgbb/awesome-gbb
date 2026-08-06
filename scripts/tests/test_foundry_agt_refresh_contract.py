@@ -41,20 +41,6 @@ sys.modules["foundry_agt_contract_probe"] = foundry_agt_contract_probe
 _contract_probe_spec.loader.exec_module(foundry_agt_contract_probe)
 
 
-class _StubGovernancePolicyMiddleware:
-    """Minimal stand-in mirroring the real class's private-attribute shape.
-
-    The real installed 4.1.0 ``GovernancePolicyMiddleware`` stores the
-    constructor's ``agent_id`` keyword as ``._agent_id`` (private, no
-    public ``.agent_id`` property) — this stub reproduces exactly that
-    shape so the executable proof below exercises the same attribute
-    access the real class actually has.
-    """
-
-    def __init__(self, agent_id: str) -> None:
-        self._agent_id = agent_id
-
-
 def _stub_agent(*middlewares: object) -> SimpleNamespace:
     return SimpleNamespace(middleware=list(middlewares))
 
@@ -190,6 +176,115 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             conditional_guard_pattern,
             "SKILL.md must describe CapabilityGuardMiddleware as "
             "conditional on allowed_tools/denied_tools, not unconditional",
+        )
+
+        # Tool-audit scope: AuditTrailMiddleware hash-chains
+        # agent-invocation start/complete entries only, never individual
+        # tool calls. Only CapabilityGuardMiddleware, when explicitly
+        # configured with allowed_tools/denied_tools, adds tool-invoked /
+        # tool-blocked audit entries. The active SKILL must not claim an
+        # unconditional, per-tool-call audit record.
+        self.assertNotIn(
+            "tamper-evident record of every tool call",
+            active_body,
+            "SKILL.md must not claim a tamper-evident record of every "
+            "tool call unconditionally — CapabilityGuardMiddleware's "
+            "tool-invoked/tool-blocked audit entries are conditional on "
+            "explicit allowed_tools/denied_tools configuration, not "
+            "automatic",
+        )
+        self.assertNotRegex(
+            active_body,
+            re.compile(r"audittrailmiddleware.{0,150}every tool call", re.DOTALL),
+            "SKILL.md must not claim AuditTrailMiddleware covers 'every "
+            "tool call' — it hash-chains agent-invocation start/complete "
+            "entries only, never individual tool calls",
+        )
+
+        when_to_use_start = active_body.find("## when to use this skill")
+        when_not_to_use_start = active_body.find("## when not to use this skill")
+        self.assertNotEqual(when_to_use_start, -1, "'When to use this skill' heading not found")
+        self.assertNotEqual(
+            when_not_to_use_start, -1, "'When NOT to use this skill' heading not found"
+        )
+        when_to_use_section = active_body[when_to_use_start:when_not_to_use_start]
+
+        self.assertRegex(
+            when_to_use_section,
+            re.compile(
+                r"audittrailmiddleware.{0,150}"
+                r"hash-chained.{0,100}"
+                r"(agent-invocation|agent invocation).{0,60}"
+                r"start.{0,40}complete",
+                re.DOTALL,
+            ),
+            "'When to use this skill' must state AuditTrailMiddleware "
+            "always hash-chains an agent-invocation start/complete entry",
+        )
+        self.assertRegex(
+            when_to_use_section,
+            re.compile(
+                r"capabilityguardmiddleware.{0,100}"
+                r"when explicitly configured.{0,150}"
+                r"(allowed_tools|denied_tools).{0,200}"
+                r"(tool-invoked|tool invoked).{0,60}"
+                r"(tool-blocked|tool blocked)",
+                re.DOTALL,
+            ),
+            "'When to use this skill' must state tool-invoked/tool-blocked "
+            "evidence is conditional on explicitly configuring "
+            "CapabilityGuardMiddleware with allowed_tools/denied_tools",
+        )
+
+        middleware_section_start = active_body.find("### middleware factory stack")
+        policy_yaml_start = active_body.find("### policy yaml")
+        self.assertNotEqual(
+            middleware_section_start, -1, "'Middleware factory stack' heading not found"
+        )
+        self.assertNotEqual(policy_yaml_start, -1, "'Policy YAML' heading not found")
+        middleware_section = active_body[middleware_section_start:policy_yaml_start]
+
+        self.assertRegex(
+            middleware_section,
+            re.compile(
+                r"audittrailmiddleware.{0,150}"
+                r"(agent-invocation|agent invocation).{0,80}"
+                r"start.{0,60}complete",
+                re.DOTALL,
+            ),
+            "Middleware factory stack list must describe "
+            "AuditTrailMiddleware as logging agent-invocation "
+            "start/complete entries only",
+        )
+        self.assertRegex(
+            middleware_section,
+            re.compile(
+                r"capabilityguardmiddleware.{0,400}"
+                r"when configured.{0,200}"
+                r"(tool-invoked|tool invoked).{0,60}"
+                r"(tool-blocked|tool blocked).{0,200}"
+                r"in addition to",
+                re.DOTALL,
+            ),
+            "Middleware factory stack list must state that "
+            "CapabilityGuardMiddleware, when configured, also logs "
+            "tool-invoked/tool-blocked audit entries in addition to "
+            "gating",
+        )
+        self.assertRegex(
+            middleware_section,
+            re.compile(
+                r"no.{0,15}capabilityguardmiddleware.{0,300}"
+                r"(no|none).{0,40}(tool-invoked|tool invoked).{0,60}"
+                r"(tool-blocked|tool blocked).{0,300}"
+                r"(still execute|execute normally).{0,300}"
+                r"not guard-audited",
+                re.DOTALL,
+            ),
+            "Middleware factory stack must state the no-guard default "
+            "yields no tool-invoked/tool-blocked audit entries — tools "
+            "still execute via the runtime but are simply not "
+            "guard-audited at the tool level",
         )
 
         # Verification table: build_factory_stack proves middleware-type
@@ -623,34 +718,35 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "not just that MiddlewareTermination was raised",
         )
 
-        # TWO DISTINCT proofs live in this block — do not conflate them:
-        #
-        # 1. assert_policy_middleware_agent_identity /
-        #    SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS is a v5
-        #    FORWARD-COMPATIBILITY CONSTRUCTION contract: build_governed_
-        #    agent's in-place replacement of the factory's
-        #    GovernancePolicyMiddleware must preserve the caller's
-        #    requested name in the ._agent_id constructor keyword it was
-        #    given — not silently revert to the class's own "maf-agent"
-        #    default. The real installed 4.1.0 GovernancePolicyMiddleware
-        #    only stores this as a private ._agent_id attribute, read ONLY
-        #    by _process_v5 (the kernel=-driven path this skill never
-        #    takes). It is UNUSED by the legacy v4 path (kernel=None)
-        #    every construction this skill actually builds exercises, so
-        #    this check is NOT proof of anything about real v4 audit
-        #    attribution.
-        #
-        # 2. assert_v4_audit_attribution / SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS
-        #    is the real v4 AUDIT-BEHAVIOUR proof: driving the real
-        #    GovernancePolicyMiddleware.process (legacy v4, since
-        #    kernel=None) with a dedicated AuditLog and asserting the
-        #    resulting CloudEvent's "source" (AuditEntry.agent_did) equals
-        #    the construction's own Agent.name — never the constructor's
-        #    agent_id/._agent_id keyword, which _process_v4 never reads.
-        self.assertIn("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS", local_probe)
-        self.assertIn(
+        # The v5 forward-compat construction contract
+        # (assert_policy_middleware_agent_identity /
+        # SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS) has been removed
+        # entirely: it exercised GovernancePolicyMiddleware's constructor
+        # agent_id / its private ._agent_id attribute, which is read ONLY
+        # by the kernel=-driven _process_v5 branch this skill never takes.
+        # The legacy _process_v4 branch every construction here actually
+        # exercises derives its audited agent_did from context.agent.name
+        # at process-time and never reads ._agent_id at all — so passing
+        # agent_id=name into the snippet's replacement construction was
+        # inert configuration, and a probe built to verify that inert
+        # constructor keyword is itself dead weight. The real,
+        # behavioural v4 audit-attribution proof below
+        # (assert_v4_audit_attribution /
+        # SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS) is the only proof this
+        # skill needs, keeps, and asserts here.
+        self.assertNotIn("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS", local_probe)
+        self.assertNotIn(
             "SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS",
             pin_meta["validation"]["expected_output"],
+        )
+        self.assertNotIn(
+            "assert_policy_middleware_agent_identity",
+            local_probe,
+            "contract_probe.py must not define or call "
+            "assert_policy_middleware_agent_identity — it is a removed, "
+            "human-rejected v5 forward-compat construction contract that "
+            "GovernancePolicyMiddleware's real legacy v4 audit path never "
+            "exercises",
         )
         self.assertNotIn("SNIPPET_AGENT_IDENTITY=PASS", local_probe)
         self.assertNotIn(
@@ -661,86 +757,6 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         self.assertIn(
             "SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS",
             pin_meta["validation"]["expected_output"],
-        )
-
-        identity_helper_match = re.search(
-            r"def assert_policy_middleware_agent_identity\(.*?\n\n\nasync def check_snippet_import",
-            local_probe,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(
-            identity_helper_match,
-            "contract_probe.py must define an "
-            "assert_policy_middleware_agent_identity(...) helper "
-            "immediately ahead of check_snippet_import",
-        )
-        identity_helper_source = identity_helper_match.group(0)
-        for required_symbol in (
-            "GovernancePolicyMiddleware",
-            "_agent_id",
-            "len(policy_middlewares) != 1",
-        ):
-            self.assertIn(
-                required_symbol,
-                identity_helper_source,
-                "the agent-identity helper must select every "
-                "GovernancePolicyMiddleware in agent.middleware, require "
-                f"exactly one, and compare its real ._agent_id — missing "
-                f"{required_symbol!r}",
-            )
-        # The helper's own framing must NOT be left implying it says
-        # anything about real v4 audit attribution — it must explicitly
-        # scope ._agent_id to v5 forward-compat construction metadata that
-        # the legacy v4 path never reads, and point readers at the real
-        # v4 audit-attribution proof instead.
-        for required_framing_symbol in (
-            "forward-compat",
-            "_process_v4",
-            "assert_v4_audit_attribution",
-        ):
-            self.assertIn(
-                required_framing_symbol,
-                identity_helper_source,
-                "assert_policy_middleware_agent_identity's docstring/error "
-                "messages must explicitly frame ._agent_id as v5 "
-                "forward-compat construction metadata unused by the "
-                "legacy v4 audit path, and cross-reference the real v4 "
-                f"audit-attribution proof — missing {required_framing_symbol!r}",
-            )
-
-        # The helper must be invoked on all four snippet constructions,
-        # each tied to its own requested name — not just a subset, and
-        # not a hardcoded marker independent of any real construction.
-        identity_call_indices = []
-        for expected_name in (
-            "compat-probe",
-            "default-no-guard-probe",
-            "default-semantics-probe",
-            "empty-allowlist-probe",
-        ):
-            call_match = re.search(
-                r"assert_policy_middleware_agent_identity\(ns,\s*\w+,\s*"
-                + re.escape(f'"{expected_name}"') + r"\)",
-                local_probe,
-            )
-            self.assertIsNotNone(
-                call_match,
-                "assert_policy_middleware_agent_identity must be called "
-                f"with the requested name {expected_name!r}",
-            )
-            identity_call_indices.append(call_match.start())
-
-        self.assertEqual(
-            identity_call_indices,
-            sorted(identity_call_indices),
-            "the four agent-identity assertions must run in the same "
-            "order as the four build_governed_agent constructions",
-        )
-        self.assertLess(
-            max(identity_call_indices),
-            local_probe.index('print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")'),
-            "SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS must only print after "
-            "all four identity assertions have run",
         )
 
         # The real v4 audit-attribution helper must exist as its own,
@@ -940,57 +956,6 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS must only print after all "
             "four real v4 audit-attribution assertions have run",
         )
-        self.assertLess(
-            local_probe.index('print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")'),
-            local_probe.index('print("SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS")'),
-            "the forward-compat construction marker must print before the "
-            "real v4 audit requested-name marker, matching the order the two "
-            "distinct proofs actually run in",
-        )
-
-        # Genuine executable proof, not static source text alone: call the
-        # REAL helper (dynamically loaded from the real file, see module
-        # header) against stub GovernancePolicyMiddleware instances that
-        # mirror its actual private-attribute shape.
-        assert_identity = foundry_agt_contract_probe.assert_policy_middleware_agent_identity
-        stub_ns = SimpleNamespace(GovernancePolicyMiddleware=_StubGovernancePolicyMiddleware)
-
-        # Passing case: the fixed middleware carries the requested name.
-        assert_identity(
-            stub_ns,
-            _stub_agent(_StubGovernancePolicyMiddleware("compat-probe")),
-            "compat-probe",
-        )
-
-        # The literal real-world defect symptom: the replacement
-        # middleware's _agent_id silently defaulted to "maf-agent"
-        # instead of the requested name.
-        with self.assertRaises(AssertionError) as mismatch_ctx:
-            assert_identity(
-                stub_ns,
-                _stub_agent(_StubGovernancePolicyMiddleware("maf-agent")),
-                "compat-probe",
-            )
-        mismatch_message = str(mismatch_ctx.exception)
-        self.assertIn("maf-agent", mismatch_message)
-        self.assertIn("compat-probe", mismatch_message)
-
-        # Exactly-one requirement: zero GovernancePolicyMiddleware present.
-        with self.assertRaises(AssertionError):
-            assert_identity(stub_ns, _stub_agent(), "compat-probe")
-
-        # Exactly-one requirement: more than one GovernancePolicyMiddleware
-        # present must also fail, even if both happen to match the name.
-        with self.assertRaises(AssertionError):
-            assert_identity(
-                stub_ns,
-                _stub_agent(
-                    _StubGovernancePolicyMiddleware("compat-probe"),
-                    _StubGovernancePolicyMiddleware("compat-probe"),
-                ),
-                "compat-probe",
-            )
-
         # Genuine executable proof of the real v4 audit-attribution helper
         # too — dynamically loaded from the real file, driven against stub
         # GovernancePolicyMiddleware/AuditLog instances that mirror the
@@ -1177,6 +1142,37 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "denied_tools or []",
         ):
             self.assertNotIn(forbidden_substring, snippet)
+
+        # The snippet's in-place replacement construction (the one bound
+        # to OUR evaluator instance, inside the stack list comprehension)
+        # must not pass agent_id=name to GovernancePolicyMiddleware: the
+        # real v4 audit path this snippet actually exercises derives the
+        # audited agent_did from context.agent.name at process-time, and
+        # never reads the constructor's agent_id/._agent_id keyword (that
+        # keyword is only read by the kernel=-driven _process_v5 path,
+        # which this snippet never takes). This is scoped to the
+        # replacement construction only — it must not touch the
+        # unrelated, in-scope create_governance_middleware(..., agent_id=
+        # name) factory call earlier in the snippet.
+        replacement_construction_match = re.search(
+            r"GovernancePolicyMiddleware\(evaluator=evaluator,\s*audit_log=audit_log[^)]*\)",
+            snippet,
+        )
+        self.assertIsNotNone(
+            replacement_construction_match,
+            "maf-middleware-snippet.py must construct a replacement "
+            "GovernancePolicyMiddleware(evaluator=evaluator, "
+            "audit_log=audit_log) inside the stack list comprehension",
+        )
+        self.assertNotIn(
+            "agent_id=name",
+            replacement_construction_match.group(0),
+            "the snippet's replacement GovernancePolicyMiddleware(...) "
+            "construction must not pass agent_id=name — the real v4 "
+            "audit path derives agent_did from context.agent.name at "
+            "process-time, not from this constructor's "
+            "agent_id/._agent_id keyword, so passing it here is inert",
+        )
 
         # The snippet's docstring must not claim an unconditional
         # three-middleware stack — CapabilityGuardMiddleware is only added
