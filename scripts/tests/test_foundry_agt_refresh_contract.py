@@ -657,9 +657,9 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "SNIPPET_AGENT_IDENTITY=PASS",
             pin_meta["validation"]["expected_output"],
         )
-        self.assertIn("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS", local_probe)
+        self.assertIn("SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS", local_probe)
         self.assertIn(
-            "SNIPPET_V4_AUDIT_ATTRIBUTION=PASS",
+            "SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS",
             pin_meta["validation"]["expected_output"],
         )
 
@@ -784,6 +784,32 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
                 f"type/source — missing {required_symbol!r}",
             )
 
+        # The v4 audit helper must claim only the observable contract
+        # (event source equals requested agent name) and must NOT assert
+        # differential knowledge of which internal field upstream reads.
+        # Since agent_id equals name in all four constructions, the probe
+        # cannot discriminate between _agent_id and context.agent.name as
+        # the source of the CloudEvent — overclaiming that breaks the
+        # "narrow to observable" rule.
+        for forbidden_differential_claim in (
+            "never from GovernancePolicyMiddleware._agent_id",
+            "comes from context.agent.name, never",
+        ):
+            self.assertNotIn(
+                forbidden_differential_claim,
+                local_probe,
+                f"contract_probe.py must not claim {forbidden_differential_claim!r} — "
+                "the observable is only that event source equals the requested "
+                "agent name; agent_id==name in all four constructions, so the "
+                "probe cannot discriminate which equal internal field upstream reads",
+            )
+        self.assertIn(
+            "requested agent name",
+            v4_audit_helper_source,
+            "assert_v4_audit_attribution's docstring must state the observable "
+            "contract in terms of 'requested agent name', not internal mechanism",
+        )
+
         # The new helper must be invoked on all four snippet constructions
         # too, each with its OWN dedicated AuditLog wired all the way
         # through build_governed_agent(..., audit_log=<dedicated>) — not a
@@ -835,15 +861,15 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         self.assertLess(
             max(v4_audit_call_indices),
-            local_probe.index('print("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS")'),
-            "SNIPPET_V4_AUDIT_ATTRIBUTION=PASS must only print after all "
+            local_probe.index('print("SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS")'),
+            "SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS must only print after all "
             "four real v4 audit-attribution assertions have run",
         )
         self.assertLess(
             local_probe.index('print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")'),
-            local_probe.index('print("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS")'),
+            local_probe.index('print("SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS")'),
             "the forward-compat construction marker must print before the "
-            "real v4 audit-attribution marker, matching the order the two "
+            "real v4 audit requested-name marker, matching the order the two "
             "distinct proofs actually run in",
         )
 
@@ -934,7 +960,12 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         source_mismatch_message = str(source_mismatch_ctx.exception)
         self.assertIn("maf-agent", source_mismatch_message)
         self.assertIn("mismatch-probe", source_mismatch_message)
-        self.assertIn("_agent_id", source_mismatch_message)
+        self.assertNotIn(
+            "never from GovernancePolicyMiddleware._agent_id",
+            source_mismatch_message,
+            "assert_v4_audit_attribution failure message must not make a "
+            "differential claim about the internal source field",
+        )
 
         # Exactly-one requirement, same as the identity helper: zero
         # GovernancePolicyMiddleware present.
