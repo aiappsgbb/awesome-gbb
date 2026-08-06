@@ -243,18 +243,24 @@ certification, and this pin does not represent it as one.
 
 ---
 
-## Verified API surface (4.1.0 / MAF 1.13.0)
+## Verified API surface (4.1.0 / MAF 1.13.0) — relevant parameters
 
-These are the **actual** signatures from `inspect.signature(...)`,
-re-verified live for this refresh. `contract_probe.py` is the
-executable source of truth — this section is a human-readable summary,
-not a substitute for running the probe.
+These are the **relevant parameters** from `inspect.signature(...)`,
+re-verified live for this refresh — not the complete signature. Each
+constructor also carries internal/advanced keyword-only parameters this
+skill never sets (`create_governance_middleware`'s `policy`,
+`approval_resolver`, `_runtime`, `_runtime_factory`) that are omitted
+below for brevity. `contract_probe.py` is the executable source of
+truth — this section is a human-readable summary, not a substitute for
+running the probe.
 
 ```python
 from agent_os.integrations.maf_adapter import (
     AuditTrailMiddleware,          # (audit_log: AuditLog, agent_did: str | None = None)
-    CapabilityGuardMiddleware,     # (allowed_tools=None, denied_tools=None, audit_log=None)
-    GovernancePolicyMiddleware,    # (evaluator: PolicyEvaluator, audit_log: AuditLog | None = None)
+    CapabilityGuardMiddleware,     # (allowed_tools=None, denied_tools=None, audit_log=None,
+                                    #  *, kernel: MAFKernel | None = None, agent_id: str = "maf-agent")
+    GovernancePolicyMiddleware,    # (evaluator: PolicyEvaluator | None = None, audit_log: AuditLog | None = None,
+                                    #  *, kernel: MAFKernel | None = None, agent_id: str = "maf-agent")
     create_governance_middleware,  # ← USE THIS — assembles the stack correctly
 )
 
@@ -263,10 +269,23 @@ from agent_os.integrations.maf_adapter import (
 #   allowed_tools: list[str] | None = None,
 #   denied_tools: list[str] | None = None,
 #   agent_id: str = "default-agent",
-#   enable_rogue_detection: bool = False,
+#   enable_rogue_detection: bool = True,
 #   audit_log: AuditLog | None = None,
-# Returns: list[Middleware] in execution order (4 items if
-# enable_rogue_detection=True, 3 otherwise)
+# Returns: list[Middleware] in execution order. The stack size is
+# conditional on BOTH the tool-list configuration and the explicit
+# enable_rogue_detection flag — it is not a fixed 3-or-4:
+#   policy_directory set, allowed_tools=None, denied_tools=None,
+#   enable_rogue_detection=False (explicit)
+#     -> 2: AuditTrailMiddleware, GovernancePolicyMiddleware
+#   policy_directory set, either allowed_tools or denied_tools configured
+#   (including an empty list), enable_rogue_detection=False (explicit)
+#     -> 3: + CapabilityGuardMiddleware
+#   policy_directory set, allowed_tools=None, denied_tools=None,
+#   enable_rogue_detection=True (or omitted — this is now the default)
+#     -> 3: + RogueDetectionMiddleware (no guard)
+#   policy_directory set, either allowed_tools or denied_tools configured,
+#   enable_rogue_detection=True (or omitted — this is now the default)
+#     -> 4: + CapabilityGuardMiddleware + RogueDetectionMiddleware
 ```
 
 ```python
@@ -318,16 +337,28 @@ See "`agt doctor` legacy package-table lag" above (KI-002). Do not
 treat "N/8 packages installed" as a failed install; it only reflects
 the pre-split package names the doctor subcommand still checks for.
 
-### Issue 2 — Rogue detection needs an explicit opt-in, not an error
+### Issue 2 — Rogue detection is upstream's default now, not this skill's
 
 In the AGT 3.x pin, `enable_rogue_detection=True` was documented as
 raising without an explicit `RogueAgentDetector` + `capability_profile`.
 Re-verified live at 4.1.0: `create_governance_middleware(enable_rogue_detection=True)`
-now constructs successfully and returns a 4th `RogueDetectionMiddleware`
-in the stack — it does **not** raise. This skill's factory still
-defaults to `enable_rogue_detection=False`, as a deliberate choice (a
-freshly deployed agent has no behavioral baseline for the detector to
-compare against yet), not because the toolkit errors without one.
+now constructs successfully — it does **not** raise. The upstream
+factory's own default also flipped: `enable_rogue_detection` now
+defaults to `True` (it defaulted to `False` in the AGT 3.x pin), so
+`RogueDetectionMiddleware` is added by default — as the 3rd stack item
+when no `allowed_tools`/`denied_tools` are configured, or the 4th when
+either is (see "Verified API surface" above for the full four-case
+breakdown).
+
+This skill's own snippet (`maf-middleware-snippet.py`) and
+`contract_probe.py`'s `build_factory_stack` deliberately pass
+`enable_rogue_detection=False` explicitly, overriding the new upstream
+default — not because the upstream factory still defaults to `False`
+(it no longer does), but because a freshly deployed agent has no
+behavioral baseline for the detector to compare against yet. `SKILL.md`
+documents this skill's own explicit choice, which does not conflict
+with the upstream default documented here: one is the toolkit's
+factory default, the other is this skill's deliberate override of it.
 
 ### Issue 3 — `agt verify` version skew
 

@@ -148,7 +148,8 @@ def check_imports() -> SimpleNamespace:
 
 def check_signatures(ns: SimpleNamespace) -> None:
     """Assert the constructor / factory parameters SKILL.md's prose depends on."""
-    factory_params = set(inspect.signature(ns.create_governance_middleware).parameters)
+    factory_signature = inspect.signature(ns.create_governance_middleware)
+    factory_params = set(factory_signature.parameters)
     required_factory_params = {
         "policy_directory",
         "allowed_tools",
@@ -162,6 +163,19 @@ def check_signatures(ns: SimpleNamespace) -> None:
         raise AssertionError(
             f"create_governance_middleware is missing parameters: {sorted(missing_factory_params)}"
         )
+
+    # Parameter *presence* alone doesn't catch a silent default flip: AGT
+    # 4.1.0 changed create_governance_middleware's own factory default for
+    # enable_rogue_detection from False (AGT 3.x) to True. Assert the real
+    # inspect.signature(...) Parameter object's .default, not just that the
+    # parameter name exists.
+    enable_rogue_detection_param = factory_signature.parameters["enable_rogue_detection"]
+    if enable_rogue_detection_param.default is not True:
+        raise AssertionError(
+            "create_governance_middleware's enable_rogue_detection factory "
+            f"default drifted: expected True, got {enable_rogue_detection_param.default!r}"
+        )
+    print("FACTORY_ROGUE_DETECTION_DEFAULT_TRUE=PASS")
 
     agent_params = set(inspect.signature(ns.Agent.__init__).parameters)
     missing_agent_params = {"client", "middleware"} - agent_params
