@@ -29,6 +29,14 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
     exactly once for a benign message and raises ``MiddlewareTermination``
     with zero ``call_next`` calls for the destructive-SQL and inbound-SSN
     policy patterns
+  - the same real ``GovernancePolicyMiddleware.process`` hook's legacy v4
+    AUDIT attribution — driven with a dedicated ``AuditLog`` bound to each
+    of the snippet's four canonical constructions — really does log the
+    resulting CloudEvent's ``source`` (serialized from
+    ``AuditEntry.agent_did``) as that construction's own ``Agent.name``,
+    never as the constructor's ``agent_id``/``._agent_id`` keyword (v5-only
+    forward-compat metadata the legacy v4 path this skill actually
+    exercises never reads)
   - the real ``CapabilityGuardMiddleware.process`` hook allows exactly the
     allowed tool and denies exactly the denied tool
   - calling ``../maf-middleware-snippet.py``'s ``build_governed_agent`` with
@@ -547,6 +555,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
     snippet = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(snippet)
 
+    compat_audit_log = ns.AuditLog()
     agent = snippet.build_governed_agent(
         name="compat-probe",
         instructions="Construction probe.",
@@ -561,6 +570,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError("build_governed_agent returned an Agent with no middleware")
 
     assert_policy_middleware_agent_identity(ns, agent, "compat-probe")
+    await assert_v4_audit_attribution(ns, agent, compat_audit_log)
 
     print("SNIPPET_IMPORT=PASS")
 
@@ -572,6 +582,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
     # CapabilityGuardMiddleware at all. create_governance_middleware
     # only adds the guard when at least one of the two parameters is
     # not None; this is the no-guard path that proof must cover.
+    no_guard_audit_log = ns.AuditLog()
     no_guard_agent = snippet.build_governed_agent(
         name="default-no-guard-probe",
         instructions="Default no-guard probe.",
@@ -591,6 +602,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         )
 
     assert_policy_middleware_agent_identity(ns, no_guard_agent, "default-no-guard-probe")
+    await assert_v4_audit_attribution(ns, no_guard_agent, no_guard_audit_log)
 
     print("SNIPPET_DEFAULT_NO_GUARD=PASS")
 
@@ -600,6 +612,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
     # AuditTrail -> GovernancePolicy -> CapabilityGuard order must be
     # preserved by the in-place replacement inside build_governed_agent
     # (no insert(0, ...) reordering ahead of AuditTrailMiddleware).
+    default_audit_log = ns.AuditLog()
     default_agent = snippet.build_governed_agent(
         name="default-semantics-probe",
         instructions="Default-semantics probe.",
@@ -643,6 +656,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError("default-semantics dangerous tool was not denied")
 
     assert_policy_middleware_agent_identity(ns, default_agent, "default-semantics-probe")
+    await assert_v4_audit_attribution(ns, default_agent, default_audit_log)
 
     print("SNIPPET_DEFAULT_SEMANTICS=PASS")
 
@@ -653,6 +667,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
     # the real guard.process/FunctionTool.invoke round trip — a tool that
     # is not even named in any allow/deny list must still be denied,
     # because the allowlist is empty rather than absent.
+    empty_allowlist_audit_log = ns.AuditLog()
     empty_allowlist_agent = snippet.build_governed_agent(
         name="empty-allowlist-probe",
         instructions="Empty-allowlist deny-all probe.",
@@ -706,9 +721,113 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError(f"empty-allowlist tool executed {executions} times, expected exactly 0")
 
     assert_policy_middleware_agent_identity(ns, empty_allowlist_agent, "empty-allowlist-probe")
+    await assert_v4_audit_attribution(ns, empty_allowlist_agent, empty_allowlist_audit_log)
 
     print("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS")
-    print("SNIPPET_AGENT_IDENTITY=PASS")
+    print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")
+    print("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS")
+
+
+async def assert_v4_audit_attribution(
+    ns: SimpleNamespace, agent: object, audit_log: object
+) -> None:
+    """Drive the real legacy-v4 GovernancePolicyMiddleware.process hook and
+    prove the CloudEvent it emits attributes the policy decision to
+    ``agent.name`` — never to the constructor's own ``agent_id``/
+    ``._agent_id`` keyword.
+
+    This is a genuine v4 AUDIT-BEHAVIOUR proof, and a SEPARATE, unrelated
+    concern from ``assert_policy_middleware_agent_identity`` above. That
+    helper only guards a v5 forward-compat CONSTRUCTION contract (the
+    ``kernel=``-only ``._agent_id`` attribute this skill's ``kernel=None``
+    legacy v4 construction never reads) — it is irrelevant to what today's
+    real audit output actually attributes a decision to. This helper is
+    the real proof of that instead.
+
+    Empirically re-verified against the real installed 4.1.0
+    ``agent_os.integrations.maf_adapter.GovernancePolicyMiddleware._process_v4``
+    and ``agentmesh.governance.audit.AuditEntry``: every
+    ``GovernancePolicyMiddleware`` this skill constructs passes
+    ``evaluator=`` and never ``kernel=``, so ``.process()`` always
+    dispatches to ``_process_v4`` — never ``_process_v5``, the only method
+    that reads ``self._agent_id``. ``_process_v4`` instead resolves
+    ``agent_name = getattr(context.agent, "name", "unknown")`` and, on
+    allow, calls ``audit_log.log(event_type="policy_evaluation",
+    agent_did=agent_name, ...)``. ``AuditEntry.to_cloudevent()`` then
+    serializes ``agent_did`` as the CloudEvents ``source`` field and
+    ``event_type`` as CloudEvents ``type`` (``"policy_evaluation"`` ->
+    ``"ai.agentmesh.policy.evaluation"``).
+
+    Requires the caller to have constructed ``agent`` with THIS
+    ``audit_log`` already threaded all the way to its own
+    ``GovernancePolicyMiddleware`` (via ``build_governed_agent(...,
+    audit_log=audit_log)``) so the newly emitted CloudEvent(s) can be
+    isolated by a before/after ``export_cloudevents()`` delta for real
+    inspection, not shared with any other construction's events or with
+    ``CapabilityGuardMiddleware`` (which always logs
+    ``agent_did="capability-guard"`` regardless of its own ``._agent_id``
+    and is unrelated to this proof).
+    """
+    policy_middlewares = [
+        middleware
+        for middleware in agent.middleware
+        if isinstance(middleware, ns.GovernancePolicyMiddleware)
+    ]
+    if len(policy_middlewares) != 1:
+        raise AssertionError(
+            f"expected exactly one GovernancePolicyMiddleware in agent.middleware "
+            f"for the v4 audit-attribution proof of {agent.name!r}, found "
+            f"{len(policy_middlewares)}: "
+            f"{[type(middleware).__name__ for middleware in agent.middleware]}"
+        )
+    (policy_middleware,) = policy_middlewares
+    if policy_middleware.audit_log is not audit_log:
+        raise AssertionError(
+            f"GovernancePolicyMiddleware.audit_log for {agent.name!r} is not "
+            "the dedicated AuditLog this proof needs — build_governed_agent "
+            "must be called with audit_log=<this dedicated AuditLog> so its "
+            "own newly emitted CloudEvent(s) can be isolated for real "
+            "inspection, not shared with any other construction's events"
+        )
+
+    events_before = len(audit_log.export_cloudevents())
+
+    calls = 0
+
+    async def call_next() -> None:
+        nonlocal calls
+        calls += 1
+
+    context = ns.AgentContext(agent=agent, messages=[ns.Message("user", ["hello"])])
+    await policy_middleware.process(context, call_next)
+
+    if calls != 1:
+        raise AssertionError(
+            f"benign 'hello' message for {agent.name!r} called call_next "
+            f"{calls} times, expected exactly 1"
+        )
+
+    new_events = audit_log.export_cloudevents()[events_before:]
+    if len(new_events) != 1:
+        raise AssertionError(
+            "expected exactly one newly emitted CloudEvent from this real "
+            f"GovernancePolicyMiddleware.process call for {agent.name!r}, "
+            f"got {len(new_events)}: {new_events}"
+        )
+    (event,) = new_events
+    if event["type"] != "ai.agentmesh.policy.evaluation":
+        raise AssertionError(
+            f"newly emitted CloudEvent 'type' for {agent.name!r} was "
+            f"{event['type']!r}, expected 'ai.agentmesh.policy.evaluation'"
+        )
+    if event["source"] != agent.name:
+        raise AssertionError(
+            "real v4 audit attribution failed — the CloudEvent 'source' "
+            "field (serialized from AuditEntry.agent_did) was "
+            f"{event['source']!r}, expected agent.name {agent.name!r}: "
+            "legacy v4 audit attribution comes from context.agent.name, "
+            "never from GovernancePolicyMiddleware._agent_id"
+        )
 
 
 async def run_probe(ns: SimpleNamespace) -> None:

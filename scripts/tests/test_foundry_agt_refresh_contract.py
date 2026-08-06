@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import re
 import sys
@@ -56,6 +57,63 @@ class _StubGovernancePolicyMiddleware:
 
 def _stub_agent(*middlewares: object) -> SimpleNamespace:
     return SimpleNamespace(middleware=list(middlewares))
+
+
+class _StubAuditLog:
+    """Minimal stand-in exposing only ``export_cloudevents()`` — the sole
+    real ``AuditLog`` surface ``assert_v4_audit_attribution`` actually
+    calls — plus an ``append`` helper tests use to simulate what the real
+    ``GovernancePolicyMiddleware._process_v4`` writes to it on ``.process``.
+    """
+
+    def __init__(self) -> None:
+        self._events: list[dict] = []
+
+    def export_cloudevents(self) -> list[dict]:
+        return list(self._events)
+
+    def append(self, event: dict) -> None:
+        self._events.append(event)
+
+
+class _StubV4GovernancePolicyMiddleware:
+    """Minimal stand-in whose ``process()`` mirrors the real legacy v4
+    ``_process_v4`` audit-logging behaviour this proof depends on: for a
+    benign message it appends a CloudEvent-shaped dict — with ``source``
+    set to whatever this test tells it to attribute the decision to — to
+    its bound ``audit_log``, and calls ``call_next`` some controllable
+    number of times, so tests can exercise both the correct-attribution
+    path and every real failure mode the helper must catch.
+    """
+
+    def __init__(
+        self,
+        audit_log: object,
+        *,
+        emitted_source: str,
+        emit_count: int = 1,
+        call_next_calls: int = 1,
+    ) -> None:
+        self.audit_log = audit_log
+        self._emitted_source = emitted_source
+        self._emit_count = emit_count
+        self._call_next_calls = call_next_calls
+
+    async def process(self, context: object, call_next) -> None:
+        for _ in range(self._emit_count):
+            self.audit_log.append(
+                {"type": "ai.agentmesh.policy.evaluation", "source": self._emitted_source}
+            )
+        for _ in range(self._call_next_calls):
+            await call_next()
+
+
+def _stub_v4_ns() -> SimpleNamespace:
+    return SimpleNamespace(
+        GovernancePolicyMiddleware=_StubV4GovernancePolicyMiddleware,
+        AgentContext=lambda agent, messages: SimpleNamespace(agent=agent, messages=messages),
+        Message=lambda role, parts: SimpleNamespace(role=role, parts=parts),
+    )
 
 
 class FoundryAgtRefreshContractTests(unittest.TestCase):
@@ -565,18 +623,43 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "not just that MiddlewareTermination was raised",
         )
 
-        # Audit-attribution identity proof: build_governed_agent's
-        # in-place replacement of the factory's GovernancePolicyMiddleware
-        # must preserve the caller's requested agent_id — not silently
-        # revert to GovernancePolicyMiddleware's own "maf-agent"
-        # constructor default. The real installed 4.1.0
-        # GovernancePolicyMiddleware only stores this as a private
-        # `_agent_id` attribute (no public `.agent_id` property exists
-        # anywhere in its MRO), so the check must be tied to that real
-        # attribute, not an invented public API.
-        self.assertIn("SNIPPET_AGENT_IDENTITY=PASS", local_probe)
+        # TWO DISTINCT proofs live in this block — do not conflate them:
+        #
+        # 1. assert_policy_middleware_agent_identity /
+        #    SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS is a v5
+        #    FORWARD-COMPATIBILITY CONSTRUCTION contract: build_governed_
+        #    agent's in-place replacement of the factory's
+        #    GovernancePolicyMiddleware must preserve the caller's
+        #    requested name in the ._agent_id constructor keyword it was
+        #    given — not silently revert to the class's own "maf-agent"
+        #    default. The real installed 4.1.0 GovernancePolicyMiddleware
+        #    only stores this as a private ._agent_id attribute, read ONLY
+        #    by _process_v5 (the kernel=-driven path this skill never
+        #    takes). It is UNUSED by the legacy v4 path (kernel=None)
+        #    every construction this skill actually builds exercises, so
+        #    this check is NOT proof of anything about real v4 audit
+        #    attribution.
+        #
+        # 2. assert_v4_audit_attribution / SNIPPET_V4_AUDIT_ATTRIBUTION=PASS
+        #    is the real v4 AUDIT-BEHAVIOUR proof: driving the real
+        #    GovernancePolicyMiddleware.process (legacy v4, since
+        #    kernel=None) with a dedicated AuditLog and asserting the
+        #    resulting CloudEvent's "source" (AuditEntry.agent_did) equals
+        #    the construction's own Agent.name — never the constructor's
+        #    agent_id/._agent_id keyword, which _process_v4 never reads.
+        self.assertIn("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS", local_probe)
         self.assertIn(
+            "SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS",
+            pin_meta["validation"]["expected_output"],
+        )
+        self.assertNotIn("SNIPPET_AGENT_IDENTITY=PASS", local_probe)
+        self.assertNotIn(
             "SNIPPET_AGENT_IDENTITY=PASS",
+            pin_meta["validation"]["expected_output"],
+        )
+        self.assertIn("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS", local_probe)
+        self.assertIn(
+            "SNIPPET_V4_AUDIT_ATTRIBUTION=PASS",
             pin_meta["validation"]["expected_output"],
         )
 
@@ -604,6 +687,25 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
                 "GovernancePolicyMiddleware in agent.middleware, require "
                 f"exactly one, and compare its real ._agent_id — missing "
                 f"{required_symbol!r}",
+            )
+        # The helper's own framing must NOT be left implying it says
+        # anything about real v4 audit attribution — it must explicitly
+        # scope ._agent_id to v5 forward-compat construction metadata that
+        # the legacy v4 path never reads, and point readers at the real
+        # v4 audit-attribution proof instead.
+        for required_framing_symbol in (
+            "forward-compat",
+            "_process_v4",
+            "assert_v4_audit_attribution",
+        ):
+            self.assertIn(
+                required_framing_symbol,
+                identity_helper_source,
+                "assert_policy_middleware_agent_identity's docstring/error "
+                "messages must explicitly frame ._agent_id as v5 "
+                "forward-compat construction metadata unused by the "
+                "legacy v4 audit path, and cross-reference the real v4 "
+                f"audit-attribution proof — missing {required_framing_symbol!r}",
             )
 
         # The helper must be invoked on all four snippet constructions,
@@ -636,9 +738,113 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         self.assertLess(
             max(identity_call_indices),
-            local_probe.index('print("SNIPPET_AGENT_IDENTITY=PASS")'),
-            "SNIPPET_AGENT_IDENTITY=PASS must only print after all four "
-            "identity assertions have run",
+            local_probe.index('print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")'),
+            "SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS must only print after "
+            "all four identity assertions have run",
+        )
+
+        # The real v4 audit-attribution helper must exist as its own,
+        # separately named function (not folded into the identity helper
+        # above), placed after check_snippet_import so it doesn't disturb
+        # the identity helper's own extraction boundary above.
+        v4_audit_helper_match = re.search(
+            r"async def assert_v4_audit_attribution\(.*?\n\n\nasync def run_probe",
+            local_probe,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            v4_audit_helper_match,
+            "contract_probe.py must define an "
+            "assert_v4_audit_attribution(...) helper immediately ahead of "
+            "run_probe",
+        )
+        v4_audit_helper_source = v4_audit_helper_match.group(0)
+        for required_symbol in (
+            "GovernancePolicyMiddleware",
+            "len(policy_middlewares) != 1",
+            "audit_log",
+            "policy_middleware.audit_log is not audit_log",
+            "export_cloudevents",
+            "AgentContext",
+            "Message(",
+            "call_next",
+            "calls != 1",
+            "policy_evaluation",
+            "ai.agentmesh.policy.evaluation",
+            "agent.name",
+            "_process_v4",
+        ):
+            self.assertIn(
+                required_symbol,
+                v4_audit_helper_source,
+                "assert_v4_audit_attribution must drive the real "
+                "GovernancePolicyMiddleware.process hook with a dedicated "
+                "AuditLog, a real AgentContext/Message, a counting "
+                "call_next, and inspect the newly emitted CloudEvent's "
+                f"type/source — missing {required_symbol!r}",
+            )
+
+        # The new helper must be invoked on all four snippet constructions
+        # too, each with its OWN dedicated AuditLog wired all the way
+        # through build_governed_agent(..., audit_log=<dedicated>) — not a
+        # shared log, and not just source-text listing the helper without
+        # actually threading a real per-construction AuditLog into the
+        # snippet.
+        v4_audit_call_indices = []
+        for expected_name, audit_log_var in (
+            ("compat-probe", "compat_audit_log"),
+            ("default-no-guard-probe", "no_guard_audit_log"),
+            ("default-semantics-probe", "default_audit_log"),
+            ("empty-allowlist-probe", "empty_allowlist_audit_log"),
+        ):
+            construction_match = re.search(
+                re.escape(f'name="{expected_name}"') + r".*?\n    \)",
+                local_probe,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(
+                construction_match,
+                f"could not find the build_governed_agent(...) call for "
+                f"{expected_name!r}",
+            )
+            self.assertIn(
+                f"audit_log={audit_log_var}",
+                construction_match.group(0),
+                f"the {expected_name!r} construction must pass its own "
+                f"dedicated audit_log={audit_log_var} through to "
+                "build_governed_agent so the real v4 audit-attribution "
+                "proof can isolate its own newly emitted CloudEvent(s)",
+            )
+
+            call_match = re.search(
+                r"assert_v4_audit_attribution\(ns,\s*\w+,\s*" + re.escape(audit_log_var) + r"\)",
+                local_probe,
+            )
+            self.assertIsNotNone(
+                call_match,
+                "assert_v4_audit_attribution must be called with the "
+                f"dedicated {audit_log_var!r} for {expected_name!r}",
+            )
+            v4_audit_call_indices.append(call_match.start())
+
+        self.assertEqual(
+            v4_audit_call_indices,
+            sorted(v4_audit_call_indices),
+            "the four v4 audit-attribution assertions must run in the "
+            "same order as the four build_governed_agent constructions",
+        )
+        self.assertLess(
+            max(v4_audit_call_indices),
+            local_probe.index('print("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS")'),
+            "SNIPPET_V4_AUDIT_ATTRIBUTION=PASS must only print after all "
+            "four real v4 audit-attribution assertions have run",
+        )
+        self.assertLess(
+            local_probe.index('print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")'),
+            local_probe.index('print("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS")'),
+            "the forward-compat construction marker must print before the "
+            "real v4 audit-attribution marker, matching the order the two "
+            "distinct proofs actually run in",
         )
 
         # Genuine executable proof, not static source text alone: call the
@@ -683,6 +889,104 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
                 ),
                 "compat-probe",
             )
+
+        # Genuine executable proof of the real v4 audit-attribution helper
+        # too — dynamically loaded from the real file, driven against stub
+        # GovernancePolicyMiddleware/AuditLog instances that mirror the
+        # real _process_v4 audit-logging behaviour this proof depends on
+        # (append one CloudEvent-shaped dict per allowed message, call
+        # call_next once).
+        assert_v4_audit = foundry_agt_contract_probe.assert_v4_audit_attribution
+        v4_stub_ns = _stub_v4_ns()
+
+        # Passing case: the CloudEvent this construction's own dedicated
+        # AuditLog receives really is attributed to this agent's own name.
+        passing_audit_log = _StubAuditLog()
+        passing_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(passing_audit_log, emitted_source="v4-audit-probe")
+        )
+        passing_agent.name = "v4-audit-probe"
+        asyncio.run(assert_v4_audit(v4_stub_ns, passing_agent, passing_audit_log))
+
+        # The literal real-world defect this proof exists to catch: the
+        # dedicated AuditLog was never threaded through to this
+        # construction's own GovernancePolicyMiddleware (build_governed_
+        # agent wasn't called with audit_log=<this dedicated AuditLog>).
+        unwired_audit_log = _StubAuditLog()
+        different_bound_log = _StubAuditLog()
+        unwired_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(different_bound_log, emitted_source="unwired-probe")
+        )
+        unwired_agent.name = "unwired-probe"
+        with self.assertRaises(AssertionError) as unwired_ctx:
+            asyncio.run(assert_v4_audit(v4_stub_ns, unwired_agent, unwired_audit_log))
+        self.assertIn("dedicated AuditLog", str(unwired_ctx.exception))
+
+        # The real bug this whole proof guards against: attribution to
+        # something other than agent.name (e.g. a constructor keyword).
+        mismatched_audit_log = _StubAuditLog()
+        mismatched_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(mismatched_audit_log, emitted_source="maf-agent")
+        )
+        mismatched_agent.name = "mismatch-probe"
+        with self.assertRaises(AssertionError) as source_mismatch_ctx:
+            asyncio.run(assert_v4_audit(v4_stub_ns, mismatched_agent, mismatched_audit_log))
+        source_mismatch_message = str(source_mismatch_ctx.exception)
+        self.assertIn("maf-agent", source_mismatch_message)
+        self.assertIn("mismatch-probe", source_mismatch_message)
+        self.assertIn("_agent_id", source_mismatch_message)
+
+        # Exactly-one requirement, same as the identity helper: zero
+        # GovernancePolicyMiddleware present.
+        zero_mw_agent = _stub_agent()
+        zero_mw_agent.name = "zero-mw-probe"
+        with self.assertRaises(AssertionError):
+            asyncio.run(assert_v4_audit(v4_stub_ns, zero_mw_agent, _StubAuditLog()))
+
+        # Exactly-one requirement: more than one GovernancePolicyMiddleware
+        # present must also fail.
+        shared_log = _StubAuditLog()
+        two_middleware_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(shared_log, emitted_source="dup-probe"),
+            _StubV4GovernancePolicyMiddleware(shared_log, emitted_source="dup-probe"),
+        )
+        two_middleware_agent.name = "dup-probe"
+        with self.assertRaises(AssertionError):
+            asyncio.run(assert_v4_audit(v4_stub_ns, two_middleware_agent, shared_log))
+
+        # call_next must be called exactly once for a benign message.
+        no_call_next_log = _StubAuditLog()
+        no_call_next_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(
+                no_call_next_log, emitted_source="no-call-next-probe", call_next_calls=0
+            )
+        )
+        no_call_next_agent.name = "no-call-next-probe"
+        with self.assertRaises(AssertionError) as no_call_next_ctx:
+            asyncio.run(assert_v4_audit(v4_stub_ns, no_call_next_agent, no_call_next_log))
+        self.assertIn("call_next", str(no_call_next_ctx.exception))
+
+        # Exactly one newly emitted CloudEvent is required — zero or two
+        # must both fail, not just be silently accepted.
+        zero_events_log = _StubAuditLog()
+        zero_events_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(
+                zero_events_log, emitted_source="zero-events-probe", emit_count=0
+            )
+        )
+        zero_events_agent.name = "zero-events-probe"
+        with self.assertRaises(AssertionError):
+            asyncio.run(assert_v4_audit(v4_stub_ns, zero_events_agent, zero_events_log))
+
+        two_events_log = _StubAuditLog()
+        two_events_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(
+                two_events_log, emitted_source="two-events-probe", emit_count=2
+            )
+        )
+        two_events_agent.name = "two-events-probe"
+        with self.assertRaises(AssertionError):
+            asyncio.run(assert_v4_audit(v4_stub_ns, two_events_agent, two_events_log))
 
         for expected_substring in (
             "FoundryChatClient",
