@@ -145,8 +145,9 @@ below).
 
 ### Middleware factory stack
 
-`create_governance_middleware(...)` assembles three middleware, in
-execution order:
+`create_governance_middleware(...)` assembles the following three
+middleware (`contract_probe.py` proves membership and types, not
+ordering):
 
 1. **`AuditTrailMiddleware`** — every tool call becomes a hash-chained
    entry in `AuditLog`.

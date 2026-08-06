@@ -33,7 +33,7 @@ def build_governed_agent(
     """
     Wire AGT governance middleware onto a MAF Agent.
 
-    Returns a ready-to-run Agent with the four-layer stack assembled
+    Returns a ready-to-run Agent with the three-middleware stack assembled
     by ``create_governance_middleware`` plus an explicit
     ``GovernancePolicyMiddleware`` bound to a YAML-loaded
     ``PolicyEvaluator``.
