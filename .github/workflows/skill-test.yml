@@ -629,5 +629,6 @@ jobs:
             /tmp/${{ matrix.skill }}-retry-smoke-evidence
             /tmp/${{ matrix.skill }}-primary-invoke.log
             /tmp/${{ matrix.skill }}-retry-invoke.log
+            /tmp/${{ matrix.skill }}-smoke-result
           if-no-files-found: warn
           retention-days: 7

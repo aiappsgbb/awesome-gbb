@@ -34,6 +34,7 @@ import asyncio
 import importlib.metadata
 import importlib.util
 import inspect
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -288,14 +289,26 @@ def check_audit_log(ns: SimpleNamespace) -> None:
     print("AUDIT_LOG=PASS")
 
 
-def build_factory_stack(ns: SimpleNamespace):
-    """Assemble the governance middleware factory stack and select the guard."""
-    audit_log = ns.AuditLog()
+def build_factory_stack(ns: SimpleNamespace, *, audit_log=None, agent_id: str = "contract-probe-agent"):
+    """Assemble the governance middleware factory stack and select the guard.
+
+    Accepts an optional pre-created ``audit_log`` so callers that need to
+    observe the guard's own audit evidence afterward (e.g. ``live_t3_probe.py``,
+    which shares one ``AuditLog`` across live inference and the capability
+    hook exercise) can supply it; a fresh one is created when omitted so this
+    function's original no-argument behavior is unchanged. Returns
+    ``(guard, audit_log, stack)`` — the audit log and the full assembled
+    middleware stack (``AuditTrailMiddleware``, ``GovernancePolicyMiddleware``,
+    the returned ``guard``) are always returned so a caller that needs to wire
+    the whole real stack onto a real ``Agent`` (as ``live_t3_probe.py`` does)
+    does not have to reassemble it separately.
+    """
+    audit_log = audit_log if audit_log is not None else ns.AuditLog()
     stack = ns.create_governance_middleware(
         policy_directory=str(POLICY_DIR),
         allowed_tools=["safe_tool"],
         denied_tools=["dangerous_tool"],
-        agent_id="contract-probe-agent",
+        agent_id=agent_id,
         enable_rogue_detection=False,
         audit_log=audit_log,
     )
@@ -314,47 +327,97 @@ def build_factory_stack(ns: SimpleNamespace):
         raise AssertionError(f"factory stack has no CapabilityGuardMiddleware: got {sorted(types_present)}")
 
     print("FACTORY_STACK=PASS")
-    return guard
+    return guard, audit_log, stack
+
+
+@dataclass(frozen=True)
+class CapabilityHookExerciseResult:
+    """Outcome of exercising a real ``CapabilityGuardMiddleware.process`` hook."""
+
+    allow_executions: int
+    deny_executions: int
+    denial_observed: bool
+    allowed_result: object
+
+
+async def exercise_capability_hook(ns: SimpleNamespace, guard) -> CapabilityHookExerciseResult:
+    """Drive ``guard.process`` through one real allow and one real deny.
+
+    Constructs a real ``safe_tool`` and a real ``dangerous_tool``, each backed
+    by an actual zero-arg Python function with its own execution counter,
+    wraps them as ``agent_framework.FunctionTool(..., func=...)``, builds real
+    ``FunctionInvocationContext`` objects, and drives each through
+    ``guard.process(context, call_next)`` where ``call_next`` invokes the tool
+    via ``FunctionTool.invoke(arguments={}, context=context,
+    skip_parsing=True)`` — the exact tool-execution path a real governed agent
+    takes when it decides to call a tool. This is the single source of truth
+    for the capability-hook exercise: ``check_capability_hook`` below and
+    ``live_t3_probe.py``'s live capability-hook check both call this helper
+    directly instead of duplicating the hook-exercise logic.
+    """
+    allow_executions = 0
+
+    def _safe_tool_fn() -> str:
+        nonlocal allow_executions
+        allow_executions += 1
+        return "safe-result"
+
+    deny_executions = 0
+
+    def _dangerous_tool_fn() -> str:
+        nonlocal deny_executions
+        deny_executions += 1
+        return "dangerous-result"
+
+    safe_tool = ns.FunctionTool(name="safe_tool", description="allowed probe tool", func=_safe_tool_fn)
+    dangerous_tool = ns.FunctionTool(
+        name="dangerous_tool", description="denied probe tool", func=_dangerous_tool_fn
+    )
+
+    allow_context = ns.FunctionInvocationContext(function=safe_tool, arguments={})
+
+    async def allow_call_next() -> None:
+        allow_context.result = await safe_tool.invoke(arguments={}, context=allow_context, skip_parsing=True)
+
+    await guard.process(allow_context, allow_call_next)
+
+    deny_context = ns.FunctionInvocationContext(function=dangerous_tool, arguments={})
+
+    async def deny_call_next() -> None:
+        deny_context.result = await dangerous_tool.invoke(
+            arguments={}, context=deny_context, skip_parsing=True
+        )
+
+    denial_observed = False
+    try:
+        await guard.process(deny_context, deny_call_next)
+    except ns.MiddlewareTermination:
+        denial_observed = True
+
+    return CapabilityHookExerciseResult(
+        allow_executions=allow_executions,
+        deny_executions=deny_executions,
+        denial_observed=denial_observed,
+        allowed_result=allow_context.result,
+    )
 
 
 async def check_capability_hook(ns: SimpleNamespace, guard) -> None:
     """Exercise the real CapabilityGuardMiddleware.process hook, allow and deny."""
-    safe_tool = ns.FunctionTool(name="safe_tool", description="allowed probe tool")
-    dangerous_tool = ns.FunctionTool(name="dangerous_tool", description="denied probe tool")
+    result = await exercise_capability_hook(ns, guard)
 
-    allow_executions = 0
-    allow_context = ns.FunctionInvocationContext(function=safe_tool, arguments={})
-
-    async def allow_call_next() -> None:
-        nonlocal allow_executions
-        allow_executions += 1
-        allow_context.result = "safe-result"
-
-    await guard.process(allow_context, allow_call_next)
-    if allow_context.result != "safe-result":
-        raise AssertionError(f"allowed function result was {allow_context.result!r}, expected 'safe-result'")
-
-    deny_executions = 0
-    deny_context = ns.FunctionInvocationContext(function=dangerous_tool, arguments={})
-
-    async def deny_call_next() -> None:
-        nonlocal deny_executions
-        deny_executions += 1
-
-    try:
-        await guard.process(deny_context, deny_call_next)
-    except ns.MiddlewareTermination:
-        pass
-    else:
+    if result.allowed_result != "safe-result":
+        raise AssertionError(f"allowed function result was {result.allowed_result!r}, expected 'safe-result'")
+    if not result.denial_observed:
         raise AssertionError("denied function did not raise MiddlewareTermination")
 
     # Assert the exact counts BEFORE printing the literal lines below — the
     # print statements are gated by real behavioral checks, not hardcoded
     # for their own sake.
-    if allow_executions != 1:
-        raise AssertionError(f"allowed function executed {allow_executions} times, expected exactly 1")
-    if deny_executions != 0:
-        raise AssertionError(f"denied function executed {deny_executions} times, expected exactly 0")
+    if result.allow_executions != 1:
+        raise AssertionError(f"allowed function executed {result.allow_executions} times, expected exactly 1")
+    if result.deny_executions != 0:
+        raise AssertionError(f"denied function executed {result.deny_executions} times, expected exactly 0")
     print("CAPABILITY_HOOK_ALLOW_EXECUTIONS=1")
     print("CAPABILITY_HOOK_DENY_EXECUTIONS=0")
     print("CAPABILITY_HOOK=PASS")
@@ -389,7 +452,7 @@ async def run_probe(ns: SimpleNamespace) -> None:
     await check_stub_response_shape(ns)
     check_policies(ns)
     check_audit_log(ns)
-    guard = build_factory_stack(ns)
+    guard, _audit_log, _stack = build_factory_stack(ns)
     await check_capability_hook(ns, guard)
     check_snippet_import(ns)
 
