@@ -17,7 +17,7 @@ description: >
   (use Azure AI Content Safety), eval scoring (use foundry-evals),
   telemetry pipeline wiring (use foundry-observability).
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit, in-process (Path A)
@@ -291,8 +291,13 @@ pinned, intervention points present, policy YAML discovered, audit
 fields in a verifier JSON, CI action SHA-pinned), call the canonical
 helper:
 
+Copy `references/python/capability_detector.py` verbatim into your
+consumer repo and put its containing directory on `PYTHONPATH` (or your
+equivalent package path) before importing it — the module ships as a
+standalone file, not an installable package:
+
 ```python
-from foundry_agt.capability_detector import detect
+from capability_detector import detect
 
 caps = detect(repo_root=".")
 # caps["version_detected"]               → str | None

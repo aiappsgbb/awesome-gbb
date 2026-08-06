@@ -17,7 +17,7 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
   - every current policy YAML (``../policies/*.yaml``) denies/allows the
     inputs SKILL.md documents, including all four SSN separator forms
   - ``AuditLog`` integrity verification and CloudEvents export both work
-  - the four-layer governance middleware factory stack assembles correctly
+  - the three-middleware governance factory stack assembles correctly
   - the real ``CapabilityGuardMiddleware.process`` hook allows exactly the
     allowed tool and denies exactly the denied tool
   - ``../maf-middleware-snippet.py``'s ``build_governed_agent`` factory
@@ -221,6 +221,44 @@ def check_policies(ns: SimpleNamespace) -> None:
             raise AssertionError(f"SSN format {ssn!r} was not denied: {decision.action!r}")
 
     print("POLICY_EVALUATION=PASS")
+
+    # hitl-gate.yaml: the real PolicyEvaluator._match_condition resolves each
+    # PolicyCondition.field as a LITERAL flat dict key via context.get(field)
+    # — it does NOT traverse nested dicts. So "tool_args.amount" in
+    # hitl-gate.yaml requires that exact dotted string as a context key, not
+    # a nested {"tool_args": {"amount": ...}} structure. Verified live
+    # against the real PolicyEvaluator before writing these assertions.
+    benign_lookup = evaluator.evaluate({"tool_name": "get_account_balance"})
+    if benign_lookup.action != "allow":
+        raise AssertionError(f"benign lookup tool was not allowed: {benign_lookup.action!r}")
+
+    write_tool = evaluator.evaluate({"tool_name": "send_email"})
+    if write_tool.action != "deny" or write_tool.reason != "HITL_REQUIRED:write-tool":
+        raise AssertionError(
+            "write tool was not HITL-gated: "
+            f"action={write_tool.action!r} reason={write_tool.reason!r}"
+        )
+
+    amount_over_threshold = evaluator.evaluate(
+        {"tool_name": "check_account_balance", "tool_args.amount": 5000}
+    )
+    if (
+        amount_over_threshold.action != "deny"
+        or amount_over_threshold.reason != "HITL_REQUIRED:amount-over-threshold"
+    ):
+        raise AssertionError(
+            "amount-over-threshold was not HITL-gated: "
+            f"action={amount_over_threshold.action!r} reason={amount_over_threshold.reason!r}"
+        )
+
+    pii_write = evaluator.evaluate({"tool_name": "patch_customer_record"})
+    if pii_write.action != "deny" or pii_write.reason != "HITL_REQUIRED:pii-write":
+        raise AssertionError(
+            "patch_customer_record was not HITL-gated: "
+            f"action={pii_write.action!r} reason={pii_write.reason!r}"
+        )
+
+    print("HITL_POLICY=PASS")
 
 
 def check_audit_log(ns: SimpleNamespace) -> None:
