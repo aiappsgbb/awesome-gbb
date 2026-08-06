@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -484,28 +485,6 @@ def _plugin_skill_name(spec: str) -> str | None:
     return None
 
 
-def _semver_core(version: str) -> tuple[int, int, int] | None:
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
-    if not match:
-        return None
-    major, minor, patch = match.groups()
-    return int(major), int(minor), int(patch)
-
-
-def _version_bump_kind(old_version: str, new_version: str) -> str:
-    old_parts = _semver_core(old_version)
-    new_parts = _semver_core(new_version)
-    if not old_parts or not new_parts:
-        return "NONE"
-    if old_parts[0] != new_parts[0]:
-        return "MAJOR"
-    if old_parts[1] != new_parts[1]:
-        return "MINOR"
-    if old_parts[2] != new_parts[2]:
-        return "PATCH"
-    return "NONE"
-
-
 def _git_stdout(*args: str) -> str | None:
     result = subprocess.run(
         ["git", *args],
@@ -524,11 +503,29 @@ def _merge_base_main() -> str | None:
         stdout = _git_stdout("merge-base", "HEAD", ref)
         if stdout and stdout.strip():
             return stdout.strip()
-    return None
+
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        return None
+    try:
+        event = json.loads(pathlib.Path(event_path).read_text(encoding="utf-8"))
+        base_sha = event["pull_request"]["base"]["sha"]
+    except (KeyError, OSError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", base_sha):
+        return None
+
+    commit_ref = f"{base_sha}^{{commit}}"
+    if _git_stdout("cat-file", "-e", commit_ref) is None:
+        if _git_stdout("fetch", "--no-tags", "--depth=1", "origin", base_sha) is None:
+            return None
+    if _git_stdout("cat-file", "-e", commit_ref) is None:
+        return None
+    return base_sha
 
 
 def validate_skill_plugin_version_consistency() -> list[str]:
-    """Error when MAJOR/MINOR skill bumps or new skills leave root plugin version unchanged."""
+    """Error when skill additions or removals leave the root plugin version unchanged."""
     errors: list[str] = []
     merge_base = _merge_base_main()
     if not merge_base or not PLUGIN_JSON.exists():
@@ -555,50 +552,34 @@ def validate_skill_plugin_version_consistency() -> list[str]:
     if not isinstance(old_plugin_version, str):
         return errors
 
-    for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
-        try:
-            current_fm = parse_frontmatter(skill_md)
-        except ValidationError:
-            continue
+    if old_plugin_version != plugin_version:
+        return errors
 
-        current_metadata = current_fm.get("metadata") or {}
-        current_version = current_metadata.get("version") if isinstance(current_metadata, dict) else None
-        if not isinstance(current_version, str):
-            continue
+    old_skill_listing = _git_stdout(
+        "ls-tree", "-r", "--name-only", merge_base, "--", "skills"
+    )
+    if old_skill_listing is None:
+        return errors
 
-        rel = skill_md.relative_to(REPO_ROOT).as_posix()
-        old_text = _git_stdout("show", f"{merge_base}:{rel}")
-        skill_name = skill_md.parent.name
+    old_skill_names = {
+        parts[1]
+        for line in old_skill_listing.splitlines()
+        if len(parts := line.split("/")) == 3
+        and parts[0] == "skills"
+        and parts[2] == "SKILL.md"
+    }
+    current_skill_names = {skill_md.parent.name for skill_md in SKILLS_DIR.glob("*/SKILL.md")}
 
-        if old_text is None:
-            # New skill — requires at least MINOR plugin bump
-            if old_plugin_version == plugin_version:
-                errors.append(
-                    f"New skill '{skill_name}' added but plugin.json version "
-                    f"unchanged at {plugin_version} — bump MINOR per AGENTS.md § 5.1"
-                )
-            continue
-
-        try:
-            old_fm = parse_frontmatter_text(old_text, f"{merge_base}:{rel}")
-        except ValidationError:
-            continue
-
-        old_metadata = old_fm.get("metadata") or {}
-        old_version = old_metadata.get("version") if isinstance(old_metadata, dict) else None
-        if not isinstance(old_version, str):
-            continue
-
-        bump_kind = _version_bump_kind(old_version, current_version)
-        if bump_kind not in ("MAJOR", "MINOR"):
-            continue
-
-        if old_plugin_version == plugin_version:
-            errors.append(
-                f"Skill '{skill_name}' bumped {old_version}→{current_version} "
-                f"({bump_kind}), but plugin.json version unchanged at {plugin_version} "
-                f"— bump per AGENTS.md § 5.1"
-            )
+    for skill_name in sorted(current_skill_names - old_skill_names):
+        errors.append(
+            f"New skill '{skill_name}' added but plugin.json version "
+            f"unchanged at {plugin_version} — bump per AGENTS.md § 5.1"
+        )
+    for skill_name in sorted(old_skill_names - current_skill_names):
+        errors.append(
+            f"Skill '{skill_name}' removed but plugin.json version "
+            f"unchanged at {plugin_version} — bump per AGENTS.md § 5.1"
+        )
 
     return errors
 

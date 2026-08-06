@@ -397,8 +397,11 @@ keywords.
 Marketplace.json **must** be updated whenever the plugin's version
 bumps — both `version` fields must match.
 
-There is no automation that enforces plugin version bumps (same as
-skills). Reviewers catch missing bumps.
+Automation requires the plugin version to change when a skill is added or
+removed and enforces equality with the marketplace version. It does not infer
+the exact bump magnitude or require a root plugin bump for changes to an
+existing skill's `metadata.version`; reviewers apply the table above to other
+catalog-level changes.
 
 ---
 
