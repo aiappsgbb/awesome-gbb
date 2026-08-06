@@ -30,7 +30,8 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
 
         changelog_index = body.find("## GBB Changelog")
         self.assertNotEqual(changelog_index, -1, "GBB Changelog heading not found")
-        active_body = body[:changelog_index].lower()
+        active_body_original = body[:changelog_index]
+        active_body = active_body_original.lower()
         for forbidden in (
             "## path b",
             "## path c",
@@ -39,8 +40,59 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "0.00% violation",
             "hitl-gate",
             "outbound text",
+            "assembles the following three middleware",
         ):
             self.assertNotIn(forbidden, active_body)
+
+        # CapabilityGuardMiddleware is conditional: upstream's factory only
+        # adds it to the stack when allowed_tools or denied_tools is not
+        # None (AuditTrail + GovernancePolicy are the only unconditional
+        # members). The active SKILL must say so precisely instead of
+        # claiming an unconditional three-item stack. Wording-robust,
+        # truth-specific: look for "only when" near CapabilityGuardMiddleware
+        # plus the deciding parameter names.
+        conditional_guard_pattern = re.compile(
+            r"capabilityguardmiddleware.{0,400}only when.{0,200}"
+            r"(allowed_tools|denied_tools)",
+            re.DOTALL,
+        )
+        self.assertRegex(
+            active_body,
+            conditional_guard_pattern,
+            "SKILL.md must describe CapabilityGuardMiddleware as "
+            "conditional on allowed_tools/denied_tools, not unconditional",
+        )
+
+        # Verification table: build_factory_stack proves middleware-type
+        # *membership* for a configured stack, never ordering; the
+        # check_snippet_import row is the one that proves the factory's
+        # preserved order plus allowed_tools=None/denied_tools=None
+        # default (no-guard) semantics. Locate each row precisely so the
+        # assertion is robust to prose wording but specific about which
+        # evidence function backs which claim.
+        factory_row_match = re.search(
+            r"^\|.*build_factory_stack.*\|\s*$",
+            active_body_original,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(
+            factory_row_match,
+            "no verification row cites contract_probe.py::build_factory_stack",
+        )
+        self.assertNotIn("order", factory_row_match.group(0).lower())
+
+        snippet_row_match = re.search(
+            r"^\|.*check_snippet_import.*\|\s*$",
+            active_body_original,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(
+            snippet_row_match,
+            "no verification row cites contract_probe.py::check_snippet_import",
+        )
+        snippet_row_lower = snippet_row_match.group(0).lower()
+        self.assertIn("order", snippet_row_lower)
+        self.assertIn("default", snippet_row_lower)
 
     def test_compliance_wording_is_precise(self) -> None:
         _, body = frontmatter(SKILL / "SKILL.md")
@@ -167,6 +219,35 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "denied_tools or []",
         ):
             self.assertNotIn(forbidden_substring, snippet)
+
+        # The snippet's docstring must not claim an unconditional
+        # three-middleware stack — CapabilityGuardMiddleware is only added
+        # by the factory when allowed_tools or denied_tools is not None,
+        # so the default (both None) is a two-middleware stack. Assertions
+        # are wording-robust but truth-specific: they anchor on the
+        # deciding parameter names and the "only when" conditionality, not
+        # exact prose.
+        self.assertNotIn(
+            "Returns a ready-to-run Agent with the three-middleware stack assembled",
+            snippet,
+        )
+        conditional_guard_in_snippet = re.compile(
+            r"capabilityguard.{0,300}only when.{0,200}"
+            r"(allowed_tools|denied_tools)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        self.assertRegex(
+            snippet,
+            conditional_guard_in_snippet,
+            "snippet docstring must describe the capability guard as "
+            "conditional, not an unconditional three-middleware stack",
+        )
+        self.assertRegex(
+            snippet,
+            re.compile(r"two.{0,40}middleware", re.IGNORECASE),
+            "snippet docstring must describe the always-on two-middleware "
+            "baseline (AuditTrail + GovernancePolicy)",
+        )
 
     def test_unsupported_sidecar_is_removed(self) -> None:
         sidecar_path = SKILL / "references" / "aca-sidecar-snippet.bicep"
