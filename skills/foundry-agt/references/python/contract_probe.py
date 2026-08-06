@@ -95,7 +95,7 @@ def check_imports() -> SimpleNamespace:
         Message,
         MiddlewareTermination,
     )
-    from agent_framework_foundry import FoundryChatClient
+    from agent_framework.foundry import FoundryChatClient
     from agent_os.integrations.maf_adapter import (
         AuditTrailMiddleware,
         CapabilityGuardMiddleware,
