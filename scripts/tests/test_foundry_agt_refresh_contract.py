@@ -640,7 +640,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         #    this check is NOT proof of anything about real v4 audit
         #    attribution.
         #
-        # 2. assert_v4_audit_attribution / SNIPPET_V4_AUDIT_ATTRIBUTION=PASS
+        # 2. assert_v4_audit_attribution / SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS
         #    is the real v4 AUDIT-BEHAVIOUR proof: driving the real
         #    GovernancePolicyMiddleware.process (legacy v4, since
         #    kernel=None) with a dedicated AuditLog and asserting the
@@ -764,6 +764,8 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "len(policy_middlewares) != 1",
             "audit_log",
             "policy_middleware.audit_log is not audit_log",
+            "expected_name",
+            "agent.name != expected_name",
             "export_cloudevents",
             "AgentContext",
             "Message(",
@@ -771,7 +773,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "calls != 1",
             "policy_evaluation",
             "ai.agentmesh.policy.evaluation",
-            "agent.name",
+            'event["source"] != expected_name',
             "_process_v4",
         ):
             self.assertIn(
@@ -781,7 +783,74 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
                 "GovernancePolicyMiddleware.process hook with a dedicated "
                 "AuditLog, a real AgentContext/Message, a counting "
                 "call_next, and inspect the newly emitted CloudEvent's "
-                f"type/source — missing {required_symbol!r}",
+                "type/source against an explicit expected_name literal — "
+                f"missing {required_symbol!r}",
+            )
+
+        # assert_v4_audit_attribution must take an explicit expected_name
+        # parameter and assert it against BOTH the returned Agent's own
+        # .name attribute and the emitted CloudEvent's source
+        # INDEPENDENTLY — never by comparing the CloudEvent source to
+        # agent.name itself (a self-referential compare that can't catch
+        # either field drifting away from what the caller actually
+        # requested, e.g. if a construction bug renames the returned
+        # Agent post-hoc while the audit trail still faithfully echoes
+        # that same, already-wrong, agent.name).
+        self.assertRegex(
+            v4_audit_helper_source,
+            r"async def assert_v4_audit_attribution\(\s*"
+            r"ns: SimpleNamespace,\s*agent: object,\s*audit_log: object,\s*"
+            r"expected_name: str,?\s*\)",
+            "assert_v4_audit_attribution must declare an explicit "
+            "expected_name: str parameter",
+        )
+        self.assertNotIn(
+            'event["source"] != agent.name',
+            v4_audit_helper_source,
+            "assert_v4_audit_attribution must not compare the emitted "
+            "CloudEvent source against agent.name — that self-referential "
+            "compare cannot catch agent.name itself having drifted away "
+            "from the caller's requested expected_name; compare against "
+            "the explicit expected_name literal instead",
+        )
+
+        # The helper's own docstring must document the empirical,
+        # fresh-venv confirmation that the real installed 4.1.0
+        # GovernancePolicyMiddleware stores audit_log as a genuine PUBLIC
+        # instance attribute — not a defensive getattr(..., None) /
+        # hasattr(...) fallback for an attribute that might not exist.
+        # This is what licenses the direct
+        # "policy_middleware.audit_log is not audit_log" attribute read
+        # above as a real proof rather than an optimistic guess.
+        for required_empirical_symbol in (
+            "public instance attribute",
+            "self.audit_log = audit_log",
+            "inspect.getsource",
+            "fresh venv",
+            "not a defensive fallback",
+        ):
+            self.assertIn(
+                required_empirical_symbol,
+                v4_audit_helper_source,
+                "assert_v4_audit_attribution's docstring must document the "
+                "empirical, fresh-venv confirmation (via inspect.getsource "
+                "on the real installed 4.1.0 "
+                "GovernancePolicyMiddleware.__init__) that .audit_log is a "
+                "genuine public instance attribute, not a defensive "
+                f"fallback — missing {required_empirical_symbol!r}",
+            )
+        for forbidden_defensive_symbol in (
+            'getattr(policy_middleware, "audit_log"',
+            'hasattr(policy_middleware, "audit_log")',
+        ):
+            self.assertNotIn(
+                forbidden_defensive_symbol,
+                v4_audit_helper_source,
+                "assert_v4_audit_attribution must not defensively guard "
+                f"the audit_log attribute access with {forbidden_defensive_symbol!r} "
+                "— it is a confirmed-public, always-present attribute on "
+                "the real installed 4.1.0 class, so a direct read is the "
+                "correct, non-defensive form",
             )
 
         # The v4 audit helper must claim only the observable contract
@@ -843,13 +912,19 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             )
 
             call_match = re.search(
-                r"assert_v4_audit_attribution\(ns,\s*\w+,\s*" + re.escape(audit_log_var) + r"\)",
+                r"assert_v4_audit_attribution\(ns,\s*\w+,\s*"
+                + re.escape(audit_log_var)
+                + r",\s*"
+                + re.escape(f'"{expected_name}"')
+                + r"\)",
                 local_probe,
             )
             self.assertIsNotNone(
                 call_match,
                 "assert_v4_audit_attribution must be called with the "
-                f"dedicated {audit_log_var!r} for {expected_name!r}",
+                f"dedicated {audit_log_var!r} AND the exact literal "
+                f"expected_name {expected_name!r} — not derived from "
+                "agent.name or any other indirection",
             )
             v4_audit_call_indices.append(call_match.start())
 
@@ -921,18 +996,25 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         # GovernancePolicyMiddleware/AuditLog instances that mirror the
         # real _process_v4 audit-logging behaviour this proof depends on
         # (append one CloudEvent-shaped dict per allowed message, call
-        # call_next once).
+        # call_next once). The helper takes an explicit expected_name
+        # literal and asserts it against BOTH the returned Agent's own
+        # .name attribute and the emitted CloudEvent's source
+        # INDEPENDENTLY of each other — never by comparing the CloudEvent
+        # source to agent.name itself.
         assert_v4_audit = foundry_agt_contract_probe.assert_v4_audit_attribution
         v4_stub_ns = _stub_v4_ns()
 
-        # Passing case: the CloudEvent this construction's own dedicated
-        # AuditLog receives really is attributed to this agent's own name.
+        # Passing case: both the Agent's own .name attribute and the
+        # CloudEvent this construction's own dedicated AuditLog receives
+        # are really attributed to the requested expected_name.
         passing_audit_log = _StubAuditLog()
         passing_agent = _stub_agent(
             _StubV4GovernancePolicyMiddleware(passing_audit_log, emitted_source="v4-audit-probe")
         )
         passing_agent.name = "v4-audit-probe"
-        asyncio.run(assert_v4_audit(v4_stub_ns, passing_agent, passing_audit_log))
+        asyncio.run(
+            assert_v4_audit(v4_stub_ns, passing_agent, passing_audit_log, "v4-audit-probe")
+        )
 
         # The literal real-world defect this proof exists to catch: the
         # dedicated AuditLog was never threaded through to this
@@ -945,34 +1027,73 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         unwired_agent.name = "unwired-probe"
         with self.assertRaises(AssertionError) as unwired_ctx:
-            asyncio.run(assert_v4_audit(v4_stub_ns, unwired_agent, unwired_audit_log))
+            asyncio.run(
+                assert_v4_audit(v4_stub_ns, unwired_agent, unwired_audit_log, "unwired-probe")
+            )
         self.assertIn("dedicated AuditLog", str(unwired_ctx.exception))
 
-        # The real bug this whole proof guards against: attribution to
-        # something other than agent.name (e.g. a constructor keyword).
-        mismatched_audit_log = _StubAuditLog()
-        mismatched_agent = _stub_agent(
-            _StubV4GovernancePolicyMiddleware(mismatched_audit_log, emitted_source="maf-agent")
+        # Emitted-SOURCE drift, INDEPENDENT of agent-name drift: the
+        # returned Agent's own .name attribute genuinely equals the
+        # requested expected_name, but the CloudEvent 'source' this
+        # construction's GovernancePolicyMiddleware emitted attributes the
+        # decision to something else entirely (e.g. a constructor keyword
+        # default). This must fail even though agent.name itself is
+        # perfectly correct — proving the source check is real and not
+        # short-circuited by a passing name check.
+        source_drift_audit_log = _StubAuditLog()
+        source_drift_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(source_drift_audit_log, emitted_source="maf-agent")
         )
-        mismatched_agent.name = "mismatch-probe"
-        with self.assertRaises(AssertionError) as source_mismatch_ctx:
-            asyncio.run(assert_v4_audit(v4_stub_ns, mismatched_agent, mismatched_audit_log))
-        source_mismatch_message = str(source_mismatch_ctx.exception)
-        self.assertIn("maf-agent", source_mismatch_message)
-        self.assertIn("mismatch-probe", source_mismatch_message)
+        source_drift_agent.name = "mismatch-probe"
+        with self.assertRaises(AssertionError) as source_drift_ctx:
+            asyncio.run(
+                assert_v4_audit(
+                    v4_stub_ns, source_drift_agent, source_drift_audit_log, "mismatch-probe"
+                )
+            )
+        source_drift_message = str(source_drift_ctx.exception)
+        self.assertIn("maf-agent", source_drift_message)
+        self.assertIn("mismatch-probe", source_drift_message)
         self.assertNotIn(
             "never from GovernancePolicyMiddleware._agent_id",
-            source_mismatch_message,
+            source_drift_message,
             "assert_v4_audit_attribution failure message must not make a "
             "differential claim about the internal source field",
         )
+
+        # Returned-AGENT-NAME drift, INDEPENDENT of source drift: the
+        # emitted CloudEvent 'source' faithfully matches the (already
+        # drifted) Agent.name — so a self-referential
+        # `event["source"] != agent.name` compare would see them "agree"
+        # and never notice anything wrong — but the Agent's own .name
+        # attribute has drifted away from the literal expected_name the
+        # caller actually requested from build_governed_agent. The helper
+        # must catch this by comparing agent.name against the
+        # caller-supplied expected_name directly, never against the
+        # (possibly also-wrong) emitted source.
+        name_drift_audit_log = _StubAuditLog()
+        name_drift_agent = _stub_agent(
+            _StubV4GovernancePolicyMiddleware(name_drift_audit_log, emitted_source="drifted-probe")
+        )
+        name_drift_agent.name = "drifted-probe"
+        with self.assertRaises(AssertionError) as name_drift_ctx:
+            asyncio.run(
+                assert_v4_audit(
+                    v4_stub_ns, name_drift_agent, name_drift_audit_log, "requested-probe"
+                )
+            )
+        name_drift_message = str(name_drift_ctx.exception)
+        self.assertIn("drifted-probe", name_drift_message)
+        self.assertIn("requested-probe", name_drift_message)
 
         # Exactly-one requirement, same as the identity helper: zero
         # GovernancePolicyMiddleware present.
         zero_mw_agent = _stub_agent()
         zero_mw_agent.name = "zero-mw-probe"
         with self.assertRaises(AssertionError):
-            asyncio.run(assert_v4_audit(v4_stub_ns, zero_mw_agent, _StubAuditLog()))
+            asyncio.run(
+                assert_v4_audit(v4_stub_ns, zero_mw_agent, _StubAuditLog(), "zero-mw-probe")
+            )
 
         # Exactly-one requirement: more than one GovernancePolicyMiddleware
         # present must also fail.
@@ -983,7 +1104,9 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         two_middleware_agent.name = "dup-probe"
         with self.assertRaises(AssertionError):
-            asyncio.run(assert_v4_audit(v4_stub_ns, two_middleware_agent, shared_log))
+            asyncio.run(
+                assert_v4_audit(v4_stub_ns, two_middleware_agent, shared_log, "dup-probe")
+            )
 
         # call_next must be called exactly once for a benign message.
         no_call_next_log = _StubAuditLog()
@@ -994,7 +1117,11 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         no_call_next_agent.name = "no-call-next-probe"
         with self.assertRaises(AssertionError) as no_call_next_ctx:
-            asyncio.run(assert_v4_audit(v4_stub_ns, no_call_next_agent, no_call_next_log))
+            asyncio.run(
+                assert_v4_audit(
+                    v4_stub_ns, no_call_next_agent, no_call_next_log, "no-call-next-probe"
+                )
+            )
         self.assertIn("call_next", str(no_call_next_ctx.exception))
 
         # Exactly one newly emitted CloudEvent is required — zero or two
@@ -1007,7 +1134,11 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         zero_events_agent.name = "zero-events-probe"
         with self.assertRaises(AssertionError):
-            asyncio.run(assert_v4_audit(v4_stub_ns, zero_events_agent, zero_events_log))
+            asyncio.run(
+                assert_v4_audit(
+                    v4_stub_ns, zero_events_agent, zero_events_log, "zero-events-probe"
+                )
+            )
 
         two_events_log = _StubAuditLog()
         two_events_agent = _stub_agent(
@@ -1017,7 +1148,9 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         )
         two_events_agent.name = "two-events-probe"
         with self.assertRaises(AssertionError):
-            asyncio.run(assert_v4_audit(v4_stub_ns, two_events_agent, two_events_log))
+            asyncio.run(
+                assert_v4_audit(v4_stub_ns, two_events_agent, two_events_log, "two-events-probe")
+            )
 
         for expected_substring in (
             "FoundryChatClient",
