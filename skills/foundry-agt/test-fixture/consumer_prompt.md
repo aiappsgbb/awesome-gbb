@@ -57,9 +57,18 @@ echo "skills/foundry-agt/SKILL.md"
 ## Step 0 — Auth context (show, do not assert)
 
 Print the auth context for the run log only. Do NOT gate flow on the `az`
-CLI cache — Copilot CLI subshells don't reliably inherit `~/.azure/`, and
-the real gate for this smoke is `DefaultAzureCredential` acquiring a real
-token in Step 2 (AGENTS.md § 9.7 Pattern 17).
+CLI cache here — `azure/login@v2` populates a runner-level CLI cache that
+Copilot CLI tool subshells do not reliably inherit, and
+`AZURE_FEDERATED_TOKEN_FILE` does not inherit into this subshell either.
+The deterministic gate for this smoke is the explicit, same-subshell OIDC
+token exchange and `az login --service-principal --federated-token` that
+Step 2's own script performs immediately before it runs the probes — that
+is what makes `DefaultAzureCredential` deterministically reach
+`AzureCliCredential` in Step 2's process (AGENTS.md § 9.7 Pattern 17). The
+runner-level `ACTIONS_ID_TOKEN_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN`
+pair DOES inherit into this subshell (GHA sets them on the parent process
+whenever `id-token: write` is in job permissions), which is what Step 2's
+exchange consumes.
 
 ```bash
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
@@ -67,22 +76,35 @@ echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
 echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
 echo "FOUNDRY_MODEL_DEPLOYMENT=${FOUNDRY_MODEL_DEPLOYMENT:+set}"
-az account show --output table || echo "(az cache not inherited — DefaultAzureCredential uses the OIDC environment)"
+echo "ACTIONS_ID_TOKEN_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:+set}"
+echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+set}"
+az account show --output table || echo "(az cache not inherited — Step 2 performs its own explicit same-subshell OIDC exchange)"
 ```
 
-All five lines above MUST print `...=set`. If any prints empty, the
-workflow's `env:` block is broken (Pattern 11) — that is a workflow bug,
-not a skill bug. In that case go straight to Step 2's failure path with
-reason `auth context missing: <var-name>`.
+All seven lines above MUST print `...=set`. If any prints empty, the
+workflow's `env:` block or `id-token: write` permission is broken
+(Pattern 11) — that is a workflow bug, not a skill bug. In that case go
+straight to Step 2's failure path with reason
+`auth context missing: <var-name>`.
 
 ---
 
 ## Step 1 — What Step 2 proves
 
-The single Bash tool call in Step 2 builds a throwaway virtualenv, installs
-the exact pinned package set the skill documents, and runs the skill's two
-canonical reference probes straight through, in order:
+The single Bash tool call in Step 2 first establishes a real Azure CLI
+login in its own subshell via an explicit GitHub OIDC token exchange (see
+below), then builds a throwaway virtualenv, installs the exact pinned
+package set the skill documents, and runs the skill's two canonical
+reference probes straight through, in order:
 
+0. **Explicit same-subshell OIDC exchange** — fetch a real GitHub Actions
+   OIDC JSON Web Token from the runner's `ACTIONS_ID_TOKEN_REQUEST_URL`
+   for the `api://AzureADTokenExchange` audience, then
+   `az login --service-principal --federated-token` with that token. This
+   populates the Azure CLI's token cache inside this exact Bash subshell —
+   the same subshell the two probes below run in — so
+   `DefaultAzureCredential` deterministically reaches `AzureCliCredential`
+   when the probes construct their own credential.
 1. `skills/foundry-agt/references/python/contract_probe.py` — the
    no-network structural contract: exact pinned package versions, the
    `agent-governance-toolkit` factory stack wiring, the real
@@ -132,6 +154,28 @@ set -Eeuo pipefail
 trap on_error ERR
 
 cd "$GITHUB_WORKSPACE"
+
+# Explicit same-subshell OIDC exchange (mandatory, fail-closed). azure/login@v2
+# authenticates only the runner's own process/CLI cache; Copilot CLI tool
+# subshells do not reliably inherit that cache, and AZURE_FEDERATED_TOKEN_FILE
+# does not inherit either. ACTIONS_ID_TOKEN_REQUEST_URL and
+# ACTIONS_ID_TOKEN_REQUEST_TOKEN DO inherit (GHA sets them on the parent
+# process whenever `id-token: write` is in job permissions), so this fetches
+# a real GitHub OIDC token and logs it into the Azure CLI cache inside THIS
+# exact subshell -- the same subshell the probes below run in.
+test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+OIDC_TOKEN=$(curl --fail --silent --show-error \
+  -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+  | jq -er .value)
+az login --service-principal \
+  --username "$AZURE_CLIENT_ID" \
+  --tenant "$AZURE_TENANT_ID" \
+  --federated-token "$OIDC_TOKEN" \
+  --output none
+unset OIDC_TOKEN
+
 : > "$EVIDENCE"
 
 python3 -m venv .venv-foundry-agt-t3
@@ -155,15 +199,20 @@ trap - ERR
 printf '_MOKE_RESULT=PASS\n' | sed 's/^_/S/' > "$MARKER"
 ```
 
-`set -Eeuo pipefail` plus the `ERR` trap means: if venv creation, the pip
-install, `pip check`, or either probe exits non-zero — `pipefail` makes a
-failure anywhere in a `... | tee -a` pipeline propagate even though `tee`
-itself always exits 0 — the trap fires immediately, writes the obfuscated
-FAIL line with the real exit code, and re-raises that same exit code. The
-PASS line at the very end is reached only if every command above it,
-including both probes, exited 0. Do not add a broad `try/catch` or `|| true`
-anywhere in this script that would swallow a failure before the trap sees
-it.
+`set -Eeuo pipefail` plus the `ERR` trap means: if the OIDC token fetch,
+`az login`, venv creation, the pip install, `pip check`, or either probe
+exits non-zero — `pipefail` makes a failure anywhere in a `curl | jq` or
+`... | tee -a` pipeline propagate even though `tee` itself always exits 0
+— the trap fires immediately, writes the obfuscated FAIL line with the
+real exit code, and re-raises that same exit code. There is no fallback
+or skip path for the OIDC exchange: if `ACTIONS_ID_TOKEN_REQUEST_URL` /
+`ACTIONS_ID_TOKEN_REQUEST_TOKEN` are unset, the token fetch fails, or
+`az login` rejects the federated token, the script fails closed right
+there — it does NOT fall through to a degraded credential path. The PASS
+line at the very end is reached only if every command above it, including
+the OIDC exchange and both probes, exited 0. Do not add a broad
+`try/catch` or `|| true` anywhere in this script that would swallow a
+failure before the trap sees it.
 
 The marker file is single-source-of-truth. Do not print the marker token
 anywhere else in your reply — no echoes, no summaries, no fenced code

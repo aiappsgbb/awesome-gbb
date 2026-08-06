@@ -207,12 +207,22 @@ def check_exact_pinned_versions() -> None:
 async def acquire_entra_token(cleanup: AsyncExitStack):
     """Construct a real async DefaultAzureCredential and acquire a real token.
 
-    Uses the workflow-provided OIDC environment contract (AZURE_CLIENT_ID /
-    AZURE_TENANT_ID / the federated-token env DefaultAzureCredential's own
-    WorkloadIdentityCredential step reads) implicitly -- DefaultAzureCredential
-    reads these from the environment itself; this probe passes no explicit
-    kwargs so it takes the same code path a real consumer following SKILL.md
-    would. Never prints the token itself.
+    This probe passes no explicit kwargs, so it takes the same
+    ``DefaultAzureCredential`` code path a real consumer following SKILL.md
+    would -- the credential chain, not a hardcoded credential type. In THIS
+    execution context (a Copilot CLI tool-call subshell inside the
+    ``copilot-cli-matrix`` job), the deterministic link in that chain is
+    ``AzureCliCredential``: the fixture's own Step 2 Bash script performs an
+    explicit ``az login --service-principal --federated-token`` in this
+    exact same subshell, immediately before this probe runs, which is what
+    populates the Azure CLI token cache ``AzureCliCredential`` reads.
+    ``AZURE_FEDERATED_TOKEN_FILE`` does NOT inherit into this subshell (the
+    ``azure/login@v2`` step sets it only in its own process), so
+    ``WorkloadIdentityCredential`` -- earlier in ``DefaultAzureCredential``'s
+    chain -- is not the reachable link here; the explicit same-subshell
+    ``az login`` above is what makes the fallback to ``AzureCliCredential``
+    deterministic instead of dependent on ambient runner state. Never prints
+    the token itself.
 
     ``credential.close`` is registered on the shared ``cleanup`` stack
     immediately after construction and BEFORE ``get_token`` is awaited, so a
