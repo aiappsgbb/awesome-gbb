@@ -199,6 +199,19 @@ Two starter policies ship in
 | `default.yaml` | Conservative default — blocks destructive SQL / shell-exec patterns, caps message length |
 | `pii-deny.yaml` | Regex PII guardrail (SSN, credit card, IBAN) on **inbound message text only** |
 
+`pii-deny.yaml`'s `block-us-ssn` rule accepts hyphen, space, dot, or no
+separator at all between digit groups. That last, unseparated form is
+indistinguishable from any other standalone 9-digit number
+(order/invoice IDs) or from a ZIP+4 code with its hyphen stripped, so
+it can false-positive/false-deny on either. This is not cosmetic: a
+deny terminates the message path (`GovernancePolicyMiddleware.process`
+raises `MiddlewareTermination` before the agent ever sees it), and
+`load_policies(...)` loads every file in the default policy directory
+— including pii-deny.yaml — so this rule is active by default the
+moment you load the starter policies. Tune or drop `block-us-ssn`
+before production and pair it with a real classifier / Azure AI
+Content Safety rather than relying on this regex alone.
+
 `GovernancePolicyMiddleware`'s evaluation context is the flat
 `{agent, message, timestamp, stream, message_count}` dict described
 above — it is built from the inbound *message text*, never from
@@ -418,6 +431,14 @@ shape with `detection_confidence: 0.0`.
   rules and `pii-deny.yaml`'s outbound `field: response` rule could
   never match in the real runtime — `hitl-gate.yaml` is deleted and
   `pii-deny.yaml` is now documented as inbound-message-text-only.
+  `pii-deny.yaml`'s `block-us-ssn` rule also broadened from a
+  hyphen-only match to accept hyphen, space, dot, or no separator at
+  all between digit groups; this release adds an explicit disclosure,
+  in both the policy file and this skill's "Policy YAML" section, that
+  the unseparated form false-positives/false-denies on any standalone
+  9-digit number (order/invoice IDs) and on ZIP+4 codes, and that the
+  rule should be tuned or dropped before production and paired with a
+  real classifier / Azure AI Content Safety.
   `maf-middleware-snippet.py`'s `allowed_tools` / `denied_tools`
   handling no longer coerces `None` (no allowlist) to `[]` (deny-all)
   via `or []`, and the factory's `GovernancePolicyMiddleware` is spliced

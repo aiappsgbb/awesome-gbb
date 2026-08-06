@@ -23,6 +23,15 @@ description: |
 defaults:
   action: allow
 rules:
+  # FALSE-POSITIVE DISCLOSURE: every separator below is optional, so this
+  # rule also matches the fully unseparated 9-digit run -- the same shape
+  # as any other standalone 9-digit number (order/invoice IDs) or a ZIP+4
+  # code with its hyphen stripped. The middleware fails closed: a deny
+  # raises MiddlewareTermination and blocks the message before the agent
+  # ever sees it, so an unseparated false positive is a false DENY, not
+  # just a false flag. Tune or remove this rule before production and
+  # pair it with a real classifier / Azure AI Content Safety rather than
+  # relying on this regex alone.
   - name: block-us-ssn
     priority: 100
     condition:
