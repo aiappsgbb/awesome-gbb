@@ -30,13 +30,12 @@ against the REAL installed packages — no mocks of AGT or MAF internals — tha
     with zero ``call_next`` calls for the destructive-SQL and inbound-SSN
     policy patterns
   - the same real ``GovernancePolicyMiddleware.process`` hook's legacy v4
-    AUDIT attribution — driven with a dedicated ``AuditLog`` bound to each
-    of the snippet's four canonical constructions — really does log the
-    resulting CloudEvent's ``source`` (serialized from
-    ``AuditEntry.agent_did``) as that construction's own ``Agent.name``,
-    never as the constructor's ``agent_id``/``._agent_id`` keyword (v5-only
-    forward-compat metadata the legacy v4 path this skill actually
-    exercises never reads)
+    AUDIT event source — driven with a dedicated ``AuditLog`` bound to each
+    of the snippet's four canonical constructions — really does equal that
+    construction's own requested agent name (serialized from
+    ``AuditEntry.agent_did`` into the CloudEvent ``source`` field); since
+    ``agent_id`` equals ``name`` in every construction this skill builds,
+    this probe cannot discriminate which equal internal field upstream reads
   - the real ``CapabilityGuardMiddleware.process`` hook allows exactly the
     allowed tool and denies exactly the denied tool
   - calling ``../maf-middleware-snippet.py``'s ``build_governed_agent`` with
@@ -749,24 +748,26 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
 
     print("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS")
     print("SNIPPET_POLICY_ID_FORWARD_COMPAT=PASS")
-    print("SNIPPET_V4_AUDIT_ATTRIBUTION=PASS")
+    print("SNIPPET_V4_AUDIT_REQUESTED_NAME=PASS")
 
 
 async def assert_v4_audit_attribution(
     ns: SimpleNamespace, agent: object, audit_log: object
 ) -> None:
     """Drive the real legacy-v4 GovernancePolicyMiddleware.process hook and
-    prove the CloudEvent it emits attributes the policy decision to
-    ``agent.name`` — never to the constructor's own ``agent_id``/
-    ``._agent_id`` keyword.
+    prove the CloudEvent it emits sets ``source`` to the requested agent name.
 
-    This is a genuine v4 AUDIT-BEHAVIOUR proof, and a SEPARATE, unrelated
-    concern from ``assert_policy_middleware_agent_identity`` above. That
-    helper only guards a v5 forward-compat CONSTRUCTION contract (the
-    ``kernel=``-only ``._agent_id`` attribute this skill's ``kernel=None``
-    legacy v4 construction never reads) — it is irrelevant to what today's
-    real audit output actually attributes a decision to. This helper is
-    the real proof of that instead.
+    Observable contract: the CloudEvent ``source`` field (serialized from
+    ``AuditEntry.agent_did``) equals the requested agent name passed into
+    ``build_governed_agent`` — for all four canonical snippet constructions.
+
+    IMPORTANT — scope of this proof: since ``agent_id`` equals ``name`` in
+    every construction this skill builds, this helper verifies the observable
+    output only. It cannot discriminate which equal internal field upstream
+    reads (whether ``_process_v4`` resolves the name from ``context.agent.name``,
+    from ``self._agent_id``, or any other equal source). See
+    ``assert_policy_middleware_agent_identity`` for the separate v5
+    forward-compat ``_agent_id`` construction contract.
 
     Empirically re-verified against the real installed 4.1.0
     ``agent_os.integrations.maf_adapter.GovernancePolicyMiddleware._process_v4``
@@ -774,12 +775,9 @@ async def assert_v4_audit_attribution(
     ``GovernancePolicyMiddleware`` this skill constructs passes
     ``evaluator=`` and never ``kernel=``, so ``.process()`` always
     dispatches to ``_process_v4`` — never ``_process_v5``, the only method
-    that reads ``self._agent_id``. ``_process_v4`` instead resolves
-    ``agent_name = getattr(context.agent, "name", "unknown")`` and, on
-    allow, calls ``audit_log.log(event_type="policy_evaluation",
-    agent_did=agent_name, ...)``. ``AuditEntry.to_cloudevent()`` then
-    serializes ``agent_did`` as the CloudEvents ``source`` field and
-    ``event_type`` as CloudEvents ``type`` (``"policy_evaluation"`` ->
+    that reads ``self._agent_id``. ``_process_v4`` resolves the agent name
+    and serializes it into the CloudEvent ``source`` via
+    ``AuditEntry.to_cloudevent()`` (``"policy_evaluation"`` ->
     ``"ai.agentmesh.policy.evaluation"``).
 
     Requires the caller to have constructed ``agent`` with THIS
@@ -789,8 +787,7 @@ async def assert_v4_audit_attribution(
     isolated by a before/after ``export_cloudevents()`` delta for real
     inspection, not shared with any other construction's events or with
     ``CapabilityGuardMiddleware`` (which always logs
-    ``agent_did="capability-guard"`` regardless of its own ``._agent_id``
-    and is unrelated to this proof).
+    ``agent_did="capability-guard"`` and is unrelated to this proof).
     """
     policy_middlewares = [
         middleware
@@ -846,11 +843,11 @@ async def assert_v4_audit_attribution(
         )
     if event["source"] != agent.name:
         raise AssertionError(
-            "real v4 audit attribution failed — the CloudEvent 'source' "
-            "field (serialized from AuditEntry.agent_did) was "
-            f"{event['source']!r}, expected agent.name {agent.name!r}: "
-            "legacy v4 audit attribution comes from context.agent.name, "
-            "never from GovernancePolicyMiddleware._agent_id"
+            "legacy-v4 policy audit event source does not equal the "
+            f"requested agent name — the CloudEvent 'source' field "
+            f"(serialized from AuditEntry.agent_did) was "
+            f"{event['source']!r}, expected requested agent name "
+            f"{agent.name!r}"
         )
 
 
