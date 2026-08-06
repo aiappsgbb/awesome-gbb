@@ -109,7 +109,7 @@ reference probes straight through, in order:
    no-network structural contract: exact pinned package versions, the
    `agent-governance-toolkit` factory stack wiring, the real
    `FunctionTool`/capability-hook allow-then-deny path, the `AuditLog`
-   hash-chain round-trip, and the `agt doctor` / `agt verify` CLI surface.
+   hash-chain round-trip, and the stub-response policy chain.
 2. `skills/foundry-agt/references/python/live_t3_probe.py` — the live T3
    proof against real Azure: an explicit async `DefaultAzureCredential`
    token acquisition for `https://ai.azure.com/.default`, a real
