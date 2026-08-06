@@ -649,6 +649,90 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         self.assertEqual(policy.count(expected), 1)
         self.assertNotIn("field: response", policy)
 
+        # The approved regex's `[\s.-]?` separators are each optional, so
+        # the rule also matches the fully unseparated digit run. That form
+        # is indistinguishable from any other standalone 9-digit number
+        # (order/invoice IDs) and from a ZIP+4 code once its separator is
+        # stripped -- both collapse into the same nine contiguous digits
+        # the regex accepts. This is a false-positive/false-deny class the
+        # policy file must disclose immediately, not a hypothetical.
+        false_positive_pattern = re.compile(
+            r"unseparated.{0,400}"
+            r"(standalone|any).{0,80}9-digit.{0,250}"
+            r"zip\+4",
+            re.DOTALL,
+        )
+        policy_lower = policy.lower()
+        self.assertRegex(
+            policy_lower,
+            false_positive_pattern,
+            "pii-deny.yaml must disclose that the unseparated SSN form "
+            "false-positives/false-denies on any standalone 9-digit "
+            "number and on ZIP+4 codes",
+        )
+        self.assertRegex(
+            policy_lower,
+            re.compile(
+                r"tune.{0,60}(or|/).{0,60}remove.{0,120}before production",
+                re.DOTALL,
+            ),
+            "pii-deny.yaml must instruct tuning or removing block-us-ssn "
+            "before production",
+        )
+        self.assertRegex(
+            policy_lower,
+            re.compile(r"(real )?classifier.{0,80}content safety", re.DOTALL),
+            "pii-deny.yaml must instruct pairing with a real classifier / "
+            "Content Safety",
+        )
+
+        # The same disclosure must reach a consumer who only ever reads
+        # SKILL.md's active (pre-changelog) policy guidance and never
+        # opens the YAML directly.
+        _, skill_body = frontmatter(SKILL / "SKILL.md")
+        changelog_index = skill_body.find("## GBB Changelog")
+        self.assertNotEqual(changelog_index, -1, "GBB Changelog heading not found")
+        active_skill_body = skill_body[:changelog_index].lower()
+
+        self.assertRegex(
+            active_skill_body,
+            false_positive_pattern,
+            "SKILL.md's active policy guidance must disclose that the "
+            "unseparated SSN form false-positives/false-denies on any "
+            "standalone 9-digit number and on ZIP+4 codes",
+        )
+        self.assertRegex(
+            active_skill_body,
+            re.compile(
+                r"tune.{0,60}(or|/).{0,60}drop.{0,120}before production",
+                re.DOTALL,
+            ),
+            "SKILL.md must instruct consumers to tune or drop the SSN "
+            "rule before production",
+        )
+        self.assertRegex(
+            active_skill_body,
+            re.compile(r"(real )?classifier.{0,80}content safety", re.DOTALL),
+            "SKILL.md must instruct pairing with a real classifier / "
+            "Content Safety",
+        )
+        self.assertRegex(
+            active_skill_body,
+            re.compile(
+                r"pii-deny\.yaml.{0,200}default.{0,60}director"
+                r"|default.{0,60}director.{0,200}pii-deny\.yaml",
+                re.DOTALL,
+            ),
+            "SKILL.md must explain that loading the default policy "
+            "directory includes pii-deny.yaml's SSN rule",
+        )
+        self.assertRegex(
+            active_skill_body,
+            re.compile(r"deny.{0,120}terminat.{0,80}message", re.DOTALL),
+            "SKILL.md must explain that a policy deny terminates the "
+            "message path",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
