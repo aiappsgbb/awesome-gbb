@@ -17,7 +17,7 @@ description: >
   (use Azure AI Content Safety), eval scoring (use foundry-evals),
   telemetry pipeline wiring (use foundry-observability).
 metadata:
-  version: "2.0.1"
+  version: "2.0.0"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit, in-process (Path A)
