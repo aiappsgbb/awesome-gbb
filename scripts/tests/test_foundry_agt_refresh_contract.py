@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -17,6 +20,42 @@ def frontmatter(path: Path) -> tuple[dict, str]:
     raw = path.read_text(encoding="utf-8")
     _, fm, body = raw.split("---", 2)
     return yaml.safe_load(fm), body
+
+
+# Load the skill's contract_probe.py under a UNIQUE module name to avoid
+# sys.modules collision with any other skill's same-named probe file when
+# multiple test files run in the same `unittest discover` session. All of
+# contract_probe.py's module-level imports are stdlib-only (agent_os /
+# agent_framework imports are deferred inside its functions), so this
+# exec_module succeeds without the pinned packages installed and without
+# any network access — giving real, executable proof of its helper
+# functions' behaviour rather than relying on static source-text matching
+# alone. See test_unit_foundry_rbac_audit.py for the canonical pattern.
+_CONTRACT_PROBE_PY = SKILL / "references" / "python" / "contract_probe.py"
+_contract_probe_spec = importlib.util.spec_from_file_location(
+    "foundry_agt_contract_probe", _CONTRACT_PROBE_PY
+)
+foundry_agt_contract_probe = importlib.util.module_from_spec(_contract_probe_spec)
+sys.modules["foundry_agt_contract_probe"] = foundry_agt_contract_probe
+_contract_probe_spec.loader.exec_module(foundry_agt_contract_probe)
+
+
+class _StubGovernancePolicyMiddleware:
+    """Minimal stand-in mirroring the real class's private-attribute shape.
+
+    The real installed 4.1.0 ``GovernancePolicyMiddleware`` stores the
+    constructor's ``agent_id`` keyword as ``._agent_id`` (private, no
+    public ``.agent_id`` property) — this stub reproduces exactly that
+    shape so the executable proof below exercises the same attribute
+    access the real class actually has.
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        self._agent_id = agent_id
+
+
+def _stub_agent(*middlewares: object) -> SimpleNamespace:
+    return SimpleNamespace(middleware=list(middlewares))
 
 
 class FoundryAgtRefreshContractTests(unittest.TestCase):
@@ -525,6 +564,125 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "counter is exactly 0 (the tool function was never called), "
             "not just that MiddlewareTermination was raised",
         )
+
+        # Audit-attribution identity proof: build_governed_agent's
+        # in-place replacement of the factory's GovernancePolicyMiddleware
+        # must preserve the caller's requested agent_id — not silently
+        # revert to GovernancePolicyMiddleware's own "maf-agent"
+        # constructor default. The real installed 4.1.0
+        # GovernancePolicyMiddleware only stores this as a private
+        # `_agent_id` attribute (no public `.agent_id` property exists
+        # anywhere in its MRO), so the check must be tied to that real
+        # attribute, not an invented public API.
+        self.assertIn("SNIPPET_AGENT_IDENTITY=PASS", local_probe)
+        self.assertIn(
+            "SNIPPET_AGENT_IDENTITY=PASS",
+            pin_meta["validation"]["expected_output"],
+        )
+
+        identity_helper_match = re.search(
+            r"def assert_policy_middleware_agent_identity\(.*?\n\n\nasync def check_snippet_import",
+            local_probe,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            identity_helper_match,
+            "contract_probe.py must define an "
+            "assert_policy_middleware_agent_identity(...) helper "
+            "immediately ahead of check_snippet_import",
+        )
+        identity_helper_source = identity_helper_match.group(0)
+        for required_symbol in (
+            "GovernancePolicyMiddleware",
+            "_agent_id",
+            "len(policy_middlewares) != 1",
+        ):
+            self.assertIn(
+                required_symbol,
+                identity_helper_source,
+                "the agent-identity helper must select every "
+                "GovernancePolicyMiddleware in agent.middleware, require "
+                f"exactly one, and compare its real ._agent_id — missing "
+                f"{required_symbol!r}",
+            )
+
+        # The helper must be invoked on all four snippet constructions,
+        # each tied to its own requested name — not just a subset, and
+        # not a hardcoded marker independent of any real construction.
+        identity_call_indices = []
+        for expected_name in (
+            "compat-probe",
+            "default-no-guard-probe",
+            "default-semantics-probe",
+            "empty-allowlist-probe",
+        ):
+            call_match = re.search(
+                r"assert_policy_middleware_agent_identity\(ns,\s*\w+,\s*"
+                + re.escape(f'"{expected_name}"') + r"\)",
+                local_probe,
+            )
+            self.assertIsNotNone(
+                call_match,
+                "assert_policy_middleware_agent_identity must be called "
+                f"with the requested name {expected_name!r}",
+            )
+            identity_call_indices.append(call_match.start())
+
+        self.assertEqual(
+            identity_call_indices,
+            sorted(identity_call_indices),
+            "the four agent-identity assertions must run in the same "
+            "order as the four build_governed_agent constructions",
+        )
+        self.assertLess(
+            max(identity_call_indices),
+            local_probe.index('print("SNIPPET_AGENT_IDENTITY=PASS")'),
+            "SNIPPET_AGENT_IDENTITY=PASS must only print after all four "
+            "identity assertions have run",
+        )
+
+        # Genuine executable proof, not static source text alone: call the
+        # REAL helper (dynamically loaded from the real file, see module
+        # header) against stub GovernancePolicyMiddleware instances that
+        # mirror its actual private-attribute shape.
+        assert_identity = foundry_agt_contract_probe.assert_policy_middleware_agent_identity
+        stub_ns = SimpleNamespace(GovernancePolicyMiddleware=_StubGovernancePolicyMiddleware)
+
+        # Passing case: the fixed middleware carries the requested name.
+        assert_identity(
+            stub_ns,
+            _stub_agent(_StubGovernancePolicyMiddleware("compat-probe")),
+            "compat-probe",
+        )
+
+        # The literal real-world defect symptom: the replacement
+        # middleware's _agent_id silently defaulted to "maf-agent"
+        # instead of the requested name.
+        with self.assertRaises(AssertionError) as mismatch_ctx:
+            assert_identity(
+                stub_ns,
+                _stub_agent(_StubGovernancePolicyMiddleware("maf-agent")),
+                "compat-probe",
+            )
+        mismatch_message = str(mismatch_ctx.exception)
+        self.assertIn("maf-agent", mismatch_message)
+        self.assertIn("compat-probe", mismatch_message)
+
+        # Exactly-one requirement: zero GovernancePolicyMiddleware present.
+        with self.assertRaises(AssertionError):
+            assert_identity(stub_ns, _stub_agent(), "compat-probe")
+
+        # Exactly-one requirement: more than one GovernancePolicyMiddleware
+        # present must also fail, even if both happen to match the name.
+        with self.assertRaises(AssertionError):
+            assert_identity(
+                stub_ns,
+                _stub_agent(
+                    _StubGovernancePolicyMiddleware("compat-probe"),
+                    _StubGovernancePolicyMiddleware("compat-probe"),
+                ),
+                "compat-probe",
+            )
 
         for expected_substring in (
             "FoundryChatClient",

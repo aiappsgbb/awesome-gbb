@@ -495,6 +495,50 @@ async def check_capability_hook(ns: SimpleNamespace, guard) -> None:
     print("CAPABILITY_HOOK=PASS")
 
 
+def assert_policy_middleware_agent_identity(
+    ns: SimpleNamespace, agent: object, expected_name: str
+) -> None:
+    """Assert the built Agent's own GovernancePolicyMiddleware carries expected_name.
+
+    Selects every ``GovernancePolicyMiddleware`` instance present in
+    ``agent.middleware``, requires there to be exactly one, and asserts its
+    identity attribute equals ``expected_name`` — the ``name=`` the caller
+    actually requested via ``build_governed_agent``, not
+    ``GovernancePolicyMiddleware``'s own ``"maf-agent"`` constructor default.
+
+    The real installed 4.1.0 ``agent_os.integrations.maf_adapter`` module
+    stores the constructor's ``agent_id`` keyword as ``._agent_id`` on
+    ``GovernancePolicyMiddleware`` — there is no public ``.agent_id``
+    property on this class (only ``RogueDetectionMiddleware``, which this
+    skill never enables, exposes one publicly). This assertion reads that
+    real, live attribute rather than inventing a public API the installed
+    package does not have, so it genuinely catches
+    ``build_governed_agent``'s in-place replacement silently reverting to
+    the class default instead of preserving the caller's requested name.
+    """
+    policy_middlewares = [
+        middleware
+        for middleware in agent.middleware
+        if isinstance(middleware, ns.GovernancePolicyMiddleware)
+    ]
+    if len(policy_middlewares) != 1:
+        raise AssertionError(
+            f"expected exactly one GovernancePolicyMiddleware in agent.middleware "
+            f"for {expected_name!r}, found {len(policy_middlewares)}: "
+            f"{[type(middleware).__name__ for middleware in agent.middleware]}"
+        )
+    (policy_middleware,) = policy_middlewares
+    actual_agent_id = policy_middleware._agent_id
+    if actual_agent_id != expected_name:
+        raise AssertionError(
+            f"GovernancePolicyMiddleware._agent_id was {actual_agent_id!r}, "
+            f"expected {expected_name!r} — build_governed_agent's in-place "
+            "replacement of the factory's GovernancePolicyMiddleware must "
+            "preserve the caller's requested agent_id, not silently fall "
+            "back to GovernancePolicyMiddleware's own 'maf-agent' default"
+        )
+
+
 async def check_snippet_import(ns: SimpleNamespace) -> None:
     """Import ../maf-middleware-snippet.py and build real governed Agents from it."""
     spec = importlib.util.spec_from_file_location("maf_middleware_snippet", SNIPPET)
@@ -515,6 +559,8 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError(f"build_governed_agent returned {type(agent)!r}, expected a real Agent")
     if not agent.middleware:
         raise AssertionError("build_governed_agent returned an Agent with no middleware")
+
+    assert_policy_middleware_agent_identity(ns, agent, "compat-probe")
 
     print("SNIPPET_IMPORT=PASS")
 
@@ -543,6 +589,8 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         raise AssertionError(
             "default (both-omitted) agent unexpectedly has a CapabilityGuardMiddleware"
         )
+
+    assert_policy_middleware_agent_identity(ns, no_guard_agent, "default-no-guard-probe")
 
     print("SNIPPET_DEFAULT_NO_GUARD=PASS")
 
@@ -593,6 +641,8 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         )
     if not result.denial_observed:
         raise AssertionError("default-semantics dangerous tool was not denied")
+
+    assert_policy_middleware_agent_identity(ns, default_agent, "default-semantics-probe")
 
     print("SNIPPET_DEFAULT_SEMANTICS=PASS")
 
@@ -655,7 +705,10 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
     if executions != 0:
         raise AssertionError(f"empty-allowlist tool executed {executions} times, expected exactly 0")
 
+    assert_policy_middleware_agent_identity(ns, empty_allowlist_agent, "empty-allowlist-probe")
+
     print("SNIPPET_EMPTY_ALLOWLIST_DENY_ALL=PASS")
+    print("SNIPPET_AGENT_IDENTITY=PASS")
 
 
 async def run_probe(ns: SimpleNamespace) -> None:
