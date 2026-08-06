@@ -85,6 +85,50 @@ def _is_name(node: ast.AST | None, *names: str) -> bool:
     return isinstance(node, ast.Name) and node.id in names
 
 
+def _is_asyncio_run_main_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run"
+        and _is_name(node.func.value, "asyncio")
+    ):
+        return False
+    return (
+        len(node.args) == 1
+        and isinstance(node.args[0], ast.Call)
+        and _is_name(node.args[0].func, "main")
+        and not node.keywords
+    )
+
+
+def _is_connect_async_with(node: ast.AST) -> bool:
+    if not isinstance(node, ast.AsyncWith) or len(node.items) != 1:
+        return False
+    item = node.items[0]
+    return (
+        isinstance(item.context_expr, ast.Call)
+        and _is_name(item.context_expr.func, "connect")
+        and _is_name(item.optional_vars, "conn")
+    )
+
+
+def _is_suppressing_with(node: ast.AST) -> bool:
+    if not isinstance(node, (ast.With, ast.AsyncWith)):
+        return False
+    for item in node.items:
+        context = item.context_expr
+        if isinstance(context, ast.Call):
+            context = context.func
+        if (
+            isinstance(context, ast.Attribute)
+            and context.attr == "suppress"
+            and _is_name(context.value, "contextlib")
+        ) or _is_name(context, "suppress"):
+            return True
+    return False
+
+
 def _handler_matches_runtime_error_or_broader(handler: ast.ExceptHandler) -> bool:
     if handler.type is None:
         return True
@@ -526,8 +570,10 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
         *,
         timeout_seconds: float = 0.01,
         never_end: bool = False,
+        records: list[str] | None = None,
     ) -> tuple[object, list[str]]:
-        records: list[str] = []
+        if records is None:
+            records = []
         self.helpers["record"] = records.append
         result = await self.helpers["await_completed_response"](
             FakeAsyncStream(events, never_end=never_end),
@@ -535,12 +581,22 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
         )
         return result, records
 
+    def assert_no_terminal_record(self, records: list[str]) -> None:
+        self.assertFalse(
+            any(record.startswith("VOICELIVE_TERMINAL") for record in records),
+            f"failure path emitted terminal success evidence: {records!r}",
+        )
+
     async def test_session_created_then_timeout_fails(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "timeout"):
             await self._run(
                 [_event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE)],
                 never_end=True,
+                records=records,
             )
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, ["VOICELIVE_EVENT type=session.created"])
 
     async def test_session_created_then_completed_response_done_succeeds_and_records_audit(self) -> None:
         result, records = await self._run(
@@ -560,20 +616,38 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
         )
 
     async def test_server_error_event_fails_immediately(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "server error event"):
-            await self._run([_event(FakeServerEventType.ERROR, error="boom")])
+            await self._run([_event(FakeServerEventType.ERROR, error="boom")], records=records)
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, [])
 
     async def test_stream_ending_before_response_done_fails(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "stream ended before response.done"):
-            await self._run([_event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE)])
+            await self._run(
+                [_event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE)],
+                records=records,
+            )
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, ["VOICELIVE_EVENT type=session.created"])
 
     async def test_response_done_completed_before_session_created_fails_specifically(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "response.done received before session.created"):
-            await self._run([_event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.COMPLETED)])
+            await self._run(
+                [_event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.COMPLETED)],
+                records=records,
+            )
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, [])
 
     async def test_immediately_empty_stream_fails_before_session_created_specifically(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "stream ended before session.created"):
-            await self._run([])
+            await self._run([], records=records)
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, [])
 
     async def test_unrelated_first_event_does_not_record_fake_session_evidence(self) -> None:
         result, records = await self._run(
@@ -594,22 +668,30 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
         )
 
     async def test_response_done_failed_fails(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "status=failed"):
             await self._run(
                 [
                     _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
                     _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.FAILED),
                 ],
+                records=records,
             )
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, ["VOICELIVE_EVENT type=session.created"])
 
     async def test_response_done_cancelled_fails(self) -> None:
+        records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "status=cancelled"):
             await self._run(
                 [
                     _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
                     _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.CANCELLED),
                 ],
+                records=records,
             )
+        self.assert_no_terminal_record(records)
+        self.assertEqual(records, ["VOICELIVE_EVENT type=session.created"])
 
     async def test_response_done_non_completed_statuses_fail(self) -> None:
         cases = (
@@ -619,6 +701,7 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
         )
         for status, status_label in cases:
             with self.subTest(status=status_label):
+                records: list[str] = []
                 expected = rf"response\.done status={re.escape(status_label)} is not completed"
                 with self.assertRaisesRegex(RuntimeError, expected):
                     await self._run(
@@ -626,7 +709,10 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
                             _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
                             _event(FakeServerEventType.RESPONSE_DONE, status=status),
                         ],
+                        records=records,
                     )
+                self.assert_no_terminal_record(records)
+                self.assertEqual(records, ["VOICELIVE_EVENT type=session.created"])
 
 
 class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
@@ -747,9 +833,24 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         main = mains[0]
 
         parents: dict[ast.AST, ast.AST] = {}
-        for parent in ast.walk(main):
+        for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):
                 parents[child] = parent
+
+        asyncio_run_main_calls = [
+            node for node in ast.walk(tree) if _is_asyncio_run_main_call(node)
+        ]
+        self.assertEqual(
+            len(asyncio_run_main_calls),
+            1,
+            "fixture must contain exactly one asyncio.run(main()) call",
+        )
+        self.assertIsInstance(tree.body[-1], ast.Expr)
+        self.assertIs(
+            tree.body[-1].value,
+            asyncio_run_main_calls[0],
+            "module tail must be a bare top-level asyncio.run(main()) Expr",
+        )
 
         awaited_calls = [
             node
@@ -771,27 +872,42 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         self.assertIsInstance(timeout_keyword.value, ast.Constant)
         self.assertEqual(timeout_keyword.value.value, 60.0)
 
-        current: ast.AST = await_node
-        while current in parents:
+        containing_stmt: ast.AST = await_node
+        while containing_stmt in parents and not isinstance(containing_stmt, ast.Expr):
+            containing_stmt = parents[containing_stmt]
+        self.assertIsInstance(containing_stmt, ast.Expr)
+
+        connect_blocks = [node for node in ast.walk(main) if _is_connect_async_with(node)]
+        self.assertEqual(len(connect_blocks), 1)
+        connect_block = connect_blocks[0]
+        self.assertIn(
+            containing_stmt,
+            connect_block.body,
+            "await_completed_response must be a direct statement in the connect(...) as conn body",
+        )
+
+        forbidden_control_flow = (
+            ast.If,
+            ast.IfExp,
+            ast.Try,
+            ast.While,
+            ast.For,
+            ast.AsyncFor,
+            ast.Match,
+        )
+        current: ast.AST = containing_stmt
+        while current is not main:
+            self.assertIn(current, parents, "await_completed_response is not inside main")
             current = parents[current]
-            if not isinstance(current, ast.Try):
-                continue
-            swallowing_handlers = [
-                handler
-                for handler in current.handlers
-                if _handler_matches_runtime_error_or_broader(handler)
-                and not _handler_reraises(handler)
-            ]
-            self.assertEqual(
-                swallowing_handlers,
-                [],
-                "await_completed_response must not be inside a Try that can swallow "
-                "RuntimeError/Exception",
+            self.assertFalse(
+                isinstance(current, forbidden_control_flow) or _is_suppressing_with(current),
+                "await_completed_response must be unconditional: no If/IfExp/Try/loop/"
+                "Match/suppressing-with ancestor may sit between it and main",
             )
 
         success_prints = [
             node
-            for node in ast.walk(main)
+            for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and _is_name(node.func, "print")
             and len(node.args) == 1
@@ -801,7 +917,7 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
         self.assertEqual(len(success_prints), 1)
         success_literals = [
             node
-            for node in ast.walk(main)
+            for node in ast.walk(tree)
             if isinstance(node, ast.Constant) and node.value == "voice-live-roundtrip-ok"
         ]
         self.assertEqual(success_literals, success_prints[0].args)
