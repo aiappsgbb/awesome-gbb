@@ -304,16 +304,17 @@ async def _run() -> None:
     check_exact_pinned_versions()
 
     credential = await acquire_entra_token()
-    ns = cp.check_imports()
-    audit_log = ns.AuditLog()
-    guard, audit_log, stack = cp.build_factory_stack(ns, audit_log=audit_log, agent_id="live-t3-probe-agent")
-
-    client = ns.FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
-        credential=credential,
-    )
+    client = None
     try:
+        ns = cp.check_imports()
+        audit_log = ns.AuditLog()
+        guard, audit_log, stack = cp.build_factory_stack(ns, audit_log=audit_log, agent_id="live-t3-probe-agent")
+
+        client = ns.FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
+            credential=credential,
+        )
         await run_live_inference(ns, client, stack)
         await check_capability_hook_live(ns, guard)
         check_audit_integrity(audit_log)
@@ -332,7 +333,8 @@ async def _run() -> None:
         # so this probe -- which created both the credential and (indirectly)
         # the project client -- is responsible for closing both explicitly,
         # exactly once each, with no double-close risk.
-        await client.project_client.close()
+        if client is not None:
+            await client.project_client.close()
         await credential.close()
 
     print("T3_PROBE=PASS")
