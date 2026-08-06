@@ -28,6 +28,38 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
         for forbidden in ("aca sidecar", "citadel adapter", "26.67", "0.00%"):
             self.assertNotIn(forbidden, description)
 
+        # The description must NOT make the unconditional claim that
+        # CapabilityGuardMiddleware is always wired alongside
+        # AuditTrailMiddleware and GovernancePolicyMiddleware; upstream
+        # AGT 4.1 factory only adds CapabilityGuard when allowed_tools
+        # or denied_tools is not None.  The exact phrase
+        # "wires AuditTrailMiddleware, GovernancePolicyMiddleware, and
+        # CapabilityGuardMiddleware" (case-insensitive) is forbidden.
+        self.assertNotIn(
+            "wires audittrailmiddleware, governancepolicymiddleware, and capabilityguardmiddleware",
+            description,
+            "description must not unconditionally claim CapabilityGuardMiddleware "
+            "is always wired; it is added by the factory only when allowed_tools "
+            "or denied_tools is configured",
+        )
+
+        # The description must clearly convey that CapabilityGuard
+        # per-tool gating is conditional: it is applied only when
+        # allowed_tools or denied_tools are configured.
+        desc_conditional_guard_pattern = re.compile(
+            r"capabilityguard.{0,400}"
+            r"(only when|when.{0,60}configured|conditional).{0,200}"
+            r"(allowed_tools|denied_tools)",
+            re.DOTALL,
+        )
+        self.assertRegex(
+            description,
+            desc_conditional_guard_pattern,
+            "description must clearly state that CapabilityGuard per-tool "
+            "gating is conditional when allowed_tools or denied_tools are "
+            "configured",
+        )
+
         changelog_index = body.find("## GBB Changelog")
         self.assertNotEqual(changelog_index, -1, "GBB Changelog heading not found")
         active_body_original = body[:changelog_index]
