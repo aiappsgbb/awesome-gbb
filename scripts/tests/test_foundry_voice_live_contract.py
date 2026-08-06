@@ -615,6 +615,27 @@ class FoundryVoiceLiveFixtureEventStateMachineTests(unittest.IsolatedAsyncioTest
             ],
         )
 
+    async def test_duplicate_session_created_before_completed_response_done_deduplicates_session_evidence(
+        self,
+    ) -> None:
+        result, records = await self._run(
+            [
+                _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                _event(FakeServerEventType.SESSION_CREATED, status=_NO_RESPONSE),
+                _event(FakeServerEventType.RESPONSE_DONE, status=FakeStatus.COMPLETED),
+            ],
+        )
+
+        self.assertEqual(result, "completed")
+        self.assertEqual(
+            [record for record in records if record == "VOICELIVE_EVENT type=session.created"],
+            ["VOICELIVE_EVENT type=session.created"],
+        )
+        self.assertEqual(
+            [record for record in records if record.startswith("VOICELIVE_TERMINAL")],
+            ["VOICELIVE_TERMINAL type=response.done status=completed"],
+        )
+
     async def test_server_error_event_fails_immediately(self) -> None:
         records: list[str] = []
         with self.assertRaisesRegex(RuntimeError, "server error event"):
@@ -921,6 +942,22 @@ class FoundryVoiceLiveFixtureContractTests(unittest.TestCase):
             if isinstance(node, ast.Constant) and node.value == "voice-live-roundtrip-ok"
         ]
         self.assertEqual(success_literals, success_prints[0].args)
+        direct_success_prints = [
+            stmt
+            for stmt in main.body
+            if isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Call)
+            and _is_name(stmt.value.func, "print")
+            and len(stmt.value.args) == 1
+            and isinstance(stmt.value.args[0], ast.Constant)
+            and stmt.value.args[0].value == "voice-live-roundtrip-ok"
+        ]
+        self.assertEqual(len(direct_success_prints), 1)
+        self.assertIs(
+            direct_success_prints[0].value,
+            success_prints[0],
+            "voice-live-roundtrip-ok print must be a direct statement in main.body",
+        )
         self.assertTrue(
             _position_after(success_prints[0], await_node),
             "voice-live-roundtrip-ok must be printed only after awaiting "
