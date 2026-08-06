@@ -155,7 +155,7 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, changelog_lower)
 
     def test_pin_uses_released_source_and_selective_set(self) -> None:
-        pin_meta, _ = frontmatter(SKILL / "references" / "upstream-pin.md")
+        pin_meta, pin_body = frontmatter(SKILL / "references" / "upstream-pin.md")
 
         self.assertEqual(pin_meta["automation_tier"], "issue_only")
         self.assertEqual(pin_meta["upstream"]["ref"], "v4.1.0")
@@ -200,6 +200,49 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             self.assertIsNone(issue.get("upstream_url"))
             self.assertNotEqual(issue["id"], "KI-001")
 
+        # Upstream release note: create_governance_middleware's factory
+        # default for enable_rogue_detection flipped to True at 4.1.0 (it
+        # was False in the prior AGT 3.x pin). Empirically re-verified live
+        # against the pinned 4.1.0 release via inspect.signature(...) — the
+        # pin body must state the new upstream default precisely and must
+        # not carry the stale "defaults to False" claim forward as if it
+        # were still the upstream factory's own default.
+        self.assertIn("enable_rogue_detection: bool = True", pin_body)
+        self.assertNotIn("enable_rogue_detection: bool = False", pin_body)
+
+        # The old unconditional "(4 items if enable_rogue_detection=True,
+        # 3 otherwise)" claim ignored that allowed_tools/denied_tools
+        # configuration ALSO changes the stack size independent of the
+        # rogue-detection flag. Empirically re-verified: with
+        # policy_directory set and nothing else configured,
+        # enable_rogue_detection=False -> 2 items (AuditTrail +
+        # GovernancePolicy only); either tool list configured (including
+        # an empty list) with enable_rogue_detection=False -> 3 (+
+        # CapabilityGuard); enable_rogue_detection=True with no tool list
+        # configured -> 3 (+ RogueDetection, no guard); and
+        # enable_rogue_detection=True with a tool list configured -> 4
+        # (+ CapabilityGuard + RogueDetection). The pin must describe all
+        # four conditional shapes instead of a single fixed "3 or 4".
+        self.assertNotRegex(
+            pin_body,
+            re.compile(r"4 items if.{0,120}3 otherwise", re.DOTALL),
+            "pin must not restate the old unconditional 4-vs-3 item claim",
+        )
+        for expected_count_phrase in (
+            "-> 2: AuditTrailMiddleware, GovernancePolicyMiddleware",
+            "-> 3: + CapabilityGuardMiddleware",
+            "-> 3: + RogueDetectionMiddleware (no guard)",
+            "-> 4: + CapabilityGuardMiddleware + RogueDetectionMiddleware",
+        ):
+            self.assertIn(
+                expected_count_phrase,
+                pin_body,
+                "pin must precisely document each conditional middleware "
+                "stack-count case (policy_directory set; tool-list "
+                "configuration crossed with the explicit rogue-detection "
+                "flag)",
+            )
+
     def test_probes_cover_shapes_hook_and_live_inference(self) -> None:
         local_probe_path = SKILL / "references" / "python" / "contract_probe.py"
         live_probe_path = SKILL / "references" / "python" / "live_t3_probe.py"
@@ -229,11 +272,39 @@ class FoundryAgtRefreshContractTests(unittest.TestCase):
             "POLICY_MIDDLEWARE=PASS",
             ".invoke(arguments={}, context=",
             "SNIPPET_DEFAULT_NO_GUARD=PASS",
+            "FACTORY_ROGUE_DETECTION_DEFAULT_TRUE=PASS",
         ):
             self.assertIn(expected_substring, local_probe)
 
         self.assertNotIn("HITL_POLICY=PASS", local_probe)
         self.assertNotIn("tool_args.amount", local_probe)
+
+        # Parameter *presence* alone doesn't catch a silent default flip.
+        # check_signatures must pull the real inspect.signature(...)
+        # Parameter object for enable_rogue_detection and assert its
+        # .default is True (the AGT 4.1.0 upstream factory default,
+        # empirically re-verified live — it was False in the prior AGT
+        # 3.x pin) — not just that the parameter name exists in the
+        # signature. SIGNATURE_CONTRACT=PASS must remain gated behind
+        # this assertion (i.e. it appears in source after this check).
+        signature_default_match = re.search(
+            r'enable_rogue_detection.*?\.default is (True|not True)',
+            local_probe,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            signature_default_match,
+            "check_signatures must assert enable_rogue_detection's actual "
+            "inspect.signature(...) Parameter.default, not just its "
+            "presence in the parameter set",
+        )
+        self.assertLess(
+            local_probe.index("FACTORY_ROGUE_DETECTION_DEFAULT_TRUE=PASS"),
+            local_probe.index('print("SIGNATURE_CONTRACT=PASS")'),
+            "the enable_rogue_detection default assertion/marker must run "
+            "before SIGNATURE_CONTRACT=PASS is printed, so a drifted "
+            "default fails the contract before the gate passes",
+        )
 
         # True-default (both allowed_tools and denied_tools OMITTED, not
         # just allowed_tools=None) construction must be exercised for
