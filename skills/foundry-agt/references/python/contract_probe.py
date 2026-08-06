@@ -523,6 +523,22 @@ def assert_policy_middleware_agent_identity(
     package does not have, so it genuinely catches
     ``build_governed_agent``'s in-place replacement silently reverting to
     the class default instead of preserving the caller's requested name.
+
+    IMPORTANT — this is a v5 forward-compat *construction* contract, not a
+    v4 audit-attribution proof. ``._agent_id`` is read only by
+    ``GovernancePolicyMiddleware``'s ``_process_v5`` branch (the
+    ``kernel=``-driven path this skill never takes); the legacy
+    ``_process_v4`` branch every construction here actually exercises
+    never reads ``._agent_id`` at all — it derives its own audit
+    ``agent_did`` from ``context.agent.name``. So a passing result here
+    proves ``build_governed_agent`` threads the caller's requested name
+    into forward-compatible v5 construction metadata; it says nothing
+    about what the real legacy v4 audit trail attributes an action to.
+    See ``assert_v4_audit_attribution`` (and its
+    ``SNIPPET_V4_AUDIT_ATTRIBUTION=PASS`` marker) below for the real,
+    behavioural v4 audit-attribution proof that drives
+    ``GovernancePolicyMiddleware.process`` and inspects the emitted
+    CloudEvent.
     """
     policy_middlewares = [
         middleware
@@ -543,7 +559,11 @@ def assert_policy_middleware_agent_identity(
             f"expected {expected_name!r} — build_governed_agent's in-place "
             "replacement of the factory's GovernancePolicyMiddleware must "
             "preserve the caller's requested agent_id, not silently fall "
-            "back to GovernancePolicyMiddleware's own 'maf-agent' default"
+            "back to GovernancePolicyMiddleware's own 'maf-agent' default. "
+            "Note: this is a v5 forward-compat construction check only — "
+            "the legacy _process_v4 path never reads ._agent_id, so this "
+            "failure is unrelated to real v4 audit attribution; see "
+            "assert_v4_audit_attribution for that proof."
         )
 
 
@@ -563,6 +583,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         policy_dir=POLICY_DIR,
         allowed_tools=["safe_tool"],
         denied_tools=["dangerous_tool"],
+        audit_log=compat_audit_log,
     )
     if not isinstance(agent, ns.Agent):
         raise AssertionError(f"build_governed_agent returned {type(agent)!r}, expected a real Agent")
@@ -588,6 +609,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         instructions="Default no-guard probe.",
         chat_client=object(),
         policy_dir=POLICY_DIR,
+        audit_log=no_guard_audit_log,
     )
     no_guard_type_names = [type(middleware).__name__ for middleware in no_guard_agent.middleware]
     expected_no_guard_order = ["AuditTrailMiddleware", "GovernancePolicyMiddleware"]
@@ -620,6 +642,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         policy_dir=POLICY_DIR,
         allowed_tools=None,
         denied_tools=["dangerous_tool"],
+        audit_log=default_audit_log,
     )
     middleware_type_names = [type(middleware).__name__ for middleware in default_agent.middleware]
     expected_order = ["AuditTrailMiddleware", "GovernancePolicyMiddleware", "CapabilityGuardMiddleware"]
@@ -674,6 +697,7 @@ async def check_snippet_import(ns: SimpleNamespace) -> None:
         chat_client=object(),
         policy_dir=POLICY_DIR,
         allowed_tools=[],
+        audit_log=empty_allowlist_audit_log,
     )
     empty_allowlist_guard = next(
         (
