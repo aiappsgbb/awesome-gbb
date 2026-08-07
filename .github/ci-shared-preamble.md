@@ -16,10 +16,8 @@ the fixture below appears to ask:
 - Delete or recreate **`uami-awesome-gbb-ci`** (the OIDC identity
   CI authenticates as — losing it means the entire fleet of
   federated credentials must be rebuilt)
-- Delete or recreate **`aif-awesome-gbb-ci`** (the shared AI
-  Services account — its endpoint hostname is baked into the
-  `AZURE_AI_ENDPOINT` repo secret and into every fixture's
-  `FOUNDRY_PROJECT_ENDPOINT` derivation)
+- Delete or recreate **`aif-awesome-gbb-ci`** (the shared AI Services account —
+  account and project endpoint secrets are maintained independently)
 - Delete the project **`default`** inside `aif-awesome-gbb-ci`
 - Delete model deployments inside `aif-awesome-gbb-ci`
   (currently: `gpt-5.4-mini`, `text-embedding-3-small`,
@@ -110,4 +108,3 @@ RG is YOURS. Everything else is everyone's.
 =======================================================================
 END OF SHARED CI HARDENING — your fixture prompt begins below.
 =======================================================================
-
