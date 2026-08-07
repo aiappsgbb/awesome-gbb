@@ -15,11 +15,13 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FDVS_ACCOUNT_DIAGNOSTIC_FILE: /tmp/fdvs-account-diagnostic.txt
       FDVS_STATUS_FILE: /tmp/fdvs-oidc-preflight.txt
     steps:
       - name: Initialize sanitized evidence
         run: |
           set -euo pipefail
+          rm -f "$FDVS_ACCOUNT_DIAGNOSTIC_FILE"
           cat > "$FDVS_STATUS_FILE" <<'EOF'
           FDVS_OIDC_PREFLIGHT_AUTH=NOT_RUN
           FDVS_OIDC_PREFLIGHT_ACCOUNT=NOT_RUN
@@ -106,6 +108,21 @@ jobs:
           )
           STATUS_VALUES = {"PASS", "FAIL", "NOT_RUN"}
           STATUS_FILE = Path(os.environ["FDVS_STATUS_FILE"])
+          ACCOUNT_DIAGNOSTIC_CODES = (
+              "ENDPOINT_SHAPE",
+              "ACCOUNT_HOST_DERIVATION",
+              "ACCOUNT_LIST_QUERY",
+              "ACCOUNT_RESOLUTION_CARDINALITY",
+              "ACCOUNT_KIND",
+              "ACCOUNT_ENDPOINT_PRESENCE",
+              "ACCOUNT_ENDPOINT_MATCH",
+              "IDENTITY_LIST_QUERY",
+              "IDENTITY_RESOLUTION_CARDINALITY",
+              "UNKNOWN",
+          )
+          ACCOUNT_DIAGNOSTIC_FILE = Path(
+              os.environ["FDVS_ACCOUNT_DIAGNOSTIC_FILE"]
+          )
 
 
           def load_status() -> dict[str, str]:
@@ -208,7 +225,9 @@ jobs:
           except Exception:
               fail_stage("FDVS_OIDC_PREFLIGHT_AUTH")
 
+          account_diagnostic = "UNKNOWN"
           try:
+              account_diagnostic = "ENDPOINT_SHAPE"
               parsed = urlparse(endpoint)
               suffix = ".cognitiveservices.azure.com"
               if (
@@ -222,10 +241,12 @@ jobs:
                   or not parsed.hostname.endswith(suffix)
               ):
                   raise RuntimeError("endpoint shape mismatch")
+              account_diagnostic = "ACCOUNT_HOST_DERIVATION"
               account_name = parsed.hostname[: -len(suffix)]
               if not account_name or "." in account_name:
                   raise RuntimeError("account host mismatch")
 
+              account_diagnostic = "ACCOUNT_LIST_QUERY"
               accounts = az_json(
                   "cognitiveservices",
                   "account",
@@ -238,21 +259,27 @@ jobs:
                   for item in accounts
                   if isinstance(item, dict) and item.get("name") == account_name
               ]
+              account_diagnostic = "ACCOUNT_RESOLUTION_CARDINALITY"
               if len(matches) != 1:
                   raise RuntimeError("account resolution mismatch")
               account = matches[0]
+              account_diagnostic = "ACCOUNT_KIND"
               if account["kind"] != "AIServices":
                   raise RuntimeError("account kind mismatch")
+              account_diagnostic = "ACCOUNT_ENDPOINT_PRESENCE"
               account_endpoint = (
                   account.get("properties", {}).get("endpoint")
                   or account.get("endpoint")
               )
               if not account_endpoint:
                   raise RuntimeError("account endpoint missing")
+              account_diagnostic = "ACCOUNT_ENDPOINT_MATCH"
               if urlparse(account_endpoint).hostname != parsed.hostname:
                   raise RuntimeError("account endpoint mismatch")
+              account_diagnostic = "UNKNOWN"
               account_id = str(account["id"])
 
+              account_diagnostic = "IDENTITY_LIST_QUERY"
               identities = az_json(
                   "identity",
                   "list",
@@ -265,11 +292,18 @@ jobs:
                   if isinstance(item, dict)
                   and str(item.get("clientId", "")).casefold() == client_id.casefold()
               ]
+              account_diagnostic = "IDENTITY_RESOLUTION_CARDINALITY"
               if len(identity_matches) != 1:
                   raise RuntimeError("identity resolution mismatch")
+              account_diagnostic = "UNKNOWN"
               principal_id = str(identity_matches[0]["principalId"])
               pass_stage("FDVS_OIDC_PREFLIGHT_ACCOUNT")
           except Exception:
+              if account_diagnostic not in ACCOUNT_DIAGNOSTIC_CODES:
+                  account_diagnostic = "UNKNOWN"
+              ACCOUNT_DIAGNOSTIC_FILE.write_bytes(
+                  f"{account_diagnostic}\n".encode("ascii")
+              )
               fail_stage("FDVS_OIDC_PREFLIGHT_ACCOUNT")
 
           try:
@@ -418,6 +452,31 @@ jobs:
               "FDVS_OIDC_PREFLIGHT_RESULT",
           )
           STATUS_VALUES = {"PASS", "FAIL", "NOT_RUN"}
+          ACCOUNT_DIAGNOSTIC_CODES = (
+              "ENDPOINT_SHAPE",
+              "ACCOUNT_HOST_DERIVATION",
+              "ACCOUNT_LIST_QUERY",
+              "ACCOUNT_RESOLUTION_CARDINALITY",
+              "ACCOUNT_KIND",
+              "ACCOUNT_ENDPOINT_PRESENCE",
+              "ACCOUNT_ENDPOINT_MATCH",
+              "IDENTITY_LIST_QUERY",
+              "IDENTITY_RESOLUTION_CARDINALITY",
+              "UNKNOWN",
+          )
+          diagnostic_file = Path(os.environ["FDVS_ACCOUNT_DIAGNOSTIC_FILE"])
+          if diagnostic_file.is_file():
+              raw_diagnostic = diagnostic_file.read_bytes()
+              diagnostic = next(
+                  (
+                      code
+                      for code in ACCOUNT_DIAGNOSTIC_CODES
+                      if raw_diagnostic == f"{code}\n".encode("ascii")
+                  ),
+                  "UNKNOWN",
+              )
+              print(f"::error::FDVS_ACCOUNT_DIAGNOSTIC={diagnostic}")
+
           status_file = Path(os.environ["FDVS_STATUS_FILE"])
           status = dict(
               line.split("=", 1)
