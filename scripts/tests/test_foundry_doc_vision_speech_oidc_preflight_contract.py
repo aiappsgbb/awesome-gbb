@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import pathlib
 import re
+import textwrap
 import unittest
+from urllib.parse import urlparse
 
 import yaml
 
@@ -35,7 +37,16 @@ EXPECTED_SECRET_NAMES = {
     "AZURE_TENANT_ID",
 }
 EXPECTED_ACCOUNT_DIAGNOSTICS = (
-    "ENDPOINT_SHAPE",
+    "ENDPOINT_PARSE",
+    "ENDPOINT_SCHEME",
+    "ENDPOINT_CREDENTIALS",
+    "ENDPOINT_HOSTNAME",
+    "ENDPOINT_HOST_PROJECT",
+    "ENDPOINT_HOST_OPENAI",
+    "ENDPOINT_HOST_SUFFIX",
+    "ENDPOINT_QUERY",
+    "ENDPOINT_FRAGMENT",
+    "ENDPOINT_PATH",
     "ACCOUNT_HOST_DERIVATION",
     "ACCOUNT_LIST_QUERY",
     "ACCOUNT_RESOLUTION_CARDINALITY",
@@ -45,6 +56,27 @@ EXPECTED_ACCOUNT_DIAGNOSTICS = (
     "IDENTITY_LIST_QUERY",
     "IDENTITY_RESOLUTION_CARDINALITY",
     "UNKNOWN",
+)
+ENDPOINT_DIAGNOSTIC_CHECKS = (
+    ("ENDPOINT_PARSE", "parsed = urlparse(endpoint)"),
+    ("ENDPOINT_SCHEME", 'if parsed.scheme != "https":'),
+    (
+        "ENDPOINT_CREDENTIALS",
+        "if parsed.username is not None or parsed.password is not None:",
+    ),
+    ("ENDPOINT_HOSTNAME", "if not parsed.hostname:"),
+    (
+        "ENDPOINT_HOST_PROJECT",
+        'if parsed.hostname.endswith(".services.ai.azure.com"):',
+    ),
+    (
+        "ENDPOINT_HOST_OPENAI",
+        'if parsed.hostname.endswith(".openai.azure.com"):',
+    ),
+    ("ENDPOINT_HOST_SUFFIX", "if not parsed.hostname.endswith(suffix):"),
+    ("ENDPOINT_QUERY", "if parsed.query:"),
+    ("ENDPOINT_FRAGMENT", "if parsed.fragment:"),
+    ("ENDPOINT_PATH", 'if parsed.path not in {"", "/"}:'),
 )
 FORBIDDEN_MUTATIONS = (
     r"\baz\s+role\s+assignment\s+(?:create|update|delete)\b",
@@ -140,7 +172,6 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
             )
 
         boundaries = (
-            ("ENDPOINT_SHAPE", "parsed = urlparse(endpoint)"),
             ("ACCOUNT_HOST_DERIVATION", "account_name = parsed.hostname"),
             ("ACCOUNT_LIST_QUERY", "accounts = az_json("),
             ("ACCOUNT_RESOLUTION_CARDINALITY", "if len(matches) != 1:"),
@@ -162,6 +193,139 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
                 assertion = self.raw.index(boundary)
                 self.assertLess(assignment, assertion)
 
+    def test_endpoint_diagnostics_are_sequential_and_guard_own_checks(self) -> None:
+        account_block = re.search(
+            r'account_diagnostic = "UNKNOWN"\n'
+            r"\s*try:\n"
+            r"(?P<body>.*?)"
+            r'\n\s*account_diagnostic = "ACCOUNT_LIST_QUERY"',
+            self.raw,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(account_block)
+        assert account_block is not None
+        body = account_block.group("body")
+
+        assignments = tuple(
+            re.findall(r'account_diagnostic = "([A-Z][A-Z0-9_]*)"', body)
+        )
+        expected_assignments = tuple(
+            code for code, _ in ENDPOINT_DIAGNOSTIC_CHECKS
+        ) + ("ACCOUNT_HOST_DERIVATION",)
+        self.assertEqual(assignments, expected_assignments)
+
+        assignment_offsets = [
+            body.index(f'account_diagnostic = "{code}"')
+            for code in expected_assignments
+        ]
+        self.assertEqual(assignment_offsets, sorted(assignment_offsets))
+
+        for index, (code, check) in enumerate(ENDPOINT_DIAGNOSTIC_CHECKS):
+            with self.subTest(code=code):
+                start = assignment_offsets[index]
+                end = assignment_offsets[index + 1]
+                interval = body[start:end]
+                self.assertIn(check, interval)
+                self.assertEqual(
+                    body.count(check),
+                    1,
+                    f"{code} check must occur once in its own interval",
+                )
+
+        parse_start = assignment_offsets[0]
+        parse_end = assignment_offsets[1]
+        parse_interval = body[parse_start:parse_end]
+        self.assertRegex(
+            parse_interval,
+            r"try:\n\s+parsed = urlparse\(endpoint\)\n"
+            r"\s+except Exception:\n\s+raise RuntimeError",
+        )
+        host_derivation_interval = body[assignment_offsets[-1] :]
+        self.assertIn(
+            "account_name = parsed.hostname[: -len(suffix)]",
+            host_derivation_interval,
+        )
+        self.assertNotIn("ENDPOINT_SHAPE", self.raw)
+
+    def test_endpoint_diagnostic_runtime_mapping_is_exact(self) -> None:
+        probe_run = next(
+            step["run"]
+            for step in self.job["steps"]
+            if step.get("id") == "live-probes"
+        )
+        python_body = probe_run.split(
+            "python - <<'PY' >/dev/null 2>/dev/null\n",
+            1,
+        )[1].rsplit("\nPY", 1)[0]
+        validation = re.search(
+            r'account_diagnostic = "UNKNOWN"\n'
+            r"try:\n"
+            r"(?P<body>.*?)"
+            r'\n    account_diagnostic = "ACCOUNT_LIST_QUERY"',
+            python_body,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(validation)
+        assert validation is not None
+
+        function_source = (
+            "def diagnose(endpoint):\n"
+            '    account_diagnostic = "UNKNOWN"\n'
+            "    try:\n"
+            f"{textwrap.indent(textwrap.dedent(validation.group('body')), '        ')}\n"
+            "    except Exception:\n"
+            "        return account_diagnostic\n"
+            "    return account_diagnostic\n"
+        )
+        namespace = {"urlparse": urlparse}
+        exec(compile(function_source, "<endpoint-diagnostic>", "exec"), namespace)
+        diagnose = namespace["diagnose"]
+
+        cases = (
+            ("https://[invalid", "ENDPOINT_PARSE"),
+            (
+                "http://account.cognitiveservices.azure.com",
+                "ENDPOINT_SCHEME",
+            ),
+            (
+                "https://user@account.cognitiveservices.azure.com",
+                "ENDPOINT_CREDENTIALS",
+            ),
+            (
+                "https://user:secret@account.cognitiveservices.azure.com",
+                "ENDPOINT_CREDENTIALS",
+            ),
+            (
+                "https://resource.services.ai.azure.com/api/projects/project",
+                "ENDPOINT_HOST_PROJECT",
+            ),
+            (
+                "https://resource.openai.azure.com/",
+                "ENDPOINT_HOST_OPENAI",
+            ),
+            ("https://example.com/models", "ENDPOINT_HOST_SUFFIX"),
+            (
+                "https://account.cognitiveservices.azure.com/models",
+                "ENDPOINT_PATH",
+            ),
+            (
+                "https://account.cognitiveservices.azure.com?api-version=test",
+                "ENDPOINT_QUERY",
+            ),
+            (
+                "https://account.cognitiveservices.azure.com#fragment",
+                "ENDPOINT_FRAGMENT",
+            ),
+            ("https:///", "ENDPOINT_HOSTNAME"),
+            (
+                "https://account.cognitiveservices.azure.com/",
+                "ACCOUNT_HOST_DERIVATION",
+            ),
+        )
+        for endpoint, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(diagnose(endpoint), expected)
+
     def test_account_diagnostic_is_private_validated_and_not_uploaded(self) -> None:
         self.assertIn("FDVS_ACCOUNT_DIAGNOSTIC_FILE", self.job["env"])
         diagnostic_path = self.job["env"]["FDVS_ACCOUNT_DIAGNOSTIC_FILE"]
@@ -181,8 +345,9 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
         self.assertIn("python - <<'PY' >/dev/null 2>/dev/null", self.raw)
         self.assertNotRegex(self.raw, r"except Exception as \w+")
         account_handler = re.search(
-            r'account_diagnostic = "UNKNOWN".*?'
-            r'except Exception:\n(?P<body>.*?)\n'
+            r"except Exception:\n"
+            r"\s*if account_diagnostic not in ACCOUNT_DIAGNOSTIC_CODES:\n"
+            r"(?P<body>.*?)\n"
             r'\s*fail_stage\("FDVS_OIDC_PREFLIGHT_ACCOUNT"\)',
             self.raw,
             flags=re.DOTALL,

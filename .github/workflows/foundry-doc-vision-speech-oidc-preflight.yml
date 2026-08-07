@@ -109,7 +109,16 @@ jobs:
           STATUS_VALUES = {"PASS", "FAIL", "NOT_RUN"}
           STATUS_FILE = Path(os.environ["FDVS_STATUS_FILE"])
           ACCOUNT_DIAGNOSTIC_CODES = (
-              "ENDPOINT_SHAPE",
+              "ENDPOINT_PARSE",
+              "ENDPOINT_SCHEME",
+              "ENDPOINT_CREDENTIALS",
+              "ENDPOINT_HOSTNAME",
+              "ENDPOINT_HOST_PROJECT",
+              "ENDPOINT_HOST_OPENAI",
+              "ENDPOINT_HOST_SUFFIX",
+              "ENDPOINT_QUERY",
+              "ENDPOINT_FRAGMENT",
+              "ENDPOINT_PATH",
               "ACCOUNT_HOST_DERIVATION",
               "ACCOUNT_LIST_QUERY",
               "ACCOUNT_RESOLUTION_CARDINALITY",
@@ -227,20 +236,39 @@ jobs:
 
           account_diagnostic = "UNKNOWN"
           try:
-              account_diagnostic = "ENDPOINT_SHAPE"
-              parsed = urlparse(endpoint)
+              account_diagnostic = "ENDPOINT_PARSE"
+              try:
+                  parsed = urlparse(endpoint)
+              except Exception:
+                  raise RuntimeError("endpoint parse mismatch")
               suffix = ".cognitiveservices.azure.com"
-              if (
-                  parsed.scheme != "https"
-                  or parsed.username is not None
-                  or parsed.password is not None
-                  or parsed.query
-                  or parsed.fragment
-                  or parsed.path not in {"", "/"}
-                  or not parsed.hostname
-                  or not parsed.hostname.endswith(suffix)
-              ):
-                  raise RuntimeError("endpoint shape mismatch")
+              account_diagnostic = "ENDPOINT_SCHEME"
+              if parsed.scheme != "https":
+                  raise RuntimeError("endpoint scheme mismatch")
+              account_diagnostic = "ENDPOINT_CREDENTIALS"
+              if parsed.username is not None or parsed.password is not None:
+                  raise RuntimeError("endpoint credentials mismatch")
+              account_diagnostic = "ENDPOINT_HOSTNAME"
+              if not parsed.hostname:
+                  raise RuntimeError("endpoint hostname mismatch")
+              account_diagnostic = "ENDPOINT_HOST_PROJECT"
+              if parsed.hostname.endswith(".services.ai.azure.com"):
+                  raise RuntimeError("endpoint project host mismatch")
+              account_diagnostic = "ENDPOINT_HOST_OPENAI"
+              if parsed.hostname.endswith(".openai.azure.com"):
+                  raise RuntimeError("endpoint openai host mismatch")
+              account_diagnostic = "ENDPOINT_HOST_SUFFIX"
+              if not parsed.hostname.endswith(suffix):
+                  raise RuntimeError("endpoint host suffix mismatch")
+              account_diagnostic = "ENDPOINT_QUERY"
+              if parsed.query:
+                  raise RuntimeError("endpoint query mismatch")
+              account_diagnostic = "ENDPOINT_FRAGMENT"
+              if parsed.fragment:
+                  raise RuntimeError("endpoint fragment mismatch")
+              account_diagnostic = "ENDPOINT_PATH"
+              if parsed.path not in {"", "/"}:
+                  raise RuntimeError("endpoint path mismatch")
               account_diagnostic = "ACCOUNT_HOST_DERIVATION"
               account_name = parsed.hostname[: -len(suffix)]
               if not account_name or "." in account_name:
@@ -453,7 +481,16 @@ jobs:
           )
           STATUS_VALUES = {"PASS", "FAIL", "NOT_RUN"}
           ACCOUNT_DIAGNOSTIC_CODES = (
-              "ENDPOINT_SHAPE",
+              "ENDPOINT_PARSE",
+              "ENDPOINT_SCHEME",
+              "ENDPOINT_CREDENTIALS",
+              "ENDPOINT_HOSTNAME",
+              "ENDPOINT_HOST_PROJECT",
+              "ENDPOINT_HOST_OPENAI",
+              "ENDPOINT_HOST_SUFFIX",
+              "ENDPOINT_QUERY",
+              "ENDPOINT_FRAGMENT",
+              "ENDPOINT_PATH",
               "ACCOUNT_HOST_DERIVATION",
               "ACCOUNT_LIST_QUERY",
               "ACCOUNT_RESOLUTION_CARDINALITY",
