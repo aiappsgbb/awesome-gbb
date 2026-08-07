@@ -1,142 +1,233 @@
-# Customer goal — `foundry-agt` skill smoke
+# Customer goal — `foundry-agt` skill live T3 smoke
 
 You are a developer on a customer team. You just installed the `awesome-gbb`
-Copilot CLI plugin and you want to prove that the `foundry-agt` skill works
-end-to-end on a CI runner with **no Azure resources, no model deployments,
-no ACA, no dataplane calls** — `foundry-agt` is in-process MAF middleware
-that fires before any model dispatch on a denied capability, so the entire
-smoke runs locally in a Python venv.
+Copilot CLI plugin and you want to prove that the `foundry-agt` skill's
+in-process MAF governance middleware works end-to-end **against real Azure
+resources** — a real Entra OIDC token, a real `FoundryChatClient` inference
+call through the CI Foundry deployment, a real capability-hook allow/deny
+pair, and a real `AuditLog` hash-chain — not just a local structural probe.
+
+**This is an EXECUTION smoke, not a catalog inspection.** You MUST run the
+Bash blocks below in order. Do NOT inspect unrelated repository files, do
+NOT run `validate-skills.py`, do NOT rebuild docs, do NOT `git status` —
+those are catalog-author concerns, not consumer-smoke concerns. Your only
+acceptable terminal state is the final Bash tool call in Step 2, which
+writes the marker file.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You ARE
+the running Copilot CLI process. Do NOT run `copilot -p ...`,
+`copilot --version`, `npm install -g @github/copilot`, or any other
+`copilot ...` invocation from inside a Bash tool call, and do NOT install
+or probe the Copilot CLI. Doing so spawns a nested CLI process without the
+right auth context, crashes, and clobbers this run's transcript, defeating
+the workflow's retry classifier (AGENTS.md § 9.7 Pattern 27). The workflow
+already captures your output via its own `tee` — your job is to EXECUTE the
+Steps below directly in Bash tool calls, not to "run the smoke".
 
 Do whatever the skill tells you to do. Do NOT improvise from training-data
 knowledge of the Agent Governance Toolkit (AGT) or the Microsoft Agent
-Framework (MAF) — read the skill's `SKILL.md` first, and follow its
-documented contract.
+Framework (MAF) — the two reference probes in Step 2 are the skill's
+canonical, already-vetted evidence source; you are executing them verbatim,
+not reimplementing them.
+
+The shared CI Foundry account, project, and model deployment used below are
+**read-only** from this fixture's perspective: the smoke performs one
+benign chat completion against the existing deployment and reads the
+resulting response. It does NOT create, delete, or tear down any Azure
+resource, ACR image, ACA app, or role assignment — there is nothing to
+clean up when the smoke finishes.
+
+---
+
+## Step −1 — Acknowledge skill contract (mandatory FIRST action)
+
+Run this single Bash block as your first tool call. It performs a bounded
+`sed -n` / `grep` read of the load-bearing parts of `SKILL.md` — its
+identity line, its pinned `pip install` block, and its SSOT
+Copy-verbatim pointer — and asserts each one, rather than merely printing
+a path. This is real audit evidence, not a manufactured string: the block
+FAILs loudly if the skill's pin or SSOT contract has drifted. Do NOT use
+the `view` tool on `SKILL.md` — the file is large and chunked reads inflate
+per-turn context past the CI model deployment's per-minute TPM ceiling
+(AGENTS.md § 9.7 Pattern 19). This bounded read stays well under that
+budget while still proving the contract, unlike a bare `echo` of the path.
+
+```bash
+S=skills/foundry-agt/SKILL.md
+sed -n '/^name: /p' "$S"
+sed -n '/^pip install/,/^```$/p' "$S"
+sed -n '/^> \*\*MUST:\*\* Copy verbatim/,+1p' "$S"
+grep -q '^name: foundry-agt$' "$S" || { echo "SKILL_CONTRACT=FAIL identity"; exit 1; }
+grep -q '"agent-governance-toolkit\[full\]~=4\.1\.0"' "$S" || { echo "SKILL_CONTRACT=FAIL agt-pin"; exit 1; }
+grep -q '"agent-framework-core~=1\.13\.0"' "$S" || { echo "SKILL_CONTRACT=FAIL maf-pin"; exit 1; }
+grep -q 'references/maf-middleware-snippet\.py' "$S" || { echo "SKILL_CONTRACT=FAIL ssot-ref"; exit 1; }
+test -f skills/foundry-agt/references/maf-middleware-snippet.py || { echo "SKILL_CONTRACT=FAIL ssot-file"; exit 1; }
+echo "SKILL_CONTRACT=OK skills/foundry-agt/SKILL.md"
+```
 
 ---
 
 ## Step 0 — Auth context (show, do not assert)
 
-`foundry-agt` itself does **no Azure dataplane calls** in the in-process
-middleware path you're exercising. The inventory below is printed only for
-run-log consistency with other fixtures in the catalog — do NOT gate flow
-on any of these checks (Pattern 17), and an empty `az account show` cache
-is not a failure for this skill.
+Print the auth context for the run log only. Do NOT gate flow on the `az`
+CLI cache here — `azure/login@v2` populates a runner-level CLI cache that
+Copilot CLI tool subshells do not reliably inherit, and
+`AZURE_FEDERATED_TOKEN_FILE` does not inherit into this subshell either.
+The deterministic gate for this smoke is the explicit, same-subshell OIDC
+token exchange and `az login --service-principal --federated-token` that
+Step 2's own script performs immediately before it runs the probes — that
+is what makes `DefaultAzureCredential` deterministically reach
+`AzureCliCredential` in Step 2's process (AGENTS.md § 9.7 Pattern 17). The
+runner-level `ACTIONS_ID_TOKEN_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN`
+pair DOES inherit into this subshell (GHA sets them on the parent process
+whenever `id-token: write` is in job permissions), which is what Step 2's
+exchange consumes.
 
 ```bash
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
-az account show --output table || echo "(az cache not inherited — fine; this skill does no Azure calls)"
+echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
+echo "FOUNDRY_MODEL_DEPLOYMENT=${FOUNDRY_MODEL_DEPLOYMENT:+set}"
+echo "ACTIONS_ID_TOKEN_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL:+set}"
+echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+set}"
+az account show --output table || echo "(az cache not inherited — Step 2 performs its own explicit same-subshell OIDC exchange)"
 ```
+
+All seven lines above MUST print `...=set`. If any prints empty, the
+workflow's `env:` block or `id-token: write` permission is broken
+(Pattern 11) — that is a workflow bug, not a skill bug. In that case go
+straight to Step 2's failure path with reason
+`auth context missing: <var-name>`.
 
 ---
 
-## Step 1 — The goal
+## Step 1 — What Step 2 proves
 
-Using the `foundry-agt` skill, prove that the in-process MAF middleware
-integration surface documented in `SKILL.md` is wired correctly against
-the pinned versions of AGT and the Microsoft Agent Framework. Specifically
-prove all of the following:
+The single Bash tool call in Step 2 first establishes a real Azure CLI
+login in its own subshell via an explicit GitHub OIDC token exchange (see
+below), then builds a throwaway virtualenv, installs the exact pinned
+package set the skill documents, and runs the skill's two canonical
+reference probes straight through, in order:
 
-1. **The documented install produces a working `agt` CLI.** Use the exact
-   `pip install` command the skill prescribes (note the `[full]` extras —
-   they are required for `agt doctor` / `agt verify` to work). Then run
-   `agt --version`, `agt doctor`, and `agt verify` and confirm `agt verify`
-   prints `OWASP ASI 2026` somewhere in its output.
+0. **Explicit same-subshell OIDC exchange** — fetch a real GitHub Actions
+   OIDC JSON Web Token from the runner's `ACTIONS_ID_TOKEN_REQUEST_URL`
+   for the `api://AzureADTokenExchange` audience, then
+   `az login --service-principal --federated-token` with that token. This
+   populates the Azure CLI's token cache inside this exact Bash subshell —
+   the same subshell the two probes below run in — so
+   `DefaultAzureCredential` deterministically reaches `AzureCliCredential`
+   when the probes construct their own credential.
+1. `skills/foundry-agt/references/python/contract_probe.py` — the
+   no-network structural contract: exact pinned package versions, the
+   `agent-governance-toolkit` factory stack wiring, the real
+   `FunctionTool`/capability-hook allow-then-deny path, the `AuditLog`
+   hash-chain round-trip, and the stub-response policy chain.
+2. `skills/foundry-agt/references/python/live_t3_probe.py` — the live T3
+   proof against real Azure: an explicit async `DefaultAzureCredential`
+   token acquisition for `https://ai.azure.com/.default`, a real
+   `FoundryChatClient` built from `FOUNDRY_PROJECT_ENDPOINT` and
+   `FOUNDRY_MODEL_DEPLOYMENT`, one benign prompt run through a real `Agent`
+   carrying the real governance middleware stack plus a counting chat
+   middleware, a deterministic re-exercise of the same capability guard
+   (one allowed execution, one denial, zero dangerous executions), and a
+   final `AuditLog` integrity + CloudEvents export check.
 
-2. **The five public surfaces the skill documents are importable and
-   their signatures are stable.** Print `inspect.signature(...)` for each
-   of these symbols to stdout — the audit trail cites these prints as
-   evidence of the actual 3.7.x / 1.7.x API surface:
-   - `agent_os.integrations.maf_adapter.create_governance_middleware`
-   - `agent_os.policies.PolicyEvaluator.evaluate`
-   - `agent_os.policies.PolicyEvaluator.load_policies`
-   - `agentmesh.governance.AuditLog.log`
-   - `agentmesh.governance.AuditLog.export_cloudevents`
-   - `agent_framework.Agent.__init__`
-
-3. **MAF accepts `middleware` as a constructor parameter.** The skill's
-   integration story is `Agent(..., middleware=create_governance_middleware(...))`,
-   so the literal parameter name `middleware` MUST appear in the
-   `Agent.__init__` signature. Assert this — if it's missing, the
-   integration contract is broken regardless of whether AGT works in
-   isolation.
-
-4. **`create_governance_middleware()` returns a middleware stack of
-   length ≥ 2.** Call the factory with `policy_directory` pointing at
-   `skills/foundry-agt/references/policies` (the canonical policies
-   shipped with the skill), `allowed_tools=[]`, `denied_tools=[]`, a
-   CI-safe `agent_id`, and **`enable_rogue_detection=False`** (Known
-   Issue #4 in the SKILL — RogueDetection needs a pre-built capability
-   profile and breaks without it). Assert the return value is a `list`
-   of length ≥ 2.
-
-5. **The canonical policy YAML loads and evaluates the expected way.**
-   Load `skills/foundry-agt/references/policies/default.yaml` via
-   `PolicyEvaluator.load_policies(...)` (structural — a malformed YAML
-   would raise). Then run two policy evaluations through the loaded
-   evaluator:
-   - A SQL-injection-shaped message containing `DROP TABLE users` MUST
-     produce a `deny` decision (per `default.yaml`'s `block-sql-injection`
-     rule on field `message`).
-   - A benign greeting (`"hello"`) MUST produce a non-deny decision.
-
-   Because `PolicyEvaluator`'s decision return type has evolved across
-   releases (could be a dataclass, dict, or plain string), introspect
-   the returned object across several plausible attribute names —
-   `action`, `decision`, `effect`, `result`, `allowed`, `message`,
-   `reason`, plus `str(decision).lower()` as a fallback — and assert
-   that the resulting text-form contains `"deny"` (SQL case) or does
-   NOT contain `"deny"` (benign case). A version-tolerant check
-   prevents an `allow`/no-op object from silently passing.
-
-6. **AuditLog hash-chain round-trip.** Create an `AuditLog`, append two
-   entries via `log(...)`, call `verify_integrity()` and assert the
-   result is truthy, then call `export_cloudevents()` and assert it
-   returns an iterable of length 2. This is the skill's headline
-   tamper-evidence story — it must work.
-
-Anchor every filesystem reference to `$GITHUB_WORKSPACE` (`cd
-"$GITHUB_WORKSPACE"` upfront) so the Python script can find the policy
-YAML regardless of where the venv ends up. Read
-`skills/foundry-agt/SKILL.md` for the canonical import paths,
-factory contract, and Known Issues — and read
-`skills/foundry-agt/references/maf-middleware-snippet.py` for the
-already-vetted shape of the integration code. If anything you remember
-from training data conflicts with the skill, the skill wins.
-
-There are **no Azure resources to clean up** — this is an in-process
-smoke. Process exit handles all teardown.
+Both scripts print their own exact evidence lines as they run and exit
+non-zero on any assertion failure — you do not need to parse their output
+yourself, you only need to let them run to completion inside the venv and
+let the shell's own error handling decide the marker outcome.
 
 ---
 
-## Step 2 — Marker contract (deterministic, MANDATORY)
+## Step 2 — Build, run, and mark (deterministic, MANDATORY, single Bash call)
 
-Your FINAL action — after the Python smoke prints all assertions and
-signature dumps — is to invoke the Bash tool to write the marker file.
-The file's literal byte content is what CI grades; your assistant-text
-reply is NOT graded.
-
-On success (all of: `pip install` succeeded, `agt --version` /
-`agt doctor` / `agt verify` all returned 0, `agt verify` output
-contained `OWASP ASI 2026`, all 6 signatures printed, the `middleware`
-parameter assertion held, the factory returned a list of length ≥ 2,
-`load_policies` did not raise, both policy evaluations matched the
-expected text, the AuditLog round-trip held):
-
-```bash
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-agt-smoke-result
-```
-
-On ANY failure (install error, missing CLI, missing signature, broken
-integration contract, policy decision mismatched, AuditLog integrity
-broken):
+Your FINAL action is to invoke the Bash tool exactly once with the script
+below, unmodified, rooted at `$GITHUB_WORKSPACE`. The marker file's literal
+byte content is what CI grades — your assistant-text reply is NOT graded.
+The success token below is rendered with a leading underscore
+(`_MOKE_RESULT`) in this prose and inside the script itself so it can never
+match the workflow's anchored grep by accident; the `sed 's/^_/S/'` in the
+script is what turns it into the real marker at the moment of the write.
+Do not substitute it back to a literal leading `S` anywhere in your own
+reply, echoes, or summaries — only the script's own `sed` pipeline may do
+that, and only into the marker file.
 
 ```bash
-printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-agt-smoke-result
+MARKER=/tmp/foundry-agt-smoke-result
+EVIDENCE=/tmp/foundry-agt-smoke-evidence
+
+on_error() {
+  rc=$?
+  printf '_MOKE_RESULT=FAIL exit=%s\n' "$rc" | sed 's/^_/S/' > "$MARKER"
+  exit "$rc"
+}
+
+set -Eeuo pipefail
+trap on_error ERR
+
+cd "$GITHUB_WORKSPACE"
+
+# Explicit same-subshell OIDC exchange (mandatory, fail-closed). azure/login@v2
+# authenticates only the runner's own process/CLI cache; Copilot CLI tool
+# subshells do not reliably inherit that cache, and AZURE_FEDERATED_TOKEN_FILE
+# does not inherit either. ACTIONS_ID_TOKEN_REQUEST_URL and
+# ACTIONS_ID_TOKEN_REQUEST_TOKEN DO inherit (GHA sets them on the parent
+# process whenever `id-token: write` is in job permissions), so this fetches
+# a real GitHub OIDC token and logs it into the Azure CLI cache inside THIS
+# exact subshell -- the same subshell the probes below run in.
+test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+OIDC_TOKEN=$(curl --fail --silent --show-error \
+  -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+  | jq -er .value)
+az login --service-principal \
+  --username "$AZURE_CLIENT_ID" \
+  --tenant "$AZURE_TENANT_ID" \
+  --federated-token "$OIDC_TOKEN" \
+  --output none
+unset OIDC_TOKEN
+
+: > "$EVIDENCE"
+
+python3 -m venv .venv-foundry-agt-t3
+source .venv-foundry-agt-t3/bin/activate
+pip install --quiet --upgrade pip
+pip install --quiet \
+  "agent-governance-toolkit[full]~=4.1.0" \
+  "agent-framework-core~=1.13.0" \
+  "agent-framework-foundry~=1.10.4" \
+  "agent-framework-openai~=1.12.0" \
+  "azure-identity~=1.25.3"
+pip check
+
+python3 skills/foundry-agt/references/python/contract_probe.py | tee -a "$EVIDENCE"
+python3 skills/foundry-agt/references/python/live_t3_probe.py | tee -a "$EVIDENCE"
+
+deactivate
+rm -rf .venv-foundry-agt-t3
+
+trap - ERR
+printf '_MOKE_RESULT=PASS\n' | sed 's/^_/S/' > "$MARKER"
 ```
+
+`set -Eeuo pipefail` plus the `ERR` trap means: if the OIDC token fetch,
+`az login`, venv creation, the pip install, `pip check`, or either probe
+exits non-zero — `pipefail` makes a failure anywhere in a `curl | jq` or
+`... | tee -a` pipeline propagate even though `tee` itself always exits 0
+— the trap fires immediately, writes the obfuscated FAIL line with the
+real exit code, and re-raises that same exit code. There is no fallback
+or skip path for the OIDC exchange: if `ACTIONS_ID_TOKEN_REQUEST_URL` /
+`ACTIONS_ID_TOKEN_REQUEST_TOKEN` are unset, the token fetch fails, or
+`az login` rejects the federated token, the script fails closed right
+there — it does NOT fall through to a degraded credential path. The PASS
+line at the very end is reached only if every command above it, including
+the OIDC exchange and both probes, exited 0. Do not add a broad
+`try/catch` or `|| true` anywhere in this script that would swallow a
+failure before the trap sees it.
 
 The marker file is single-source-of-truth. Do not print the marker token
 anywhere else in your reply — no echoes, no summaries, no fenced code
-blocks containing the literal string. The Bash tool write is the only
-legitimate emission path.
+blocks reproducing it outside the script above. The Bash tool write inside
+this one script is the only legitimate emission path.

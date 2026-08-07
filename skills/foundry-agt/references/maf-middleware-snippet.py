@@ -1,16 +1,10 @@
-"""
-GBB-verified MAF middleware wiring for the Microsoft Agent Governance
-Toolkit (AGT v3.7.0) on top of agent-framework v1.8.0.
+"""Canonical MAF middleware wiring for Agent Governance Toolkit 4.1.0
+with Agent Framework Core 1.13.0.
 
-This is the **working** version — the upstream Foundry deployment doc
-(`docs/deployment/azure-foundry-agent-service.md`) shows manual
-construction with kwargs that no longer exist in 3.7.0. Use this
-factory instead.
+Source of truth for the prose example in `../../SKILL.md § Wiring snippet`.
 
-References:
-  - upstream-pin.md (this skill) — full API surface + Known Issues
-  - https://github.com/microsoft/agent-governance-toolkit/blob/main/
-      agent-governance-python/agent-os/src/agent_os/integrations/maf_adapter.py
+The pin validation probe imports this module and constructs an Agent from it
+on every refresh.
 """
 from __future__ import annotations
 
@@ -39,10 +33,15 @@ def build_governed_agent(
     """
     Wire AGT governance middleware onto a MAF Agent.
 
-    Returns a ready-to-run Agent with the four-layer stack assembled
-    by ``create_governance_middleware`` plus an explicit
+    Returns a ready-to-run Agent with the default two-middleware stack
+    (``AuditTrailMiddleware`` + ``GovernancePolicyMiddleware``) assembled
+    by ``create_governance_middleware``, plus an explicit
     ``GovernancePolicyMiddleware`` bound to a YAML-loaded
-    ``PolicyEvaluator``.
+    ``PolicyEvaluator``. ``create_governance_middleware`` adds a third,
+    ``CapabilityGuardMiddleware``, only when ``allowed_tools`` or
+    ``denied_tools`` is not ``None`` — pass both as ``None`` (this
+    function's default) to get the two-middleware stack with no
+    capability guard at all.
 
     Parameters
     ----------
@@ -54,9 +53,10 @@ def build_governed_agent(
 
     Notes
     -----
-    - ``enable_rogue_detection=False`` because RogueDetectionMiddleware
-      requires a pre-built capability profile (see Known Issue #4 in
-      upstream-pin.md). Switch to True after baselining the agent.
+    - ``enable_rogue_detection=False`` by default: RogueDetectionMiddleware
+      is most useful once the agent has a baselined capability profile
+      (see upstream-pin.md for current rogue-detection guidance). Switch
+      to True after baselining the agent.
     - The factory's auto-built GovernancePolicyMiddleware is replaced with
       one bound to a PolicyEvaluator we control, so we can inspect
       decisions in tests and CI.
@@ -67,17 +67,38 @@ def build_governed_agent(
     evaluator.load_policies(str(policy_dir))
 
     stack = create_governance_middleware(
-        policy_directory=None,                    # we attach our own evaluator below
-        allowed_tools=allowed_tools or [],
-        denied_tools=denied_tools or [],
+        policy_directory=str(policy_dir),          # factory builds its own evaluator
+                                                   # bound to this dir; replaced below
+                                                   # with OUR evaluator instance so
+                                                   # callers can inspect decisions
+        allowed_tools=allowed_tools,               # None means no allowlist (allow
+                                                   # every tool not on denied_tools);
+                                                   # do NOT coerce to [] — [] means
+                                                   # deny-all to CapabilityGuardMiddleware
+        denied_tools=denied_tools,
         agent_id=name,
-        enable_rogue_detection=False,             # see upstream-pin.md Known Issue #4
+        enable_rogue_detection=False,             # rogue detection is most useful
+                                                   # once the agent has a baselined
+                                                   # capability profile — see
+                                                   # upstream-pin.md
         audit_log=audit_log,
     )
 
-    # Replace the factory's policy mw with one bound to OUR evaluator
-    stack = [m for m in stack if not isinstance(m, GovernancePolicyMiddleware)]
-    stack.insert(0, GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log))
+    # Replace the factory's own GovernancePolicyMiddleware with one bound to OUR
+    # evaluator instance, IN PLACE at its original factory index. Do NOT
+    # filter-then-insert(0, ...) — that would place GovernancePolicyMiddleware
+    # ahead of AuditTrailMiddleware and break the documented
+    # AuditTrail -> GovernancePolicy -> CapabilityGuard factory order.
+    stack = [
+        # No agent_id= kwarg here: v4's audit writer reads agent_did from
+        # context.agent.name at call time, not from anything passed to
+        # this constructor, so an agent_id kwarg would be accepted but
+        # silently ignored on this path.
+        GovernancePolicyMiddleware(evaluator=evaluator, audit_log=audit_log)
+        if isinstance(m, GovernancePolicyMiddleware)
+        else m
+        for m in stack
+    ]
 
     return Agent(
         chat_client,                              # NB: first positional is `client`, NOT `chat_client=`
