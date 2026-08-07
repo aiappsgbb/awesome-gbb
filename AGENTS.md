@@ -1896,7 +1896,7 @@ and protects all legs automatically; no fixture-side change needed.
 The "Copilot CLI's own backing model" framing above is **correct only
 when CLI runs on its default backend**. The catalog's CI sets
 `COPILOT_PROVIDER_TYPE=azure` + `COPILOT_PROVIDER_BASE_URL=
-${secrets.AZURE_AI_ENDPOINT}` + `COPILOT_PROVIDER_MODEL_ID=gpt-5.4-mini`
+${secrets.FOUNDRY_PROJECT_ENDPOINT}` + `COPILOT_PROVIDER_MODEL_ID=gpt-5.4-mini`
 in `skill-test.yml`, so every `copilot -p` invocation in CI calls
 **our own `gpt-5.4-mini` deployment in `aif-awesome-gbb-ci`** — not
 the GitHub-backed CAPI quota. Consequences:
@@ -2659,7 +2659,7 @@ recoverable failure modes without changing fixture code.
    used:currentValue, limit:limit}" -o table`
 3. If regional ceiling hit (e.g. 1000K already allocated), deploy
    `gpt-5.4-mini` in a second region (eastus2 typically has 1000K
-   free) and rotate `AZURE_AI_ENDPOINT` between regions OR shrink
+   free) and rotate `FOUNDRY_PROJECT_ENDPOINT` between regions OR shrink
    the fixture's prompt size.
 
 **Cost / benefit.** Pattern 26 adds ~5 min per retry leg when it

@@ -94,7 +94,7 @@ jobs:
         env:
           # BYOK routing → Foundry. Names verified in Task 1.0.
           COPILOT_PROVIDER_TYPE: azure
-          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
           COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
           COPILOT_PROVIDER_WIRE_API: responses
