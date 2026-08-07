@@ -51,7 +51,9 @@ PIN_VALIDATION_REPO_ROOT_ENV = "PIN_VALIDATION_REPO_ROOT"
 # ALL Azure env vars live here — no ad-hoc forwarding elsewhere.
 AZURE_ENV_MAP = {
     "azure_subscription": "AZURE_SUBSCRIPTION_ID",
-    "foundry_project": "AZURE_AI_ENDPOINT",
+    # Project-scoped Foundry calls (AIProjectClient, evals, agents) use the
+    # dedicated project endpoint secret — NOT the account-scoped endpoint.
+    "foundry_project": "FOUNDRY_PROJECT_ENDPOINT",
 }
 # Additional env vars forwarded to every pin script when present (OIDC, etc.)
 AZURE_EXTRA_ENV = (
