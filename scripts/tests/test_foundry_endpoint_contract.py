@@ -138,6 +138,20 @@ class FoundryEndpointContractTests(unittest.TestCase):
             )
         )
 
+    def test_agents_quota_remediation_rotates_project_endpoint(self) -> None:
+        agents = AGENTS_GUIDE.read_text(encoding="utf-8")
+        protocol_match = re.search(
+            r"\*\*Diagnostic protocol\.\*\* If a fixture FAILs with"
+            r".*?(?=\n\*\*Cost / benefit\.\*\*)",
+            agents,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(protocol_match)
+        protocol = protocol_match.group(0)
+
+        self.assertNotIn("rotate `AZURE_AI_ENDPOINT`", protocol)
+        self.assertIn("rotate `FOUNDRY_PROJECT_ENDPOINT`", protocol)
+
 
 if __name__ == "__main__":
     unittest.main()

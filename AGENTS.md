@@ -2659,7 +2659,7 @@ recoverable failure modes without changing fixture code.
    used:currentValue, limit:limit}" -o table`
 3. If regional ceiling hit (e.g. 1000K already allocated), deploy
    `gpt-5.4-mini` in a second region (eastus2 typically has 1000K
-   free) and rotate `AZURE_AI_ENDPOINT` between regions OR shrink
+   free) and rotate `FOUNDRY_PROJECT_ENDPOINT` between regions OR shrink
    the fixture's prompt size.
 
 **Cost / benefit.** Pattern 26 adds ~5 min per retry leg when it
