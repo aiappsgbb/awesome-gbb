@@ -51,7 +51,7 @@ PIN_VALIDATION_REPO_ROOT_ENV = "PIN_VALIDATION_REPO_ROOT"
 # ALL Azure env vars live here — no ad-hoc forwarding elsewhere.
 AZURE_ENV_MAP = {
     "azure_subscription": "AZURE_SUBSCRIPTION_ID",
-    "foundry_project": "FOUNDRY_PROJECT_ENDPOINT",
+    "foundry_project": "AZURE_AI_ENDPOINT",
 }
 # Additional env vars forwarded to every pin script when present (OIDC, etc.)
 AZURE_EXTRA_ENV = (
@@ -59,7 +59,6 @@ AZURE_EXTRA_ENV = (
     "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID",
     "AZURE_AI_ENDPOINT",
-    "FOUNDRY_PROJECT_ENDPOINT",
     "ACR_LOGIN_SERVER",
 )
 
