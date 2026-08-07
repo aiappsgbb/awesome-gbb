@@ -1,0 +1,482 @@
+name: Foundry document vision speech OIDC preflight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      FDVS_STATUS_FILE: /tmp/fdvs-oidc-preflight.txt
+    steps:
+      - name: Initialize sanitized evidence
+        run: |
+          set -euo pipefail
+          cat > "$FDVS_STATUS_FILE" <<'EOF'
+          FDVS_OIDC_PREFLIGHT_AUTH=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_ACCOUNT=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_USER=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_SPEECH_USER=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_DOCINTEL_PREBUILT_READ=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_SPEECH_TTS=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_SPEECH_STT=NOT_RUN
+          FDVS_OIDC_PREFLIGHT_RESULT=FAIL
+          EOF
+
+      - name: Guard main ref
+        id: ref-guard
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::FDVS preflight requires refs/heads/main"
+            exit 1
+          fi
+
+      - name: Azure login via OIDC
+        id: azure-login
+        if: steps.ref-guard.outcome == 'success'
+        continue-on-error: true
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Python
+        id: setup-python
+        if: steps.azure-login.outcome == 'success'
+        continue-on-error: true
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded probe dependencies
+        id: install-dependencies
+        if: steps.setup-python.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet \
+            "azure-identity~=1.25.3" \
+            "azure-ai-documentintelligence~=1.0.2" \
+            "azure-cognitiveservices-speech~=1.51.0" \
+            "Pillow~=11.3.0"
+
+      - name: Run read-only live probes
+        id: live-probes
+        if: steps.install-dependencies.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python - <<'PY' >/dev/null 2>/dev/null
+          from __future__ import annotations
+
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          from urllib.parse import urlparse
+
+          from azure.ai.documentintelligence import DocumentIntelligenceClient
+          from azure.identity import DefaultAzureCredential
+          import azure.cognitiveservices.speech as speechsdk
+          from PIL import Image, ImageDraw
+
+
+          STATUS_KEYS = (
+              "FDVS_OIDC_PREFLIGHT_AUTH",
+              "FDVS_OIDC_PREFLIGHT_ACCOUNT",
+              "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_USER",
+              "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_SPEECH_USER",
+              "FDVS_OIDC_PREFLIGHT_DOCINTEL_PREBUILT_READ",
+              "FDVS_OIDC_PREFLIGHT_SPEECH_TTS",
+              "FDVS_OIDC_PREFLIGHT_SPEECH_STT",
+              "FDVS_OIDC_PREFLIGHT_RESULT",
+          )
+          STATUS_VALUES = {"PASS", "FAIL", "NOT_RUN"}
+          STATUS_FILE = Path(os.environ["FDVS_STATUS_FILE"])
+
+
+          def load_status() -> dict[str, str]:
+              status: dict[str, str] = {}
+              for line in STATUS_FILE.read_text(encoding="utf-8").splitlines():
+                  key, value = line.split("=", 1)
+                  status[key] = value
+              if tuple(status) != STATUS_KEYS:
+                  raise RuntimeError("status schema mismatch")
+              if not set(status.values()) <= STATUS_VALUES:
+                  raise RuntimeError("status value mismatch")
+              return status
+
+
+          def save_status(status: dict[str, str]) -> None:
+              body = "".join(f"{key}={status[key]}\n" for key in STATUS_KEYS)
+              STATUS_FILE.write_bytes(body.encode("utf-8"))
+
+
+          status = load_status()
+
+
+          def pass_stage(key: str) -> None:
+              status[key] = "PASS"
+              save_status(status)
+
+
+          def fail_stage(key: str) -> None:
+              status[key] = "FAIL"
+              status["FDVS_OIDC_PREFLIGHT_RESULT"] = "FAIL"
+              save_status(status)
+              raise SystemExit(1)
+
+
+          def required_env(name: str) -> str:
+              value = os.environ.get(name, "").strip()
+              if not value:
+                  raise RuntimeError("missing environment")
+              return value
+
+
+          def az_json(*args: str) -> object:
+              result = subprocess.run(
+                  ["az", *args, "--only-show-errors", "--output", "json"],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  raise RuntimeError("azure query failed")
+              return json.loads(result.stdout)
+
+
+          def normalize_words(value: str) -> set[str]:
+              return set(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+          try:
+              endpoint = required_env("AZURE_AI_ENDPOINT")
+              client_id = required_env("AZURE_CLIENT_ID")
+              subscription_id = required_env("AZURE_SUBSCRIPTION_ID")
+              required_env("AZURE_TENANT_ID")
+              account = subprocess.run(
+                  [
+                      "az",
+                      "account",
+                      "show",
+                      "--query",
+                      "id",
+                      "--output",
+                      "tsv",
+                      "--only-show-errors",
+                  ],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+              )
+              if account.returncode != 0 or account.stdout.strip() != subscription_id:
+                  raise RuntimeError("authenticated context mismatch")
+              token = subprocess.run(
+                  [
+                      "az",
+                      "account",
+                      "get-access-token",
+                      "--resource",
+                      "https://cognitiveservices.azure.com",
+                      "--query",
+                      "expiresOn",
+                      "--output",
+                      "tsv",
+                      "--only-show-errors",
+                  ],
+                  check=False,
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+              )
+              if token.returncode != 0:
+                  raise RuntimeError("token acquisition failed")
+              pass_stage("FDVS_OIDC_PREFLIGHT_AUTH")
+          except Exception:
+              fail_stage("FDVS_OIDC_PREFLIGHT_AUTH")
+
+          try:
+              parsed = urlparse(endpoint)
+              suffix = ".cognitiveservices.azure.com"
+              if (
+                  parsed.scheme != "https"
+                  or parsed.username is not None
+                  or parsed.password is not None
+                  or parsed.query
+                  or parsed.fragment
+                  or parsed.path not in {"", "/"}
+                  or not parsed.hostname
+                  or not parsed.hostname.endswith(suffix)
+              ):
+                  raise RuntimeError("endpoint shape mismatch")
+              account_name = parsed.hostname[: -len(suffix)]
+              if not account_name or "." in account_name:
+                  raise RuntimeError("account host mismatch")
+
+              accounts = az_json(
+                  "cognitiveservices",
+                  "account",
+                  "list",
+                  "--subscription",
+                  subscription_id,
+              )
+              matches = [
+                  item
+                  for item in accounts
+                  if isinstance(item, dict) and item.get("name") == account_name
+              ]
+              if len(matches) != 1:
+                  raise RuntimeError("account resolution mismatch")
+              account = matches[0]
+              if account["kind"] != "AIServices":
+                  raise RuntimeError("account kind mismatch")
+              account_endpoint = (
+                  account.get("properties", {}).get("endpoint")
+                  or account.get("endpoint")
+              )
+              if not account_endpoint:
+                  raise RuntimeError("account endpoint missing")
+              if urlparse(account_endpoint).hostname != parsed.hostname:
+                  raise RuntimeError("account endpoint mismatch")
+              account_id = str(account["id"])
+
+              identities = az_json(
+                  "identity",
+                  "list",
+                  "--subscription",
+                  subscription_id,
+              )
+              identity_matches = [
+                  item
+                  for item in identities
+                  if isinstance(item, dict)
+                  and str(item.get("clientId", "")).casefold() == client_id.casefold()
+              ]
+              if len(identity_matches) != 1:
+                  raise RuntimeError("identity resolution mismatch")
+              principal_id = str(identity_matches[0]["principalId"])
+              pass_stage("FDVS_OIDC_PREFLIGHT_ACCOUNT")
+          except Exception:
+              fail_stage("FDVS_OIDC_PREFLIGHT_ACCOUNT")
+
+          try:
+              assignments = az_json(
+                  "role",
+                  "assignment",
+                  "list",
+                  "--assignee-object-id",
+                  principal_id,
+                  "--scope",
+                  account_id,
+                  "--include-inherited",
+              )
+              role_names = {
+                  str(item.get("roleDefinitionName", ""))
+                  for item in assignments
+                  if isinstance(item, dict)
+              }
+              if "Cognitive Services User" not in role_names:
+                  raise RuntimeError("required role missing")
+              pass_stage(
+                  "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_USER"
+              )
+          except Exception:
+              fail_stage(
+                  "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_USER"
+              )
+
+          try:
+              if "Cognitive Services Speech User" not in role_names:
+                  raise RuntimeError("required role missing")
+              pass_stage(
+                  "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_SPEECH_USER"
+              )
+          except Exception:
+              fail_stage(
+                  "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_SPEECH_USER"
+              )
+
+          credential = DefaultAzureCredential()
+          wav_path = Path("/tmp/fdvs-preflight.wav")
+          phrase = "preflight speech check"
+          try:
+              try:
+                  image = Image.new("RGB", (900, 180), "white")
+                  ImageDraw.Draw(image).text(
+                      (40, 70),
+                      "FDVS document preflight nonce 20260807",
+                      fill="black",
+                  )
+                  document = io.BytesIO()
+                  image.save(document, format="PNG")
+                  document.seek(0)
+                  with DocumentIntelligenceClient(
+                      endpoint=endpoint,
+                      credential=credential,
+                  ) as client:
+                      poller = client.begin_analyze_document(
+                          "prebuilt-read",
+                          body=document,
+                          content_type="image/png",
+                      )
+                      result = poller.result()
+                  if "FDVS document preflight nonce 20260807" not in (
+                      result.content or ""
+                  ):
+                      raise RuntimeError("document content mismatch")
+                  pass_stage("FDVS_OIDC_PREFLIGHT_DOCINTEL_PREBUILT_READ")
+              except Exception:
+                  fail_stage("FDVS_OIDC_PREFLIGHT_DOCINTEL_PREBUILT_READ")
+
+              try:
+                  speech_config = speechsdk.SpeechConfig(
+                      token_credential=credential,
+                      endpoint=endpoint,
+                  )
+                  audio_output = speechsdk.audio.AudioOutputConfig(
+                      filename=str(wav_path)
+                  )
+                  synthesizer = speechsdk.SpeechSynthesizer(
+                      speech_config=speech_config,
+                      audio_config=audio_output,
+                  )
+                  synthesis = synthesizer.speak_text_async(phrase).get()
+                  if (
+                      synthesis.reason
+                      != speechsdk.ResultReason.SynthesizingAudioCompleted
+                      or not synthesis.audio_data
+                      or not wav_path.is_file()
+                      or wav_path.stat().st_size == 0
+                  ):
+                      raise RuntimeError("speech synthesis mismatch")
+                  pass_stage("FDVS_OIDC_PREFLIGHT_SPEECH_TTS")
+              except Exception:
+                  fail_stage("FDVS_OIDC_PREFLIGHT_SPEECH_TTS")
+
+              try:
+                  audio_input = speechsdk.audio.AudioConfig(
+                      filename=str(wav_path)
+                  )
+                  recognizer = speechsdk.SpeechRecognizer(
+                      speech_config=speech_config,
+                      language="en-US",
+                      audio_config=audio_input,
+                  )
+                  recognition = recognizer.recognize_once_async().get()
+                  if recognition.reason != speechsdk.ResultReason.RecognizedSpeech:
+                      raise RuntimeError("speech recognition mismatch")
+                  if not normalize_words(phrase) <= normalize_words(
+                      recognition.text or ""
+                  ):
+                      raise RuntimeError("speech transcript mismatch")
+                  pass_stage("FDVS_OIDC_PREFLIGHT_SPEECH_STT")
+              except Exception:
+                  fail_stage("FDVS_OIDC_PREFLIGHT_SPEECH_STT")
+          finally:
+              wav_path.unlink(missing_ok=True)
+              credential.close()
+
+          status["FDVS_OIDC_PREFLIGHT_RESULT"] = "PASS"
+          save_status(status)
+          PY
+
+      - name: Finalize sanitized evidence
+        if: always()
+        env:
+          REF_OUTCOME: ${{ steps.ref-guard.outcome }}
+          LOGIN_OUTCOME: ${{ steps.azure-login.outcome }}
+          PYTHON_OUTCOME: ${{ steps.setup-python.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install-dependencies.outcome }}
+          PROBE_OUTCOME: ${{ steps.live-probes.outcome }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          STATUS_KEYS = (
+              "FDVS_OIDC_PREFLIGHT_AUTH",
+              "FDVS_OIDC_PREFLIGHT_ACCOUNT",
+              "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_USER",
+              "FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_SPEECH_USER",
+              "FDVS_OIDC_PREFLIGHT_DOCINTEL_PREBUILT_READ",
+              "FDVS_OIDC_PREFLIGHT_SPEECH_TTS",
+              "FDVS_OIDC_PREFLIGHT_SPEECH_STT",
+              "FDVS_OIDC_PREFLIGHT_RESULT",
+          )
+          STATUS_VALUES = {"PASS", "FAIL", "NOT_RUN"}
+          status_file = Path(os.environ["FDVS_STATUS_FILE"])
+          status = dict(
+              line.split("=", 1)
+              for line in status_file.read_text(encoding="utf-8").splitlines()
+          )
+          if tuple(status) != STATUS_KEYS or not set(status.values()) <= STATUS_VALUES:
+              raise SystemExit("invalid evidence schema")
+
+          outcomes = (
+              os.environ["REF_OUTCOME"],
+              os.environ["LOGIN_OUTCOME"],
+              os.environ["PYTHON_OUTCOME"],
+              os.environ["INSTALL_OUTCOME"],
+              os.environ["PROBE_OUTCOME"],
+          )
+          if outcomes[0] != "success" or outcomes[1] != "success":
+              status["FDVS_OIDC_PREFLIGHT_AUTH"] = "FAIL"
+          elif outcomes[2] != "success" or outcomes[3] != "success":
+              status["FDVS_OIDC_PREFLIGHT_AUTH"] = "PASS"
+              status["FDVS_OIDC_PREFLIGHT_ACCOUNT"] = "FAIL"
+          elif outcomes[4] != "success":
+              for key in STATUS_KEYS[:-1]:
+                  if status[key] == "NOT_RUN":
+                      status[key] = "FAIL"
+                      break
+
+          if not all(status[key] == "PASS" for key in STATUS_KEYS[:-1]):
+              status["FDVS_OIDC_PREFLIGHT_RESULT"] = "FAIL"
+          body = "".join(f"{key}={status[key]}\n" for key in STATUS_KEYS)
+          status_file.write_bytes(body.encode("utf-8"))
+          PY
+
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdvs-oidc-preflight
+          path: /tmp/fdvs-oidc-preflight.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce exact PASS bytes
+        if: always()
+        run: |
+          set -euo pipefail
+          STATUS_FILE=/tmp/fdvs-oidc-preflight.txt
+          EXPECTED_FILE=/tmp/fdvs-oidc-preflight-expected.txt
+          cat > "$EXPECTED_FILE" <<'EOF'
+          FDVS_OIDC_PREFLIGHT_AUTH=PASS
+          FDVS_OIDC_PREFLIGHT_ACCOUNT=PASS
+          FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_USER=PASS
+          FDVS_OIDC_PREFLIGHT_RBAC_COGNITIVE_SERVICES_SPEECH_USER=PASS
+          FDVS_OIDC_PREFLIGHT_DOCINTEL_PREBUILT_READ=PASS
+          FDVS_OIDC_PREFLIGHT_SPEECH_TTS=PASS
+          FDVS_OIDC_PREFLIGHT_SPEECH_STT=PASS
+          FDVS_OIDC_PREFLIGHT_RESULT=PASS
+          EOF
+          if ! cmp -s "$STATUS_FILE" "$EXPECTED_FILE"; then
+            echo "::error::FDVS OIDC preflight failed"
+            exit 1
+          fi
+          echo "FDVS OIDC preflight passed"
