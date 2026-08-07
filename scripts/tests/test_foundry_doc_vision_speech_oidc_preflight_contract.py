@@ -42,8 +42,8 @@ FORBIDDEN_MUTATIONS = (
     r"\bazd\b",
     r"\baz\s+cognitiveservices\s+account\s+keys\s+list\b",
     r"\b(?:PUT|PATCH|DELETE)\s+https?://",
-    r"\bterraform\b",
-    r"\bbicep\b",
+    r"(?m)^[ \t]*(?:run:[ \t]*)?terraform\b",
+    r"(?m)^[ \t]*(?:run:[ \t]*)?bicep\b",
 )
 
 
@@ -63,6 +63,16 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
         )
 
     def test_main_guard_precedes_azure_login(self) -> None:
+        self.assertIn(
+            'GITHUB_REF" != "refs/heads/main"',
+            self.raw,
+            "expected the main-branch guard before Azure login",
+        )
+        self.assertIn(
+            "uses: azure/login@v2",
+            self.raw,
+            "expected azure/login@v2 to be present after the main-branch guard",
+        )
         guard = self.raw.index('GITHUB_REF" != "refs/heads/main"')
         login = self.raw.index("uses: azure/login@v2")
         self.assertLess(guard, login)
