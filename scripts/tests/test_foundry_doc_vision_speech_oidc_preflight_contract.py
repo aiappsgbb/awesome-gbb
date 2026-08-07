@@ -39,7 +39,7 @@ FORBIDDEN_MUTATIONS = (
     r"\baz\s+deployment\b",
     r"\baz\s+stack\b",
     r"\baz\s+resource\s+(?:create|update|delete)\b",
-    r"\bazd\b",
+    r"(?m)^[ \t]*(?:run:[ \t]*)?azd\b",
     r"\baz\s+cognitiveservices\s+account\s+keys\s+list\b",
     r"\b(?:PUT|PATCH|DELETE)\s+https?://",
     r"(?m)^[ \t]*(?:run:[ \t]*)?terraform\b",
