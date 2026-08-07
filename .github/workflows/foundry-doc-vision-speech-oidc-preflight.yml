@@ -112,11 +112,13 @@ jobs:
               "ENDPOINT_PARSE",
               "ENDPOINT_SCHEME",
               "ENDPOINT_CREDENTIALS",
+              "ENDPOINT_HOSTNAME",
+              "ENDPOINT_HOST_PROJECT",
+              "ENDPOINT_HOST_OPENAI",
+              "ENDPOINT_HOST_SUFFIX",
               "ENDPOINT_QUERY",
               "ENDPOINT_FRAGMENT",
               "ENDPOINT_PATH",
-              "ENDPOINT_HOSTNAME",
-              "ENDPOINT_HOST_SUFFIX",
               "ACCOUNT_HOST_DERIVATION",
               "ACCOUNT_LIST_QUERY",
               "ACCOUNT_RESOLUTION_CARDINALITY",
@@ -246,6 +248,18 @@ jobs:
               account_diagnostic = "ENDPOINT_CREDENTIALS"
               if parsed.username is not None or parsed.password is not None:
                   raise RuntimeError("endpoint credentials mismatch")
+              account_diagnostic = "ENDPOINT_HOSTNAME"
+              if not parsed.hostname:
+                  raise RuntimeError("endpoint hostname mismatch")
+              account_diagnostic = "ENDPOINT_HOST_PROJECT"
+              if parsed.hostname.endswith(".services.ai.azure.com"):
+                  raise RuntimeError("endpoint project host mismatch")
+              account_diagnostic = "ENDPOINT_HOST_OPENAI"
+              if parsed.hostname.endswith(".openai.azure.com"):
+                  raise RuntimeError("endpoint openai host mismatch")
+              account_diagnostic = "ENDPOINT_HOST_SUFFIX"
+              if not parsed.hostname.endswith(suffix):
+                  raise RuntimeError("endpoint host suffix mismatch")
               account_diagnostic = "ENDPOINT_QUERY"
               if parsed.query:
                   raise RuntimeError("endpoint query mismatch")
@@ -255,12 +269,6 @@ jobs:
               account_diagnostic = "ENDPOINT_PATH"
               if parsed.path not in {"", "/"}:
                   raise RuntimeError("endpoint path mismatch")
-              account_diagnostic = "ENDPOINT_HOSTNAME"
-              if not parsed.hostname:
-                  raise RuntimeError("endpoint hostname mismatch")
-              account_diagnostic = "ENDPOINT_HOST_SUFFIX"
-              if not parsed.hostname.endswith(suffix):
-                  raise RuntimeError("endpoint host suffix mismatch")
               account_diagnostic = "ACCOUNT_HOST_DERIVATION"
               account_name = parsed.hostname[: -len(suffix)]
               if not account_name or "." in account_name:
@@ -476,11 +484,13 @@ jobs:
               "ENDPOINT_PARSE",
               "ENDPOINT_SCHEME",
               "ENDPOINT_CREDENTIALS",
+              "ENDPOINT_HOSTNAME",
+              "ENDPOINT_HOST_PROJECT",
+              "ENDPOINT_HOST_OPENAI",
+              "ENDPOINT_HOST_SUFFIX",
               "ENDPOINT_QUERY",
               "ENDPOINT_FRAGMENT",
               "ENDPOINT_PATH",
-              "ENDPOINT_HOSTNAME",
-              "ENDPOINT_HOST_SUFFIX",
               "ACCOUNT_HOST_DERIVATION",
               "ACCOUNT_LIST_QUERY",
               "ACCOUNT_RESOLUTION_CARDINALITY",

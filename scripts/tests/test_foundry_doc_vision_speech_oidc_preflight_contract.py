@@ -40,11 +40,13 @@ EXPECTED_ACCOUNT_DIAGNOSTICS = (
     "ENDPOINT_PARSE",
     "ENDPOINT_SCHEME",
     "ENDPOINT_CREDENTIALS",
+    "ENDPOINT_HOSTNAME",
+    "ENDPOINT_HOST_PROJECT",
+    "ENDPOINT_HOST_OPENAI",
+    "ENDPOINT_HOST_SUFFIX",
     "ENDPOINT_QUERY",
     "ENDPOINT_FRAGMENT",
     "ENDPOINT_PATH",
-    "ENDPOINT_HOSTNAME",
-    "ENDPOINT_HOST_SUFFIX",
     "ACCOUNT_HOST_DERIVATION",
     "ACCOUNT_LIST_QUERY",
     "ACCOUNT_RESOLUTION_CARDINALITY",
@@ -62,11 +64,19 @@ ENDPOINT_DIAGNOSTIC_CHECKS = (
         "ENDPOINT_CREDENTIALS",
         "if parsed.username is not None or parsed.password is not None:",
     ),
+    ("ENDPOINT_HOSTNAME", "if not parsed.hostname:"),
+    (
+        "ENDPOINT_HOST_PROJECT",
+        'if parsed.hostname.endswith(".services.ai.azure.com"):',
+    ),
+    (
+        "ENDPOINT_HOST_OPENAI",
+        'if parsed.hostname.endswith(".openai.azure.com"):',
+    ),
+    ("ENDPOINT_HOST_SUFFIX", "if not parsed.hostname.endswith(suffix):"),
     ("ENDPOINT_QUERY", "if parsed.query:"),
     ("ENDPOINT_FRAGMENT", "if parsed.fragment:"),
     ("ENDPOINT_PATH", 'if parsed.path not in {"", "/"}:'),
-    ("ENDPOINT_HOSTNAME", "if not parsed.hostname:"),
-    ("ENDPOINT_HOST_SUFFIX", "if not parsed.hostname.endswith(suffix):"),
 )
 FORBIDDEN_MUTATIONS = (
     r"\baz\s+role\s+assignment\s+(?:create|update|delete)\b",
@@ -286,6 +296,19 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
                 "ENDPOINT_CREDENTIALS",
             ),
             (
+                "https://resource.services.ai.azure.com/api/projects/project",
+                "ENDPOINT_HOST_PROJECT",
+            ),
+            (
+                "https://resource.openai.azure.com/",
+                "ENDPOINT_HOST_OPENAI",
+            ),
+            ("https://example.com/models", "ENDPOINT_HOST_SUFFIX"),
+            (
+                "https://account.cognitiveservices.azure.com/models",
+                "ENDPOINT_PATH",
+            ),
+            (
                 "https://account.cognitiveservices.azure.com?api-version=test",
                 "ENDPOINT_QUERY",
             ),
@@ -293,12 +316,7 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
                 "https://account.cognitiveservices.azure.com#fragment",
                 "ENDPOINT_FRAGMENT",
             ),
-            (
-                "https://account.cognitiveservices.azure.com/models",
-                "ENDPOINT_PATH",
-            ),
             ("https:///", "ENDPOINT_HOSTNAME"),
-            ("https://example.com", "ENDPOINT_HOST_SUFFIX"),
             (
                 "https://account.cognitiveservices.azure.com/",
                 "ACCOUNT_HOST_DERIVATION",
