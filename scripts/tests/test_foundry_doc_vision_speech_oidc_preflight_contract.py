@@ -34,6 +34,18 @@ EXPECTED_SECRET_NAMES = {
     "AZURE_SUBSCRIPTION_ID",
     "AZURE_TENANT_ID",
 }
+EXPECTED_ACCOUNT_DIAGNOSTICS = (
+    "ENDPOINT_SHAPE",
+    "ACCOUNT_HOST_DERIVATION",
+    "ACCOUNT_LIST_QUERY",
+    "ACCOUNT_RESOLUTION_CARDINALITY",
+    "ACCOUNT_KIND",
+    "ACCOUNT_ENDPOINT_PRESENCE",
+    "ACCOUNT_ENDPOINT_MATCH",
+    "IDENTITY_LIST_QUERY",
+    "IDENTITY_RESOLUTION_CARDINALITY",
+    "UNKNOWN",
+)
 FORBIDDEN_MUTATIONS = (
     r"\baz\s+role\s+assignment\s+(?:create|update|delete)\b",
     r"\baz\s+deployment\b",
@@ -76,6 +88,7 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
         guard = self.raw.index('GITHUB_REF" != "refs/heads/main"')
         login = self.raw.index("uses: azure/login@v2")
         self.assertLess(guard, login)
+        self.assertIn("if: steps.ref-guard.outcome == 'success'", self.raw)
 
     def test_job_permissions_are_exact(self) -> None:
         self.assertNotIn("permissions", self.workflow)
@@ -101,6 +114,103 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
             self.raw,
             r'"cognitiveservices",\s*"account",\s*"list"',
         )
+
+    def test_account_diagnostic_allowlist_and_boundaries_are_explicit(self) -> None:
+        allowlist_blocks = re.findall(
+            r"ACCOUNT_DIAGNOSTIC_CODES = \(\n(?P<body>.*?)\n\s*\)",
+            self.raw,
+            flags=re.DOTALL,
+        )
+        self.assertEqual(
+            len(allowlist_blocks),
+            2,
+            "probe and finalizer must independently use the explicit allowlist",
+        )
+        for block in allowlist_blocks:
+            codes = tuple(
+                re.findall(
+                    r'^\s*"([A-Z][A-Z0-9_]*)",$',
+                    block,
+                    flags=re.MULTILINE,
+                )
+            )
+            self.assertEqual(codes, EXPECTED_ACCOUNT_DIAGNOSTICS)
+            self.assertTrue(
+                all(re.fullmatch(r"[A-Z][A-Z0-9_]*", code) for code in codes)
+            )
+
+        boundaries = (
+            ("ENDPOINT_SHAPE", "parsed = urlparse(endpoint)"),
+            ("ACCOUNT_HOST_DERIVATION", "account_name = parsed.hostname"),
+            ("ACCOUNT_LIST_QUERY", "accounts = az_json("),
+            ("ACCOUNT_RESOLUTION_CARDINALITY", "if len(matches) != 1:"),
+            ("ACCOUNT_KIND", 'if account["kind"] != "AIServices":'),
+            ("ACCOUNT_ENDPOINT_PRESENCE", "account_endpoint = ("),
+            (
+                "ACCOUNT_ENDPOINT_MATCH",
+                "if urlparse(account_endpoint).hostname != parsed.hostname:",
+            ),
+            ("IDENTITY_LIST_QUERY", "identities = az_json("),
+            (
+                "IDENTITY_RESOLUTION_CARDINALITY",
+                "if len(identity_matches) != 1:",
+            ),
+        )
+        for code, boundary in boundaries:
+            with self.subTest(code=code):
+                assignment = self.raw.index(f'account_diagnostic = "{code}"')
+                assertion = self.raw.index(boundary)
+                self.assertLess(assignment, assertion)
+
+    def test_account_diagnostic_is_private_validated_and_not_uploaded(self) -> None:
+        self.assertIn("FDVS_ACCOUNT_DIAGNOSTIC_FILE", self.job["env"])
+        diagnostic_path = self.job["env"]["FDVS_ACCOUNT_DIAGNOSTIC_FILE"]
+        status_path = self.job["env"]["FDVS_STATUS_FILE"]
+        self.assertEqual(diagnostic_path, "/tmp/fdvs-account-diagnostic.txt")
+        self.assertNotEqual(diagnostic_path, status_path)
+
+        upload_steps = [
+            step
+            for step in self.job["steps"]
+            if step.get("uses") == "actions/upload-artifact@v4"
+        ]
+        self.assertEqual(len(upload_steps), 1)
+        self.assertEqual(upload_steps[0]["with"]["path"], status_path)
+        self.assertNotIn(diagnostic_path, upload_steps[0]["with"]["path"])
+
+        self.assertIn("python - <<'PY' >/dev/null 2>/dev/null", self.raw)
+        self.assertNotRegex(self.raw, r"except Exception as \w+")
+        account_handler = re.search(
+            r'account_diagnostic = "UNKNOWN".*?'
+            r'except Exception:\n(?P<body>.*?)\n'
+            r'\s*fail_stage\("FDVS_OIDC_PREFLIGHT_ACCOUNT"\)',
+            self.raw,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(account_handler)
+        assert account_handler is not None
+        handler_body = account_handler.group("body")
+        self.assertRegex(
+            handler_body,
+            r"ACCOUNT_DIAGNOSTIC_FILE\.write_bytes\(\s*"
+            r'f"\{account_diagnostic\}\\n"\.encode\("ascii"\)\s*\)',
+        )
+        self.assertNotRegex(
+            handler_body,
+            r"(?i)(endpoint|account_name|client_id|subscription_id|"
+            r"principal_id|stdout|stderr|exception|traceback)",
+        )
+
+        self.assertIn("raw_diagnostic = diagnostic_file.read_bytes()", self.raw)
+        self.assertIn(
+            'raw_diagnostic == f"{code}\\n".encode("ascii")',
+            self.raw,
+        )
+        self.assertIn(
+            'print(f"::error::FDVS_ACCOUNT_DIAGNOSTIC={diagnostic}")',
+            self.raw,
+        )
+        self.assertEqual(self.raw.count("FDVS_ACCOUNT_DIAGNOSTIC="), 1)
 
     def test_exact_effective_roles_are_required(self) -> None:
         self.assertIn('"--include-inherited"', self.raw)
