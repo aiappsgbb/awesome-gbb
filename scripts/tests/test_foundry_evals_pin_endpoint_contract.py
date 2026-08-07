@@ -32,7 +32,11 @@ import yaml
 HERE = pathlib.Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
 ROOT = SCRIPTS.parent
-EVALS_PIN = ROOT / "skills" / "foundry-evals" / "references" / "upstream-pin.md"
+EVALS_SKILL = ROOT / "skills" / "foundry-evals"
+EVALS_PIN = EVALS_SKILL / "references" / "upstream-pin.md"
+EVALS_FIXTURE = EVALS_SKILL / "test-fixture" / "consumer_prompt.md"
+SKILL_TEST_WORKFLOW = ROOT / ".github" / "workflows" / "skill-test.yml"
+MATRIX_JOB = "copilot-cli-matrix"
 
 ACCOUNT_ENV = "AZURE_AI_ENDPOINT"
 PROJECT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
@@ -64,6 +68,22 @@ def _hard_required_env(script: str) -> set[str]:
 
 def _pin_frontmatter(path: pathlib.Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8").split("---", 2)[1])
+
+
+def _referenced_env(text: str) -> set[str]:
+    """Env vars a prompt/shell body reads: `$VAR`, `${VAR}`, `${VAR:+x}`."""
+    braced = re.findall(r"\$\{([A-Z][A-Z0-9_]*)[:}\-+?]", text)
+    bare = re.findall(r"\$([A-Z][A-Z0-9_]*)\b", text)
+    return set(braced) | set(bare)
+
+
+def _matrix_step_env_keys() -> set[str]:
+    """Env keys the copilot-cli-matrix job actually exports to fixtures."""
+    workflow = yaml.safe_load(SKILL_TEST_WORKFLOW.read_text(encoding="utf-8"))
+    keys: set[str] = set()
+    for step in workflow["jobs"][MATRIX_JOB]["steps"]:
+        keys |= set(step.get("env") or {})
+    return keys
 
 
 class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
@@ -141,6 +161,51 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
         self.assertTrue(blocks, "no bash mirror block found in pin prose")
         mirror = next(b for b in blocks if "FOUNDRY_EVALS_VALIDATION_PASS" in b)
         self.assertEqual(mirror.strip(), self.script.strip())
+
+    # ── fixture (T3 consumer) contract ────────────────────────────────
+
+    def test_evals_fixture_names_project_endpoint_for_project_scope(self) -> None:
+        """The fixture's declared 'Foundry project endpoint' is project-scoped."""
+        text = EVALS_FIXTURE.read_text(encoding="utf-8")
+        declaration = next(
+            line for line in text.splitlines() if "Foundry project endpoint" in line
+        )
+        self.assertIn(PROJECT_ENV, _referenced_env(declaration))
+        self.assertNotIn(ACCOUNT_ENV, _referenced_env(declaration))
+
+    def test_evals_fixture_inventories_the_endpoint_it_consumes(self) -> None:
+        """Step 0's auth inventory must cover the endpoint Step 1 actually uses."""
+        referenced = _referenced_env(EVALS_FIXTURE.read_text(encoding="utf-8"))
+        self.assertIn(PROJECT_ENV, referenced)
+        self.assertNotIn(ACCOUNT_ENV, referenced)
+
+    def test_evals_fixture_env_refs_are_exported_by_the_matrix_job(self) -> None:
+        """Pattern 11: a fixture may only read env the workflow actually sets.
+
+        The fixture self-FAILs when an inventoried var prints empty, so an
+        unexported reference is a guaranteed red matrix leg.
+        """
+        referenced = _referenced_env(EVALS_FIXTURE.read_text(encoding="utf-8"))
+        azure_refs = {
+            v
+            for v in referenced
+            if v.startswith(("AZURE_", "FOUNDRY_", "ACR_", "APPLICATIONINSIGHTS_"))
+        }
+        missing = azure_refs - _matrix_step_env_keys()
+        self.assertEqual(
+            missing,
+            set(),
+            f"fixture reads env not exported by {MATRIX_JOB}: {sorted(missing)}",
+        )
+
+    def test_evals_skill_tree_has_no_account_endpoint_alias(self) -> None:
+        """No file under the skill may alias the account var as the project one."""
+        offenders = [
+            str(p.relative_to(ROOT))
+            for p in sorted(EVALS_SKILL.rglob("*"))
+            if p.is_file() and ACCOUNT_ENV in p.read_text(encoding="utf-8", errors="ignore")
+        ]
+        self.assertEqual(offenders, [])
 
     # ── cross-pin coherence (the bug class, not just this instance) ────
 
