@@ -304,8 +304,10 @@ jobs:
               return json.loads(result.stdout)
 
 
-          def normalize_words(value: str) -> set[str]:
-              return set(re.findall(r"[a-z0-9]+", value.casefold()))
+          def canonicalize_alphanumeric(value: str) -> str:
+              return "".join(
+                  character for character in value.casefold() if character.isalnum()
+              )
 
 
           def classify_wav(path: Path) -> str:
@@ -620,7 +622,9 @@ jobs:
                   recognition = recognizer.recognize_once_async().get()
                   outcome = "UNKNOWN"
                   if recognition.reason == speechsdk.ResultReason.RecognizedSpeech:
-                      if not normalize_words(phrase) <= normalize_words(
+                      if canonicalize_alphanumeric(
+                          phrase
+                      ) != canonicalize_alphanumeric(
                           recognition.text or ""
                       ):
                           outcome = "RECOGNIZED_TRANSCRIPT_MISMATCH"

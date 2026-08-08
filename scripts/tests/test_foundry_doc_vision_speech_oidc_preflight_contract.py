@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 import textwrap
 import unittest
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import yaml
@@ -551,6 +553,68 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
             r"FDVS_SPEECH_STT_DIAGNOSTIC=\{(?:endpoint|token|client_id|"
             r"subscription_id|recognition\.text|wav_path|error)",
         )
+
+    def test_stt_transcript_match_ignores_display_word_boundaries(self) -> None:
+        probe_run = next(
+            step["run"]
+            for step in self.job["steps"]
+            if step.get("id") == "live-probes"
+        )
+        python_body = probe_run.split(
+            "python - <<'PY' >/dev/null 2>/dev/null\n",
+            1,
+        )[1].rsplit("\nPY", 1)[0]
+        module = ast.parse(python_body)
+        mismatch = next(
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.If)
+            and any(
+                isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and statement.value.value == "RECOGNIZED_TRANSCRIPT_MISMATCH"
+                for statement in node.body
+            )
+        )
+        helper_names = {
+            node.func.id
+            for node in ast.walk(mismatch.test)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        helpers = [
+            node
+            for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name in helper_names
+        ]
+        self.assertEqual({helper.name for helper in helpers}, helper_names)
+        namespace = {"re": re}
+        exec(
+            compile(
+                ast.Module(body=helpers, type_ignores=[]),
+                "<stt-transcript-helpers>",
+                "exec",
+            ),
+            namespace,
+        )
+        mismatch_expression = compile(
+            ast.Expression(mismatch.test),
+            "<stt-transcript-mismatch>",
+            "eval",
+        )
+
+        def is_mismatch(transcript: str) -> bool:
+            namespace["phrase"] = "preflight speech check"
+            namespace["recognition"] = SimpleNamespace(text=transcript)
+            return bool(eval(mismatch_expression, namespace))
+
+        for transcript in (
+            "preflight speech check",
+            "Pre-flight speech check.",
+            "Pre flight speech check.",
+        ):
+            with self.subTest(transcript=transcript):
+                self.assertFalse(is_mismatch(transcript))
+        self.assertTrue(is_mismatch("unrelated content"))
 
     def test_stt_finalizer_rejects_unallowlisted_payloads(self) -> None:
         finalize_run = next(
