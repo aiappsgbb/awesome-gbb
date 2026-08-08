@@ -38,6 +38,13 @@ ROOT = SCRIPTS.parent
 EVALS_SKILL = ROOT / "skills" / "foundry-evals"
 EVALS_PIN = EVALS_SKILL / "references" / "upstream-pin.md"
 EVALS_FIXTURE = EVALS_SKILL / "test-fixture" / "consumer_prompt.md"
+PROMPT_AGENTS_FIXTURE = (
+    ROOT
+    / "skills"
+    / "foundry-prompt-agents"
+    / "test-fixture"
+    / "consumer_prompt.md"
+)
 SKILL_TEST_WORKFLOW = ROOT / ".github" / "workflows" / "skill-test.yml"
 MATRIX_JOB = "copilot-cli-matrix"
 
@@ -349,6 +356,36 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
             missing,
             {},
             f"fixture reads env not exported by {MATRIX_JOB} steps: {missing}",
+        )
+
+    def test_prompt_agents_fixture_uses_exported_project_endpoint(self) -> None:
+        """Prompt-agent SDK calls consume only the dedicated project endpoint."""
+        text = PROMPT_AGENTS_FIXTURE.read_text(encoding="utf-8")
+        declarations = [
+            line
+            for line in text.splitlines()
+            if line.startswith("Foundry project endpoint:")
+        ]
+        self.assertEqual(
+            declarations,
+            [f"Foundry project endpoint: `${PROJECT_ENV}`"],
+        )
+
+        endpoint_refs = _referenced_env(text) & ENDPOINT_ENVS
+        self.assertEqual(endpoint_refs, {PROJECT_ENV})
+
+        workflow = _load_matrix_workflow()
+        fixture_steps = _fixture_running_steps(workflow)
+        self.assertGreaterEqual(
+            len(fixture_steps),
+            2,
+            "expected at least the main + retry copilot -p invocations",
+        )
+        missing = _missing_env_by_fixture_step(endpoint_refs, workflow)
+        self.assertEqual(
+            missing,
+            {},
+            f"prompt fixture reads env not exported by fixture steps: {missing}",
         )
 
     def test_evals_skill_tree_has_no_account_endpoint_alias(self) -> None:
