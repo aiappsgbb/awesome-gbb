@@ -19,10 +19,12 @@ Written as `unittest.TestCase` (NOT pytest fixtures) because
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import pathlib
 import re
+import subprocess
 import tempfile
 import unittest
 import unittest.mock
@@ -77,13 +79,52 @@ def _referenced_env(text: str) -> set[str]:
     return set(braced) | set(bare)
 
 
-def _matrix_step_env_keys() -> set[str]:
-    """Env keys the copilot-cli-matrix job actually exports to fixtures."""
-    workflow = yaml.safe_load(SKILL_TEST_WORKFLOW.read_text(encoding="utf-8"))
-    keys: set[str] = set()
-    for step in workflow["jobs"][MATRIX_JOB]["steps"]:
-        keys |= set(step.get("env") or {})
-    return keys
+def _load_matrix_workflow() -> dict:
+    return yaml.safe_load(SKILL_TEST_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _fixture_running_steps(workflow: dict) -> list[dict]:
+    """Matrix steps that actually hand a fixture to the agent.
+
+    Keyed off the real `copilot -p` invocation rather than step names or
+    indices, both of which churn. Pattern 26 means there is more than one:
+    the main run plus the transient-retry run(s).
+    """
+    return [
+        step
+        for step in workflow["jobs"][MATRIX_JOB]["steps"]
+        if "copilot -p" in (step.get("run") or "")
+    ]
+
+
+def _missing_env_by_fixture_step(
+    required: set[str], workflow: dict | None = None
+) -> dict[str, list[str]]:
+    """Per-step shortfall of `required` across every fixture-running step.
+
+    Deliberately not a union over the job's steps: env set only on an
+    unrelated setup step would otherwise mask its absence from a step that
+    runs the fixture, and the agent inherits the *step* env block.
+    """
+    workflow = _load_matrix_workflow() if workflow is None else workflow
+    shortfall: dict[str, list[str]] = {}
+    for index, step in enumerate(_fixture_running_steps(workflow)):
+        missing = sorted(required - set(step.get("env") or {}))
+        if missing:
+            shortfall[f"[{index}] {step.get('name') or '<unnamed>'}"] = missing
+    return shortfall
+
+
+def _tracked_files(root: pathlib.Path) -> list[pathlib.Path]:
+    """Git-tracked files under `root`, so local artifacts cannot false-fail."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--", str(root)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [(ROOT / name).resolve() for name in listing.stdout.split("\0") if name]
 
 
 class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
@@ -183,7 +224,9 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
         """Pattern 11: a fixture may only read env the workflow actually sets.
 
         The fixture self-FAILs when an inventoried var prints empty, so an
-        unexported reference is a guaranteed red matrix leg.
+        unexported reference is a guaranteed red matrix leg. Checked per
+        fixture-running step: the retry leg needs the same env as the main
+        one, and a union would let either hide behind the other.
         """
         referenced = _referenced_env(EVALS_FIXTURE.read_text(encoding="utf-8"))
         azure_refs = {
@@ -191,21 +234,112 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
             for v in referenced
             if v.startswith(("AZURE_", "FOUNDRY_", "ACR_", "APPLICATIONINSIGHTS_"))
         }
-        missing = azure_refs - _matrix_step_env_keys()
+        missing = _missing_env_by_fixture_step(azure_refs)
         self.assertEqual(
             missing,
-            set(),
-            f"fixture reads env not exported by {MATRIX_JOB}: {sorted(missing)}",
+            {},
+            f"fixture reads env not exported by {MATRIX_JOB} steps: {missing}",
         )
 
     def test_evals_skill_tree_has_no_account_endpoint_alias(self) -> None:
-        """No file under the skill may alias the account var as the project one."""
+        """No tracked file under the skill may alias the account var.
+
+        Scoped to Git-tracked sources so untracked local artifacts cannot
+        false-fail; this still covers SKILL.md, the pin, the fixture and
+        every reference source.
+        """
         offenders = [
             str(p.relative_to(ROOT))
-            for p in sorted(EVALS_SKILL.rglob("*"))
-            if p.is_file() and ACCOUNT_ENV in p.read_text(encoding="utf-8", errors="ignore")
+            for p in _tracked_files(EVALS_SKILL)
+            if ACCOUNT_ENV in p.read_text(encoding="utf-8", errors="ignore")
         ]
-        self.assertEqual(offenders, [])
+        self.assertEqual(sorted(offenders), [])
+
+    # ── helper-level regression coverage ──────────────────────────────
+    #
+    # These guard the *checkers* above. A contract test is only worth the
+    # bytes if it fails when the contract breaks, so each of these mutates
+    # a known-good input into a known-bad one and asserts detection.
+
+    def test_fixture_running_steps_are_found_by_invocation_not_position(
+        self,
+    ) -> None:
+        """Fixture steps are identified by the real `copilot -p` invocation.
+
+        Step names and indices churn; the invocation is the contract. Both
+        the main run and the transient-retry run must be found (Pattern 26),
+        since a var exported to only one of them still fails half the legs.
+        """
+        steps = _fixture_running_steps(_load_matrix_workflow())
+        self.assertGreaterEqual(
+            len(steps),
+            2,
+            "expected at least the main + retry copilot -p invocations",
+        )
+        for step in steps:
+            self.assertIn("copilot -p", step.get("run") or "")
+
+    def test_missing_env_detected_when_dropped_from_a_single_fixture_step(
+        self,
+    ) -> None:
+        """The masking defect: per-step checking, never a cross-step union.
+
+        `FOUNDRY_PROJECT_ENDPOINT` is also exported by the unrelated
+        'Resolve Foundry project context' setup step, so a union over all
+        matrix steps still contains it after it is dropped from a step that
+        actually runs the fixture. Each fixture-running step is checked on
+        its own.
+        """
+        for victim in range(2):
+            with self.subTest(dropped_from_step=victim):
+                workflow = _load_matrix_workflow()
+                steps = _fixture_running_steps(workflow)
+                del steps[victim]["env"][PROJECT_ENV]
+
+                union = set().union(
+                    *(
+                        set(s.get("env") or {})
+                        for s in workflow["jobs"][MATRIX_JOB]["steps"]
+                    )
+                )
+                self.assertIn(
+                    PROJECT_ENV, union, "precondition: another step masks it"
+                )
+
+                missing = _missing_env_by_fixture_step({PROJECT_ENV}, workflow)
+                self.assertTrue(
+                    missing, f"drop from fixture step {victim} went undetected"
+                )
+
+    def test_tracked_scan_ignores_untracked_artifacts(self) -> None:
+        """`__pycache__`, venvs, temp workdirs and editor backups are noise.
+
+        Scanning the working tree lets a local artifact that merely mentions
+        the account var false-fail validation. Only Git-tracked source counts.
+        """
+        probe = EVALS_SKILL / "__pycache__" / "endpoint_scan_probe.txt"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text(f"{ACCOUNT_ENV}\n", encoding="utf-8")
+        try:
+            self.assertNotIn(probe.resolve(), _tracked_files(EVALS_SKILL))
+        finally:
+            probe.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):  # only if we created it empty
+                probe.parent.rmdir()
+
+    def test_tracked_scan_still_covers_every_tracked_source(self) -> None:
+        """Narrowing to tracked files must not narrow detection coverage."""
+        tracked = _tracked_files(EVALS_SKILL)
+        for required in (
+            EVALS_PIN,
+            EVALS_FIXTURE,
+            EVALS_SKILL / "SKILL.md",
+        ):
+            self.assertIn(required.resolve(), tracked)
+        self.assertTrue(
+            any(p.suffix == ".py" for p in tracked),
+            "expected the skill's reference python sources to be scanned",
+        )
 
     # ── cross-pin coherence (the bug class, not just this instance) ────
 
