@@ -360,10 +360,18 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
 
     def test_prompt_agents_fixture_uses_exported_project_endpoint(self) -> None:
         """Prompt-agent SDK calls consume only the dedicated project endpoint."""
-        endpoint_refs = (
-            _referenced_env(PROMPT_AGENTS_FIXTURE.read_text(encoding="utf-8"))
-            & ENDPOINT_ENVS
+        text = PROMPT_AGENTS_FIXTURE.read_text(encoding="utf-8")
+        declarations = [
+            line
+            for line in text.splitlines()
+            if line.startswith("Foundry project endpoint:")
+        ]
+        self.assertEqual(
+            declarations,
+            [f"Foundry project endpoint: `${PROJECT_ENV}`"],
         )
+
+        endpoint_refs = _referenced_env(text) & ENDPOINT_ENVS
         self.assertEqual(endpoint_refs, {PROJECT_ENV})
 
         workflow = _load_matrix_workflow()
