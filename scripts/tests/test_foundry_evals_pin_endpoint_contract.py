@@ -79,6 +79,67 @@ def _referenced_env(text: str) -> set[str]:
     return set(braced) | set(bare)
 
 
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_SHELL_SEPARATORS = re.compile(r"\|\||&&|[;|&]")
+_SHORT_PROMPT_FLAG = re.compile(r"-[A-Za-z]*p")
+_LEADING_KEYWORDS = frozenset({"then", "do", "else", "time", "!", "{", "("})
+
+
+def _command_segments(run: str) -> list[str]:
+    """Executable command segments of a `run:` body.
+
+    Full-line comments are dropped *before* backslash-newline
+    continuations are folded, so a commented-out line ending in a
+    backslash cannot swallow the command beneath it. Deliberately not a
+    shell parser: this only has to be right for the forms this workflow
+    uses, and a dependency would be worse than the ambiguity.
+    """
+    lines = [
+        line
+        for line in run.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    folded = re.sub(r"\\\n[ \t]*", " ", "\n".join(lines))
+    segments: list[str] = []
+    for line in folded.splitlines():
+        segments.extend(part.strip() for part in _SHELL_SEPARATORS.split(line))
+    return [segment for segment in segments if segment]
+
+
+def _invokes_copilot_prompt(run: str) -> bool:
+    """True when a segment *executes* `copilot` with a `-p` prompt flag.
+
+    Substring matching on `"copilot -p"` both over- and under-matches: it
+    counts comments and echoed strings, and misses tabs, repeated spaces
+    and line continuations.
+    """
+    for segment in _command_segments(run or ""):
+        tokens = segment.split()
+        while tokens and (
+            _ENV_ASSIGNMENT.match(tokens[0]) or tokens[0] in _LEADING_KEYWORDS
+        ):
+            tokens.pop(0)
+        if not tokens or tokens[0].rsplit("/", 1)[-1] != "copilot":
+            continue
+        if any(_SHORT_PROMPT_FLAG.fullmatch(token) for token in tokens[1:]):
+            return True
+    return False
+
+
+def _synthetic_matrix_workflow(run_bodies: list[str]) -> dict:
+    """A minimal workflow doc shaped like the matrix job, for unit cases."""
+    return {
+        "jobs": {
+            MATRIX_JOB: {
+                "steps": [
+                    {"name": f"synthetic-{index}", "run": body}
+                    for index, body in enumerate(run_bodies)
+                ]
+            }
+        }
+    }
+
+
 def _load_matrix_workflow() -> dict:
     return yaml.safe_load(SKILL_TEST_WORKFLOW.read_text(encoding="utf-8"))
 
@@ -93,7 +154,7 @@ def _fixture_running_steps(workflow: dict) -> list[dict]:
     return [
         step
         for step in workflow["jobs"][MATRIX_JOB]["steps"]
-        if "copilot -p" in (step.get("run") or "")
+        if _invokes_copilot_prompt(step.get("run") or "")
     ]
 
 
@@ -270,14 +331,62 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
         the main run and the transient-retry run must be found (Pattern 26),
         since a var exported to only one of them still fails half the legs.
         """
-        steps = _fixture_running_steps(_load_matrix_workflow())
+        workflow = _load_matrix_workflow()
+        steps = _fixture_running_steps(workflow)
         self.assertGreaterEqual(
             len(steps),
             2,
             "expected at least the main + retry copilot -p invocations",
         )
-        for step in steps:
-            self.assertIn("copilot -p", step.get("run") or "")
+        # Non-tautological: the job also runs `copilot --version` and
+        # `copilot plugin install`, which must NOT count as fixture runs.
+        all_steps = workflow["jobs"][MATRIX_JOB]["steps"]
+        self.assertLess(len(steps), len(all_steps))
+        selected = {id(step) for step in steps}
+        for step in all_steps:
+            if id(step) in selected:
+                continue
+            self.assertNotIn(
+                "consumer_prompt.md",
+                step.get("run") or "",
+                f"step {step.get('name')!r} feeds a fixture but was not selected",
+            )
+
+    def test_copilot_invocation_detection_is_command_aware(self) -> None:
+        """Detection tolerates real shell forms and ignores mere mentions.
+
+        A literal `"copilot -p"` substring test both misses executable
+        forms (extra whitespace, backslash continuation) and counts
+        non-executable ones (comments, echoed strings).
+        """
+        cases = (
+            ("single space", 'copilot -p "$(cat prompt.md)"', True),
+            ("extra spaces", 'copilot  -p "$(cat prompt.md)"', True),
+            ("tab separated", 'copilot\t-p "$(cat prompt.md)"', True),
+            (
+                "backslash continuation",
+                'copilot \\\n  -p "$(cat prompt.md)" \\\n  --allow-all-tools',
+                True,
+            ),
+            ("indented and piped", '  copilot -p "$(cat p.md)" | tee log', True),
+            ("env assignment prefix", 'FOO=1 copilot -p "x"', True),
+            ("absolute path", '/usr/local/bin/copilot -p "x"', True),
+            ("bundled short flags", 'copilot -sp "x"', True),
+            ("comment only", "# copilot -p example", False),
+            ("indented comment", "   # copilot -p example", False),
+            ("echoed mention", 'echo "run copilot -p to start"', False),
+            ("other subcommand", "copilot --version", False),
+            ("plugin install", "copilot plugin install awesome-gbb@awesome-gbb", False),
+            ("unrelated shell", "az account show --output table", False),
+        )
+        for label, run, expected in cases:
+            with self.subTest(case=label):
+                workflow = _synthetic_matrix_workflow([run])
+                self.assertEqual(
+                    len(_fixture_running_steps(workflow)),
+                    1 if expected else 0,
+                    f"{label}: {run!r}",
+                )
 
     def test_missing_env_detected_when_dropped_from_a_single_fixture_step(
         self,
@@ -317,15 +426,38 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
         Scanning the working tree lets a local artifact that merely mentions
         the account var false-fail validation. Only Git-tracked source counts.
         """
-        probe = EVALS_SKILL / "__pycache__" / "endpoint_scan_probe.txt"
-        probe.parent.mkdir(parents=True, exist_ok=True)
-        probe.write_text(f"{ACCOUNT_ENV}\n", encoding="utf-8")
-        try:
+        with tempfile.TemporaryDirectory(
+            prefix=".endpoint-scan-probe-", dir=EVALS_SKILL
+        ) as workdir:
+            probe = pathlib.Path(workdir) / "artifact.txt"
+            probe.write_text(f"{ACCOUNT_ENV}\n", encoding="utf-8")
             self.assertNotIn(probe.resolve(), _tracked_files(EVALS_SKILL))
+            self.test_evals_skill_tree_has_no_account_endpoint_alias()
+
+    def test_untracked_probe_owns_its_artifact(self) -> None:
+        """The probe must not touch anything it did not create.
+
+        A fixed probe path deletes whatever already sits there and races
+        parallel runs; an exclusively owned temporary directory cannot.
+        """
+        bystander = EVALS_SKILL / "__pycache__"
+        preexisting = bystander.exists()
+        bystander.mkdir(exist_ok=True)
+        try:
+            before = {p.name for p in EVALS_SKILL.iterdir()}
+            self.test_tracked_scan_ignores_untracked_artifacts()
+            self.assertTrue(
+                bystander.is_dir(), "probe removed a directory it did not create"
+            )
+            self.assertEqual(
+                before,
+                {p.name for p in EVALS_SKILL.iterdir()},
+                "probe leaked or removed entries under the skill",
+            )
         finally:
-            probe.unlink(missing_ok=True)
-            with contextlib.suppress(OSError):  # only if we created it empty
-                probe.parent.rmdir()
+            if not preexisting:
+                with contextlib.suppress(OSError):
+                    bystander.rmdir()
 
     def test_tracked_scan_still_covers_every_tracked_source(self) -> None:
         """Narrowing to tracked files must not narrow detection coverage."""
