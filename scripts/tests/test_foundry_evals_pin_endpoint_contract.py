@@ -24,6 +24,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -80,30 +81,78 @@ def _referenced_env(text: str) -> set[str]:
 
 
 _ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-_SHELL_SEPARATORS = re.compile(r"\|\||&&|[;|&]")
+_SHELL_PUNCTUATION = ";&|()"
 _SHORT_PROMPT_FLAG = re.compile(r"-[A-Za-z]*p")
-_LEADING_KEYWORDS = frozenset({"then", "do", "else", "time", "!", "{", "("})
+_LEADING_KEYWORDS = frozenset(
+    {"if", "elif", "while", "until", "then", "do", "else", "time", "!", "{", "("}
+)
 
 
-def _command_segments(run: str) -> list[str]:
-    """Executable command segments of a `run:` body.
+def _lex(text: str) -> tuple[list[str], bool]:
+    """Tokenise one logical line; `(tokens, closed)`.
+
+    `closed` is False when quoting never closes, which is how a quoted
+    string spanning several physical lines is detected. Separators are
+    emitted as their own tokens because `punctuation_chars` keeps them out
+    of words -- and, crucially, only when they are *unquoted*.
+    """
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
+    lexer.whitespace_split = True
+    tokens: list[str] = []
+    while True:
+        try:
+            token = lexer.get_token()
+        except ValueError:
+            return tokens, False
+        if token is None:
+            return tokens, True
+        tokens.append(token)
+
+
+def _logical_lines(body: str) -> list[str]:
+    """Physical lines regrouped so no quoted string is cut in half."""
+    lines: list[str] = []
+    pending = ""
+    for physical in body.splitlines():
+        candidate = f"{pending}\n{physical}" if pending else physical
+        if _lex(candidate)[1]:
+            pending = ""
+            if candidate.strip():
+                lines.append(candidate)
+        else:
+            pending = candidate
+    if pending.strip():
+        lines.append(pending)
+    return lines
+
+
+def _command_segments(run: str) -> list[list[str]]:
+    """`argv` lists for the executable commands in a `run:` body.
 
     Full-line comments are dropped *before* backslash-newline
     continuations are folded, so a commented-out line ending in a
-    backslash cannot swallow the command beneath it. Deliberately not a
-    shell parser: this only has to be right for the forms this workflow
-    uses, and a dependency would be worse than the ambiguity.
+    backslash cannot swallow the command beneath it (bash does not
+    continue a comment either). Everything after that is `shlex`'s job:
+    splitting raw text on separator bytes cannot distinguish `a; b` from
+    `echo "a; b"`, and a stdlib lexer can.
     """
-    lines = [
-        line
-        for line in run.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    folded = re.sub(r"\\\n[ \t]*", " ", "\n".join(lines))
-    segments: list[str] = []
-    for line in folded.splitlines():
-        segments.extend(part.strip() for part in _SHELL_SEPARATORS.split(line))
-    return [segment for segment in segments if segment]
+    body = "\n".join(
+        line for line in run.splitlines() if not line.lstrip().startswith("#")
+    )
+    body = re.sub(r"\\\n[ \t]*", " ", body)
+    segments: list[list[str]] = []
+    for line in _logical_lines(body):
+        current: list[str] = []
+        for token in _lex(line)[0]:
+            if token and all(char in _SHELL_PUNCTUATION for char in token):
+                if current:
+                    segments.append(current)
+                current = []
+            else:
+                current.append(token)
+        if current:
+            segments.append(current)
+    return segments
 
 
 def _invokes_copilot_prompt(run: str) -> bool:
@@ -113,8 +162,8 @@ def _invokes_copilot_prompt(run: str) -> bool:
     counts comments and echoed strings, and misses tabs, repeated spaces
     and line continuations.
     """
-    for segment in _command_segments(run or ""):
-        tokens = segment.split()
+    for argv in _command_segments(run or ""):
+        tokens = list(argv)
         while tokens and (
             _ENV_ASSIGNMENT.match(tokens[0]) or tokens[0] in _LEADING_KEYWORDS
         ):
@@ -378,6 +427,45 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
             ("other subcommand", "copilot --version", False),
             ("plugin install", "copilot plugin install awesome-gbb@awesome-gbb", False),
             ("unrelated shell", "az account show --output table", False),
+        )
+        for label, run, expected in cases:
+            with self.subTest(case=label):
+                workflow = _synthetic_matrix_workflow([run])
+                self.assertEqual(
+                    len(_fixture_running_steps(workflow)),
+                    1 if expected else 0,
+                    f"{label}: {run!r}",
+                )
+
+    def test_copilot_invocation_detection_honours_shell_quoting(self) -> None:
+        """Quoting and control syntax decide what is a command, not raw text.
+
+        Splitting the raw body on `;`, `&` and `|` cannot tell a separator
+        from the same byte inside a quoted string, and treats a compound
+        command's leading keyword as the program being run. That both
+        invents invocations out of echoed prose and hides real ones behind
+        an `if`/`while` guard.
+        """
+        cases = (
+            # Quoted separators and mentions are data, never commands.
+            ("quoted semicolon mention", 'echo "note; copilot -p x"', False),
+            ("quoted andand mention", 'echo "note && copilot -p x"', False),
+            ("quoted pipe mention", "echo 'note | copilot -p x'", False),
+            ("printf mention", "printf 'copilot -p %s\\n' x", False),
+            # Compound-command keywords precede the program; strip them.
+            ("if guard", "if copilot -p x; then echo ok; fi", True),
+            ("elif guard", "if false; then :; elif copilot -p x; then :; fi", True),
+            ("while guard", "while copilot -p x; do :; done", True),
+            ("until guard", "until copilot -p x; do :; done", True),
+            ("then keyword", "if true; then copilot -p x; fi", True),
+            # Newlines separate commands; a lexer must not weld them.
+            (
+                "newline separated",
+                'echo start\ncopilot -p "$(cat prompt.md)"\necho done',
+                True,
+            ),
+            ("newline boundary not welded", "copilot --version\necho -p later", False),
+            ("quoted body spanning lines", 'echo "line one\ncopilot -p x"', False),
         )
         for label, run, expected in cases:
             with self.subTest(case=label):
