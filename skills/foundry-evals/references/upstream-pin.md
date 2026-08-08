@@ -16,7 +16,7 @@ upstream:
     (`azure-ai-projects`) plus the public evaluation samples in the upstream repository.
     The pin script creates a live eval definition + run in a Foundry project using a
     self-contained synthetic Q/A pair (no agent dependency) and polls the run to a
-    terminal status. Runnable in CI via `--include-azure` when `AZURE_AI_ENDPOINT` and
+    terminal status. Runnable in CI via `--include-azure` when `FOUNDRY_PROJECT_ENDPOINT` and
     a deployed `JUDGE_MODEL_DEPLOYMENT` (default `gpt-5.4-mini`) are present.
 
 docs_to_revalidate:
@@ -39,7 +39,7 @@ validation:
     # AZURE_CONFIG_DIR set per the azure-tenant-isolation skill.
     set -euo pipefail
 
-    : "${AZURE_AI_ENDPOINT:?Set the Foundry project endpoint (azure-ai-projects)}"
+    : "${FOUNDRY_PROJECT_ENDPOINT:?Set the Foundry project endpoint (azure-ai-projects)}"
     : "${JUDGE_MODEL_DEPLOYMENT:=gpt-5.4-mini}"
 
     PINNED_SHA="${PINNED_SHA:-99ed7476c82bb6b02363ce4cc6c0d2a5d01f2c97}"
@@ -64,7 +64,7 @@ validation:
     from azure.identity import DefaultAzureCredential
     from azure.ai.projects import AIProjectClient
 
-    endpoint = os.environ["AZURE_AI_ENDPOINT"]
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     judge_model = os.environ.get("JUDGE_MODEL_DEPLOYMENT", "gpt-5.4-mini")
 
     # Self-contained smoke: a static synthetic query/response pair, no agent required.
@@ -187,7 +187,7 @@ git ls-remote https://github.com/Azure/azure-sdk-for-python main
 > YAML front-matter; the block below is a verbatim mirror for human audit. The pin
 > is `runnable: false` (Foundry creds required) + `automation_tier: auto`, so
 > `scripts/run-pin-validation.py --include-azure` will execute it in CI when
-> `AZURE_AI_ENDPOINT` and a deployed judge model are present. **Standard CI runs
+> `FOUNDRY_PROJECT_ENDPOINT` and a deployed judge model are present. **Standard CI runs
 > (without `--include-azure`) skip this pin.** The script polls the eval run to a
 > terminal status — not just control-plane acceptance.
 
@@ -197,7 +197,7 @@ git ls-remote https://github.com/Azure/azure-sdk-for-python main
 # AZURE_CONFIG_DIR set per the azure-tenant-isolation skill.
 set -euo pipefail
 
-: "${AZURE_AI_ENDPOINT:?Set the Foundry project endpoint (azure-ai-projects)}"
+: "${FOUNDRY_PROJECT_ENDPOINT:?Set the Foundry project endpoint (azure-ai-projects)}"
 : "${JUDGE_MODEL_DEPLOYMENT:=gpt-5.4-mini}"
 
 PINNED_SHA="${PINNED_SHA:-99ed7476c82bb6b02363ce4cc6c0d2a5d01f2c97}"
@@ -222,7 +222,7 @@ import uuid
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 
-endpoint = os.environ["AZURE_AI_ENDPOINT"]
+endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 judge_model = os.environ.get("JUDGE_MODEL_DEPLOYMENT", "gpt-5.4-mini")
 
 # Self-contained smoke: a static synthetic query/response pair, no agent required.
@@ -373,7 +373,7 @@ When upstream advances:
 >
 > 1. `automation_tier` is `auto` and `validation.runnable` is `false`. CI executes
 >    the pin via `scripts/run-pin-validation.py --include-azure` whenever
->    `AZURE_AI_ENDPOINT` is set (and a deployed `JUDGE_MODEL_DEPLOYMENT` exists,
+>    `FOUNDRY_PROJECT_ENDPOINT` is set (and a deployed `JUDGE_MODEL_DEPLOYMENT` exists,
 >    default `gpt-5.4-mini`). Standard CI (no flag) skips it.
 > 2. **You do not need a hosted agent in the project.** The smoke uses a static
 >    synthetic query/response pair so the pin validates only the foundry-evals

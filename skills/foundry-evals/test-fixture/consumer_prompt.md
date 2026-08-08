@@ -19,7 +19,7 @@ checks — `azure/login@v2` already validated the credentials upstream.
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
-echo "AZURE_AI_ENDPOINT=${AZURE_AI_ENDPOINT:+set}"
+echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
 az account show --output table || echo "(az cache not inherited — relying on SDK DefaultAzureCredential)"
 ```
 
@@ -52,7 +52,7 @@ quality, only that the eval pipeline returned a result).
 
 Then delete the prompt agent.
 
-Foundry project endpoint: `$AZURE_AI_ENDPOINT`
+Foundry project endpoint: `$FOUNDRY_PROJECT_ENDPOINT`
 Model deployment available in that project: `gpt-5.4-mini` (use this for
 both the agent under test AND the evaluator's judge model unless the
 skill says otherwise).
