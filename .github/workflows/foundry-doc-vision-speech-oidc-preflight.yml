@@ -16,12 +16,14 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FDVS_ACCOUNT_DIAGNOSTIC_FILE: /tmp/fdvs-account-diagnostic.txt
+      FDVS_SPEECH_STT_DIAGNOSTIC_FILE: /tmp/fdvs-speech-stt-diagnostic.txt
       FDVS_STATUS_FILE: /tmp/fdvs-oidc-preflight.txt
     steps:
       - name: Initialize sanitized evidence
         run: |
           set -euo pipefail
           rm -f "$FDVS_ACCOUNT_DIAGNOSTIC_FILE"
+          rm -f "$FDVS_SPEECH_STT_DIAGNOSTIC_FILE"
           cat > "$FDVS_STATUS_FILE" <<'EOF'
           FDVS_OIDC_PREFLIGHT_AUTH=NOT_RUN
           FDVS_OIDC_PREFLIGHT_ACCOUNT=NOT_RUN
@@ -89,6 +91,7 @@ jobs:
           import re
           import subprocess
           from urllib.parse import urlparse
+          import wave
 
           from azure.ai.documentintelligence import DocumentIntelligenceClient
           from azure.identity import DefaultAzureCredential
@@ -132,6 +135,122 @@ jobs:
           ACCOUNT_DIAGNOSTIC_FILE = Path(
               os.environ["FDVS_ACCOUNT_DIAGNOSTIC_FILE"]
           )
+          WAV_SPECIAL_CODES = (
+              "WAV_INVALID",
+              "WAV_UNKNOWN",
+          )
+          WAV_CHANNEL_CODES = (
+              "MONO",
+              "STEREO",
+              "UNKNOWN",
+          )
+          WAV_SAMPLE_WIDTH_CODES = (
+              "BITS_8",
+              "BITS_16",
+              "BITS_24",
+              "BITS_32",
+              "UNKNOWN",
+          )
+          WAV_SAMPLE_RATE_CODES = (
+              "HZ_8000",
+              "HZ_16000",
+              "HZ_22050",
+              "HZ_24000",
+              "HZ_44100",
+              "HZ_48000",
+              "UNKNOWN",
+          )
+          WAV_COMPRESSION_CODES = (
+              "PCM",
+              "UNKNOWN",
+          )
+          WAV_FRAME_CODES = (
+              "PRESENT",
+              "EMPTY",
+              "UNKNOWN",
+          )
+          STT_CANCELLATION_REASON_CODES = (
+              "ERROR",
+              "END_OF_STREAM",
+              "BY_USER",
+              "UNKNOWN",
+          )
+          STT_CANCELLATION_ERROR_CODES = (
+              "NO_ERROR",
+              "AUTHENTICATION_FAILURE",
+              "BAD_REQUEST",
+              "TOO_MANY_REQUESTS",
+              "FORBIDDEN",
+              "CONNECTION_FAILURE",
+              "SERVICE_TIMEOUT",
+              "SERVICE_ERROR",
+              "SERVICE_UNAVAILABLE",
+              "RUNTIME_ERROR",
+              "EMBEDDED_MODEL_ERROR",
+              "SERVICE_REDIRECT_PERMANENT",
+              "SERVICE_REDIRECT_TEMPORARY",
+              "UNKNOWN",
+          )
+          STT_SDK_EXCEPTION_CODES = (
+              "SDK_EXCEPTION_RUNTIME_ERROR",
+              "SDK_EXCEPTION_VALUE_ERROR",
+              "SDK_EXCEPTION_TYPE_ERROR",
+              "SDK_EXCEPTION_OS_ERROR",
+              "UNKNOWN",
+          )
+          STT_BASE_OUTCOME_CODES = (
+              "RECOGNIZED_TRANSCRIPT_MISMATCH",
+              "NO_MATCH",
+              "UNEXPECTED_RESULT_REASON",
+              "UNKNOWN",
+          )
+          STT_DIAGNOSTIC_FILE = Path(
+              os.environ["FDVS_SPEECH_STT_DIAGNOSTIC_FILE"]
+          )
+          WAV_CHANNEL_VALUE_CODES = {
+              1: "MONO",
+              2: "STEREO",
+          }
+          WAV_SAMPLE_WIDTH_VALUE_CODES = {
+              1: "BITS_8",
+              2: "BITS_16",
+              3: "BITS_24",
+              4: "BITS_32",
+          }
+          WAV_SAMPLE_RATE_VALUE_CODES = {
+              8000: "HZ_8000",
+              16000: "HZ_16000",
+              22050: "HZ_22050",
+              24000: "HZ_24000",
+              44100: "HZ_44100",
+              48000: "HZ_48000",
+          }
+          STT_CANCELLATION_REASON_NAME_CODES = {
+              "Error": "ERROR",
+              "EndOfStream": "END_OF_STREAM",
+              "CancelledByUser": "BY_USER",
+          }
+          STT_CANCELLATION_ERROR_NAME_CODES = {
+              "NoError": "NO_ERROR",
+              "AuthenticationFailure": "AUTHENTICATION_FAILURE",
+              "BadRequest": "BAD_REQUEST",
+              "TooManyRequests": "TOO_MANY_REQUESTS",
+              "Forbidden": "FORBIDDEN",
+              "ConnectionFailure": "CONNECTION_FAILURE",
+              "ServiceTimeout": "SERVICE_TIMEOUT",
+              "ServiceError": "SERVICE_ERROR",
+              "ServiceUnavailable": "SERVICE_UNAVAILABLE",
+              "RuntimeError": "RUNTIME_ERROR",
+              "EmbeddedModelError": "EMBEDDED_MODEL_ERROR",
+              "ServiceRedirectPermanent": "SERVICE_REDIRECT_PERMANENT",
+              "ServiceRedirectTemporary": "SERVICE_REDIRECT_TEMPORARY",
+          }
+          STT_EXCEPTION_CLASS_CODES = {
+              "RuntimeError": "SDK_EXCEPTION_RUNTIME_ERROR",
+              "ValueError": "SDK_EXCEPTION_VALUE_ERROR",
+              "TypeError": "SDK_EXCEPTION_TYPE_ERROR",
+              "OSError": "SDK_EXCEPTION_OS_ERROR",
+          }
 
 
           def load_status() -> dict[str, str]:
@@ -187,6 +306,66 @@ jobs:
 
           def normalize_words(value: str) -> set[str]:
               return set(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+          def classify_wav(path: Path) -> str:
+              try:
+                  with wave.open(str(path), "rb") as wav_file:
+                      channel_code = WAV_CHANNEL_VALUE_CODES.get(
+                          wav_file.getnchannels(),
+                          "UNKNOWN",
+                      )
+                      sample_width_code = WAV_SAMPLE_WIDTH_VALUE_CODES.get(
+                          wav_file.getsampwidth(),
+                          "UNKNOWN",
+                      )
+                      sample_rate_code = WAV_SAMPLE_RATE_VALUE_CODES.get(
+                          wav_file.getframerate(),
+                          "UNKNOWN",
+                      )
+                      compression_code = (
+                          "PCM"
+                          if wav_file.getcomptype() == "NONE"
+                          else "UNKNOWN"
+                      )
+                      frame_code = (
+                          "PRESENT" if wav_file.getnframes() > 0 else "EMPTY"
+                      )
+              except (EOFError, wave.Error):
+                  return "WAV_INVALID"
+              except Exception:
+                  return "WAV_UNKNOWN"
+              return (
+                  f"WAV_{channel_code}_{sample_width_code}_{sample_rate_code}_"
+                  f"{compression_code}_{frame_code}"
+              )
+
+
+          def safe_named_enum_code(value: object, codes: dict[str, str]) -> str:
+              name = getattr(value, "name", None)
+              return codes.get(name, "UNKNOWN") if isinstance(name, str) else "UNKNOWN"
+
+
+          def classify_stt_cancellation(cancellation: object) -> str:
+              reason_code = safe_named_enum_code(
+                  cancellation.reason,
+                  STT_CANCELLATION_REASON_NAME_CODES,
+              )
+              error_code = safe_named_enum_code(
+                  cancellation.code,
+                  STT_CANCELLATION_ERROR_NAME_CODES,
+              )
+              return f"CANCELED_{reason_code}_{error_code}"
+
+
+          def classify_stt_exception(error: Exception) -> str:
+              return STT_EXCEPTION_CLASS_CODES.get(type(error).__name__, "UNKNOWN")
+
+
+          def write_stt_diagnostic(wav_code: str, outcome_code: str) -> None:
+              STT_DIAGNOSTIC_FILE.write_bytes(
+                  f"{wav_code}__{outcome_code}\n".encode("ascii")
+              )
 
 
           try:
@@ -428,6 +607,7 @@ jobs:
               except Exception:
                   fail_stage("FDVS_OIDC_PREFLIGHT_SPEECH_TTS")
 
+              wav_diagnostic = classify_wav(wav_path)
               try:
                   audio_input = speechsdk.audio.AudioConfig(
                       filename=str(wav_path)
@@ -438,14 +618,30 @@ jobs:
                       audio_config=audio_input,
                   )
                   recognition = recognizer.recognize_once_async().get()
-                  if recognition.reason != speechsdk.ResultReason.RecognizedSpeech:
-                      raise RuntimeError("speech recognition mismatch")
-                  if not normalize_words(phrase) <= normalize_words(
-                      recognition.text or ""
-                  ):
-                      raise RuntimeError("speech transcript mismatch")
+                  outcome = "UNKNOWN"
+                  if recognition.reason == speechsdk.ResultReason.RecognizedSpeech:
+                      if not normalize_words(phrase) <= normalize_words(
+                          recognition.text or ""
+                      ):
+                          outcome = "RECOGNIZED_TRANSCRIPT_MISMATCH"
+                      else:
+                          outcome = ""
+                  elif recognition.reason == speechsdk.ResultReason.NoMatch:
+                      outcome = "NO_MATCH"
+                  elif recognition.reason == speechsdk.ResultReason.Canceled:
+                      cancellation = speechsdk.CancellationDetails(recognition)
+                      outcome = classify_stt_cancellation(cancellation)
+                  else:
+                      outcome = "UNEXPECTED_RESULT_REASON"
+                  if outcome:
+                      write_stt_diagnostic(wav_diagnostic, outcome)
+                      fail_stage("FDVS_OIDC_PREFLIGHT_SPEECH_STT")
                   pass_stage("FDVS_OIDC_PREFLIGHT_SPEECH_STT")
-              except Exception:
+              except Exception as error:
+                  write_stt_diagnostic(
+                      wav_diagnostic,
+                      classify_stt_exception(error),
+                  )
                   fail_stage("FDVS_OIDC_PREFLIGHT_SPEECH_STT")
           finally:
               wav_path.unlink(missing_ok=True)
@@ -466,8 +662,9 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          from pathlib import Path
           import os
+          from pathlib import Path
+          import re
 
           STATUS_KEYS = (
               "FDVS_OIDC_PREFLIGHT_AUTH",
@@ -501,6 +698,127 @@ jobs:
               "IDENTITY_RESOLUTION_CARDINALITY",
               "UNKNOWN",
           )
+          WAV_SPECIAL_CODES = (
+              "WAV_INVALID",
+              "WAV_UNKNOWN",
+          )
+          WAV_CHANNEL_CODES = (
+              "MONO",
+              "STEREO",
+              "UNKNOWN",
+          )
+          WAV_SAMPLE_WIDTH_CODES = (
+              "BITS_8",
+              "BITS_16",
+              "BITS_24",
+              "BITS_32",
+              "UNKNOWN",
+          )
+          WAV_SAMPLE_RATE_CODES = (
+              "HZ_8000",
+              "HZ_16000",
+              "HZ_22050",
+              "HZ_24000",
+              "HZ_44100",
+              "HZ_48000",
+              "UNKNOWN",
+          )
+          WAV_COMPRESSION_CODES = (
+              "PCM",
+              "UNKNOWN",
+          )
+          WAV_FRAME_CODES = (
+              "PRESENT",
+              "EMPTY",
+              "UNKNOWN",
+          )
+          STT_CANCELLATION_REASON_CODES = (
+              "ERROR",
+              "END_OF_STREAM",
+              "BY_USER",
+              "UNKNOWN",
+          )
+          STT_CANCELLATION_ERROR_CODES = (
+              "NO_ERROR",
+              "AUTHENTICATION_FAILURE",
+              "BAD_REQUEST",
+              "TOO_MANY_REQUESTS",
+              "FORBIDDEN",
+              "CONNECTION_FAILURE",
+              "SERVICE_TIMEOUT",
+              "SERVICE_ERROR",
+              "SERVICE_UNAVAILABLE",
+              "RUNTIME_ERROR",
+              "EMBEDDED_MODEL_ERROR",
+              "SERVICE_REDIRECT_PERMANENT",
+              "SERVICE_REDIRECT_TEMPORARY",
+              "UNKNOWN",
+          )
+          STT_SDK_EXCEPTION_CODES = (
+              "SDK_EXCEPTION_RUNTIME_ERROR",
+              "SDK_EXCEPTION_VALUE_ERROR",
+              "SDK_EXCEPTION_TYPE_ERROR",
+              "SDK_EXCEPTION_OS_ERROR",
+              "UNKNOWN",
+          )
+          STT_BASE_OUTCOME_CODES = (
+              "RECOGNIZED_TRANSCRIPT_MISMATCH",
+              "NO_MATCH",
+              "UNEXPECTED_RESULT_REASON",
+              "UNKNOWN",
+          )
+
+
+          def validated_stt_diagnostic(raw: bytes) -> str:
+              try:
+                  candidate = raw.decode("ascii")
+              except UnicodeDecodeError:
+                  return "UNKNOWN"
+              if candidate.count("\n") != 1 or not candidate.endswith("\n"):
+                  return "UNKNOWN"
+              candidate = candidate[:-1]
+              parts = candidate.split("__")
+              if len(parts) != 2:
+                  return "UNKNOWN"
+              wav_code, outcome_code = parts
+
+              choices = lambda codes: "(?:" + "|".join(
+                  re.escape(code) for code in codes
+              ) + ")"
+              wav_pattern = re.compile(
+                  "^WAV_"
+                  + choices(WAV_CHANNEL_CODES)
+                  + "_"
+                  + choices(WAV_SAMPLE_WIDTH_CODES)
+                  + "_"
+                  + choices(WAV_SAMPLE_RATE_CODES)
+                  + "_"
+                  + choices(WAV_COMPRESSION_CODES)
+                  + "_"
+                  + choices(WAV_FRAME_CODES)
+                  + "$"
+              )
+              cancellation_pattern = re.compile(
+                  "^CANCELED_"
+                  + choices(STT_CANCELLATION_REASON_CODES)
+                  + "_"
+                  + choices(STT_CANCELLATION_ERROR_CODES)
+                  + "$"
+              )
+              if (
+                  wav_code not in WAV_SPECIAL_CODES
+                  and wav_pattern.fullmatch(wav_code) is None
+              ):
+                  return "UNKNOWN"
+              if (
+                  outcome_code not in STT_BASE_OUTCOME_CODES
+                  and outcome_code not in STT_SDK_EXCEPTION_CODES
+                  and cancellation_pattern.fullmatch(outcome_code) is None
+              ):
+                  return "UNKNOWN"
+              return candidate
+
+
           diagnostic_file = Path(os.environ["FDVS_ACCOUNT_DIAGNOSTIC_FILE"])
           if diagnostic_file.is_file():
               raw_diagnostic = diagnostic_file.read_bytes()
@@ -513,6 +831,14 @@ jobs:
                   "UNKNOWN",
               )
               print(f"::error::FDVS_ACCOUNT_DIAGNOSTIC={diagnostic}")
+
+          stt_diagnostic_file = Path(
+              os.environ["FDVS_SPEECH_STT_DIAGNOSTIC_FILE"]
+          )
+          if stt_diagnostic_file.is_file():
+              raw_diagnostic = stt_diagnostic_file.read_bytes()
+              diagnostic = validated_stt_diagnostic(raw_diagnostic)
+              print(f"::error::FDVS_SPEECH_STT_DIAGNOSTIC={diagnostic}")
 
           status_file = Path(os.environ["FDVS_STATUS_FILE"])
           status = dict(
