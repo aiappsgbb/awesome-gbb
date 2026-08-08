@@ -57,6 +57,63 @@ EXPECTED_ACCOUNT_DIAGNOSTICS = (
     "IDENTITY_RESOLUTION_CARDINALITY",
     "UNKNOWN",
 )
+EXPECTED_STT_DIAGNOSTIC_COMPONENTS = {
+    "WAV_SPECIAL_CODES": ("WAV_INVALID", "WAV_UNKNOWN"),
+    "WAV_CHANNEL_CODES": ("MONO", "STEREO", "UNKNOWN"),
+    "WAV_SAMPLE_WIDTH_CODES": (
+        "BITS_8",
+        "BITS_16",
+        "BITS_24",
+        "BITS_32",
+        "UNKNOWN",
+    ),
+    "WAV_SAMPLE_RATE_CODES": (
+        "HZ_8000",
+        "HZ_16000",
+        "HZ_22050",
+        "HZ_24000",
+        "HZ_44100",
+        "HZ_48000",
+        "UNKNOWN",
+    ),
+    "WAV_COMPRESSION_CODES": ("PCM", "UNKNOWN"),
+    "WAV_FRAME_CODES": ("PRESENT", "EMPTY", "UNKNOWN"),
+    "STT_CANCELLATION_REASON_CODES": (
+        "ERROR",
+        "END_OF_STREAM",
+        "BY_USER",
+        "UNKNOWN",
+    ),
+    "STT_CANCELLATION_ERROR_CODES": (
+        "NO_ERROR",
+        "AUTHENTICATION_FAILURE",
+        "BAD_REQUEST",
+        "TOO_MANY_REQUESTS",
+        "FORBIDDEN",
+        "CONNECTION_FAILURE",
+        "SERVICE_TIMEOUT",
+        "SERVICE_ERROR",
+        "SERVICE_UNAVAILABLE",
+        "RUNTIME_ERROR",
+        "EMBEDDED_MODEL_ERROR",
+        "SERVICE_REDIRECT_PERMANENT",
+        "SERVICE_REDIRECT_TEMPORARY",
+        "UNKNOWN",
+    ),
+    "STT_SDK_EXCEPTION_CODES": (
+        "SDK_EXCEPTION_RUNTIME_ERROR",
+        "SDK_EXCEPTION_VALUE_ERROR",
+        "SDK_EXCEPTION_TYPE_ERROR",
+        "SDK_EXCEPTION_OS_ERROR",
+        "UNKNOWN",
+    ),
+    "STT_BASE_OUTCOME_CODES": (
+        "RECOGNIZED_TRANSCRIPT_MISMATCH",
+        "NO_MATCH",
+        "UNEXPECTED_RESULT_REASON",
+        "UNKNOWN",
+    ),
+}
 ENDPOINT_DIAGNOSTIC_CHECKS = (
     ("ENDPOINT_PARSE", "parsed = urlparse(endpoint)"),
     ("ENDPOINT_SCHEME", 'if parsed.scheme != "https":'),
@@ -343,7 +400,6 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
         self.assertNotIn(diagnostic_path, upload_steps[0]["with"]["path"])
 
         self.assertIn("python - <<'PY' >/dev/null 2>/dev/null", self.raw)
-        self.assertNotRegex(self.raw, r"except Exception as \w+")
         account_handler = re.search(
             r"except Exception:\n"
             r"\s*if account_diagnostic not in ACCOUNT_DIAGNOSTIC_CODES:\n"
@@ -376,6 +432,239 @@ class FoundryDocVisionSpeechOidcPreflightContractTests(unittest.TestCase):
             self.raw,
         )
         self.assertEqual(self.raw.count("FDVS_ACCOUNT_DIAGNOSTIC="), 1)
+
+    def test_stt_diagnostic_is_separate_allowlisted_and_not_uploaded(self) -> None:
+        self.assertIn("FDVS_SPEECH_STT_DIAGNOSTIC_FILE", self.job["env"])
+        diagnostic_path = self.job["env"]["FDVS_SPEECH_STT_DIAGNOSTIC_FILE"]
+        status_path = self.job["env"]["FDVS_STATUS_FILE"]
+        self.assertEqual(
+            diagnostic_path,
+            "/tmp/fdvs-speech-stt-diagnostic.txt",
+        )
+        self.assertNotEqual(diagnostic_path, status_path)
+
+        upload_steps = [
+            step
+            for step in self.job["steps"]
+            if step.get("uses") == "actions/upload-artifact@v4"
+        ]
+        self.assertEqual(len(upload_steps), 1)
+        self.assertEqual(upload_steps[0]["with"]["path"], status_path)
+        self.assertNotIn(diagnostic_path, upload_steps[0]["with"]["path"])
+
+        for name, expected_codes in EXPECTED_STT_DIAGNOSTIC_COMPONENTS.items():
+            with self.subTest(name=name):
+                allowlist_blocks = re.findall(
+                    rf"{name} = \(\n(?P<body>.*?)\n\s*\)",
+                    self.raw,
+                    flags=re.DOTALL,
+                )
+                self.assertEqual(
+                    len(allowlist_blocks),
+                    2,
+                    "probe and finalizer must independently allowlist diagnostics",
+                )
+                for block in allowlist_blocks:
+                    actual_codes = tuple(
+                        re.findall(
+                            r'^\s*"([A-Z][A-Z0-9_]*)",$',
+                            block,
+                            flags=re.MULTILINE,
+                        )
+                    )
+                    self.assertEqual(actual_codes, expected_codes)
+
+        self.assertIn("validated_stt_diagnostic(raw_diagnostic)", self.raw)
+        self.assertIn(
+            'print(f"::error::FDVS_SPEECH_STT_DIAGNOSTIC={diagnostic}")',
+            self.raw,
+        )
+        self.assertEqual(self.raw.count("FDVS_SPEECH_STT_DIAGNOSTIC="), 1)
+
+    def test_stt_failures_are_classified_without_raw_payloads(self) -> None:
+        stt_block = re.search(
+            r"wav_diagnostic = classify_wav\(wav_path\)\n"
+            r"(?P<body>.*?)"
+            r'\n\s*pass_stage\("FDVS_OIDC_PREFLIGHT_SPEECH_STT"\)',
+            self.raw,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(
+            stt_block,
+            "STT must classify the WAV and recognition outcome before PASS",
+        )
+        assert stt_block is not None
+        body = stt_block.group("body")
+        for required in (
+            "speechsdk.ResultReason.RecognizedSpeech",
+            "RECOGNIZED_TRANSCRIPT_MISMATCH",
+            "speechsdk.ResultReason.NoMatch",
+            '"NO_MATCH"',
+            "speechsdk.ResultReason.Canceled",
+            "speechsdk.CancellationDetails(recognition)",
+            "classify_stt_cancellation(cancellation)",
+            '"UNEXPECTED_RESULT_REASON"',
+            "write_stt_diagnostic(wav_diagnostic, outcome)",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, body)
+
+        exception_handler = re.search(
+            r"except Exception as error:\n"
+            r"(?P<body>.*?)\n"
+            r'\s*fail_stage\("FDVS_OIDC_PREFLIGHT_SPEECH_STT"\)',
+            self.raw,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(
+            exception_handler,
+            "the broad STT catch must classify its exception safely",
+        )
+        assert exception_handler is not None
+        handler_body = exception_handler.group("body")
+        self.assertIn("classify_stt_exception(error)", handler_body)
+        self.assertIn("write_stt_diagnostic(", handler_body)
+        self.assertEqual(handler_body.count("classify_stt_exception(error)"), 1)
+        self.assertEqual(
+            len(re.findall(r"\berror\b", handler_body)),
+            1,
+            "the caught exception may only flow into the allowlist classifier",
+        )
+
+        self.assertNotIn(".error_details", self.raw)
+        self.assertEqual(
+            body.count("recognition.text"),
+            1,
+            "transcript text may only be compared, never emitted",
+        )
+        self.assertNotRegex(
+            self.raw,
+            r"(?i)(?:print|write_text|write_bytes)\([^)]*recognition\.text",
+        )
+        self.assertNotRegex(
+            handler_body,
+            r"(?i)(?:str|repr)\(error\)|traceback|error\.args|"
+            r"error_details|recognition\.text|wav_path",
+        )
+        self.assertNotRegex(
+            self.raw,
+            r"FDVS_SPEECH_STT_DIAGNOSTIC=\{(?:endpoint|token|client_id|"
+            r"subscription_id|recognition\.text|wav_path|error)",
+        )
+
+    def test_stt_finalizer_rejects_unallowlisted_payloads(self) -> None:
+        finalize_run = next(
+            step["run"]
+            for step in self.job["steps"]
+            if step.get("name") == "Finalize sanitized evidence"
+        )
+        python_body = finalize_run.split("python - <<'PY'\n", 1)[1].rsplit(
+            "\nPY",
+            1,
+        )[0]
+        validator_source = re.search(
+            r"(?P<body>WAV_SPECIAL_CODES = \(.*?"
+            r"\ndef validated_stt_diagnostic\(raw: bytes\) -> str:\n.*?)"
+            r"(?=\n\ndiagnostic_file =)",
+            python_body,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(validator_source)
+        assert validator_source is not None
+
+        namespace = {"re": re}
+        exec(
+            compile(
+                textwrap.dedent(validator_source.group("body")),
+                "<stt-diagnostic-validator>",
+                "exec",
+            ),
+            namespace,
+        )
+        validate = namespace["validated_stt_diagnostic"]
+
+        valid = (
+            b"WAV_MONO_BITS_16_HZ_24000_PCM_PRESENT"
+            b"__CANCELED_ERROR_AUTHENTICATION_FAILURE\n"
+        )
+        self.assertEqual(validate(valid), valid.decode("ascii").strip())
+        unsafe_values = (
+            b"WAV_MONO_BITS_16_HZ_24000_PCM_PRESENT"
+            b"__RuntimeError: endpoint=https://private.example\n",
+            b"WAV_MONO_BITS_16_HZ_24000_PCM_PRESENT"
+            b"__recognized private transcript\n",
+            b"WAV_MONO_BITS_16_HZ_24000_PCM_PRESENT"
+            b"__/tmp/private.wav\n",
+            b"WAV_MONO_BITS_16_HZ_24000_PCM_PRESENT__NO_MATCH\nextra\n",
+            b"\xff\n",
+        )
+        for raw in unsafe_values:
+            with self.subTest(raw=raw):
+                self.assertEqual(validate(raw), "UNKNOWN")
+
+    def test_stt_cancellation_classifier_uses_python_sdk_contract(self) -> None:
+        probe_run = next(
+            step["run"]
+            for step in self.job["steps"]
+            if step.get("id") == "live-probes"
+        )
+        python_body = probe_run.split(
+            "python - <<'PY' >/dev/null 2>/dev/null\n",
+            1,
+        )[1].rsplit("\nPY", 1)[0]
+        maps = re.search(
+            r"(?P<body>STT_CANCELLATION_REASON_NAME_CODES = \{.*?"
+            r"\nSTT_CANCELLATION_ERROR_NAME_CODES = \{.*?\n\})",
+            python_body,
+            flags=re.DOTALL,
+        )
+        functions = re.search(
+            r"(?P<body>def safe_named_enum_code\(.*?"
+            r"\ndef classify_stt_cancellation\(.*?"
+            r"return f\"CANCELED_\{reason_code\}_\{error_code\}\")",
+            python_body,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(maps)
+        self.assertIsNotNone(functions)
+        assert maps is not None
+        assert functions is not None
+
+        namespace: dict[str, object] = {}
+        source = "\n\n".join(
+            (
+                textwrap.dedent(maps.group("body")),
+                textwrap.dedent(functions.group("body")),
+            )
+        )
+        exec(compile(source, "<stt-cancellation-classifier>", "exec"), namespace)
+        classify = namespace["classify_stt_cancellation"]
+
+        class NamedEnum:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        class Cancellation:
+            reason = NamedEnum("Error")
+            code = NamedEnum("BadRequest")
+
+        try:
+            actual = classify(Cancellation())
+        except AttributeError:
+            actual = "ATTRIBUTE_ERROR"
+        self.assertEqual(actual, "CANCELED_ERROR_BAD_REQUEST")
+
+    def test_embedded_python_blocks_compile(self) -> None:
+        blocks = re.findall(
+            r"python - <<'PY'(?: >/dev/null 2>/dev/null)?\n"
+            r"(?P<body>.*?)\n\s+PY",
+            self.raw,
+            flags=re.DOTALL,
+        )
+        self.assertEqual(len(blocks), 2)
+        for index, body in enumerate(blocks):
+            with self.subTest(index=index):
+                compile(textwrap.dedent(body), f"<workflow-python-{index}>", "exec")
 
     def test_exact_effective_roles_are_required(self) -> None:
         self.assertIn('"--include-inherited"', self.raw)
