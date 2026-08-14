@@ -35,11 +35,17 @@ Azure resource.
 
 ---
 
-## Step -1 — Acknowledge the skill contract
+## Step -1 — Acknowledge the skill contract (mandatory FIRST action)
 
-Run this exactly. It is a cheap audit breadcrumb — do NOT `view` or `cat`
-the SKILL.md, which is ~47 KB and would blow the per-turn token budget
-(AGENTS.md § 9.7 Pattern 19 addendum v2).
+Your first action must be a **separate Bash tool call containing only this
+command**. Do not combine it with Step 0 or any later work — the Copilot CLI
+transcript collapses each tool call to roughly its first five lines, so a
+breadcrumb buried inside a larger block never reaches the text the workflow's
+post-hoc audit step greps, and the leg fails even when every probe passes.
+
+It is a cheap audit breadcrumb — do NOT `view` or `cat` the SKILL.md, which
+is ~47 KB and would blow the per-turn token budget (AGENTS.md § 9.7
+Pattern 19 addendum v2).
 
 ```bash
 echo "Executing consumer smoke for skills/foundry-doc-vision-speech/SKILL.md"
