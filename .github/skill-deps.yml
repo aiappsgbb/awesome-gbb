@@ -109,6 +109,14 @@ skills:
   foundry-voice-live:
     depends_on: []
 
+  # foundry-doc-vision-speech — read-only fixture: Document Intelligence
+  # prebuilt-read, Speech TTS→STT round-trip, and gpt-5.4-mini vision, all
+  # keyless against the shared CI AI Services account. Creates no Azure
+  # resources. No catalog-internal deps — Voice Live (real-time) is a
+  # sibling modality, not an upstream dependency.
+  foundry-doc-vision-speech:
+    depends_on: []
+
   # foundry-cost-monitoring — read-only fixture: anonymous Retail Prices
   # probe + LAW gen_ai.usage KQL (soft) + Cost Mgmt REST (soft). Depends
   # on foundry-observability for the emit-side telemetry contract; any
