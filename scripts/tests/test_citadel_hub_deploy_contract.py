@@ -77,6 +77,16 @@ class CitadelHubDeployContractTests(unittest.TestCase):
             for path in sorted(PROFILES_DIR.glob("*.env"))
         }
 
+    def assert_profile_values(
+        self,
+        profile_name: str,
+        expected: dict[str, str],
+    ) -> None:
+        profile = self.profiles[profile_name]
+        for key, value in expected.items():
+            with self.subTest(profile=profile_name, key=key):
+                self.assertEqual(profile.get(key), value)
+
     def test_pin_and_quickstart_materialize_the_exact_target_sha(self) -> None:
         self.assertIn(f"pinned_sha: {TARGET_SHA}", self.pin)
         self.assertRegex(
@@ -111,7 +121,6 @@ class CitadelHubDeployContractTests(unittest.TestCase):
                 )
 
     def test_pilot_quickstart_is_lean_and_secure(self) -> None:
-        pilot = self.profiles["pilot-quickstart.env"]
         expected = {
             "APIM_SKU": "Developer",
             "USE_EXISTING_VNET": "false",
@@ -128,9 +137,239 @@ class CitadelHubDeployContractTests(unittest.TestCase):
             "CREATE_DASHBOARDS": "false",
             "AZURE_ENTRA_AUTH": "true",
         }
-        for key, value in expected.items():
-            with self.subTest(key=key):
-                self.assertEqual(pilot.get(key), value)
+        self.assert_profile_values("pilot-quickstart.env", expected)
+
+    def test_apim_v2_profiles_keep_event_hub_public_during_provisioning(self) -> None:
+        for profile_name in (
+            "enterprise-baseline.env",
+            "vnet-isolated-spoke-aware.env",
+        ):
+            with self.subTest(profile=profile_name):
+                self.assertEqual(
+                    self.profiles[profile_name].get("EVENTHUB_NETWORK_ACCESS"),
+                    "Enabled",
+                )
+        self.assertRegex(
+            self.skill + self.checklist,
+            re.compile(
+                r"Event Hub.{0,180}Enabled.{0,180}APIM v2",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+
+    def test_entra_setup_documents_permissions_private_kv_and_verification(self) -> None:
+        docs = self.skill + self.checklist
+        for required_text in (
+            "Application.ReadWrite.All",
+            "Application Developer",
+            "Key Vault Secrets Officer",
+            "API Management Service Contributor",
+            "ENTRA-APP-CLIENT-SECRET",
+            "az keyvault secret show",
+            "az apim nv show",
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, docs)
+        self.assertRegex(
+            docs,
+            re.compile(
+                r"Key Vault.{0,300}(?:private endpoint|private network|VPN|peered)",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            docs,
+            re.compile(
+                r"setup\.ps1.{0,500}continues.{0,300}Key Vault",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+
+    def test_entra_setup_verifies_current_values_not_only_resource_existence(self) -> None:
+        for required_text in (
+            "azd env get-value ENTRA_CLIENT_SECRET",
+            "azd env get-value AZURE_CLIENT_ID",
+            "--query value -o tsv",
+            "https://login.microsoftonline.com/$EXPECTED_TENANT_ID/v2.0",
+            (
+                "https://login.microsoftonline.com/"
+                "$EXPECTED_TENANT_ID/v2.0/.well-known/openid-configuration"
+            ),
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, self.skill)
+        self.assertRegex(
+            self.skill,
+            re.compile(
+                r'keyvault secret show.{0,240}--query value -o tsv.{0,240}'
+                r'ENTRA_CLIENT_SECRET',
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            self.skill,
+            re.compile(
+                r'apim nv show.{0,240}--query value -o tsv.{0,300}'
+                r'expected_value',
+                re.DOTALL,
+            ),
+        )
+        verification_docs = self.skill + self.checklist
+        self.assertNotIn("declare -A", verification_docs)
+        for named_value in (
+            "JWT-TenantId",
+            "JWT-AppRegistrationId",
+            "JWT-Issuer",
+            "JWT-OpenIdConfigUrl",
+        ):
+            with self.subTest(named_value=named_value):
+                self.assertRegex(
+                    self.skill,
+                    re.compile(
+                        rf"verify_apim_named_value\s+{named_value}\s+",
+                    ),
+                )
+
+    def test_quickstarts_assert_exact_guids_before_mutating_azure(self) -> None:
+        self.assertIn('EXPECTED_TENANT_ID="<tenant-guid>"', self.skill)
+        self.assertIn(
+            'EXPECTED_SUBSCRIPTION_ID="<subscription-guid>"',
+            self.skill,
+        )
+        self.assertIn("az account show --query tenantId", self.skill)
+        self.assertIn("az account show --query id", self.skill)
+        self.assertNotIn("az account show --query name", self.skill)
+        for required_text in (
+            "azd env get-value AZURE_TENANT_ID",
+            "azd env get-value AZURE_SUBSCRIPTION_ID",
+            'azd env set AZURE_TENANT_ID "$EXPECTED_TENANT_ID"',
+            'azd env set AZURE_SUBSCRIPTION_ID "$EXPECTED_SUBSCRIPTION_ID"',
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, self.skill)
+        self.assertGreaterEqual(
+            len(re.findall(r"assert_azure_target\s*\n\s*azd up", self.skill)),
+            3,
+        )
+        self.assertRegex(
+            self.skill,
+            re.compile(
+                r"assert_azure_target.{0,240}pwsh (?:\./)?setup\.ps1",
+                re.DOTALL,
+            ),
+        )
+        self.assertIn("$expectedTenantId = \"<tenant-guid>\"", self.skill)
+        self.assertIn(
+            "$expectedSubscriptionId = \"<subscription-guid>\"",
+            self.skill,
+        )
+        self.assertRegex(
+            self.skill,
+            re.compile(r"Assert-AzureTarget\s*\n\s*azd up"),
+        )
+        self.assertRegex(
+            self.skill,
+            re.compile(r"Assert-AzureTarget\s*\n\s*pwsh \.\\setup\.ps1"),
+        )
+
+    def test_powershell_quickstart_fails_on_native_command_errors(self) -> None:
+        self.assertIn('$ErrorActionPreference = "Stop"', self.skill)
+        self.assertIn("function Assert-NativeSuccess", self.skill)
+        for operation in (
+            "az login",
+            "azd auth login",
+            "az account set",
+            "git clone",
+            "git fetch",
+            "git checkout",
+            "azd env new",
+            "azd up",
+            "Entra setup",
+        ):
+            with self.subTest(operation=operation):
+                self.assertIn(
+                    f'Assert-NativeSuccess "{operation}"',
+                    self.skill,
+                )
+        self.assertRegex(
+            self.skill,
+            re.compile(
+                r"azd env set \$k \$v\s*\n\s*"
+                r'Assert-NativeSuccess "profile value \$k"',
+            ),
+        )
+        self.assertIn("Test-Path -LiteralPath $profilePath -PathType Leaf", self.skill)
+        self.assertIn(
+            "Get-Content -LiteralPath $profilePath -ErrorAction Stop",
+            self.skill,
+        )
+
+    def test_separate_host_entra_setup_exits_on_target_mismatch(self) -> None:
+        self.assertGreaterEqual(self.skill.count("set -euo pipefail"), 2)
+        self.assertRegex(
+            self.skill,
+            re.compile(
+                r"assert_azure_target \|\| exit 1\s*\n\s*pwsh \./setup\.ps1",
+            ),
+        )
+
+    def test_apim_private_ingress_is_not_described_as_fully_private_hub(self) -> None:
+        for profile_name in (
+            "enterprise-baseline.env",
+            "vnet-isolated-spoke-aware.env",
+        ):
+            profile_text = (
+                PROFILES_DIR / profile_name
+            ).read_text(encoding="utf-8")
+            with self.subTest(profile=profile_name):
+                self.assertNotIn("fully private", profile_text.lower())
+        self.assertNotIn("To go fully private", self.skill)
+
+    def test_enterprise_and_vnet_profiles_preserve_critical_guardrails(self) -> None:
+        shared = {
+            "APIM_SKU": "StandardV2",
+            "COSMOS_DB_PUBLIC_ACCESS": "Disabled",
+            "AI_FOUNDRY_EXTERNAL_NETWORK_ACCESS": "Disabled",
+            "KEY_VAULT_EXTERNAL_NETWORK_ACCESS": "Disabled",
+            "REDIS_PUBLIC_NETWORK_ACCESS": "Disabled",
+            "EVENTHUB_NETWORK_ACCESS": "Enabled",
+            "ENABLE_MANAGED_REDIS": "true",
+            "REDIS_HIGH_AVAILABILITY": "Enabled",
+            "ENABLE_API_CENTER": "true",
+            "ENABLE_AZURE_AI_SEARCH": "false",
+            "ENABLE_DOCUMENT_INTELLIGENCE": "false",
+            "CREATE_DASHBOARDS": "true",
+            "AZURE_ENTRA_AUTH": "true",
+        }
+        self.assert_profile_values(
+            "enterprise-baseline.env",
+            shared
+            | {
+                "USE_EXISTING_VNET": "false",
+                "USE_EXISTING_LOG_ANALYTICS": "true",
+                "APIM_V2_USE_PRIVATE_ENDPOINT": "true",
+                "APIM_V2_PUBLIC_NETWORK_ACCESS": "true",
+            },
+        )
+        self.assert_profile_values(
+            "vnet-isolated-spoke-aware.env",
+            shared
+            | {
+                "USE_EXISTING_VNET": "true",
+                "USE_EXISTING_LOG_ANALYTICS": "false",
+                "APIM_V2_USE_PRIVATE_ENDPOINT": "true",
+                "APIM_V2_PUBLIC_NETWORK_ACCESS": "false",
+            },
+        )
+        for profile_name in (
+            "enterprise-baseline.env",
+            "vnet-isolated-spoke-aware.env",
+        ):
+            with self.subTest(profile=profile_name):
+                self.assertNotIn(
+                    "FOUNDRY_NETWORK_INJECTION_ENABLED",
+                    self.profiles[profile_name],
+                )
 
     def test_profiles_do_not_enable_incompatible_network_injection(self) -> None:
         for name, profile in self.profiles.items():

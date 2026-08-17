@@ -142,6 +142,10 @@ Pick ONE up front. Switching after deploy = re-deploy.
       `PRIVATE_ENDPOINT_SUBNET_NAME`, and `FUNCTION_APP_SUBNET_NAME`
       env vars (or accept the `snet-*` defaults)
 - [ ] If BYO DNS zones: cross-sub `Network Contributor` granted to deploy identity
+- [ ] If using APIM Standard v2/Premium v2:
+      `EVENTHUB_NETWORK_ACCESS=Enabled` remains set during provisioning. The
+      pinned `main.bicep` requires Event Hub public access for APIM v2;
+      enterprise and VNet profiles enforce this compatibility setting.
 
 ## 5. Tagging (MCAPS pilot subscriptions)
 
@@ -162,11 +166,68 @@ azd env set AZURE_TAGS '{"costCenter":"<cc>","owner":"<email>","environment":"pi
 The upstream supports JWT auth on the gateway. All supplied profiles set
 `AZURE_ENTRA_AUTH=true`. After `azd up`, run
 `bicep/infra/entra-id-setup/setup.ps1`; it creates or updates the app
-registration and configures APIM named values directly, without another hub
-deployment.
+registration and service principal, resets a two-year client secret, writes
+`ENTRA-APP-CLIENT-SECRET` to Key Vault, configures the APIM JWT named values
+directly, and writes Entra values to the selected azd environment. No second
+hub deployment is required.
 
-- [ ] Entra app registration ownership agreed
-- [ ] Post-deploy setup script scheduled and token/RBAC tests included
+Prerequisites from the pinned script and upstream setup guide:
+
+- Microsoft Graph `Application.ReadWrite.All` permission or the Entra
+  **Application Developer** role.
+- **Key Vault Secrets Officer** on the deployed Key Vault data plane.
+- **API Management Service Contributor** on the APIM service or its resource
+  group.
+- A host with private DNS and network reachability to the Key Vault private
+  endpoint. Every supplied profile sets Key Vault public network access to
+  `Disabled`; a normal Internet-only workstation cannot complete the secret
+  write. Use the approved VPN or a peered administrative host with the same
+  exact detached checkout and selected azd environment. This checklist does
+  not authorize a temporary public-access exception.
+
+The pinned `setup.ps1` continues when the Key Vault secret write fails and
+still stores the client secret in the local azd environment. Therefore, do
+not accept its final banner or resource existence alone. Re-run the exact
+tenant/subscription GUID assertion immediately before the script, then compare
+the stored values with the newly generated azd values:
+
+```bash
+EXPECTED_TENANT_ID="<tenant-guid>"
+EXPECTED_CLIENT_ID="$(azd env get-value AZURE_CLIENT_ID)"
+EXPECTED_CLIENT_SECRET="$(azd env get-value ENTRA_CLIENT_SECRET)"
+ACTUAL_CLIENT_SECRET="$(az keyvault secret show \
+  --vault-name "$(azd env get-value KEY_VAULT_NAME)" \
+  --name ENTRA-APP-CLIENT-SECRET \
+  --query value -o tsv)"
+[[ -n "$EXPECTED_CLIENT_SECRET" &&
+   "$ACTUAL_CLIENT_SECRET" == "$EXPECTED_CLIENT_SECRET" ]] || exit 1
+unset EXPECTED_CLIENT_SECRET ACTUAL_CLIENT_SECRET
+
+verify_apim_named_value() {
+  local named_value="$1"
+  local expected_value="$2"
+  local actual_value
+  actual_value="$(az apim nv show \
+    --resource-group "$(azd env get-value AZURE_RESOURCE_GROUP)" \
+    --service-name "$(azd env get-value APIM_NAME)" \
+    --named-value-id "$named_value" \
+    --query value -o tsv)"
+  [[ "$actual_value" == "$expected_value" ]] || exit 1
+}
+verify_apim_named_value JWT-TenantId "$EXPECTED_TENANT_ID"
+verify_apim_named_value JWT-AppRegistrationId "$EXPECTED_CLIENT_ID"
+verify_apim_named_value JWT-Issuer \
+  "https://login.microsoftonline.com/$EXPECTED_TENANT_ID/v2.0"
+verify_apim_named_value JWT-OpenIdConfigUrl \
+  "https://login.microsoftonline.com/$EXPECTED_TENANT_ID/v2.0/.well-known/openid-configuration"
+```
+
+- [ ] Exact tenant GUID and subscription GUID re-asserted immediately before
+      `setup.ps1`
+- [ ] Graph app-registration permission/role confirmed
+- [ ] Key Vault Secrets Officer and private endpoint reachability confirmed
+- [ ] API Management Service Contributor confirmed
+- [ ] Key Vault secret and all four APIM named values verified after setup
 
 ## 7. Optional: Hub upgrade flow
 
@@ -183,7 +244,8 @@ v1.0.0 scope.
 
 - [ ] All boxes above checked
 - [ ] You have **30-45 minutes** of uninterrupted time for `azd up`
-- [ ] You have a `azd down --purge` plan if you need to roll back
+- [ ] You have a `azd down --purge` plan if you need to roll back, and will
+      re-run the exact tenant/subscription GUID assertion immediately before it
       (the hub's RG should NOT contain shared resources unless you
       explicitly used BYO mode for them)
 - [ ] You will run the 12-scenario sequence in `validation/README.md`;

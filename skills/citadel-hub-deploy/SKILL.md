@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -190,14 +190,17 @@ Don't deploy a hub when:
   2. You MUST have set AZURE_CONFIG_DIR and AZD_CONFIG_DIR per
      azure-tenant-isolation. A Citadel hub costs $200-1000+/mo — deploying
      to the wrong subscription is expensive.
-  3. You MUST run the tenant assertion (az account show) and verify output.
+  3. You MUST assert the exact tenant GUID and subscription GUID immediately
+     before every deploy or mutating post-deploy command.
   If any of these are not done, STOP and complete them first.
 </HARD-GATE> -->
 
 > **TENANT ISOLATION FIRST.** Per `azure-tenant-isolation`, set both
 > `AZURE_CONFIG_DIR` and `AZD_CONFIG_DIR` to per-tenant directories
 > **before** any `az` / `azd` command. Then run the two-layer assertion
-> (`az account show --query tenantId / name`) before `azd up`. Without
+> (`az account show --query tenantId / id`, plus the selected azd environment)
+> immediately before every `azd up`, `setup.ps1`, rollback, or destructive
+> Azure operation. Display names are not identity checks. Without
 > these, you risk deploying a $1k+/mo hub into the wrong subscription.
 
 ### Path A — Pilot Quickstart (lean non-production overlay)
@@ -209,17 +212,37 @@ default `foundryNetworkInjectionEnabled=false`; enabling it without the full
 BYO Standard Agent dependency set fails.
 
 ```bash
+set -euo pipefail
+
 # 0. Set the path to your awesome-gbb checkout (or `~/.copilot/skills`
 #    user-scope mirror) so the .env profiles below resolve.
 SKILL_DIR="$HOME/.copilot/skills/citadel-hub-deploy"  # or your repo path
 
-# 1. Tenant isolation (per azure-tenant-isolation skill)
+# 1. Tenant isolation with immutable GUID expectations
 export AZURE_CONFIG_DIR="$HOME/.azure-tenants/<alias>"
 export AZD_CONFIG_DIR="$HOME/.azd-tenants/<alias>"
-az login --tenant "$TENANT_ID"
-azd auth login --tenant-id "$TENANT_ID"
-az account set --subscription "$DEFAULT_SUB"
-[ "$(az account show --query name -o tsv)" = "$DEFAULT_SUB" ] || exit 1
+EXPECTED_TENANT_ID="<tenant-guid>"
+EXPECTED_SUBSCRIPTION_ID="<subscription-guid>"
+
+assert_azure_target() {
+  local actual_tenant actual_subscription azd_tenant azd_subscription
+  actual_tenant="$(az account show --query tenantId -o tsv)"
+  actual_subscription="$(az account show --query id -o tsv)"
+  azd_tenant="$(azd env get-value AZURE_TENANT_ID)"
+  azd_subscription="$(azd env get-value AZURE_SUBSCRIPTION_ID)"
+  [[ "$actual_tenant" == "$EXPECTED_TENANT_ID" ]] ||
+    { echo "Azure CLI tenant mismatch" >&2; return 1; }
+  [[ "$actual_subscription" == "$EXPECTED_SUBSCRIPTION_ID" ]] ||
+    { echo "Azure CLI subscription mismatch" >&2; return 1; }
+  [[ "$azd_tenant" == "$EXPECTED_TENANT_ID" ]] ||
+    { echo "azd tenant mismatch" >&2; return 1; }
+  [[ "$azd_subscription" == "$EXPECTED_SUBSCRIPTION_ID" ]] ||
+    { echo "azd subscription mismatch" >&2; return 1; }
+}
+
+az login --tenant "$EXPECTED_TENANT_ID"
+azd auth login --tenant-id "$EXPECTED_TENANT_ID"
+az account set --subscription "$EXPECTED_SUBSCRIPTION_ID"
 
 # 2. Materialize and verify the exact pin. Do not replace this with
 #    branch-based azd init: citadel-v1 is mutable.
@@ -232,6 +255,8 @@ git -C my-citadel-hub fetch --depth 1 origin "$PINNED_SHA"
 test "$(git -C my-citadel-hub rev-parse HEAD)" = "$PINNED_SHA" || exit 1
 cd my-citadel-hub
 azd env new citadel-pilot-01
+azd env set AZURE_TENANT_ID "$EXPECTED_TENANT_ID"
+azd env set AZURE_SUBSCRIPTION_ID "$EXPECTED_SUBSCRIPTION_ID"
 
 # 3. Apply the pilot-quickstart profile (env-var bundle from the skill)
 while IFS='=' read -r k v; do
@@ -244,15 +269,13 @@ done < "$SKILL_DIR/references/profiles/pilot-quickstart.env"
 #    override arrays. Reduce them directly if quota or model scope requires.
 
 # 5. Deploy
+assert_azure_target
 azd up
-
-# 6. Complete Entra setup. The script configures APIM directly; no redeploy.
-cd bicep/infra/entra-id-setup
-pwsh ./setup.ps1
 ```
 
 Expected wall clock: **30-45 min** (APIM provisioning dominates).
 Expected baseline cost: ~$200-400/mo with light usage.
+Complete the common Entra step below after the deployment.
 
 ### Path B — Enterprise Baseline (production-grade, public APIM)
 
@@ -275,12 +298,13 @@ while IFS='=' read -r k v; do
   azd env set "$k" "$v"
 done < "$SKILL_DIR/references/profiles/enterprise-baseline.env"
 
+assert_azure_target
 azd up
-cd bicep/infra/entra-id-setup && pwsh ./setup.ps1
 ```
 
-To go fully private (no public APIM access): set
+To make APIM ingress private-only: set
 `APIM_V2_PUBLIC_NETWORK_ACCESS=false` after applying the profile.
+Event Hub public access must still remain `Enabled` for APIM v2 provisioning.
 
 ### Path C — VNet-Isolated, Spoke-Aware (peers to your landing zone)
 
@@ -310,8 +334,8 @@ while IFS='=' read -r k v; do
   azd env set "$k" "$v"
 done < "$SKILL_DIR/references/profiles/vnet-isolated-spoke-aware.env"
 
+assert_azure_target
 azd up
-cd bicep/infra/entra-id-setup && pwsh ./setup.ps1
 ```
 
 Then deploy your spoke separately with `foundry-vnet-deploy`, peer the
@@ -319,36 +343,209 @@ spoke VNet to the hub VNet, and link the
 `privatelink.azure-api.net` zone to the spoke VNet so spoke agents
 resolve the hub APIM private FQDN.
 
+### Required Entra setup for all profiles
+
+All profiles enable Entra JWT policy, but all also keep Key Vault public
+network access disabled. Run the pinned
+`bicep/infra/entra-id-setup/setup.ps1` only after `azd up`, from an
+administrative host that uses the same isolated az/azd environment and has
+private DNS plus network reachability to the Key Vault private endpoint
+(for example, a workstation connected by the approved VPN or a peered
+management host). Do not weaken the profile automatically just to run the
+script.
+
+The signed-in operator needs:
+
+- Microsoft Graph `Application.ReadWrite.All` permission or the Entra
+  **Application Developer** role to create/update the app registration,
+  service principal, and two-year client secret.
+- **Key Vault Secrets Officer** on the deployed vault data plane.
+- **API Management Service Contributor** on the deployed APIM service (or
+  its resource group) to read/create/update JWT named values.
+
+The script then creates or reuses the app registration, creates the service
+principal, resets the client secret, writes it as
+`ENTRA-APP-CLIENT-SECRET`, updates four APIM named values, and stores values
+in the selected azd environment. It configures APIM directly; a second
+`azd up` is not required. The pinned `setup.ps1` continues on a Key Vault
+secret-write failure, so its final success banner is not sufficient: treat
+a missing Key Vault secret as a failed setup and verify both data planes.
+
+```bash
+# Run from the exact detached checkout and selected azd environment on the
+# network-connected administrative host described above. First repeat Path A
+# step 1 on that host so EXPECTED_* and assert_azure_target are defined.
+set -euo pipefail
+cd bicep/infra/entra-id-setup
+assert_azure_target || exit 1
+pwsh ./setup.ps1
+
+KEY_VAULT_NAME="$(azd env get-value KEY_VAULT_NAME)"
+APIM_RESOURCE_GROUP="$(azd env get-value AZURE_RESOURCE_GROUP)"
+APIM_NAME="$(azd env get-value APIM_NAME)"
+EXPECTED_CLIENT_ID="$(azd env get-value AZURE_CLIENT_ID)"
+EXPECTED_CLIENT_SECRET="$(azd env get-value ENTRA_CLIENT_SECRET)"
+ACTUAL_CLIENT_SECRET="$(az keyvault secret show \
+  --vault-name "$KEY_VAULT_NAME" \
+  --name ENTRA-APP-CLIENT-SECRET \
+  --query value -o tsv)"
+[[ -n "$EXPECTED_CLIENT_SECRET" &&
+   "$ACTUAL_CLIENT_SECRET" == "$EXPECTED_CLIENT_SECRET" ]] ||
+  { echo "Key Vault ENTRA_CLIENT_SECRET mismatch" >&2; exit 1; }
+unset EXPECTED_CLIENT_SECRET ACTUAL_CLIENT_SECRET
+
+verify_apim_named_value() {
+  local named_value="$1"
+  local expected_value="$2"
+  local actual_value
+  actual_value="$(az apim nv show \
+    --resource-group "$APIM_RESOURCE_GROUP" \
+    --service-name "$APIM_NAME" \
+    --named-value-id "$named_value" \
+    --query value -o tsv)"
+  [[ "$actual_value" == "$expected_value" ]] ||
+    { echo "APIM named value mismatch: $named_value" >&2; exit 1; }
+}
+verify_apim_named_value JWT-TenantId "$EXPECTED_TENANT_ID"
+verify_apim_named_value JWT-AppRegistrationId "$EXPECTED_CLIENT_ID"
+verify_apim_named_value JWT-Issuer \
+  "https://login.microsoftonline.com/$EXPECTED_TENANT_ID/v2.0"
+verify_apim_named_value JWT-OpenIdConfigUrl \
+  "https://login.microsoftonline.com/$EXPECTED_TENANT_ID/v2.0/.well-known/openid-configuration"
+```
+
 ### PowerShell equivalent (Windows)
 
 ```powershell
+$ErrorActionPreference = "Stop"
+
 # Path to the skill (repo or user-scope mirror)
 $skillDir = "$env:USERPROFILE\.copilot\skills\citadel-hub-deploy"
 
 # Tenant isolation (per azure-tenant-isolation skill)
 $env:AZURE_CONFIG_DIR = "$env:USERPROFILE\.azure-tenants\<alias>"
 $env:AZD_CONFIG_DIR   = "$env:USERPROFILE\.azd-tenants\<alias>"
-az login --tenant $tenantId
-azd auth login --tenant-id $tenantId
-az account set --subscription $defaultSub
-if ((az account show --query name -o tsv) -ne $defaultSub) { exit 1 }
+$expectedTenantId = "<tenant-guid>"
+$expectedSubscriptionId = "<subscription-guid>"
+
+function Assert-NativeSuccess {
+  param([string]$Operation)
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Operation failed with native exit code $LASTEXITCODE"
+  }
+}
+
+function Assert-AzureTarget {
+  $accountJson = az account show --output json
+  Assert-NativeSuccess "az account show"
+  $account = $accountJson | ConvertFrom-Json
+  $azdTenantId = azd env get-value AZURE_TENANT_ID
+  Assert-NativeSuccess "azd tenant lookup"
+  $azdTenantId = $azdTenantId.Trim()
+  $azdSubscriptionId = azd env get-value AZURE_SUBSCRIPTION_ID
+  Assert-NativeSuccess "azd subscription lookup"
+  $azdSubscriptionId = $azdSubscriptionId.Trim()
+  if ($account.tenantId -ne $expectedTenantId) {
+    throw "Azure CLI tenant mismatch"
+  }
+  if ($account.id -ne $expectedSubscriptionId) {
+    throw "Azure CLI subscription mismatch"
+  }
+  if ($azdTenantId -ne $expectedTenantId) {
+    throw "azd tenant mismatch"
+  }
+  if ($azdSubscriptionId -ne $expectedSubscriptionId) {
+    throw "azd subscription mismatch"
+  }
+}
+
+az login --tenant $expectedTenantId
+Assert-NativeSuccess "az login"
+azd auth login --tenant-id $expectedTenantId
+Assert-NativeSuccess "azd auth login"
+az account set --subscription $expectedSubscriptionId
+Assert-NativeSuccess "az account set"
 
 # Exact detached checkout + profile
 $pinnedSha = "63f0f812474e713916dc909494d655246783a1d9"
 git clone --filter=blob:none --no-checkout `
   https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator `
   my-citadel-hub
+Assert-NativeSuccess "git clone"
 git -C my-citadel-hub fetch --depth 1 origin $pinnedSha
+Assert-NativeSuccess "git fetch"
 git -C my-citadel-hub checkout --detach $pinnedSha
-if ((git -C my-citadel-hub rev-parse HEAD) -ne $pinnedSha) { exit 1 }
+Assert-NativeSuccess "git checkout"
+$currentSha = git -C my-citadel-hub rev-parse HEAD
+Assert-NativeSuccess "git rev-parse"
+if ($currentSha -ne $pinnedSha) { throw "Detached checkout SHA mismatch" }
 Set-Location my-citadel-hub
 azd env new citadel-pilot-01
-Get-Content "$skillDir\references\profiles\pilot-quickstart.env" |
+Assert-NativeSuccess "azd env new"
+azd env set AZURE_TENANT_ID $expectedTenantId
+Assert-NativeSuccess "azd tenant assignment"
+azd env set AZURE_SUBSCRIPTION_ID $expectedSubscriptionId
+Assert-NativeSuccess "azd subscription assignment"
+$profilePath = Join-Path $skillDir "references\profiles\pilot-quickstart.env"
+if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+  throw "Citadel profile not found: $profilePath"
+}
+Get-Content -LiteralPath $profilePath -ErrorAction Stop |
   Where-Object { $_ -and -not $_.StartsWith('#') } |
-  ForEach-Object { $k,$v = $_.Split('=',2); azd env set $k $v }
+  ForEach-Object {
+    $k,$v = $_.Split('=',2)
+    azd env set $k $v
+    Assert-NativeSuccess "profile value $k"
+  }
+Assert-AzureTarget
 azd up
+Assert-NativeSuccess "azd up"
+
+# Run only from a host with private DNS/network reachability to the deployed
+# Key Vault and the Graph, Key Vault, and APIM permissions listed above.
 Set-Location bicep\infra\entra-id-setup
+Assert-AzureTarget
 pwsh .\setup.ps1
+Assert-NativeSuccess "Entra setup"
+
+$keyVaultName = azd env get-value KEY_VAULT_NAME
+Assert-NativeSuccess "Key Vault name lookup"
+$apimResourceGroup = azd env get-value AZURE_RESOURCE_GROUP
+Assert-NativeSuccess "APIM resource group lookup"
+$apimName = azd env get-value APIM_NAME
+Assert-NativeSuccess "APIM name lookup"
+$expectedClientId = azd env get-value AZURE_CLIENT_ID
+Assert-NativeSuccess "Entra client ID lookup"
+$expectedClientSecret = azd env get-value ENTRA_CLIENT_SECRET
+Assert-NativeSuccess "Entra client secret lookup"
+$actualClientSecret = az keyvault secret show `
+  --vault-name $keyVaultName `
+  --name ENTRA-APP-CLIENT-SECRET `
+  --query value -o tsv
+Assert-NativeSuccess "Key Vault client secret lookup"
+if (-not $expectedClientSecret -or
+    $actualClientSecret -ne $expectedClientSecret) {
+  throw "Key Vault ENTRA_CLIENT_SECRET mismatch"
+}
+Remove-Variable expectedClientSecret, actualClientSecret
+
+$expectedNamedValues = @{
+  "JWT-TenantId" = $expectedTenantId
+  "JWT-AppRegistrationId" = $expectedClientId
+  "JWT-Issuer" = "https://login.microsoftonline.com/$expectedTenantId/v2.0"
+  "JWT-OpenIdConfigUrl" = "https://login.microsoftonline.com/$expectedTenantId/v2.0/.well-known/openid-configuration"
+}
+foreach ($namedValue in $expectedNamedValues.Keys) {
+  $actualValue = az apim nv show `
+    --resource-group $apimResourceGroup `
+    --service-name $apimName `
+    --named-value-id $namedValue `
+    --query value -o tsv
+  Assert-NativeSuccess "APIM named value lookup: $namedValue"
+  if ($actualValue -ne $expectedNamedValues[$namedValue]) {
+    throw "APIM named value mismatch: $namedValue"
+  }
+}
 ```
 
 ---
@@ -368,12 +565,18 @@ requested, RBAC, networking decision, DNS ownership). The TL;DR:
 - [ ] RBAC: deployer is **Owner** or has **Contributor** + **User Access
       Administrator** on the target sub (role assignments are part of
       the deploy)
+- [ ] APIM v2 profiles keep `EVENTHUB_NETWORK_ACCESS=Enabled` during
+      provisioning: Event Hub remains `Enabled` during APIM v2 provisioning,
+      as required by the pinned `main.bicep`
 - [ ] Networking decision made (greenfield vs BYO VNet vs BYO DNS)
 - [ ] If BYO Log Analytics: workspace ID + cross-sub RBAC granted
 - [ ] Foundry network injection remains disabled unless the full BYO Standard
       Agent dependency set is supplied outside this accelerator
-- [ ] Entra app-registration ownership and post-deploy
-      `bicep/infra/entra-id-setup/setup.ps1` execution agreed
+- [ ] Entra operator has Graph `Application.ReadWrite.All` or Application
+      Developer, Key Vault Secrets Officer, API Management Service
+      Contributor, and private network reachability to the vault
+- [ ] Post-deploy `bicep/infra/entra-id-setup/setup.ps1` execution and
+      explicit Key Vault/APIM verification agreed
 
 ---
 

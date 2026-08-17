@@ -41,6 +41,25 @@ non-production subscription and execute the current validation sequence.
 No Azure deployment or live validation was run for
 `63f0f812474e713916dc909494d655246783a1d9`.
 
+### Current-pin static contract review
+
+Static review of the pinned sources established two constraints that are now
+enforced by the shipped profile validator:
+
+- `bicep/infra/main.bicep` documents `eventHubNetworkAccess=Enabled` as
+  required while an APIM v2 SKU provisions. The enterprise and VNet profiles
+  therefore keep Event Hub public access enabled; this is source inspection,
+  not post-deploy hardening evidence.
+- `bicep/infra/entra-id-setup/setup.ps1` mutates Microsoft Graph, writes
+  `ENTRA-APP-CLIENT-SECRET` through the Key Vault data plane, and creates or
+  updates APIM named values. It also continues after a Key Vault write failure.
+  The skill consequently requires Graph app-registration permission, Key
+  Vault Secrets Officer, API Management Service Contributor, private vault
+  reachability, and explicit post-script data-plane verification.
+
+These findings were not exercised against Azure at the current pin; they do
+not expand the build-only evidence above.
+
 ---
 
 ## Historical live audit — old pin
