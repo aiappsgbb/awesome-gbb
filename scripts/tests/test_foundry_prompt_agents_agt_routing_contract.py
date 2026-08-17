@@ -102,6 +102,28 @@ class FoundryPromptAgentsAgtRoutingContractTests(unittest.TestCase):
             ),
         )
 
+    def test_generated_docs_show_the_current_version_everywhere(self) -> None:
+        metadata, _ = _frontmatter_and_body()
+        expected = f"v{metadata['metadata']['version']}"
+        detail = (
+            ROOT / "docs" / "skills" / "foundry-prompt-agents" / "index.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn(f'<span class="badge ver">{expected}</span>', detail)
+
+        card_pattern = re.compile(
+            r'href="/awesome-gbb/skills/foundry-prompt-agents/">'
+            r"foundry-prompt-agents</a>.{0,1600}"
+            rf'<span class="badge ver">{re.escape(expected)}</span>',
+            re.DOTALL,
+        )
+        listing_pages = (
+            ROOT / "docs" / "skills" / "index.html",
+            ROOT / "docs" / "plugins" / "awesome-gbb" / "index.html",
+        )
+        for page in listing_pages:
+            with self.subTest(page=page.relative_to(ROOT)):
+                self.assertRegex(page.read_text(encoding="utf-8"), card_pattern)
+
 
 if __name__ == "__main__":
     unittest.main()
