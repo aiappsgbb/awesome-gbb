@@ -4,12 +4,35 @@ You are a developer on a customer team. You just installed the `awesome-gbb`
 Copilot CLI plugin and you want to prove that the `foundry-caphost-lifecycle`
 skill works end-to-end against your CI Azure subscription.
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of the Cognitive Services REST API or the `az` CLI — read the
-skill's `SKILL.md` (under `skills/foundry-caphost-lifecycle/`) first, and
-follow its documented contract. If your memory of how capability host CRUD,
-soft-delete, or purge should look conflicts with what the skill says, **the
-skill wins**.
+**This is an EXECUTION smoke, not a catalog inspection.** You MUST run every
+Bash code block below in order, except the mutually exclusive Step 10 PASS/FAIL
+marker commands, where you run exactly one. Do NOT inspect repo files, do NOT
+run `validate-skills.py`, do NOT rebuild docs, and do NOT run `git status` —
+those are catalog-author concerns, not consumer-smoke concerns. Your only
+acceptable terminal state is a Bash tool call that writes the marker file to
+`/tmp/foundry-caphost-lifecycle-smoke-result`.
+
+This prompt is self-contained. Do NOT read, view, grep, or glob `SKILL.md`,
+`upstream-pin.md`, the workflow, or unrelated repository files. Do NOT create
+or modify tracked repository files. Execute the numbered lifecycle steps
+directly using the commands and code in this prompt.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You ARE the
+running Copilot CLI process. Do NOT run `copilot -p ...`, `copilot --version`,
+`npm install -g @github/copilot`, or any other `copilot ...` invocation from
+inside a Bash tool call. The workflow already captures your output through its
+outer `tee`; your job is to execute Steps -1 through 10 directly.
+
+---
+
+## Step -1 — Acknowledge the skill contract (mandatory FIRST action)
+
+Your first action must be a separate Bash tool call containing only this
+command. Do not combine it with Step 0 or any later work.
+
+```bash
+echo "Executing consumer smoke for skills/foundry-caphost-lifecycle/SKILL.md"
+```
 
 ---
 
@@ -73,11 +96,15 @@ All Azure resources you create MUST carry a short-UUID suffix
 collide on the same name. Capture the suffix once and reuse:
 
 ```bash
+STATE_FILE="/tmp/foundry-caphost-lifecycle-state.env"
 UUID=$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')
 ACCT="caphost-smoke-${UUID}"
 RG="rg-awesome-gbb-ci"
 LOC="swedencentral"
 echo "ACCT=$ACCT  RG=$RG  LOC=$LOC"
+printf 'export ACCT=%q\nexport RG=%q\nexport LOC=%q\n' \
+  "$ACCT" "$RG" "$LOC" > "${STATE_FILE}.tmp"
+mv "${STATE_FILE}.tmp" "$STATE_FILE"
 ```
 
 Install the Python SDK packages the skill uses (the cap windows match
@@ -100,6 +127,7 @@ fixture is testing the **caphost lifecycle**, not greenfield Foundry
 deploy (which is owned by `foundry-vnet-deploy`):
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 az cognitiveservices account create \
   -n "$ACCT" \
   -g "$RG" \
@@ -114,6 +142,7 @@ Then poll `provisioningState` until `Succeeded` (typical: 30s-2min;
 budget 5min):
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 for i in $(seq 1 60); do
   STATE=$(az cognitiveservices account show -n "$ACCT" -g "$RG" \
             --query "properties.provisioningState" -o tsv 2>/dev/null || echo "Pending")
@@ -185,6 +214,7 @@ sys.exit(3)  # ran out of retries
 Run it:
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 RG="$RG" ACCT="$ACCT" python3 caphost_put.py
 ```
 
@@ -196,6 +226,7 @@ final line is hard FAIL — write the marker per Step 10.
 ## Step 4 — GET the caphost and assert healthy
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 az rest --method get \
   --url "https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCT}/capabilityHosts/default?api-version=2025-06-01" \
   --query "{name:name, state:properties.provisioningState, kind:properties.capabilityHostKind}" \
@@ -214,6 +245,7 @@ config PUT MUST return the existing resource (200) without re-creating
 anything. Run the same SDK call from Step 3 a second time:
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 RG="$RG" ACCT="$ACCT" python3 caphost_put.py
 ```
 
@@ -266,12 +298,14 @@ sys.exit(3)
 ```
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 RG="$RG" ACCT="$ACCT" python3 caphost_delete.py
 ```
 
 Expected: `caphost_delete_ok`. Then verify with a GET — expect 404:
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 HTTP=$(az rest --method get \
   --url "https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCT}/capabilityHosts/default?api-version=2025-06-01" \
   -o tsv 2>&1 | head -1) || true
@@ -289,6 +323,7 @@ janitor sweeps `caphost-smoke-*` weekly if cleanup fails).
 ## Step 7 — Soft-delete the parent account
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 az cognitiveservices account delete -n "$ACCT" -g "$RG"
 ```
 
@@ -303,6 +338,7 @@ There can be a brief consistency lag (5-60s) between the delete return
 and the soft-delete index reflecting it. Poll up to 90 seconds:
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 for i in $(seq 1 18); do
   FOUND=$(az cognitiveservices account list-deleted -l "$LOC" \
             --query "[?name=='${ACCT}'].name" -o tsv 2>/dev/null || echo "")
@@ -318,6 +354,7 @@ done
 ## Step 9 — Purge the account, then verify it's gone from `list-deleted`
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 az cognitiveservices account purge -l "$LOC" -n "$ACCT" -g "$RG"
 ```
 
@@ -325,6 +362,7 @@ Per SKILL.md § 8.5 the purge itself takes 1-3 min typical / up to 10 min
 p99. Then the soft-delete index updates within seconds:
 
 ```bash
+source /tmp/foundry-caphost-lifecycle-state.env
 for i in $(seq 1 18); do
   STILL=$(az cognitiveservices account list-deleted -l "$LOC" \
             --query "[?name=='${ACCT}'].name" -o tsv 2>/dev/null || echo "")
