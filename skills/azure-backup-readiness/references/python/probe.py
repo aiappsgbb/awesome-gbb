@@ -102,8 +102,9 @@ def _write_manifest(result: dict[str, Any]) -> str:
     out_dir = Path(os.environ.get("AZURE_BACKUP_READINESS_OUT", "out"))
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{result['finding_id']}.json"
+    result["manifest_path"] = str(path.resolve())
     path.write_text(json.dumps(result, indent=2, default=str))
-    return str(path.resolve())
+    return result["manifest_path"]
 
 
 def _item_type(item: Any) -> str:
