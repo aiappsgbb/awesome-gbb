@@ -61,9 +61,8 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
         dependent_commands = (
             "az cognitiveservices account create",
             "STATE=$(az cognitiveservices account show",
-            "python3 caphost_put.py",
+            "python3 - <<'PY'",
             "az rest --method get",
-            "python3 caphost_delete.py",
             "az cognitiveservices account delete",
             "FOUND=$(az cognitiveservices account list-deleted",
             "az cognitiveservices account purge",
@@ -83,6 +82,46 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
                 )
                 with self.subTest(first_command=first_command):
                     self.assertEqual(first_command, state_source)
+
+    def test_python_helpers_execute_inline_without_checkout_writes(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        bash_blocks = re.findall(r"```bash\n(.*?)```", fixture, re.DOTALL)
+        python_fences = re.findall(r"```python\n(.*?)```", fixture, re.DOTALL)
+        heredoc_blocks = [
+            block for block in bash_blocks if "python3 - <<'PY'" in block
+        ]
+
+        self.assertEqual(
+            python_fences,
+            [],
+            "Python helper bodies must execute inside Bash heredocs",
+        )
+        self.assertEqual(
+            len(heredoc_blocks),
+            3,
+            "create, idempotent replay, and delete each need an inline heredoc",
+        )
+        for block in heredoc_blocks:
+            commands = [
+                line.strip()
+                for line in block.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+            with self.subTest(first_command=commands[0]):
+                self.assertEqual(
+                    commands[0],
+                    "source /tmp/foundry-caphost-lifecycle-state.env",
+                )
+                self.assertEqual(commands[-1], "PY")
+
+        for forbidden in (
+            "caphost_put.py",
+            "caphost_delete.py",
+            "python3 caphost_put.py",
+            "python3 caphost_delete.py",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, fixture)
 
 
 if __name__ == "__main__":

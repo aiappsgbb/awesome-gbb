@@ -17,7 +17,7 @@ description: >
   spoke onboarding (use citadel-spoke-onboarding), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.0.3"
+  version: "1.0.4"
 ---
 
 # Foundry Capability Host Lifecycle — Day-2 Operations

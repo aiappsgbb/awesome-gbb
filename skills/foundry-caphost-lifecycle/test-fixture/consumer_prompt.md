@@ -175,8 +175,9 @@ Wrap the PUT call in the skill's **Pattern 23 concurrent-op retry loop**
 (SKILL.md § 6.3): max 6 attempts, 30s backoff, retry ONLY on 409
 `currently in non creating`. On any other failure, FAIL immediately.
 
-```python
-# caphost_put.py
+```bash
+source /tmp/foundry-caphost-lifecycle-state.env
+python3 - <<'PY'
 import os, sys, time
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
@@ -209,13 +210,7 @@ for attempt in range(6):
         print(f"caphost_put_FAIL status={e.status_code} msg={e.message}")
         sys.exit(2)
 sys.exit(3)  # ran out of retries
-```
-
-Run it:
-
-```bash
-source /tmp/foundry-caphost-lifecycle-state.env
-RG="$RG" ACCT="$ACCT" python3 caphost_put.py
+PY
 ```
 
 Expected stdout (last line): `caphost_put_state=Succeeded`. Any other
@@ -246,7 +241,40 @@ anything. Run the same SDK call from Step 3 a second time:
 
 ```bash
 source /tmp/foundry-caphost-lifecycle-state.env
-RG="$RG" ACCT="$ACCT" python3 caphost_put.py
+python3 - <<'PY'
+import os, sys, time
+from azure.identity import DefaultAzureCredential
+from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
+from azure.mgmt.cognitiveservices.models import CapabilityHost
+from azure.core.exceptions import HttpResponseError
+
+SUB = os.environ["AZURE_SUBSCRIPTION_ID"]
+RG = os.environ["RG"]
+ACCT = os.environ["ACCT"]
+NAME = "default"
+
+client = CognitiveServicesManagementClient(DefaultAzureCredential(), SUB)
+body = CapabilityHost(properties={"capabilityHostKind": "Agents"})
+
+for attempt in range(6):
+    try:
+        poller = client.capability_hosts.begin_create_or_update(
+            resource_group_name=RG, account_name=ACCT,
+            capability_host_name=NAME, capability_host=body,
+        )
+        result = poller.result()
+        print(f"caphost_put_state={result.properties.provisioning_state}")
+        sys.exit(0)
+    except HttpResponseError as e:
+        msg = (e.message or "").lower()
+        if "currently in non creating" in msg and attempt < 5:
+            print(f"caphost_put_retry attempt={attempt} (concurrent op)")
+            time.sleep(30)
+            continue
+        print(f"caphost_put_FAIL status={e.status_code} msg={e.message}")
+        sys.exit(2)
+sys.exit(3)
+PY
 ```
 
 Expected: again `caphost_put_state=Succeeded` — no `caphost_put_FAIL`
@@ -261,8 +289,9 @@ Per SKILL.md § 7.2, DELETE caphost is a separate REST verb that removes
 the caphost without deleting the parent account. Wrap in the same
 Pattern 23 retry on `currently in non creating` 409.
 
-```python
-# caphost_delete.py
+```bash
+source /tmp/foundry-caphost-lifecycle-state.env
+python3 - <<'PY'
 import os, sys, time
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
@@ -295,11 +324,7 @@ for attempt in range(6):
         print(f"caphost_delete_FAIL status={e.status_code} msg={e.message}")
         sys.exit(2)
 sys.exit(3)
-```
-
-```bash
-source /tmp/foundry-caphost-lifecycle-state.env
-RG="$RG" ACCT="$ACCT" python3 caphost_delete.py
+PY
 ```
 
 Expected: `caphost_delete_ok`. Then verify with a GET — expect 404:
