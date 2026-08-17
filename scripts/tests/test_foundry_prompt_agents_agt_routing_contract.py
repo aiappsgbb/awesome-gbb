@@ -35,7 +35,7 @@ class FoundryPromptAgentsAgtRoutingContractTests(unittest.TestCase):
     def test_version_includes_local_guardrail_routing_patch(self) -> None:
         metadata, _ = _frontmatter_and_body()
         version = tuple(int(part) for part in metadata["metadata"]["version"].split("."))
-        self.assertGreaterEqual(version, (1, 1, 6))
+        self.assertGreaterEqual(version, (1, 1, 7))
 
     def test_guardrail_routing_is_local_and_plane_specific(self) -> None:
         _, body = _frontmatter_and_body()

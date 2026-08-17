@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.6"
+  version: "1.1.7"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
