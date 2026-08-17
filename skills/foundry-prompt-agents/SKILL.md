@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.7"
+  version: "1.1.8"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -51,13 +51,14 @@ when you need custom code that can't be expressed as a tool.
 
 1. **Microsoft Foundry project** with a deployed model (e.g., `gpt-5-mini`,
    `gpt-5.4-mini`, `gpt-4.1`)
-2. **Python 3.9+** with `azure-ai-projects >= 2.0.0` and `azure-identity`
+2. **Python 3.9+** with `azure-ai-projects ~= 2.4.0`,
+   `azure-identity ~= 1.25.3`, and `httpx ~= 0.28.1`
 3. **Azure CLI** authenticated via `az login` (or `DefaultAzureCredential`)
 4. **Foundry User role** on the AI Services account (GUID
    `53ca6127-db72-4b80-b1b0-d745d6d5456d`) — same role as hosted agents
 
 ```bash
-pip install "azure-ai-projects~=2.1.0" azure-identity
+pip install "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
 ```
 
 ---
@@ -557,7 +558,8 @@ See the `foundry-evals` skill for the complete evaluation workflow.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `PromptAgentDefinition` not found on import | `azure-ai-projects` < 2.0.0 installed | `pip install "azure-ai-projects~=2.1.0"` |
+| `PromptAgentDefinition` not found on import | `azure-ai-projects` < 2.0.0 installed | `pip install "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"` |
+| `ModuleNotFoundError: No module named 'httpx'` on SDK import | `azure-ai-projects` 2.4.0 imports undeclared `httpx` | Install bounded `httpx~=0.28.1` explicitly (use the prerequisite command above) |
 | "The project does not exist" | Wrong endpoint format or project not provisioned | Endpoint must be `https://<resource>.services.ai.azure.com/api/projects/<project>` (note `services.ai.azure.com`, not `ai.azure.com`) |
 | "Model not found" on create | Model not deployed in the Foundry project | Deploy the model in the portal or via `az` CLI |
 | Agent created but chat returns empty | No conversation created, or wrong `agent_reference` | Use `openai.conversations.create()` + correct name in `extra_body` |
