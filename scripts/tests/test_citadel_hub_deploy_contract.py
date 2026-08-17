@@ -240,8 +240,8 @@ class CitadelHubDeployContractTests(unittest.TestCase):
         self.assertIn("az account show --query id", self.skill)
         self.assertNotIn("az account show --query name", self.skill)
         for required_text in (
-            "azd env get-value AZURE_TENANT_ID",
-            "azd env get-value AZURE_SUBSCRIPTION_ID",
+            "azd env get-value AZURE_TENANT_ID --no-prompt",
+            "azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt",
             'azd env set AZURE_TENANT_ID "$EXPECTED_TENANT_ID"',
             'azd env set AZURE_SUBSCRIPTION_ID "$EXPECTED_SUBSCRIPTION_ID"',
         ):
@@ -271,6 +271,74 @@ class CitadelHubDeployContractTests(unittest.TestCase):
             self.skill,
             re.compile(r"Assert-AzureTarget\s*\n\s*pwsh \.\\setup\.ps1"),
         )
+
+    def test_checklist_asserts_exact_cli_and_active_azd_environment_guids(self) -> None:
+        for required_text in (
+            'EXPECTED_TENANT_ID="<tenant-guid>"',
+            'EXPECTED_SUBSCRIPTION_ID="<subscription-guid>"',
+            'az account set --subscription "$EXPECTED_SUBSCRIPTION_ID"',
+            "az account show --query tenantId -o tsv",
+            "az account show --query id -o tsv",
+            "azd env get-value AZURE_TENANT_ID --no-prompt",
+            "azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt",
+            "assert_azure_target || exit 1",
+            "immediately before `azd up`",
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, self.checklist)
+        self.assertNotIn("az account show --query name", self.checklist)
+        self.assertNotIn("az account set --subscription <name>", self.checklist)
+        self.assertNotRegex(
+            self.checklist,
+            re.compile(
+                r"azd env get-values.{0,120}(?:grep|cut|sed|eval)",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            self.checklist,
+            re.compile(
+                r'actual_tenant.{0,500}EXPECTED_TENANT_ID.{0,500}'
+                r'actual_subscription.{0,500}EXPECTED_SUBSCRIPTION_ID.{0,500}'
+                r'azd_tenant.{0,500}EXPECTED_TENANT_ID.{0,500}'
+                r'azd_subscription.{0,500}EXPECTED_SUBSCRIPTION_ID',
+                re.DOTALL,
+            ),
+        )
+
+    def test_quick_smoke_requires_entra_and_subscription_auth_and_http_success(
+        self,
+    ) -> None:
+        smoke = self.skill.split("### Quick smoke (no Jupyter)", 1)[1].split(
+            "\n---",
+            1,
+        )[0]
+        for required_text in (
+            "azd env get-value AZURE_TENANT_ID --no-prompt",
+            "azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt",
+            "azd env get-value AZURE_CLIENT_ID --no-prompt",
+            "azd env get-value AZURE_AUDIENCE --no-prompt",
+            "azd env get-value ENTRA_CLIENT_SECRET --no-prompt",
+            "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token",
+            "grant_type=client_credentials",
+            "scope=$AUDIENCE/.default",
+            "jq -er '.access_token'",
+            "set +x",
+            "unset CLIENT_SECRET",
+            "unset TOKEN KEY",
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, smoke)
+        self.assertGreaterEqual(smoke.count("--fail-with-body"), 3)
+        self.assertGreaterEqual(smoke.count('-H "api-key: $KEY"'), 2)
+        self.assertGreaterEqual(
+            smoke.count('-H "Authorization: Bearer $TOKEN"'),
+            2,
+        )
+        self.assertNotRegex(smoke, re.compile(r"curl -s(?:\s|$)"))
+        self.assertNotIn('echo "$TOKEN"', smoke)
+        self.assertNotIn('echo "$CLIENT_SECRET"', smoke)
+        self.assertNotIn("set -x", smoke)
 
     def test_powershell_quickstart_fails_on_native_command_errors(self) -> None:
         self.assertIn('$ErrorActionPreference = "Stop"', self.skill)

@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.2"
+  version: "1.1.3"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -228,8 +228,8 @@ assert_azure_target() {
   local actual_tenant actual_subscription azd_tenant azd_subscription
   actual_tenant="$(az account show --query tenantId -o tsv)"
   actual_subscription="$(az account show --query id -o tsv)"
-  azd_tenant="$(azd env get-value AZURE_TENANT_ID)"
-  azd_subscription="$(azd env get-value AZURE_SUBSCRIPTION_ID)"
+  azd_tenant="$(azd env get-value AZURE_TENANT_ID --no-prompt)"
+  azd_subscription="$(azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt)"
   [[ "$actual_tenant" == "$EXPECTED_TENANT_ID" ]] ||
     { echo "Azure CLI tenant mismatch" >&2; return 1; }
   [[ "$actual_subscription" == "$EXPECTED_SUBSCRIPTION_ID" ]] ||
@@ -439,10 +439,10 @@ function Assert-AzureTarget {
   $accountJson = az account show --output json
   Assert-NativeSuccess "az account show"
   $account = $accountJson | ConvertFrom-Json
-  $azdTenantId = azd env get-value AZURE_TENANT_ID
+  $azdTenantId = azd env get-value AZURE_TENANT_ID --no-prompt
   Assert-NativeSuccess "azd tenant lookup"
   $azdTenantId = $azdTenantId.Trim()
-  $azdSubscriptionId = azd env get-value AZURE_SUBSCRIPTION_ID
+  $azdSubscriptionId = azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt
   Assert-NativeSuccess "azd subscription lookup"
   $azdSubscriptionId = $azdSubscriptionId.Trim()
   if ($account.tenantId -ne $expectedTenantId) {
@@ -619,26 +619,64 @@ azd env-var map.
 
 ### Quick smoke (no Jupyter)
 
-If you don't have a Python venv handy, this curl (or `Invoke-RestMethod`)
-proves the gateway works:
+If you don't have a Python venv handy, this curl flow proves both configured
+gateway controls work: the APIM subscription key and Microsoft Entra client
+credentials. All bundled profiles set `AZURE_ENTRA_AUTH=true`, so a
+subscription key alone is not a valid smoke. Keep shell tracing disabled:
+the client secret, bearer token, and subscription key must not be printed.
 
 ```bash
-# Get APIM gateway URL
-GW=$(az apim show -g <rg> -n <apim> --query gatewayUrl -o tsv)
+set -euo pipefail
+set +x
+
+# Read the active azd environment without parsing aggregate output.
+TENANT_ID="$(azd env get-value AZURE_TENANT_ID --no-prompt)"
+SUBSCRIPTION_ID="$(azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt)"
+CLIENT_ID="$(azd env get-value AZURE_CLIENT_ID --no-prompt)"
+AUDIENCE="$(azd env get-value AZURE_AUDIENCE --no-prompt)"
+CLIENT_SECRET="$(azd env get-value ENTRA_CLIENT_SECRET --no-prompt)"
+RESOURCE_GROUP="$(azd env get-value AZURE_RESOURCE_GROUP --no-prompt)"
+APIM_NAME="$(azd env get-value APIM_NAME --no-prompt)"
+GW="$(azd env get-value APIM_GATEWAY_URL --no-prompt)"
 
 # Get the master subscription key (DEMO ONLY — don't use master in prod;
 # create a per-team Access Contract via citadel-spoke-onboarding instead)
 KEY=$(az rest --method post \
-  --url "https://management.azure.com/subscriptions/$(az account show --query id -o tsv)/resourceGroups/<rg>/providers/Microsoft.ApiManagement/service/<apim>/subscriptions/master/listSecrets?api-version=2022-08-01" \
+  --url "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ApiManagement/service/$APIM_NAME/subscriptions/master/listSecrets?api-version=2022-08-01" \
   --query primaryKey -o tsv)
 
-# Discover models
-curl -s "$GW/models/models" -H "api-key: $KEY" | jq '.value[].name'
+# Acquire the Entra service-to-service token for the configured audience.
+# jq -e makes a missing access_token fail without printing the response or
+# credentials.
+TOKEN="$(
+  curl --silent --show-error --fail-with-body \
+    --request POST \
+    --url "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token" \
+    --header "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "grant_type=client_credentials" \
+    --data-urlencode "client_id=$CLIENT_ID" \
+    --data-urlencode "client_secret=$CLIENT_SECRET" \
+    --data-urlencode "scope=$AUDIENCE/.default" |
+    jq -er '.access_token'
+)"
+unset CLIENT_SECRET
+
+# Discover models. Both gateway authentication controls are required.
+curl --silent --show-error --fail-with-body \
+  "$GW/models/models" \
+  -H "api-key: $KEY" \
+  -H "Authorization: Bearer $TOKEN" |
+  jq -er '.value[].name'
 
 # Send one chat completion (NOTE: api-key header, NOT Ocp-Apim-Subscription-Key)
-curl -s -X POST "$GW/openai/deployments/gpt-5.4-mini/chat/completions?api-version=2024-12-01-preview" \
-  -H "api-key: $KEY" -H "Content-Type: application/json" \
+curl --silent --show-error --fail-with-body \
+  -X POST "$GW/openai/deployments/gpt-5.4-mini/chat/completions?api-version=2024-12-01-preview" \
+  -H "api-key: $KEY" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"ping"}],"max_completion_tokens":10}'
+
+unset TOKEN KEY
 ```
 
 Historical old-pin round-trip latency from this skill's May 2026 audit
@@ -810,6 +848,11 @@ The following observations were captured during the historical audit pass on
 
 ## 13. Changelog
 
+- **1.1.3** (2026-08) — Require non-interactive exact GUID parity between
+  the isolated Azure CLI context and active azd environment. Update the APIM
+  smoke to acquire an Entra client-credentials token, send both required
+  authentication headers, fail on non-2xx responses, and avoid printing
+  credentials.
 - **1.1.1** (2026-08) — Re-pin upstream to
   `63f0f812474e713916dc909494d655246783a1d9`; replace mutable branch-based
   initialization with an exact detached checkout; update all profiles for the

@@ -20,13 +20,38 @@ but not yet live-validated on Azure.
       (e.g., `~/.azd-tenants/<alias>`)
 - [ ] `az login --tenant <id>` AND `azd auth login --tenant-id <id>`
       both run (separate caches)
-- [ ] `az account set --subscription <name>` after login (multi-sub
-      tenants do NOT auto-set the default)
-- [ ] Two-layer assertion passes:
-      ```
-      az account show --query tenantId -o tsv  →  expected tenant id
-      az account show --query name -o tsv      →  expected sub name
-      ```
+- [ ] Exact tenant and subscription GUIDs are known; display names are not
+      accepted as identity checks
+- [ ] The isolated Azure CLI context and active azd environment pass this
+      fail-closed assertion:
+
+```bash
+EXPECTED_TENANT_ID="<tenant-guid>"
+EXPECTED_SUBSCRIPTION_ID="<subscription-guid>"
+az account set --subscription "$EXPECTED_SUBSCRIPTION_ID"
+
+assert_azure_target() {
+  local actual_tenant actual_subscription azd_tenant azd_subscription
+  actual_tenant="$(az account show --query tenantId -o tsv)" || return 1
+  actual_subscription="$(az account show --query id -o tsv)" || return 1
+  azd_tenant="$(azd env get-value AZURE_TENANT_ID --no-prompt)" || return 1
+  azd_subscription="$(azd env get-value AZURE_SUBSCRIPTION_ID --no-prompt)" ||
+    return 1
+
+  [ "$actual_tenant" = "$EXPECTED_TENANT_ID" ] || return 1
+  [ "$actual_subscription" = "$EXPECTED_SUBSCRIPTION_ID" ] || return 1
+  [ "$azd_tenant" = "$EXPECTED_TENANT_ID" ] || return 1
+  [ "$azd_subscription" = "$EXPECTED_SUBSCRIPTION_ID" ] || return 1
+}
+
+assert_azure_target || exit 1
+az account show --query "{tenant:tenantId, subscriptionId:id}" -o table
+```
+
+Run `assert_azure_target || exit 1` again immediately before `azd up` and
+before every later mutating Azure operation. If no azd environment is active,
+`azd env get-value ... --no-prompt` fails instead of selecting one
+interactively.
 - [ ] Subscription has **Owner** OR (**Contributor** + **User Access
       Administrator**) for the deploying principal — role assignments
       are part of the deploy
