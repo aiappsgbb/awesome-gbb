@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.5"
+  version: "1.1.6"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -282,9 +282,20 @@ definition = PromptAgentDefinition(
 )
 ```
 
-For the **decision** of when to use `GuardrailTool` vs full in-process
-governance (AGT) vs raw ACS API calls, see the `foundry-agt` skill — it
-carries the canonical decision table.
+Keep the routing decision in this skill:
+
+- Use `GuardrailTool` in `PromptAgentDefinition` when the prompt agent
+  should invoke its configured Azure Content Safety connection as a
+  server-side check.
+- Call the raw ACS API directly when application code must select
+  classifiers, thresholds, and response handling itself.
+- Use [`foundry-agt`](../foundry-agt/SKILL.md#why-action-governance-matters)
+  only for a MAF hosted-agent process that needs deterministic
+  allow/deny by tool name before the tool body executes. You cannot
+  insert AGT's in-process middleware into `PromptAgentDefinition`.
+
+AGT does not replace Azure Content Safety; combine the two planes when a
+workload needs both content scanning and tool-action governance.
 
 #### A2ATool
 
@@ -610,7 +621,7 @@ from azure.ai.projects.models import (
 | Deploy MCP servers for tool wiring | `foundry-mcp-aca` |
 | RAG via Knowledge Bases | `foundry-iq` |
 | Agent evaluation | `foundry-evals` |
-| Agent governance (AGT) — incl. GuardrailTool decision | `foundry-agt` |
+| MAF hosted-agent action governance (not prompt-agent GuardrailTool selection) | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |
 | Memory across sessions | `foundry-memory` |
 | In-process toolbox utilities | `foundry-toolbox` |
