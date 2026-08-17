@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -453,10 +453,13 @@ the relevant mapping for this catalog is:
 | **L3** Agent Identity | Entra agent identities + delegated permissions | (no skill yet — Entra Agent ID GA path) |
 | **L4** Security Fabric | Defender for Cloud, Purview, Entra Conditional Access | (no skill yet — Microsoft security stack) |
 
-Defence in depth is the principle: gateway-side governance (L1) plus
-in-process governance (L1.5) catches a class of attacks neither alone
-can stop. See `foundry-agt`'s "Why this matters" for the
-26.67% (prompt-only) vs 0.00% (deterministic) red-team stat.
+Defence in depth is the principle: APIM governs edge authentication,
+rate limiting, and product policy (L1), while
+[`foundry-agt`](../foundry-agt/SKILL.md#why-action-governance-matters)
+provides in-process action governance (L1.5). As documented in
+**Why action governance matters**, AGT makes deterministic allow/deny
+decisions by tool name before the tool body (`call_next()`) executes;
+argument validation remains the caller's or tool body's responsibility.
 
 ---
 
