@@ -8,6 +8,11 @@ Do whatever the skill tells you to do. Do NOT improvise from training-data
 knowledge of the Azure SDK — read the skill's `SKILL.md` first, and follow
 its documented contract.
 
+Do NOT edit any repository file during this smoke. If the live service
+rejects a documented contract, write the FAIL marker with the precise
+reason and stop. Changing the fixture or skill in the runner makes the
+result vacuous.
+
 ---
 
 ## Step 0 — Auth context (show, do not assert)
@@ -66,14 +71,14 @@ In a fresh venv (or directly in the runner's site-packages, whichever
 matches what the skill documents), install the pin:
 
 ```bash
-pip install --quiet "azure-ai-projects~=2.2.0" "azure-identity~=1.25"
+pip install --quiet "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
 python -c "import azure.ai.projects as m; print(f'azure-ai-projects=={m.__version__}')"
 ```
 
 Print the version line. If `azure-ai-projects` resolves to anything
-below 2.2.0, `client.beta.routines` will not exist and the rest of the
-fixture cannot proceed — FAIL with reason
-`azure-ai-projects<2.2.0 — routines surface missing`.
+outside the pinned 2.4.x cap, the fixture is not testing the current
+contract — FAIL with reason
+`azure-ai-projects outside ~=2.4.0 pin`.
 
 ### Step 1b — Create the prompt agent (target of the routine)
 
@@ -100,21 +105,19 @@ If creation raises, FAIL with reason
 
 ### Step 1c — Create a RECURRING routine bound to that agent
 
-Per the brief, use a **recurring schedule** with a cron expression that
-will NOT auto-fire during the CI run window. The chosen cron is
-`"0 0 1 1 *"` (midnight on January 1, UTC) — far enough in the future
-that the routine cannot be triggered automatically while the fixture
-is still running. The `dispatch()` call in Step 1d is the only
-invocation path this fixture exercises.
+Per the brief, use a **recurring schedule** with the live-proven monthly
+cron `"0 0 1 * *"` (midnight on the first day of each month, UTC). The
+service rejects the former yearly expression. The `dispatch()` call in
+Step 1d is the invocation path this fixture asserts.
 
 Required trigger shape per SKILL.md § 3 (the schedule trigger requires
 BOTH `cron_expression` AND `time_zone`):
 
 ```python
 triggers = {
-    "annual-anchor": {
+    "monthly-anchor": {
         "type": "schedule",
-        "cron_expression": "0 0 1 1 *",
+        "cron_expression": "0 0 1 * *",
         "time_zone": "UTC",
     }
 }
@@ -213,7 +216,7 @@ routine-cleanup-note: <exception class> — <first line>
 
 Then continue. **Do not FAIL** the marker on cleanup failure
 (AGENTS.md § 9.7 Pattern 25 — teardown is soft after happy-path
-success; the `rg-awesome-gbb-ci` janitor sweeps `ci-smoke-routine-*`
+success; the `<ci-resource-group>` janitor sweeps `ci-smoke-routine-*`
 on a periodic schedule).
 
 ### Step 1g — Delete the prompt agent (best-effort, Pattern 25)
@@ -251,7 +254,7 @@ printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-routines-smoke-result
 ```
 
 On ANY failure in Step 0, 1a, 1b, 1c, 1d, or 1e (auth context missing,
-SDK below 2.2.0, prompt agent create failed, routine create failed,
+SDK outside the 2.4.x pin, prompt agent create failed, routine create failed,
 dispatch returned empty `dispatch_id`, routine missing from `list()`):
 
 ```bash
