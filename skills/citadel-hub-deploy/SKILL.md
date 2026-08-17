@@ -7,12 +7,12 @@ description: >
   contracts. Wraps `Azure-Samples/ai-hub-gateway-solution-accelerator`
   branch `citadel-v1` (azd template) at a pinned commit. Ships 3 profiles
   (pilot-quickstart, enterprise-baseline, vnet-isolated-spoke-aware) plus
-  tenant-isolated workflow.
+  tenant isolation.
   USE FOR: deploy citadel hub, citadel governance hub, apim ai gateway,
   ai-hub-gateway-solution-accelerator, citadel-v1, llm backend pool, unified
   ai api, universal llm api, openai realtime api, citadel access contract,
   multi-region foundry hub, BYO vnet hub, BYO log analytics, foundry
-  network injection, managed redis semantic cache.
+  private Foundry networking, managed redis semantic cache.
   DO NOT USE FOR: connecting a spoke to a hub (use citadel-spoke-
   onboarding), in-process governance (use foundry-agt), single-resource
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
@@ -31,10 +31,14 @@ metadata:
 > awesome-gbb conventions (tenant isolation, MCAPS pilot tagging,
 > spoke-aware networking).
 >
-> **Pinned upstream:** see [`references/upstream-pin.md`](references/upstream-pin.md).
-> **Live-validated:** ✅ Resource & shape audit + APIM smoke calls against
-> a real `rg-citadel-hub-01` in Sweden Central (May 2026, see
-> [`references/live-audit-notes.md`](references/live-audit-notes.md)).
+> **Pinned upstream:** `63f0f812474e713916dc909494d655246783a1d9`;
+> see [`references/upstream-pin.md`](references/upstream-pin.md).
+> **Validation boundary:** the current pin is build-validated only (exact
+> checkout + `main.bicep` + `main.bicepparam`). The resource audit and APIM
+> smoke calls in [`references/live-audit-notes.md`](references/live-audit-notes.md)
+> are historical evidence from the prior pin
+> `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`, not live evidence for the
+> current pin.
 
 [Azure-Samples / ai-hub-gateway-solution-accelerator]: https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1
 
@@ -103,20 +107,20 @@ on day 91.
 - Wraps the deployment in a **tenant-isolated, assertion-gated** workflow
   (see `azure-tenant-isolation`).
 - Ships **3 curated AZD environment profiles** in `references/profiles/`:
-  - `pilot-quickstart.env` — Developer SKU, cheapest demo
+  - `pilot-quickstart.env` — Developer SKU, lean optional-service overlay
   - `enterprise-baseline.env` — Standard v2, production-grade, BYO Log Analytics
   - `vnet-isolated-spoke-aware.env` — BYO VNet + DNS, pre-wired for
     `foundry-vnet-deploy` spokes
-- Documents the **8 upstream validation notebooks** and the
-  recommended execution order.
+- Documents the current **12-scenario upstream validation sequence** and
+  the four-notebook strongly recommended baseline.
 - Documents the **post-deploy hand-off** to `citadel-spoke-onboarding`
   (per-team access contracts) and `foundry-agt` (in-process governance).
 
 ### Doesn't
 
-- **Doesn't fork or vendor** the upstream Bicep. The 55 KB `main.bicep`
-  + 3-tier module tree lives at the source repo and is fetched fresh by
-  `azd init --template ... --branch citadel-v1` at the pinned SHA.
+- **Doesn't fork or vendor** the upstream Bicep. The deployment uses a
+  detached Git checkout at the exact pinned SHA. `azd init` cannot pin a
+  commit when given `--branch`, so branch-based initialization is forbidden.
 - **Doesn't onboard spokes.** That's `citadel-spoke-onboarding` — a
   single `az deployment sub create` against
   `bicep/infra/citadel-access-contracts/main.bicep`.
@@ -141,9 +145,9 @@ on day 91.
 
 ## 3. When NOT to deploy a Citadel Hub
 
-The hub is opinionated: APIM Standard v2 + Foundry control plane + Cosmos
-+ Event Hub + Logic App + Redis + 13 Private DNS Zones + 4 NSGs + private
-endpoints. That's **~$800-2,500/month baseline cost** in pilot config
+The hub is opinionated: APIM + Foundry control plane + Cosmos + Event Hub +
+Logic App + private networking, with Redis and API Center optional by profile.
+That's **~$800-2,500/month baseline cost** in enterprise config
 (see `guides/citadel-sizing-guide.md` upstream) and 30-45 minutes of
 APIM provisioning before the first request can flow.
 
@@ -168,7 +172,9 @@ Don't deploy a hub when:
 
 ## 4. Stakeholder TL;DR
 
-- **Engineer:** "It's `azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator -e <env> --branch citadel-v1` then `azd up`. Profile picks the SKU/network shape. 30-45 min wall clock. Don't forget tenant isolation."
+- **Engineer:** "Clone upstream, detach and verify the pinned SHA, select a
+  profile, then run `azd up` from that checkout. Profile picks the SKU/network
+  shape. 30-45 min wall clock. Don't forget tenant isolation."
 - **Architect:** "Layer 1 of the 4-layer Citadel platform. APIM is the gateway plane; spokes connect via per-team access contracts (Bicep-driven). Pairs with `foundry-agt` for in-process defence in depth. Telemetry sinks: 3 App Insights workspaces + 1 Log Analytics + Cosmos `usage-db`."
 - **Compliance:** "PII redaction (Azure AI Language) + Content Safety + JWT-enforceable RBAC + per-team subscription keys with audit trail in Cosmos + private endpoints on every backend service. Documented in `guides/pii-masking-apim.md` and `guides/jwt-client-identity-permissions.md` upstream."
 - **Seller:** "One repeatable Bicep deployment that checks the platform-team's first 5 boxes (cost attribution, quota fairness, policy uniformity, audit, backend abstraction) plus the unified-ai-api wildcard route lets you onboard AOAI, Foundry, and Gemini behind one developer-friendly endpoint. Demo runs against the deployed hub via `validation/citadel-universal-llm-api-all-models-tests.ipynb`."
@@ -194,10 +200,13 @@ Don't deploy a hub when:
 > (`az account show --query tenantId / name`) before `azd up`. Without
 > these, you risk deploying a $1k+/mo hub into the wrong subscription.
 
-### Path A — Pilot Quickstart (cheapest demo)
+### Path A — Pilot Quickstart (lean non-production overlay)
 
-Goal: smallest hub that exercises every API surface. Developer SKU APIM,
-public access, all feature flags on, greenfield VNet + Log Analytics.
+Goal: lean non-production hub. Developer SKU APIM is public; data-plane
+backends stay private. Redis, API Center, Search, Document Intelligence,
+dashboards, and Foundry network injection are disabled. Keep the upstream
+default `foundryNetworkInjectionEnabled=false`; enabling it without the full
+BYO Standard Agent dependency set fails.
 
 ```bash
 # 0. Set the path to your awesome-gbb checkout (or `~/.copilot/skills`
@@ -212,11 +221,17 @@ azd auth login --tenant-id "$TENANT_ID"
 az account set --subscription "$DEFAULT_SUB"
 [ "$(az account show --query name -o tsv)" = "$DEFAULT_SUB" ] || exit 1
 
-# 2. Init template at pinned branch
-mkdir my-citadel-hub && cd my-citadel-hub
-azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator \
-         -e citadel-pilot-01 \
-         --branch citadel-v1
+# 2. Materialize and verify the exact pin. Do not replace this with
+#    branch-based azd init: citadel-v1 is mutable.
+PINNED_SHA="63f0f812474e713916dc909494d655246783a1d9"
+git clone --filter=blob:none --no-checkout \
+  https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator \
+  my-citadel-hub
+git -C my-citadel-hub fetch --depth 1 origin "$PINNED_SHA"
+(cd my-citadel-hub && git checkout --detach "$PINNED_SHA")
+test "$(git -C my-citadel-hub rev-parse HEAD)" = "$PINNED_SHA" || exit 1
+cd my-citadel-hub
+azd env new citadel-pilot-01
 
 # 3. Apply the pilot-quickstart profile (env-var bundle from the skill)
 while IFS='=' read -r k v; do
@@ -224,8 +239,16 @@ while IFS='=' read -r k v; do
   azd env set "$k" "$v"
 done < "$SKILL_DIR/references/profiles/pilot-quickstart.env"
 
-# 4. Deploy
+# 4. Review the structured aiFoundryInstances and aiFoundryModelsConfig
+#    arrays in bicep/infra/main.bicepparam. ENV profiles cannot safely
+#    override arrays. Reduce them directly if quota or model scope requires.
+
+# 5. Deploy
 azd up
+
+# 6. Complete Entra setup. The script configures APIM directly; no redeploy.
+cd bicep/infra/entra-id-setup
+pwsh ./setup.ps1
 ```
 
 Expected wall clock: **30-45 min** (APIM provisioning dominates).
@@ -237,11 +260,8 @@ Goal: Standard v2 APIM, all backend services on private endpoints,
 BYO Log Analytics for the central observability landing zone.
 
 ```bash
-# (Tenant isolation + SKILL_DIR setup as Path A)
-mkdir my-citadel-hub && cd my-citadel-hub
-azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator \
-         -e citadel-prod-01 \
-         --branch citadel-v1
+# Repeat Path A steps 0-2 with env name citadel-prod-01. You must be inside
+# the verified detached checkout before continuing.
 
 # Set BYO Log Analytics first
 azd env set USE_EXISTING_LOG_ANALYTICS true
@@ -256,6 +276,7 @@ while IFS='=' read -r k v; do
 done < "$SKILL_DIR/references/profiles/enterprise-baseline.env"
 
 azd up
+cd bicep/infra/entra-id-setup && pwsh ./setup.ps1
 ```
 
 To go fully private (no public APIM access): set
@@ -268,16 +289,11 @@ BYO Private DNS Zones (typical landing zone with central DNS), pre-wired
 for spokes deployed via `foundry-vnet-deploy`.
 
 ```bash
-# (Tenant isolation + SKILL_DIR setup as Path A)
+# Repeat Path A steps 0-2 with env name citadel-prod-01.
 # Pre-requisites:
 #   - VNet vnet-citadel-hub already exists in rg-network-prod
-#     with subnets snet-apim, snet-private-endpoint, snet-functionapp, snet-agents
+#     with subnets snet-apim, snet-private-endpoint, snet-functionapp
 #   - Private DNS zones already exist in rg-dns-prod (one zone per privatelink.* type)
-
-mkdir my-citadel-hub && cd my-citadel-hub
-azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator \
-         -e citadel-prod-01 \
-         --branch citadel-v1
 
 # Set BYO networking first
 azd env set USE_EXISTING_VNET true
@@ -295,6 +311,7 @@ while IFS='=' read -r k v; do
 done < "$SKILL_DIR/references/profiles/vnet-isolated-spoke-aware.env"
 
 azd up
+cd bicep/infra/entra-id-setup && pwsh ./setup.ps1
 ```
 
 Then deploy your spoke separately with `foundry-vnet-deploy`, peer the
@@ -316,14 +333,22 @@ azd auth login --tenant-id $tenantId
 az account set --subscription $defaultSub
 if ((az account show --query name -o tsv) -ne $defaultSub) { exit 1 }
 
-# Init + apply profile
-mkdir my-citadel-hub; cd my-citadel-hub
-azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator `
-         -e citadel-pilot-01 --branch citadel-v1
+# Exact detached checkout + profile
+$pinnedSha = "63f0f812474e713916dc909494d655246783a1d9"
+git clone --filter=blob:none --no-checkout `
+  https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator `
+  my-citadel-hub
+git -C my-citadel-hub fetch --depth 1 origin $pinnedSha
+git -C my-citadel-hub checkout --detach $pinnedSha
+if ((git -C my-citadel-hub rev-parse HEAD) -ne $pinnedSha) { exit 1 }
+Set-Location my-citadel-hub
+azd env new citadel-pilot-01
 Get-Content "$skillDir\references\profiles\pilot-quickstart.env" |
   Where-Object { $_ -and -not $_.StartsWith('#') } |
   ForEach-Object { $k,$v = $_.Split('=',2); azd env set $k $v }
 azd up
+Set-Location bicep\infra\entra-id-setup
+pwsh .\setup.ps1
 ```
 
 ---
@@ -345,16 +370,18 @@ requested, RBAC, networking decision, DNS ownership). The TL;DR:
       the deploy)
 - [ ] Networking decision made (greenfield vs BYO VNet vs BYO DNS)
 - [ ] If BYO Log Analytics: workspace ID + cross-sub RBAC granted
-- [ ] If `entraAuth=true` later: app registration ready (use
-      `bicep/infra/entra-id-setup/setup.ps1` upstream — outside v1.0.0
-      of this skill)
+- [ ] Foundry network injection remains disabled unless the full BYO Standard
+      Agent dependency set is supplied outside this accelerator
+- [ ] Entra app-registration ownership and post-deploy
+      `bicep/infra/entra-id-setup/setup.ps1` execution agreed
 
 ---
 
 ## 7. Post-deploy verification
 
-The upstream ships **8 validation notebooks** under `validation/`. The
-recommended baseline (run all 4 on every new deployment):
+The upstream ships **13 notebooks** under `validation/` and documents a
+**12-scenario recommended sequence**. Run the first four as the strongly
+recommended baseline on every new deployment:
 
 | # | Notebook | What it validates | ⭐ Baseline? |
 |---|----------|-------------------|------------|
@@ -366,6 +393,14 @@ recommended baseline (run all 4 on every new deployment):
 | 6 | `citadel-pii-processing-tests.ipynb` | PII anonymize/deanonymize/block | scenario |
 | 7 | `citadel-unified-ai-api-tests.ipynb` | Multi-provider routing through unified-ai wildcard API | scenario |
 | 8 | `citadel-jwt-authentication-tests.ipynb` | JWT enforcement + RBAC across endpoints | scenario |
+| 9 | `llm-backend-onboarding-extended-providers-runner.ipynb` | AWS, Gemini, and Anthropic backend onboarding | scenario |
+| 10 | `citadel-session-affinity-tests.ipynb` | Sticky routing for stateful Responses API sessions | scenario |
+| 11 | `citadel-alerting-tests.ipynb` | Throttling/quota metrics and Azure Monitor alerts | scenario |
+| 12 | `citadel-publish-contract-tests.ipynb` | API-to-MCP, remote MCP, and A2A publication contracts | scenario |
+
+`citadel-image-models-tests.ipynb` is an additional image-model notebook not
+listed in the numbered 12-scenario sequence. Run it when image deployments are
+kept in `aiFoundryModelsConfig`.
 
 Each notebook auto-loads from your `azd` env via the
 `init_from_azd = True` toggle in cell 0:
@@ -403,10 +438,10 @@ curl -s -X POST "$GW/openai/deployments/gpt-5.4-mini/chat/completions?api-versio
   -d '{"messages":[{"role":"user","content":"ping"}],"max_completion_tokens":10}'
 ```
 
-Live-tested round-trip latency from this skill's audit run (Sweden
-Central, gpt-5.4-mini, warm): **~1 sec end-to-end** through APIM.
+Historical old-pin round-trip latency from this skill's May 2026 audit
+(Sweden Central, gpt-5.4-mini, warm): **~1 sec end-to-end** through APIM.
 Discovery `/models` call: **~250 ms warm**. See
-`references/live-audit-notes.md` for the full numbers + gotchas.
+`references/live-audit-notes.md` for the evidence boundary and full numbers.
 
 ---
 
@@ -477,10 +512,23 @@ argument validation remains the caller's or tool body's responsibility.
 
 ---
 
-## 11. Known issues (from live audit)
+## 11. Known issues and current-pin contract notes
 
-Captured during the audit pass on `rg-citadel-hub-01` (Sweden Central,
-upstream pinned at `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`):
+Current-pin source/build findings:
+
+- **The upstream branch is mutable.** `azd init` with a branch cannot
+  materialize an immutable commit. Use the detached checkout flow in § 5 and
+  verify `git rev-parse HEAD` before any Azure operation.
+- **Foundry network injection defaults to false.** Enabling it without the
+  complete BYO Standard Agent dependency set is an upstream-documented
+  deployment failure. The removed env setting is not consumed by the current
+  `main.bicepparam`; all profiles leave it disabled.
+- **Redis HA is explicit.** Profiles that enable Redis set
+  `REDIS_HIGH_AVAILABILITY=Enabled`; the Redis-disabled pilot sets `Disabled`.
+
+The following observations were captured during the historical audit pass on
+`rg-citadel-hub-01` (Sweden Central), at old pin
+`f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`:
 
 1. **Newer GPT-5.4 models reject `max_tokens`.** A vanilla
    `chat/completions` POST with `max_tokens` returns HTTP 400 with
@@ -529,7 +577,8 @@ upstream pinned at `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`):
 - [`references/live-audit-notes.md`](references/live-audit-notes.md) —
   live audit data captured against `rg-citadel-hub-01` in Sweden Central.
 - [`references/profiles/pilot-quickstart.env`](references/profiles/pilot-quickstart.env)
-  — Developer SKU, public, all features on (cheapest demo).
+  — Developer SKU; public APIM, private backends, fixed-cost optional services
+  off.
 - [`references/profiles/enterprise-baseline.env`](references/profiles/enterprise-baseline.env)
   — Standard v2, private endpoints, BYO Log Analytics.
 - [`references/profiles/vnet-isolated-spoke-aware.env`](references/profiles/vnet-isolated-spoke-aware.env)
@@ -558,6 +607,12 @@ upstream pinned at `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`):
 
 ## 13. Changelog
 
+- **1.1.1** (2026-08) — Re-pin upstream to
+  `63f0f812474e713916dc909494d655246783a1d9`; replace mutable branch-based
+  initialization with an exact detached checkout; update all profiles for the
+  current env contract, safe network-injection default, Redis HA, and Entra
+  setup; refresh model/notebook guidance; clearly separate current build-only
+  validation from historical live evidence at the old pin.
 - **1.0.1** (2026-05) — Fix: profile `.env` path in Quickstart paths now
   references `$SKILL_DIR` (the awesome-gbb skill dir) rather than the
   azd project dir (which doesn't have it). Add `az login` before

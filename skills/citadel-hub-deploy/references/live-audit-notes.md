@@ -1,18 +1,51 @@
-# Live audit notes — `rg-citadel-hub-01` (Sweden Central, May 2026)
+# Live audit notes — historical old-pin evidence + current-pin build
 
-Captured during the v1.0.0 authoring pass to prove the wrapper holds
-against a real-world deployed hub. Subscription: a sandbox MCAPS sub
-(name redacted). Hub deployed via the same upstream template at the
-pinned commit (`f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`) by a peer
-session before this audit.
+Captured during the v1.0.0 authoring pass against a real deployed hub in
+`rg-citadel-hub-01` (Sweden Central, May 2026). Subscription: a sandbox
+MCAPS sub (name redacted). The live evidence in this file belongs to commit
+`f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`.
 
 This file is **shipped with the skill as record** so future contributors
 can re-validate the same checks against a different deployed hub
 (or re-pin upstream).
 
+> **Evidence boundary:** the skill now pins
+> `63f0f812474e713916dc909494d655246783a1d9`. Every Azure resource, API,
+> latency, and notebook observation below belongs to the old live commit.
+> Do not attribute those observations to the current pin.
+
+## Current pin — build-only validation (2026-08-06)
+
+The target commit was materialized as an exact detached checkout and both
+deployment entry points compiled without errors:
+
+```text
+git rev-parse HEAD
+63f0f812474e713916dc909494d655246783a1d9
+
+az bicep build --file bicep/infra/main.bicep --outfile <tmp>/main.json
+exit 0; 4,867,085-byte ARM JSON with Bicep CLI 0.43.8; warnings only
+
+az bicep build-params --file bicep/infra/main.bicepparam \
+  --outfile <tmp>/main.parameters.json
+exit 0; 10,971-byte parameters JSON; warnings only
+```
+
+The coordinator's reference build produced a 4,867,124-byte `main.json`.
+Generated ARM JSON byte size can vary by Bicep compiler; both runs exited zero
+with warnings only.
+
+No `azd up`, ARM deployment, resource creation, subscription change, or live
+API call was performed for the current pin. Required follow-up: deploy it in a
+non-production subscription and execute the current validation sequence.
+No Azure deployment or live validation was run for
+`63f0f812474e713916dc909494d655246783a1d9`.
+
 ---
 
-## Phase 1 — Pin upstream + bicep build
+## Historical live audit — old pin
+
+### Phase 1 — Pin upstream + bicep build
 
 ```
 $ git ls-remote https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator citadel-v1
@@ -31,7 +64,7 @@ JSON output. Always use `--outfile` for hubs of this size.
 
 ---
 
-## Phase 2 — Resource & shape audit
+### Phase 2 — Resource & shape audit
 
 After tenant isolation per `azure-tenant-isolation`:
 

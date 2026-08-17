@@ -4,6 +4,10 @@ Run this **before** `azd up`. The hub takes 30-45 minutes to provision
 and costs $200-2,500/mo at baseline depending on profile — failing
 mid-deploy because of a missing provider or quota is expensive.
 
+This checklist targets pinned commit
+`63f0f812474e713916dc909494d655246783a1d9`, which is build-validated
+but not yet live-validated on Azure.
+
 ---
 
 ## 1. Tenant + subscription
@@ -75,34 +79,31 @@ is everywhere.
 
 ### Foundry / AI Services models
 
-The default `aiFoundryModelsConfig` deploys 6-7 models per Foundry
-instance × 2 instances. Each `GlobalStandard` deployment requires TPM
-quota in the region.
+The default `aiFoundryModelsConfig` deploys eight models in instance 0
+and three in instance 1. Each deployment consumes regional quota.
 
 ```bash
 # Check Cognitive Services quota
 az cognitiveservices usage list --location <region> -o table
 ```
 
-Models in the upstream default config (capacity field; for OpenAI
-GlobalStandard, `capacity: N` = N×1k TPM):
+Models in the current upstream default:
 
-- gpt-4.1 (100k TPM)
-- gpt-5.4-mini (100k TPM)
-- gpt-5.2 (100k TPM, East US 2 instance only)
-- text-embedding-3-large (100k TPM)
-- DeepSeek-R1 (1k TPM)
-- Mistral-Large-3 (100k TPM, Sweden Central instance only)
-- Phi-4 (1k TPM)
+- Instance 0 (`AZURE_LOCATION`, default Sweden Central): gpt-4.1,
+  gpt-5.2, gpt-image-1.5, MAI-Image-2.5-Flash, FLUX.2-pro,
+  text-embedding-3-large, Mistral-Large-3, and gpt-5.4-mini.
+- Instance 1 (hardcoded `eastus2` in `aiFoundryInstances`): gpt-5.4-mini,
+  gpt-5.2, and text-embedding-3-large. There is no `AZURE_LOCATION_2`
+  environment variable; change the literal array to use another region.
 
-(The audit hub additionally deployed `gpt-5.4` — it's not in the upstream
-default but is commonly added for hubs that want the full gpt-5.4 family.)
-
-**Pilot-quickstart** profile uses upstream defaults. **Enterprise-baseline**
-should be tuned per region/project.
+The profile ENV files cannot override the two structured arrays safely.
+For a smaller pilot, deliberately reduce `aiFoundryInstances` and
+`aiFoundryModelsConfig` in the pinned `main.bicepparam`; do not send JSON
+arrays through `azd env set`.
 
 - [ ] Quota approved for every model in your `aiFoundryModelsConfig`
       (or use a smaller `aiFoundryModelsConfig` array)
+- [ ] Model versions and retirement dates in `main.bicepparam` rechecked
 
 ### Cosmos DB RU/s
 
@@ -118,6 +119,9 @@ Default: 400 RU/s shared throughput (cheap baseline). Adjust via
 - Key Vault: standard tier
 - Redis: Balanced_B1 (Managed Redis)
 
+When Redis is enabled, set `REDIS_HIGH_AVAILABILITY=Enabled`. The pilot
+quickstart disables Redis and explicitly uses `Disabled`.
+
 ## 4. Networking decision
 
 Pick ONE up front. Switching after deploy = re-deploy.
@@ -130,10 +134,13 @@ Pick ONE up front. Switching after deploy = re-deploy.
 | **BYO Log Analytics** — central observability landing zone | `enterprise-baseline` (or layer manually) | Set `USE_EXISTING_LOG_ANALYTICS=true`, `EXISTING_LOG_ANALYTICS_NAME=...`, `EXISTING_LOG_ANALYTICS_RG=...`, `EXISTING_LOG_ANALYTICS_SUBSCRIPTION_ID=...`. RBAC required: `Monitoring Metrics Publisher` on the workspace for the deploying identity |
 
 - [ ] Networking decision made and matching profile selected
-- [ ] If BYO VNet: address space carves out 4 /26 subnets (apim, pe,
-      functionapp, agents) — names must match `APIM_SUBNET_NAME`,
-      `PRIVATE_ENDPOINT_SUBNET_NAME`, `FUNCTION_APP_SUBNET_NAME`,
-      `AGENT_SUBNET_NAME` env vars (or accept the `snet-*` defaults)
+- [ ] `foundryNetworkInjectionEnabled=false` remains unchanged. Upstream
+      warns that enabling it without full BYO Standard Agent dependencies
+      fails; the accelerator does not provision that full dependency set.
+- [ ] If BYO VNet: address space carves out 3 /26 subnets (apim, pe,
+      functionapp) — names must match `APIM_SUBNET_NAME`,
+      `PRIVATE_ENDPOINT_SUBNET_NAME`, and `FUNCTION_APP_SUBNET_NAME`
+      env vars (or accept the `snet-*` defaults)
 - [ ] If BYO DNS zones: cross-sub `Network Contributor` granted to deploy identity
 
 ## 5. Tagging (MCAPS pilot subscriptions)
@@ -150,15 +157,16 @@ azd env set AZURE_TAGS '{"costCenter":"<cc>","owner":"<email>","environment":"pi
 
 - [ ] Tag strategy decided (MCAPS pilot vs. customer landing zone)
 
-## 6. Optional: Entra Auth (JWT)
+## 6. Entra Auth (JWT)
 
-The upstream supports JWT auth on the gateway. Default is **disabled**
-(`entraAuth=false`). To enable post-deploy, run
-`bicep/infra/entra-id-setup/setup.ps1` — outside this skill's v1.0.0
-scope (will require its own follow-up).
+The upstream supports JWT auth on the gateway. All supplied profiles set
+`AZURE_ENTRA_AUTH=true`. After `azd up`, run
+`bicep/infra/entra-id-setup/setup.ps1`; it creates or updates the app
+registration and configures APIM named values directly, without another hub
+deployment.
 
-- [ ] If JWT will be enabled later: app registration ready or willing
-      to use upstream `entra-id-setup/setup.ps1`
+- [ ] Entra app registration ownership agreed
+- [ ] Post-deploy setup script scheduled and token/RBAC tests included
 
 ## 7. Optional: Hub upgrade flow
 
@@ -178,5 +186,9 @@ v1.0.0 scope.
 - [ ] You have a `azd down --purge` plan if you need to roll back
       (the hub's RG should NOT contain shared resources unless you
       explicitly used BYO mode for them)
+- [ ] You will run the 12-scenario sequence in `validation/README.md`;
+      at minimum run the four strongly recommended baseline notebooks
+- [ ] You understand the current pin has build-only evidence until that
+      live validation is captured
 
 If yes to all → proceed to the Quickstart paths in `SKILL.md § 5`.
