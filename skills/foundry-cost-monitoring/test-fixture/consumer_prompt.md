@@ -7,12 +7,13 @@ subscription, Application Insights workspace, and the public Azure
 Retail Prices API.
 
 **This is a self-contained EXECUTION smoke, not a catalog inspection.**
-You MUST run every Bash code block below in order. Do NOT inspect repository
-files, run `validate-skills.py`, rebuild docs, or run `git status` — those are
-catalog-author concerns, not consumer-smoke concerns. Do NOT create or modify
-tracked repository files. Do NOT open, read, view, or `cat` SKILL.md; this
-prompt contains the complete execution contract. Your only acceptable terminal
-state is a Bash tool call that writes a marker file to
+Run each applicable Bash code block only when its surrounding instructions
+apply. Execute Steps 0-4 in order, then run exactly one Step 5 marker block.
+Do NOT inspect repository files, run `validate-skills.py`, rebuild docs, or run
+`git status` — those are catalog-author concerns, not consumer-smoke concerns.
+Do NOT create or modify tracked repository files. Do NOT open, read, view, or
+`cat` SKILL.md; this prompt contains the complete execution contract. Your only
+acceptable terminal state is a Bash tool call that writes a marker file to
 `/tmp/foundry-cost-monitoring-smoke-result` (Step 5). If you find yourself
 reading `skill-deps.yml`, `upstream-pin.md`, or anything under `docs/`, you are
 off-script — stop and execute Step 0.

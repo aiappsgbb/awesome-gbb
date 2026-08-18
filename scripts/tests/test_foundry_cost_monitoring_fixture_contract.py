@@ -31,7 +31,9 @@ class FoundryCostMonitoringFixtureContractTests(unittest.TestCase):
 
         for required in (
             "This is a self-contained EXECUTION smoke, not a catalog inspection.",
-            "You MUST run every Bash code block below in order",
+            "Run each applicable Bash code block only when its surrounding "
+            "instructions apply.",
+            "Execute Steps 0-4 in order, then run exactly one Step 5 marker block.",
             "Do NOT inspect repository files",
             "Do NOT create or modify tracked repository files.",
             "Do NOT open, read, view, or `cat` SKILL.md",
@@ -49,6 +51,7 @@ class FoundryCostMonitoringFixtureContractTests(unittest.TestCase):
         for forbidden in (
             "Do whatever the skill tells you to do.",
             "read the skill's `SKILL.md` first",
+            "run every Bash code block below in order",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, fixture_flat)
