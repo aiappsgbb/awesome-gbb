@@ -13,9 +13,11 @@ created.
 
 ## Step 0 — Auth context (show, do not assert)
 
-Print the auth context for the run log. Do NOT gate flow on any of
-these checks — `azure/login@v2` already validated the credentials
-upstream.
+Print the auth context for the run log. Gate execution only on those
+three core Azure identity variables. `LAW_WORKSPACE_ID` and
+`az account show` are audit context only; do not gate flow on either
+because `azure/login@v2` already validated credentials upstream and LAW
+is optional.
 
 ```bash
 rm -f /tmp/foundry-network-runbook-law-absent
@@ -59,16 +61,22 @@ exists.
 read works — BEST-EFFORT, see soft-skip below):
 
 ```bash
+LAW_PROBE_ERROR="/tmp/foundry-network-runbook-law-probe-error"
+rm -f "$LAW_PROBE_ERROR"
+trap 'rm -f "$LAW_PROBE_ERROR"' EXIT
 if az monitor log-analytics workspace show \
   --workspace-name law-awesome-gbb-ci \
   -g rg-awesome-gbb-ci \
   --query "{name:name, retentionInDays:retentionInDays, sku:sku.name}" \
-  -o table 2>/dev/null; then
+  -o table 2>"$LAW_PROBE_ERROR"; then
   rm -f /tmp/foundry-network-runbook-law-absent
   echo "LAW present — management-plane read OK"
-else
+elif grep -Eqi '\((ResourceNotFound|WorkspaceNotFound)\)' "$LAW_PROBE_ERROR"; then
   : > /tmp/foundry-network-runbook-law-absent
   echo "NOTE: law-awesome-gbb-ci absent in rg-awesome-gbb-ci — LAW-dependent probes (2a assertion + Step 3 Kusto) soft-skipped; LAW-independent surfaces (2b private-DNS, 2c RBAC) still asserted."
+else
+  cat "$LAW_PROBE_ERROR" >&2
+  exit 1
 fi
 ```
 
@@ -80,7 +88,10 @@ absence marker at `/tmp/foundry-network-runbook-law-absent`, emit the
 NOTE above, and carry on. The file persists the decision across separate
 Bash tool calls; a shell variable would not. The LAW-independent
 diagnostic surfaces (2b, 2c) still prove the runbook's read paths work.
-Do NOT try to create the workspace.
+Only a confirmed `ResourceNotFound` / `WorkspaceNotFound` response takes
+this soft-skip. Authentication, authorization, CLI, and transient
+management-plane errors are real failures; write the FAIL marker with
+the reported error and stop. Do NOT try to create the workspace.
 
 **b) Private DNS zone enumeration** (proves the private-DNS read
 surface works):
@@ -164,8 +175,8 @@ MUST remain byte-exact `SMOKE_RESULT=PASS\n`; the LAW-absent NOTE goes
 only to your stdout transcript, never into the marker.
 
 On a real failure (auth context missing, RBAC empty, private-DNS
-non-zero exit, OR — when LAW was PRESENT — a non-zero exit / KQL error
-from 2a or Step 3):
+non-zero exit, a non-not-found error from Step 2a, OR — when LAW was
+PRESENT — a non-zero exit / KQL error from Step 3):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-network-runbook-smoke-result
