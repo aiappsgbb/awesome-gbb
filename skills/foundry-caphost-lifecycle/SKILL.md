@@ -156,7 +156,10 @@ The GA 2025-06-01 Swagger uses different LRO contracts by verb:
 For PUT, poll the original URI for up to 15 minutes until
 `properties.provisioningState` is `Succeeded` or `Failed`. For DELETE,
 poll `Location`, honor `Retry-After`, require terminal `Succeeded`, and
-then verify the original URI returns 404. **Do not issue a parallel PUT
+then verify the original URI returns 404. The live provider can remove the
+`Location` result immediately after completion; in that case a `Location`
+404 is only indeterminate and counts as success solely when the original
+capability-host URI also returns 404. **Do not issue a parallel PUT
 or DELETE on the same scope while an operation is `Running`** — you'll
 get the `currently in non creating, retry after its complete` 409 (§ 6).
 
