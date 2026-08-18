@@ -4,14 +4,17 @@
 # `../../SKILL.md § Dependencies (pyproject.toml)`. Mirrors the F1
 # patch from PR #180 (DO NOT install the meta-package).
 #
-# Four pyproject mistakes this file prevents:
-#   1. `agent-framework>=1.13.0` meta-package — floating/transitive
+# Five pyproject mistakes this file prevents:
+#   1. `agent-framework>=1.14.0` meta-package — floating/transitive
 #      resolution is non-deterministic. Pin hosted-agent sub-packages directly.
-#   2. Floating `azure-ai-projects` via transitive resolution — pin direct
+#   2. Transitive Agent Server beta packages — uv does not admit their
+#      prereleases under `if-necessary-or-explicit` unless they are direct.
+#      Pin the coherent core/responses/invocations beta train exactly.
+#   3. Floating `azure-ai-projects` via transitive resolution — pin direct
 #      `azure-ai-projects~=2.3.0` because Foundry is still held below 2.4.
-#   3. `agent-framework-core[mcp]` extra — does NOT exist. MCP tools
+#   4. `agent-framework-core[mcp]` extra — does NOT exist. MCP tools
 #      are top-level exports of agent_framework; the bare pin already covers them.
-#   4. Missing `mcp~=1.29.0` — agent_framework_foundry_hosting imports
+#   5. Missing `mcp~=1.29.0` — agent_framework_foundry_hosting imports
 #      `from mcp import McpError` at module-load time; container crashes at
 #      startup with `ModuleNotFoundError: No module named 'mcp'` even when no
 #      MCP tool is wired. Surfaces as `session_not_ready` after 60s timeout —
@@ -25,9 +28,12 @@ name = "my-agent"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-core~=1.13.0",
-    "agent-framework-foundry~=1.10.4",
-    "agent-framework-foundry-hosting==1.0.0b260730",
+    "agent-framework-core~=1.14.0",
+    "agent-framework-foundry~=1.11.0",
+    "agent-framework-foundry-hosting==1.0.0b260813",
+    "azure-ai-agentserver-core==2.1.0b1",
+    "azure-ai-agentserver-responses==2.1.0b1",
+    "azure-ai-agentserver-invocations==1.1.0b1",
     "azure-ai-projects~=2.3.0",
     "azure-identity~=1.25.3",
     "mcp~=1.29.0",

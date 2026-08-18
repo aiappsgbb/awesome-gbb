@@ -169,9 +169,12 @@ cp "$skill_refs/python/pyproject.toml" "$work_dir/pyproject.toml"
 cp "$skill_refs/yaml/azure.yaml" "$work_dir/azure.yaml"
 printf 'You are a customer-support triage assistant.\n' > "$work_dir/copilot-instructions.md"
 
-require_canonical_dependency "agent-framework-core~=1.13.0"
-require_canonical_dependency "agent-framework-foundry~=1.10.4"
-require_canonical_dependency "agent-framework-foundry-hosting==1.0.0b260730"
+require_canonical_dependency "agent-framework-core~=1.14.0"
+require_canonical_dependency "agent-framework-foundry~=1.11.0"
+require_canonical_dependency "agent-framework-foundry-hosting==1.0.0b260813"
+require_canonical_dependency "azure-ai-agentserver-core==2.1.0b1"
+require_canonical_dependency "azure-ai-agentserver-responses==2.1.0b1"
+require_canonical_dependency "azure-ai-agentserver-invocations==1.1.0b1"
 require_canonical_dependency "azure-ai-projects~=2.3.0"
 require_canonical_dependency "azure-identity~=1.25.3"
 require_canonical_dependency "mcp~=1.29.0"
@@ -264,13 +267,15 @@ Write the matching FAIL marker and stop.
 
 ## Step 3 - GA SDK hard checks (deterministic, no preview surfaces)
 
-Create an isolated virtual environment and install the bounded stable stack:
+Create an isolated virtual environment and install the complete bounded GA SDK
+probe stack, including its direct HTTP transport:
 
 ```bash
 python3 -m venv /tmp/foundry-hosted-agents-venv
 /tmp/foundry-hosted-agents-venv/bin/pip install --quiet \
   "azure-ai-projects~=2.3.0" \
-  "azure-identity~=1.25.3"
+  "azure-identity~=1.25.3" \
+  "httpx~=0.28.1"
 ```
 
 Use a Bash heredoc to write the following program to
