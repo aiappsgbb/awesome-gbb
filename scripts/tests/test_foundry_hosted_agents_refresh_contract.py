@@ -92,6 +92,8 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         )
         self.assertEqual(fixture_dependencies, expected_dependencies)
         self.assertIn("Core 1.14.0 is the current dependency stack", self.skill)
+        self.assertIn("use the current canonical 1.14 stack", self.skill)
+        self.assertNotIn("use the current canonical 1.13 stack", self.skill)
         self.assertIn(
             "Agent Server Responses/Core `2.1.0b1`",
             self.skill,

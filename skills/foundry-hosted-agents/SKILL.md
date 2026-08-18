@@ -64,7 +64,7 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 
 > **Historical boundary only.** The pins below are preserved for the
 > original 1.4.0 cutover. If you are still on 1.3.x today, do **not** copy
-> these historical 1.4 pins — use the current canonical 1.13 stack in
+> these historical 1.4 pins — use the current canonical 1.14 stack in
 > [`references/python/pyproject.toml`](references/python/pyproject.toml),
 > which already incorporates the 1.4 breaking changes, the 1.6 telemetry
 > update, and the 1.8 timeout correction.
