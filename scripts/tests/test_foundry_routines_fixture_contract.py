@@ -68,6 +68,16 @@ class FoundryRoutinesFixtureContractTests(unittest.TestCase):
         )
         self.assertNotIn("rg-awesome-gbb-ci", fixture)
 
+    def test_enabled_routine_deletion_is_a_hard_pass_condition(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+
+        self.assertIn("Routine deletion is a hard PASS condition", fixture)
+        self.assertIn("routine-disable-note:", fixture)
+        self.assertIn("routine-delete-fail:", fixture)
+        self.assertIn("Steps 1a through 1f all passed", fixture)
+        self.assertNotIn("janitor sweeps `ci-smoke-routine-*`", fixture)
+        self.assertNotIn("1f and 1g are best-effort", fixture)
+
     def test_generated_docs_show_the_current_version_everywhere(self) -> None:
         raw = SKILL.read_text(encoding="utf-8")
         _, frontmatter, _ = raw.split("---", 2)

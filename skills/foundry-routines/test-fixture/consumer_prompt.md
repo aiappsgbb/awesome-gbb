@@ -197,27 +197,36 @@ print(f"list-ok: {len(names)} routines visible to this project")
 If the routine is missing, FAIL with reason
 `routine not visible in list() after create`.
 
-### Step 1f — Disable + delete the routine (best-effort, Pattern 25)
+### Step 1f — Disable + delete the routine (deletion is hard)
 
-Disable first, then delete:
+Routine deletion is a hard PASS condition because an enabled recurring
+routine is the direct output of this skill. Attempt disable and delete
+independently so a disable failure never prevents the delete attempt:
 
 ```python
-client.beta.routines.disable("<routine name>")
-client.beta.routines.delete("<routine name>")
+try:
+    client.beta.routines.disable("<routine name>")
+except Exception as exc:
+    print(
+        f"routine-disable-note: {type(exc).__name__} — "
+        f"{str(exc).splitlines()[0]}"
+    )
+
+try:
+    client.beta.routines.delete("<routine name>")
+except Exception as exc:
+    print(
+        f"routine-delete-fail: {type(exc).__name__} — "
+        f"{str(exc).splitlines()[0]}"
+    )
+    raise
+
 print("routine-cleanup-ok: <routine name>")
 ```
 
-If either call raises, capture the exception class + first line of the
-message and emit a transcript NOTE:
-
-```
-routine-cleanup-note: <exception class> — <first line>
-```
-
-Then continue. **Do not FAIL** the marker on cleanup failure
-(AGENTS.md § 9.7 Pattern 25 — teardown is soft after happy-path
-success; the `<ci-resource-group>` janitor sweeps `ci-smoke-routine-*`
-on a periodic schedule).
+Disable is best-effort because delete removes the routine regardless.
+Delete failure is a hard failure: write the FAIL marker after the prompt
+agent cleanup attempt.
 
 ### Step 1g — Delete the prompt agent (best-effort, Pattern 25)
 
@@ -246,16 +255,17 @@ Your FINAL action — after cleanup — is to invoke the Bash tool to write
 the marker file. The file's literal byte content is what CI grades;
 your assistant-text reply is NOT graded.
 
-On success (Step 0 + Steps 1a through 1e all passed; 1f and 1g are
-best-effort per Pattern 25):
+On success (Step 0 + Steps 1a through 1f all passed; prompt-agent cleanup
+in 1g remains best-effort per Pattern 25):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-routines-smoke-result
 ```
 
-On ANY failure in Step 0, 1a, 1b, 1c, 1d, or 1e (auth context missing,
-SDK outside the 2.4.x pin, prompt agent create failed, routine create failed,
-dispatch returned empty `dispatch_id`, routine missing from `list()`):
+On ANY failure in Step 0 or Steps 1a through 1f (auth context missing,
+SDK outside the 2.4.x pin, prompt agent create failed, routine create
+failed, dispatch returned empty `dispatch_id`, routine missing from
+`list()`, or routine deletion failed):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-routines-smoke-result
@@ -266,9 +276,8 @@ token anywhere else in your reply — no echoes, no summaries, no fenced
 code blocks containing the literal string. The Bash tool write is the
 only legitimate emission path.
 
-Pattern 25 cleanup NOTEs (`routine-cleanup-note: …`,
-`prompt-agent-cleanup-note: …`) belong in the transcript only — NEVER
-in the marker file. The marker line is the exact 18 bytes
+The Pattern 25 prompt-agent cleanup NOTE belongs in the transcript only —
+NEVER in the marker file. The marker line is the exact 18 bytes
 `SMOKE_RESULT=PASS\n`; anything else (extra spaces, trailing prose,
 decoration) is FAIL.
 
