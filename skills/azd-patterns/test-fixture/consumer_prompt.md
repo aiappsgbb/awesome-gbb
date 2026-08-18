@@ -2,7 +2,8 @@
 
 ## Step -1 - acknowledge the skill contract
 
-Your first Bash action must be:
+Your first action must be a separate Bash tool call containing only the
+command below. Do not combine it with planning, auth checks, or any later step.
 
 ```bash
 echo "skills/azd-patterns/SKILL.md"
