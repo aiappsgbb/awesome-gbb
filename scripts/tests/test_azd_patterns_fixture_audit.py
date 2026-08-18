@@ -26,7 +26,7 @@ class AzdPatternsFixtureAuditTests(unittest.TestCase):
     def test_fixture_asset_change_bumps_patch_version(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         frontmatter = yaml.safe_load(skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "1.4.9")
+        self.assertEqual(frontmatter["metadata"]["version"], "1.4.10")
 
 
 if __name__ == "__main__":
