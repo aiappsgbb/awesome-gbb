@@ -18,7 +18,7 @@ description: >
   Functions / Logic Apps), agent runtime (use foundry-prompt-agents
   or foundry-hosted-agents).
 metadata:
-  version: "1.0.2"
+  version: "1.0.4"
 ---
 
 # Microsoft Foundry Routines — Reference Guide
@@ -95,12 +95,14 @@ skill schedules its invocation.
 4. **Python 3.9+** with the routines-capable SDK:
 
    ```bash
-   pip install "azure-ai-projects~=2.2.0" "azure-identity~=1.25"
+   pip install "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
    ```
 
    Routines surface under `client.beta.routines` requires
    `azure-ai-projects` 2.2.0 or later (preview). Earlier versions
-   raise `AttributeError` on `client.beta.routines`.
+   raise `AttributeError` on `client.beta.routines`. The explicit
+   `httpx` pin works around an `azure-ai-projects` 2.4.0 packaging gap:
+   the SDK imports `httpx` directly but does not declare it.
 
 5. **Authentication** via `DefaultAzureCredential` for SDK calls
    or `az account get-access-token --resource https://ai.azure.com`
