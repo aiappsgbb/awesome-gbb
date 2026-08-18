@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 import yaml
@@ -20,6 +21,7 @@ SKILL_DIR = ROOT / "skills" / "foundry-hosted-agents"
 SKILL = SKILL_DIR / "SKILL.md"
 FIXTURE = SKILL_DIR / "test-fixture" / "consumer_prompt.md"
 PIN = SKILL_DIR / "references" / "upstream-pin.md"
+PYPROJECT = SKILL_DIR / "references" / "python" / "pyproject.toml"
 TIMEOUT = SKILL_DIR / "references" / "python" / "foundry_agent_timeout.py"
 
 
@@ -29,6 +31,7 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         cls.skill = SKILL.read_text(encoding="utf-8")
         cls.fixture = FIXTURE.read_text(encoding="utf-8")
         cls.pin = PIN.read_text(encoding="utf-8")
+        cls.pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
         cls.timeout = TIMEOUT.read_text(encoding="utf-8")
         cls.pin_frontmatter = yaml.safe_load(cls.pin.split("---", 2)[1])
         cls.validation_script = cls.pin_frontmatter["validation"]["script"]
@@ -49,14 +52,71 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
             raise AssertionError("fixture dependency guard not found")
         cls.dependency_function = dependency_function.group(0)
 
+    def test_august_release_train_is_consistent_across_consumer_surfaces(self) -> None:
+        expected_dependencies = [
+            "agent-framework-core~=1.14.0",
+            "agent-framework-foundry~=1.11.0",
+            "agent-framework-foundry-hosting==1.0.0b260813",
+            "azure-ai-agentserver-core==2.1.0b1",
+            "azure-ai-agentserver-responses==2.1.0b1",
+            "azure-ai-agentserver-invocations==1.1.0b1",
+            "azure-ai-projects~=2.3.0",
+            "azure-identity~=1.25.3",
+            "mcp~=1.29.0",
+            "python-dotenv~=1.2.2",
+        ]
+        self.assertEqual(
+            self.pyproject["project"]["dependencies"],
+            expected_dependencies,
+        )
+        self.assertEqual(
+            self.pyproject["tool"]["uv"]["prerelease"],
+            "if-necessary-or-explicit",
+        )
+
+        package_versions = {
+            package["name"]: package["version"]
+            for package in self.pin_frontmatter["packages"]
+        }
+        self.assertEqual(package_versions["agent-framework-core"], "1.14.0")
+        self.assertEqual(package_versions["agent-framework-foundry"], "1.11.0")
+        self.assertEqual(
+            package_versions["agent-framework-foundry-hosting"],
+            "1.0.0b260813",
+        )
+
+        fixture_dependencies = re.findall(
+            r'^require_canonical_dependency "([^"]+)"$',
+            self.fixture,
+            re.MULTILINE,
+        )
+        self.assertEqual(fixture_dependencies, expected_dependencies)
+        self.assertIn("Core 1.14.0 is the current dependency stack", self.skill)
+        self.assertIn(
+            "Agent Server Responses/Core `2.1.0b1`",
+            self.skill,
+        )
+        self.assertIn("Agent Server Invocations `1.1.0b1`", self.skill)
+        for package, version in (
+            ("azure-ai-agentserver-core", "2.1.0b1"),
+            ("azure-ai-agentserver-responses", "2.1.0b1"),
+            ("azure-ai-agentserver-invocations", "1.1.0b1"),
+        ):
+            self.assertIn(
+                f'assert version("{package}") == "{version}"',
+                self.validation_script,
+            )
+        self.assertIn("- agent-framework-core ~= 1.14.0", self.timeout)
+        self.assertIn("- agent-framework-foundry ~= 1.11.0", self.timeout)
+
     def test_timeout_reference_requires_current_versions(self) -> None:
-        self.assertIn("- agent-framework-core ~= 1.13.0", self.timeout)
-        self.assertIn("- agent-framework-foundry ~= 1.10.4", self.timeout)
+        self.assertIn("- agent-framework-core ~= 1.14.0", self.timeout)
+        self.assertIn("- agent-framework-foundry ~= 1.11.0", self.timeout)
         self.assertNotIn("- agent-framework-core ~= 1.11.0", self.timeout)
         self.assertNotIn("- agent-framework-foundry ~= 1.10.1", self.timeout)
 
-    def test_pin_records_final_live_validation_date(self) -> None:
-        self.assertEqual(str(self.pin_frontmatter["last_validated"]), "2026-08-05")
+    def test_pin_records_refresh_validation_date(self) -> None:
+        self.assertEqual(str(self.pin_frontmatter["last_validated"]), "2026-08-18")
         self.assertNotIn("this 2026-08-04 validation", self.pin)
 
     def test_historical_upgrade_recipes_are_guarded_from_copying(self) -> None:
@@ -80,13 +140,13 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         )
         self.assertIn(
             "current operators must use the exact beta "
-            "`agent-framework-foundry-hosting==1.0.0b260730`",
+            "`agent-framework-foundry-hosting==1.0.0b260813`",
             self.skill,
         )
 
     def test_pin_validation_checks_all_selected_installed_versions(self) -> None:
         required = (
-            'assert version("agent-framework-foundry-hosting") == "1.0.0b260730"',
+            'assert version("agent-framework-foundry-hosting") == "1.0.0b260813"',
             'assert version("azure-identity").startswith("1.25.")',
             'assert version("python-dotenv").startswith("1.2.")',
         )
@@ -111,9 +171,12 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
 
     def test_fixture_guards_all_canonical_runtime_dependencies(self) -> None:
         required = (
-            "agent-framework-core~=1.13.0",
-            "agent-framework-foundry~=1.10.4",
-            "agent-framework-foundry-hosting==1.0.0b260730",
+            "agent-framework-core~=1.14.0",
+            "agent-framework-foundry~=1.11.0",
+            "agent-framework-foundry-hosting==1.0.0b260813",
+            "azure-ai-agentserver-core==2.1.0b1",
+            "azure-ai-agentserver-responses==2.1.0b1",
+            "azure-ai-agentserver-invocations==1.1.0b1",
             "azure-ai-projects~=2.3.0",
             "azure-identity~=1.25.3",
             "mcp~=1.29.0",
@@ -150,7 +213,7 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         return result, marker_text
 
     def test_fixture_dependency_guard_accepts_exact_canonical_pin(self) -> None:
-        dependency = "agent-framework-core~=1.13.0"
+        dependency = "agent-framework-core~=1.14.0"
         result, marker = self._run_dependency_guard(
             f'[project]\ndependencies = ["{dependency}"]\n', dependency
         )
@@ -158,7 +221,7 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         self.assertIsNone(marker)
 
     def test_fixture_dependency_guard_writes_exact_failure_marker(self) -> None:
-        dependency = "agent-framework-core~=1.13.0"
+        dependency = "agent-framework-core~=1.14.0"
         result, marker = self._run_dependency_guard(
             '[project]\ndependencies = ["agent-framework-core~=1.12.0"]\n',
             dependency,
