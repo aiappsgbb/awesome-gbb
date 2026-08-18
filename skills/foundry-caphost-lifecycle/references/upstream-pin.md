@@ -10,29 +10,21 @@ upstream:
   ref: main
   pinned_sha: ""
   pinned_commit_message: |
-    PyPI-only wrapper — no SHA pin. Tracks azure-mgmt-cognitiveservices
-    + azure-identity stable releases via cap windows below. The freshness
-    detector watches PyPI for new minors / majors.
+    REST + CLI wrapper — no SHA pin. Tracks azure-identity for bearer-token
+    authentication. Capability-host CRUD itself is REST-only.
   license: MIT
   notes: |
     This skill is a Day-2 operations overlay on top of the MS Learn
     capability-hosts page. The "upstream" is the combination of:
       1. The Azure REST contract (api-version 2025-06-01) documented on
          https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts
-      2. The azure-mgmt-cognitiveservices Python SDK (CapabilityHost models)
+      2. The azure-identity package used to acquire ARM bearer tokens
       3. The az CLI cognitiveservices account verbs (delete, purge, recover,
          list-deleted, show-deleted) — GA, no extension required
     There is no single git SHA to pin. PyPI cap windows below + MS Learn
     URL revalidation cover the surface.
 
 packages:
-  - name: azure-mgmt-cognitiveservices
-    source: pypi
-    version: "~=14.1.0"
-    upstream_changelog: https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/cognitiveservices/azure-mgmt-cognitiveservices/CHANGELOG.md
-    notes: |
-      Cap window allows 14.1.x patch upgrades inside 14.x; bump cap when a
-      14.2 / 15.0 lands and re-validate the CapabilityHost model surface.
   - name: azure-identity
     source: pypi
     version: "~=1.25.3"
@@ -46,7 +38,6 @@ docs_to_revalidate:
   - https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts
   - https://learn.microsoft.com/cli/azure/cognitiveservices/account
   - https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks
-  - https://pypi.org/project/azure-mgmt-cognitiveservices/
   - https://pypi.org/project/azure-identity/
 
 known_issues: []
@@ -59,19 +50,13 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # ── SDK import smoke (proves the CapabilityHost surface still exists)
+    # ── Identity import smoke (capability-host CRUD is REST-only)
     python3 -m venv .venv
     . .venv/bin/activate
-    pip install --quiet \
-      "azure-mgmt-cognitiveservices~=14.1.0" \
-      "azure-identity~=1.25.3"
+    pip install --quiet "azure-identity~=1.25.3"
     python3 -c "
-    import azure.mgmt.cognitiveservices as mc
-    from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
-    from azure.mgmt.cognitiveservices.models import CapabilityHost, CapabilityHostProperties
     from azure.identity import DefaultAzureCredential
-    print(f'azure-mgmt-cognitiveservices={mc.VERSION}')
-    print('caphost-sdk-import-ok')
+    print('caphost-identity-import-ok')
     "
 
     # ── az CLI surface smoke (proves the GA purge verb is present)
@@ -83,7 +68,7 @@ validation:
     az cognitiveservices account recover --help > /dev/null && \
       echo "caphost-recover-cli-ok"
   expected_output:
-    - "caphost-sdk-import-ok"
+    - "caphost-identity-import-ok"
     - "caphost-purge-cli-ok"
     - "caphost-list-deleted-cli-ok"
     - "caphost-recover-cli-ok"
@@ -92,7 +77,7 @@ validation:
     - "ModuleNotFoundError"
     - "is not in the 'cognitiveservices' command group"
 
-last_validated: 2026-07-06
+last_validated: 2026-08-18
 validated_by: copilot-bot
 known_issues_count: 0
 ---
@@ -109,9 +94,8 @@ This file is the **machine-readable validation contract** for the
 
 | Field | Value |
 |-------|-------|
-| **Upstream** | Azure REST API + Python SDK + `az` CLI |
+| **Upstream** | Azure REST API + `azure-identity` + `az` CLI |
 | **REST API version** | `2025-06-01` |
-| **SDK package** | `azure-mgmt-cognitiveservices` ~= 14.1.0 |
 | **Identity package** | `azure-identity` ~= 1.25.3 |
 | **CLI surface** | `az cognitiveservices account {delete,purge,recover,list-deleted,show-deleted}` (GA) |
 | **First authored against** | 2026-06-09 |
@@ -121,7 +105,7 @@ The live-Azure proof for this skill is the fixture at
 `skills/foundry-caphost-lifecycle/test-fixture/consumer_prompt.md` — the
 matrix leg in `.github/workflows/skill-test.yml` exercises the full caphost
 lifecycle (create → idempotent replay → delete → soft-delete → purge → verify)
-against `rg-awesome-gbb-ci` on every PR.
+against the dedicated disposable capability-host CI resource group on every PR.
 
 ---
 
@@ -129,7 +113,6 @@ against `rg-awesome-gbb-ci` on every PR.
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `azure-mgmt-cognitiveservices` | PyPI | **~= 14.1.0** | Cap window allows 14.1.x patch upgrades inside 14.x |
 | `azure-identity` | PyPI | **~= 1.25.3** | Matches peer skills' baseline |
 
 ---
@@ -144,19 +127,13 @@ against `rg-awesome-gbb-ci` on every PR.
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SDK import smoke
+# Identity import smoke
 python3 -m venv .venv
 . .venv/bin/activate
-pip install --quiet \
-  "azure-mgmt-cognitiveservices~=14.1.0" \
-  "azure-identity~=1.25.3"
+pip install --quiet "azure-identity~=1.25.3"
 python3 -c "
-import azure.mgmt.cognitiveservices as mc
-from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
-from azure.mgmt.cognitiveservices.models import CapabilityHost, CapabilityHostProperties
 from azure.identity import DefaultAzureCredential
-print(f'azure-mgmt-cognitiveservices={mc.VERSION}')
-print('caphost-sdk-import-ok')
+print('caphost-identity-import-ok')
 "
 
 # az CLI surface smoke (no auth required)
@@ -167,14 +144,14 @@ az cognitiveservices account recover --help > /dev/null && echo "caphost-recover
 
 **Expected output** must contain (substring match):
 
-- `caphost-sdk-import-ok`
+- `caphost-identity-import-ok`
 - `caphost-purge-cli-ok`
 - `caphost-list-deleted-cli-ok`
 - `caphost-recover-cli-ok`
 
 **Failure signatures** (upstream regression):
 
-- `ImportError` — SDK module surface broke
+- `ImportError` — identity module surface broke
 - `ModuleNotFoundError` — package name changed upstream
 - `is not in the 'cognitiveservices' command group` — `az` CLI surface dropped a verb
 
@@ -184,12 +161,12 @@ az cognitiveservices account recover --help > /dev/null && echo "caphost-recover
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| `azure-mgmt-cognitiveservices` import | ✅ | `caphost-sdk-import-ok` |
+| `azure-identity` import | ✅ | `caphost-identity-import-ok` |
 | `az cognitiveservices account purge` | ✅ | `caphost-purge-cli-ok` |
 | `az cognitiveservices account list-deleted` | ✅ | `caphost-list-deleted-cli-ok` |
 | `az cognitiveservices account recover` | ✅ | `caphost-recover-cli-ok` |
 
-Captured at `last_validated: 2026-06-09` by `copilot-bot`.
+Captured at `last_validated: 2026-08-18` by `copilot-bot`.
 
 ---
 
@@ -206,9 +183,8 @@ the upstream — there is no upstream issue to track.
 
 When upstream advances:
 
-1. **Bump the SDK cap** in `packages[].version` if a new minor lands
-   (e.g. 14.1 → 14.2 → `~=14.2.0`). Patch upgrades inside the cap window
-   are auto-covered, no PR needed.
+1. **Bump the identity cap** in `packages[].version` if a new minor lands.
+   Patch upgrades inside the cap window are auto-covered, no PR needed.
 2. **Re-run `validation.script`** (or push an empty commit to retrigger
    `pin-validation.yml` on the latest cap).
 3. **Verify expected_output** — each substring must appear in stdout.
@@ -229,7 +205,6 @@ commit tag is required for any SKILL.md body change.
 - <https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts>
 - <https://learn.microsoft.com/cli/azure/cognitiveservices/account>
 - <https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks>
-- <https://pypi.org/project/azure-mgmt-cognitiveservices/>
 - <https://pypi.org/project/azure-identity/>
 
 ---
@@ -240,8 +215,8 @@ commit tag is required for any SKILL.md body change.
   — the create-time capability host verification this skill picks up at Day-2.
 - [Azure CLI cognitiveservices account reference](https://learn.microsoft.com/cli/azure/cognitiveservices/account)
   — `delete`, `purge`, `recover`, `list-deleted`, `show-deleted`.
-- [`azure-mgmt-cognitiveservices` CHANGELOG](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/cognitiveservices/azure-mgmt-cognitiveservices/CHANGELOG.md)
-  — watch for `CapabilityHost` / `CapabilityHostProperties` model breakage.
+- [Capability hosts](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts)
+  — REST-only management contract and current operational constraints.
 
 ---
 
@@ -258,4 +233,4 @@ commit tag is required for any SKILL.md body change.
 >    **do NOT open a PR**.
 > 4. The matrix-leg fixture is the live-Azure proof for this skill —
 >    don't try to substitute pin validation for it. They cover different
->    surfaces (pin = static SDK contract; fixture = live REST + CLI).
+>    surfaces (pin = identity/CLI imports; fixture = live REST + CLI).
