@@ -193,6 +193,53 @@ class FoundryRoutinesFixtureContractTests(unittest.TestCase):
             cleanup.index(': > "$SUCCESS_FILE"'),
         )
 
+    def test_auth_step_clears_stale_success_before_fallible_checks(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        auth = fixture.split(
+            "## Step 0 - Auth context",
+            maxsplit=1,
+        )[1].split(
+            "## Step 1 - Install",
+            maxsplit=1,
+        )[0]
+        bash_block = re.findall(r"```bash\n(.*?)```", auth, re.DOTALL)
+
+        self.assertEqual(len(bash_block), 1)
+        commands = [
+            line.strip()
+            for line in bash_block[0].splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(
+            commands[0],
+            "rm -f /tmp/foundry-routines-smoke-success",
+        )
+
+    def test_best_effort_prompt_agent_cleanup_has_a_hard_timeout(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        cleanup = fixture.split(
+            "## Step 7 - Delete the routine, clean the prompt agent, and seal success",
+            maxsplit=1,
+        )[1].split(
+            "## Step 8 - Write the result marker",
+            maxsplit=1,
+        )[0]
+
+        for required in (
+            "signal.signal(signal.SIGALRM, prompt_cleanup_timeout)",
+            "signal.alarm(120)",
+            'raise TimeoutError("prompt-agent cleanup exceeded 120s")',
+            "signal.alarm(0)",
+            "signal.signal(signal.SIGALRM, previous_alarm_handler)",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, cleanup)
+        if "signal.alarm(120)" in cleanup:
+            self.assertLess(
+                cleanup.index("ROUTINE_DELETED\\n"),
+                cleanup.index("signal.alarm(120)"),
+            )
+
     def test_skill_version_includes_live_fixture_repair(self) -> None:
         raw = SKILL.read_text(encoding="utf-8")
         _, frontmatter, _ = raw.split("---", 2)

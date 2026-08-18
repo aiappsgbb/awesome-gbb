@@ -61,6 +61,7 @@ Print the auth context for the run log. Do not gate flow on the Azure CLI token
 cache; Copilot CLI subprocesses do not always inherit it.
 
 ```bash
+rm -f /tmp/foundry-routines-smoke-success
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
@@ -277,9 +278,15 @@ set -euo pipefail
 source /tmp/foundry-routines-state.env
 python3 - <<'PY'
 import os
+import signal
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
+
+
+def prompt_cleanup_timeout(_signum, _frame):
+    raise TimeoutError("prompt-agent cleanup exceeded 120s")
+
 
 project = AIProjectClient(
     endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
@@ -300,20 +307,26 @@ except Exception as exc:
     routine_delete_error = exc
     print(f"routine-delete-fail: {type(exc).__name__} - {str(exc).splitlines()[0]}")
 
+previous_alarm_handler = signal.signal(signal.SIGALRM, prompt_cleanup_timeout)
+signal.alarm(120)
 try:
-    project.agents.delete_version(
-        os.environ["AGENT_NAME"],
-        os.environ["AGENT_VERSION"],
-    )
-    print(
-        "prompt-agent-cleanup-ok: "
-        f"{os.environ['AGENT_NAME']} v{os.environ['AGENT_VERSION']}"
-    )
-except Exception as exc:
-    print(
-        "prompt-agent-cleanup-note: "
-        f"{type(exc).__name__} - {str(exc).splitlines()[0]}"
-    )
+    try:
+        project.agents.delete_version(
+            os.environ["AGENT_NAME"],
+            os.environ["AGENT_VERSION"],
+        )
+        print(
+            "prompt-agent-cleanup-ok: "
+            f"{os.environ['AGENT_NAME']} v{os.environ['AGENT_VERSION']}"
+        )
+    except Exception as exc:
+        print(
+            "prompt-agent-cleanup-note: "
+            f"{type(exc).__name__} - {str(exc).splitlines()[0]}"
+        )
+finally:
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous_alarm_handler)
 
 if routine_delete_error is not None:
     raise routine_delete_error
