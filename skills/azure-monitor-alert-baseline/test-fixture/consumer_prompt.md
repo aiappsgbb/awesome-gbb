@@ -34,16 +34,13 @@ does NOT deploy any infrastructure, and does NOT invoke any models.
 
 ## Step −1 — Acknowledge skill contract (mandatory FIRST action)
 
-Before Step 0, run this echo as a Bash tool call. The grep on
-`skills/azure-monitor-alert-baseline/` in the output is what the workflow's
-post-hoc audit step grades on as "agent loaded the skill". Do NOT use
-the `view` tool on SKILL.md — the chunked reads inflate per-turn
-context past our TPM ceiling (AGENTS.md § 9.7 Pattern 19 v2).
+Your first action must be a separate Bash tool call containing only the
+command below. Do not combine it with Step 0. The path in the output is
+what the workflow's post-hoc audit grades. Do NOT use the `view` tool on
+SKILL.md — chunked reads inflate per-turn context past the TPM ceiling.
 
 ```bash
-echo "Loading skill contract: skills/azure-monitor-alert-baseline/SKILL.md (version 1.0.x)"
-echo "Fixture path:           skills/azure-monitor-alert-baseline/test-fixture/consumer_prompt.md"
-echo "Audit grade evidence:   present"
+echo "skills/azure-monitor-alert-baseline/SKILL.md"
 ```
 
 ---

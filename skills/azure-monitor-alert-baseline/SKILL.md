@@ -16,7 +16,7 @@ description: >
   different API surface; DO NOT USE FOR: log alerts (Log Analytics scheduled
   query rules) — metric alerts only.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # azure-monitor-alert-baseline
