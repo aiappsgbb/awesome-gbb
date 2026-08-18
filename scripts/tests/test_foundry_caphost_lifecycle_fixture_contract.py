@@ -6,6 +6,8 @@ import pathlib
 import re
 import unittest
 
+import yaml
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = (
@@ -16,6 +18,7 @@ FIXTURE = (
     / "consumer_prompt.md"
 )
 SKILL = ROOT / "skills" / "foundry-caphost-lifecycle" / "SKILL.md"
+PIN = ROOT / "skills" / "foundry-caphost-lifecycle" / "references" / "upstream-pin.md"
 
 
 class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
@@ -144,7 +147,7 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
 
         for required in (
             '[[ "$SHAPE_OK" == "true" ]] || exit 1',
-            "caphost_replay_status=200",
+            "caphost_replay_status=",
             "caphost_absent_after_delete",
             '[[ "$FOUND" == "$ACCT" ]] || exit 1',
             '[[ -z "$STILL" ]] || exit 1',
@@ -170,7 +173,7 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
             "ACCOUNT_CREATED",
             "CAPHOST_CREATED",
             "CAPHOST_GET_OK",
-            "CAPHOST_REPLAY_200",
+            "CAPHOST_REPLAY_OK",
             "CAPHOST_DELETED",
             "ACCOUNT_SOFT_DELETED",
             "ACCOUNT_PURGED",
@@ -222,6 +225,59 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
         self.assertNotIn(
             "az cognitiveservices account show",
             final_step,
+        )
+
+    def test_capability_host_management_is_rest_only(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        skill = SKILL.read_text(encoding="utf-8")
+        pin = PIN.read_text(encoding="utf-8")
+
+        for content in (fixture, skill):
+            self.assertNotIn("client.capability_hosts", content)
+            self.assertNotIn("CognitiveServicesManagementClient", content)
+        self.assertNotIn("azure-mgmt-cognitiveservices", fixture)
+        self.assertNotIn("azure-mgmt-cognitiveservices", pin)
+        self.assertIn("SDK support for capability host management isn't available", skill)
+        self.assertIn("status not in (200, 201)", fixture)
+        self.assertIn("CAPHOST_REPLAY_OK", fixture)
+
+        _, frontmatter, _ = skill.split("---", 2)
+        version = tuple(
+            int(part)
+            for part in yaml.safe_load(frontmatter)["metadata"]["version"].split(".")
+        )
+        self.assertGreaterEqual(version, (2, 0, 0))
+
+    def test_rest_long_running_operations_reach_terminal_success(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        skill = SKILL.read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(
+            fixture.count("time.monotonic() + 900"),
+            2,
+        )
+        for required in (
+            'location = response.headers.get("Location")',
+            'retry_after = int(response.headers.get("Retry-After", "10"))',
+            "caphost_delete_FAIL missing_location",
+            "caphost_delete_FAIL initial_status=404",
+            "caphost_delete_FAIL lro_status=404",
+            'if lro_status == "Succeeded":',
+            "caphost_delete_lro_succeeded",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, fixture)
+        self.assertGreaterEqual(
+            fixture.count('if state in ("Failed", "Canceled"):'),
+            2,
+        )
+        self.assertIn(
+            "PUT 201 uses `Azure-AsyncOperation`",
+            skill,
+        )
+        self.assertIn(
+            "DELETE 202 uses `Location` and `Retry-After`",
+            skill,
         )
 
 
