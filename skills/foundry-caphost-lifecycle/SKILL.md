@@ -17,7 +17,7 @@ description: >
   spoke onboarding (use citadel-spoke-onboarding), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.0.5"
+  version: "2.0.0"
 ---
 
 # Foundry Capability Host Lifecycle — Day-2 Operations
@@ -97,7 +97,7 @@ Read these once. They drive every Day-2 decision below.
 | **One caphost per scope** | Each account, each project: only one active capability host. Second host with different name → 409 Conflict. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **No updates** | There is no PATCH support. Configuration changes require DELETE + recreate. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **Account caphost prerequisite** | You cannot create a project capability host unless an account-level one already exists. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
-| **Idempotency: same-name + same-config** | Returns 200 OK with the existing resource. Safe to retry. | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
+| **Idempotency: same-name + same-config** | Learn documents 200; the GA schema permits 200/201 and live replay can return 201. Verify the same resource identity and `Succeeded` state. | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **Idempotency: same-name + different config** | Returns 400 Bad Request. No silent in-place modification. | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **Idempotency: different name at occupied scope** | Returns 409 Conflict (one-per-scope). | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **Concurrent operation in flight** | Returns 409 `currently in non creating, retry after its complete`. Retry with backoff. | [MS Learn § Concurrent operations](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
@@ -146,17 +146,19 @@ az rest --method get \
 
 ### 5.3 Poll an in-flight operation
 
-Capability-host PUT/DELETE return an `Azure-AsyncOperation` header with a URL of
-this shape:
+The GA 2025-06-01 Swagger uses different LRO contracts by verb:
 
-```
-https://management.azure.com/subscriptions/{subId}/providers/Microsoft.CognitiveServices/locations/{location}/operationResults/{operationId}?api-version=2025-06-01
-```
+- PUT 201 uses `Azure-AsyncOperation`; its declared final state is the
+  original capability-host URI.
+- DELETE 202 uses `Location` and `Retry-After`; its declared final state is
+  the `Location` response.
 
-Poll it (5-second interval, 15-minute budget — covers documented p99) until
-`properties.status` is `Succeeded` or `Failed`. **Do not issue a parallel PUT or
-DELETE on the same scope while an operation is `Running`** — you'll get the
-`currently in non creating, retry after its complete` 409 (§ 6).
+For PUT, poll the original URI for up to 15 minutes until
+`properties.provisioningState` is `Succeeded` or `Failed`. For DELETE,
+poll `Location`, honor `Retry-After`, require terminal `Succeeded`, and
+then verify the original URI returns 404. **Do not issue a parallel PUT
+or DELETE on the same scope while an operation is `Running`** — you'll
+get the `currently in non creating, retry after its complete` 409 (§ 6).
 
 ## 6. Create: idempotent PUT pattern with retry
 
@@ -202,55 +204,35 @@ host required properties". Wrong-name → 400. Resource IDs in place of names �
 Three distinct 409 responses, three different handling rules (per MS Learn
 § "HTTP 409 Conflict errors"):
 
-```python
-# Python pseudocode using azure-mgmt-cognitiveservices
-from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
-from azure.core.exceptions import HttpResponseError
-import time
-
-def put_caphost_idempotent(client, rg, acct, name, body, *, max_retries=6, backoff_s=30):
-    """Idempotent caphost PUT with 409-class-aware retry.
-
-    Per MS Learn:
-      - 200 on same-name + same-config (returns existing)
-      - 400 on same-name + different config (no PATCH; delete + recreate)
-      - 409 'existing Capability Host with name <other>' — different name at occupied scope
-      - 409 'currently in non creating' — concurrent op; retry with backoff
-    """
-    for attempt in range(max_retries):
-        try:
-            poller = client.capability_hosts.begin_create_or_update(
-                resource_group_name=rg,
-                account_name=acct,
-                capability_host_name=name,
-                capability_host=body,
-            )
-            return poller.result()
-        except HttpResponseError as e:
-            msg = (e.message or "").lower()
-            if "currently in non creating" in msg:
-                # Concurrent-op 409 — wait + retry
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"caphost {name} still busy after {max_retries} retries") from e
-                time.sleep(backoff_s)
-                continue
-            if "existing capability host with name" in msg:
-                # Different-name 409 — this is policy, not transient. Caller decides.
-                raise
-            if "differs from the current configuration" in msg or "bad request" in msg:
-                # 400 same-name + different-config — caller must delete first
-                raise
-            raise
+```bash
+for attempt in $(seq 1 6); do
+  if result=$(az rest --method put \
+      --url "https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCT}/capabilityHosts/${NAME}?api-version=2025-06-01" \
+      --body '{"properties":{"capabilityHostKind":"Agents"}}' 2>caphost.err); then
+    printf '%s\n' "$result"
+    break
+  fi
+  if grep -qi "currently in non creating" caphost.err && [[ "$attempt" -lt 6 ]]; then
+    sleep 30
+    continue
+  fi
+  cat caphost.err >&2
+  exit 1
+done
 ```
 
-### 6.4 What a 200-on-replay looks like
+SDK support for capability host management isn't available. Use REST
+directly; `azure-mgmt-cognitiveservices` 14.1.0 contains resource models
+but no capability-host operation group.
 
-If you `PUT` the same name with the same body twice, the second call returns
-**200 OK** with the existing resource per MS Learn § "Understand idempotent
-behavior". This is what makes the retry above safe: if a transient network blip
-hides the success of attempt N, attempt N+1 returns 200 against the now-existing
-resource. Field-verified in the catalog fixture
-(`skills/foundry-caphost-lifecycle/test-fixture/consumer_prompt.md` step 4).
+### 6.4 What a replay looks like
+
+Microsoft Learn says a same-name, same-body replay returns **200 OK**.
+The published GA Swagger permits both 200 and 201, and live validation
+observed 201 on repeated identical PUTs. Treat 200 or 201 as transport
+success, then GET the resource and require the same resource ID, name,
+configuration, and `Succeeded` state. Do not interpret 201 alone as proof
+that a second resource was created.
 
 ## 7. Delete: caphost-only (lightweight, keeps account)
 
@@ -274,7 +256,7 @@ DELETE https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/pr
 (For project scope, insert `projects/{projectName}/` between `accounts/{accountName}/`
 and `capabilityHosts/`.)
 
-The response is 202 with an `Azure-AsyncOperation` header. Poll per § 5.3 until
+The response is 202 with `Location` and `Retry-After` headers. Poll per § 5.3 until
 `Succeeded` (typical: 30s-2min; p99 ~5min). Then verify with GET — expect 404.
 
 ```bash
@@ -485,7 +467,7 @@ These are mistakes the catalog has paid for in the field. Do not repeat them.
 | Running `az cognitiveservices account purge` without first running `list-deleted` to confirm presence | Purge of a non-existent soft-deleted account returns a misleading 404. Always confirm soft-delete first (§ 8.2). |
 | Trying to `recover` an account that's already past its 48h `scheduledPurgeDate` | Returns 404 — the account is permanently gone, just not yet swept from the index. Treat as purged. |
 | Reading the capability host state without first checking the parent account's `provisioningState` | If the account itself is `Failed` or `Deleting`, every caphost call returns a confusing 500/404 cascade. Inspect the account first. |
-| Assuming `az` CLI works for capability host CRUD | There is no `az cognitiveservices account capability-host` group as of 2025-06-01. Use `az rest` or the `azure-mgmt-cognitiveservices` SDK. |
+| Assuming an SDK/CLI operation group exists for capability host CRUD | Microsoft Learn states SDK support isn't available, and there is no `az cognitiveservices account capability-host` group as of 2025-06-01. Use `az rest`. |
 
 ## 12. Cross-references
 

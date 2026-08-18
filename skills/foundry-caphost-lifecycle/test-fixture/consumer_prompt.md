@@ -64,9 +64,9 @@ race the workflow timeout):**
 **Tooling pre-installed by the workflow** (Pattern 15 — AGENTS.md § 9.7):
 
 - `az` CLI, Python 3, and `pip` are pre-installed by the GHA runner.
-- The Python SDK packages this fixture needs (`azure-mgmt-cognitiveservices`,
-  `azure-identity`) will be `pip install`'d inside Step 1 with the cap
-  windows declared in the skill's pin file.
+- The identity package this fixture needs (`azure-identity`) will be
+  `pip install`'d inside Step 1 with the cap window declared in the
+  skill's pin file. Capability-host management is REST-only.
 
 ---
 
@@ -90,7 +90,7 @@ marker (Step 10) with reason `auth context missing: <var-name>` and stop.
 
 ---
 
-## Step 1 — Resource naming + SDK install
+## Step 1 — Resource naming + identity install
 
 All Azure resources you create MUST carry a short-UUID suffix
 (Pattern 3 / Pattern 15.3) so parallel matrix runs and retries don't
@@ -110,12 +110,11 @@ printf 'export ACCT=%q\nexport RG=%q\nexport LOC=%q\nexport EVIDENCE_FILE=%q\n' 
 mv "${STATE_FILE}.tmp" "$STATE_FILE"
 ```
 
-Install the Python SDK packages the skill uses (the cap windows match
+Install the identity package the skill uses (the cap window matches
 `skills/foundry-caphost-lifecycle/references/upstream-pin.md`):
 
 ```bash
 pip install --quiet --upgrade \
-  "azure-mgmt-cognitiveservices~=14.1.0" \
   "azure-identity~=1.25.3"
 ```
 
@@ -170,10 +169,8 @@ reason `account create returned <status>` and stop.
 
 Per `SKILL.md` § 6.1 the account capability host PUT body for an
 agent-enabled account (with no BYO connections, no `customerSubnet`) is
-the minimal shape. Use the `azure-mgmt-cognitiveservices` SDK — the skill
-documents this as the runnable path because there is no `az
-cognitiveservices account capability-host` command group as of api-version
-2025-06-01 (SKILL.md § 11 anti-pattern).
+the minimal shape. Use the REST API because Microsoft Learn explicitly
+states that SDK support for capability-host management isn't available.
 
 Wrap the PUT call in the skill's **Pattern 23 concurrent-op retry loop**
 (SKILL.md § 6.3): max 6 attempts, 30s backoff, retry ONLY on 409
@@ -182,44 +179,73 @@ Wrap the PUT call in the skill's **Pattern 23 concurrent-op retry loop**
 ```bash
 source /tmp/foundry-caphost-lifecycle-state.env
 python3 - <<'PY'
-import os, sys, time
+import json, os, sys, time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from azure.identity import DefaultAzureCredential
-from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
-from azure.mgmt.cognitiveservices.models import CapabilityHost
-from azure.core.exceptions import HttpResponseError
 
 SUB = os.environ["AZURE_SUBSCRIPTION_ID"]
 RG  = os.environ["RG"]
 ACCT = os.environ["ACCT"]
 NAME = "default"
+URL = (
+    f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{RG}"
+    f"/providers/Microsoft.CognitiveServices/accounts/{ACCT}"
+    f"/capabilityHosts/{NAME}?api-version=2025-06-01"
+)
+CREDENTIAL = DefaultAzureCredential()
 
-client = CognitiveServicesManagementClient(DefaultAzureCredential(), SUB)
-body = CapabilityHost(properties={"capabilityHostKind": "Agents"})
+def request(method, *, body=None):
+    token = CREDENTIAL.get_token("https://management.azure.com/.default").token
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    req = Request(
+        URL,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        data=data,
+    )
+    return urlopen(req, timeout=120)
 
 for attempt in range(6):
     try:
-        poller = client.capability_hosts.begin_create_or_update(
-            resource_group_name=RG, account_name=ACCT,
-            capability_host_name=NAME, capability_host=body,
-        )
-        result = poller.result()
-        state = result.properties.provisioning_state
-        if state != "Succeeded":
-            print(f"caphost_put_FAIL unexpected_state={state}")
-            sys.exit(2)
-        with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
-            evidence.write("CAPHOST_CREATED\n")
-        print(f"caphost_put_state={state}")
-        sys.exit(0)
-    except HttpResponseError as e:
-        msg = (e.message or "").lower()
-        if "currently in non creating" in msg and attempt < 5:
+        with request(
+            "PUT",
+            body={"properties": {"capabilityHostKind": "Agents"}},
+        ) as response:
+            if response.status not in (200, 201):
+                print(f"caphost_put_FAIL status={response.status}")
+                sys.exit(2)
+        break
+    except HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="replace").lower()
+        if exc.code == 409 and "currently in non creating" in message and attempt < 5:
             print(f"caphost_put_retry attempt={attempt} (concurrent op)")
             time.sleep(30)
             continue
-        print(f"caphost_put_FAIL status={e.status_code} msg={e.message}")
+        print(f"caphost_put_FAIL status={exc.code}")
         sys.exit(2)
-sys.exit(3)  # ran out of retries
+else:
+    sys.exit(3)
+
+deadline = time.monotonic() + 900
+while time.monotonic() < deadline:
+    with request("GET") as response:
+        payload = json.load(response)
+    state = payload.get("properties", {}).get("provisioningState")
+    if state == "Succeeded":
+        with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+            evidence.write("CAPHOST_CREATED\n")
+        print("caphost_put_state=Succeeded")
+        sys.exit(0)
+    if state in ("Failed", "Canceled"):
+        print(f"caphost_put_FAIL unexpected_state={state}")
+        sys.exit(2)
+    time.sleep(5)
+print(f"caphost_put_FAIL unexpected_state={state}")
+sys.exit(2)
 PY
 ```
 
@@ -244,16 +270,17 @@ The Bash assertion makes any wrong state, kind, or name a hard failure.
 
 ---
 
-## Step 5 — Idempotent replay: PUT same name + same body → 200 OK
+## Step 5 — Idempotent replay: PUT same name + same body
 
-Per MS Learn (and SKILL.md § 4 Constraints recap), the same-name + same-
-config PUT MUST return the existing resource (200) without re-creating
-anything. Run the same SDK call from Step 3 a second time:
+Microsoft Learn describes a 200 replay, while the GA REST schema permits
+both 200 and 201 and the live provider can return 201 on an identical
+replay. Accept either status, then require the same resource identity and
+`Succeeded` state:
 
 ```bash
 source /tmp/foundry-caphost-lifecycle-state.env
 python3 - <<'PY'
-import json, os, sys
+import json, os, sys, time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from azure.identity import DefaultAzureCredential
@@ -280,6 +307,7 @@ request = Request(
         {"properties": {"capabilityHostKind": "Agents"}}
     ).encode("utf-8"),
 )
+expected_suffix = f"/accounts/{ACCT}/capabilityHosts/default".lower()
 try:
     with urlopen(request, timeout=120) as response:
         status = response.status
@@ -287,20 +315,38 @@ try:
 except HTTPError as exc:
     print(f"caphost_replay_FAIL status={exc.code}")
     sys.exit(2)
-if status != 200:
+if status not in (200, 201):
     print(f"caphost_replay_FAIL status={status}")
     sys.exit(2)
-if payload.get("properties", {}).get("provisioningState") != "Succeeded":
+if not payload.get("id", "").lower().endswith(expected_suffix):
+    print("caphost_replay_FAIL unexpected_resource")
+    sys.exit(2)
+deadline = time.monotonic() + 900
+while time.monotonic() < deadline:
+    get_request = Request(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urlopen(get_request, timeout=120) as response:
+        current = json.load(response)
+    if current.get("properties", {}).get("provisioningState") == "Succeeded":
+        break
+    state = current.get("properties", {}).get("provisioningState")
+    if state in ("Failed", "Canceled"):
+        print(f"caphost_replay_FAIL unexpected_state={state}")
+        sys.exit(2)
+    time.sleep(5)
+else:
     print("caphost_replay_FAIL unexpected_state")
     sys.exit(2)
 with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
-    evidence.write("CAPHOST_REPLAY_200\n")
-print("caphost_replay_status=200")
+    evidence.write("CAPHOST_REPLAY_OK\n")
+print(f"caphost_replay_status={status}")
 PY
 ```
 
-Expected: `caphost_replay_status=200`. The code hard-fails any other HTTP
-status or response state.
+Expected: `caphost_replay_status=200` or `caphost_replay_status=201`.
+The code hard-fails any other status, resource identity, or response state.
 
 ---
 
@@ -313,62 +359,111 @@ Pattern 23 retry on `currently in non creating` 409.
 ```bash
 source /tmp/foundry-caphost-lifecycle-state.env
 python3 - <<'PY'
-import os, sys, time
+import json, os, sys, time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from azure.identity import DefaultAzureCredential
-from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
-from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 
 SUB = os.environ["AZURE_SUBSCRIPTION_ID"]
 RG  = os.environ["RG"]
 ACCT = os.environ["ACCT"]
 NAME = "default"
+URL = (
+    f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{RG}"
+    f"/providers/Microsoft.CognitiveServices/accounts/{ACCT}"
+    f"/capabilityHosts/{NAME}?api-version=2025-06-01"
+)
+CREDENTIAL = DefaultAzureCredential()
 
-client = CognitiveServicesManagementClient(DefaultAzureCredential(), SUB)
+def request(method):
+    token = CREDENTIAL.get_token("https://management.azure.com/.default").token
+    return urlopen(
+        Request(URL, method=method, headers={"Authorization": f"Bearer {token}"}),
+        timeout=120,
+    )
 
+location = None
+retry_after = 10
 for attempt in range(6):
     try:
-        client.capability_hosts.begin_delete(
-            resource_group_name=RG, account_name=ACCT,
-            capability_host_name=NAME,
-        ).result()
+        with request("DELETE") as response:
+            if response.status not in (202, 204):
+                print(f"caphost_delete_FAIL status={response.status}")
+                sys.exit(2)
+            location = response.headers.get("Location")
+            retry_after = int(response.headers.get("Retry-After", "10"))
+            if response.status == 202 and not location:
+                print("caphost_delete_FAIL missing_location")
+                sys.exit(2)
         print("caphost_delete_ok")
         break
-    except ResourceNotFoundError:
-        print("caphost_delete_already_gone")
-        print("caphost_absent_after_delete")
-        with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
-            evidence.write("CAPHOST_DELETED\n")
-        sys.exit(0)
-    except HttpResponseError as e:
-        msg = (e.message or "").lower()
-        if "currently in non creating" in msg and attempt < 5:
+    except HTTPError as exc:
+        if exc.code == 404:
+            print("caphost_delete_FAIL initial_status=404")
+            sys.exit(2)
+        message = exc.read().decode("utf-8", errors="replace").lower()
+        if exc.code == 409 and "currently in non creating" in message and attempt < 5:
             print(f"caphost_delete_retry attempt={attempt}")
             time.sleep(30)
             continue
-        print(f"caphost_delete_FAIL status={e.status_code} msg={e.message}")
+        print(f"caphost_delete_FAIL status={exc.code}")
         sys.exit(2)
 else:
     sys.exit(3)
 
-for attempt in range(12):
+if location:
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        token = CREDENTIAL.get_token(
+            "https://management.azure.com/.default"
+        ).token
+        try:
+            with urlopen(
+                Request(location, headers={"Authorization": f"Bearer {token}"}),
+                timeout=120,
+            ) as response:
+                raw = response.read()
+                payload = json.loads(raw) if raw else {}
+                lro_status = (
+                    payload.get("status")
+                    or payload.get("properties", {}).get("provisioningState")
+                )
+        except HTTPError as exc:
+            if exc.code == 404:
+                print("caphost_delete_FAIL lro_status=404")
+                sys.exit(2)
+            raise
+        if lro_status == "Succeeded":
+            print("caphost_delete_lro_succeeded")
+            break
+        if lro_status in ("Failed", "Canceled"):
+            print(f"caphost_delete_FAIL lro_status={lro_status}")
+            sys.exit(2)
+        time.sleep(retry_after)
+    else:
+        print("caphost_delete_FAIL lro_timeout")
+        sys.exit(2)
+else:
+    print("caphost_delete_lro_succeeded")
+
+deadline = time.monotonic() + 300
+while time.monotonic() < deadline:
     try:
-        client.capability_hosts.get(
-          resource_group_name=RG,
-          account_name=ACCT,
-          capability_host_name=NAME,
-        )
-    except ResourceNotFoundError:
-        print("caphost_absent_after_delete")
-        with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
-            evidence.write("CAPHOST_DELETED\n")
-        sys.exit(0)
+        request("GET").close()
+    except HTTPError as exc:
+        if exc.code == 404:
+            print("caphost_absent_after_delete")
+            with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+                evidence.write("CAPHOST_DELETED\n")
+            sys.exit(0)
+        raise
     time.sleep(5)
 print("caphost_delete_FAIL resource_still_exists")
 sys.exit(2)
 PY
 ```
 
-Expected: both `caphost_delete_ok` (or `caphost_delete_already_gone`) and
+Expected: both `caphost_delete_ok` and
 `caphost_absent_after_delete`. Failure to observe absence within 60 seconds
 is a hard failure.
 
@@ -452,8 +547,8 @@ reply is NOT graded.
 - Account created and reached `provisioningState=Succeeded`
 - Account caphost PUT returned `Succeeded` (Step 3)
 - Caphost GET returned `Succeeded` + `kind=Agents` + `name=default` (Step 4)
-- Idempotent replay PUT returned HTTP 200 + `Succeeded` (Step 5)
-- Caphost DELETE returned ok (or `already_gone`) and post-delete GET was 404 (Step 6)
+- Idempotent replay PUT returned HTTP 200/201 + same identity + `Succeeded` (Step 5)
+- Caphost DELETE returned 202/204, reached terminal success, and post-delete GET was 404 (Step 6)
 - Account entered the soft-delete index (Steps 7-8)
 - Account purge succeeded and the account left the soft-delete index (Step 9)
 
@@ -499,7 +594,7 @@ EXPECTED_EVIDENCE=$(printf '%s\n' \
   ACCOUNT_CREATED \
   CAPHOST_CREATED \
   CAPHOST_GET_OK \
-  CAPHOST_REPLAY_200 \
+  CAPHOST_REPLAY_OK \
   CAPHOST_DELETED \
   ACCOUNT_SOFT_DELETED \
   ACCOUNT_PURGED)
@@ -522,7 +617,7 @@ fi
 - Step 3 caphost PUT returned anything other than `Succeeded` after the
   retry loop completed
 - Step 4 caphost GET returned a non-`Succeeded` state or wrong shape
-- Step 5 idempotent replay was rejected (any 400, any non-200/`Succeeded`)
+- Step 5 idempotent replay was rejected (any 400, non-200/201, changed identity, or non-`Succeeded`)
 - Step 6 caphost DELETE returned a non-retryable error
 - Step 8 did not observe the account in the soft-delete index
 - Step 9 purge failed or the account remained in the soft-delete index
