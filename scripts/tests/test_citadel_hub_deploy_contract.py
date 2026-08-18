@@ -319,10 +319,14 @@ class CitadelHubDeployContractTests(unittest.TestCase):
             "azd env get-value AZURE_CLIENT_ID --no-prompt",
             "azd env get-value AZURE_AUDIENCE --no-prompt",
             "azd env get-value ENTRA_CLIENT_SECRET --no-prompt",
+            'ACCESS_CONTRACT_SUBSCRIPTION_ID="<jwt-enabled-subscription-id>"',
+            '"jwtAuth": { "enabled": true }',
             "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token",
             "grant_type=client_credentials",
             "scope=$AUDIENCE/.default",
             "jq -er '.access_token'",
+            "MISSING_TOKEN_STATUS",
+            '[ "$MISSING_TOKEN_STATUS" = "401" ]',
             "set +x",
             "unset CLIENT_SECRET",
             "unset TOKEN KEY",
@@ -339,6 +343,11 @@ class CitadelHubDeployContractTests(unittest.TestCase):
         self.assertNotIn('echo "$TOKEN"', smoke)
         self.assertNotIn('echo "$CLIENT_SECRET"', smoke)
         self.assertNotIn("set -x", smoke)
+        self.assertNotIn("/subscriptions/master/listSecrets", smoke)
+        self.assertIn(
+            "/subscriptions/$ACCESS_CONTRACT_SUBSCRIPTION_ID/listSecrets",
+            smoke,
+        )
 
     def test_powershell_quickstart_fails_on_native_command_errors(self) -> None:
         self.assertIn('$ErrorActionPreference = "Stop"', self.skill)

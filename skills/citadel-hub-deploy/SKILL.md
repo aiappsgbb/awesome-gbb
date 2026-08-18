@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.3"
+  version: "1.1.4"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -619,11 +619,19 @@ azd env-var map.
 
 ### Quick smoke (no Jupyter)
 
-If you don't have a Python venv handy, this curl flow proves both configured
-gateway controls work: the APIM subscription key and Microsoft Entra client
-credentials. All bundled profiles set `AZURE_ENTRA_AUTH=true`, so a
-subscription key alone is not a valid smoke. Keep shell tracing disabled:
-the client secret, bearer token, and subscription key must not be printed.
+This enforced-auth smoke runs **after** `citadel-spoke-onboarding`. The hub
+deployment creates no per-team Access Contract, and the APIM master
+subscription does not set the product-level `jwtRequired=true` variable.
+Create an Access Contract whose request contains
+`"jwtAuth": { "enabled": true }`, grant it access to the tested API/model,
+and use that APIM subscription's resource name below. The smoke first proves
+that omitting the bearer token returns 401, then proves the valid
+client-credentials token plus subscription key succeeds.
+
+All bundled profiles set `AZURE_ENTRA_AUTH=true`, but that only makes the
+gateway JWT-ready; enforcement remains per Access Contract. Keep shell
+tracing disabled: the client secret, bearer token, and subscription key must
+not be printed.
 
 ```bash
 set -euo pipefail
@@ -638,12 +646,26 @@ CLIENT_SECRET="$(azd env get-value ENTRA_CLIENT_SECRET --no-prompt)"
 RESOURCE_GROUP="$(azd env get-value AZURE_RESOURCE_GROUP --no-prompt)"
 APIM_NAME="$(azd env get-value APIM_NAME --no-prompt)"
 GW="$(azd env get-value APIM_GATEWAY_URL --no-prompt)"
+ACCESS_CONTRACT_SUBSCRIPTION_ID="<jwt-enabled-subscription-id>"
 
-# Get the master subscription key (DEMO ONLY — don't use master in prod;
-# create a per-team Access Contract via citadel-spoke-onboarding instead)
+# Get the key for the JWT-enabled Access Contract subscription.
 KEY=$(az rest --method post \
-  --url "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ApiManagement/service/$APIM_NAME/subscriptions/master/listSecrets?api-version=2022-08-01" \
+  --url "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ApiManagement/service/$APIM_NAME/subscriptions/$ACCESS_CONTRACT_SUBSCRIPTION_ID/listSecrets?api-version=2022-08-01" \
   --query primaryKey -o tsv)
+
+# Prove this product requires JWT. Do not use --fail-with-body here: 401 is
+# the expected response, and the response body is intentionally discarded.
+MISSING_TOKEN_STATUS="$(
+  curl --silent --show-error \
+    --output /dev/null \
+    --write-out "%{http_code}" \
+    "$GW/models/models" \
+    -H "api-key: $KEY"
+)"
+[ "$MISSING_TOKEN_STATUS" = "401" ] || {
+  echo "Expected JWT-enabled Access Contract to reject a missing token" >&2
+  exit 1
+}
 
 # Acquire the Entra service-to-service token for the configured audience.
 # jq -e makes a missing access_token fail without printing the response or
@@ -848,6 +870,10 @@ The following observations were captured during the historical audit pass on
 
 ## 13. Changelog
 
+- **1.1.4** (2026-08) — Make the dual-auth smoke use a JWT-enabled Access
+  Contract subscription instead of the APIM master subscription, and prove
+  enforcement with an expected 401 when the bearer token is omitted before
+  testing the valid token path.
 - **1.1.3** (2026-08) — Require non-interactive exact GUID parity between
   the isolated Azure CLI context and active azd environment. Update the APIM
   smoke to acquire an Entra client-credentials token, send both required
