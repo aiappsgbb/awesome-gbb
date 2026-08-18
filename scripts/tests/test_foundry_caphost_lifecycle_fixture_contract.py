@@ -280,6 +280,32 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
             skill,
         )
 
+    def test_replay_identity_comes_from_terminal_get(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        replay = fixture.split(
+            "## Step 5 — Idempotent replay",
+            maxsplit=1,
+        )[1].split("## Step 6 — DELETE", maxsplit=1)[0]
+
+        self.assertIn(
+            'current.get("id", "").lower().endswith(expected_suffix)',
+            fixture,
+        )
+        self.assertNotIn(
+            'payload.get("id", "").lower().endswith(expected_suffix)',
+            fixture,
+        )
+        self.assertLess(
+            replay.index('current.get("id", "").lower().endswith(expected_suffix)'),
+            replay.index("break"),
+        )
+
+    def test_account_delete_and_purge_use_documented_budgets(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+
+        self.assertIn("deadline=$((SECONDS + 300))", fixture)
+        self.assertIn("deadline=$((SECONDS + 600))", fixture)
+
 
 if __name__ == "__main__":
     unittest.main()
