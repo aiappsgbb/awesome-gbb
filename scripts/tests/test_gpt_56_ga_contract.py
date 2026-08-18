@@ -37,7 +37,7 @@ class Gpt56GaContractTests(unittest.TestCase):
 
     def test_skill_version_is_current(self) -> None:
         frontmatter = yaml.safe_load(self.skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "2.1.1")
+        self.assertEqual(frontmatter["metadata"]["version"], "2.1.2")
         self.assertLessEqual(len(frontmatter["description"]), 1024)
 
     def test_version_lookup_has_only_exact_gpt56_ids(self) -> None:
