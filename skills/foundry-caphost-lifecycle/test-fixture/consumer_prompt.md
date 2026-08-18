@@ -318,9 +318,6 @@ except HTTPError as exc:
 if status not in (200, 201):
     print(f"caphost_replay_FAIL status={status}")
     sys.exit(2)
-if not payload.get("id", "").lower().endswith(expected_suffix):
-    print("caphost_replay_FAIL unexpected_resource")
-    sys.exit(2)
 deadline = time.monotonic() + 900
 while time.monotonic() < deadline:
     get_request = Request(
@@ -329,9 +326,12 @@ while time.monotonic() < deadline:
     )
     with urlopen(get_request, timeout=120) as response:
         current = json.load(response)
-    if current.get("properties", {}).get("provisioningState") == "Succeeded":
-        break
     state = current.get("properties", {}).get("provisioningState")
+    if state == "Succeeded":
+        if not current.get("id", "").lower().endswith(expected_suffix):
+            print("caphost_replay_FAIL unexpected_resource")
+            sys.exit(2)
+        break
     if state in ("Failed", "Canceled"):
         print(f"caphost_replay_FAIL unexpected_state={state}")
         sys.exit(2)
@@ -464,7 +464,7 @@ PY
 ```
 
 Expected: both `caphost_delete_ok` and
-`caphost_absent_after_delete`. Failure to observe absence within 60 seconds
+`caphost_absent_after_delete`. Failure to observe absence within five minutes
 is a hard failure.
 
 Steps 1-9 are the **hard PASS contract** for this full lifecycle fixture.
@@ -485,12 +485,13 @@ deletion is part of this skill's core contract.
 
 ## Step 8 — `list-deleted` should show the account is in the soft-delete index
 
-There can be a brief consistency lag (5-60s) between the delete return
-and the soft-delete index reflecting it. Poll up to 90 seconds:
+There can be a consistency lag between the delete return and the
+soft-delete index reflecting it. Poll up to five minutes:
 
 ```bash
 source /tmp/foundry-caphost-lifecycle-state.env
-for i in $(seq 1 18); do
+deadline=$((SECONDS + 300))
+while (( SECONDS < deadline )); do
   if ! FOUND=$(az cognitiveservices account list-deleted \
       --query "[?name=='${ACCT}'].name | [0]" -o tsv 2>/dev/null); then
     exit 1
@@ -515,11 +516,12 @@ az cognitiveservices account purge -l "$LOC" -n "$ACCT" -g "$RG"
 ```
 
 Per SKILL.md § 8.5 the purge itself takes 1-3 min typical / up to 10 min
-p99. Then the soft-delete index updates within seconds:
+p99. Poll the index for the full 10-minute budget:
 
 ```bash
 source /tmp/foundry-caphost-lifecycle-state.env
-for i in $(seq 1 18); do
+deadline=$((SECONDS + 600))
+while (( SECONDS < deadline )); do
   if ! STILL=$(az cognitiveservices account list-deleted \
       --query "[?name=='${ACCT}'].name | [0]" -o tsv 2>/dev/null); then
     exit 1
@@ -568,7 +570,8 @@ cleanup_failed_account() {
   if [[ "$active" == "$ACCT" ]]; then
     az cognitiveservices account delete -n "$ACCT" -g "$RG" || return 1
   fi
-  for _ in $(seq 1 18); do
+  deadline=$((SECONDS + 300))
+  while (( SECONDS < deadline )); do
     if ! found=$(az cognitiveservices account list-deleted \
         --query "[?name=='${ACCT}'].name | [0]" -o tsv 2>/dev/null); then
       return 1
