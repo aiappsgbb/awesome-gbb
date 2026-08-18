@@ -144,9 +144,7 @@ class TestAzureBackupReadinessProbe(unittest.TestCase):
         manifest = Path(result["manifest_path"])
         self.assertTrue(manifest.exists())
         self.assertEqual(manifest.parent, Path(self._outdir.name).resolve())
-        self.assertEqual(
-            json.loads(manifest.read_text())["finding_id"],
-            result["finding_id"])
+        self.assertEqual(json.loads(manifest.read_text()), result)
 
     def test_never_raises_on_partial_denial(self):
         """RSV list 403 but Backup Vault listing succeeds → probes other surface."""
