@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.4"
+  version: "1.1.5"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -622,11 +622,39 @@ azd env-var map.
 This enforced-auth smoke runs **after** `citadel-spoke-onboarding`. The hub
 deployment creates no per-team Access Contract, and the APIM master
 subscription does not set the product-level `jwtRequired=true` variable.
-Create an Access Contract whose request contains
-`"jwtAuth": { "enabled": true }`, grant it access to the tested API/model,
-and use that APIM subscription's resource name below. The smoke first proves
-that omitting the bearer token returns 401, then proves the valid
-client-credentials token plus subscription key succeeds.
+For the sibling skill's manual Bicep path, create
+`jwt-required-policy.xml`:
+
+```xml
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="jwtRequired" value="true" />
+  </inbound>
+  <backend><base /></backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>
+```
+
+Then bind it to the LLM service item in the Access Contract
+`main.bicepparam`:
+
+```bicep
+services: [
+  {
+    code: 'LLM'
+    endpointSecretName: 'MYAPP-LLM-ENDPOINT'
+    apiKeySecretName: 'MYAPP-LLM-KEY'
+    policyXml: loadTextContent('jwt-required-policy.xml')
+  }
+]
+```
+
+Deploy that contract with `citadel-spoke-onboarding`, ensure it grants access
+to the tested model, and use its APIM subscription resource name below. The
+smoke first proves that omitting the bearer token returns 401, then proves
+the valid client-credentials token plus subscription key succeeds.
 
 All bundled profiles set `AZURE_ENTRA_AUTH=true`, but that only makes the
 gateway JWT-ready; enforcement remains per Access Contract. Keep shell
@@ -870,6 +898,9 @@ The following observations were captured during the historical audit pass on
 
 ## 13. Changelog
 
+- **1.1.5** (2026-08) — Correct the enforced-auth smoke prerequisite to
+  match `citadel-spoke-onboarding`'s manual Bicep path: bind a custom product
+  `policyXml` that sets `jwtRequired=true`.
 - **1.1.4** (2026-08) — Make the dual-auth smoke use a JWT-enabled Access
   Contract subscription instead of the APIM master subscription, and prove
   enforcement with an expected 401 when the bearer token is omitted before
