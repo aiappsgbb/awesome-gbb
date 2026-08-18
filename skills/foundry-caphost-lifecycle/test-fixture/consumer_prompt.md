@@ -60,6 +60,9 @@ race the workflow timeout):**
   insufficient: <call-name> returned <status>`. Do NOT try to grant a
   fresh role yourself — that races propagation against the workflow
   timeout (Pattern 7 in AGENTS.md § 9.7).
+- The same UAMI holds **Awesome GBB Cognitive Account Purger**, a custom
+  least-privilege role on the soft-deleted account scope at subscription
+  level. It grants only deleted-account read and purge actions.
 
 **Tooling pre-installed by the workflow** (Pattern 15 — AGENTS.md § 9.7):
 
@@ -412,6 +415,7 @@ else:
     sys.exit(3)
 
 if location:
+    lro_gone = False
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         token = CREDENTIAL.get_token(
@@ -430,11 +434,11 @@ if location:
                 )
         except HTTPError as exc:
             if exc.code == 404:
-                print("caphost_delete_FAIL lro_status=404")
-                sys.exit(2)
+                lro_status = "Gone"
+                lro_gone = True
+                break
             raise
         if lro_status == "Succeeded":
-            print("caphost_delete_lro_succeeded")
             break
         if lro_status in ("Failed", "Canceled"):
             print(f"caphost_delete_FAIL lro_status={lro_status}")
@@ -443,9 +447,8 @@ if location:
     else:
         print("caphost_delete_FAIL lro_timeout")
         sys.exit(2)
-else:
-    print("caphost_delete_lro_succeeded")
-
+    if lro_status == "Gone":
+        print("caphost_delete_lro_gone_verify_original")
 deadline = time.monotonic() + 300
 while time.monotonic() < deadline:
     try:
@@ -453,6 +456,7 @@ while time.monotonic() < deadline:
     except HTTPError as exc:
         if exc.code == 404:
             print("caphost_absent_after_delete")
+            print("caphost_delete_lro_succeeded")
             with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
                 evidence.write("CAPHOST_DELETED\n")
             sys.exit(0)

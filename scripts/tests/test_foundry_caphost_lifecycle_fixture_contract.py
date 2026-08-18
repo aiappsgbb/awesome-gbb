@@ -261,7 +261,7 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
             'retry_after = int(response.headers.get("Retry-After", "10"))',
             "caphost_delete_FAIL missing_location",
             "caphost_delete_FAIL initial_status=404",
-            "caphost_delete_FAIL lro_status=404",
+            'lro_status = "Gone"',
             'if lro_status == "Succeeded":',
             "caphost_delete_lro_succeeded",
         ):
@@ -278,6 +278,33 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
         self.assertIn(
             "DELETE 202 uses `Location` and `Retry-After`",
             skill,
+        )
+
+    def test_delete_location_404_requires_original_resource_404(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        delete = fixture.split(
+            "## Step 6 — DELETE",
+            maxsplit=1,
+        )[1].split(
+            "## Step 7 — Soft-delete",
+            maxsplit=1,
+        )[0]
+
+        self.assertIn("lro_gone = True", delete)
+        self.assertIn('if lro_status == "Gone":', delete)
+        self.assertLess(
+            delete.index("caphost_absent_after_delete"),
+            delete.index("caphost_delete_lro_succeeded"),
+        )
+
+    def test_fixture_documents_pregranted_purge_role(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        fixture_flat = " ".join(fixture.split())
+
+        self.assertIn("Awesome GBB Cognitive Account Purger", fixture)
+        self.assertIn(
+            "soft-deleted account scope at subscription level",
+            fixture_flat,
         )
 
     def test_replay_identity_comes_from_terminal_get(self) -> None:
