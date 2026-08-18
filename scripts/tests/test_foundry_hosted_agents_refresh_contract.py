@@ -187,6 +187,23 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         calls = re.findall(r'^require_canonical_dependency "([^"]+)"$', self.fixture, re.MULTILINE)
         self.assertEqual(calls, list(required))
 
+    def test_fixture_installs_complete_ga_sdk_probe_stack_upfront(self) -> None:
+        install = re.search(
+            r"/tmp/foundry-hosted-agents-venv/bin/pip install --quiet \\\n"
+            r"(?P<requirements>(?:  \"[^\"]+\"(?: \\\n|\n))+)",
+            self.fixture,
+        )
+        self.assertIsNotNone(install, "GA SDK install command not found")
+        requirements = re.findall(r'"([^"]+)"', install.group("requirements"))
+        self.assertEqual(
+            requirements,
+            [
+                "azure-ai-projects~=2.3.0",
+                "azure-identity~=1.25.3",
+                "httpx~=0.28.1",
+            ],
+        )
+
     def _run_dependency_guard(
         self, pyproject: str, dependency: str
     ) -> tuple[subprocess.CompletedProcess[str], str | None]:

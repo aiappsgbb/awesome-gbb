@@ -267,13 +267,15 @@ Write the matching FAIL marker and stop.
 
 ## Step 3 - GA SDK hard checks (deterministic, no preview surfaces)
 
-Create an isolated virtual environment and install the bounded stable stack:
+Create an isolated virtual environment and install the complete bounded GA SDK
+probe stack, including its direct HTTP transport:
 
 ```bash
 python3 -m venv /tmp/foundry-hosted-agents-venv
 /tmp/foundry-hosted-agents-venv/bin/pip install --quiet \
   "azure-ai-projects~=2.3.0" \
-  "azure-identity~=1.25.3"
+  "azure-identity~=1.25.3" \
+  "httpx~=0.28.1"
 ```
 
 Use a Bash heredoc to write the following program to
