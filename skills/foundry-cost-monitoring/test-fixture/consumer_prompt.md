@@ -6,14 +6,17 @@ You are a FinOps engineer on a customer team. You just installed the
 subscription, Application Insights workspace, and the public Azure
 Retail Prices API.
 
-**This is an EXECUTION smoke, not a catalog inspection.** You MUST run
-every Bash code block below in order. Do NOT inspect repo files, do NOT
-run `validate-skills.py`, do NOT rebuild docs, do NOT `git status` —
-those are catalog-author concerns, not consumer-smoke concerns. Your only
-acceptable terminal state is a Bash tool call that writes a marker file
-to `/tmp/foundry-cost-monitoring-smoke-result` (Step 5). If you find
-yourself reading `skill-deps.yml`, `upstream-pin.md`, or anything under
-`docs/`, you are off-script — stop and execute Step 0.
+**This is a self-contained EXECUTION smoke, not a catalog inspection.**
+Run each applicable Bash code block only when its surrounding instructions
+apply. Execute Steps 0-4 in order, then run exactly one Step 5 marker block.
+Do NOT inspect repository files, run `validate-skills.py`, rebuild docs, or run
+`git status` — those are catalog-author concerns, not consumer-smoke concerns.
+Do NOT create or modify tracked repository files. Do NOT open, read, view, or
+`cat` SKILL.md; this prompt contains the complete execution contract. Your only
+acceptable terminal state is a Bash tool call that writes a marker file to
+`/tmp/foundry-cost-monitoring-smoke-result` (Step 5). If you find yourself
+reading `skill-deps.yml`, `upstream-pin.md`, or anything under `docs/`, you are
+off-script — stop and execute Step 0.
 
 **CRITICAL — never invoke `copilot` recursively from a Bash tool.** You
 ARE the running Copilot CLI process. Do NOT run `copilot -p ...`,
@@ -28,10 +31,6 @@ retry classifier (AGENTS.md § 9.7 Pattern 19 addendum). The workflow
 ALREADY captures your output via the outer `tee` — your job is to
 EXECUTE Steps 0-5 directly in Bash tool calls, not to "run the smoke".
 
-Do whatever the skill tells you to do. Do NOT improvise from
-training-data knowledge of Cost Management or KQL — read the skill's
-`SKILL.md` first, and follow its documented contract.
-
 This fixture is **read-only**: it does NOT create any Azure resources,
 does NOT deploy any infrastructure, and does NOT invoke any models.
 
@@ -39,27 +38,20 @@ does NOT deploy any infrastructure, and does NOT invoke any models.
 
 ## Step −1 — Acknowledge skill contract (mandatory FIRST action)
 
-Before Step 0, run this echo as a Bash tool call. The grep on
-`skills/foundry-cost-monitoring/` in the output is what the workflow's
-post-hoc audit step grades on as "agent loaded the skill", and the
-output is what your audit trail proves. Do NOT use the `view` tool on
-SKILL.md — that file is ~23KB and the chunked reads inflate per-turn
-context past our gpt-5.4-mini deployment's per-minute TPM ceiling
-(AGENTS.md § 9.7 Pattern 19 — CAPI 429 root cause). The fixture below
-is fully self-contained and does NOT require SKILL.md to be loaded
-into context; the steps are explicit Bash code blocks.
+Your first action must be a separate Bash tool call containing only the
+command below. Do not combine it with planning, auth checks, or any later
+step. Its standalone output is the workflow's transcript-visible audit
+breadcrumb. Do NOT use the `view` tool on SKILL.md — that file is ~23KB and
+the chunked reads inflate per-turn context past our gpt-5.4-mini deployment's
+per-minute TPM ceiling (AGENTS.md § 9.7 Pattern 19 — CAPI 429 root cause).
+The fixture below is fully self-contained and does NOT require SKILL.md to be
+loaded into context; the steps are explicit Bash code blocks.
 
 ```bash
-echo "Loading skill contract: skills/foundry-cost-monitoring/SKILL.md (version 1.0.x)"
-echo "Fixture path:           skills/foundry-cost-monitoring/test-fixture/consumer_prompt.md"
-echo "Audit grade evidence:   present"
+echo "Executing consumer smoke for skills/foundry-cost-monitoring/SKILL.md"
 ```
 
-Then proceed to Step 0. Do NOT view, read, or `cat` SKILL.md — its
-size will trigger the CAPI 429 path documented above and the leg will
-fail. If the audit step rejects this run despite the echo above, the
-audit regex needs to be widened, but that is a workflow change and
-out of scope for this fixture.
+Then proceed to Step 0 without inspecting the repository.
 
 ---
 
