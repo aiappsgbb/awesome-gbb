@@ -17,7 +17,7 @@ description: >
   spoke onboarding (use citadel-spoke-onboarding), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.0.2"
+  version: "1.0.5"
 ---
 
 # Foundry Capability Host Lifecycle — Day-2 Operations
@@ -329,7 +329,7 @@ az cognitiveservices account delete \
   -g "$RG"
 
 # Step 2: confirm the account is in the soft-deleted index
-az cognitiveservices account list-deleted -l "$LOC" \
+az cognitiveservices account list-deleted \
   --query "[?name=='${ACCT}'].{name:name, deletionDate:deletionDate, location:location}"
 
 # (Optional, for explicit confirmation by name)
@@ -339,7 +339,7 @@ az cognitiveservices account show-deleted -l "$LOC" -n "$ACCT" -g "$RG"
 az cognitiveservices account purge -l "$LOC" -n "$ACCT" -g "$RG"
 
 # Step 4: confirm the account is no longer in the soft-deleted index
-az cognitiveservices account list-deleted -l "$LOC" \
+az cognitiveservices account list-deleted \
   --query "[?name=='${ACCT}'].name"
 # expect: [] (empty)
 ```
@@ -406,7 +406,7 @@ remove the existing serviceAssociationLink ...'
 The previous Foundry account that bound this subnet still owns the SAL — either
 because:
 
-1. **The account is soft-deleted but not purged.** Most common. `az cognitiveservices account list-deleted -l <loc>` shows the old account; the 48h window is still open.
+1. **The account is soft-deleted but not purged.** Most common. `az cognitiveservices account list-deleted` shows the old account; the 48h window is still open.
 2. **The caphost was deleted but the account was never deleted.** The account
    still exists and still holds the SAL via its hidden Managed Environment.
 3. **Another active Foundry account in the same subscription is bound to the
