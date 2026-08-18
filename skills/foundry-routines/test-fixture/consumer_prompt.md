@@ -1,25 +1,64 @@
-# Customer goal — `foundry-routines` skill smoke
+# Customer goal - `foundry-routines` skill smoke
 
-You are a developer on a customer team. You just installed the `awesome-gbb`
-Copilot CLI plugin and you want to prove that the `foundry-routines` skill
-works end-to-end against your CI Foundry project.
+You are a developer on a customer team. Prove that the `foundry-routines`
+consumer contract works end-to-end against the CI Foundry project.
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of the Azure SDK — read the skill's `SKILL.md` first, and follow
-its documented contract.
+**This is an EXECUTION smoke, not a catalog inspection.** You MUST run every
+Bash code block below in order. Execute each fenced Bash block as its own Bash
+tool call. Do not combine multiple numbered steps into one command. Do NOT
+create an ad-hoc combined smoke harness. Do NOT use shell process substitution.
 
-Do NOT edit any repository file during this smoke. If the live service
-rejects a documented contract, write the FAIL marker with the precise
-reason and stop. Changing the fixture or skill in the runner makes the
-result vacuous.
+Do NOT inspect repo files, do NOT run `validate-skills.py`, do NOT rebuild docs,
+and do NOT run `git status`. This prompt is self-contained. Do NOT read, view,
+grep, or glob `SKILL.md`, `upstream-pin.md`, workflow files, or unrelated
+repository files. Do NOT create or modify tracked repository files. Do NOT
+write a session plan. Do NOT create scratch scripts, wrappers, or planning
+files. Do NOT edit any repository file. Do NOT edit the fixture or skill.
+Execute Steps -1 through 8 directly.
+If the live service rejects this documented contract, write the FAIL marker;
+do not modify the repository to make the smoke pass.
+
+Your only acceptable terminal state is a Bash tool call that writes the marker
+file to `/tmp/foundry-routines-smoke-result`.
+
+**CRITICAL - never invoke `copilot` recursively from a Bash tool.** You ARE the
+running Copilot CLI process. Do NOT run `copilot -p ...`. Do NOT run `copilot --version`.
+Do NOT install Copilot or invoke any other `copilot ...` command.
+The workflow already captures your output through its outer `tee`; your job is
+to execute the numbered Bash blocks directly.
 
 ---
 
-## Step 0 — Auth context (show, do not assert)
+## Step -1 - Acknowledge skill contract (mandatory FIRST action)
 
-Print the auth context for the run log. Do NOT gate flow on any of these
-checks — `azure/login@v2` already validated the credentials upstream
-(AGENTS.md § 9.7 Patterns 11 and 17 — show, don't assert).
+Your first action must be a separate Bash tool call containing only this
+command. Do not combine it with Step 0 or any later work.
+
+```bash
+echo "Executing consumer smoke for skills/foundry-routines/SKILL.md"
+```
+
+---
+
+## Environment available to your run
+
+The workflow has pre-provisioned shared CI infrastructure. You consume it; do
+not create or modify the project, model deployment, identities, or RBAC.
+
+- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` - populated by
+  `azure/login@v2` OIDC upstream.
+- `FOUNDRY_PROJECT_ENDPOINT` - the existing CI Foundry project endpoint.
+- `FOUNDRY_MODEL_DEPLOYMENT` - the existing model deployment used by the
+  temporary prompt agent.
+- `az`, Python 3, and `pip` are already installed. Do not hunt for or install
+  CLI tooling.
+
+---
+
+## Step 0 - Auth context (show, do not assert)
+
+Print the auth context for the run log. Do not gate flow on the Azure CLI token
+cache; Copilot CLI subprocesses do not always inherit it.
 
 ```bash
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
@@ -27,260 +66,291 @@ echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
 echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
 echo "FOUNDRY_MODEL_DEPLOYMENT=${FOUNDRY_MODEL_DEPLOYMENT:+set}"
-az account show --output table || echo "(az cache not inherited — relying on SDK DefaultAzureCredential)"
+az account show --output table || echo "(az cache not inherited - relying on SDK DefaultAzureCredential)"
 ```
 
-If any env var prints empty, the workflow's `env:` block is broken
-(Pattern 11). That is a workflow bug, not a skill bug. Write the FAIL
-marker (Step 2) with reason `auth context missing: <var-name>` and stop.
+If any required variable prints empty, stop the lifecycle and execute Step 8.
+The absent success sentinel will produce the authoritative FAIL marker.
 
 ---
 
-## Step 1 — The goal
+## Step 1 - Install the bounded SDK stack
 
-Using the `foundry-routines` skill, exercise the full routine lifecycle
-end-to-end against the CI Foundry project. The skill wraps the PREVIEW
-`client.beta.routines` surface introduced in `azure-ai-projects` 2.2.0,
-so the test must prove the SDK surface is reachable AND that
-create/dispatch/list all work against a live Foundry project.
-
-Read `skills/foundry-routines/SKILL.md` before writing any code — it is
-the source of truth for the SDK surface, action / trigger shapes, the
-`Foundry-Features` header convention, and the limitations to design
-around. If the skill's instructions conflict with anything you remember
-from training data, the skill wins.
-
-Foundry project endpoint: `$FOUNDRY_PROJECT_ENDPOINT`
-Model deployment available in that project: `$FOUNDRY_MODEL_DEPLOYMENT`
-(currently `gpt-5.4-mini`, in Sweden Central — which is a routines
-preview region).
-
-Give every Azure resource you create a CI-safe name that includes a short
-UUID suffix (Pattern 15.3) so parallel runs don't collide. Suggested
-patterns:
-
-- prompt agent: `ci-smoke-routine-pa-$(uuidgen | cut -c1-8)`
-- routine: `ci-smoke-routine-$(uuidgen | cut -c1-8)`
-
-The lifecycle below is mandatory. Do not invent shortcuts; each step
-proves a different part of the skill contract.
-
-### Step 1a — Install the pinned SDK
-
-In a fresh venv (or directly in the runner's site-packages, whichever
-matches what the skill documents), install the pin:
+Run this block verbatim:
 
 ```bash
+set -euo pipefail
 pip install --quiet "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
-python -c "import azure.ai.projects as m; print(f'azure-ai-projects=={m.__version__}')"
+python3 - <<'PY'
+import azure.ai.projects as projects
+
+parts = tuple(int(part) for part in projects.__version__.split(".")[:2])
+assert parts == (2, 4), f"azure-ai-projects outside ~=2.4.0: {projects.__version__}"
+print(f"azure-ai-projects=={projects.__version__}")
+PY
 ```
 
-Print the version line. If `azure-ai-projects` resolves to anything
-outside the pinned 2.4.x cap, the fixture is not testing the current
-contract — FAIL with reason
-`azure-ai-projects outside ~=2.4.0 pin`.
+---
 
-### Step 1b — Create the prompt agent (target of the routine)
+## Step 2 - Initialize disposable names and state
 
-Per AGENTS.md § 9.7 Pattern 23 + this skill's § 7, routines need an
-agent with a **configured agent identity**. A prompt agent published
-via `project.agents.create_version(...)` qualifies. Pure prompt-only
-agents without an agent identity are rejected by the routines service.
+The short UUID suffix prevents collisions between parallel matrix runs and
+retries. State lives only under `/tmp`; never write state into the checkout.
 
-Create one with:
-
-- `agent_name`: `ci-smoke-routine-pa-<uuid>` (capture the resolved
-  `.name` for use in Step 1c)
-- model: `$FOUNDRY_MODEL_DEPLOYMENT`
-- instructions: `"Echo back the input verbatim. Do not embellish."`
-
-Use `project.agents.create_version(...)` — the SDK shape is documented
-in `skills/foundry-prompt-agents/SKILL.md` § 1. Capture and print:
-
-- `agent.name`
-- `agent.version`
-
-If creation raises, FAIL with reason
-`prompt agent create failed: <exception class> <first line of message>`.
-
-### Step 1c — Create a RECURRING routine bound to that agent
-
-Per the brief, use a **recurring schedule** with the live-proven monthly
-cron `"0 0 1 * *"` (midnight on the first day of each month, UTC). The
-service rejects the former yearly expression. The `dispatch()` call in
-Step 1d is the invocation path this fixture asserts.
-
-Required trigger shape per SKILL.md § 3 (the schedule trigger requires
-BOTH `cron_expression` AND `time_zone`):
-
-```python
-triggers = {
-    "monthly-anchor": {
-        "type": "schedule",
-        "cron_expression": "0 0 1 * *",
-        "time_zone": "UTC",
-    }
-}
+```bash
+set -euo pipefail
+STATE_FILE="/tmp/foundry-routines-state.env"
+SUCCESS_FILE="/tmp/foundry-routines-smoke-success"
+EVIDENCE_FILE="/tmp/foundry-routines-smoke-evidence"
+UUID=$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')
+AGENT_REQUESTED_NAME="ci-smoke-routine-pa-${UUID}"
+ROUTINE_NAME="ci-smoke-routine-${UUID}"
+rm -f "$STATE_FILE" "$SUCCESS_FILE" "$EVIDENCE_FILE" /tmp/foundry-routines-smoke-result
+: > "$EVIDENCE_FILE"
+printf 'export STATE_FILE=%q\nexport SUCCESS_FILE=%q\nexport EVIDENCE_FILE=%q\nexport AGENT_REQUESTED_NAME=%q\nexport ROUTINE_NAME=%q\n' \
+  "$STATE_FILE" "$SUCCESS_FILE" "$EVIDENCE_FILE" "$AGENT_REQUESTED_NAME" "$ROUTINE_NAME" \
+  > "${STATE_FILE}.tmp"
+mv "${STATE_FILE}.tmp" "$STATE_FILE"
+echo "agent=${AGENT_REQUESTED_NAME} routine=${ROUTINE_NAME}"
 ```
 
-Required action shape (Responses API target):
+---
 
-```python
-action = {
-    "type": "invoke_agent_responses_api",
-    "agent_name": "<the .name captured from Step 1b>",
-}
+## Step 3 - Create the temporary prompt agent
+
+The routine service requires an agent with a configured agent identity.
+`project.agents.create_version(...)` supplies that identity.
+
+```bash
+set -euo pipefail
+source /tmp/foundry-routines-state.env
+python3 - <<'PY'
+import os
+import shlex
+
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import PromptAgentDefinition
+from azure.identity import DefaultAzureCredential
+
+project = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+)
+agent = project.agents.create_version(
+    agent_name=os.environ["AGENT_REQUESTED_NAME"],
+    definition=PromptAgentDefinition(
+        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
+        instructions="Echo back the input verbatim. Do not embellish.",
+    ),
+)
+assert agent.name, "prompt agent returned empty name"
+assert agent.version, "prompt agent returned empty version"
+with open(os.environ["STATE_FILE"], "a", encoding="utf-8") as state:
+    state.write(f"export AGENT_NAME={shlex.quote(str(agent.name))}\n")
+    state.write(f"export AGENT_VERSION={shlex.quote(str(agent.version))}\n")
+with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+    evidence.write("AGENT_CREATED\n")
+print(f"prompt-agent-created: {agent.name} v{agent.version}")
+PY
 ```
 
-Create the routine with:
+---
 
-- routine_name: `ci-smoke-routine-<uuid>`
-- description: `"CI smoke for foundry-routines lifecycle."`
-- enabled: `True` (so `dispatch()` is accepted in Step 1d)
-- the trigger + action above
+## Step 4 - Create the enabled monthly routine
 
-Call `client.beta.routines.create_or_update(routine_name=..., ...)`.
-Assert:
+Use the live-proven recurring schedule: midnight UTC on the first day of each
+month. Keep the trigger and action shapes exact.
 
-- `routine.name` equals the requested name
-- `routine.enabled is True`
+```bash
+source /tmp/foundry-routines-state.env
+python3 - <<'PY'
+import os
 
-Print both. If either assertion fails OR the call raises, FAIL with
-reason `routine create failed: <details>`.
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 
-### Step 1d — Manually dispatch the routine
+client = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+)
+routine = client.beta.routines.create_or_update(
+    routine_name=os.environ["ROUTINE_NAME"],
+    description="CI smoke for foundry-routines lifecycle.",
+    enabled=True,
+    triggers={
+        "monthly-anchor": {
+            "type": "schedule",
+            "cron_expression": "0 0 1 * *",
+            "time_zone": "UTC",
+        }
+    },
+    action={
+        "type": "invoke_agent_responses_api",
+        "agent_name": os.environ["AGENT_NAME"],
+    },
+)
+assert routine.name == os.environ["ROUTINE_NAME"], (
+    f"routine name mismatch: {routine.name!r}"
+)
+assert routine.enabled is True, f"routine not enabled: {routine.enabled!r}"
+with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+    evidence.write("ROUTINE_CREATED\n")
+print(f"routine-created: {routine.name} enabled={routine.enabled}")
+PY
+```
 
-`dispatch()` queues a one-off run without waiting for the schedule.
-The `payload.type` MUST match the routine's `action.type` (anti-pattern
-§ 9 in SKILL.md).
+---
 
-```python
+## Step 5 - Dispatch the routine
+
+The payload type must match the routine action type. A non-empty dispatch ID is
+the hard asynchronous queueing contract; do not poll run history.
+
+```bash
+source /tmp/foundry-routines-state.env
+python3 - <<'PY'
+import os
+
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+client = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+)
 result = client.beta.routines.dispatch(
-    routine_name="<the routine name>",
+    routine_name=os.environ["ROUTINE_NAME"],
     payload={
         "type": "invoke_agent_responses_api",
         "input": "Echo: live-routine-smoke",
     },
 )
+assert result.dispatch_id, "dispatch returned empty dispatch_id"
+print(
+    "routine-dispatched: "
+    f"dispatch_id={result.dispatch_id} "
+    f"task_id={result.task_id} "
+    f"action_correlation_id={result.action_correlation_id}"
+)
+with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+    evidence.write("ROUTINE_DISPATCHED\n")
+PY
 ```
-
-Capture and print:
-
-- `result.dispatch_id`
-- `result.task_id`
-- `result.action_correlation_id`
-
-Assert `result.dispatch_id` is non-empty (a truthy string). If empty
-or absent, FAIL with reason
-`dispatch returned empty dispatch_id`.
-
-> **Note:** Whether the queued run actually completes a Responses API
-> invocation against the prompt agent is **soft** for this fixture —
-> the per-Pattern-13 reasoning is that the run executes asynchronously
-> on Foundry's worker pool with documented eventual-consistency
-> behaviour, and the queueing is what the dispatch contract proves.
-> The hard contract is: the SDK call returned a valid
-> `DispatchRoutineResult` with a non-empty `dispatch_id`. Do NOT
-> poll `list_runs` and FAIL on no-run-yet within a tight window.
-
-### Step 1e — List routines
-
-Call `client.beta.routines.list()` and iterate. Assert the routine
-name created in Step 1c appears in the listing.
-
-```python
-names = [r.name for r in client.beta.routines.list()]
-assert "<routine name>" in names, f"routine not in list: {names}"
-print(f"list-ok: {len(names)} routines visible to this project")
-```
-
-If the routine is missing, FAIL with reason
-`routine not visible in list() after create`.
-
-### Step 1f — Disable + delete the routine (deletion is hard)
-
-Routine deletion is a hard PASS condition because an enabled recurring
-routine is the direct output of this skill. Attempt disable and delete
-independently so a disable failure never prevents the delete attempt:
-
-```python
-try:
-    client.beta.routines.disable("<routine name>")
-except Exception as exc:
-    print(
-        f"routine-disable-note: {type(exc).__name__} — "
-        f"{str(exc).splitlines()[0]}"
-    )
-
-try:
-    client.beta.routines.delete("<routine name>")
-except Exception as exc:
-    print(
-        f"routine-delete-fail: {type(exc).__name__} — "
-        f"{str(exc).splitlines()[0]}"
-    )
-    raise
-
-print("routine-cleanup-ok: <routine name>")
-```
-
-Disable is best-effort because delete removes the routine regardless.
-Delete failure is a hard failure: write the FAIL marker after the prompt
-agent cleanup attempt.
-
-### Step 1g — Delete the prompt agent (best-effort, Pattern 25)
-
-Per `foundry-prompt-agents` SKILL.md § 4, delete by **positional** args:
-
-```python
-project.agents.delete_version("<agent_name>", "<agent_version>")
-print(f"prompt-agent-cleanup-ok: <agent_name> v<agent_version>")
-```
-
-If the call raises, capture the exception class + first line of the
-message and emit a transcript NOTE:
-
-```
-prompt-agent-cleanup-note: <exception class> — <first line>
-```
-
-Then continue. **Do not FAIL** the marker on cleanup failure
-(Pattern 25).
 
 ---
 
-## Step 2 — Marker contract (deterministic, MANDATORY)
-
-Your FINAL action — after cleanup — is to invoke the Bash tool to write
-the marker file. The file's literal byte content is what CI grades;
-your assistant-text reply is NOT graded.
-
-On success (Step 0 + Steps 1a through 1f all passed; prompt-agent cleanup
-in 1g remains best-effort per Pattern 25):
+## Step 6 - List and verify the routine
 
 ```bash
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-routines-smoke-result
+source /tmp/foundry-routines-state.env
+python3 - <<'PY'
+import os
+
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+client = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+)
+names = [routine.name for routine in client.beta.routines.list()]
+assert os.environ["ROUTINE_NAME"] in names, (
+    f"routine not visible in list(): {names}"
+)
+with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+    evidence.write("ROUTINE_LISTED\n")
+print(f"routine-list-ok: {len(names)} routines visible")
+PY
 ```
 
-On ANY failure in Step 0 or Steps 1a through 1f (auth context missing,
-SDK outside the 2.4.x pin, prompt agent create failed, routine create
-failed, dispatch returned empty `dispatch_id`, routine missing from
-`list()`, or routine deletion failed):
+---
+
+## Step 7 - Delete the routine, clean the prompt agent, and seal success
+
+Routine deletion is a hard PASS condition because the enabled recurring
+routine is the direct output of this skill. Disable is best-effort because
+delete removes the routine regardless. Prompt-agent cleanup is best-effort
+per Pattern 25 and must never turn a proven routine lifecycle into FAIL.
 
 ```bash
-printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-routines-smoke-result
+set -euo pipefail
+source /tmp/foundry-routines-state.env
+python3 - <<'PY'
+import os
+
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+project = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    credential=DefaultAzureCredential(),
+)
+routine_delete_error = None
+try:
+    project.beta.routines.disable(os.environ["ROUTINE_NAME"])
+except Exception as exc:
+    print(f"routine-disable-note: {type(exc).__name__} - {str(exc).splitlines()[0]}")
+
+try:
+    project.beta.routines.delete(os.environ["ROUTINE_NAME"])
+    with open(os.environ["EVIDENCE_FILE"], "a", encoding="utf-8") as evidence:
+        evidence.write("ROUTINE_DELETED\n")
+    print(f"routine-cleanup-ok: {os.environ['ROUTINE_NAME']}")
+except Exception as exc:
+    routine_delete_error = exc
+    print(f"routine-delete-fail: {type(exc).__name__} - {str(exc).splitlines()[0]}")
+
+try:
+    project.agents.delete_version(
+        os.environ["AGENT_NAME"],
+        os.environ["AGENT_VERSION"],
+    )
+    print(
+        "prompt-agent-cleanup-ok: "
+        f"{os.environ['AGENT_NAME']} v{os.environ['AGENT_VERSION']}"
+    )
+except Exception as exc:
+    print(
+        "prompt-agent-cleanup-note: "
+        f"{type(exc).__name__} - {str(exc).splitlines()[0]}"
+    )
+
+if routine_delete_error is not None:
+    raise routine_delete_error
+PY
+EXPECTED_EVIDENCE=$(printf '%s\n' \
+  AGENT_CREATED \
+  ROUTINE_CREATED \
+  ROUTINE_DISPATCHED \
+  ROUTINE_LISTED \
+  ROUTINE_DELETED)
+ACTUAL_EVIDENCE=$(cat "$EVIDENCE_FILE")
+if [[ "$ACTUAL_EVIDENCE" == "$EXPECTED_EVIDENCE" ]]; then
+  : > "$SUCCESS_FILE"
+else
+  echo "ordered lifecycle evidence mismatch"
+  exit 1
+fi
 ```
 
-The marker file is single-source-of-truth. Do not print the marker
-token anywhere else in your reply — no echoes, no summaries, no fenced
-code blocks containing the literal string. The Bash tool write is the
-only legitimate emission path.
+---
 
-The Pattern 25 prompt-agent cleanup NOTE belongs in the transcript only —
-NEVER in the marker file. The marker line is the exact 18 bytes
-`SMOKE_RESULT=PASS\n`; anything else (extra spaces, trailing prose,
-decoration) is FAIL.
+## Step 8 - Write the result marker (deterministic, MANDATORY)
 
-Per AGENTS.md § 9.7 Pattern 16, do NOT invoke `azd ai routine` from
-this fixture. The preview-CLI flag surface drifts between releases;
-this fixture is SDK-only.
+Your FINAL action is to invoke the Bash tool with this block exactly.
+The file's literal byte content is what CI grades; your assistant-text reply is
+NOT graded. Do not replace this block with `echo PASS`, `printf PASS`, prose,
+or an ad-hoc marker command.
+
+```bash
+if [[ -f /tmp/foundry-routines-smoke-success ]]; then
+  printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-routines-smoke-result
+else
+  printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-routines-smoke-result
+  exit 1
+fi
+```
+
+The marker file is the single source of truth. Do not print the marker token
+elsewhere. The success form is exactly the 18 bytes `SMOKE_RESULT=PASS\n`;
+anything else is graded FAIL by `cmp -s`.
