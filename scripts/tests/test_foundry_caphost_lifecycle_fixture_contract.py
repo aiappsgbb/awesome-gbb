@@ -15,6 +15,7 @@ FIXTURE = (
     / "test-fixture"
     / "consumer_prompt.md"
 )
+SKILL = ROOT / "skills" / "foundry-caphost-lifecycle" / "SKILL.md"
 
 
 class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
@@ -122,6 +123,106 @@ class FoundryCaphostLifecycleFixtureContractTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, fixture)
+
+    def test_fixture_uses_disposable_unlocked_resource_group(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+
+        self.assertIn('RG="rg-awesome-gbb-caphost-ci"', fixture)
+        self.assertIn(
+            "dedicated unlocked disposable CI resource group",
+            fixture,
+        )
+        self.assertNotIn('RG="rg-awesome-gbb-ci"', fixture)
+        self.assertNotIn(
+            "janitor sweeps `caphost-smoke-*`",
+            fixture,
+        )
+
+    def test_full_account_lifecycle_is_hard_gated(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        fixture_flat = " ".join(fixture.split())
+
+        for required in (
+            '[[ "$SHAPE_OK" == "true" ]] || exit 1',
+            "caphost_replay_status=200",
+            "caphost_absent_after_delete",
+            '[[ "$FOUND" == "$ACCT" ]] || exit 1',
+            '[[ -z "$STILL" ]] || exit 1',
+            "Account entered the soft-delete index",
+            "Account purge succeeded and the account left the soft-delete index",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, fixture_flat)
+
+        for forbidden in (
+            "Pattern 25",
+            "best-effort soft-PASS",
+            "list-deleted -l",
+            "true **even if Steps 7-9",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, fixture_flat)
+
+    def test_pass_marker_requires_ordered_lifecycle_evidence(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+
+        required_evidence = (
+            "ACCOUNT_CREATED",
+            "CAPHOST_CREATED",
+            "CAPHOST_GET_OK",
+            "CAPHOST_REPLAY_200",
+            "CAPHOST_DELETED",
+            "ACCOUNT_SOFT_DELETED",
+            "ACCOUNT_PURGED",
+        )
+        self.assertIn(
+            'EVIDENCE_FILE="/tmp/foundry-caphost-lifecycle-smoke-evidence"',
+            fixture,
+        )
+        for item in required_evidence:
+            with self.subTest(item=item):
+                self.assertIn(item, fixture)
+
+        self.assertIn("EXPECTED_EVIDENCE=$(printf", fixture)
+        self.assertIn('ACTUAL_EVIDENCE=$(cat "$EVIDENCE_FILE")', fixture)
+        self.assertIn(
+            '[[ "$ACTUAL_EVIDENCE" == "$EXPECTED_EVIDENCE" ]]',
+            fixture,
+        )
+
+    def test_cli_failures_cannot_masquerade_as_absence(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        skill = SKILL.read_text(encoding="utf-8")
+
+        self.assertNotIn("list-deleted -l", fixture)
+        self.assertNotIn("list-deleted -l", skill)
+        self.assertNotIn('list-deleted \\\n            --query', fixture)
+        self.assertIn("if ! FOUND=$(az cognitiveservices account list-deleted", fixture)
+        self.assertIn("if ! STILL=$(az cognitiveservices account list-deleted", fixture)
+
+    def test_incomplete_evidence_triggers_failure_cleanup(self) -> None:
+        fixture = FIXTURE.read_text(encoding="utf-8")
+        final_step = fixture.split(
+            "## Step 10 — Marker contract (deterministic, MANDATORY)",
+            maxsplit=1,
+        )[1]
+
+        for required in (
+            "cleanup_failed_account()",
+            'if ! active=$(az cognitiveservices account list -g "$RG"',
+            'az cognitiveservices account delete -n "$ACCT" -g "$RG"',
+            'az cognitiveservices account purge -l "$LOC" -n "$ACCT" -g "$RG"',
+            'grep -qx \'ACCOUNT_CREATED\' "$EVIDENCE_FILE"',
+            "active_after=",
+            "if ! cleanup_failed_account; then",
+            "NOTE: failure cleanup incomplete",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, final_step)
+        self.assertNotIn(
+            "az cognitiveservices account show",
+            final_step,
+        )
 
 
 if __name__ == "__main__":
