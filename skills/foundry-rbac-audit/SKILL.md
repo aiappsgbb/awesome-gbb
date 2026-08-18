@@ -15,7 +15,7 @@ description: >
   RBAC — use foundry-agt; DO NOT USE FOR: hub-side Citadel security
   checks — use citadel-spoke-onboarding probe_hub_contract.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # foundry-rbac-audit
