@@ -18,7 +18,7 @@ description: >
   Foundry (use foundry-vnet-deploy or microsoft-foundry), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "1.1.5"
+  version: "1.1.7"
 ---
 
 # Citadel Hub Deploy — Layer 1 Governance Hub
@@ -33,12 +33,12 @@ metadata:
 >
 > **Pinned upstream:** `63f0f812474e713916dc909494d655246783a1d9`;
 > see [`references/upstream-pin.md`](references/upstream-pin.md).
-> **Validation boundary:** the current pin is build-validated only (exact
-> checkout + `main.bicep` + `main.bicepparam`). The resource audit and APIM
-> smoke calls in [`references/live-audit-notes.md`](references/live-audit-notes.md)
-> are historical evidence from the prior pin
-> `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`, not live evidence for the
-> current pin.
+> **Validation boundary:** the current pin is build-validated and was
+> live-deployed with the lean pilot overlay on 2026-08-19. Core APIM model
+> discovery and chat succeeded. Positive client-credentials JWT validation
+> remains unverified because the validation tenant's Conditional Access policy
+> blocked workload token issuance; see
+> [`references/live-audit-notes.md`](references/live-audit-notes.md).
 
 [Azure-Samples / ai-hub-gateway-solution-accelerator]: https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1
 
@@ -358,13 +358,34 @@ The signed-in operator needs:
 
 - Microsoft Graph `Application.ReadWrite.All` permission or the Entra
   **Application Developer** role to create/update the app registration,
-  service principal, and two-year client secret.
+  service principal, and policy-compliant client secret.
 - **Key Vault Secrets Officer** on the deployed vault data plane.
 - **API Management Service Contributor** on the deployed APIM service (or
   its resource group) to read/create/update JWT named values.
 
+> **Credential-policy workaround required.** The pinned `setup.ps1` calls
+> `az ad app credential reset --years 2` without `--append`. Do not use
+> `--years 2` when the tenant has a shorter credential lifetime policy, and
+> never replace credentials on a reused app registration. In the detached
+> deployment checkout, replace that command with a policy-approved UTC end
+> date and append-only rotation:
+>
+> ```powershell
+> $credentialEndDate = '<approved-UTC-end-date>'
+> $secretResult = az ad app credential reset `
+>   --id $appObjectId `
+>   --append `
+>   --display-name "Citadel-$EnvironmentName-$(Get-Date -Format yyyyMMdd)" `
+>   --end-date $credentialEndDate `
+>   --output json | ConvertFrom-Json
+> ```
+>
+> The date must satisfy the tenant's credential lifetime policy. Record the
+> expiry and rotation owner. Keep this as a deployment-only overlay; do not
+> change or repin upstream without a separately reviewed skill update.
+
 The script then creates or reuses the app registration, creates the service
-principal, resets the client secret, writes it as
+principal, appends the client secret, writes it as
 `ENTRA-APP-CLIENT-SECRET`, updates four APIM named values, and stores values
 in the selected azd environment. It configures APIM directly; a second
 `azd up` is not required. The pinned `setup.ps1` continues on a Key Vault
@@ -559,7 +580,8 @@ requested, RBAC, networking decision, DNS ownership). The TL;DR:
 - [ ] Tenant + subscription confirmed via two-layer assertion
 - [ ] Resource providers registered: `Microsoft.ApiManagement`,
       `Microsoft.CognitiveServices`, `Microsoft.DocumentDB`,
-      `Microsoft.EventHub`, `Microsoft.Insights`, `Microsoft.Logic`
+      `Microsoft.EventHub`, `Microsoft.Insights`, `Microsoft.Logic`,
+      `Microsoft.ManagedIdentity`
 - [ ] Quota: APIM Standard v2 (1+ unit), Foundry GlobalStandard tokens
       for each model in your `aiFoundryModelsConfig`, Cosmos RU/s
 - [ ] RBAC: deployer is **Owner** or has **Contributor** + **User Access
@@ -732,7 +754,8 @@ unset TOKEN KEY
 Historical old-pin round-trip latency from this skill's May 2026 audit
 (Sweden Central, gpt-5.4-mini, warm): **~1 sec end-to-end** through APIM.
 Discovery `/models` call: **~250 ms warm**. See
-`references/live-audit-notes.md` for the evidence boundary and full numbers.
+`references/live-audit-notes.md` for the current-pin results, evidence
+boundary, and historical latency numbers.
 
 ---
 
@@ -898,6 +921,12 @@ The following observations were captured during the historical audit pass on
 
 ## 13. Changelog
 
+- **1.1.7** (2026-08) — Document the current-pin Entra setup workaround for
+  tenant credential lifetime policies: replace the pinned destructive
+  two-year reset with append-only, named, explicit-end-date rotation.
+- **1.1.6** (2026-08) — Add `Microsoft.ManagedIdentity` to the required
+  provider preflight after current-pin live deployment exposed APIM activation
+  failing when the namespace was not registered.
 - **1.1.5** (2026-08) — Correct the enforced-auth smoke prerequisite to
   match `citadel-spoke-onboarding`'s manual Bicep path: bind a custom product
   `policyXml` that sets `jwtRequired=true`.

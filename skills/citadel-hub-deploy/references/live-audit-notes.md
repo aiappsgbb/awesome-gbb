@@ -1,4 +1,4 @@
-# Live audit notes — historical old-pin evidence + current-pin build
+# Live audit notes — current-pin core validation + historical evidence
 
 Captured during the v1.0.0 authoring pass against a real deployed hub in
 `rg-citadel-hub-01` (Sweden Central, May 2026). Subscription: a sandbox
@@ -10,11 +10,12 @@ can re-validate the same checks against a different deployed hub
 (or re-pin upstream).
 
 > **Evidence boundary:** the skill now pins
-> `63f0f812474e713916dc909494d655246783a1d9`. Every Azure resource, API,
-> latency, and notebook observation below belongs to the old live commit.
-> Do not attribute those observations to the current pin.
+> `63f0f812474e713916dc909494d655246783a1d9`. The section immediately below
+> records its 2026-08-19 lean deployment and core gateway smoke. Later
+> resource counts, latency numbers, and notebook observations remain
+> historical evidence from the old live commit.
 
-## Current pin — build-only validation (2026-08-06)
+## Current pin — build + live core validation (2026-08-19)
 
 The target commit was materialized as an exact detached checkout and both
 deployment entry points compiled without errors:
@@ -35,11 +36,40 @@ The coordinator's reference build produced a 4,867,124-byte `main.json`.
 Generated ARM JSON byte size can vary by Bicep compiler; both runs exited zero
 with warnings only.
 
-No `azd up`, ARM deployment, resource creation, subscription change, or live
-API call was performed for the current pin. Required follow-up: deploy it in a
-non-production subscription and execute the current validation sequence.
-No Azure deployment or live validation was run for
-`63f0f812474e713916dc909494d655246783a1d9`.
+The exact pin was also deployed to a non-production subscription with the
+lean pilot overlay in East US 2. The structured arrays were deliberately
+reduced to one Foundry account plus `gpt-5.4-mini` and
+`text-embedding-3-large`, both at 30K TPM. Redis, API Center, AI Search,
+Document Intelligence, dashboards, and Foundry network injection remained
+disabled.
+
+`azd provision --preview` succeeded. The first deployment exposed a missing
+`Microsoft.ManagedIdentity` provider preflight during APIM activation. After
+registering the provider and recreating the failed APIM service, `azd up`
+succeeded using the canonical `azure-tenant-isolation` bootstrap and an
+explicit subscription argument.
+
+One LLM Access Contract was deployed with direct output rather than Key Vault
+secret storage. Live calls then returned:
+
+```text
+GET /models/models
+HTTP 200
+gpt-5.4-mini
+
+POST /openai/deployments/gpt-5.4-mini/chat/completions
+HTTP 200
+citadel-ok
+```
+
+A product policy setting `jwtRequired=true` rejected a missing bearer token
+with HTTP 401. Positive client-credentials validation did not complete: the tenant rejected the
+pinned two-year secret lifetime, a 30-day append-only credential succeeded,
+the private Key Vault rejected the local host with `ForbiddenByConnection`,
+and Conditional Access rejected workload token issuance with `AADSTS53003`.
+No Key Vault firewall exception was introduced. The current pin is therefore
+live-validated for deployment and core gateway traffic, not for a positive
+client-credentials dual-auth call.
 
 ### Current-pin static contract review
 
@@ -57,8 +87,10 @@ enforced by the shipped profile validator:
   Vault Secrets Officer, API Management Service Contributor, private vault
   reachability, and explicit post-script data-plane verification.
 
-These findings were not exercised against Azure at the current pin; they do
-not expand the build-only evidence above.
+The provider, credential-lifetime, private-network, and Conditional Access
+findings above were observed live at the current pin. The APIM v2 Event Hub
+constraint remains source-reviewed rather than live-tested because the lean
+validation used Developer APIM.
 
 ---
 

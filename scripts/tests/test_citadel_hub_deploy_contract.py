@@ -111,6 +111,25 @@ class CitadelHubDeployContractTests(unittest.TestCase):
         self.assertIn("hardcoded `eastus2`", self.checklist)
         self.assertIn("There is no `AZURE_LOCATION_2`", self.checklist)
 
+    def test_preflight_registers_managed_identity_provider(self) -> None:
+        self.assertIn("Microsoft.ManagedIdentity", self.checklist)
+        self.assertIn("Microsoft.ManagedIdentity", self.skill)
+
+    def test_apim_region_preflight_uses_supported_cli_commands(self) -> None:
+        self.assertNotRegex(
+            self.checklist,
+            re.compile(r"^\s*az apim list-skus", re.MULTILINE),
+        )
+        self.assertIn(
+            "az provider show --namespace Microsoft.ApiManagement",
+            self.checklist,
+        )
+        self.assertIn("azd provision --preview", self.checklist)
+        self.assertIn(
+            "does not validate SKU quota or capacity",
+            self.checklist,
+        )
+
     def test_profiles_only_use_env_vars_consumed_by_target_bicepparam(self) -> None:
         for name, profile in self.profiles.items():
             with self.subTest(profile=name):
@@ -229,6 +248,20 @@ class CitadelHubDeployContractTests(unittest.TestCase):
                         rf"verify_apim_named_value\s+{named_value}\s+",
                     ),
                 )
+
+    def test_entra_secret_workaround_is_policy_compliant_and_non_destructive(
+        self,
+    ) -> None:
+        docs = self.skill + self.checklist
+        for required_text in (
+            "--append",
+            "--display-name",
+            "--end-date",
+            "credential lifetime policy",
+            "Do not use `--years 2`",
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, docs)
 
     def test_quickstarts_assert_exact_guids_before_mutating_azure(self) -> None:
         self.assertIn('EXPECTED_TENANT_ID="<tenant-guid>"', self.skill)
@@ -471,13 +504,15 @@ class CitadelHubDeployContractTests(unittest.TestCase):
                         {"Enabled", "Disabled"},
                     )
 
-    def test_audit_separates_new_build_validation_from_old_live_evidence(self) -> None:
+    def test_audit_separates_current_core_live_validation_from_old_evidence(
+        self,
+    ) -> None:
         self.assertIn(TARGET_SHA, self.audit)
         self.assertIn(LIVE_VALIDATED_SHA, self.audit)
         self.assertRegex(
             self.audit,
             re.compile(
-                rf"{TARGET_SHA}.{{0,500}}build",
+                rf"{TARGET_SHA}.{{0,500}}(?:build|live)",
                 re.IGNORECASE | re.DOTALL,
             ),
         )
@@ -488,12 +523,21 @@ class CitadelHubDeployContractTests(unittest.TestCase):
                 re.IGNORECASE | re.DOTALL,
             ),
         )
+        for required_text in (
+            "Current pin — build + live core validation",
+            "GET /models/models",
+            "HTTP 200",
+            "jwtRequired=true",
+            "HTTP 401",
+            "AADSTS53003",
+        ):
+            with self.subTest(required_text=required_text):
+                self.assertIn(required_text, self.audit)
         self.assertRegex(
             self.audit,
             re.compile(
-                r"no (?:Azure )?(?:deployment|live validation).{0,160}"
-                rf"{TARGET_SHA}",
-                re.IGNORECASE | re.DOTALL,
+                r"not for a positive\s+client-credentials dual-auth call",
+                re.IGNORECASE,
             ),
         )
 

@@ -5,8 +5,10 @@ and costs $200-2,500/mo at baseline depending on profile — failing
 mid-deploy because of a missing provider or quota is expensive.
 
 This checklist targets pinned commit
-`63f0f812474e713916dc909494d655246783a1d9`, which is build-validated
-but not yet live-validated on Azure.
+`63f0f812474e713916dc909494d655246783a1d9`, which is build-validated and
+live-validated for lean deployment plus core API-key gateway traffic. Positive
+client-credentials JWT validation remains tenant-policy-dependent; see
+`live-audit-notes.md`.
 
 ---
 
@@ -68,6 +70,7 @@ for ns in Microsoft.ApiManagement \
           Microsoft.Web \
           Microsoft.KeyVault \
           Microsoft.Cache \
+          Microsoft.ManagedIdentity \
           Microsoft.Storage \
           Microsoft.Network \
           Microsoft.OperationalInsights; do
@@ -78,7 +81,7 @@ done
 Verify all show `Registered`:
 
 ```bash
-az provider list --query "[?starts_with(namespace,'Microsoft.')].{ns:namespace,state:registrationState}" -o table | grep -E "(ApiManagement|CognitiveServices|DocumentDB|EventHub|Insights|Logic|Web|KeyVault|Cache|Storage|Network|OperationalInsights)"
+az provider list --query "[?starts_with(namespace,'Microsoft.')].{ns:namespace,state:registrationState}" -o table | grep -E "(ApiManagement|CognitiveServices|DocumentDB|EventHub|Insights|Logic|Web|KeyVault|Cache|ManagedIdentity|Storage|Network|OperationalInsights)"
 ```
 
 - [ ] All required providers `Registered`
@@ -91,12 +94,21 @@ before deploy.
 ### APIM Standard v2
 
 ```bash
-# Check region availability
-az apim list-skus --location <region> -o table
+# Check APIM resource availability in the target region
+az provider show --namespace Microsoft.ApiManagement \
+  --expand resourceTypes/locations \
+  --query "resourceTypes[?resourceType=='service'].locations | [0]" -o tsv
+
+# Validate Bicep and preview the complete deployment change shape
+azd provision --preview --no-prompt
 ```
 
-Standard v2 is in [limited regions]. Pilot-quickstart's Developer SKU
-is everywhere.
+The Azure CLI has no `az apim list-skus` command. The provider query proves
+regional resource-type availability. Cross-check V2 tiers against the
+official [limited regions] table. `azd provision --preview` validates the
+template and change shape, but **does not validate SKU quota or capacity**;
+the actual ARM create can still return `SkuNotAvailable`. Pilot-quickstart's
+Developer SKU is broadly available.
 
 [limited regions]: https://learn.microsoft.com/azure/api-management/v2-service-tiers-overview#region-availability
 
@@ -191,10 +203,28 @@ azd env set AZURE_TAGS '{"costCenter":"<cc>","owner":"<email>","environment":"pi
 The upstream supports JWT auth on the gateway. All supplied profiles set
 `AZURE_ENTRA_AUTH=true`. After `azd up`, run
 `bicep/infra/entra-id-setup/setup.ps1`; it creates or updates the app
-registration and service principal, resets a two-year client secret, writes
+registration and service principal, appends a policy-compliant client secret, writes
 `ENTRA-APP-CLIENT-SECRET` to Key Vault, configures the APIM JWT named values
 directly, and writes Entra values to the selected azd environment. No second
 hub deployment is required.
+
+The pinned script currently calls `az ad app credential reset --years 2`
+without `--append`. Do not use `--years 2` when the tenant has a shorter
+credential lifetime policy, and never replace credentials on a reused app.
+Patch only the detached deployment checkout to use an approved UTC date:
+
+```powershell
+$credentialEndDate = '<approved-UTC-end-date>'
+$secretResult = az ad app credential reset `
+  --id $appObjectId `
+  --append `
+  --display-name "Citadel-$EnvironmentName-$(Get-Date -Format yyyyMMdd)" `
+  --end-date $credentialEndDate `
+  --output json | ConvertFrom-Json
+```
+
+- [ ] End date complies with the tenant credential lifetime policy
+- [ ] Credential expiry and rotation owner recorded
 
 Prerequisites from the pinned script and upstream setup guide:
 
@@ -275,7 +305,8 @@ v1.0.0 scope.
       explicitly used BYO mode for them)
 - [ ] You will run the 12-scenario sequence in `validation/README.md`;
       at minimum run the four strongly recommended baseline notebooks
-- [ ] You understand the current pin has build-only evidence until that
-      live validation is captured
+- [ ] You understand the current pin has lean deployment and core gateway
+      evidence, while positive client-credentials JWT validation remains
+      tenant-policy-dependent
 
 If yes to all → proceed to the Quickstart paths in `SKILL.md § 5`.

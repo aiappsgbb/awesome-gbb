@@ -13,8 +13,10 @@ upstream:
   license: MIT
   notes: |
     The Citadel Governance Hub — Layer 1 of the AI Citadel Platform.
-    The pinned SHA and Bicep entry points are build-validated. Live Azure
-    validation still requires a human, so this remains issue_only.
+    The pinned SHA and Bicep entry points are build-validated. A lean Azure
+    deployment and core APIM gateway smoke passed on 2026-08-19. Positive
+    client-credentials JWT validation remains blocked by the validation
+    tenant's Conditional Access policy. This remains issue_only.
 
 docs_to_revalidate:
   - https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator
@@ -81,7 +83,7 @@ validation:
     - "BICEP_BUILD_OK="
     - "BICEPPARAM_BUILD_OK="
 
-last_validated: 2026-08-06
+last_validated: 2026-08-19
 validated_by: copilot-bot
 known_issues_count: 4
 ---
@@ -119,15 +121,17 @@ cd citadel-hub
 
 ## Validation boundary
 
-- **Current pin:** exact checkout and both Bicep entry points build
-  successfully. No Azure deployment was run for this re-pin.
+- **Current pin:** exact checkout, both Bicep entry points, lean Azure
+  deployment, APIM model discovery, and chat inference succeeded.
+- **JWT boundary:** a JWT-required Access Contract rejected a missing bearer
+  token with HTTP 401. Positive client-credentials token acquisition was
+  blocked by the validation tenant's Conditional Access policy, so the
+  positive dual-auth call remains unverified.
 - **Historical live evidence:** the May 2026 deployment and API observations
   below were collected at commit
   `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`, not the current pin.
-- **Gap:** deploy the current pin in a non-production subscription and execute
-  the current upstream validation sequence before claiming live readiness.
 
-## Build-validated as of 2026-08 against current pinned SHA
+## Build and live core validation as of 2026-08 against current pinned SHA
 
 ### Bicep build (offline)
 
@@ -146,6 +150,52 @@ az bicep build-params \
 # generated JSON byte size can vary with the Bicep compiler. Exit status and
 # semantic compilation are the contract, not an exact main.json byte count.
 ```
+
+### Lean live deployment (non-production, East US 2)
+
+The exact detached pin was deployed with the pilot overlay and these
+structured-array reductions:
+
+- one Foundry account and one project;
+- `gpt-5.4-mini` at 30K TPM;
+- `text-embedding-3-large` at 30K TPM;
+- Developer APIM;
+- Redis, API Center, AI Search, Document Intelligence, dashboards, and
+  Foundry network injection disabled.
+
+`azd provision --preview` succeeded before provisioning. The first APIM
+activation exposed a missing `Microsoft.ManagedIdentity` provider preflight;
+after registering it and recreating the failed APIM service, `azd up`
+succeeded. The successful run used the canonical `azure-tenant-isolation`
+bootstrap plus an explicit subscription argument.
+
+### Current-pin live gateway evidence
+
+After deploying one personal LLM Access Contract:
+
+```text
+GET /models/models
+HTTP 200
+models: gpt-5.4-mini
+
+POST /openai/deployments/gpt-5.4-mini/chat/completions
+HTTP 200
+response: citadel-ok
+```
+
+A product policy setting `jwtRequired=true` rejected the API key without a
+bearer token with HTTP 401. Entra setup then exposed two tenant constraints:
+
+- the pinned two-year credential reset violated the tenant credential
+  lifetime policy; append-only rotation with a 30-day end date succeeded;
+- the private Key Vault correctly rejected the local host with
+  `ForbiddenByConnection`, so no firewall exception was introduced;
+- Conditional Access rejected the client-credentials token request with
+  `AADSTS53003`.
+
+Therefore the current pin has live deployment and core gateway evidence, but
+not a positive client-credentials dual-auth call. Do not present the missing
+positive JWT evidence as passed.
 
 ### Historical live deployment audit (old pin, Sweden Central, May 2026)
 
