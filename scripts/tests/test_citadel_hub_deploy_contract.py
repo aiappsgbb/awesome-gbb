@@ -530,6 +530,8 @@ class CitadelHubDeployContractTests(unittest.TestCase):
             "jwtRequired=true",
             "HTTP 401",
             "AADSTS53003",
+            "KV_SECRET_MATCH",
+            "temporary in-VNet",
         ):
             with self.subTest(required_text=required_text):
                 self.assertIn(required_text, self.audit)

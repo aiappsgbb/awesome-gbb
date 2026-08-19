@@ -127,6 +127,10 @@ cd citadel-hub
   token with HTTP 401. Positive client-credentials token acquisition was
   blocked by the validation tenant's Conditional Access policy, so the
   positive dual-auth call remains unverified.
+- **Private Key Vault:** the local host was correctly blocked. A temporary
+  in-VNet workload wrote and read-matched the secret through the private
+  endpoint, then its container, role, and subnet were removed. Public access
+  remained disabled.
 - **Historical live evidence:** the May 2026 deployment and API observations
   below were collected at commit
   `f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`, not the current pin.
@@ -189,7 +193,9 @@ bearer token with HTTP 401. Entra setup then exposed two tenant constraints:
 - the pinned two-year credential reset violated the tenant credential
   lifetime policy; append-only rotation with a 30-day end date succeeded;
 - the private Key Vault correctly rejected the local host with
-  `ForbiddenByConnection`, so no firewall exception was introduced;
+  `ForbiddenByConnection`; a temporary in-VNet workload produced
+  `KV_SECRET_MATCH`, then its temporary resources were removed without a
+  firewall exception;
 - Conditional Access rejected the client-credentials token request with
   `AADSTS53003`.
 

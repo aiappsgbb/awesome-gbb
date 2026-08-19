@@ -65,10 +65,14 @@ citadel-ok
 A product policy setting `jwtRequired=true` rejected a missing bearer token
 with HTTP 401. Positive client-credentials validation did not complete: the tenant rejected the
 pinned two-year secret lifetime, a 30-day append-only credential succeeded,
-the private Key Vault rejected the local host with `ForbiddenByConnection`,
-and Conditional Access rejected workload token issuance with `AADSTS53003`.
-No Key Vault firewall exception was introduced. The current pin is therefore
-live-validated for deployment and core gateway traffic, not for a positive
+and the private Key Vault rejected the local host with
+`ForbiddenByConnection`. A temporary in-VNet workload then wrote the same
+secret through the private endpoint and read it back byte-for-byte
+(`KV_SECRET_MATCH`); its container, role assignment, and subnet were removed.
+No Key Vault firewall exception was introduced. Conditional Access still
+rejected workload token issuance with `AADSTS53003`. The current pin is
+therefore live-validated for deployment, core gateway traffic, missing-token
+JWT enforcement, and private Key Vault persistence, but not for a positive
 client-credentials dual-auth call.
 
 ### Current-pin static contract review
