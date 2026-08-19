@@ -7,6 +7,8 @@ You ARE the running Copilot CLI process. Do NOT run `copilot -p ...`,
 §9.7 Pattern 27.)
 
 This is an EXECUTION smoke, not a catalog inspection.
+Run each numbered step in order. Do not combine cleanup with marker
+emission, and do not run any command after the final marker tool call.
 
 ### Step −1 — Acknowledge skill contract
 
@@ -51,7 +53,22 @@ print('shape OK')
 " {}
 ```
 
+### Step 3 — Clean up scratch output
+
+Cleanup must finish before the result marker is written. Remove the
+repo-local probe output and any stale marker from an earlier attempt,
+then prove the checkout is clean.
+
+```bash
+rm -rf out/abr-smoke
+rm -f /tmp/azure-backup-readiness-smoke-result
+test -z "$(git status --short)"
+```
+
 ### Step N — Write the result marker (MANDATORY)
+
+Your FINAL action is a Bash tool call that writes exactly one marker.
+Use PASS only when Steps −1 through 3 succeeded.
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/azure-backup-readiness-smoke-result
@@ -67,3 +84,5 @@ The marker file is single-source-of-truth (Pattern 12). Do not print
 the marker token anywhere else in your reply — no echoes, no summaries,
 no fenced code blocks containing the literal string. The Bash tool
 `printf` is the only legitimate emission path.
+After that Bash tool call completes, do not invoke another tool and do
+not remove or modify the marker file.
