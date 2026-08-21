@@ -30,6 +30,8 @@ skills:
   # ── Core fixtures (no upstream deps within this catalog) ────────────
   azd-patterns:
     depends_on: []
+  # foundry-agt calls a live Foundry model but creates no catalog-owned
+  # resource and depends on no other catalog skill.
   foundry-agt:
     depends_on: []
   foundry-caphost-lifecycle:
@@ -104,15 +106,18 @@ skills:
       - foundry-vnet-deploy
       - foundry-caphost-lifecycle
 
-  # foundry-agt — pure in-process MAF middleware (no Azure resource
-  # create). Independent of every other catalog skill.
-  foundry-agt:
-    depends_on: []
-
   # foundry-voice-live — opens a Voice Live WSS session (transient,
   # closes on script exit). No catalog-internal deps; tests Voice Live
   # GA 2026-04-10 surface via native azure-ai-voicelive SDK.
   foundry-voice-live:
+    depends_on: []
+
+  # foundry-doc-vision-speech — read-only fixture: Document Intelligence
+  # prebuilt-read, Speech TTS→STT round-trip, and gpt-5.4-mini vision, all
+  # keyless against the shared CI AI Services account. Creates no Azure
+  # resources. No catalog-internal deps — Voice Live (real-time) is a
+  # sibling modality, not an upstream dependency.
+  foundry-doc-vision-speech:
     depends_on: []
 
   # foundry-cost-monitoring — read-only fixture: anonymous Retail Prices

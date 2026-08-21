@@ -69,7 +69,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-prompt-agents
     . .venv-prompt-agents/bin/activate
-    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.4.0}" "azure-identity~=1.25.3"
+    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.4.0}" "azure-identity~=1.25.3" "httpx~=0.28.1"
     python -c "
     from azure.ai.projects import AIProjectClient
     from azure.ai.projects.models import PromptAgentDefinition
@@ -87,11 +87,18 @@ validation:
     - "import ok: MCPTool"
     - "import ok: DefaultAzureCredential"
 
-last_validated: 2026-07-30
+last_validated: 2026-08-17
 validated_by: copilot-bot
 ---
 
 ## Audit trail
+
+### 2026-08-17 — Linux validation dependency fix (v1.1.7)
+
+- Added an explicit bounded `httpx~=0.28.1` install because
+  `azure-ai-projects` 2.4.0 imports `httpx` directly without declaring it.
+- Reproduced the missing dependency in the Linux Python 3.12 CI runner and
+  retained the existing import smoke as the validation gate.
 
 ### 2026-06-11 — T3 E2E validation + pin fixes (v1.0.1)
 

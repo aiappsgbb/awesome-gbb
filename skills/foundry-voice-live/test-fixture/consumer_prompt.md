@@ -1,14 +1,31 @@
-# Customer goal — `foundry-voice-live` skill smoke
+# Customer goal — `foundry-voice-live` self-contained execution smoke
 
 You are a developer on a customer team. You just installed the `awesome-gbb`
 Copilot CLI plugin and you want to prove that the `foundry-voice-live` skill
 works end-to-end against your CI Foundry resource using the native
 `azure-ai-voicelive` Python SDK (Rung 4 of the skill's migration ladder).
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of the Azure SDK — read the skill's `SKILL.md` first (in
-particular § 1 "Four Rungs", § 2 "Rung 4 — native `azure-ai-voicelive` SDK",
-and § 12 "2026-04-10 GA Deltas") and follow its documented contract.
+This fixture is self-contained. Do NOT open/read the whole skill file, do
+NOT inspect unrelated repository files, and do NOT improvise from
+training-data knowledge of the Azure SDK. The first required Bash action is
+the lightweight audit acknowledgement below; after that, execute the steps in
+this prompt directly.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You ARE
+the running Copilot CLI process. Do NOT run any `copilot ...` command from
+inside a Bash tool call, and do NOT install or probe Copilot CLI. The workflow
+already captures your output; your job is to execute these steps directly.
+
+---
+
+## Step -1 — Acknowledge skill contract (first required Bash action)
+
+```bash
+echo "skills/foundry-voice-live/SKILL.md"
+```
+
+Do not perform broad repository inspection. Do not hunt for tooling. Python,
+`az`, and the workflow-provided environment are already present.
 
 ---
 
@@ -39,17 +56,16 @@ Open a Voice Live WSS session against the CI Foundry resource using the
 native `azure-ai-voicelive` SDK with `DefaultAzureCredential` (scope
 `https://ai.azure.com/.default` — handled by the SDK). Send one short
 text turn (a `session.update` configuring text modality + a single user
-message + a `response.create`). Receive at least one server event back
-from the family `session.created` / `session.updated` /
-`conversation.item.created` / `response.created` /
-`response.audio_transcript.delta` / `response.text.delta` /
-`response.done`. Close the session cleanly.
+message + a `response.create`). Receive `session.created`, then require
+the terminal `response.done` event and require its final
+`response.status` to be exactly `completed`. Close the session cleanly.
 
 The deployment to use is `gpt-realtime` (GA in Voice Live, NOT preview)
 on the CI Foundry resource. It is already provisioned in
 `aif-awesome-gbb-ci` (region `swedencentral`, GlobalStandard, capacity 5,
-version `2025-08-28`). The API version is `2026-04-10` (the SDK default —
-do not override).
+version `2025-08-28`). SDK 1.3 now defaults 2026-07-15, so this fixture
+passes `api_version="2026-04-10"` explicitly to preserve the live-proven
+GA path.
 
 The Voice Live WSS endpoint lives on the `services.ai.azure.com` DNS
 surface, NOT on `cognitiveservices.azure.com`. Both names point at the
@@ -64,12 +80,6 @@ auto-closes when the Python `async with` block exits, and no
 persistent Foundry artefacts are touched (AGENTS.md § 9.7 Pattern 25 —
 teardown N/A for this fixture).
 
-The skill's `SKILL.md` is the source of truth for which SDK to use, how
-to authenticate, the endpoint hostname convention, the `connect()` kwargs,
-and how to build session/conversation/response items. Read it before you
-write any code. If the skill's instructions conflict with anything you
-remember from training data, the skill wins.
-
 Do NOT branch on "if `az` has a voice-live CLI extension, use it;
 otherwise SDK" (AGENTS.md § 9.7 Pattern 16). There is no GA `az` surface
 for Voice Live — use the Python SDK only.
@@ -83,14 +93,13 @@ runs inside the fixture (AGENTS.md § 9.7 Pattern 15 only kicks in for
 binaries like `azd` / `func` / `kubectl`).
 
 ```bash
-python3 -m pip install --quiet --upgrade pip
 python3 -m pip install --quiet \
-  "azure-ai-voicelive[aiohttp]~=1.2.0" \
-  "azure-identity~=1.24.0"
+  "azure-ai-voicelive[aiohttp]~=1.3.0" \
+  "azure-identity~=1.25.3"
 ```
 
 The `[aiohttp]` extra is REQUIRED for the async `connect()` path — without
-it the SDK raises `ImportError: aiohttp transport is required` (see
+it the SDK raises `ImportError: aiohttp is required for azure-ai-voicelive` (see
 SKILL.md § 11 "Troubleshooting" for the corresponding row).
 
 ---
@@ -98,7 +107,13 @@ SKILL.md § 11 "Troubleshooting" for the corresponding row).
 ## Step 3 — Open the WSS session
 
 Run the Python script below. It MUST complete without exception, print
-`voice-live-roundtrip-ok` on success, and exit 0.
+`voice-live-roundtrip-ok` on success, persist and lock the successful runtime
+audit records to `/tmp/foundry-voice-live-smoke-evidence`, and exit 0. The
+workflow uploads the evidence file; it is the authoritative audit trail for
+the runtime connect record, session-created record, and completed terminal
+record when the Copilot CLI transcript collapses long shell output. The
+evidence file's final newline is canonical record termination, NOT a blank
+fourth record.
 
 **Do NOT redirect the script's stdout anywhere.** The workflow harness
 already captures all output via its own `tee` pipeline (so the
@@ -107,12 +122,14 @@ shell redirect — `> /tmp/...`, `>>`, `tee`, `rm` of a `/tmp/*log`
 file, or wrapping the heredoc in a sub-harness that mimics the
 workflow's `MARKER=…; TRANSCRIPT=…; rm -f; python3 … > "$TRANSCRIPT"`
 pattern — clobbers the workflow's audit transcript and fails the
-post-hoc step even when the WSS roundtrip succeeded. Just invoke
-`python3 <<'PY' … PY` and let the runtime print to stdout normally.
+post-hoc step even when the WSS roundtrip succeeded. The Python script's
+sanctioned evidence-file write is the only `/tmp` write in this step. Just
+invoke `python3 <<'PY' … PY` and let the runtime print to stdout normally.
 
 ```bash
 python3 <<'PY'
 import asyncio, os, sys
+from pathlib import Path
 from urllib.parse import urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -126,6 +143,28 @@ from azure.ai.voicelive.models import (
     UserMessageItem,
 )
 
+EVIDENCE_PATH = Path('/tmp/foundry-voice-live-smoke-evidence')
+EVIDENCE_PATH.unlink(missing_ok=True)
+EVIDENCE_PATH.write_text('', encoding='utf-8')
+EXPECTED_EVIDENCE_BYTES = (
+    b"VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3\n"
+    b"VOICELIVE_EVENT type=session.created\n"
+    b"VOICELIVE_TERMINAL type=response.done status=completed\n"
+)
+
+def record(message: str) -> None:
+    with EVIDENCE_PATH.open("a", encoding="utf-8") as evidence:
+        evidence.write(message + "\n")
+    print(message)
+
+def finalize_evidence() -> None:
+    if EVIDENCE_PATH.read_bytes() != EXPECTED_EVIDENCE_BYTES:
+        raise RuntimeError(
+            "evidence mismatch: expected exactly three canonical records "
+            "with final newline"
+        )
+    EVIDENCE_PATH.chmod(0o444)
+
 # Derive the Voice Live WSS host from AZURE_AI_ENDPOINT (the
 # cognitiveservices.azure.com surface). Voice Live lives on
 # services.ai.azure.com — same resource, different DNS handler.
@@ -138,28 +177,73 @@ if not resource:
 voicelive_endpoint = f"https://{resource}.services.ai.azure.com/"
 print(f"voicelive endpoint: {voicelive_endpoint}")
 
-ACCEPT = {
-    ServerEventType.SESSION_CREATED,
-    ServerEventType.SESSION_UPDATED,
-    ServerEventType.CONVERSATION_ITEM_CREATED,
-    ServerEventType.RESPONSE_CREATED,
-    ServerEventType.RESPONSE_TEXT_DELTA,
-    ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA,
-    ServerEventType.RESPONSE_DONE,
-}
+def enum_value(value):
+    if value is None:
+        return None
+    return getattr(value, "value", value)
+
+
+def event_type(event):
+    return enum_value(getattr(event, "type", None))
+
+
+def response_status(event):
+    response = getattr(event, "response", None)
+    return enum_value(getattr(response, "status", None))
+
+
+async def await_completed_response(conn, timeout_seconds=60.0):
+    saw_session_created = False
+    session_created_type = enum_value(ServerEventType.SESSION_CREATED)
+    response_done_type = enum_value(ServerEventType.RESPONSE_DONE)
+    error_type = enum_value(ServerEventType.ERROR)
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async for event in conn:
+                etype = event_type(event)
+                print(f"event: {etype}")
+
+                if etype == error_type:
+                    error = getattr(event, "error", str(event))
+                    raise RuntimeError(f"server error event: {error}")
+
+                if etype == session_created_type:
+                    if not saw_session_created:
+                        record("VOICELIVE_EVENT type=session.created")
+                    saw_session_created = True
+                    continue
+
+                if etype == response_done_type:
+                    if not saw_session_created:
+                        raise RuntimeError("response.done received before session.created")
+                    status = response_status(event)
+                    status_label = "None" if status is None else str(status)
+                    if status_label != "completed":
+                        raise RuntimeError(
+                            f"response.done status={status_label} is not completed"
+                        )
+                    record("VOICELIVE_TERMINAL type=response.done status=completed")
+                    return status_label
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(
+            f"timeout waiting for response.done after {timeout_seconds:g}s"
+        ) from exc
+
+    if not saw_session_created:
+        raise RuntimeError("stream ended before session.created")
+    raise RuntimeError("stream ended before response.done")
 
 async def main() -> None:
-    saw_event = False
-    saw_terminal = False
-    saw_error = None
     async with DefaultAzureCredential() as cred:
-        # SDK defaults: api_version="2026-04-10",
-        # credential_scopes=["https://ai.azure.com/.default"].
+        # SDK 1.3 defaults 2026-07-15; the fixture preserves the live-proven 2026-04-10 API.
         async with connect(
             endpoint=voicelive_endpoint,
             credential=cred,
+            api_version="2026-04-10",
             model="gpt-realtime",
         ) as conn:
+            record("VOICELIVE_CONNECT api_version=2026-04-10 sdk=1.3")
             # session.update — text modality + GA AzureSemanticVad with
             # the 2026-04-10 fields (create_response / auto_truncate).
             await conn.session.update(session=RequestSession(
@@ -176,32 +260,12 @@ async def main() -> None:
             ))
             await conn.response.create()
 
-            # Wait up to 60 s for any accepted server event (Voice Live
-            # response generation is typically 5-15 s — 60 s leaves
-            # headroom for cold-start jitter without flaking).
-            try:
-                async with asyncio.timeout(60.0):
-                    async for event in conn:
-                        etype = getattr(event, "type", None)
-                        print(f"event: {etype}")
-                        if etype == ServerEventType.ERROR:
-                            saw_error = getattr(event, "error", str(event))
-                            break
-                        if etype in ACCEPT:
-                            saw_event = True
-                        if etype == ServerEventType.RESPONSE_DONE:
-                            saw_terminal = True
-                            break
-            except asyncio.TimeoutError:
-                print("event loop hit 60 s timeout")
+            # Voice Live emits response.done for every completed response
+            # attempt, regardless of final state. Only status=completed is
+            # success for this smoke.
+            await await_completed_response(conn, timeout_seconds=60.0)
+            finalize_evidence()
 
-    if saw_error is not None:
-        print(f"FAIL: server error event: {saw_error}", file=sys.stderr)
-        sys.exit(1)
-    if not saw_event:
-        print("FAIL: no accepted server event received", file=sys.stderr)
-        sys.exit(1)
-    print(f"saw_terminal={saw_terminal}")
     print("voice-live-roundtrip-ok")
 
 asyncio.run(main())
@@ -212,10 +276,14 @@ Success criteria for Step 3:
 
 - Process exits 0.
 - Stdout contains the literal string `voice-live-roundtrip-ok`.
-- At least one event of type `session.created` / `session.updated` /
-  `conversation.item.created` / `response.created` /
-  `response.text.delta` / `response.audio_transcript.delta` /
-  `response.done` was printed.
+- The evidence file contains exactly the successful runtime audit records:
+  one connect record, one session-created record, and one terminal completed
+  record, with the canonical final newline after the terminal record.
+- After Step 3 succeeds, the evidence file is read-only. You MUST NOT
+  normalize, rewrite, chmod, truncate, remove the final newline from, or
+  otherwise modify it. Only the workflow may copy/upload it.
+- The terminal event was `response.done` and its final
+  `response.status` was exactly `completed`.
 
 If the script raises `ClientAuthenticationError` or any HTTP
 `401`/`403` from the WSS handshake, the CI UAMI is missing a role
@@ -235,7 +303,9 @@ match the workflow's anchored grep — substitute the leading `_` back to
 `S` when you emit the actual `printf` command.
 
 On success (Step 3's script exited 0 AND its stdout contained
-`voice-live-roundtrip-ok`):
+`voice-live-roundtrip-ok` AND the evidence file contains exactly three
+runtime records: connect, session-created, and terminal completed, with its
+canonical final newline intact, and is read-only):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-live-smoke-result
@@ -243,15 +313,21 @@ printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-live-smoke-result
 
 On ANY failure (auth context missing in Step 0, `pip install` failure
 in Step 2, Python exception, `_MOKE_RESULT=FAIL` condition in Step 3,
-HTTP 401/403 from the WSS handshake, no accepted server event received,
-explicit server-side `error` event):
+HTTP 401/403 from the WSS handshake, timeout before terminal
+`response.done`, stream ending before `response.done`, non-`completed`
+terminal status, or explicit server-side `error` event):
 
 ```bash
 printf 'SMOKE_RESULT=FAIL <one-line reason>\n' > /tmp/foundry-voice-live-smoke-result
 ```
 
+After Step 3, Step 4 may verify the evidence file exists and can be read, but
+it MUST NOT normalize, rewrite, chmod, truncate, remove the canonical final
+newline from, or otherwise modify the evidence file. Only the workflow may
+copy/upload the read-only evidence file.
+
 The marker file is single-source-of-truth. Do NOT print the marker
 token anywhere else in your reply — no echoes, no summaries, no fenced
-code blocks containing the literal `SMOKE_RESULT=PASS` or
-`SMOKE_RESULT=FAIL` string outside the two `printf` commands above. The
+code blocks containing the literal `_MOKE_RESULT=PASS` or
+`_MOKE_RESULT=FAIL` string outside the two `printf` commands above. The
 Bash tool write is the only legitimate emission path.

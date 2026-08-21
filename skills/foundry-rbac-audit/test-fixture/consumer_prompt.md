@@ -34,16 +34,15 @@ does NOT deploy any infrastructure, and does NOT invoke any models.
 
 ## Step −1 — Acknowledge skill contract (mandatory FIRST action)
 
-Before Step 0, run this echo as a Bash tool call. The grep on
-`skills/foundry-rbac-audit/` in the output is what the workflow's
-post-hoc audit step grades on as "agent loaded the skill". Do NOT use
-the `view` tool on SKILL.md — the chunked reads inflate per-turn
-context past our TPM ceiling (AGENTS.md § 9.7 Pattern 19 v2).
+Your first action must be a separate Bash tool call containing only the
+command below. Wait for that Bash tool call to complete before planning or
+running any other command. Do not combine it with Step 0 or any later work.
+The path in the output is what the workflow's post-hoc audit grades. Do NOT
+use the `view` tool on SKILL.md — chunked reads inflate per-turn context past
+our TPM ceiling (AGENTS.md § 9.7 Pattern 19 v2).
 
 ```bash
-echo "Loading skill contract: skills/foundry-rbac-audit/SKILL.md (version 1.0.x)"
-echo "Fixture path:           skills/foundry-rbac-audit/test-fixture/consumer_prompt.md"
-echo "Audit grade evidence:   present"
+echo "skills/foundry-rbac-audit/SKILL.md"
 ```
 
 ---

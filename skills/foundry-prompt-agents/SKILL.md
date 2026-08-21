@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.4"
+  version: "1.1.8"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -51,13 +51,14 @@ when you need custom code that can't be expressed as a tool.
 
 1. **Microsoft Foundry project** with a deployed model (e.g., `gpt-5-mini`,
    `gpt-5.4-mini`, `gpt-4.1`)
-2. **Python 3.9+** with `azure-ai-projects >= 2.0.0` and `azure-identity`
+2. **Python 3.9+** with `azure-ai-projects ~= 2.4.0`,
+   `azure-identity ~= 1.25.3`, and `httpx ~= 0.28.1`
 3. **Azure CLI** authenticated via `az login` (or `DefaultAzureCredential`)
 4. **Foundry User role** on the AI Services account (GUID
    `53ca6127-db72-4b80-b1b0-d745d6d5456d`) — same role as hosted agents
 
 ```bash
-pip install "azure-ai-projects~=2.1.0" azure-identity
+pip install "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
 ```
 
 ---
@@ -282,9 +283,20 @@ definition = PromptAgentDefinition(
 )
 ```
 
-For the **decision** of when to use `GuardrailTool` vs full in-process
-governance (AGT) vs raw ACS API calls, see the `foundry-agt` skill — it
-carries the canonical decision table.
+Keep the routing decision in this skill:
+
+- Use `GuardrailTool` in `PromptAgentDefinition` when the prompt agent
+  should invoke its configured Azure Content Safety connection as a
+  server-side check.
+- Call the raw ACS API directly when application code must select
+  classifiers, thresholds, and response handling itself.
+- Use [`foundry-agt`](../foundry-agt/SKILL.md#why-action-governance-matters)
+  only for a MAF hosted-agent process that needs deterministic
+  allow/deny by tool name before the tool body executes. You cannot
+  insert AGT's in-process middleware into `PromptAgentDefinition`.
+
+AGT does not replace Azure Content Safety; combine the two planes when a
+workload needs both content scanning and tool-action governance.
 
 #### A2ATool
 
@@ -546,7 +558,8 @@ See the `foundry-evals` skill for the complete evaluation workflow.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `PromptAgentDefinition` not found on import | `azure-ai-projects` < 2.0.0 installed | `pip install "azure-ai-projects~=2.1.0"` |
+| `PromptAgentDefinition` not found on import | `azure-ai-projects` < 2.0.0 installed | `pip install "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"` |
+| `ModuleNotFoundError: No module named 'httpx'` on SDK import | `azure-ai-projects` 2.4.0 imports undeclared `httpx` | Install bounded `httpx~=0.28.1` explicitly (use the prerequisite command above) |
 | "The project does not exist" | Wrong endpoint format or project not provisioned | Endpoint must be `https://<resource>.services.ai.azure.com/api/projects/<project>` (note `services.ai.azure.com`, not `ai.azure.com`) |
 | "Model not found" on create | Model not deployed in the Foundry project | Deploy the model in the portal or via `az` CLI |
 | Agent created but chat returns empty | No conversation created, or wrong `agent_reference` | Use `openai.conversations.create()` + correct name in `extra_body` |
@@ -610,7 +623,7 @@ from azure.ai.projects.models import (
 | Deploy MCP servers for tool wiring | `foundry-mcp-aca` |
 | RAG via Knowledge Bases | `foundry-iq` |
 | Agent evaluation | `foundry-evals` |
-| Agent governance (AGT) — incl. GuardrailTool decision | `foundry-agt` |
+| MAF hosted-agent action governance (not prompt-agent GuardrailTool selection) | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |
 | Memory across sessions | `foundry-memory` |
 | In-process toolbox utilities | `foundry-toolbox` |

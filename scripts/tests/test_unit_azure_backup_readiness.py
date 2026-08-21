@@ -27,6 +27,7 @@ from unittest.mock import MagicMock, patch
 _PROBE_PY = (Path(__file__).resolve().parents[2]
              / "skills" / "azure-backup-readiness"
              / "references" / "python" / "probe.py")
+_FIXTURE_MD = (_PROBE_PY.parents[2] / "test-fixture" / "consumer_prompt.md")
 _spec = importlib.util.spec_from_file_location("backup_probe", _PROBE_PY)
 backup_probe = importlib.util.module_from_spec(_spec)
 sys.modules["backup_probe"] = backup_probe
@@ -144,9 +145,7 @@ class TestAzureBackupReadinessProbe(unittest.TestCase):
         manifest = Path(result["manifest_path"])
         self.assertTrue(manifest.exists())
         self.assertEqual(manifest.parent, Path(self._outdir.name).resolve())
-        self.assertEqual(
-            json.loads(manifest.read_text())["finding_id"],
-            result["finding_id"])
+        self.assertEqual(json.loads(manifest.read_text()), result)
 
     def test_never_raises_on_partial_denial(self):
         """RSV list 403 but Backup Vault listing succeeds → probes other surface."""
@@ -212,6 +211,38 @@ class TestAzureBackupReadinessProbe(unittest.TestCase):
         self.assertTrue(
             result["summary"].get("probe_error")
             or result["summary"]["confidence"] == 0.0)
+
+
+class TestAzureBackupReadinessFixtureContract(unittest.TestCase):
+    """Regression tests for the live-Azure consumer fixture."""
+
+    def test_cleanup_precedes_terminal_marker_write(self):
+        """Cleanup cannot remove the authoritative marker after it is written."""
+        fixture = _FIXTURE_MD.read_text(encoding="utf-8")
+        cleanup_heading = "### Step 3 — Clean up scratch output"
+        marker_heading = "### Step N — Write the result marker (MANDATORY)"
+
+        self.assertIn(
+            cleanup_heading,
+            fixture,
+            "fixture must make scratch cleanup an explicit ordered step",
+        )
+        self.assertLess(fixture.index(cleanup_heading), fixture.index(marker_heading))
+
+        marker_section = fixture[fixture.index(marker_heading):]
+        self.assertNotRegex(
+            marker_section,
+            r"(?m)^\s*(?:rm|git clean)\b",
+            "no cleanup command may run after the marker step begins",
+        )
+        self.assertIn(
+            "Your FINAL action is a Bash tool call that writes exactly one marker",
+            marker_section,
+        )
+        self.assertIn(
+            "After that Bash tool call completes, do not invoke another tool",
+            marker_section,
+        )
 
 
 if __name__ == "__main__":

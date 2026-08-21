@@ -300,7 +300,7 @@ jobs:
           # `COPILOT_MODEL_*` names DO NOT EXIST and would be silently
           # ignored.
           COPILOT_PROVIDER_TYPE: azure
-          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
           COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
           COPILOT_PROVIDER_WIRE_API: responses
@@ -340,6 +340,89 @@ jobs:
           RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"
           RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"
           test -f "$PROMPT" || { echo "missing fixture: $PROMPT"; exit 2; }
+          # BEGIN tracked-checkout guard
+          trusted_git() {
+            env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+              GIT_NO_REPLACE_OBJECTS=1 git "$@"
+          }
+          repo_matches_commit() {
+            local repo="$1"
+            local expected_commit="$2"
+            local baseline_index current_tree expected_tree
+            local entry metadata path mode type expected_oid actual_oid
+            local dirty=0
+            if [ "$(trusted_git -C "$repo" rev-parse HEAD)" != "$expected_commit" ]; then
+              dirty=1
+            fi
+            baseline_index="$(mktemp)"
+            if ! env -u GIT_DIR -u GIT_WORK_TREE \
+                 GIT_NO_REPLACE_OBJECTS=1 GIT_INDEX_FILE="$baseline_index" \
+                 git -C "$repo" read-tree "$expected_commit"; then
+              rm -f "$baseline_index"
+              return 1
+            fi
+            env -u GIT_DIR -u GIT_WORK_TREE \
+              GIT_NO_REPLACE_OBJECTS=1 GIT_INDEX_FILE="$baseline_index" \
+              git -C "$repo" update-index -q --refresh || true
+            if ! env -u GIT_DIR -u GIT_WORK_TREE \
+                 GIT_NO_REPLACE_OBJECTS=1 GIT_INDEX_FILE="$baseline_index" \
+                 git -C "$repo" diff-files --quiet \
+                   --ignore-submodules=untracked --; then
+              dirty=1
+            fi
+            rm -f "$baseline_index"
+            if ! current_tree="$(trusted_git -C "$repo" write-tree)"; then
+              dirty=1
+            fi
+            if ! expected_tree="$(
+              trusted_git -C "$repo" rev-parse "${expected_commit}^{tree}"
+            )"; then
+              dirty=1
+            fi
+            if [ "$current_tree" != "$expected_tree" ]; then
+              dirty=1
+            fi
+            while IFS= read -r -d '' entry; do
+              metadata="${entry%%$'\t'*}"
+              path="${entry#*$'\t'}"
+              read -r mode type expected_oid <<< "$metadata"
+              if [ "$type" = "blob" ]; then
+                if ! actual_oid="$(
+                  trusted_git -C "$repo" hash-object --no-filters -- "$path"
+                )" || [ "$actual_oid" != "$expected_oid" ]; then
+                  dirty=1
+                fi
+                case "$mode" in
+                  100644)
+                    [ -f "$repo/$path" ] && [ ! -L "$repo/$path" ] \
+                      && [ ! -x "$repo/$path" ] || dirty=1
+                    ;;
+                  100755)
+                    [ -f "$repo/$path" ] && [ ! -L "$repo/$path" ] \
+                      && [ -x "$repo/$path" ] || dirty=1
+                    ;;
+                  120000)
+                    [ -L "$repo/$path" ] || dirty=1
+                    ;;
+                esac
+              elif [ "$mode" = "160000" ] \
+                 && [ -e "$repo/$path/.git" ] \
+                 && ! repo_matches_commit "$repo/$path" "$expected_oid"; then
+                dirty=1
+              fi
+            done < <(trusted_git -C "$repo" ls-tree -rz -r "$expected_commit")
+            [ "$dirty" -eq 0 ]
+          }
+          assert_tracked_checkout_clean() {
+            local phase="$1"
+            if ! repo_matches_commit "$GITHUB_WORKSPACE" "$GITHUB_SHA"; then
+              echo "::error::Fixture checkout has tracked-file mutations ${phase}; refusing to grade its marker"
+              trusted_git -C "$GITHUB_WORKSPACE" \
+                status --short --untracked-files=no
+              return 1
+            fi
+          }
+          # END tracked-checkout guard
           # Pattern 12 (AGENTS.md § 9.7): the fixture writes its result
           # marker to MARKER via a deterministic Bash-tool printf. The
           # transcript grep is a legacy fallback only — see eval block
@@ -375,6 +458,9 @@ jobs:
           # lock + sub-scope denyAction policy.
           PREAMBLE=".github/ci-shared-preamble.md"
           test -f "$PREAMBLE" || { echo "missing preamble: $PREAMBLE"; exit 2; }
+          # A fixture must execute the checked-in contract as-is. A dirty
+          # checkout before invocation is a workflow/predecessor defect.
+          assert_tracked_checkout_clean "before Copilot"
           set +e
           copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
                   --allow-all-tools \
@@ -391,6 +477,10 @@ jobs:
           if [ -f "$INVOKE_LOG" ]; then
             cp "$INVOKE_LOG" "$PRIMARY_INVOKE_LOG"
           fi
+          # A PASS marker cannot override edits to a tracked fixture, skill,
+          # workflow, or test. Filenames are safe to print; diff contents are
+          # deliberately omitted because an agent could have written secrets.
+          assert_tracked_checkout_clean "after Copilot"
           # === Result evaluation (Pattern 12, AGENTS.md § 9.7) ===
           # Marker file is AUTHORITATIVE when present — its bytes were
           # written by the fixture's final Bash-tool printf, deterministic
@@ -436,7 +526,7 @@ jobs:
         if: steps.run.outcome == 'failure'
         env:
           COPILOT_PROVIDER_TYPE: azure
-          COPILOT_PROVIDER_BASE_URL: ${{ secrets.AZURE_AI_ENDPOINT }}
+          COPILOT_PROVIDER_BASE_URL: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
           COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
           COPILOT_PROVIDER_WIRE_API: responses
@@ -471,6 +561,92 @@ jobs:
           INVOKE_LOG="/tmp/${SKILL}-invoke.log"
           RETRY_EVIDENCE="/tmp/${SKILL}-retry-smoke-evidence"
           RETRY_INVOKE_LOG="/tmp/${SKILL}-retry-invoke.log"
+          # BEGIN tracked-checkout guard
+          trusted_git() {
+            env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+              GIT_NO_REPLACE_OBJECTS=1 git "$@"
+          }
+          repo_matches_commit() {
+            local repo="$1"
+            local expected_commit="$2"
+            local baseline_index current_tree expected_tree
+            local entry metadata path mode type expected_oid actual_oid
+            local dirty=0
+            if [ "$(trusted_git -C "$repo" rev-parse HEAD)" != "$expected_commit" ]; then
+              dirty=1
+            fi
+            baseline_index="$(mktemp)"
+            if ! env -u GIT_DIR -u GIT_WORK_TREE \
+                 GIT_NO_REPLACE_OBJECTS=1 GIT_INDEX_FILE="$baseline_index" \
+                 git -C "$repo" read-tree "$expected_commit"; then
+              rm -f "$baseline_index"
+              return 1
+            fi
+            env -u GIT_DIR -u GIT_WORK_TREE \
+              GIT_NO_REPLACE_OBJECTS=1 GIT_INDEX_FILE="$baseline_index" \
+              git -C "$repo" update-index -q --refresh || true
+            if ! env -u GIT_DIR -u GIT_WORK_TREE \
+                 GIT_NO_REPLACE_OBJECTS=1 GIT_INDEX_FILE="$baseline_index" \
+                 git -C "$repo" diff-files --quiet \
+                   --ignore-submodules=untracked --; then
+              dirty=1
+            fi
+            rm -f "$baseline_index"
+            if ! current_tree="$(trusted_git -C "$repo" write-tree)"; then
+              dirty=1
+            fi
+            if ! expected_tree="$(
+              trusted_git -C "$repo" rev-parse "${expected_commit}^{tree}"
+            )"; then
+              dirty=1
+            fi
+            if [ "$current_tree" != "$expected_tree" ]; then
+              dirty=1
+            fi
+            while IFS= read -r -d '' entry; do
+              metadata="${entry%%$'\t'*}"
+              path="${entry#*$'\t'}"
+              read -r mode type expected_oid <<< "$metadata"
+              if [ "$type" = "blob" ]; then
+                if ! actual_oid="$(
+                  trusted_git -C "$repo" hash-object --no-filters -- "$path"
+                )" || [ "$actual_oid" != "$expected_oid" ]; then
+                  dirty=1
+                fi
+                case "$mode" in
+                  100644)
+                    [ -f "$repo/$path" ] && [ ! -L "$repo/$path" ] \
+                      && [ ! -x "$repo/$path" ] || dirty=1
+                    ;;
+                  100755)
+                    [ -f "$repo/$path" ] && [ ! -L "$repo/$path" ] \
+                      && [ -x "$repo/$path" ] || dirty=1
+                    ;;
+                  120000)
+                    [ -L "$repo/$path" ] || dirty=1
+                    ;;
+                esac
+              elif [ "$mode" = "160000" ] \
+                 && [ -e "$repo/$path/.git" ] \
+                 && ! repo_matches_commit "$repo/$path" "$expected_oid"; then
+                dirty=1
+              fi
+            done < <(trusted_git -C "$repo" ls-tree -rz -r "$expected_commit")
+            [ "$dirty" -eq 0 ]
+          }
+          assert_tracked_checkout_clean() {
+            local phase="$1"
+            if ! repo_matches_commit "$GITHUB_WORKSPACE" "$GITHUB_SHA"; then
+              echo "::error::Fixture checkout has tracked-file mutations ${phase}; refusing to grade its marker"
+              trusted_git -C "$GITHUB_WORKSPACE" \
+                status --short --untracked-files=no
+              return 1
+            fi
+          }
+          # END tracked-checkout guard
+          # Fail closed if the primary attempt mutated tracked files. Do not
+          # retry against a contract that the previous agent rewrote.
+          assert_tracked_checkout_clean "before retry classification"
           # Pattern 18 (AGENTS.md § 9.7): expand the retry-classifier
           # regex to include known ARM/ACA control-plane transients that
           # a real Azure deployment hits even when the target resource
@@ -545,6 +721,9 @@ jobs:
             # retry steps applies here too).
             PREAMBLE=".github/ci-shared-preamble.md"
             test -f "$PREAMBLE" || { echo "missing preamble: $PREAMBLE"; exit 2; }
+            # Re-check after the cooldown so a process left by the primary
+            # attempt cannot mutate tracked inputs while this step sleeps.
+            assert_tracked_checkout_clean "before Copilot"
             set +e
             copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
                     --allow-all-tools \
@@ -561,6 +740,7 @@ jobs:
             if [ -f "$INVOKE_LOG" ]; then
               cp "$INVOKE_LOG" "$RETRY_INVOKE_LOG"
             fi
+            assert_tracked_checkout_clean "after Copilot"
             # Same Pattern 12 eval ladder as the primary step
             if [ -f "$MARKER" ]; then
               if grep -qE "^SMOKE_RESULT=FAIL" "$MARKER"; then
@@ -629,5 +809,6 @@ jobs:
             /tmp/${{ matrix.skill }}-retry-smoke-evidence
             /tmp/${{ matrix.skill }}-primary-invoke.log
             /tmp/${{ matrix.skill }}-retry-invoke.log
+            /tmp/${{ matrix.skill }}-smoke-result
           if-no-files-found: warn
           retention-days: 7

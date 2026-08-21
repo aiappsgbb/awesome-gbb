@@ -1,18 +1,106 @@
-# Live audit notes — `rg-citadel-hub-01` (Sweden Central, May 2026)
+# Live audit notes — current-pin core validation + historical evidence
 
-Captured during the v1.0.0 authoring pass to prove the wrapper holds
-against a real-world deployed hub. Subscription: a sandbox MCAPS sub
-(name redacted). Hub deployed via the same upstream template at the
-pinned commit (`f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`) by a peer
-session before this audit.
+Captured during the v1.0.0 authoring pass against a real deployed hub in
+`rg-citadel-hub-01` (Sweden Central, May 2026). Subscription: a sandbox
+MCAPS sub (name redacted). The live evidence in this file belongs to commit
+`f2702b49f80d0ad40e227ae2ee9d8b6dd9137da4`.
 
 This file is **shipped with the skill as record** so future contributors
 can re-validate the same checks against a different deployed hub
 (or re-pin upstream).
 
+> **Evidence boundary:** the skill now pins
+> `63f0f812474e713916dc909494d655246783a1d9`. The section immediately below
+> records its 2026-08-19 lean deployment and core gateway smoke. Later
+> resource counts, latency numbers, and notebook observations remain
+> historical evidence from the old live commit.
+
+## Current pin — build + live core validation (2026-08-19)
+
+The target commit was materialized as an exact detached checkout and both
+deployment entry points compiled without errors:
+
+```text
+git rev-parse HEAD
+63f0f812474e713916dc909494d655246783a1d9
+
+az bicep build --file bicep/infra/main.bicep --outfile <tmp>/main.json
+exit 0; 4,867,085-byte ARM JSON with Bicep CLI 0.43.8; warnings only
+
+az bicep build-params --file bicep/infra/main.bicepparam \
+  --outfile <tmp>/main.parameters.json
+exit 0; 10,971-byte parameters JSON; warnings only
+```
+
+The coordinator's reference build produced a 4,867,124-byte `main.json`.
+Generated ARM JSON byte size can vary by Bicep compiler; both runs exited zero
+with warnings only.
+
+The exact pin was also deployed to a non-production subscription with the
+lean pilot overlay in East US 2. The structured arrays were deliberately
+reduced to one Foundry account plus `gpt-5.4-mini` and
+`text-embedding-3-large`, both at 30K TPM. Redis, API Center, AI Search,
+Document Intelligence, dashboards, and Foundry network injection remained
+disabled.
+
+`azd provision --preview` succeeded. The first deployment exposed a missing
+`Microsoft.ManagedIdentity` provider preflight during APIM activation. After
+registering the provider and recreating the failed APIM service, `azd up`
+succeeded using the canonical `azure-tenant-isolation` bootstrap and an
+explicit subscription argument.
+
+One LLM Access Contract was deployed with direct output rather than Key Vault
+secret storage. Live calls then returned:
+
+```text
+GET /models/models
+HTTP 200
+gpt-5.4-mini
+
+POST /openai/deployments/gpt-5.4-mini/chat/completions
+HTTP 200
+citadel-ok
+```
+
+A product policy setting `jwtRequired=true` rejected a missing bearer token
+with HTTP 401. Positive client-credentials validation did not complete: the tenant rejected the
+pinned two-year secret lifetime, a 30-day append-only credential succeeded,
+and the private Key Vault rejected the local host with
+`ForbiddenByConnection`. A temporary in-VNet workload then wrote the same
+secret through the private endpoint and read it back byte-for-byte
+(`KV_SECRET_MATCH`); its container, role assignment, and subnet were removed.
+No Key Vault firewall exception was introduced. Conditional Access still
+rejected workload token issuance with `AADSTS53003`. The current pin is
+therefore live-validated for deployment, core gateway traffic, missing-token
+JWT enforcement, and private Key Vault persistence, but not for a positive
+client-credentials dual-auth call.
+
+### Current-pin static contract review
+
+Static review of the pinned sources established two constraints that are now
+enforced by the shipped profile validator:
+
+- `bicep/infra/main.bicep` documents `eventHubNetworkAccess=Enabled` as
+  required while an APIM v2 SKU provisions. The enterprise and VNet profiles
+  therefore keep Event Hub public access enabled; this is source inspection,
+  not post-deploy hardening evidence.
+- `bicep/infra/entra-id-setup/setup.ps1` mutates Microsoft Graph, writes
+  `ENTRA-APP-CLIENT-SECRET` through the Key Vault data plane, and creates or
+  updates APIM named values. It also continues after a Key Vault write failure.
+  The skill consequently requires Graph app-registration permission, Key
+  Vault Secrets Officer, API Management Service Contributor, private vault
+  reachability, and explicit post-script data-plane verification.
+
+The provider, credential-lifetime, private-network, and Conditional Access
+findings above were observed live at the current pin. The APIM v2 Event Hub
+constraint remains source-reviewed rather than live-tested because the lean
+validation used Developer APIM.
+
 ---
 
-## Phase 1 — Pin upstream + bicep build
+## Historical live audit — old pin
+
+### Phase 1 — Pin upstream + bicep build
 
 ```
 $ git ls-remote https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator citadel-v1
@@ -31,7 +119,7 @@ JSON output. Always use `--outfile` for hubs of this size.
 
 ---
 
-## Phase 2 — Resource & shape audit
+### Phase 2 — Resource & shape audit
 
 After tenant isolation per `azure-tenant-isolation`:
 

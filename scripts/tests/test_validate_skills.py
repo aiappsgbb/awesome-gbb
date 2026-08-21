@@ -3,7 +3,7 @@
 test_validate_skills.py — unit tests for validate-skills.py (AGENTS.md § 8).
 
 Tests the validation logic in isolation using synthetic SKILL.md, pin,
-and plugin.json data. No git or real files required.
+and plugin.json data, plus temporary Git repositories where history matters.
 
 Run:
     python -m pytest scripts/tests/test_validate_skills.py -v
@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 VS_PATH = HERE.parent / "validate-skills.py"
@@ -402,6 +403,180 @@ class TestValidatePluginJson(unittest.TestCase):
             _write(pj, json.dumps({"name": "test", "version": "bad", "description": "x"}))
             errs = vs.validate_plugin_json(pj)
             self.assertTrue(any("SemVer" in e for e in errs))
+
+
+class TestValidateSkillPluginVersionConsistency(unittest.TestCase):
+    def _validate(
+        self,
+        *,
+        old_skills: dict[str, str],
+        current_skills: dict[str, str],
+        old_plugin_version: str = "4.2.0",
+        current_plugin_version: str = "4.2.0",
+    ) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            subprocess.run(
+                ["git", "init", "-q", "-b", "main"],
+                cwd=root,
+                check=True,
+            )
+            _write(root / "plugin.json", _plugin_json(version=old_plugin_version))
+            for name, version in old_skills.items():
+                _write(root / "skills" / name / "SKILL.md", _skill_md(name=name, version=version))
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "-qm",
+                    "baseline",
+                ],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "switch", "-qc", "feature"], cwd=root, check=True)
+
+            _write(root / "plugin.json", _plugin_json(version=current_plugin_version))
+            for name in old_skills.keys() - current_skills.keys():
+                (root / "skills" / name / "SKILL.md").unlink()
+            for name, version in current_skills.items():
+                _write(root / "skills" / name / "SKILL.md", _skill_md(name=name, version=version))
+
+            with mock.patch.object(vs, "REPO_ROOT", root), \
+                 mock.patch.object(vs, "SKILLS_DIR", root / "skills"), \
+                 mock.patch.object(vs, "PLUGIN_JSON", root / "plugin.json"):
+                return vs.validate_skill_plugin_version_consistency()
+
+    def test_existing_skill_patch_bump_does_not_require_plugin_bump(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0"},
+            current_skills={"existing": "1.0.1"},
+        )
+        self.assertEqual(errs, [])
+
+    def test_existing_skill_minor_bump_does_not_require_plugin_bump(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0"},
+            current_skills={"existing": "1.1.0"},
+        )
+        self.assertEqual(errs, [])
+
+    def test_existing_skill_major_bump_does_not_require_plugin_bump(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0"},
+            current_skills={"existing": "2.0.0"},
+        )
+        self.assertEqual(errs, [])
+
+    def test_added_skill_requires_plugin_version_change(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0"},
+            current_skills={"existing": "1.0.0", "added": "1.0.0"},
+        )
+        self.assertTrue(any("added" in error.lower() for error in errs))
+
+    def test_removed_skill_requires_plugin_version_change(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0", "removed": "1.0.0"},
+            current_skills={"existing": "1.0.0"},
+        )
+        self.assertTrue(any("removed" in error.lower() for error in errs))
+
+    def test_changed_plugin_version_satisfies_added_skill_gate(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0"},
+            current_skills={"existing": "1.0.0", "added": "1.0.0"},
+            current_plugin_version="4.2.1",
+        )
+        self.assertEqual(errs, [])
+
+    def test_changed_plugin_version_satisfies_removed_skill_gate(self):
+        errs = self._validate(
+            old_skills={"existing": "1.0.0", "removed": "1.0.0"},
+            current_skills={"existing": "1.0.0"},
+            current_plugin_version="4.2.1",
+        )
+        self.assertEqual(errs, [])
+
+    def test_removed_skill_is_detected_in_shallow_pull_request_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_root = pathlib.Path(tmp)
+            source = temp_root / "source"
+            source.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=source, check=True)
+            _write(source / "plugin.json", _plugin_json())
+            _write(
+                source / "skills" / "existing" / "SKILL.md",
+                _skill_md(name="existing"),
+            )
+            _write(
+                source / "skills" / "removed" / "SKILL.md",
+                _skill_md(name="removed"),
+            )
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            commit = [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+            ]
+            subprocess.run([*commit, "baseline"], cwd=source, check=True)
+            base_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                text=True,
+            ).strip()
+            subprocess.run(["git", "switch", "-qc", "feature"], cwd=source, check=True)
+            (source / "skills" / "removed" / "SKILL.md").unlink()
+            subprocess.run(["git", "add", "-u"], cwd=source, check=True)
+            subprocess.run([*commit, "remove skill"], cwd=source, check=True)
+
+            checkout = temp_root / "checkout"
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "-q",
+                    "--depth=1",
+                    "--branch=feature",
+                    f"file://{source}",
+                    str(checkout),
+                ],
+                check=True,
+            )
+            event_path = temp_root / "event.json"
+            _write(event_path, json.dumps({"pull_request": {"base": {"sha": base_sha}}}))
+
+            with mock.patch.dict(
+                "os.environ",
+                {"GITHUB_EVENT_PATH": str(event_path)},
+                clear=False,
+            ), mock.patch.object(vs, "REPO_ROOT", checkout), \
+                 mock.patch.object(vs, "SKILLS_DIR", checkout / "skills"), \
+                 mock.patch.object(vs, "PLUGIN_JSON", checkout / "plugin.json"):
+                errs = vs.validate_skill_plugin_version_consistency()
+
+        self.assertTrue(any("removed" in error.lower() for error in errs))
+
+    def test_marketplace_version_must_match_plugin_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            plugin_path = root / "plugin.json"
+            marketplace_path = root / "marketplace.json"
+            _write(plugin_path, _plugin_json(version="4.2.1"))
+            _write(marketplace_path, _marketplace_json(plugin_version="4.2.0"))
+            with mock.patch.object(vs, "REPO_ROOT", root), \
+                 mock.patch.object(vs, "PLUGIN_JSON", plugin_path):
+                errs = vs.validate_marketplace(marketplace_path)
+        self.assertTrue(any("plugin.json version" in error for error in errs))
 
 
 # ── Frontmatter parser ───────────────────────────────────────────────

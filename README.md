@@ -116,7 +116,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | Skill | Description |
 |-------|-------------|
 | [**foundry-prompt-agents**](skills/foundry-prompt-agents/) | Create declarative Foundry agents — model + instructions + tools, no containers, no custom code. `PromptAgentDefinition`, tool wiring (web search, code interpreter, file search, MCP, OpenAPI), versioning, structured inputs, agent applications |
-| [**foundry-voice-live**](skills/foundry-voice-live/) | Build real-time voice agents with Azure Voice Live (GA 2025-10-01). Three-rung migration from Realtime → Voice Live → +Agent in 3 lines. Semantic VAD, echo cancel, Neural HD voices, benchmark pattern, Gradio + FastRTC UI |
+| [**foundry-voice-live**](skills/foundry-voice-live/) | Build real-time voice agents with Azure Voice Live (GA 2026-04-10) through a four-rung migration from Azure OpenAI Realtime to the native Voice Live SDK. Covers semantic VAD, echo cancellation, Neural HD voices, Foundry agent routing, benchmark patterns, and the FastRTC 0.0.34 plus Gradio 5.50 compatibility boundary |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | GA container-deploy hosted agents via unified `azure.yaml` + `azd` — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, implicit-access identity model (no default role grant), MCP wiring, **`SkillsProvider` progressive skill loading** vs. legacy concat, stable `update_details` blue-green/canary rollout, troubleshooting |
 | [agent-framework-harness](skills/agent-framework-harness/) | Build MAF `create_harness_agent` runtimes with accurate defaults, compaction, plan/execute modes, recovery, bounded loops, and Hosted Agents adapter wiring |
 | [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
@@ -152,22 +152,23 @@ defence-in-depth for production agent platforms:
 1. **Layer 1 (gateway infra)** — `citadel-hub-deploy` stands up the
    shared APIM AI gateway + Foundry control plane + telemetry sink.
 2. **Layer 1 (per-spoke wiring)** — `citadel-spoke-onboarding` connects
-   each agent project to the hub via per-team Access Contracts.
-3. **Layer 1.5 (in-process)** — `foundry-agt` wraps the Microsoft Agent
-   Governance Toolkit around the agent runtime itself, catching attacks
-   the gateway can't see (intent classification, capability allow/deny,
-   hash-chained audit, OWASP ASI 2026 coverage). The 26.67% (prompt-only)
-   vs 0.00% (deterministic AGT) red-team gap is why both layers matter.
+   each agent project to the hub via per-team Access Contracts, gateway
+   routing, and product policies.
+3. **Layer 1.5 (in-process)** — `foundry-agt` is a separate action/tool
+   enforcement layer that runs inside the agent runtime itself:
+   deterministic per-tool-call capability allow/deny before the tool body
+   executes, plus a tamper-evident, hash-chained audit trail. It
+   complements the gateway and network isolation rather than adapting
+   into Citadel.
 
-Compose with `foundry-hosted-agents` / [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills) (in-process
-middleware), `foundry-vnet-deploy` (VNet-isolated spokes), or
-`azd-patterns` (sidecar pattern).
+Compose with `foundry-hosted-agents` / [`threadlight-deploy`](https://github.com/aiappsgbb/threadlight-skills) for
+MAF middleware, and `foundry-vnet-deploy` for network isolation.
 
 | Skill | Description |
 |-------|-------------|
 | [**citadel-hub-deploy**](skills/citadel-hub-deploy/) | Deploy the **AI Citadel Governance Hub** (Layer 1 infra) — APIM AI Gateway + 2× Microsoft Foundry control plane + Cosmos usage telemetry + Logic App billing + 4 LLM APIs (Azure OpenAI / OpenAI Realtime / Universal LLM / Unified AI wildcard) + 13 Private DNS Zones + Managed Redis semantic cache. Wraps `Azure-Samples/ai-hub-gateway-solution-accelerator` `citadel-v1` branch (azd template, MIT) at a pinned commit; **does NOT fork or vendor upstream Bicep**. Ships 3 curated env profiles (`pilot-quickstart`, `enterprise-baseline`, `vnet-isolated-spoke-aware`), pre-flight checklist, live audit notes against a real `rg-citadel-hub-01` deployment in Sweden Central (resource inventory + APIM smoke calls + latency baselines + 8 Known Issues incl. `api-key` header convention + `max_completion_tokens` GPT-5.4 migration). |
 | [**citadel-spoke-onboarding**](skills/citadel-spoke-onboarding/) | Onboard a GenAI app or Foundry project as a spoke into an AI Citadel Governance Hub — Access Contracts, APIM connections, Key Vault secrets, product policies, JWT auth. **Combines with `foundry-vnet-deploy` for VNet-isolated spokes** (Option B Foundry Connection auth posture mandatory). Pairs with `citadel-hub-deploy` for the full Layer 1 story. |
-| [**foundry-agt**](skills/foundry-agt/) | Wrap the [Microsoft Agent Governance Toolkit (AGT)](https://github.com/microsoft/agent-governance-toolkit) v3.6.0 around Foundry hosted agents, MCP servers, and Citadel spokes. **Path A** (in-process MAF middleware, GBB-verified ~8–12 µs/eval on Win + Py 3.13) for hosted agents; **Path B** (ACA sidecar) for non-MAF workloads; **Path C** (Citadel adapter) for governed spokes. Ships 3 starter YAML policies (default conservative / HITL gate / PII deny), the `create_governance_middleware(...)` factory snippet (working — upstream Foundry doc shows stale kwargs that no longer exist), an ACA-sidecar Bicep fragment, and **5 field-tested Known Issues** (Windows UTF-8 CLI trap, stale Foundry-doc kwargs, `Agent` ctor rename, RogueDetection setup gotcha, verifier version skew). Wrapper skill — upstream is canon, links don't duplicate. |
+| [**foundry-agt**](skills/foundry-agt/) | Wrap the [Microsoft Agent Governance Toolkit (AGT)](https://github.com/microsoft/agent-governance-toolkit) v4.1.0 (Public Preview) around a Foundry hosted agent's Microsoft Agent Framework runtime — **in-process middleware only, no sidecar or adapter path**. Loads two starter YAML policies (default / PII-deny, inbound message text only) into a PolicyEvaluator, and separately enforces deterministic per-tool-call allow/deny via `CapabilityGuardMiddleware`'s explicit allow/deny lists before the tool body executes; emits a tamper-evident, hash-chained `AuditLog` with CloudEvents export, and composes with a real `FoundryChatClient`. `agt verify` is a toolkit self-assessment, not a certification. Wrapper skill — upstream is canon, links don't duplicate. |
 | [**azure-sre-agent**](skills/azure-sre-agent/) | GBB wrapper for [Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/) (preview). **Thin** — uses Microsoft's official toolchain at [`microsoft/sre-agent`](https://github.com/microsoft/sre-agent) (Bicep + Terraform + azd + PS deploy backends, `bin/` CLI) and plugin marketplace at [`Azure/sre-agent-plugins`](https://github.com/Azure/sre-agent-plugins). Adds the three things MS won't ship: **3 GBB recipes** (`citadel-routed`, `foundry-hosted-agents`, `threadlight-pilot-handover`) in upstream byte-exact shape; **2 GBB plugins** (`gbb-citadel`, `gbb-foundry`) with 5 expert skills (JWT 403 debug, APIM throttle, hosted-agent deploy triage, BYOK 401, AOAI quota); a **pre-flight runbook** for the gotchas the official docs assume away (Zscaler `*.azuresre.ai`, region scarcity, `Microsoft.App` RP); and **`data_plane.py`** so other awesome-gbb skills (Threadlight) can post incidents via HTTP trigger. |
 
 ### 📊 Content Generation

@@ -28,6 +28,13 @@ packages:
     upstream_changelog: https://pypi.org/project/azure-identity/#history
     notes: |
       DefaultAzureCredential for authentication. Stable, low churn.
+  - name: httpx
+    source: pypi
+    version: "0.28.1"
+    upstream_changelog: https://pypi.org/project/httpx/#history
+    notes: |
+      Explicit compatibility dependency because azure-ai-projects 2.4.0
+      imports httpx directly without declaring it.
 
 docs_to_revalidate:
   - https://learn.microsoft.com/azure/foundry/agents/concepts/routines
@@ -88,7 +95,7 @@ validation:
     set -euo pipefail
     python -m venv .venv-routines
     . .venv-routines/bin/activate
-    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.4.0}" "azure-identity~=1.25"
+    pip install --quiet "azure-ai-projects~=${PINNED_VERSION:-2.4.0}" "azure-identity~=1.25.3" "httpx~=0.28.1"
     python -c "
     import azure.ai.projects as _m
     print(f'azure-ai-projects=={_m.__version__}')
@@ -120,7 +127,7 @@ validation:
     - "routines-surface-ok"
     - "routines-methods:"
 
-last_validated: 2026-07-30
+last_validated: 2026-08-17
 validated_by: copilot-bot
 known_issues_count: 4
 ---
@@ -139,11 +146,11 @@ audit trail. Keep them in sync.
 | Field | Value |
 |-------|-------|
 | **Upstream** | `azure-ai-projects` (PyPI) |
-| **Pinned version** | **2.2.0** (preview routines surface) |
-| **Cap window** | `~=2.2.0` ≡ `>=2.2.0, <2.3.0` |
+| **Pinned version** | **2.4.0** (current routines surface) |
+| **Cap window** | `~=2.4.0` ≡ `>=2.4.0, <2.5.0` |
 | **License** | MIT |
 | **First authored against** | 2026-06-15 |
-| **Last re-validated** | 2026-06-15 |
+| **Last re-validated** | 2026-08-17 |
 
 The skill wraps the **routines preview surface** added in
 `azure-ai-projects` 2.2.0 (`client.beta.routines`). The SDK proxy
@@ -156,8 +163,9 @@ on every call, so consumers do not need to set it manually.
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `azure-ai-projects` | PyPI | **2.2.0** | First version with `client.beta.routines`. Earlier 2.1.x raises `AttributeError`. |
+| `azure-ai-projects` | PyPI | **2.4.0** | Current validated version; routines first appeared in 2.2.0. |
 | `azure-identity` | PyPI | **1.25.3** | `DefaultAzureCredential`. Stable, low churn. |
+| `httpx` | PyPI | **0.28.1** | Explicit compatibility dependency for an upstream packaging gap. |
 
 ---
 
@@ -166,7 +174,7 @@ on every call, so consumers do not need to set it manually.
 The `validation.script` above runs a pure PyPI import smoke against the
 pinned `azure-ai-projects` version. It proves:
 
-1. The SDK installs cleanly within its `~=2.2.0` cap window.
+1. The SDK installs cleanly within its `~=2.4.0` cap window.
 2. `client.beta.routines` exists (the preview surface is present).
 3. The accessor returns a `_OperationMethodHeaderProxy` (the wrapper
    that auto-injects the `Foundry-Features: Routines=V1Preview`
@@ -178,7 +186,7 @@ pinned `azure-ai-projects` version. It proves:
 
 **Expected output** must contain (substring match):
 
-- `azure-ai-projects==2.2.0`
+- `azure-ai-projects==2.4.0`
 - `routines-surface-ok`
 - `routines-methods:`
 
@@ -192,7 +200,7 @@ pinned `azure-ai-projects` version. It proves:
 > **Live Azure E2E** is covered by the fixture at
 > `skills/foundry-routines/test-fixture/consumer_prompt.md`, which runs
 > in the `copilot-cli-matrix` job of `.github/workflows/skill-test.yml`
-> against the project at `aif-awesome-gbb-ci`. That fixture proves the
+> against the project at `<ci-foundry-project>`. That fixture proves the
 > end-to-end create → dispatch → list → cleanup cycle works against a
 > real Foundry deployment. This pin script is the import-surface gate
 > for weekly drift detection.
@@ -203,12 +211,12 @@ pinned `azure-ai-projects` version. It proves:
 
 | Check | Result | Evidence |
 |-------|--------|----------|
-| `azure-ai-projects~=2.2.0` install | ✅ | `azure-ai-projects==2.2.0` |
+| `azure-ai-projects~=2.4.0` install | ✅ | `azure-ai-projects==2.4.0` |
 | `client.beta.routines` surface present | ✅ | `routines-surface-ok` |
 | 8-method proxy intact | ✅ | `routines-methods: ['create_or_update', 'delete', 'disable', 'dispatch', 'enable', 'get', 'list', 'list_runs']` |
 | Live E2E (Sweden Central) | ✅ | See `copilot-cli-matrix` job log for `foundry-routines` leg |
 
-Captured at `last_validated: 2026-06-15` by `copilot-bot`.
+Captured at `last_validated: 2026-08-17` by `copilot-bot`.
 
 ---
 
@@ -261,9 +269,9 @@ Available regions as of the pin date:
 - Japan East
 
 Provisioning a Foundry project in any other region will not expose the
-routines surface even with `azure-ai-projects` 2.2.0 installed. The CI
-infrastructure for this catalog (`aif-awesome-gbb-ci` in Sweden Central)
-qualifies; verify your customer project's region before quoting routines.
+routines surface even with a routines-capable SDK installed. The CI
+infrastructure for this catalog (`<ci-foundry-project>` in Sweden Central)
+qualifies; verify your project's region before relying on routines.
 
 ### KI-004 — Prompt-only agents without configured agent identity are rejected
 
@@ -291,10 +299,10 @@ When `azure-ai-projects` advances:
    <https://pypi.org/project/azure-ai-projects/#history> — look for any
    notes on `client.beta.routines` or routines-related fixes.
 3. **Update front-matter**: set `packages[0].version` to the new
-   version. If the new pin is still in the `>=2.2.0,<2.3.0` cap window
-   (e.g. 2.2.1, 2.2.2, …) leave the existing `~=2.2.0` cap alone — the
+   version. If the new pin is still in the `>=2.4.0,<2.5.0` cap window
+   (e.g. 2.4.1, 2.4.2, …) leave the existing `~=2.4.0` cap alone — the
    compatible-release operator auto-covers patches. If the new pin
-   crosses the cap (e.g. 2.3.0), bump the cap AND update the version
+   crosses the cap (e.g. 2.5.0), bump the cap AND update the version
    pin.
 4. **Run the validation script**:
    ```bash

@@ -1,10 +1,13 @@
 # PII pattern-block policy.
 #
-# Defence-in-depth alongside Azure AI Content Safety / Presidio:
-# these regex patterns catch the obvious leaks (SSN, credit card,
-# IBAN, phone, email) in either the user message OR the agent's
-# outbound response. Use the priority ladder to put high-value
-# patterns first.
+# Defence-in-depth alongside Azure AI Content Safety / Presidio: these
+# regex patterns catch the obvious leaks (SSN, credit card, IBAN) in the
+# user's INBOUND message. The real GovernancePolicyMiddleware evaluation
+# context carries only agent/message/timestamp/stream/message_count --
+# there is no outbound "response" field for a condition to match
+# against, so this policy cannot and does not gate the agent's outbound
+# text. Gate tool actions with CapabilityGuard allow/deny lists instead.
+# Use the priority ladder below to put high-value patterns first.
 #
 # NOTE: regex-based PII detection is necessarily imprecise. Use this
 # as a guardrail, not a primary classifier. For high-stakes
@@ -12,18 +15,31 @@
 name: foundry-agt-pii-deny
 version: "1.0"
 description: |
-  Block obvious PII patterns in inputs and outputs. Patterns are
-  regional shorthand — extend per locale. Pair with a content-safety
-  evaluator for production.
+  Block obvious PII patterns in the user's inbound message. Patterns
+  are regional shorthand — extend per locale. Pair with a
+  content-safety evaluator for production. This policy does not gate
+  the agent's outbound response text; the real PolicyEvaluator context
+  has no such field to match against.
 defaults:
   action: allow
 rules:
+  # FALSE-POSITIVE DISCLOSURE: every separator below is optional, so this
+  # rule also matches the fully unseparated 9-digit run -- the same shape
+  # as any other standalone 9-digit number (order/invoice IDs). An ordinary
+  # hyphenated ZIP+4 also matches because the first separator is optional
+  # and the second accepts its hyphen. The middleware fails closed: a deny
+  # raises MiddlewareTermination and blocks the message before the agent
+  # ever sees it, so an unseparated false positive is a false DENY, not
+  # just a false flag. Tune or remove this rule before production and
+  # pair it with a real classifier / Azure AI Content Safety rather than
+  # relying on this regex alone.
   - name: block-us-ssn
     priority: 100
     condition:
       field: message
       operator: matches
-      value: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      # Matches hyphen, space, dot, or unseparated SSN digit groupings.
+      value: '\b\d{3}[\s.-]?\d{2}[\s.-]?\d{4}\b'
     action: deny
     message: US SSN pattern detected.
 
@@ -45,12 +61,3 @@ rules:
       value: "\\b[A-Z]{2}\\d{2}[A-Z0-9]{4}\\d{7}([A-Z0-9]?){0,16}\\b"
     action: deny
     message: IBAN pattern detected.
-
-  - name: block-output-ssn
-    priority: 80
-    condition:
-      field: response
-      operator: matches
-      value: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
-    action: deny
-    message: Outbound response contains SSN pattern; refusing.

@@ -12,7 +12,7 @@ description: >
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq),
   real-time voice / Voice Live (use foundry-voice-live).
 metadata:
-  version: "1.2.6"
+  version: "1.2.9"
 ---
 
 # Foundry Doc / Vision / Speech
@@ -923,7 +923,7 @@ Tool naming: verb_noun snake_case, prefixed by modality
 | Vision tool returns gibberish | Wrong content-part type | Use `input_image` not `image` for the Responses API |
 | Document Intelligence times out | Large PDF (>500 pages) | Pre-split into chunks of ≤100 pages |
 | Custom doc model accuracy < 80% | Training set < 5 samples or labels inconsistent | Add 10+ samples; re-label in Studio for consistency |
-| Speech 401 with managed identity | Speech needs `Cognitive Services User` role assignment | Assign UAMI to Speech account scope |
+| Speech 401 with managed identity | Wrong role — `Cognitive Services User` covers Document Intelligence but does NOT grant Speech data-plane access | Assign `Cognitive Services Speech User` (role ID `f2dc8367-1007-4938-bd23-fe263f013447`) to the UAMI on the Speech account scope. If it still 401s, confirm the Speech resource has a custom subdomain — AAD auth requires it (one-way door, see Speech section) |
 | `gpt-4o` referenced in SPEC | Legacy model | **Fail loudly** — ask spec author to update to `gpt-5.4-mini` per SPEC template § 7b rules |
 | Vision response slow (>30s) | Image too large (>4MP) | Pre-resize to 2048px max edge before passing to vision |
 | TTS audio file too large | Default WAV format | Use compressed `audio-24khz-48kbitrate-mono-mp3` output format |
