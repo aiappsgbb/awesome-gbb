@@ -4,21 +4,21 @@ description: >
   Deploy + manage Foundry hosted agents — container deploy via unified
   azure.yaml is GA; source-code --deploy-mode code is still preview. MAF
   1.14 current, azd ext install microsoft.foundry, implicit agent access
-  (no default role grant). Read the body for patterns, identity,
-  rollout, troubleshooting. USE FOR: deploy foundry agent, hosted agent,
+  (no default role grant). USE FOR: deploy foundry agent, hosted agent,
   container agent, azure.yaml, azd ai agent, microsoft.foundry, MAF,
   FoundryChatClient, ResponsesHostServer, ACR push, batch eval, agent
   identity, Foundry User role, entra-agent-id, Responses/Invocations
   protocols, Activity protocol, blue-green deploy, canary rollout,
   version rollback, traffic routing, version_selector, agent_endpoint,
-  update_details. DO NOT USE FOR: prompt agents (use
-  foundry-prompt-agents), ACA MCP (use foundry-mcp-aca), GHCP coding
+  update_details. DO NOT USE FOR: Harness runtime composition (use
+  agent-framework-harness), prompt agents (use foundry-prompt-agents),
+  ACA MCP (use foundry-mcp-aca), GHCP coding
   agent (use ghcp-hosted-agents), Citadel hub/spoke (use
   citadel-hub-deploy), pilot pipeline (use threadlight-deploy),
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.1.3"
+  version: "2.1.4"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -55,6 +55,10 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 - **Migrating from the legacy two-file `agent.yaml` + `agent.manifest.yaml`
   contract** — both are gone; a single `azure.yaml` is now the source of truth
   ([§ azure.yaml](#azureyaml-unified-hosted-agent-configuration))
+
+| Need | Use |
+|---|---|
+| Build an already-hostable `Agent` with `create_harness_agent` | [`agent-framework-harness`](../agent-framework-harness/SKILL.md) |
 
 > **Choosing a model?** See [`references/model-selection.md`](references/model-selection.md) for the model / region / capacity / data-residency decision before you `azd provision`.
 

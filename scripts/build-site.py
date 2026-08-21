@@ -47,7 +47,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # failure (drift detector for new skills).
 CATEGORIES: dict[str, list[str]] = {
     '🏗️ Foundry Building Blocks': [
-        'foundry-prompt-agents', 'foundry-hosted-agents', 'foundry-teams-bot',
+        'foundry-prompt-agents', 'foundry-hosted-agents', 'agent-framework-harness',
+        'foundry-teams-bot',
         'ghcp-hosted-agents',
         'foundry-mcp-aca', 'foundry-evals', 'foundry-iq',
         'foundry-doc-vision-speech', 'foundry-observability',
