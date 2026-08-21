@@ -107,9 +107,12 @@ test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" || {
 
 python3 -m venv /tmp/agent-framework-harness-venv
 /tmp/agent-framework-harness-venv/bin/pip install --quiet \
-  "agent-framework-core~=1.13.0" \
-  "agent-framework-foundry~=1.10.4" \
-  "agent-framework-foundry-hosting==1.0.0b260730" \
+  "agent-framework-core~=1.14.0" \
+  "agent-framework-foundry~=1.11.0" \
+  "agent-framework-foundry-hosting==1.0.0b260813" \
+  "azure-ai-agentserver-core==2.1.0b1" \
+  "azure-ai-agentserver-responses==2.1.0b1" \
+  "azure-ai-agentserver-invocations==1.1.0b1" \
   "azure-identity~=1.25.3"
 
 OIDC_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api%3A%2F%2FAzureADTokenExchange"
@@ -154,6 +157,7 @@ reference_dir = Path(
 sys.path.insert(0, str(reference_dir))
 
 from hosted_harness import build_agent, build_server
+from session_recovery import restore_session, serialize_session
 
 
 async def main() -> None:
@@ -167,7 +171,7 @@ async def main() -> None:
     assert isinstance(server, ResponsesHostServer)
     print("HOSTING_ADAPTER_CONSTRUCTED")
 
-    session = agent.create_session()
+    session = restore_session(serialize_session(agent.create_session()))
     assert isinstance(session, AgentSession)
     response = await agent.run(
         "Reply with exactly HARNESS_LIVE_OK.",

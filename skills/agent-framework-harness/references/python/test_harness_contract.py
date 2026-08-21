@@ -13,6 +13,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from collections.abc import Awaitable, Iterator, Mapping, Sequence
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from agent_framework import (
     AgentLoopMiddleware,
     AgentModeProvider,
     AgentResponse,
+    BackgroundAgentsProvider,
     BaseChatClient,
     ChatOptions,
     ChatResponse,
@@ -49,6 +51,7 @@ from plan_execute import (
     build_plan_execute_agents,
     has_pending_tool_approval,
 )
+from session_recovery import restore_session, serialize_session
 
 
 class NeverCalledChatClient(BaseChatClient[ChatOptions[Any]]):
@@ -113,12 +116,25 @@ def assert_signature() -> None:
     ):
         assert signature.parameters[name].default is None
     assert signature.parameters["loop_max_iterations"].default == 10
+    middleware_annotation = str(signature.parameters["middleware"].annotation)
+    assert "MiddlewareTypes | Sequence[MiddlewareTypes] | None" in middleware_annotation
     return_annotation = signature.return_annotation
     assert (
         return_annotation is Agent
         or str(return_annotation).startswith("Agent")
         or getattr(return_annotation, "__origin__", None) is Agent
     )
+
+
+def assert_release_contract() -> None:
+    assert version("agent-framework-core").startswith("1.14.")
+    assert version("agent-framework-foundry").startswith("1.11.")
+    assert version("agent-framework-foundry-hosting") == "1.0.0b260813"
+
+    release_signature = inspect.signature(BackgroundAgentsProvider.release_session)
+    assert release_signature.parameters["cancel_running"].default is True
+    assert release_signature.parameters["timeout"].default == 30.0
+    assert getattr(CompactionProvider, "after_run_once_per_turn", None) is None
 
 
 def assert_defaults(client: NeverCalledChatClient) -> None:
@@ -368,6 +384,17 @@ def assert_pending_approval_contract() -> None:
     assert not has_pending_tool_approval(text_response)
 
 
+def assert_session_recovery(client: NeverCalledChatClient) -> None:
+    agent = create_harness_agent(client=client, disable_web_search=True)
+    session = agent.create_session()
+    session.state["contract_probe"] = {"value": "preserved"}
+
+    restored = restore_session(serialize_session(session))
+
+    assert restored.session_id == session.session_id
+    assert restored.state["contract_probe"] == {"value": "preserved"}
+
+
 def assert_reference_imports(compile_dir: Path) -> None:
     reference_dir = Path(__file__).parent
     for name in (
@@ -402,6 +429,8 @@ def main() -> None:
         client = NeverCalledChatClient()
         assert_signature()
         print("HARNESS_SIGNATURE_OK")
+        assert_release_contract()
+        print("HARNESS_RELEASE_OK")
         assert_defaults(client)
         print("HARNESS_DEFAULTS_OK")
         assert_compaction(client)
@@ -410,6 +439,8 @@ def main() -> None:
         assert_plan_execute_construction(client)
         assert_pending_approval_contract()
         print("HARNESS_CONSTRUCTION_OK")
+        assert_session_recovery(client)
+        print("HARNESS_RECOVERY_OK")
         assert_reference_imports(working_directory)
         print("HOSTING_IMPORT_OK")
 

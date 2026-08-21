@@ -50,6 +50,9 @@ Preserve this middleware order, outermost first:
 3. always-on `MessageInjectionMiddleware`;
 4. caller middleware.
 
+Python 1.14.0 accepts either one caller middleware object or a sequence through
+the `middleware` parameter; both forms remain appended after the built-ins.
+
 The default history provider is `InMemoryHistoryProvider`. Per-service-call history persistence and provider-owned state are session-backed, but neither is durable across process loss unless the host persists the full `AgentSession`. Pending tool approval stops autonomous progress and returns control to the caller. The loop is outermost, so each iteration is a complete run through history, providers, approval, and telemetry.
 
 ## Default, opt-in, and experimental feature matrix
@@ -67,9 +70,9 @@ The default history provider is `InMemoryHistoryProvider`. Per-service-call hist
 | Auto-approval callbacks | No callbacks unless `auto_approval_rules` is supplied. | Opt-in; inspect arguments whenever risk is argument-dependent. |
 | Message injection | Always-on; no-op when its session queue is empty. | Released. |
 | OpenTelemetry | Factory sets the OTel provider name. | Released; telemetry destination and sensitive-data settings remain caller-owned. |
-| Shared file access | Opt in only through `file_access_store`; Python 1.13.0 has no `disable_file_access` parameter. | Experimental; read and write tools require approval by default, and the host owns access policy and real sandboxing. |
+| Shared file access | Opt in only through `file_access_store`; Python 1.14.0 has no `disable_file_access` parameter. | Experimental; read and write tools require approval by default, and the host owns access policy and real sandboxing. |
 | Skills | Opt-in through `skills_provider` and/or `skills_paths`. | Released; external skills are untrusted input and are not Foundry Skills REST distribution. |
-| Background agents | Opt-in through `background_agents`; child sessions and running tasks are process memory, not restart state. | Experimental; long-lived providers require host-owned cancellation, cleanup, and retention management. |
+| Background agents | Opt-in through `background_agents`; child sessions and running tasks are process memory, not restart state. | Experimental; Python 1.14.0 adds bounded `BackgroundAgentsProvider.release_session(...)`, which long-lived hosts must call when evicting a session. |
 | Shell | Requires `shell_executor` and a client implementing `SupportsShellTool`. | Experimental and prerelease. |
 | Autonomous looping | Opt-in through `loop_should_continue`; the default cap resolves to `10`. | Experimental; every recipe must pass an explicit positive cap. |
 | Caller providers and middleware | Opt-in advanced extension surfaces. | Preserve the built-in order. |
@@ -77,6 +80,12 @@ The default history provider is `InMemoryHistoryProvider`. Per-service-call hist
 ### Compaction activation
 
 Supplying both `max_context_window_tokens` and `max_output_tokens` creates one shared default `ContextWindowCompactionStrategy`. The before-call phase is assigned to `agent.compaction_strategy`; the after-call phase is installed through `CompactionProvider`. A custom before-only strategy can independently populate `agent.compaction_strategy`, and a custom after-only strategy can independently add `CompactionProvider`. `disable_compaction=True` overrides default and custom strategies. Supplying only one token budget does not create the shared default strategy.
+
+Released Python 1.14.0 still invokes after-run providers on every
+`AgentLoopMiddleware` iteration. Upstream issue
+[#7236](https://github.com/microsoft/agent-framework/issues/7236) is fixed on
+`main` but not in 1.14.0. Keep explicit loop caps and revalidate after-run
+compaction when the next stable core release lands.
 
 ## Canonical local Python recipe
 
@@ -88,14 +97,14 @@ Keep both token budgets so compaction is active, the explicit `.agent-memory` st
 
 > **MUST:** Copy or adapt [`references/python/hosted_harness.py`](references/python/hosted_harness.py), then use [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) for deployment, RBAC, containers, rollout, and lifecycle. Do not reproduce the reference functions inline.
 
-Keep `default_options={"store": False}` because the hosting adapter owns Responses transcript history. The pinned `ResponsesHostServer` rejects a history provider that loads messages; therefore the Harness must receive the reference's no-load/no-store `InMemoryHistoryProvider` (`load_messages=False`, `store_inputs=False`, and `store_outputs=False`). `FoundryChatClient` constructs an async `AIProjectClient`, so use an async Azure credential. The reference's internally created `DefaultAzureCredential` is process-lifetime and its handle is not exposed. A host requiring deterministic close must create and inject its own async credential, retain that handle, and close it.
+Keep `default_options={"store": False}` because the hosting adapter owns Responses transcript history. The pinned `ResponsesHostServer` uses the Agent Server Responses 2.x provider-backed session, checkpoint, and function-approval storage model and still rejects a history provider that loads messages. Therefore the Harness must receive the reference's no-load/no-store `InMemoryHistoryProvider` (`load_messages=False`, `store_inputs=False`, and `store_outputs=False`). `FoundryChatClient` constructs an async `AIProjectClient`, so use an async Azure credential. The reference's internally created `DefaultAzureCredential` is process-lifetime and its handle is not exposed. A host requiring deterministic close must create and inject its own async credential, retain that handle, and close it.
 
 The baseline also disables mode, file memory, and web search. Re-enable mode only when the protocol transports explicit plan approval and transitions. Re-enable file memory only after choosing durable storage, authenticated tenant partitioning, and path policy.
 
 | Surface | Status |
 |---|---|
-| Harness factory stable core | `agent-framework-core` 1.13.x stable. |
-| Python hosting adapter | `agent-framework-foundry-hosting==1.0.0b260730`, exact prerelease pin. |
+| Harness factory stable core | `agent-framework-core` 1.14.x stable. |
+| Python hosting adapter | `agent-framework-foundry-hosting==1.0.0b260813`, exact prerelease pin. |
 | Hosted Agents service | Separate lifecycle: the current [`foundry-hosted-agents`](../foundry-hosted-agents/SKILL.md) contract treats container deployment as GA and source-code deployment as preview. |
 
 Do not infer service maturity from adapter semver or adapter maturity from service status.
@@ -116,7 +125,7 @@ Inspect the structured response before reading `.text`. A `function_approval_req
 
 Persist and restore the full opaque `AgentSession`, not only transcript text. Restore it with the same agent, providers, middleware, and stores. Partition durable state by authenticated tenant and user; authorize the session identifier before loading; reject caller-supplied serialized state; and never mutate provider-owned keys directly.
 
-Full `AgentSession` persistence restores serializable session, provider, and middleware state, including history, approval, mode, and todo state. It does not serialize provider-instance runtime or external stores. `BackgroundAgentsProvider` child sessions and running `asyncio` tasks are non-serializable process memory; after restart, running tasks are **LOST**. Pinned issue [#7385](https://github.com/microsoft/agent-framework/issues/7385) also means a long-lived provider requires host-owned cancellation, cleanup, and retention management.
+Full `AgentSession` persistence restores serializable session, provider, and middleware state, including history, approval, mode, and todo state. It does not serialize provider-instance runtime or external stores. `BackgroundAgentsProvider` child sessions and running `asyncio` tasks are non-serializable process memory; after restart, running tasks are **LOST**. Python 1.14.0 resolves issue [#7385](https://github.com/microsoft/agent-framework/issues/7385) with `await provider.release_session(session)`, whose default cancellation path is bounded to 30 seconds. Long-lived hosts must invoke that API when a session is evicted.
 
 File-memory and other external stores must be made separately durable and partitioned by authenticated tenant and user. Assign one owner to transcript persistence: in the hosted recipe, keep `store=False` and the no-load/no-store Harness history provider so the adapter remains the owner.
 
@@ -154,7 +163,7 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 | Compaction was expected but does not run. | One or both token budgets are absent, and no relevant custom strategy was supplied. | Supply both budgets for the shared default, or explicitly configure the required custom phase. |
 | Construction raises `ValueError` for token budgets. | `max_output_tokens >= max_context_window_tokens`, or a budget is not positive. | Validate positive budgets and require `max_output_tokens < max_context_window_tokens`. |
 | A run writes files beneath an unexpected working directory. | Default file memory writes to `{cwd}/agent-file-memory`. | Set an explicit tenant-partitioned store or use `disable_file_memory=True`. |
-| Construction rejects `disable_file_access=True` as an invalid argument. | Python 1.13.0 has no `disable_file_access` parameter. | Leave `file_access_store=None` to keep shared file access disabled. |
+| Construction rejects `disable_file_access=True` as an invalid argument. | Python 1.14.0 has no `disable_file_access` parameter. | Leave `file_access_store=None` to keep shared file access disabled. |
 | Planning switches into execution before host approval. | One agent exposed the model-accessible, auto-approved `mode_set` tool while planning. | Use separate plan/execute agents; disable mode and looping on the planning agent. |
 | A loop is unbounded or runs during planning. | `loop_max_iterations=None` or a predicate not restricted to execute mode was used. | Use an explicit positive cap and an execute-only predicate. |
 | Approval appears to wait inside a loop, or the host sees empty text. | Autonomous code continued after a pending request, or reduced the structured response to `.text`. | Stop the loop, return the complete response through `ToolApprovalRequired`, and resume only after host interaction. |
@@ -163,7 +172,7 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 | A standing or "always approve" choice is treated as authorization. | Standing approval is session-backed UX state, not an enforceable authorization boundary. | Implement authorization in the application and use [`foundry-agt`](../foundry-agt/SKILL.md) for enforceable policy. |
 | A headless run stalls on a plan or tool request. | Plan mode or approval-required tools were enabled without caller UX. | Disable those features or implement the complete plan/approval protocol. |
 | Serializable session state disappears after restart. | The default in-memory history or only message text was persisted. | Persist and restore the full opaque `AgentSession` with the same composition; separately persist and partition external stores. |
-| Background work was expected to resume after restart. | `BackgroundAgentsProvider` child sessions and running `asyncio` tasks are non-serializable process memory. | Treat running tasks as LOST after restart; make the host own cancellation, cleanup, retention, and any durable work queue. |
+| Background work was expected to resume after restart. | `BackgroundAgentsProvider` child sessions and running `asyncio` tasks are non-serializable process memory. | Treat running tasks as LOST after restart; call `await provider.release_session(session)` on eviction and use a durable queue for restartable work. |
 | A restored session crosses a tenant or user boundary. | Session identifiers and serialized payloads were trusted before tenant/user authorization, or durable state was not partitioned. | Authorize the authenticated tenant and user before loading, partition state by both boundaries, and reject untrusted session payloads. |
 | Hosted transcripts duplicate or history is rejected. | `store=False` is missing, or the Harness history provider loads/stores transcript messages while `ResponsesHostServer` owns them. | Keep `default_options={"store": False}` and use the no-load/no-store history provider from the hosted reference. |
 | Hosting adapter semver is used to infer the Hosted Agents service lifecycle. | Adapter package maturity and Hosted Agents service status were treated as one lifecycle. | Track and report the adapter lifecycle and Hosted Agents service lifecycle independently. |
@@ -187,10 +196,10 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 
 ## Upstream pin and reference policy
 
-- Record `agent-framework` 1.13.0 for release context, but the `agent-framework` meta-package MUST NOT be used in canonical hosted dependency sets; canonical hosted dependencies use component packages.
-- Use compatible stable pins for `agent-framework-core~=1.13.0`, `agent-framework-foundry~=1.10.4`, and `azure-identity~=1.25.3`.
-- Pin `agent-framework-foundry-hosting==1.0.0b260730` and optional `agent-framework-tools==1.0.0b260730` exactly because they are prerelease surfaces.
-- Preserve the immutable audited source evidence: tag `python-1.13.0` at SHA `e39a8a2e79c8c8987a0b9082d3ccb8665734b897`.
+- Record `agent-framework` 1.14.0 for release context, but the `agent-framework` meta-package MUST NOT be used in canonical hosted dependency sets; canonical hosted dependencies use component packages.
+- Use compatible stable pins for `agent-framework-core~=1.14.0`, `agent-framework-foundry~=1.11.0`, and `azure-identity~=1.25.3`.
+- Pin `agent-framework-foundry-hosting==1.0.0b260813`, its Agent Server beta dependencies, and optional `agent-framework-tools==1.0.0b260730` exactly because they are prerelease surfaces.
+- Preserve the immutable audited source evidence: tag `python-1.14.0` at SHA `ae7fa3389c8f70b3ed702b0e04b85a3ee62b1bd1`.
 - Track the Hosted Agents service lifecycle separately from the Python hosting adapter lifecycle.
 - On every MINOR refresh, reverify web-search capability detection and empty approval-rule behavior.
 - Before using experimental file access, background agents, looping, or shell, inspect the open issues recorded in [`references/upstream-pin.md`](references/upstream-pin.md).
