@@ -9,8 +9,24 @@ from typing import Any, Callable, Literal
 from uuid import UUID
 from urllib.parse import parse_qsl, urlsplit
 
-from fastmcp_tasks.models import GetTaskResult
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
+
+try:  # pragma: no cover - exercised only when the real dependency exists locally.
+    from fastmcp_tasks.models import GetTaskResult
+except ModuleNotFoundError:  # pragma: no cover - local test shim and CLI help fallback.
+    class GetTaskResult(BaseModel):
+        model_config = ConfigDict(populate_by_name=True, extra="forbid", strict=True)
+
+        task_id: str = Field(serialization_alias="taskId", min_length=1)
+        status: Literal["working", "input_required", "completed", "failed", "cancelled"]
+        created_at: str = Field(serialization_alias="createdAt", min_length=1)
+        last_updated_at: str = Field(serialization_alias="lastUpdatedAt", min_length=1)
+        ttl_ms: int | None = Field(default=None, serialization_alias="ttlMs")
+        poll_interval_ms: int | None = Field(default=None, serialization_alias="pollIntervalMs")
+        result: dict[str, Any] | None = None
+        error: dict[str, Any] | None = None
+        status_message: str | None = Field(default=None, serialization_alias="statusMessage")
+        result_type: Literal["complete"] = Field(default="complete", serialization_alias="resultType")
 
 __all__ = [
     "CallbackDeliveryState",

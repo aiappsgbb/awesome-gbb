@@ -49,6 +49,7 @@ _ALLOWED_TRANSITIONS: dict[LifecycleState, frozenset[LifecycleState]] = {
         {
             LifecycleState.ACCEPTED,
             LifecycleState.STARTING,
+            LifecycleState.RUNNING,
             LifecycleState.FAILED,
             LifecycleState.CANCELLED,
         }
