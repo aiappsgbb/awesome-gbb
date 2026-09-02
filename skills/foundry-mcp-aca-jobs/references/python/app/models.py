@@ -5,17 +5,21 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
+from urllib.parse import parse_qsl, urlsplit
 
 from fastmcp_tasks.models import GetTaskResult
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
 
 __all__ = [
     "CallbackDeliveryState",
+    "CallbackPolicy",
     "GetTaskResult",
+    "JobPolicy",
     "LifecycleState",
     "PublicError",
+    "Policy",
     "StartRequest",
     "TaskRecord",
     "map_aca_state",
@@ -65,6 +69,107 @@ class PublicError(Exception):
 
     def __str__(self) -> str:
         return self.safe_message
+
+
+class JobPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource_group: str
+    job_name: str
+    container_name: str
+    image_digest: str = Field(pattern=r"^[^@]+@sha256:[0-9a-f]{64}$")
+    command: list[str]
+    allowed_owner_scopes: set[str] | None = None
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_must_be_an_exact_list(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            raise ValueError("command must be a list[str]")
+        return value
+
+
+class CallbackPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: HttpUrl
+    auth_mode: Literal["managed_identity", "key_vault"]
+    audience: str | None = Field(default=None, min_length=1)
+    secret_name: str | None = Field(default=None, min_length=1)
+
+    @field_validator("url")
+    @classmethod
+    def _url_must_be_https(cls, value: HttpUrl) -> HttpUrl:
+        if value.scheme != "https":
+            raise ValueError("callback url must use https")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_auth_fields(self) -> "CallbackPolicy":
+        if self.auth_mode == "managed_identity":
+            if not self.audience:
+                raise ValueError("audience is required for managed_identity callbacks")
+        elif self.auth_mode == "key_vault":
+            if not self.secret_name:
+                raise ValueError("secret_name is required for key_vault callbacks")
+        return self
+
+
+class Policy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    jobs: dict[str, JobPolicy] = Field(default_factory=dict)
+    callbacks: dict[str, CallbackPolicy] = Field(default_factory=dict)
+    input_hosts: set[str] = Field(default_factory=set)
+    result_hosts: set[str] = Field(default_factory=set)
+
+    def job(self, key: str) -> JobPolicy:
+        try:
+            return self.jobs[key]
+        except KeyError as exc:
+            raise PublicError("INVALID_JOB_TYPE", "job type is not allowlisted") from exc
+
+    def callback(self, alias: str) -> CallbackPolicy:
+        try:
+            return self.callbacks[alias]
+        except KeyError as exc:
+            raise PublicError("INVALID_CALLBACK_ALIAS", "callback alias is not allowlisted") from exc
+
+    def validate_input(self, value: str | HttpUrl) -> str:
+        return self._validate_reference(value, self.input_hosts, "INVALID_INPUT_REFERENCE")
+
+    def validate_result(self, value: str | HttpUrl) -> str:
+        return self._validate_reference(value, self.result_hosts, "INVALID_RESULT_REFERENCE")
+
+    @staticmethod
+    def _validate_reference(value: str | HttpUrl, allowed_hosts: set[str], code: str) -> str:
+        parsed = urlsplit(str(value))
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not hostname:
+            raise PublicError(code, "reference must use https")
+        if parsed.username or parsed.password:
+            raise PublicError(code, "reference must not contain credentials")
+        if hostname not in {host.lower() for host in allowed_hosts}:
+            raise PublicError(code, "reference host is not allowlisted")
+        if any(_is_secret_query_key(name) for name, _ in parse_qsl(parsed.query, keep_blank_values=True)):
+            raise PublicError(code, "reference query contains credentials")
+        return parsed.geturl()
+
+
+def _is_secret_query_key(name: str) -> bool:
+    normalized = name.strip().lower()
+    return normalized in {
+        "token",
+        "access_token",
+        "id_token",
+        "refresh_token",
+        "sig",
+        "signature",
+        "secret",
+        "key",
+        "sas",
+        "sastoken",
+    } or normalized.endswith("_token")
 
 
 class StartRequest(BaseModel):
