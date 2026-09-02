@@ -751,6 +751,91 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
         self.assertIsNone(current.error_code)
 
+    async def test_success_persistence_survives_concurrent_cancellation_intent_and_delivers_callback(self) -> None:
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+
+        class _BlockingHandler:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            async def __call__(self, input_ref: str, task_id: str) -> dict[str, str]:
+                self.calls.append((input_ref, task_id))
+                handler_started.set()
+                await release_handler.wait()
+                return {"kind": "metadata"}
+
+        worker, store, handler, callback_sender, output = await self._build_worker(handler=_BlockingHandler())
+        await self._seed_task(store, self.task.model_copy(update={"aca_execution_id": None}))
+        execution_id = "execution-race-1"
+
+        run_task = asyncio.create_task(
+            worker.run("scope-a", str(self.task.task_id), execution_id),
+            name="success-race",
+        )
+        await asyncio.wait_for(handler_started.wait(), timeout=1)
+
+        current = await store.get("scope-a", str(self.task.task_id))
+        updated = await store.replace(
+            current.model_copy(update={"cancellation_requested_at": self.fixed_now}),
+            current.etag,
+        )
+        self.assertEqual(updated.cancellation_requested_at, self.fixed_now)
+
+        release_handler.set()
+        self.assertEqual(await asyncio.wait_for(run_task, timeout=2), 0)
+
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.cancellation_requested_at, self.fixed_now)
+        self.assertEqual(current.aca_execution_id, execution_id)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertIsNone(current.callback_error_code)
+        self.assertIsNone(current.worker_claim_token)
+        self.assertIsNone(current.worker_claim_expires_at)
+        self.assertEqual(len(handler.calls), 1)
+        self.assertEqual(len(callback_sender.calls), 1)
+        _, payload = callback_sender.calls[0]
+        self.assertEqual(payload["acaExecutionId"], execution_id)
+        self.assertEqual(output.write_calls[0][0], self._task_path(str(self.task.task_id)))
+
+    async def test_callback_persistence_survives_concurrent_binding_update(self) -> None:
+        race_committed = asyncio.Event()
+
+        class _RacingCallbackSender(_FakeCallbackSender):
+            def __init__(self, store: Any, task_id: str) -> None:
+                super().__init__()
+                self.store = store
+                self.task_id = task_id
+
+            async def send(self, policy: Any, payload: dict[str, str]) -> None:
+                self.calls.append((policy, payload))
+                current = await self.store.get("scope-a", self.task_id)
+                await self.store.replace(
+                    current.model_copy(update={"aca_execution_id": "execution-raced"}),
+                    current.etag,
+                )
+                race_committed.set()
+
+        worker, store, handler, callback_sender, output = await self._build_worker()
+        await self._seed_task(store, self.task.model_copy(update={"aca_execution_id": "execution-1"}))
+        racing_sender = _RacingCallbackSender(store, str(self.task.task_id))
+        worker._callback_sender = racing_sender
+
+        code = await asyncio.wait_for(worker.run("scope-a", str(self.task.task_id), "execution-1"), timeout=2)
+
+        self.assertEqual(code, 0)
+        self.assertTrue(race_committed.is_set())
+        self.assertEqual(len(racing_sender.calls), 1)
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.aca_execution_id, "execution-raced")
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertIsNone(current.callback_error_code)
+        self.assertIsNone(current.worker_claim_token)
+        self.assertIsNone(current.worker_claim_expires_at)
+        self.assertEqual(output.write_calls[0][0], self._task_path(str(self.task.task_id)))
+
     async def test_duplicate_active_worker_exits_zero_without_handler(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
         claimed = self.task.model_copy(

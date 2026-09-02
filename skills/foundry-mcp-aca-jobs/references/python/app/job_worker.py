@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import inspect
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,8 @@ from azure.storage.blob.aio import ContainerClient
 from .callbacks import CallbackSender, callback_payload
 from .control_store import ConcurrencyError, ControlStore, CosmosControlStore
 from .models import CallbackDeliveryState, CallbackPolicy, JobPolicy, LifecycleState, Policy, PublicError, TaskRecord
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "BlobOutputStore",
@@ -227,52 +230,90 @@ class JobWorker:
                     next_task = next_task.model_copy(update={"aca_execution_id": execution_id})
         return None
 
+    async def _mutate_with_retry(
+        self,
+        owner_scope: str,
+        task_id: str,
+        mutator: Callable[[TaskRecord], TaskRecord],
+    ) -> TaskRecord:
+        last_error: ConcurrencyError | None = None
+        for _ in range(3):
+            current = await self._store.get(owner_scope, task_id)
+            candidate = mutator(current)
+            if candidate == current:
+                return current
+            try:
+                return await self._store.replace(candidate, current.etag)
+            except ConcurrencyError as error:
+                last_error = error
+                continue
+        if last_error is not None:
+            raise last_error
+        return await self._store.get(owner_scope, task_id)
+
     async def _persist_failure(self, task: TaskRecord, error_code: str) -> TaskRecord:
         now = self._clock()
-        failed = task.model_copy(
-            update={
-                "lifecycle_state": LifecycleState.FAILED,
-                "error_code": error_code,
-                "result_url": None,
-                "callback_delivery_state": CallbackDeliveryState.NOT_STARTED,
-                "callback_error_code": None,
-                "worker_claimed_at": None,
-                "worker_claim_token": None,
-                "worker_claim_expires_at": None,
-                "updated_at": now,
-                "completed_at": now,
-            }
-        )
-        return await self._store.replace(failed, task.etag)
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if current.lifecycle_state in TERMINAL_STATES:
+                return current
+            return current.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.FAILED,
+                    "error_code": error_code,
+                    "result_url": None,
+                    "callback_delivery_state": CallbackDeliveryState.NOT_STARTED,
+                    "callback_error_code": None,
+                    "worker_claimed_at": None,
+                    "worker_claim_token": None,
+                    "worker_claim_expires_at": None,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+
+        return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
 
     async def _persist_succeeded(self, task: TaskRecord, result_url: str) -> TaskRecord:
         now = self._clock()
-        succeeded = task.model_copy(
-            update={
-                "lifecycle_state": LifecycleState.SUCCEEDED,
-                "result_url": self._policy.validate_result(result_url),
-                "error_code": None,
-                "callback_delivery_state": CallbackDeliveryState.PENDING,
-                "callback_error_code": None,
-                "worker_claimed_at": None,
-                "worker_claim_token": None,
-                "worker_claim_expires_at": None,
-                "updated_at": now,
-                "completed_at": now,
-            }
-        )
-        return await self._store.replace(succeeded, task.etag)
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
+                return current
+            return current.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.SUCCEEDED,
+                    "result_url": self._policy.validate_result(result_url),
+                    "error_code": None,
+                    "callback_delivery_state": CallbackDeliveryState.PENDING,
+                    "callback_error_code": None,
+                    "worker_claimed_at": None,
+                    "worker_claim_token": None,
+                    "worker_claim_expires_at": None,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+
+        return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
 
     async def _persist_callback_state(self, task: TaskRecord, state: CallbackDeliveryState, callback_error_code: str | None) -> TaskRecord:
         now = self._clock()
-        updated = task.model_copy(
-            update={
-                "callback_delivery_state": state,
-                "callback_error_code": callback_error_code,
-                "updated_at": now,
-            }
-        )
-        return await self._store.replace(updated, task.etag)
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if current.lifecycle_state is not LifecycleState.SUCCEEDED:
+                return current
+            if current.callback_delivery_state is state and current.callback_error_code == callback_error_code:
+                return current
+            return current.model_copy(
+                update={
+                    "callback_delivery_state": state,
+                    "callback_error_code": callback_error_code,
+                    "updated_at": now,
+                }
+            )
+
+        return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
 
     async def _send_callback(self, task: TaskRecord, result_url: str) -> None:
         callback_policy = self._policy.callback(task.callback_alias)
