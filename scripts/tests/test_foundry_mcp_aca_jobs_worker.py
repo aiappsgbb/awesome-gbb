@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
-import subprocess
 import sys
 import types
 import unittest
@@ -49,6 +48,143 @@ except ModuleNotFoundError:  # pragma: no cover - local test shim only.
     sys.modules["fastmcp_tasks"] = fastmcp_tasks
     sys.modules["fastmcp_tasks.models"] = fastmcp_tasks_models
     from fastmcp_tasks.models import GetTaskResult  # type: ignore  # noqa: E402
+
+def _ensure_azure_worker_stubs() -> None:
+    azure = sys.modules.get("azure")
+    if azure is None:
+        azure = types.ModuleType("azure")
+        azure.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["azure"] = azure
+
+    def _ensure_package(name: str) -> types.ModuleType:
+        module = sys.modules.get(name)
+        if module is None:
+            module = types.ModuleType(name)
+            module.__path__ = []  # type: ignore[attr-defined]
+            sys.modules[name] = module
+        parent_name, _, attr = name.rpartition(".")
+        if parent_name:
+            parent = sys.modules.get(parent_name)
+            if parent is None:
+                parent = _ensure_package(parent_name)
+            setattr(parent, attr, module)
+        return module
+
+    def _ensure_class(module_name: str, class_name: str, factory: type[Any]) -> None:
+        try:
+            module = __import__(module_name, fromlist=[class_name])
+        except ModuleNotFoundError:
+            module = _ensure_package(module_name)
+        if not hasattr(module, class_name):
+            setattr(module, class_name, factory)
+
+    class _AsyncCloseable:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.close = AsyncMock()
+
+        async def aclose(self) -> None:
+            await self.close()
+
+    class _ManagedIdentityCredential(_AsyncCloseable):
+        pass
+
+    class _SecretClient(_AsyncCloseable):
+        def get_secret(self, name: str) -> Any:
+            return types.SimpleNamespace(value=f"secret:{name}")
+
+    class _BlobClient:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.upload_blob = AsyncMock()
+            self.exists = AsyncMock(return_value=True)
+
+    class _ContainerClient:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self._blob_clients: dict[str, _BlobClient] = {}
+            self.close = AsyncMock()
+
+        @classmethod
+        def from_container_url(cls, url: str, credential: Any | None = None) -> "_ContainerClient":
+            client = cls(url)
+            client.credential = credential
+            return client
+
+        def get_blob_client(self, path: str) -> _BlobClient:
+            client = self._blob_clients.get(path)
+            if client is None:
+                client = _BlobClient(f"{self.url.rstrip('/')}/{path}")
+                self._blob_clients[path] = client
+            return client
+
+    class _ContainerProxy:
+        def __init__(self) -> None:
+            self.create_item = AsyncMock()
+            self.read_item = AsyncMock()
+            self.replace_item = AsyncMock()
+
+    class _DatabaseProxy:
+        def __init__(self) -> None:
+            self.container = _ContainerProxy()
+            self.calls: list[str] = []
+
+        def get_container_client(self, name: str) -> _ContainerProxy:
+            self.calls.append(name)
+            return self.container
+
+    class _CosmosClient(_AsyncCloseable):
+        def __init__(self, endpoint: str, credential: Any) -> None:
+            super().__init__(endpoint, credential)
+            self.endpoint = endpoint
+            self.credential = credential
+            self.database = _DatabaseProxy()
+
+        async def __aenter__(self) -> "_CosmosClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            await self.close()
+
+        def get_database_client(self, name: str) -> _DatabaseProxy:
+            self.database.calls.append(name)
+            return self.database
+
+    class _AsyncClient(_AsyncCloseable):
+        async def __aenter__(self) -> "_AsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            await self.close()
+
+    class _HttpResponseError(Exception):
+        def __init__(self, message: str = "", *, status_code: int | None = None, response: Any | None = None) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+            self.response = response
+
+    class _ResourceExistsError(Exception):
+        pass
+
+    class _MatchConditions:
+        IfNotModified = "IfNotModified"
+
+    _ensure_class("azure.core.exceptions", "HttpResponseError", _HttpResponseError)
+    _ensure_class("azure.core.exceptions", "ResourceExistsError", _ResourceExistsError)
+    _ensure_class("azure.core", "MatchConditions", _MatchConditions)  # type: ignore[arg-type]
+    class _ContainerAppsAPIClient:
+        pass
+
+    _ensure_class("azure.mgmt.appcontainers", "ContainerAppsAPIClient", _ContainerAppsAPIClient)
+    _ensure_class("azure.identity.aio", "ManagedIdentityCredential", _ManagedIdentityCredential)
+    _ensure_class("azure.keyvault.secrets", "SecretClient", _SecretClient)
+    _ensure_class("azure.storage.blob.aio", "ContainerClient", _ContainerClient)
+    _ensure_class("azure.cosmos.aio", "CosmosClient", _CosmosClient)
+    _ensure_class("httpx", "AsyncClient", _AsyncClient)  # type: ignore[arg-type]
+
+
+_ensure_azure_worker_stubs()
 
 from app.control_store import InMemoryControlStore  # noqa: E402
 from app.models import CallbackDeliveryState, LifecycleState, Policy, PublicError, TaskRecord  # noqa: E402
@@ -141,6 +277,79 @@ class _RecordingStore:
         return await self.inner.replace(task, etag)
 
 
+class _FakeBlobClient:
+    def __init__(self, url: str, *, exists: bool = True) -> None:
+        self.url = url
+        self.upload_blob = AsyncMock()
+        self.exists = AsyncMock(return_value=exists)
+
+
+class _FakeContainerClient:
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.close = AsyncMock()
+        self._blob_clients: dict[str, _FakeBlobClient] = {}
+
+    def get_blob_client(self, path: str) -> _FakeBlobClient:
+        client = self._blob_clients.get(path)
+        if client is None:
+            client = _FakeBlobClient(f"{self.url.rstrip('/')}/{path}")
+            self._blob_clients[path] = client
+        return client
+
+
+class _FakeDatabaseProxy:
+    def __init__(self, container: Any) -> None:
+        self.container = container
+        self.calls: list[str] = []
+
+    def get_container_client(self, name: str) -> Any:
+        self.calls.append(name)
+        return self.container
+
+
+class _FakeCosmosClient:
+    def __init__(self, endpoint: str, credential: Any, container: Any | None = None) -> None:
+        self.endpoint = endpoint
+        self.credential = credential
+        self.close = AsyncMock()
+        self.database = _FakeDatabaseProxy(container or object())
+        self.database_names: list[str] = []
+
+    async def __aenter__(self) -> "_FakeCosmosClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
+
+    def get_database_client(self, name: str) -> _FakeDatabaseProxy:
+        self.database_names.append(name)
+        return self.database
+
+
+class _FakeCredential:
+    def __init__(self, client_id: str) -> None:
+        self.client_id = client_id
+        self.close = AsyncMock()
+
+
+class _FakeHttpClient:
+    def __init__(self) -> None:
+        self.close = AsyncMock()
+        self.aclose = AsyncMock()
+
+
+class _FakeSecretClient:
+    def __init__(self, vault_url: str, credential: Any) -> None:
+        self.vault_url = vault_url
+        self.credential = credential
+        self.calls: list[str] = []
+
+    def get_secret(self, name: str) -> Any:
+        self.calls.append(name)
+        return types.SimpleNamespace(value=f"secret:{name}")
+
+
 class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -226,6 +435,184 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def _seed_task(self, store: Any, task: TaskRecord | None = None) -> TaskRecord:
         task = task or self.task
         return await store.create_or_get(task)
+
+    def test_blob_output_store_result_path_and_query_free_url(self) -> None:
+        module = self._module()
+        self.assertEqual(module.BlobOutputStore.result_path("task-1"), "results/task-1/result.json")
+
+        container = _FakeContainerClient("https://results.example.com/container")
+        output = module.BlobOutputStore(container)
+        blob = container.get_blob_client("results/task-1/result.json")
+        blob.url = "https://results.example.com/container/results/task-1/result.json?sig=secret"
+
+        self.assertTrue(asyncio.run(output.exists("results/task-1/result.json")))
+        self.assertEqual(asyncio.run(output.get("results/task-1/result.json")), "https://results.example.com/container/results/task-1/result.json")
+
+    def test_blob_output_store_write_json_overwrites_false_and_sets_application_json(self) -> None:
+        module = self._module()
+        container = _FakeContainerClient("https://results.example.com/container")
+        output = module.BlobOutputStore(container)
+        blob = container.get_blob_client("results/task-1/result.json")
+        blob.url = "https://results.example.com/container/results/task-1/result.json?sig=secret"
+
+        result = asyncio.run(output.write_json("results/task-1/result.json", {"b": 2, "a": "x"}, overwrite=False))
+
+        self.assertEqual(result, "https://results.example.com/container/results/task-1/result.json")
+        blob.upload_blob.assert_awaited_once()
+        args = blob.upload_blob.await_args
+        self.assertEqual(args.args[0], b'{"a":"x","b":2}')
+        self.assertEqual(args.kwargs["overwrite"], False)
+        self.assertEqual(args.kwargs["content_type"], "application/json")
+
+    def test_blob_output_store_get_missing_raises_and_exists_passthrough(self) -> None:
+        module = self._module()
+        container = _FakeContainerClient("https://results.example.com/container")
+        output = module.BlobOutputStore(container)
+        blob = container.get_blob_client("results/task-2/result.json")
+        blob.exists = AsyncMock(return_value=False)
+
+        with self.assertRaises(FileNotFoundError):
+            asyncio.run(output.get("results/task-2/result.json"))
+        self.assertEqual(asyncio.run(output.exists("results/task-2/result.json")), False)
+
+        blob.exists = AsyncMock(return_value=True)
+        blob.url = "https://results.example.com/container/results/task-2/result.json?query=secret"
+        self.assertEqual(
+            asyncio.run(output.get("results/task-2/result.json")),
+            "https://results.example.com/container/results/task-2/result.json",
+        )
+
+    def test_build_worker_from_env_accepts_injected_store_output_and_sender(self) -> None:
+        module = self._module()
+        store = _RecordingStore()
+        output = _FakeContainerClient("https://results.example.com/container")
+        sender = object()
+        env = {
+            "MCP_ACA_JOBS_JOB_TYPE": "batch",
+            "MCP_ACA_JOBS_JOB_RESOURCE_GROUP": "rg",
+            "MCP_ACA_JOBS_JOB_NAME": "batch-job",
+            "MCP_ACA_JOBS_JOB_CONTAINER_NAME": "worker",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": "registry.azurecr.io/work@sha256:" + "a" * 64,
+            "MCP_ACA_JOBS_CALLBACK_URL": "https://hooks.example.com/jobs",
+            "MCP_ACA_JOBS_CALLBACK_AUDIENCE": "api://mcp-callback",
+            "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://results.example.com/container",
+        }
+        with patch.dict(os.environ, env, clear=False), patch.object(module.BlobOutputStore, "from_container_url") as from_container_url:
+            worker = module.build_worker_from_env(store, output=output, callback_sender=sender, config=module.load_runtime_config_from_env())
+
+        self.assertIs(worker._store, store)
+        self.assertIs(worker._output, output)
+        self.assertIs(worker._callback_sender, sender)
+        from_container_url.assert_not_called()
+
+    async def test_run_from_env_uses_managed_identity_defaults_and_shared_clients(self) -> None:
+        module = self._module()
+        fake_worker = types.SimpleNamespace(run=AsyncMock(return_value=17))
+        fake_output = _FakeContainerClient("https://results.example.com/container")
+        fake_credential = _FakeCredential("client-1")
+        fake_http_client = _FakeHttpClient()
+        fake_cosmos_container = object()
+        fake_cosmos_client = _FakeCosmosClient("https://cosmos.example.com", fake_credential, container=fake_cosmos_container)
+        fake_db_proxy = fake_cosmos_client.database
+        fake_sender = object()
+        env = {
+            "AZURE_CLIENT_ID": "client-1",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com",
+            "MCP_ACA_JOBS_COSMOS_DATABASE": "db-1",
+            "MCP_ACA_JOBS_COSMOS_CONTAINER": "container-1",
+            "MCP_ACA_JOBS_JOB_TYPE": "batch",
+            "MCP_ACA_JOBS_JOB_RESOURCE_GROUP": "rg",
+            "MCP_ACA_JOBS_JOB_NAME": "batch-job",
+            "MCP_ACA_JOBS_JOB_CONTAINER_NAME": "worker",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": "registry.azurecr.io/work@sha256:" + "a" * 64,
+            "MCP_ACA_JOBS_CALLBACK_URL": "https://hooks.example.com/jobs",
+            "MCP_ACA_JOBS_CALLBACK_AUDIENCE": "api://mcp-callback",
+            "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://results.example.com/container",
+            "MCP_ACA_JOBS_LEASE_MINUTES": "5",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+            patch.object(module, "ManagedIdentityCredential", return_value=fake_credential) as credential_ctor, \
+            patch.object(module, "CosmosClient", return_value=fake_cosmos_client) as cosmos_ctor, \
+            patch.object(module.BlobOutputStore, "from_container_url", return_value=fake_output) as blob_ctor, \
+            patch.object(module.httpx, "AsyncClient", return_value=fake_http_client) as http_ctor, \
+            patch.object(module, "CallbackSender", return_value=fake_sender) as sender_ctor, \
+            patch.object(module, "CosmosControlStore", return_value="store-from-cosmos") as store_ctor, \
+            patch.object(module, "build_worker_from_env", return_value=fake_worker) as build_worker_ctor:
+            result = await module._run_from_env("scope-a", "task-1")
+
+        self.assertEqual(result, 17)
+        credential_ctor.assert_called_once_with(client_id="client-1")
+        cosmos_ctor.assert_called_once_with(endpoint="https://cosmos.example.com", credential=fake_credential)
+        self.assertEqual(fake_cosmos_client.database_names, ["db-1"])
+        self.assertEqual(fake_db_proxy.calls, ["container-1"])
+        blob_ctor.assert_called_once_with("https://results.example.com/container", credential=fake_credential)
+        http_ctor.assert_called_once_with()
+        sender_ctor.assert_called_once_with(fake_http_client, fake_credential, secret_client=None)
+        store_ctor.assert_called_once_with(fake_cosmos_container)
+        build_worker_ctor.assert_called_once()
+        _, build_kwargs = build_worker_ctor.call_args
+        self.assertEqual(build_kwargs["output"], fake_output)
+        self.assertIs(build_kwargs["callback_sender"], fake_sender)
+        self.assertIs(build_kwargs["credential"], fake_credential)
+        self.assertEqual(build_kwargs["config"].lease, timedelta(minutes=5))
+        fake_worker.run.assert_awaited_once_with("scope-a", "task-1")
+        fake_http_client.aclose.assert_awaited()
+        fake_credential.close.assert_awaited()
+        fake_output.close.assert_awaited()
+
+    async def test_run_from_env_uses_key_vault_secret_client_when_configured(self) -> None:
+        module = self._module()
+        fake_worker = types.SimpleNamespace(run=AsyncMock(return_value=19))
+        fake_output = _FakeContainerClient("https://results.example.com/container")
+        fake_credential = _FakeCredential("client-1")
+        fake_http_client = _FakeHttpClient()
+        fake_cosmos_client = _FakeCosmosClient("https://cosmos.example.com", fake_credential, container=object())
+        fake_sender = object()
+        fake_secret_client = _FakeSecretClient("https://vault.example.com", fake_credential)
+        env = {
+            "AZURE_CLIENT_ID": "client-1",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com",
+            "MCP_ACA_JOBS_COSMOS_DATABASE": "db-1",
+            "MCP_ACA_JOBS_COSMOS_CONTAINER": "container-1",
+            "MCP_ACA_JOBS_JOB_TYPE": "batch",
+            "MCP_ACA_JOBS_JOB_RESOURCE_GROUP": "rg",
+            "MCP_ACA_JOBS_JOB_NAME": "batch-job",
+            "MCP_ACA_JOBS_JOB_CONTAINER_NAME": "worker",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": "registry.azurecr.io/work@sha256:" + "a" * 64,
+            "MCP_ACA_JOBS_CALLBACK_URL": "https://hooks.example.com/jobs",
+            "MCP_ACA_JOBS_CALLBACK_AUTH_MODE": "key_vault",
+            "MCP_ACA_JOBS_CALLBACK_VAULT_URL": "https://vault.example.com",
+            "MCP_ACA_JOBS_CALLBACK_SECRET_NAME": "callback-secret",
+            "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://results.example.com/container",
+            "MCP_ACA_JOBS_LEASE_MINUTES": "7",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+            patch.object(module, "ManagedIdentityCredential", return_value=fake_credential) as credential_ctor, \
+            patch.object(module, "CosmosClient", return_value=fake_cosmos_client) as cosmos_ctor, \
+            patch.object(module.BlobOutputStore, "from_container_url", return_value=fake_output) as blob_ctor, \
+            patch.object(module.httpx, "AsyncClient", return_value=fake_http_client) as http_ctor, \
+            patch.object(module, "SecretClient", return_value=fake_secret_client) as secret_ctor, \
+            patch.object(module, "CallbackSender", return_value=fake_sender) as sender_ctor, \
+            patch.object(module, "CosmosControlStore", return_value="store-from-cosmos") as store_ctor, \
+            patch.object(module, "build_worker_from_env", return_value=fake_worker) as build_worker_ctor:
+            result = await module._run_from_env("scope-a", "task-1")
+
+        self.assertEqual(result, 19)
+        credential_ctor.assert_called_once_with(client_id="client-1")
+        cosmos_ctor.assert_called_once_with(endpoint="https://cosmos.example.com", credential=fake_credential)
+        self.assertEqual(fake_cosmos_client.database_names, ["db-1"])
+        blob_ctor.assert_called_once_with("https://results.example.com/container", credential=fake_credential)
+        http_ctor.assert_called_once_with()
+        secret_ctor.assert_called_once_with(vault_url="https://vault.example.com", credential=fake_credential)
+        sender_ctor.assert_called_once_with(fake_http_client, fake_credential, secret_client=fake_secret_client)
+        store_ctor.assert_called_once()
+        build_worker_ctor.assert_called_once()
+        _, build_kwargs = build_worker_ctor.call_args
+        self.assertEqual(build_kwargs["config"].lease, timedelta(minutes=7))
+        fake_worker.run.assert_awaited_once_with("scope-a", "task-1")
+        fake_http_client.aclose.assert_awaited()
+        fake_credential.close.assert_awaited()
+        fake_output.close.assert_awaited()
 
     async def test_first_worker_claims_runs_handler_persists_result_and_sends_exact_callback(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
@@ -437,20 +824,23 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args.owner_scope, "scope-a")
         self.assertEqual(args.task_id, str(self.task.task_id))
 
-    def test_module_help_exits_zero(self) -> None:
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(SKILL_DIR) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        completed = subprocess.run(
-            [sys.executable, "-m", "app.job_worker", "--help"],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("--owner-scope", completed.stdout)
-        self.assertIn("--task-id", completed.stdout)
+    def test_main_parses_args_and_runs_async_entrypoint(self) -> None:
+        module = self._module()
+        sentinel = object()
+        with patch.object(module, "_run_from_env", new=unittest.mock.Mock(return_value=sentinel)) as run_from_env, patch.object(
+            module.asyncio, "run", return_value=42
+        ) as asyncio_run:
+            result = module.main(["--owner-scope", "scope-a", "--task-id", "task-1"])
+
+        self.assertEqual(result, 42)
+        run_from_env.assert_called_once_with("scope-a", "task-1")
+        asyncio_run.assert_called_once_with(sentinel)
+
+    def test_module_help_mentions_required_arguments(self) -> None:
+        module = self._module()
+        help_text = module.build_arg_parser().format_help()
+        self.assertIn("--owner-scope", help_text)
+        self.assertIn("--task-id", help_text)
 
 
 if __name__ == "__main__":

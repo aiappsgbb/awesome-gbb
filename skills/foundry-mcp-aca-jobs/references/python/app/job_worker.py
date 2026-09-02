@@ -17,12 +17,15 @@ from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+import httpx
 from azure.core.exceptions import ResourceExistsError
+from azure.cosmos.aio import CosmosClient
 from azure.identity.aio import ManagedIdentityCredential
+from azure.keyvault.secrets import SecretClient
 from azure.storage.blob.aio import ContainerClient
 
 from .callbacks import CallbackSender, callback_payload
-from .control_store import ConcurrencyError, ControlStore
+from .control_store import ConcurrencyError, ControlStore, CosmosControlStore
 from .models import CallbackDeliveryState, CallbackPolicy, JobPolicy, LifecycleState, Policy, PublicError, TaskRecord
 
 __all__ = [
@@ -59,6 +62,13 @@ async def _await_if_needed(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+async def _close_resource(resource: Any) -> None:
+    closer = getattr(resource, "aclose", None) or getattr(resource, "close", None)
+    if closer is None:
+        return
+    await _await_if_needed(closer())
 
 
 @runtime_checkable
@@ -103,6 +113,9 @@ class BlobOutputStore:
             raise FileNotFoundError(path)
         return _strip_query(str(blob_client.url))
 
+    async def close(self) -> None:
+        await _close_resource(self._container_client)
+
 
 @dataclass(frozen=True)
 class WorkerRuntimeConfig:
@@ -143,7 +156,11 @@ class JobWorker:
         if claimed is None:
             return 0
 
-        result_path = self._output.result_path(str(claimed.task_id)) if hasattr(self._output, "result_path") else f"results/{claimed.task_id}/result.json"
+        result_path = (
+            self._output.result_path(str(claimed.task_id))
+            if hasattr(self._output, "result_path")
+            else f"results/{claimed.task_id}/result.json"
+        )
         if await self._output.exists(result_path):
             result_url = await self._output.get(result_path)
         else:
@@ -283,11 +300,18 @@ def load_runtime_config_from_env() -> WorkerRuntimeConfig:
     job_container_name = os.environ["MCP_ACA_JOBS_JOB_CONTAINER_NAME"]
     job_image_digest = os.environ["MCP_ACA_JOBS_JOB_IMAGE_DIGEST"]
     callback_url = os.environ["MCP_ACA_JOBS_CALLBACK_URL"]
-    callback_audience = os.environ["MCP_ACA_JOBS_CALLBACK_AUDIENCE"]
+    callback_auth_mode = os.environ.get("MCP_ACA_JOBS_CALLBACK_AUTH_MODE", "managed_identity")
     output_container_url = os.environ["MCP_ACA_JOBS_OUTPUT_CONTAINER_URL"]
     input_hosts = _parse_hosts(os.environ.get("MCP_ACA_JOBS_INPUT_HOSTS"), default={"input.example.com"})
     result_hosts = _parse_hosts(os.environ.get("MCP_ACA_JOBS_RESULT_HOSTS"), default={"results.example.com"})
     lease_minutes = int(os.environ.get("MCP_ACA_JOBS_LEASE_MINUTES", "5"))
+    callback_kwargs: dict[str, Any] = {"url": callback_url, "auth_mode": callback_auth_mode}
+    if callback_auth_mode == "managed_identity":
+        callback_kwargs["audience"] = os.environ["MCP_ACA_JOBS_CALLBACK_AUDIENCE"]
+    elif callback_auth_mode == "key_vault":
+        callback_kwargs["secret_name"] = os.environ["MCP_ACA_JOBS_CALLBACK_SECRET_NAME"]
+    else:
+        raise ValueError(f"unsupported callback auth mode: {callback_auth_mode}")
     policy = Policy(
         jobs={
             job_type: JobPolicy(
@@ -300,11 +324,7 @@ def load_runtime_config_from_env() -> WorkerRuntimeConfig:
             )
         },
         callbacks={
-            "ops": CallbackPolicy(
-                url=callback_url,
-                auth_mode="managed_identity",
-                audience=callback_audience,
-            )
+            "ops": CallbackPolicy(**callback_kwargs),
         },
         input_hosts=input_hosts,
         result_hosts=result_hosts,
@@ -316,11 +336,21 @@ def load_runtime_config_from_env() -> WorkerRuntimeConfig:
     )
 
 
-def build_worker_from_env(store: ControlStore, *, clock: Callable[[], datetime] = _utcnow, handler: Any = demo_handler, callback_sender: Any | None = None) -> JobWorker:
-    config = load_runtime_config_from_env()
+def build_worker_from_env(
+    store: ControlStore,
+    *,
+    clock: Callable[[], datetime] = _utcnow,
+    handler: Any = demo_handler,
+    callback_sender: Any | None = None,
+    output: OutputStore | None = None,
+    config: WorkerRuntimeConfig | None = None,
+    credential: Any | None = None,
+) -> JobWorker:
+    config = config or load_runtime_config_from_env()
     if callback_sender is None:
         raise RuntimeError("callback sender must be provided by the worker runtime")
-    output = BlobOutputStore.from_container_url(config.output_container_url)
+    if output is None:
+        output = BlobOutputStore.from_container_url(config.output_container_url, credential=credential)
     return JobWorker(
         store=store,
         output=output,
@@ -339,14 +369,49 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _run_from_env(owner_scope: str, task_id: str) -> int:
+    config = load_runtime_config_from_env()
+    client_id = os.environ["AZURE_CLIENT_ID"]
+    cosmos_endpoint = os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]
+    cosmos_database = os.environ["MCP_ACA_JOBS_COSMOS_DATABASE"]
+    cosmos_container = os.environ["MCP_ACA_JOBS_COSMOS_CONTAINER"]
+
+    credential = ManagedIdentityCredential(client_id=client_id)
+    http_client = httpx.AsyncClient()
+    output: BlobOutputStore | None = None
+    secret_client: Any | None = None
+    try:
+        output = BlobOutputStore.from_container_url(config.output_container_url, credential=credential)
+        async with CosmosClient(endpoint=cosmos_endpoint, credential=credential) as cosmos_client:
+            database = cosmos_client.get_database_client(cosmos_database)
+            container = database.get_container_client(cosmos_container)
+            store = CosmosControlStore(container)
+            callback_policy = config.policy.callback("ops")
+            if callback_policy.auth_mode == "key_vault":
+                secret_client = SecretClient(
+                    vault_url=os.environ["MCP_ACA_JOBS_CALLBACK_VAULT_URL"],
+                    credential=credential,
+                )
+            callback_sender = CallbackSender(http_client, credential, secret_client=secret_client)
+            worker = build_worker_from_env(
+                store,
+                output=output,
+                callback_sender=callback_sender,
+                config=config,
+                credential=credential,
+            )
+            return await worker.run(owner_scope, task_id)
+    finally:
+        if output is not None:
+            await _close_resource(output)
+        await _close_resource(http_client)
+        await _close_resource(credential)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    _ = load_runtime_config_from_env()
-    raise RuntimeError(
-        "The command-line entrypoint is a thin wrapper around build_worker_from_env(); "
-        "wire the store and callback sender in the hosting runtime before invoking run()."
-    )
+    return asyncio.run(_run_from_env(args.owner_scope, args.task_id))
 
 
 if __name__ == "__main__":
