@@ -54,13 +54,15 @@ from app.control_store import (  # noqa: E402
     CosmosControlStore,
     InMemoryControlStore,
     InvalidTransition,
+    _record_from_document,
 )
 
 
 class _CosmosError(Exception):
-    def __init__(self, status_code: int, message: str = "boom") -> None:
+    def __init__(self, status_code: int, message: str = "boom", body: object | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.body = body
 
 
 class _ContainerProxy:
@@ -83,8 +85,24 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
                 callback_alias="callback://jobs/import",
             )
 
-    def _task_dump(self, task: TaskRecord) -> dict[str, object]:
-        return task.model_dump(mode="json", by_alias=True, exclude_none=True)
+    def _task_document(self, task: TaskRecord) -> dict[str, object]:
+        document = task.model_dump(mode="json", by_alias=True, exclude_none=True)
+        document["id"] = str(task.task_id)
+        return document
+
+    def _cosmos_document(self, task: TaskRecord, *, etag: str | None = None) -> dict[str, object]:
+        document = self._task_document(task)
+        document.update(
+            {
+                "_rid": "rid-1",
+                "_self": "dbs/db1/colls/tasks/docs/1",
+                "_attachments": "attachments/",
+                "_ts": 1735787045,
+            }
+        )
+        if etag is not None:
+            document["_etag"] = etag
+        return document
 
     async def test_in_memory_duplicate_conflict_etags_and_owner_isolation(self) -> None:
         store = InMemoryControlStore()
@@ -176,21 +194,35 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         container = _ContainerProxy()
         store = CosmosControlStore(container)
 
-        create_body = self._task_dump(self.task)
-        existing = self._task_dump(self.task)
-        existing["_etag"] = "7"
+        create_body = self._task_document(self.task)
+        existing = self._cosmos_document(self.task, etag="7")
+        created = self._cosmos_document(self.task, etag="7")
+        updated = self._cosmos_document(self.task.model_copy(update={"callback_delivery_state": CallbackDeliveryState.DELIVERED}), etag="10")
 
         container.create_item.side_effect = _CosmosError(409, "conflict")
         container.read_item.return_value = existing
 
         duplicate = await store.create_or_get(self.task)
         self.assertEqual(duplicate.etag, "7")
+        self.assertEqual(duplicate, _record_from_document(existing))
         self.assertEqual(container.create_item.await_count, 1)
         self.assertEqual(container.read_item.await_count, 1)
         self.assertEqual(container.create_item.await_args.args[0], create_body)
         self.assertEqual(container.read_item.await_args.kwargs, {"item": str(self.task.task_id), "partition_key": self.task.owner_scope})
 
+        container.create_item.reset_mock()
+        container.read_item.reset_mock()
+        container.create_item.side_effect = None
+        container.create_item.return_value = created
+        created_record = await store.create_or_get(self.task.model_copy(update={"request_fingerprint": "fingerprint-1"}))
+        self.assertEqual(created_record.etag, "7")
+        self.assertEqual(container.create_item.await_args.args[0], create_body)
+        self.assertEqual(created_record, _record_from_document(created))
+
         different = self.task.model_copy(update={"request_fingerprint": "fingerprint-2"})
+        container.create_item.reset_mock()
+        container.create_item.side_effect = _CosmosError(409, "conflict")
+        container.read_item.return_value = existing
         with self.assertRaises(PublicError) as error:
             await store.create_or_get(different)
         self.assertEqual(error.exception.code, "IDEMPOTENCY_KEY_REUSED")
@@ -203,23 +235,22 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
 
         current = self.task.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "etag": "9"})
         container.read_item.side_effect = None
-        container.read_item.return_value = self._task_dump(current)
-        container.replace_item.return_value = self._task_dump(
-            current.model_copy(update={"callback_delivery_state": CallbackDeliveryState.DELIVERED, "etag": "10"})
-        )
+        container.read_item.return_value = self._cosmos_document(current, etag="9")
+        container.replace_item.return_value = updated
 
         callback_update = current.model_copy(
             update={"callback_delivery_state": CallbackDeliveryState.DELIVERED, "etag": "9"}
         )
         replaced = await store.replace(callback_update, "9")
         self.assertEqual(replaced.callback_delivery_state, CallbackDeliveryState.DELIVERED)
+        self.assertEqual(replaced, _record_from_document(updated))
         self.assertEqual(container.read_item.await_count, 2)
         self.assertEqual(container.replace_item.await_count, 1)
         self.assertEqual(
             container.replace_item.await_args.kwargs,
             {
                 "item": str(self.task.task_id),
-                "body": self._task_dump(callback_update),
+                "body": self._task_document(callback_update),
                 "etag": "9",
                 "match_condition": MatchConditions.IfNotModified,
             },
@@ -227,14 +258,14 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
 
         container.read_item.reset_mock()
         container.replace_item.reset_mock()
-        container.read_item.return_value = self._task_dump(current)
+        container.read_item.return_value = self._cosmos_document(current, etag="9")
         invalid = current.model_copy(update={"lifecycle_state": LifecycleState.ACCEPTED})
         with self.assertRaises(InvalidTransition):
             await store.replace(invalid, "9")
         self.assertEqual(container.replace_item.await_count, 0)
 
         container.read_item.side_effect = None
-        container.read_item.return_value = self._task_dump(current)
+        container.read_item.return_value = self._cosmos_document(current, etag="9")
         container.replace_item.side_effect = _CosmosError(412, "precondition failed")
         with self.assertRaises(ConcurrencyError):
             await store.replace(callback_update, "9")
@@ -243,7 +274,8 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         container = _ContainerProxy()
         store = CosmosControlStore(container)
         current = self.task.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "etag": "9"})
-        replace_body = self._task_dump(current)
+        replace_body = self._task_document(current)
+        current_document = self._cosmos_document(current, etag="9")
 
         container.read_item.reset_mock()
         container.read_item.side_effect = _CosmosError(404, "missing")
@@ -258,7 +290,7 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
 
         container.read_item.reset_mock()
         container.read_item.side_effect = None
-        container.read_item.return_value = self._task_dump(current)
+        container.read_item.return_value = current_document
         container.replace_item.side_effect = _CosmosError(404, "missing")
         with self.assertRaises(PublicError) as error:
             await store.replace(current, "9")
@@ -275,15 +307,25 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
 
         container.read_item.reset_mock()
         container.read_item.side_effect = None
-        container.read_item.return_value = self._task_dump(current)
+        container.read_item.return_value = current_document
         container.replace_item.side_effect = _CosmosError(412, "precondition failed")
         with self.assertRaises(ConcurrencyError):
             await store.replace(current, "9")
 
+        container.read_item.reset_mock()
+        container.read_item.side_effect = _CosmosError(404, "owner resource does not exist for container tasks", body={"message": "owner resource does not exist"})
+        with self.assertRaises(PublicError) as error:
+            await store.get(self.task.owner_scope, str(self.task.task_id))
+        self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
+        self.assertEqual(error.exception.safe_message, "control store unavailable")
+        self.assertNotIn("owner resource", str(error.exception))
+        self.assertIsInstance(error.exception.__cause__, _CosmosError)
+        self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 404)
+
         for status_code in (429, 500):
             container.read_item.reset_mock()
             container.read_item.side_effect = None
-            container.read_item.return_value = self._task_dump(current)
+            container.read_item.return_value = current_document
             container.replace_item.reset_mock()
             container.replace_item.side_effect = _CosmosError(status_code, "server exploded")
             with self.assertRaises(PublicError) as error:
