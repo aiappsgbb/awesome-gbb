@@ -191,6 +191,10 @@ class TaskRecord(BaseModel):
                 return GetTaskResult(task_id=self.task_id, status="working")
             result = {
                 "content": [{"type": "text", "text": str(self.result_url)}],
+                "structuredContent": {
+                    "status": "Succeeded",
+                    "resultUrl": str(self.result_url),
+                },
                 "isError": False,
             }
             return GetTaskResult(task_id=self.task_id, status="completed", result=result)
@@ -216,6 +220,13 @@ def map_aca_state(
     result_url: str | HttpUrl | None = None,
     reconciliation_exhausted: bool = False,
 ) -> TaskRecord:
+    if record.lifecycle_state in {
+        LifecycleState.SUCCEEDED,
+        LifecycleState.FAILED,
+        LifecycleState.CANCELLED,
+    }:
+        return record
+
     if aca_state == "Processing":
         lifecycle_state = LifecycleState.RUNNING if record.worker_claimed_at else LifecycleState.STARTING
         return record.model_copy(update={"lifecycle_state": lifecycle_state, "updated_at": _utcnow()})

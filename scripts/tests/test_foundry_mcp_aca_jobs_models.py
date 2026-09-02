@@ -220,6 +220,23 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         self.assertEqual(exhausted.lifecycle_state, LifecycleState.FAILED)
         self.assertEqual(exhausted.error_code, "RESULT_REFERENCE_MISSING")
 
+        succeeded_terminal = record.model_copy(
+            update={
+                "lifecycle_state": LifecycleState.SUCCEEDED,
+                "result_url": None,
+            }
+        )
+        self.assertEqual(
+            map_aca_state(succeeded_terminal, "Degraded", reconciliation_exhausted=True).lifecycle_state,
+            LifecycleState.SUCCEEDED,
+        )
+
+        failed_terminal = record.model_copy(update={"lifecycle_state": LifecycleState.FAILED, "error_code": "BUSINESS_FAIL"})
+        self.assertEqual(
+            map_aca_state(failed_terminal, "Unknown", reconciliation_exhausted=True).lifecycle_state,
+            LifecycleState.FAILED,
+        )
+
     def test_map_aca_state_handles_failed_stopped_degraded_and_unknown(self) -> None:
         with patch("app.models._utcnow", return_value=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)):
             record = TaskRecord.new(
@@ -270,6 +287,17 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         self.assertEqual(map_aca_state(accepted, "Degraded").lifecycle_state, LifecycleState.ACCEPTED)
         self.assertEqual(map_aca_state(accepted, "Unknown").lifecycle_state, LifecycleState.ACCEPTED)
 
+        cancelled_terminal = record.model_copy(
+            update={
+                "lifecycle_state": LifecycleState.CANCELLED,
+                "cancellation_requested_at": datetime(2026, 1, 2, 4, 0, 0, tzinfo=timezone.utc),
+            }
+        )
+        self.assertEqual(
+            map_aca_state(cancelled_terminal, "Unknown", reconciliation_exhausted=True).lifecycle_state,
+            LifecycleState.CANCELLED,
+        )
+
     def test_to_mcp_task_semantics(self) -> None:
         from fastmcp_tasks.models import GetTaskResult  # noqa: E402
 
@@ -297,6 +325,10 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         succeeded_task = to_mcp_task(succeeded)
         self.assertEqual(succeeded_task.status, "completed")
         self.assertEqual(succeeded_task.result["content"][0]["text"], "https://example.invalid/result.json")
+        self.assertEqual(
+            succeeded_task.result["structuredContent"],
+            {"status": "Succeeded", "resultUrl": "https://example.invalid/result.json"},
+        )
         self.assertFalse(succeeded_task.result["isError"])
 
         cancelled = record.model_copy(update={"lifecycle_state": LifecycleState.CANCELLED})
