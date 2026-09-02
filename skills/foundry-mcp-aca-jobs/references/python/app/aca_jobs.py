@@ -106,6 +106,10 @@ def _execution_start_time(response: Any) -> datetime:
     return _utcnow()
 
 
+def _expected_start_args(owner_scope: str, task_id: str) -> list[str]:
+    return ["--owner-scope", owner_scope, "--task-id", task_id]
+
+
 def _execution_args(response: Any) -> list[str]:
     properties = _raw_value(response, "properties", response)
     template = _raw_value(properties, "template")
@@ -187,14 +191,18 @@ def _execution_template_for_start(job: Any, policy: JobPolicy, owner_scope: str,
 
 
 def _start_execution_args(response: Any, policy: JobPolicy, owner_scope: str, task_id: str) -> list[str]:
+    expected = _expected_start_args(owner_scope, task_id)
     properties = _raw_value(response, "properties", response)
     template = _raw_value(properties, "template")
     if template is None:
-        return ["--owner-scope", owner_scope, "--task-id", task_id]
+        return expected
     containers = _raw_value(template, "containers", None)
     if not containers:
         _raise_public_error("ARM_STATUS_UNAVAILABLE")
-    return _execution_args_for_container(response, policy.container_name, strict=True, phase="status")
+    args = _execution_args_for_container(response, policy.container_name, strict=True, phase="status")
+    if args != expected:
+        _raise_public_error("ARM_STATUS_UNAVAILABLE")
+    return expected
 
 
 class AcaExecution(BaseModel):

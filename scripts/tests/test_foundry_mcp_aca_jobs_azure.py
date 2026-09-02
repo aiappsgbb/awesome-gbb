@@ -418,7 +418,7 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
             await adapter_bad_ack.start(policy, "owner-hash", "task-id")
         self.assertEqual(error.exception.code, "DEPLOYMENT_CONTRACT_MISMATCH")
 
-    async def test_start_ack_with_worker_container_parses_ack_args(self) -> None:
+    async def test_start_ack_with_worker_container_requires_exact_args(self) -> None:
         policy = self._policy()
         client = self._client(job=self._job())
         adapter = self.AcaJobsAdapter(client)
@@ -429,7 +429,7 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
                     name=policy.container_name,
                     image=policy.image_digest,
                     command=policy.command,
-                    args=["--owner-scope", "ack-owner", "--task-id", "ack-task"],
+                    args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
                     env=[SimpleNamespace(name="KEEP", value="1")],
                     resources=SimpleNamespace(cpu=1, memory="2Gi"),
                 )
@@ -440,7 +440,20 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         execution = await adapter.start(policy, "owner-hash", "task-id")
 
         self.assertEqual(execution.execution_id, "execution-123")
-        self.assertEqual(execution.args, ["--owner-scope", "ack-owner", "--task-id", "ack-task"])
+        self.assertEqual(execution.args, ["--owner-scope", "owner-hash", "--task-id", "task-id"])
+
+    async def test_start_ack_without_template_returns_expected_args(self) -> None:
+        policy = self._policy()
+        client = self._client(job=self._job())
+        adapter = self.AcaJobsAdapter(client)
+        begin_result = self._start_ack("execution-123")
+        begin_result.properties = SimpleNamespace(status="Processing", start_time=datetime(2026, 9, 2, 17, 0, 0, tzinfo=timezone.utc))
+        client.jobs.begin_start.return_value = _Poller(begin_result)
+
+        execution = await adapter.start(policy, "owner-hash", "task-id")
+
+        self.assertEqual(execution.execution_id, "execution-123")
+        self.assertEqual(execution.args, ["--owner-scope", "owner-hash", "--task-id", "task-id"])
 
     async def test_start_ack_with_wrong_worker_container_is_unavailable(self) -> None:
         policy = self._policy()
@@ -454,6 +467,29 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
                     image=policy.image_digest,
                     command=policy.command,
                     args=["--owner-scope", "ack-owner", "--task-id", "ack-task"],
+                    env=[SimpleNamespace(name="KEEP", value="1")],
+                    resources=SimpleNamespace(cpu=1, memory="2Gi"),
+                )
+            ],
+        )
+        client.jobs.begin_start.return_value = _Poller(begin_result)
+
+        with self.assertRaises(self.PublicError) as error:
+            await adapter.start(policy, "owner-hash", "task-id")
+        self.assertEqual(error.exception.code, "ARM_STATUS_UNAVAILABLE")
+
+    async def test_start_ack_with_mismatched_worker_container_args_is_unavailable(self) -> None:
+        policy = self._policy()
+        client = self._client(job=self._job())
+        adapter = self.AcaJobsAdapter(client)
+        begin_result = self._start_ack_with_template(
+            "execution-123",
+            containers=[
+                SimpleNamespace(
+                    name=policy.container_name,
+                    image=policy.image_digest,
+                    command=policy.command,
+                    args=["--owner-scope", "ack-owner", "--task-id", "ack-task", "--extra", "value"],
                     env=[SimpleNamespace(name="KEEP", value="1")],
                     resources=SimpleNamespace(cpu=1, memory="2Gi"),
                 )
