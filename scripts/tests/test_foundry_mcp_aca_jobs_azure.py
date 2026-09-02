@@ -136,6 +136,24 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
             id=id_value or f"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/job-worker/executions/{execution_id}",
         )
 
+    def _start_ack_with_template(
+        self,
+        execution_id: str,
+        *,
+        containers: list[Any],
+        name: str | None = None,
+        id_value: str | None = None,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            name=name or execution_id,
+            id=id_value or f"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/jobs/job-worker/executions/{execution_id}",
+            properties=SimpleNamespace(
+                status="Processing",
+                start_time=datetime(2026, 9, 2, 17, 0, 0, tzinfo=timezone.utc),
+                template=SimpleNamespace(containers=containers, init_containers=[], volumes=[]),
+            ),
+        )
+
     def _execution(
         self,
         *,
@@ -399,6 +417,92 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(self.PublicError) as error:
             await adapter_bad_ack.start(policy, "owner-hash", "task-id")
         self.assertEqual(error.exception.code, "DEPLOYMENT_CONTRACT_MISMATCH")
+
+    async def test_start_ack_with_worker_container_parses_ack_args(self) -> None:
+        policy = self._policy()
+        client = self._client(job=self._job())
+        adapter = self.AcaJobsAdapter(client)
+        begin_result = self._start_ack_with_template(
+            "execution-123",
+            containers=[
+                SimpleNamespace(
+                    name=policy.container_name,
+                    image=policy.image_digest,
+                    command=policy.command,
+                    args=["--owner-scope", "ack-owner", "--task-id", "ack-task"],
+                    env=[SimpleNamespace(name="KEEP", value="1")],
+                    resources=SimpleNamespace(cpu=1, memory="2Gi"),
+                )
+            ],
+        )
+        client.jobs.begin_start.return_value = _Poller(begin_result)
+
+        execution = await adapter.start(policy, "owner-hash", "task-id")
+
+        self.assertEqual(execution.execution_id, "execution-123")
+        self.assertEqual(execution.args, ["--owner-scope", "ack-owner", "--task-id", "ack-task"])
+
+    async def test_start_ack_with_wrong_worker_container_is_unavailable(self) -> None:
+        policy = self._policy()
+        client = self._client(job=self._job())
+        adapter = self.AcaJobsAdapter(client)
+        begin_result = self._start_ack_with_template(
+            "execution-123",
+            containers=[
+                SimpleNamespace(
+                    name="assistant",
+                    image=policy.image_digest,
+                    command=policy.command,
+                    args=["--owner-scope", "ack-owner", "--task-id", "ack-task"],
+                    env=[SimpleNamespace(name="KEEP", value="1")],
+                    resources=SimpleNamespace(cpu=1, memory="2Gi"),
+                )
+            ],
+        )
+        client.jobs.begin_start.return_value = _Poller(begin_result)
+
+        with self.assertRaises(self.PublicError) as error:
+            await adapter.start(policy, "owner-hash", "task-id")
+        self.assertEqual(error.exception.code, "ARM_STATUS_UNAVAILABLE")
+
+    async def test_start_ack_with_duplicate_worker_container_is_unavailable(self) -> None:
+        policy = self._policy()
+        client = self._client(job=self._job())
+        adapter = self.AcaJobsAdapter(client)
+        begin_result = self._start_ack_with_template(
+            "execution-123",
+            containers=[
+                SimpleNamespace(
+                    name=policy.container_name,
+                    image=policy.image_digest,
+                    command=policy.command,
+                    args=["--owner-scope", "ack-owner", "--task-id", "ack-task"],
+                    env=[SimpleNamespace(name="KEEP", value="1")],
+                    resources=SimpleNamespace(cpu=1, memory="2Gi"),
+                ),
+                SimpleNamespace(
+                    name="sidecar",
+                    image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                    command=["sh", "-c", "echo sidecar"],
+                    args=["--sidecar", "value"],
+                    env=[SimpleNamespace(name="SIDE", value="1")],
+                    resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+                ),
+                SimpleNamespace(
+                    name=policy.container_name,
+                    image=policy.image_digest,
+                    command=policy.command,
+                    args=["--owner-scope", "ack-owner", "--task-id", "ack-task"],
+                    env=[SimpleNamespace(name="KEEP", value="1")],
+                    resources=SimpleNamespace(cpu=1, memory="2Gi"),
+                ),
+            ],
+        )
+        client.jobs.begin_start.return_value = _Poller(begin_result)
+
+        with self.assertRaises(self.PublicError) as error:
+            await adapter.start(policy, "owner-hash", "task-id")
+        self.assertEqual(error.exception.code, "ARM_STATUS_UNAVAILABLE")
 
     async def test_get_list_stop_and_status_errors_translate_safely(self) -> None:
         policy = self._policy()

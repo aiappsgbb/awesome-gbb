@@ -186,6 +186,17 @@ def _execution_template_for_start(job: Any, policy: JobPolicy, owner_scope: str,
     return template
 
 
+def _start_execution_args(response: Any, policy: JobPolicy, owner_scope: str, task_id: str) -> list[str]:
+    properties = _raw_value(response, "properties", response)
+    template = _raw_value(properties, "template")
+    if template is None:
+        return ["--owner-scope", owner_scope, "--task-id", task_id]
+    containers = _raw_value(template, "containers", None)
+    if not containers:
+        _raise_public_error("ARM_STATUS_UNAVAILABLE")
+    return _execution_args_for_container(response, policy.container_name, strict=True, phase="status")
+
+
 class AcaExecution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -250,12 +261,7 @@ class AcaJobsAdapter:
         if status == "Unknown" and _raw_value(_raw_value(response, "properties", response), "status") is None:
             status = "Processing"
         start_time = _execution_start_time(response)
-        args = _execution_args_for_container(response, policy.container_name, strict=False, phase="start") or [
-            "--owner-scope",
-            owner_scope,
-            "--task-id",
-            task_id,
-        ]
+        args = _start_execution_args(response, policy, owner_scope, task_id)
         return AcaExecution(execution_id=execution_id, status=status, start_time=start_time, args=args)
 
     async def get(self, policy: JobPolicy, execution_id: str) -> AcaExecution:
