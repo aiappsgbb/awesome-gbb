@@ -1082,15 +1082,18 @@ Expected: failure because `build_server()` does not exist.
 - [ ] **Step 3: Implement server assembly and three tools**
 
 `build_server(runtime: Runtime) -> FastMCP` registers
-`AcaTasksExtension(runtime.orchestrator, owner_scope_from_headers)`, `/health`,
+`AcaTasksExtension(runtime.orchestrator, resolve_owner_scope)`, `/health`,
 the three tools, and an authenticated `/callbacks/jobs` route. The callback
 route validates `CallbackEvent`, writes exactly its four fields to the
 fixture-capable callback capture store, returns HTTP 202, and never proxies the
 result URL. Use aliases in tool signatures so the JSON schema exposes exactly
 `jobType`, `idempotencyKey`, `inputRef`, `callbackAlias`, and `taskId`.
 
-`owner_scope_from_headers()` hashes the verified
-`X-MS-CLIENT-PRINCIPAL-ID`; absence raises `TASK_FORBIDDEN`. Never trust a
+`owner_scope_from_headers(headers, trusted=False)` fails closed unless the
+runtime explicitly declares the ACA Easy Auth perimeter via
+`MCP_ACA_JOBS_AUTH_MODE=aca-easy-auth`; only then may the verified
+`X-MS-CLIENT-PRINCIPAL-ID` be hashed. Future Bicep must set that env var only
+next to `authConfig.unauthenticatedClientAction=Return401`. Never trust a
 caller-supplied owner.
 
 Add this strict callback model to `models.py`:

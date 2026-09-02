@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Annotated, Protocol, runtime_checkable
 
+from azure.core.exceptions import ResourceExistsError
 from azure.cosmos.aio import CosmosClient
 from azure.identity import ManagedIdentityCredential
 from azure.identity.aio import ManagedIdentityCredential as AioManagedIdentityCredential
@@ -74,7 +75,9 @@ def _header_value(headers: Mapping[str, Any], name: str) -> str | None:
     return None
 
 
-def owner_scope_from_headers(headers: Mapping[str, Any]) -> str:
+def owner_scope_from_headers(headers: Mapping[str, Any], trusted: bool = False) -> str:
+    if not trusted:
+        raise PublicError("TASK_FORBIDDEN", "caller is not authorized")
     principal = _header_value(headers, "X-MS-CLIENT-PRINCIPAL-ID")
     if principal is None or not principal.strip():
         raise PublicError("TASK_FORBIDDEN", "caller is not authorized")
@@ -88,6 +91,7 @@ class Runtime:
     store: Any
     policy: Policy
     callback_capture: CallbackCapture
+    trust_aca_auth_headers: bool = False
     close: Callable[[], Awaitable[None]] | None = None
 
 
@@ -114,10 +118,38 @@ class BlobCallbackCapture:
     async def write(self, event: CallbackEvent) -> None:
         payload = event.model_dump(mode="json", by_alias=True, exclude_none=False)
         blob_client = self.container_client.get_blob_client(f"callbacks/{event.task_id}.json")
-        await blob_client.upload_blob(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-            overwrite=False,
-        )
+        payload_bytes = self._canonical_payload_bytes(payload)
+        try:
+            await blob_client.upload_blob(payload_bytes, overwrite=False)
+        except ResourceExistsError as exc:
+            try:
+                existing = await self._read_existing_payload(blob_client)
+            except Exception as read_exc:
+                raise PublicError("CALLBACK_PAYLOAD_CONFLICT", "callback payload conflict") from read_exc
+            if self._canonical_payload_bytes(existing) == payload_bytes:
+                return
+            raise PublicError("CALLBACK_PAYLOAD_CONFLICT", "callback payload conflict") from exc
+
+    @staticmethod
+    def _canonical_payload_bytes(payload: Mapping[str, Any]) -> bytes:
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    @staticmethod
+    async def _read_existing_payload(blob_client: Any) -> dict[str, Any]:
+        downloader = blob_client.download_blob()
+        if inspect.isawaitable(downloader):
+            downloader = await downloader
+        data = downloader.readall()
+        if inspect.isawaitable(data):
+            data = await data
+        if isinstance(data, bytes):
+            raw = data.decode("utf-8")
+        else:
+            raw = str(data)
+        existing = json.loads(raw)
+        if not isinstance(existing, dict):
+            raise ValueError("callback payload must be a JSON object")
+        return existing
 
     async def close(self) -> None:
         close = getattr(self.container_client, "close", None)
@@ -203,6 +235,13 @@ def build_server(runtime: Runtime) -> FastMCP:
 
     reconciler_interval = _reconcile_interval_seconds()
 
+    def resolve_owner_scope(headers: Mapping[str, Any]) -> str:
+        return owner_scope_from_headers(headers, trusted=runtime.trust_aca_auth_headers)
+
+    def public_error_response(error: PublicError) -> JSONResponse:
+        status_code = 403 if error.code == "TASK_FORBIDDEN" else 409 if error.code == "CALLBACK_PAYLOAD_CONFLICT" else 400
+        return _json_response({"code": error.code, "detail": error.safe_message}, status_code=status_code)
+
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[None]:
         reconciler_task: asyncio.Task[None] | None = None
@@ -219,7 +258,7 @@ def build_server(runtime: Runtime) -> FastMCP:
                 await runtime.close()
 
     server = FastMCP("foundry-mcp-aca-jobs", lifespan=lifespan)
-    server.add_extension(AcaTasksExtension(runtime.orchestrator, owner_scope_from_headers))
+    server.add_extension(AcaTasksExtension(runtime.orchestrator, resolve_owner_scope))
 
     @server.custom_route("/health", methods=["GET"])
     async def health(_: Request) -> PlainTextResponse:
@@ -227,13 +266,15 @@ def build_server(runtime: Runtime) -> FastMCP:
 
     @server.custom_route("/callbacks/jobs", methods=["POST"])
     async def callbacks_jobs(request: Request) -> JSONResponse | PlainTextResponse:
-        owner_scope_from_headers(request.headers)
         try:
+            resolve_owner_scope(request.headers)
             body = await request.json()
             event = CallbackEvent.model_validate(body)
+            await runtime.callback_capture.write(event)
+        except PublicError as error:
+            return public_error_response(error)
         except (ValidationError, ValueError, TypeError):
             return _json_response({"detail": "invalid callback event"}, status_code=422)
-        await runtime.callback_capture.write(event)
         return PlainTextResponse("accepted", status_code=202)
 
     @server.tool
@@ -243,7 +284,7 @@ def build_server(runtime: Runtime) -> FastMCP:
         inputRef: Annotated[str, Field(min_length=1)],
         callbackAlias: Annotated[str, Field(min_length=1)],
     ) -> dict[str, Any]:
-        owner_scope = owner_scope_from_headers(get_http_headers() or {})
+        owner_scope = resolve_owner_scope(get_http_headers() or {})
         request = StartRequest.model_validate(
             {
                 "jobType": jobType,
@@ -257,13 +298,13 @@ def build_server(runtime: Runtime) -> FastMCP:
 
     @server.tool
     async def get_aca_job_status(taskId: Annotated[str, Field(min_length=1)]) -> dict[str, Any]:
-        owner_scope = owner_scope_from_headers(get_http_headers() or {})
+        owner_scope = resolve_owner_scope(get_http_headers() or {})
         task = await runtime.orchestrator.get_status(owner_scope, taskId)
         return task.model_dump(mode="json", by_alias=True, exclude_none=False)
 
     @server.tool
     async def cancel_aca_job(taskId: Annotated[str, Field(min_length=1)]) -> dict[str, Any]:
-        owner_scope = owner_scope_from_headers(get_http_headers() or {})
+        owner_scope = resolve_owner_scope(get_http_headers() or {})
         task = await runtime.orchestrator.cancel(owner_scope, taskId)
         return task.model_dump(mode="json", by_alias=True, exclude_none=False)
 
@@ -271,6 +312,9 @@ def build_server(runtime: Runtime) -> FastMCP:
 
 
 def runtime_from_env() -> Runtime:
+    auth_mode = os.environ.get("MCP_ACA_JOBS_AUTH_MODE")
+    if auth_mode != "aca-easy-auth":
+        raise RuntimeError("MCP_ACA_JOBS_AUTH_MODE must be exactly 'aca-easy-auth' to trust ACA auth headers")
     client_id = os.environ["AZURE_CLIENT_ID"]
     subscription_id = os.environ["AZURE_SUBSCRIPTION_ID"]
     cosmos_endpoint = os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]
@@ -302,6 +346,7 @@ def runtime_from_env() -> Runtime:
         store=store,
         policy=policy,
         callback_capture=callback_capture,
+        trust_aca_auth_headers=True,
         close=close,
     )
 

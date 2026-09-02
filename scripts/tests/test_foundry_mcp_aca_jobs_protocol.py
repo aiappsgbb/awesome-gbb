@@ -63,6 +63,9 @@ def _install_stubs() -> None:
             self.response = response
             self.status_code = getattr(response, "status_code", None)
 
+    class ResourceExistsError(Exception):
+        pass
+
     class ManagedIdentityCredential:
         def __init__(self, client_id: str | None = None) -> None:
             self.client_id = client_id
@@ -135,9 +138,26 @@ def _install_stubs() -> None:
         def __init__(self, path: str) -> None:
             self.path = path
             self.uploads: list[dict[str, Any]] = []
+            self.payload: bytes | None = None
 
         async def upload_blob(self, data: Any, overwrite: bool = False) -> None:
-            self.uploads.append({"data": data, "overwrite": overwrite})
+            if self.payload is not None and not overwrite:
+                raise ResourceExistsError("blob already exists")
+            payload = data if isinstance(data, bytes) else bytes(data)
+            self.uploads.append({"data": payload, "overwrite": overwrite})
+            self.payload = payload
+
+        def download_blob(self) -> Any:
+            payload = self.payload or b""
+
+            class _Downloader:
+                def __init__(self, data: bytes) -> None:
+                    self._data = data
+
+                async def readall(self) -> bytes:
+                    return self._data
+
+            return _Downloader(payload)
 
     class ContainerClient:
         def __init__(self, url: str, credential: Any | None = None) -> None:
@@ -173,6 +193,7 @@ def _install_stubs() -> None:
 
     azure_core.MatchConditions = MatchConditions
     azure_core_exceptions.HttpResponseError = HttpResponseError
+    azure_core_exceptions.ResourceExistsError = ResourceExistsError
     azure_identity.ManagedIdentityCredential = ManagedIdentityCredential
     azure_identity_aio.ManagedIdentityCredential = AsyncManagedIdentityCredential
     azure_cosmos_aio.CosmosClient = CosmosClient
@@ -1075,6 +1096,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         orchestrator: Orchestrator | None = None,
         store: Any | None = None,
         callback_capture: Any | None = None,
+        trust_aca_auth_headers: bool = False,
     ) -> app_mcp_server.Runtime:
         store = store or InMemoryControlStore()
         jobs = FakeJobsClient()
@@ -1091,6 +1113,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             store=store,
             policy=policy,
             callback_capture=callback_capture,
+            trust_aca_auth_headers=trust_aca_auth_headers,
         )
 
     def test_callback_event_model_is_strict(self) -> None:
@@ -1117,19 +1140,81 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
 
-    def test_owner_scope_from_headers_hashes_principal_and_requires_header(self) -> None:
+    def test_owner_scope_from_headers_requires_trusted_perimeter_and_principal(self) -> None:
         principal = "  Alice@example.com  "
         expected = hashlib.sha256("alice@example.com".encode("utf-8")).hexdigest()
+        with self.assertRaises(PublicError) as exc:
+            app_mcp_server.owner_scope_from_headers({"X-MS-CLIENT-PRINCIPAL-ID": principal})
+        self.assertEqual(exc.exception.code, "TASK_FORBIDDEN")
         self.assertEqual(
-            app_mcp_server.owner_scope_from_headers({"X-MS-CLIENT-PRINCIPAL-ID": principal}),
+            app_mcp_server.owner_scope_from_headers({"X-MS-CLIENT-PRINCIPAL-ID": principal}, trusted=True),
             expected,
         )
         with self.assertRaises(PublicError) as exc:
-            app_mcp_server.owner_scope_from_headers({})
+            app_mcp_server.owner_scope_from_headers({}, trusted=True)
         self.assertEqual(exc.exception.code, "TASK_FORBIDDEN")
 
+    def test_runtime_from_env_requires_aca_easy_auth_and_sets_trust_flag(self) -> None:
+        env = {
+            "AZURE_CLIENT_ID": "client-id-1",
+            "AZURE_SUBSCRIPTION_ID": "sub-id-1",
+            "MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
+            "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs-db",
+            "MCP_ACA_JOBS_COSMOS_CONTAINER": "jobs",
+            "MCP_ACA_JOBS_CALLBACK_CONTAINER_URL": "https://storage.example.com/callbacks",
+            "MCP_ACA_JOBS_POLICY_JSON": json.dumps(self._policy().model_dump(mode="json", by_alias=True)),
+        }
+        fake_blob_client = types.SimpleNamespace(upload_blob=AsyncMock())
+        fake_container_client = types.SimpleNamespace(
+            get_blob_client=MagicMock(return_value=fake_blob_client),
+            close=AsyncMock(),
+        )
+        fake_cosmos_container = types.SimpleNamespace()
+        fake_cosmos_database = types.SimpleNamespace(get_container_client=MagicMock(return_value=fake_cosmos_container))
+        fake_cosmos_client = types.SimpleNamespace(
+            get_database_client=MagicMock(return_value=fake_cosmos_database),
+            close=AsyncMock(),
+        )
+        fake_sync_credential = types.SimpleNamespace(close=MagicMock())
+        fake_async_credential = types.SimpleNamespace(close=AsyncMock())
+        fake_app_client = types.SimpleNamespace(close=MagicMock())
+        with patch.dict(os.environ, env, clear=False), patch.object(
+            app_mcp_server, "ManagedIdentityCredential"
+        ) as managed_identity, patch.object(app_mcp_server, "AioManagedIdentityCredential") as aio_managed_identity, patch.object(
+            app_mcp_server, "ContainerAppsAPIClient", return_value=fake_app_client
+        ) as jobs_client, patch.object(app_mcp_server, "CosmosClient", return_value=fake_cosmos_client) as cosmos_client, patch.object(
+            app_mcp_server.ContainerClient, "from_container_url", return_value=fake_container_client
+        ) as from_container_url:
+            managed_identity.return_value = fake_sync_credential
+            aio_managed_identity.return_value = fake_async_credential
+            runtime = app_mcp_server.runtime_from_env()
+
+        self.assertTrue(runtime.trust_aca_auth_headers)
+        managed_identity.assert_called_once_with(client_id="client-id-1")
+        aio_managed_identity.assert_called_once_with(client_id="client-id-1")
+        jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1")
+        cosmos_client.assert_called_once_with("https://cosmos.example.com:443/", credential=fake_async_credential)
+        from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=fake_async_credential)
+
+        bad_env = dict(env)
+        bad_env["MCP_ACA_JOBS_AUTH_MODE"] = "bearer-token"
+        with patch.dict(os.environ, bad_env, clear=False), patch.object(
+            app_mcp_server, "ManagedIdentityCredential", side_effect=AssertionError("runtime must fail closed before auth setup")
+        ), patch.object(
+            app_mcp_server, "AioManagedIdentityCredential", side_effect=AssertionError("runtime must fail closed before auth setup")
+        ), patch.object(
+            app_mcp_server, "ContainerAppsAPIClient", side_effect=AssertionError("runtime must fail closed before auth setup")
+        ), patch.object(
+            app_mcp_server, "CosmosClient", side_effect=AssertionError("runtime must fail closed before auth setup")
+        ), patch.object(
+            app_mcp_server.ContainerClient, "from_container_url", side_effect=AssertionError("runtime must fail closed before auth setup")
+        ):
+            with self.assertRaises(RuntimeError):
+                app_mcp_server.runtime_from_env()
+
     def test_build_server_registers_extension_routes_and_flat_tool_names(self) -> None:
-        runtime = self._runtime()
+        runtime = self._runtime(trust_aca_auth_headers=True)
         server = app_mcp_server.build_server(runtime)
         self.assertEqual(server.name, "foundry-mcp-aca-jobs")
         self.assertTrue(any(isinstance(extension, AcaTasksExtension) for extension in server.extensions))
@@ -1143,7 +1228,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tuple(inspect.signature(server.tools["cancel_aca_job"]).parameters), ("taskId",))
 
     async def test_tools_round_trip_and_restart_same_store(self) -> None:
-        runtime = self._runtime()
+        runtime = self._runtime(trust_aca_auth_headers=True)
         server = app_mcp_server.build_server(runtime)
         client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "  Alice@example.com  "}, task_capability=False)
 
@@ -1182,7 +1267,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restarted_status.data["taskId"], task_id)
 
     async def test_awared_start_short_circuits_tool_call(self) -> None:
-        runtime = self._runtime()
+        runtime = self._runtime(trust_aca_auth_headers=True)
         server = app_mcp_server.build_server(runtime)
         server.tools["start_aca_job"] = lambda **_: (_ for _ in ()).throw(AssertionError("tool should not run"))
         client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"}, task_capability=True)
@@ -1200,7 +1285,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_and_callback_route_validate_and_store_exact_fields(self) -> None:
         capture = app_mcp_server.InMemoryCallbackCapture()
-        runtime = self._runtime(callback_capture=capture)
+        runtime = self._runtime(callback_capture=capture, trust_aca_auth_headers=True)
         server = app_mcp_server.build_server(runtime)
         client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
 
@@ -1244,10 +1329,69 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(rejected.status_code, 422)
 
+    async def test_callbacks_route_requires_trusted_perimeter_and_is_idempotent(self) -> None:
+        untrusted_capture = app_mcp_server.BlobCallbackCapture(
+            app_mcp_server.ContainerClient.from_container_url("https://callbacks.example/jobs")
+        )
+        untrusted_runtime = self._runtime(
+            callback_capture=untrusted_capture,
+            trust_aca_auth_headers=False,
+        )
+        untrusted_server = app_mcp_server.build_server(untrusted_runtime)
+        untrusted_client = untrusted_server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
+        rejected = await untrusted_client.request(
+            "POST",
+            "/callbacks/jobs",
+            json={
+                "taskId": "task-1",
+                "acaExecutionId": "exec-1",
+                "status": "Succeeded",
+                "resultUrl": "https://results.example/jobs/task-1.json",
+            },
+        )
+        self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(json.loads(rejected.text), {"code": "TASK_FORBIDDEN", "detail": "caller is not authorized"})
+
+        container_client = app_mcp_server.ContainerClient.from_container_url("https://callbacks.example/jobs")
+        trusted_runtime = self._runtime(
+            callback_capture=app_mcp_server.BlobCallbackCapture(container_client),
+            trust_aca_auth_headers=True,
+        )
+        trusted_server = app_mcp_server.build_server(trusted_runtime)
+        trusted_client = trusted_server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
+        payload = {
+            "taskId": "task-1",
+            "acaExecutionId": "exec-1",
+            "status": "Succeeded",
+            "resultUrl": "https://results.example/jobs/task-1.json",
+        }
+        accepted = await trusted_client.request("POST", "/callbacks/jobs", json=payload)
+        self.assertEqual(accepted.status_code, 202)
+        duplicate = await trusted_client.request("POST", "/callbacks/jobs", json=payload)
+        self.assertEqual(duplicate.status_code, 202)
+        conflicting = await trusted_client.request(
+            "POST",
+            "/callbacks/jobs",
+            json={
+                "taskId": "task-1",
+                "acaExecutionId": "exec-1",
+                "status": "Failed",
+                "resultUrl": "https://results.example/jobs/task-1.json",
+            },
+        )
+        self.assertEqual(conflicting.status_code, 409)
+        self.assertEqual(
+            json.loads(conflicting.text),
+            {"code": "CALLBACK_PAYLOAD_CONFLICT", "detail": "callback payload conflict"},
+        )
+        blob = container_client.get_blob_client("callbacks/task-1.json")
+        self.assertEqual(json.loads(blob.payload.decode("utf-8")), payload)
+
     async def test_runtime_from_env_wires_clients_closes_resources_and_supports_help_without_env(self) -> None:
         env = {
             "AZURE_CLIENT_ID": "client-id-1",
             "AZURE_SUBSCRIPTION_ID": "sub-id-1",
+            "MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth",
             "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
             "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs-db",
             "MCP_ACA_JOBS_COSMOS_CONTAINER": "jobs",
@@ -1286,6 +1430,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=fake_async_credential)
         self.assertIsInstance(runtime.policy, app_models.Policy)
         self.assertEqual(runtime.policy.jobs["batch"].job_name, "worker-job")
+        self.assertTrue(runtime.trust_aca_auth_headers)
         self.assertIsNotNone(runtime.close)
         await runtime.close()
         fake_container_client.close.assert_awaited_once()
