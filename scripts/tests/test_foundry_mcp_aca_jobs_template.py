@@ -16,6 +16,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_pyproject_dependencies_match_canonical_stack(self) -> None:
         template = SKILL / "templates" / "pyproject.toml"
         pyproject = tomllib.loads(template.read_text(encoding="utf-8"))
+        self.assertEqual(pyproject["build-system"]["requires"], ["hatchling"])
+        self.assertEqual(pyproject["build-system"]["build-backend"], "hatchling.build")
+        self.assertEqual(pyproject["project"]["name"], "foundry-mcp-aca-jobs-example")
+        self.assertEqual(pyproject["project"]["version"], "1.0.0")
+        self.assertEqual(pyproject["project"]["requires-python"], ">=3.12")
+        self.assertEqual(pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"], ["app"])
         self.assertEqual(
             pyproject["project"]["dependencies"],
             [
