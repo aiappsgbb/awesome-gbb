@@ -7,6 +7,9 @@ import sys
 import types
 import unittest
 import uuid
+import asyncio
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -83,6 +86,51 @@ class FlakyStore(InMemoryControlStore):
         return await super().replace(task, etag)
 
 
+class CoordinatedClaimStore(InMemoryControlStore):
+    def __init__(
+        self,
+        *,
+        fail_first_replace_for: str | None = None,
+        retry_release_event: asyncio.Event | None = None,
+        retry_block_task_name: str | None = None,
+        second_winner_task_name: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.fail_first_replace_for = fail_first_replace_for
+        self.retry_release_event = retry_release_event
+        self.retry_block_task_name = retry_block_task_name
+        self.second_winner_task_name = second_winner_task_name
+        self.first_replace_failed = asyncio.Event()
+        self.second_replace_committed = asyncio.Event()
+        self._get_counts: dict[str, int] = {}
+        self._failed_task_names: set[str] = set()
+
+    @staticmethod
+    def _task_name() -> str:
+        task = asyncio.current_task()
+        return task.get_name() if task is not None else "unknown"
+
+    async def get(self, owner_scope: str, task_id: str) -> TaskRecord:
+        name = self._task_name()
+        self._get_counts[name] = self._get_counts.get(name, 0) + 1
+        if self.retry_block_task_name == name and self._get_counts[name] >= 3:
+            await (self.retry_release_event or self.second_replace_committed).wait()
+        return await super().get(owner_scope, task_id)
+
+    async def replace(self, task: TaskRecord, etag: str | None) -> TaskRecord:
+        name = self._task_name()
+        if self.fail_first_replace_for == name and name not in self._failed_task_names:
+            self._failed_task_names.add(name)
+            self.first_replace_failed.set()
+            raise ConcurrencyError("task etag no longer matches")
+        if self.second_winner_task_name == name:
+            await self.first_replace_failed.wait()
+        replaced = await super().replace(task, etag)
+        if self.second_winner_task_name == name:
+            self.second_replace_committed.set()
+        return replaced
+
+
 class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.fixed_now = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -138,9 +186,21 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_creates_claims_and_binds_execution(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)
+        canonical_fingerprint = json.dumps(
+            {
+                "callbackAlias": self.request.callback_alias,
+                "inputRef": str(self.request.input_ref),
+                "jobType": self.request.job_type,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        expected_fingerprint = hashlib.sha256(canonical_fingerprint.encode("utf-8")).hexdigest()
+        idempotency_material = f"{self.owner_scope}\0{self.request.job_type}\0{self.request.idempotency_key}"
         expected_task_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{self.owner_scope}:import:{orchestrator._idempotency_key_hash(self.owner_scope, self.request)}",  # type: ignore[attr-defined]
+            f"{self.owner_scope}:{self.request.job_type}:{hashlib.sha256(idempotency_material.encode('utf-8')).hexdigest()}",
         )
         self.jobs.start.return_value = self._make_execution(
             execution_id="exec-1",
@@ -152,6 +212,7 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         record = await orchestrator.start(self.request, self.owner_scope)
 
         self.assertEqual(record.task_id, expected_task_id)
+        self.assertEqual(record.request_fingerprint, expected_fingerprint)
         self.assertEqual(record.lifecycle_state, LifecycleState.STARTING)
         self.assertEqual(record.aca_execution_id, "exec-1")
         self.assertEqual(record.start_attempt_count, 1)
@@ -229,9 +290,10 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             await orchestrator.start(self.request, self.owner_scope)
 
         self.assertEqual(error.exception.code, "ARM_START_REJECTED")
+        idempotency_material = f"{self.owner_scope}\0{self.request.job_type}\0{self.request.idempotency_key}"
         record = await store.get(
             self.owner_scope,
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.owner_scope}:import:{orchestrator._idempotency_key_hash(self.owner_scope, self.request)}")),  # type: ignore[attr-defined]
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.owner_scope}:import:{hashlib.sha256(idempotency_material.encode('utf-8')).hexdigest()}")),
         )
         self.assertEqual(record.lifecycle_state, LifecycleState.FAILED)
         self.assertEqual(record.error_code, "ARM_START_REJECTED")
@@ -493,6 +555,108 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         terminal = await store.get(self.owner_scope, str(exhausted.task_id))
         self.assertEqual(terminal.lifecycle_state, LifecycleState.FAILED)
         self.assertEqual(terminal.error_code, "START_RECONCILIATION_EXHAUSTED")
+
+    async def test_claim_start_loses_when_cancellation_is_persisted_before_retry(self) -> None:
+        retry_release = asyncio.Event()
+        store = CoordinatedClaimStore(
+            fail_first_replace_for="cancel-race",
+            retry_block_task_name="cancel-race",
+            retry_release_event=retry_release,
+        )
+        orchestrator = self._orchestrator(store)
+        created = await store.create_or_get(
+            TaskRecord.new(
+                owner_scope=self.owner_scope,
+                job_type="import",
+                idempotency_key_hash="hash-1",
+                request_fingerprint="fingerprint-1",
+                input_ref="https://input.example.invalid/input.json",
+                callback_alias="callback",
+            )
+        )
+        seeded = await store.replace(
+            created.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.STARTING,
+                    "start_attempt_count": 1,
+                    "start_attempted_at": self.fixed_now - timedelta(seconds=5),
+                }
+            ),
+            created.etag,
+        )
+
+        reconcile_task = asyncio.create_task(
+            orchestrator.reconcile(self.owner_scope, str(seeded.task_id)),
+            name="cancel-race",
+        )
+        await store.first_replace_failed.wait()
+
+        current = await store.get(self.owner_scope, str(seeded.task_id))
+        updated = await store.replace(
+            current.model_copy(update={"cancellation_requested_at": self.fixed_now}),
+            current.etag,
+        )
+        retry_release.set()
+
+        record = await reconcile_task
+
+        self.assertEqual(record.cancellation_requested_at, self.fixed_now)
+        self.assertEqual(record.lifecycle_state, LifecycleState.STARTING)
+        self.assertEqual(updated.cancellation_requested_at, self.fixed_now)
+        self.jobs.start.assert_not_awaited()
+
+    async def test_concurrent_reconcile_calls_after_one_412_only_start_once(self) -> None:
+        store = CoordinatedClaimStore(
+            fail_first_replace_for="reconcile-1",
+            retry_block_task_name="reconcile-1",
+            second_winner_task_name="reconcile-2",
+        )
+        orchestrator = self._orchestrator(store)
+        created = await store.create_or_get(
+            TaskRecord.new(
+                owner_scope=self.owner_scope,
+                job_type="import",
+                idempotency_key_hash="hash-1",
+                request_fingerprint="fingerprint-1",
+                input_ref="https://input.example.invalid/input.json",
+                callback_alias="callback",
+            )
+        )
+        seeded = await store.replace(
+            created.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.STARTING,
+                    "start_attempt_count": 1,
+                    "start_attempted_at": self.fixed_now - timedelta(seconds=5),
+                }
+            ),
+            created.etag,
+        )
+        self.jobs.start.return_value = self._make_execution(
+            execution_id="exec-1",
+            status="Processing",
+            start_time=self.fixed_now,
+            task_id=str(seeded.task_id),
+        )
+
+        first = asyncio.create_task(
+            orchestrator.reconcile(self.owner_scope, str(seeded.task_id)),
+            name="reconcile-1",
+        )
+        second = asyncio.create_task(
+            orchestrator.reconcile(self.owner_scope, str(seeded.task_id)),
+            name="reconcile-2",
+        )
+
+        await asyncio.gather(first, second)
+
+        final = await store.get(self.owner_scope, str(seeded.task_id))
+
+        self.assertEqual(self.jobs.start.await_count, 1)
+        self.assertTrue(store.first_replace_failed.is_set())
+        self.assertTrue(store.second_replace_committed.is_set())
+        self.assertEqual(final.aca_execution_id, "exec-1")
+        self.assertEqual(final.start_attempt_count, 2)
 
     async def test_store_mutation_retries_concurrency_error_by_rereading(self) -> None:
         store = FlakyStore(fail_replace_times=1)

@@ -78,9 +78,9 @@ class Orchestrator:
         ):
             return current
 
-        claimed, acquired = await self._claim_start(current)
-        if not acquired:
-            return claimed
+        claimed = await self._claim_start(current)
+        if claimed is None:
+            return await self._store.get(owner_scope, str(task.task_id))
 
         try:
             execution = await self._jobs.start(job_policy, owner_scope, str(task.task_id))
@@ -144,11 +144,21 @@ class Orchestrator:
         job_policy = self._policy.job(task.job_type)
         return await self._reconcile(task, job_policy)
 
-    async def _claim_start(self, task: TaskRecord) -> tuple[TaskRecord, bool]:
+    @staticmethod
+    def _can_claim_start(current: TaskRecord, expected: TaskRecord) -> bool:
+        return (
+            current.lifecycle_state in {LifecycleState.ACCEPTED, LifecycleState.STARTING}
+            and current.cancellation_requested_at is None
+            and current.aca_execution_id is None
+            and current.start_attempt_count == expected.start_attempt_count
+            and current.start_attempted_at == expected.start_attempted_at
+        )
+
+    async def _claim_start(self, task: TaskRecord) -> TaskRecord | None:
         now = self._clock()
 
         def mutate(current: TaskRecord) -> TaskRecord:
-            if current.lifecycle_state not in {LifecycleState.ACCEPTED, LifecycleState.STARTING}:
+            if not self._can_claim_start(current, task):
                 return current
             return current.model_copy(
                 update={
@@ -163,14 +173,16 @@ class Orchestrator:
             current = await self._store.get(task.owner_scope, str(task.task_id))
             candidate = mutate(current)
             if candidate == current:
-                return current, False
+                return None
             try:
-                return await self._store.replace(candidate, current.etag), True
+                return await self._store.replace(candidate, current.etag)
             except ConcurrencyError:
+                current = await self._store.get(task.owner_scope, str(task.task_id))
+                if not self._can_claim_start(current, task):
+                    return None
                 continue
 
-        current = await self._store.get(task.owner_scope, str(task.task_id))
-        return current, False
+        return None
 
     async def _persist_failed_start(self, task: TaskRecord, error: PublicError) -> TaskRecord:
         now = self._clock()
@@ -339,9 +351,9 @@ class Orchestrator:
         if elapsed < _START_RECONCILIATION_GRACE:
             return task
 
-        claimed, acquired = await self._claim_start(task)
-        if not acquired:
-            return claimed
+        claimed = await self._claim_start(task)
+        if claimed is None:
+            return await self._store.get(task.owner_scope, str(task.task_id))
 
         try:
             execution = await self._jobs.start(job_policy, task.owner_scope, str(task.task_id))
