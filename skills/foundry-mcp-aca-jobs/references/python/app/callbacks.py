@@ -29,7 +29,7 @@ class AsyncTokenCredential(Protocol):
 
 @runtime_checkable
 class _SecretClient(Protocol):
-    def get_secret(self, name: str) -> Any: ...
+    async def get_secret(self, name: str) -> Any: ...
 
 
 def callback_payload(task_id: str, execution_id: str, status: str, result_url: str) -> dict[str, str]:
@@ -115,7 +115,7 @@ class CallbackSender:
         if self._secret_client is None:
             raise PublicError("CALLBACK_DELIVERY_REJECTED", "callback secret client unavailable")
 
-        secret = await asyncio.to_thread(self._secret_client.get_secret, policy.secret_name)
+        secret = await self._secret_client.get_secret(policy.secret_name)
         return {"X-Callback-Key": secret.value}
 
     def _delay_for_attempt(self, attempt: int) -> float:

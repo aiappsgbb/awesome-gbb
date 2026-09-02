@@ -80,7 +80,7 @@ class _SecretClient:
         self.secret_value = secret_value
         self.calls: list[str] = []
 
-    def get_secret(self, name: str) -> _Secret:
+    async def get_secret(self, name: str) -> _Secret:
         self.calls.append(name)
         return _Secret(self.secret_value)
 
@@ -100,7 +100,7 @@ class _FailingSecretClient:
         self.exc = exc
         self.calls: list[str] = []
 
-    def get_secret(self, name: str) -> _Secret:
+    async def get_secret(self, name: str) -> _Secret:
         self.calls.append(name)
         raise self.exc
 
@@ -424,7 +424,7 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts), 2)
         self.assertEqual(delays, [1.0])
 
-    async def test_key_vault_sender_uses_to_thread_and_secret_header(self) -> None:
+    async def test_key_vault_sender_awaits_async_secret_and_secret_header(self) -> None:
         callbacks = self._callbacks_module()
         payload = callbacks.callback_payload(
             "task-1",
@@ -434,11 +434,9 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
         secret_client = _SecretClient("kv-secret-456")
         requests: list[httpx.Request] = []
-        to_thread_calls: list[tuple[Any, tuple[Any, ...]]] = []
 
-        async def fake_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
-            to_thread_calls.append((func, args))
-            return func(*args, **kwargs)
+        async def unexpected_to_thread(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("asyncio.to_thread should not be used")
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
@@ -451,7 +449,7 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
         logger.addHandler(collector)
         logger.setLevel(logging.DEBUG)
         try:
-            with mock.patch("app.callbacks.asyncio.to_thread", new=fake_to_thread):
+            with mock.patch("app.callbacks.asyncio.to_thread", new=unexpected_to_thread):
                 sender = callbacks.CallbackSender(client, _TokenCredential("unused"), secret_client=secret_client)
                 await sender.send(self._make_policy(auth_mode="key_vault").callback("ops"), payload)
         finally:
@@ -459,10 +457,6 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
             await client.aclose()
 
         self.assertEqual(secret_client.calls, ["callback-secret"])
-        self.assertEqual(len(to_thread_calls), 1)
-        self.assertIs(to_thread_calls[0][0].__self__, secret_client)
-        self.assertEqual(to_thread_calls[0][0].__func__.__name__, "get_secret")
-        self.assertEqual(to_thread_calls[0][1], ("callback-secret",))
         self.assertEqual(len(requests), 1)
         request = requests[0]
         self.assertEqual(request.headers["X-Callback-Key"], "kv-secret-456")

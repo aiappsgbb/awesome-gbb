@@ -12,7 +12,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -91,7 +91,7 @@ def _ensure_azure_worker_stubs() -> None:
         pass
 
     class _SecretClient(_AsyncCloseable):
-        def get_secret(self, name: str) -> Any:
+        async def get_secret(self, name: str) -> Any:
             return types.SimpleNamespace(value=f"secret:{name}")
 
     class _BlobClient:
@@ -178,7 +178,7 @@ def _ensure_azure_worker_stubs() -> None:
 
     _ensure_class("azure.mgmt.appcontainers", "ContainerAppsAPIClient", _ContainerAppsAPIClient)
     _ensure_class("azure.identity.aio", "ManagedIdentityCredential", _ManagedIdentityCredential)
-    _ensure_class("azure.keyvault.secrets", "SecretClient", _SecretClient)
+    _ensure_class("azure.keyvault.secrets.aio", "SecretClient", _SecretClient)
     _ensure_class("azure.storage.blob.aio", "ContainerClient", _ContainerClient)
     _ensure_class("azure.cosmos.aio", "CosmosClient", _CosmosClient)
     _ensure_class("httpx", "AsyncClient", _AsyncClient)  # type: ignore[arg-type]
@@ -344,9 +344,9 @@ class _FakeSecretClient:
         self.vault_url = vault_url
         self.credential = credential
         self.calls: list[str] = []
-        self.close = Mock()
+        self.aclose = AsyncMock()
 
-    def get_secret(self, name: str) -> Any:
+    async def get_secret(self, name: str) -> Any:
         self.calls.append(name)
         return types.SimpleNamespace(value=f"secret:{name}")
 
@@ -415,6 +415,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         output: _FakeOutputStore | None = None,
         handler: _RecordingHandler | None = None,
         callback_sender: _FakeCallbackSender | None = None,
+        sleep: Any | None = None,
         lease: timedelta = timedelta(minutes=5),
     ) -> tuple[Any, Any, _RecordingHandler, _FakeCallbackSender, _FakeOutputStore]:
         module = self._module()
@@ -429,6 +430,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             callback_sender=callback_sender,
             policy=self.policy,
             clock=_Clock(self.fixed_now),
+            sleep=sleep or AsyncMock(),
             lease=lease,
         )
         return worker, store, handler, callback_sender, output
@@ -612,7 +614,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(build_kwargs["config"].lease, timedelta(minutes=7))
         fake_worker.run.assert_awaited_once_with("scope-a", "task-1")
         fake_http_client.aclose.assert_awaited()
-        fake_secret_client.close.assert_called_once_with()
+        fake_secret_client.aclose.assert_awaited()
         fake_credential.close.assert_awaited()
         fake_output.close.assert_awaited()
 
@@ -778,6 +780,97 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(callback_sender.calls), 1)
         self.assertEqual(len(handler.calls), 1)
         self.assertEqual(len(output.write_calls), 1)
+
+    async def test_callback_rejection_preserves_success_and_marks_exhausted(self) -> None:
+        class _RejectedCallbackSender(_FakeCallbackSender):
+            async def send(self, policy: Any, payload: dict[str, str]) -> None:
+                self.calls.append((policy, payload))
+                raise PublicError("CALLBACK_DELIVERY_REJECTED", "callback delivery rejected")
+
+        worker, store, handler, callback_sender, output = await self._build_worker(
+            callback_sender=_RejectedCallbackSender()
+        )
+        await self._seed_task(store)
+
+        code = await worker.run("scope-a", str(self.task.task_id))
+
+        self.assertEqual(code, 0)
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertIsNone(current.error_code)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.EXHAUSTED)
+        self.assertEqual(current.callback_error_code, "CALLBACK_DELIVERY_REJECTED")
+        self.assertIsNotNone(current.result_url)
+        self.assertEqual(len(callback_sender.calls), 1)
+        self.assertEqual(len(handler.calls), 1)
+        self.assertEqual(len(output.write_calls), 1)
+
+    async def test_succeeded_pending_without_execution_id_polls_then_returns_without_callback(self) -> None:
+        sleep = AsyncMock()
+        worker, store, handler, callback_sender, output = await self._build_worker(sleep=sleep)
+        await self._seed_task(
+            store,
+            self.task.model_copy(
+                update={
+                    "lifecycle_state": self.LifecycleState.SUCCEEDED,
+                    "callback_delivery_state": self.CallbackDeliveryState.PENDING,
+                    "result_url": self.policy.validate_result("https://results.example.com/results/task/result.json"),
+                    "aca_execution_id": None,
+                }
+            ),
+        )
+
+        code = await worker.run("scope-a", str(self.task.task_id))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(callback_sender.calls, [])
+        self.assertEqual(output.write_calls, [])
+        self.assertEqual(len(store.get_calls), 6)
+        self.assertEqual(sleep.await_count, 5)
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.PENDING)
+        self.assertIsNone(current.aca_execution_id)
+
+    async def test_succeeded_pending_with_later_execution_id_delivers_callback_on_second_run(self) -> None:
+        worker, store, handler, callback_sender, output = await self._build_worker()
+        await self._seed_task(
+            store,
+            self.task.model_copy(
+                update={
+                    "lifecycle_state": self.LifecycleState.SUCCEEDED,
+                    "callback_delivery_state": self.CallbackDeliveryState.PENDING,
+                    "result_url": self.policy.validate_result("https://results.example.com/results/task/result.json"),
+                    "aca_execution_id": None,
+                }
+            ),
+        )
+
+        first_code = await worker.run("scope-a", str(self.task.task_id))
+        self.assertEqual(first_code, 0)
+        self.assertEqual(callback_sender.calls, [])
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.PENDING)
+
+        await store.replace(
+            current.model_copy(update={"aca_execution_id": "execution-77"}),
+            current.etag,
+        )
+
+        second_code = await worker.run("scope-a", str(self.task.task_id))
+
+        self.assertEqual(second_code, 0)
+        self.assertEqual(len(callback_sender.calls), 1)
+        _, payload = callback_sender.calls[0]
+        self.assertEqual(payload["acaExecutionId"], "execution-77")
+        self.assertEqual(payload["taskId"], str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        final = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(final.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertEqual(final.aca_execution_id, "execution-77")
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(output.write_calls, [])
 
     async def test_terminal_no_op(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()

@@ -21,7 +21,7 @@ import httpx
 from azure.core.exceptions import ResourceExistsError
 from azure.cosmos.aio import CosmosClient
 from azure.identity.aio import ManagedIdentityCredential
-from azure.keyvault.secrets import SecretClient
+from azure.keyvault.secrets.aio import SecretClient
 from azure.storage.blob.aio import ContainerClient
 
 from .callbacks import CallbackSender, callback_payload
@@ -133,6 +133,7 @@ class JobWorker:
         callback_sender: Any,
         policy: Policy,
         clock: Callable[[], datetime],
+        sleep: Callable[[float], Awaitable[Any] | Any] = asyncio.sleep,
         lease: timedelta = timedelta(minutes=5),
     ) -> None:
         self._store = store
@@ -141,10 +142,15 @@ class JobWorker:
         self._callback_sender = callback_sender
         self._policy = policy
         self._clock = clock
+        self._sleep = sleep
         self._lease = lease
 
     async def run(self, owner_scope: str, task_id: str) -> int:
         current = await self._store.get(owner_scope, task_id)
+        if current.lifecycle_state is LifecycleState.SUCCEEDED:
+            if current.callback_delivery_state is CallbackDeliveryState.PENDING:
+                await self._deliver_callback_if_ready(current)
+            return 0
         if current.lifecycle_state in TERMINAL_STATES:
             return 0
 
@@ -179,7 +185,7 @@ class JobWorker:
                 result_url = await self._output.get(result_path)
 
         succeeded = await self._persist_succeeded(claimed, result_url)
-        await self._send_callback(succeeded, result_url)
+        await self._deliver_callback_if_ready(succeeded)
         return 0
 
     async def _claim(self, current: TaskRecord, now: datetime) -> TaskRecord | None:
@@ -262,20 +268,44 @@ class JobWorker:
 
     async def _send_callback(self, task: TaskRecord, result_url: str) -> None:
         callback_policy = self._policy.callback(task.callback_alias)
+        if task.aca_execution_id is None:
+            logger.debug("callback deferred for %s until execution binding is available", task.task_id)
+            return
         payload = callback_payload(
             str(task.task_id),
-            task.aca_execution_id or str(task.task_id),
+            task.aca_execution_id,
             "Succeeded",
             result_url,
         )
         try:
             await self._callback_sender.send(callback_policy, payload)
         except PublicError as error:
-            if error.code != "CALLBACK_DELIVERY_EXHAUSTED":
+            if error.code not in {"CALLBACK_DELIVERY_EXHAUSTED", "CALLBACK_DELIVERY_REJECTED"}:
                 raise
             await self._persist_callback_state(task, CallbackDeliveryState.EXHAUSTED, error.code)
             return
         await self._persist_callback_state(task, CallbackDeliveryState.DELIVERED, None)
+
+    async def _await_callback_binding(self, task: TaskRecord) -> TaskRecord | None:
+        latest = task
+        for attempt in range(6):
+            if latest.callback_delivery_state is not CallbackDeliveryState.PENDING:
+                return None
+            if latest.aca_execution_id is not None:
+                return latest
+            if attempt == 5:
+                break
+            await _await_if_needed(self._sleep(5.0))
+            latest = await self._store.get(task.owner_scope, str(task.task_id))
+        if latest.callback_delivery_state is CallbackDeliveryState.PENDING and latest.aca_execution_id is not None:
+            return latest
+        return None
+
+    async def _deliver_callback_if_ready(self, task: TaskRecord) -> None:
+        latest = await self._await_callback_binding(task)
+        if latest is None or latest.result_url is None:
+            return
+        await self._send_callback(latest, str(latest.result_url))
 
 
 async def demo_handler(input_ref: str, task_id: str) -> dict[str, str]:
