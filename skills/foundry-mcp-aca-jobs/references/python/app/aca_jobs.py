@@ -116,12 +116,54 @@ def _execution_args(response: Any) -> list[str]:
     return [str(value) for value in args]
 
 
-def _execution_from_response(response: Any, *, execution_id: str | None = None) -> "AcaExecution":
+def _matching_worker_container(containers: list[Any], container_name: str) -> Any | None:
+    matches = [container for container in containers if _raw_value(container, "name") == container_name]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _execution_args_for_container(
+    response: Any,
+    container_name: str,
+    *,
+    strict: bool,
+    phase: str,
+) -> list[str]:
+    properties = _raw_value(response, "properties", response)
+    template = _raw_value(properties, "template")
+    containers = _raw_value(template, "containers", []) or []
+    if not containers:
+        if strict:
+            _raise_public_error("ARM_STATUS_UNAVAILABLE" if phase == "status" else "DEPLOYMENT_CONTRACT_MISMATCH")
+        return []
+    container = _matching_worker_container(containers, container_name)
+    if container is None:
+        if strict:
+            _raise_public_error("ARM_STATUS_UNAVAILABLE" if phase == "status" else "DEPLOYMENT_CONTRACT_MISMATCH")
+        return []
+    args = _raw_value(container, "args", []) or []
+    return [str(value) for value in args]
+
+
+def _execution_from_response(
+    response: Any,
+    *,
+    execution_id: str | None = None,
+    container_name: str | None = None,
+    strict_container_match: bool = True,
+    phase: str = "status",
+) -> "AcaExecution":
+    args = (
+        _execution_args_for_container(response, container_name, strict=strict_container_match, phase=phase)
+        if container_name is not None
+        else _execution_args(response)
+    )
     return AcaExecution(
         execution_id=execution_id or _execution_id_from_response(response),
         status=_execution_status(response),
         start_time=_execution_start_time(response),
-        args=_execution_args(response),
+        args=args,
     )
 
 
@@ -130,12 +172,17 @@ def _execution_template_for_start(job: Any, policy: JobPolicy, owner_scope: str,
     containers = _raw_value(template, "containers", []) or []
     if not containers:
         _raise_public_error("DEPLOYMENT_CONTRACT_MISMATCH")
-    first = containers[0]
+    first = _matching_worker_container(containers, policy.container_name)
+    if first is None:
+        _raise_public_error("DEPLOYMENT_CONTRACT_MISMATCH")
     image = _raw_value(first, "image")
     command = _raw_value(first, "command")
     if image != policy.image_digest or list(command or []) != list(policy.command):
         _raise_public_error("DEPLOYMENT_CONTRACT_MISMATCH")
-    first.args = ["--owner-scope", owner_scope, "--task-id", task_id]
+    if isinstance(first, dict):
+        first["args"] = ["--owner-scope", owner_scope, "--task-id", task_id]
+    else:
+        first.args = ["--owner-scope", owner_scope, "--task-id", task_id]
     return template
 
 
@@ -155,10 +202,14 @@ class AcaExecution(BaseModel):
     def matches_task(self, task_id: str, attempt_started_at: datetime | None) -> bool:
         if attempt_started_at is not None and _normalize_datetime(self.start_time) < _normalize_datetime(attempt_started_at):
             return False
-        for index in range(len(self.args) - 1):
-            if self.args[index] == "--task-id" and self.args[index + 1] == task_id:
-                return True
-        return False
+        matches = 0
+        for index, value in enumerate(self.args):
+            if value != "--task-id":
+                continue
+            matches += 1
+            if index + 1 >= len(self.args) or self.args[index + 1] != task_id:
+                return False
+        return matches == 1
 
 
 @runtime_checkable
@@ -199,7 +250,12 @@ class AcaJobsAdapter:
         if status == "Unknown" and _raw_value(_raw_value(response, "properties", response), "status") is None:
             status = "Processing"
         start_time = _execution_start_time(response)
-        args = _execution_args(response) or ["--owner-scope", owner_scope, "--task-id", task_id]
+        args = _execution_args_for_container(response, policy.container_name, strict=False, phase="start") or [
+            "--owner-scope",
+            owner_scope,
+            "--task-id",
+            task_id,
+        ]
         return AcaExecution(execution_id=execution_id, status=status, start_time=start_time, args=args)
 
     async def get(self, policy: JobPolicy, execution_id: str) -> AcaExecution:
@@ -212,7 +268,7 @@ class AcaJobsAdapter:
             )
         except HttpResponseError as error:
             _translate_http_error(error, phase="read")
-        return _execution_from_response(response, execution_id=execution_id)
+        return _execution_from_response(response, execution_id=execution_id, container_name=policy.container_name)
 
     async def list(self, policy: JobPolicy) -> list[AcaExecution]:
         try:
@@ -221,7 +277,7 @@ class AcaJobsAdapter:
             )
         except HttpResponseError as error:
             _translate_http_error(error, phase="read")
-        return [_execution_from_response(item) for item in response]
+        return [_execution_from_response(item, container_name=policy.container_name) for item in response]
 
     async def stop(self, policy: JobPolicy, execution_id: str) -> None:
         try:

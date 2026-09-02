@@ -236,10 +236,26 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
             start_time=start_time,
             args=["--task-id", "task-id", "--task-id", "different"],
         )
-        self.assertTrue(unmatched.matches_task("task-id", start_time))
+        self.assertFalse(unmatched.matches_task("task-id", start_time))
         self.assertFalse(
             self.AcaExecution(
                 execution_id="execution-3",
+                status="Running",
+                start_time=start_time,
+                args=["--task-id", "task-id", "--task-id", "task-id"],
+            ).matches_task("task-id", start_time)
+        )
+        self.assertFalse(
+            self.AcaExecution(
+                execution_id="execution-4",
+                status="Running",
+                start_time=start_time,
+                args=["--task-id", "wrong-task"],
+            ).matches_task("task-id", start_time)
+        )
+        self.assertFalse(
+            self.AcaExecution(
+                execution_id="execution-5",
                 status="Running",
                 start_time=start_time,
                 args=["--task-id", "task-id"],
@@ -249,6 +265,24 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_builds_trusted_template_and_rejects_contract_mismatch(self) -> None:
         policy = self._policy()
         original_job = self._job()
+        original_job.properties.template.containers = [
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "legacy-owner", "--task-id", "legacy-task"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
         client = self._client(job=original_job)
         adapter = self.AcaJobsAdapter(client)
         begin_result = self._start_ack("execution-123")
@@ -261,12 +295,17 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         args = client.jobs.begin_start.call_args.args
         self.assertEqual(args[:2], (policy.resource_group, policy.job_name))
         template = args[2]
-        container = template.containers[0]
+        container = template.containers[1]
         self.assertEqual(container.image, policy.image_digest)
         self.assertEqual(container.command, policy.command)
         self.assertEqual(container.args, ["--owner-scope", "owner-hash", "--task-id", "task-id"])
-        self.assertEqual(container.env, original_job.properties.template.containers[0].env)
-        self.assertEqual(container.resources, original_job.properties.template.containers[0].resources)
+        self.assertEqual(container.env, original_job.properties.template.containers[1].env)
+        self.assertEqual(container.resources, original_job.properties.template.containers[1].resources)
+        self.assertEqual(template.containers[0].name, "sidecar")
+        self.assertEqual(template.containers[0].image, "example.azurecr.io/sidecar@sha256:" + "b" * 64)
+        self.assertEqual(template.containers[0].command, ["sh", "-c", "echo sidecar"])
+        self.assertEqual(template.containers[0].args, ["--sidecar", "value"])
+        self.assertEqual(template.containers[1].name, policy.container_name)
         self.assertEqual(template.init_containers, original_job.properties.template.init_containers)
         self.assertEqual(template.volumes, original_job.properties.template.volumes)
         self.assertNotIn("inputRef", str(template))
@@ -276,7 +315,67 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(execution.args, ["--owner-scope", "owner-hash", "--task-id", "task-id"])
         self.assertTrue(execution.matches_task("task-id", execution.start_time))
 
-        original_job.properties.template.containers[0].image = "example.azurecr.io/worker@sha256:" + "b" * 64
+        zero_match_job = self._job()
+        zero_match_job.properties.template.containers = [
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+            SimpleNamespace(
+                name="assistant",
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "legacy-owner", "--task-id", "legacy-task"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
+        client_zero_match = self._client(job=zero_match_job)
+        adapter_zero_match = self.AcaJobsAdapter(client_zero_match)
+        client_zero_match.jobs.begin_start.return_value = _Poller(begin_result)
+        with self.assertRaises(self.PublicError) as error:
+            await adapter_zero_match.start(policy, "owner-hash", "task-id")
+        self.assertEqual(error.exception.code, "DEPLOYMENT_CONTRACT_MISMATCH")
+
+        duplicate_match_job = self._job()
+        duplicate_match_job.properties.template.containers = [
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "legacy-owner", "--task-id", "legacy-task"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "legacy-owner", "--task-id", "legacy-task"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
+        client_duplicate_match = self._client(job=duplicate_match_job)
+        adapter_duplicate_match = self.AcaJobsAdapter(client_duplicate_match)
+        client_duplicate_match.jobs.begin_start.return_value = _Poller(begin_result)
+        with self.assertRaises(self.PublicError) as error:
+            await adapter_duplicate_match.start(policy, "owner-hash", "task-id")
+        self.assertEqual(error.exception.code, "DEPLOYMENT_CONTRACT_MISMATCH")
+
+        original_job.properties.template.containers[1].image = "example.azurecr.io/worker@sha256:" + "b" * 64
         client_bad_image = self._client(job=original_job)
         adapter_bad_image = self.AcaJobsAdapter(client_bad_image)
         client_bad_image.jobs.begin_start.return_value = _Poller(begin_result)
@@ -303,18 +402,97 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_list_stop_and_status_errors_translate_safely(self) -> None:
         policy = self._policy()
-        client = self._client()
+        listed = [
+            self._execution(
+                execution_id="execution-2",
+                status="Processing",
+                start_time=datetime(2026, 9, 2, 17, 1, 0, tzinfo=timezone.utc),
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id", "--retry", "1"],
+            ),
+            self._execution(
+                execution_id="execution-3",
+                status="Succeeded",
+                start_time=datetime(2026, 9, 2, 17, 2, 0, tzinfo=timezone.utc),
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id", "--retry", "2"],
+            ),
+        ]
+        listed[0].properties.template.containers = [
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=self._policy().image_digest,
+                command=self._policy().command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id", "--retry", "1"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
+        listed[1].properties.template.containers = [
+            SimpleNamespace(
+                name=policy.container_name,
+                image=self._policy().image_digest,
+                command=self._policy().command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id", "--retry", "2"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+        ]
+        client = self._client(
+            execution=self._execution(
+                execution_id="execution-1",
+                status="Running",
+                start_time=datetime(2026, 9, 2, 17, 0, 0, tzinfo=timezone.utc),
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+            ),
+            listed=listed,
+        )
+        client.job_execution.return_value.properties.template.containers = [
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=self._policy().image_digest,
+                command=self._policy().command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
         adapter = self.AcaJobsAdapter(client)
 
         execution = await adapter.get(policy, "execution-1")
         self.assertEqual(execution.execution_id, "execution-1")
         self.assertEqual(execution.status, "Running")
         self.assertTrue(execution.matches_task("task-id", execution.start_time - timedelta(seconds=1)))
+        self.assertEqual(execution.args, ["--owner-scope", "owner-hash", "--task-id", "task-id"])
         client.job_execution.assert_called_once_with(policy.resource_group, policy.job_name, "execution-1")
 
         listed = await adapter.list(policy)
         self.assertEqual([item.execution_id for item in listed], ["execution-2", "execution-3"])
         self.assertEqual([item.status for item in listed], ["Processing", "Succeeded"])
+        self.assertEqual(listed[0].args, ["--owner-scope", "owner-hash", "--task-id", "task-id", "--retry", "1"])
+        self.assertEqual(listed[1].args, ["--owner-scope", "owner-hash", "--task-id", "task-id", "--retry", "2"])
         client.jobs_executions.list.assert_called_once_with(policy.resource_group, policy.job_name)
 
         stop_poller = _Poller(None)
@@ -338,6 +516,78 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
                     await adapter_failing.get(policy, "execution-1")
                 self.assertEqual(error.exception.code, expected_code)
                 self.assertNotIn("boom", str(error.exception))
+
+        ambiguous_get = self._client(
+            execution=self._execution(
+                execution_id="execution-4",
+                status="Running",
+                start_time=datetime(2026, 9, 2, 17, 3, 0, tzinfo=timezone.utc),
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+            )
+        )
+        ambiguous_get.job_execution.return_value.properties.template.containers = [
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
+        adapter_ambiguous_get = self.AcaJobsAdapter(ambiguous_get)
+        with self.assertRaises(self.PublicError) as error:
+            await adapter_ambiguous_get.get(policy, "execution-4")
+        self.assertEqual(error.exception.code, "ARM_STATUS_UNAVAILABLE")
+
+        ambiguous_list = self._client(
+            listed=[
+                self._execution(
+                    execution_id="execution-5",
+                    status="Processing",
+                    start_time=datetime(2026, 9, 2, 17, 4, 0, tzinfo=timezone.utc),
+                    args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+                )
+            ]
+        )
+        ambiguous_list.jobs_executions.list.return_value[0].properties.template.containers = [
+            SimpleNamespace(
+                name="sidecar",
+                image="example.azurecr.io/sidecar@sha256:" + "b" * 64,
+                command=["sh", "-c", "echo sidecar"],
+                args=["--sidecar", "value"],
+                env=[SimpleNamespace(name="SIDE", value="1")],
+                resources=SimpleNamespace(cpu=0.25, memory="256Mi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+            SimpleNamespace(
+                name=policy.container_name,
+                image=policy.image_digest,
+                command=policy.command,
+                args=["--owner-scope", "owner-hash", "--task-id", "task-id"],
+                env=[SimpleNamespace(name="KEEP", value="1")],
+                resources=SimpleNamespace(cpu=1, memory="2Gi"),
+            ),
+        ]
+        adapter_ambiguous_list = self.AcaJobsAdapter(ambiguous_list)
+        with self.assertRaises(self.PublicError) as error:
+            await adapter_ambiguous_list.list(policy)
+        self.assertEqual(error.exception.code, "ARM_STATUS_UNAVAILABLE")
 
         for status_code, expected_code in [
             (400, "ARM_START_REJECTED"),
