@@ -147,6 +147,8 @@ class JobWorker:
 
     async def run(self, owner_scope: str, task_id: str, execution_id: str | None = None) -> int:
         current = await self._store.get(owner_scope, task_id)
+        if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
+            return 0
         if current.lifecycle_state is LifecycleState.SUCCEEDED:
             if current.callback_delivery_state is CallbackDeliveryState.PENDING:
                 await self._deliver_callback_if_ready(current)
@@ -155,9 +157,6 @@ class JobWorker:
             return 0
 
         now = self._clock()
-        if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
-            await self._persist_failure(current, "WORKER_EXECUTION_ID_MISMATCH")
-            return 0
         if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
             return 0
 
@@ -212,7 +211,6 @@ class JobWorker:
                 if current.lifecycle_state in TERMINAL_STATES:
                     return None
                 if execution_id is not None and current.aca_execution_id is not None and current.aca_execution_id != execution_id:
-                    await self._persist_failure(current, "WORKER_EXECUTION_ID_MISMATCH")
                     return None
                 if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
                     return None

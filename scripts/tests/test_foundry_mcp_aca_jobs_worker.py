@@ -696,21 +696,60 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.fixed_now + timedelta(minutes=5),
         )
 
-    async def test_conflicting_execution_id_fails_without_handler(self) -> None:
-        worker, store, handler, callback_sender, output = await self._build_worker()
-        await self._seed_task(store)
+    async def test_duplicate_loser_exits_zero_without_mutation_while_winner_completes(self) -> None:
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
 
-        code = await worker.run("scope-a", str(self.task.task_id), "execution-2")
+        class _BlockingHandler:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            async def __call__(self, input_ref: str, task_id: str) -> dict[str, str]:
+                self.calls.append((input_ref, task_id))
+                handler_started.set()
+                await release_handler.wait()
+                return {"kind": "metadata"}
+
+        winner_execution_id = "execution-winner"
+        loser_execution_id = "execution-loser"
+        worker, store, handler, callback_sender, output = await self._build_worker(handler=_BlockingHandler())
+        await self._seed_task(store, self.task.model_copy(update={"aca_execution_id": None}))
+
+        winner = asyncio.create_task(worker.run("scope-a", str(self.task.task_id), winner_execution_id))
+        await asyncio.wait_for(handler_started.wait(), timeout=1)
+
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.aca_execution_id, winner_execution_id)
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.RUNNING)
+        self.assertEqual(handler.calls, [("https://input.example.com/jobs/1", str(self.task.task_id))])
+        self.assertEqual(output.write_calls, [])
+        self.assertEqual(callback_sender.calls, [])
+
+        replace_calls_before_loser = len(store.replace_calls)
+        code = await worker.run("scope-a", str(self.task.task_id), loser_execution_id)
 
         self.assertEqual(code, 0)
-        self.assertEqual(handler.calls, [])
-        self.assertEqual(callback_sender.calls, [])
+        self.assertEqual(len(store.replace_calls), replace_calls_before_loser)
+        self.assertEqual(handler.calls, [("https://input.example.com/jobs/1", str(self.task.task_id))])
         self.assertEqual(output.write_calls, [])
+        self.assertEqual(callback_sender.calls, [])
         current = await store.get("scope-a", str(self.task.task_id))
-        self.assertEqual(current.lifecycle_state, self.LifecycleState.FAILED)
-        self.assertEqual(current.error_code, "WORKER_EXECUTION_ID_MISMATCH")
-        self.assertIsNone(current.result_url)
-        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.NOT_STARTED)
+        self.assertEqual(current.aca_execution_id, winner_execution_id)
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.RUNNING)
+
+        release_handler.set()
+        self.assertEqual(await winner, 0)
+
+        self.assertEqual(len(handler.calls), 1)
+        self.assertEqual(output.write_calls[0][0], self._task_path(str(self.task.task_id)))
+        self.assertEqual(len(callback_sender.calls), 1)
+        _, payload = callback_sender.calls[0]
+        self.assertEqual(payload["acaExecutionId"], winner_execution_id)
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.aca_execution_id, winner_execution_id)
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertIsNone(current.error_code)
 
     async def test_duplicate_active_worker_exits_zero_without_handler(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
