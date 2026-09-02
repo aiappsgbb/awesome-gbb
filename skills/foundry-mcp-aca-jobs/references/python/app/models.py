@@ -30,6 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - local test shim and CLI help f
 
 __all__ = [
     "CallbackDeliveryState",
+    "CallbackEvent",
     "CallbackPolicy",
     "GetTaskResult",
     "JobPolicy",
@@ -223,6 +224,28 @@ class StartRequest(BaseModel):
     def _https_only(cls, value: HttpUrl) -> HttpUrl:
         if value.scheme != "https":
             raise ValueError("inputRef must use https")
+        return value
+
+
+class CallbackEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    task_id: str = Field(alias="taskId", min_length=1)
+    aca_execution_id: str = Field(alias="acaExecutionId", min_length=1)
+    status: Literal["Succeeded", "Failed", "Cancelled"]
+    result_url: HttpUrl | None = Field(default=None, alias="resultUrl")
+
+    @field_validator("result_url")
+    @classmethod
+    def _url_must_be_https(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is None:
+            return value
+        if value.scheme != "https":
+            raise ValueError("resultUrl must use https")
+        if value.username or value.password:
+            raise ValueError("resultUrl must not contain credentials")
+        if value.query:
+            raise ValueError("resultUrl must not contain query parameters")
         return value
 
 

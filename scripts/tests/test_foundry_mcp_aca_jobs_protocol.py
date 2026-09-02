@@ -3,15 +3,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import hashlib
+import inspect
+import json
+import os
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "skills" / "foundry-mcp-aca-jobs" / "references" / "python"
@@ -33,6 +39,148 @@ def _ensure_package(name: str, *, path: list[str] | None = None) -> types.Module
 def _install_stubs() -> None:
     _ensure_package("app", path=[str(APP_DIR)])
 
+    azure = _ensure_package("azure")
+    azure_core = _ensure_package("azure.core")
+    azure_core_exceptions = _ensure_package("azure.core.exceptions")
+    azure_identity = _ensure_package("azure.identity")
+    azure_identity_aio = _ensure_package("azure.identity.aio")
+    azure_cosmos = _ensure_package("azure.cosmos")
+    azure_cosmos_aio = _ensure_package("azure.cosmos.aio")
+    azure_storage = _ensure_package("azure.storage")
+    azure_storage_blob = _ensure_package("azure.storage.blob")
+    azure_storage_blob_aio = _ensure_package("azure.storage.blob.aio")
+    azure_mgmt = _ensure_package("azure.mgmt")
+    azure_appcontainers = _ensure_package("azure.mgmt.appcontainers")
+
+    class MatchConditions:
+        IfNotModified = "IfNotModified"
+
+    class HttpResponseError(Exception):
+        def __init__(self, message: object | None = None, response: object | None = None, **_: Any) -> None:
+            super().__init__(message)
+            self.response = response
+            self.status_code = getattr(response, "status_code", None)
+
+    class ManagedIdentityCredential:
+        def __init__(self, client_id: str | None = None) -> None:
+            self.client_id = client_id
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class CosmosContainer:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.records: dict[tuple[str, str], dict[str, Any]] = {}
+
+        async def create_item(self, body: dict[str, Any]) -> dict[str, Any]:
+            self.records[(body["ownerScope"], body["id"])] = body
+            return body
+
+        async def read_item(self, item: str, partition_key: str) -> dict[str, Any]:
+            return self.records[(partition_key, item)]
+
+        async def replace_item(
+            self,
+            *,
+            item: str,
+            body: dict[str, Any],
+            etag: str | None,
+            match_condition: Any = None,
+        ) -> dict[str, Any]:
+            self.records[(body["ownerScope"], item)] = body
+            return body
+
+    class CosmosDatabase:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.containers: dict[str, CosmosContainer] = {}
+
+        def get_container_client(self, name: str) -> CosmosContainer:
+            container = self.containers.get(name)
+            if container is None:
+                container = CosmosContainer(name)
+                self.containers[name] = container
+            return container
+
+    class CosmosClient:
+        def __init__(self, endpoint: str, credential: Any | None = None) -> None:
+            self.endpoint = endpoint
+            self.credential = credential
+            self.databases: dict[str, CosmosDatabase] = {}
+            self.closed = False
+
+        def get_database_client(self, name: str) -> CosmosDatabase:
+            database = self.databases.get(name)
+            if database is None:
+                database = CosmosDatabase(name)
+                self.databases[name] = database
+            return database
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class FakeBlobClient:
+        def __init__(self, path: str) -> None:
+            self.path = path
+            self.uploads: list[dict[str, Any]] = []
+
+        async def upload_blob(self, data: Any, overwrite: bool = False) -> None:
+            self.uploads.append({"data": data, "overwrite": overwrite})
+
+    class ContainerClient:
+        def __init__(self, url: str, credential: Any | None = None) -> None:
+            self.url = url
+            self.credential = credential
+            self.closed = False
+            self.blobs: dict[str, FakeBlobClient] = {}
+
+        @classmethod
+        def from_container_url(cls, url: str, credential: Any | None = None) -> "ContainerClient":
+            return cls(url, credential)
+
+        def get_blob_client(self, path: str) -> FakeBlobClient:
+            blob = self.blobs.get(path)
+            if blob is None:
+                blob = FakeBlobClient(path)
+                self.blobs[path] = blob
+            return blob
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class ContainerAppsAPIClient:
+        def __init__(self, credential: Any | None = None, subscription_id: str | None = None) -> None:
+            self.credential = credential
+            self.subscription_id = subscription_id
+            self.jobs = types.SimpleNamespace(
+                get=MagicMock(),
+                begin_start=MagicMock(),
+                begin_stop_execution=MagicMock(),
+            )
+            self.jobs_executions = types.SimpleNamespace(list=MagicMock())
+
+    azure_core.MatchConditions = MatchConditions
+    azure_core_exceptions.HttpResponseError = HttpResponseError
+    azure_identity.ManagedIdentityCredential = ManagedIdentityCredential
+    azure_identity_aio.ManagedIdentityCredential = ManagedIdentityCredential
+    azure_cosmos_aio.CosmosClient = CosmosClient
+    azure_storage_blob_aio.ContainerClient = ContainerClient
+    azure_storage_blob.ContainerClient = ContainerClient
+    azure_appcontainers.ContainerAppsAPIClient = ContainerAppsAPIClient
+    azure.core = azure_core
+    azure.identity = azure_identity
+    azure.cosmos = azure_cosmos
+    azure.mgmt = azure_mgmt
+    azure.storage = azure_storage
+    azure_core.exceptions = azure_core_exceptions
+    azure_identity.aio = azure_identity_aio
+    azure_cosmos.aio = azure_cosmos_aio
+    azure_storage.blob = azure_storage_blob
+    azure_storage_blob.aio = azure_storage_blob_aio
+    azure_mgmt.appcontainers = azure_appcontainers
+
     fastmcp = _ensure_package("fastmcp")
     server = _ensure_package("fastmcp.server")
     fastmcp_context = _ensure_package("fastmcp.server.context")
@@ -40,7 +188,11 @@ def _install_stubs() -> None:
     dependencies = _ensure_package("fastmcp.server.dependencies")
     shared_inbound = _ensure_package("mcp.shared.inbound")
     utilities = _ensure_package("fastmcp.utilities")
+    utilities_tests = _ensure_package("fastmcp.utilities.tests")
     utilities_tasks = _ensure_package("fastmcp.utilities.tasks")
+    starlette = _ensure_package("starlette")
+    starlette_requests = _ensure_package("starlette.requests")
+    starlette_responses = _ensure_package("starlette.responses")
 
     class MethodBinding:
         def __init__(
@@ -80,9 +232,127 @@ def _install_stubs() -> None:
                 return None
             return self._settings
 
+    class PlainTextResponse:
+        def __init__(self, content: str = "", status_code: int = 200) -> None:
+            self.status_code = status_code
+            self.text = content
+            self.body = content.encode("utf-8")
+
+    class JSONResponse(PlainTextResponse):
+        def __init__(self, content: Any = None, status_code: int = 200) -> None:
+            payload = json.dumps(content, ensure_ascii=False)
+            super().__init__(payload, status_code=status_code)
+            self.content = content
+
+    class FakeRequest:
+        def __init__(self, *, headers: dict[str, str] | None = None, json_data: Any = None) -> None:
+            self.headers = headers or {}
+            self._json_data = json_data
+            self._body = json.dumps(json_data, ensure_ascii=False).encode("utf-8") if json_data is not None else b""
+
+        async def json(self) -> Any:
+            return self._json_data
+
+        async def body(self) -> bytes:
+            return self._body
+
+    class FakeToolResult(types.SimpleNamespace):
+        pass
+
+    class FastMCP:
+        def __init__(self, name: str, *, lifespan: Any | None = None, tasks: bool = False) -> None:
+            self.name = name
+            self.lifespan = lifespan
+            self.tasks = tasks
+            self.tools: dict[str, Any] = {}
+            self.routes: dict[tuple[str, str], Any] = {}
+            self.extensions: list[Any] = []
+            self.run_args: dict[str, Any] | None = None
+
+        def tool(self, fn: Any | None = None, *, name: str | None = None, **_: Any):
+            def decorator(func: Any) -> Any:
+                self.tools[name or func.__name__] = func
+                return func
+
+            return decorator(fn) if fn is not None else decorator
+
+        def custom_route(self, path: str, methods: list[str], name: str | None = None, include_in_schema: bool = True):
+            def decorator(func: Any) -> Any:
+                for method in methods:
+                    self.routes[(path, method.upper())] = func
+                return func
+
+            return decorator
+
+        def add_extension(self, extension: Any) -> None:
+            self.extensions.append(extension)
+
+        def run(self, *, transport: str, host: str, port: int) -> None:
+            self.run_args = {"transport": transport, "host": host, "port": port}
+
+        def client(self, *, headers: dict[str, str] | None = None, task_capability: bool = True) -> "FakeClient":
+            return FakeClient(self, headers=headers or {}, task_capability=task_capability)
+
+    class FakeClient:
+        def __init__(self, server: FastMCP, *, headers: dict[str, str], task_capability: bool) -> None:
+            self._server = server
+            self._headers = headers
+            self._task_capability = task_capability
+
+        async def call_tool(self, name: str, arguments: dict[str, Any]) -> FakeToolResult:
+            async def call_next() -> Any:
+                with patch("app.mcp_server.get_http_headers", return_value=self._headers):
+                    tool = self._server.tools[name]
+                    result = tool(**arguments)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    return result
+
+            ctx = Context(
+                request_context=ServerRequestContext(protocol_version="2026-07-28"),
+                settings={"enabled": True} if self._task_capability else None,
+            )
+            params = types.SimpleNamespace(name=name, arguments=arguments)
+            for extension in self._server.extensions:
+                interceptor = getattr(extension, "intercept_tool_call", None)
+                if interceptor is None:
+                    continue
+                with patch("app.aca_tasks_extension.get_http_headers", return_value=self._headers), patch(
+                    "app.aca_tasks_extension.get_http_request", side_effect=RuntimeError("No active HTTP request found.")
+                ):
+                    outcome = await interceptor(params, ctx, call_next)
+                if outcome is not None:
+                    return FakeToolResult(data=_dump_tool_result(outcome))
+            return FakeToolResult(data=_dump_tool_result(await call_next()))
+
+        async def request(self, method: str, path: str, *, headers: dict[str, str] | None = None, json: Any = None) -> Any:
+            route = self._server.routes[(path, method.upper())]
+            request = FakeRequest(headers=headers or self._headers, json_data=json)
+            outcome = route(request)
+            if inspect.isawaitable(outcome):
+                outcome = await outcome
+            return outcome
+
+    def _dump_tool_result(value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(by_alias=True, exclude_none=True)
+        if hasattr(value, "dict"):
+            return value.dict(by_alias=True, exclude_none=True)
+        return value
+
     extensions.MethodBinding = MethodBinding
     extensions.ServerExtension = ServerExtension
     fastmcp_context.Context = Context
+    fastmcp.PlainTextResponse = PlainTextResponse
+    fastmcp.JSONResponse = JSONResponse
+    fastmcp.FastMCP = FastMCP
+    utilities_tests.asgi_client = lambda server: server.client()  # pragma: no cover - helper for parity.
+    starlette_requests.Request = FakeRequest
+    starlette_responses.PlainTextResponse = PlainTextResponse
+    starlette_responses.JSONResponse = JSONResponse
+    starlette_responses.Response = PlainTextResponse
+    starlette.requests = starlette_requests
+    starlette.responses = starlette_responses
     shared_inbound.MCP_NAME_HEADER = "mcp-name"
 
     def encode_header_value(value: str) -> str:
@@ -232,6 +502,10 @@ _install_stubs()
 
 import app.models as app_models  # noqa: E402
 from app.aca_tasks_extension import AcaTasksExtension  # noqa: E402
+from app import mcp_server as app_mcp_server  # noqa: E402
+from app.aca_jobs import AcaExecution  # noqa: E402
+from app.control_store import InMemoryControlStore  # noqa: E402
+from app.orchestrator import Orchestrator  # noqa: E402
 from app.models import PublicError, StartRequest, TaskRecord  # noqa: E402
 from fastmcp.server.extensions import MethodBinding  # noqa: E402
 from fastmcp.server.context import Context as FastMCPContext  # noqa: E402
@@ -258,6 +532,7 @@ app_package.StartRequest = app_models.StartRequest
 app_package.TaskRecord = app_models.TaskRecord
 app_package.PublicError = app_models.PublicError
 app_package.LifecycleState = app_models.LifecycleState
+app_package.CallbackEvent = app_models.CallbackEvent
 
 
 class FakeOrchestrator:
@@ -288,6 +563,41 @@ class FakeOrchestrator:
             raise self.exc
         assert self.task is not None
         return self.task
+
+
+class FakeJobsClient:
+    def __init__(self) -> None:
+        self.start_calls: list[tuple[str, str, str]] = []
+        self.get_calls: list[tuple[str, str]] = []
+        self.list_calls: list[str] = []
+        self.stop_calls: list[tuple[str, str]] = []
+        self._execution = AcaExecution(
+            execution_id="exec-1",
+            status="Running",
+            start_time=datetime.now(timezone.utc).replace(microsecond=0),
+            args=[],
+        )
+
+    async def start(self, policy: Any, owner_scope: str, task_id: str) -> AcaExecution:
+        self.start_calls.append((policy.job_name, owner_scope, task_id))
+        self._execution = AcaExecution(
+            execution_id="exec-1",
+            status="Running",
+            start_time=datetime.now(timezone.utc).replace(microsecond=0),
+            args=["--owner-scope", owner_scope, "--task-id", task_id],
+        )
+        return self._execution
+
+    async def get(self, policy: Any, execution_id: str) -> AcaExecution:
+        self.get_calls.append((policy.job_name, execution_id))
+        return self._execution.model_copy(update={"execution_id": execution_id})
+
+    async def list(self, policy: Any) -> list[AcaExecution]:
+        self.list_calls.append(policy.job_name)
+        return [self._execution]
+
+    async def stop(self, policy: Any, execution_id: str) -> None:
+        self.stop_calls.append((policy.job_name, execution_id))
 
 
 def _dump_model(value: Any) -> dict[str, Any]:
@@ -633,6 +943,234 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             "Docket(",
         ):
             self.assertNotIn(forbidden, source)
+
+
+class ServerTests(unittest.IsolatedAsyncioTestCase):
+    def _policy(self) -> app_models.Policy:
+        return app_models.Policy(
+            jobs={
+            "batch": app_models.JobPolicy(
+                resource_group="rg-jobs",
+                job_name="worker-job",
+                container_name="worker",
+                image_digest="example.azurecr.io/worker@sha256:" + "a" * 64,
+                command=["python", "-m", "app.job_worker"],
+            )
+            },
+            callbacks={
+            "ops": app_models.CallbackPolicy(
+                url="https://callbacks.example/jobs",
+                auth_mode="managed_identity",
+                audience="api://callback",
+            )
+            },
+            input_hosts={"storage.example.com"},
+            result_hosts={"results.example.com"},
+        )
+
+    def _runtime(
+        self,
+        *,
+        orchestrator: Orchestrator | None = None,
+        store: Any | None = None,
+        callback_capture: Any | None = None,
+    ) -> app_mcp_server.Runtime:
+        store = store or InMemoryControlStore()
+        jobs = FakeJobsClient()
+        policy = self._policy()
+        orchestrator = orchestrator or Orchestrator(
+            store=store,
+            jobs=jobs,
+            policy=policy,
+            clock=lambda: datetime.now(timezone.utc).replace(microsecond=0),
+        )
+        callback_capture = callback_capture or app_mcp_server.InMemoryCallbackCapture()
+        return app_mcp_server.Runtime(
+            orchestrator=orchestrator,
+            store=store,
+            policy=policy,
+            callback_capture=callback_capture,
+        )
+
+    def test_callback_event_model_is_strict(self) -> None:
+        event = app_models.CallbackEvent.model_validate(
+            {
+                "taskId": "task-1",
+                "acaExecutionId": "exec-1",
+                "status": "Succeeded",
+                "resultUrl": "https://results.example/jobs/task-1.json",
+            }
+        )
+        self.assertEqual(event.task_id, "task-1")
+        self.assertEqual(event.aca_execution_id, "exec-1")
+        self.assertEqual(event.status, "Succeeded")
+        self.assertEqual(str(event.result_url), "https://results.example/jobs/task-1.json")
+        with self.assertRaises(ValidationError):
+            app_models.CallbackEvent.model_validate(
+                {
+                    "taskId": "task-1",
+                    "acaExecutionId": "exec-1",
+                    "status": "Succeeded",
+                    "resultUrl": None,
+                    "unexpected": True,
+                }
+            )
+
+    def test_owner_scope_from_headers_hashes_principal_and_requires_header(self) -> None:
+        principal = "  Alice@example.com  "
+        expected = hashlib.sha256("alice@example.com".encode("utf-8")).hexdigest()
+        self.assertEqual(
+            app_mcp_server.owner_scope_from_headers({"X-MS-CLIENT-PRINCIPAL-ID": principal}),
+            expected,
+        )
+        with self.assertRaises(PublicError) as exc:
+            app_mcp_server.owner_scope_from_headers({})
+        self.assertEqual(exc.exception.code, "TASK_FORBIDDEN")
+
+    def test_build_server_registers_extension_routes_and_flat_tool_names(self) -> None:
+        runtime = self._runtime()
+        server = app_mcp_server.build_server(runtime)
+        self.assertEqual(server.name, "foundry-mcp-aca-jobs")
+        self.assertTrue(any(isinstance(extension, AcaTasksExtension) for extension in server.extensions))
+        self.assertIn("start_aca_job", server.tools)
+        self.assertIn("get_aca_job_status", server.tools)
+        self.assertIn("cancel_aca_job", server.tools)
+        self.assertIn(("/health", "GET"), server.routes)
+        self.assertIn(("/callbacks/jobs", "POST"), server.routes)
+        self.assertEqual(tuple(inspect.signature(server.tools["start_aca_job"]).parameters), ("jobType", "idempotencyKey", "inputRef", "callbackAlias"))
+        self.assertEqual(tuple(inspect.signature(server.tools["get_aca_job_status"]).parameters), ("taskId",))
+        self.assertEqual(tuple(inspect.signature(server.tools["cancel_aca_job"]).parameters), ("taskId",))
+
+    async def test_tools_round_trip_and_restart_same_store(self) -> None:
+        runtime = self._runtime()
+        server = app_mcp_server.build_server(runtime)
+        client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "  Alice@example.com  "}, task_capability=False)
+
+        started = await client.call_tool(
+            "start_aca_job",
+            {
+                "jobType": "batch",
+                "idempotencyKey": "key-1",
+                "inputRef": "https://storage.example.com/input.json",
+                "callbackAlias": "ops",
+            },
+        )
+        self.assertEqual(started.data["lifecycleState"], "Running")
+        task_id = started.data["taskId"]
+        self.assertEqual(
+            runtime.orchestrator._jobs.start_calls[0][1],
+            hashlib.sha256("alice@example.com".encode("utf-8")).hexdigest(),
+        )
+
+        status = await client.call_tool("get_aca_job_status", {"taskId": task_id})
+        cancelled = await client.call_tool("cancel_aca_job", {"taskId": task_id})
+        self.assertEqual(status.data["taskId"], task_id)
+        self.assertEqual(cancelled.data["taskId"], task_id)
+
+        restarted = app_mcp_server.build_server(runtime)
+        restarted_client = restarted.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"}, task_capability=False)
+        restarted_status = await restarted_client.call_tool("get_aca_job_status", {"taskId": task_id})
+        self.assertEqual(restarted_status.data["taskId"], task_id)
+
+    async def test_awared_start_short_circuits_tool_call(self) -> None:
+        runtime = self._runtime()
+        server = app_mcp_server.build_server(runtime)
+        server.tools["start_aca_job"] = lambda **_: (_ for _ in ()).throw(AssertionError("tool should not run"))
+        client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"}, task_capability=True)
+        started = await client.call_tool(
+            "start_aca_job",
+            {
+                "jobType": "batch",
+                "idempotencyKey": "key-2",
+                "inputRef": "https://storage.example.com/input.json",
+                "callbackAlias": "ops",
+            },
+        )
+        self.assertEqual(started.data["resultType"], "task")
+        self.assertIn("taskId", started.data)
+
+    async def test_health_and_callback_route_validate_and_store_exact_fields(self) -> None:
+        capture = app_mcp_server.InMemoryCallbackCapture()
+        runtime = self._runtime(callback_capture=capture)
+        server = app_mcp_server.build_server(runtime)
+        client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
+
+        health = await client.request("GET", "/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.text, "ok")
+
+        accepted = await client.request(
+            "POST",
+            "/callbacks/jobs",
+            json={
+                "taskId": "task-1",
+                "acaExecutionId": "exec-1",
+                "status": "Succeeded",
+                "resultUrl": "https://results.example/jobs/task-1.json",
+            },
+        )
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(
+            capture.events,
+            [
+                {
+                    "taskId": "task-1",
+                    "acaExecutionId": "exec-1",
+                    "status": "Succeeded",
+                    "resultUrl": "https://results.example/jobs/task-1.json",
+                }
+            ],
+        )
+
+        rejected = await client.request(
+            "POST",
+            "/callbacks/jobs",
+            json={
+                "taskId": "task-1",
+                "acaExecutionId": "exec-1",
+                "status": "Succeeded",
+                "resultUrl": None,
+                "unexpected": True,
+            },
+        )
+        self.assertEqual(rejected.status_code, 422)
+
+    def test_runtime_from_env_wires_clients_and_supports_help_without_env(self) -> None:
+        env = {
+            "AZURE_CLIENT_ID": "client-id-1",
+            "AZURE_SUBSCRIPTION_ID": "sub-id-1",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
+            "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs-db",
+            "MCP_ACA_JOBS_COSMOS_CONTAINER": "jobs",
+            "MCP_ACA_JOBS_CALLBACK_CONTAINER_URL": "https://storage.example.com/callbacks",
+            "MCP_ACA_JOBS_POLICY_JSON": json.dumps(self._policy().model_dump(mode="json", by_alias=True)),
+        }
+        fake_blob_client = types.SimpleNamespace(upload_blob=AsyncMock())
+        fake_container_client = types.SimpleNamespace(get_blob_client=MagicMock(return_value=fake_blob_client), close=AsyncMock())
+        fake_cosmos_container = types.SimpleNamespace()
+        fake_cosmos_database = types.SimpleNamespace(get_container_client=MagicMock(return_value=fake_cosmos_container))
+        fake_cosmos_client = types.SimpleNamespace(get_database_client=MagicMock(return_value=fake_cosmos_database), close=AsyncMock())
+        with patch.dict(os.environ, env, clear=False), patch.object(app_mcp_server, "ManagedIdentityCredential") as managed_identity, patch.object(
+            app_mcp_server, "ContainerAppsAPIClient"
+        ) as jobs_client, patch.object(app_mcp_server, "CosmosClient", return_value=fake_cosmos_client) as cosmos_client, patch.object(
+            app_mcp_server.ContainerClient, "from_container_url", return_value=fake_container_client
+        ) as from_container_url:
+            credential = types.SimpleNamespace(close=AsyncMock())
+            managed_identity.return_value = credential
+            jobs_client.return_value = types.SimpleNamespace()
+            runtime = app_mcp_server.runtime_from_env()
+
+        managed_identity.assert_called_once_with(client_id="client-id-1")
+        jobs_client.assert_called_once_with(credential=credential, subscription_id="sub-id-1")
+        cosmos_client.assert_called_once_with("https://cosmos.example.com:443/", credential=credential)
+        from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=credential)
+        self.assertIsInstance(runtime.policy, app_models.Policy)
+        self.assertEqual(runtime.policy.jobs["batch"].job_name, "worker-job")
+        self.assertIsNotNone(runtime.close)
+        with patch.object(app_mcp_server, "runtime_from_env", side_effect=AssertionError("runtime factory should not run for --help")):
+            with self.assertRaises(SystemExit) as exc:
+                app_mcp_server.main(["--help"])
+        self.assertEqual(exc.exception.code, 0)
 
 
 if __name__ == "__main__":
