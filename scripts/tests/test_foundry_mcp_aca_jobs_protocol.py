@@ -14,7 +14,9 @@ import types
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Any
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -67,6 +69,14 @@ def _install_stubs() -> None:
             self.closed = False
 
         def close(self) -> None:
+            self.closed = True
+
+    class AsyncManagedIdentityCredential:
+        def __init__(self, client_id: str | None = None) -> None:
+            self.client_id = client_id
+            self.closed = False
+
+        async def close(self) -> None:
             self.closed = True
 
     class CosmosContainer:
@@ -164,7 +174,7 @@ def _install_stubs() -> None:
     azure_core.MatchConditions = MatchConditions
     azure_core_exceptions.HttpResponseError = HttpResponseError
     azure_identity.ManagedIdentityCredential = ManagedIdentityCredential
-    azure_identity_aio.ManagedIdentityCredential = ManagedIdentityCredential
+    azure_identity_aio.ManagedIdentityCredential = AsyncManagedIdentityCredential
     azure_cosmos_aio.CosmosClient = CosmosClient
     azure_storage_blob_aio.ContainerClient = ContainerClient
     azure_storage_blob.ContainerClient = ContainerClient
@@ -933,16 +943,107 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 uninstall.assert_not_called()
             uninstall.assert_called_once()
 
-    def test_source_does_not_reference_docket_or_tasks_extension(self) -> None:
-        source = (APP_DIR / "aca_tasks_extension.py").read_text(encoding="utf-8")
-        for forbidden in (
-            "from fastmcp_tasks import TasksExtension",
-            "TaskConfig",
-            "pydocket",
-            "docket_lifespan",
-            "Docket(",
-        ):
-            self.assertNotIn(forbidden, source)
+    async def test_lifespan_reconciles_candidates_logs_safe_errors_and_closes_runtime(self) -> None:
+        accepted = self.task.model_copy(update={"task_id": uuid.uuid4(), "etag": "1"})
+        starting = self.task.model_copy(
+            update={
+                "task_id": uuid.uuid4(),
+                "lifecycle_state": app_models.LifecycleState.STARTING,
+                "etag": "2",
+            }
+        )
+
+        async def reconcile(owner_scope: str, task_id: str) -> TaskRecord:
+            if task_id == str(starting.task_id):
+                raise PublicError("TASK_NOT_FOUND", "task not found")
+            return accepted if task_id == str(accepted.task_id) else starting
+
+        store = types.SimpleNamespace(list_reconcilable=AsyncMock(return_value=[accepted, starting]))
+        orchestrator = types.SimpleNamespace(reconcile=AsyncMock(side_effect=reconcile))
+        close = AsyncMock()
+        policy = app_models.Policy(
+            jobs={
+                "batch": app_models.JobPolicy(
+                    resource_group="rg-jobs",
+                    job_name="worker-job",
+                    container_name="worker",
+                    image_digest="example.azurecr.io/worker@sha256:" + "a" * 64,
+                    command=["python", "-m", "app.job_worker"],
+                )
+            },
+            callbacks={
+                "callback": app_models.CallbackPolicy(
+                    url="https://callbacks.example/jobs",
+                    auth_mode="managed_identity",
+                    audience="api://callback",
+                )
+            },
+            input_hosts={"storage.example.com"},
+            result_hosts={"results.example.com"},
+        )
+        runtime = app_mcp_server.Runtime(
+            orchestrator=orchestrator,
+            store=store,
+            policy=policy,
+            callback_capture=types.SimpleNamespace(write=AsyncMock()),
+            close=close,
+        )
+        real_sleep = asyncio.sleep
+
+        with patch.object(app_mcp_server, "_reconcile_interval_seconds", return_value=120.0), patch.object(
+            app_mcp_server.logger, "warning"
+        ) as warning, patch.object(app_mcp_server.logger, "exception") as exception, patch.object(
+            app_mcp_server.asyncio, "sleep", new=AsyncMock(side_effect=asyncio.CancelledError())
+        ) as sleep:
+            server = app_mcp_server.build_server(runtime)
+            async with server.lifespan(server):
+                await real_sleep(0)
+
+        self.assertEqual(orchestrator.reconcile.await_count, 2)
+        self.assertEqual(orchestrator.reconcile.await_args_list[0].args, (accepted.owner_scope, str(accepted.task_id)))
+        self.assertEqual(orchestrator.reconcile.await_args_list[1].args, (starting.owner_scope, str(starting.task_id)))
+        warning.assert_called_once_with(
+            "reconcile failed for owner=%s task=%s: %s",
+            starting.owner_scope,
+            str(starting.task_id),
+            "task not found",
+        )
+        exception.assert_not_called()
+        sleep.assert_awaited_once_with(60.0)
+        close.assert_awaited_once()
+
+    def test_build_server_does_not_add_pydocket_modules(self) -> None:
+        before = {name for name in sys.modules if name.startswith("pydocket")}
+        policy = app_models.Policy(
+            jobs={
+                "batch": app_models.JobPolicy(
+                    resource_group="rg-jobs",
+                    job_name="worker-job",
+                    container_name="worker",
+                    image_digest="example.azurecr.io/worker@sha256:" + "a" * 64,
+                    command=["python", "-m", "app.job_worker"],
+                )
+            },
+            callbacks={
+                "callback": app_models.CallbackPolicy(
+                    url="https://callbacks.example/jobs",
+                    auth_mode="managed_identity",
+                    audience="api://callback",
+                )
+            },
+            input_hosts={"storage.example.com"},
+            result_hosts={"results.example.com"},
+        )
+        runtime = app_mcp_server.Runtime(
+            orchestrator=self.orchestrator,
+            store=InMemoryControlStore(),
+            policy=policy,
+            callback_capture=types.SimpleNamespace(write=AsyncMock()),
+        )
+        server = app_mcp_server.build_server(runtime)
+        after = {name for name in sys.modules if name.startswith("pydocket")}
+        self.assertTrue(any(isinstance(extension, AcaTasksExtension) for extension in server.extensions))
+        self.assertEqual(after, before)
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
@@ -1046,6 +1147,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         server = app_mcp_server.build_server(runtime)
         client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "  Alice@example.com  "}, task_capability=False)
 
+        started_at = monotonic()
         started = await client.call_tool(
             "start_aca_job",
             {
@@ -1055,6 +1157,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 "callbackAlias": "ops",
             },
         )
+        self.assertLess(monotonic() - started_at, 1.0)
         self.assertEqual(started.data["lifecycleState"], "Running")
         task_id = started.data["taskId"]
         self.assertEqual(
@@ -1062,14 +1165,20 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             hashlib.sha256("alice@example.com".encode("utf-8")).hexdigest(),
         )
 
+        status_started_at = monotonic()
         status = await client.call_tool("get_aca_job_status", {"taskId": task_id})
+        self.assertLess(monotonic() - status_started_at, 1.0)
+        cancel_started_at = monotonic()
         cancelled = await client.call_tool("cancel_aca_job", {"taskId": task_id})
+        self.assertLess(monotonic() - cancel_started_at, 1.0)
         self.assertEqual(status.data["taskId"], task_id)
         self.assertEqual(cancelled.data["taskId"], task_id)
 
         restarted = app_mcp_server.build_server(runtime)
         restarted_client = restarted.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"}, task_capability=False)
+        restarted_started_at = monotonic()
         restarted_status = await restarted_client.call_tool("get_aca_job_status", {"taskId": task_id})
+        self.assertLess(monotonic() - restarted_started_at, 1.0)
         self.assertEqual(restarted_status.data["taskId"], task_id)
 
     async def test_awared_start_short_circuits_tool_call(self) -> None:
@@ -1135,7 +1244,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(rejected.status_code, 422)
 
-    def test_runtime_from_env_wires_clients_and_supports_help_without_env(self) -> None:
+    async def test_runtime_from_env_wires_clients_closes_resources_and_supports_help_without_env(self) -> None:
         env = {
             "AZURE_CLIENT_ID": "client-id-1",
             "AZURE_SUBSCRIPTION_ID": "sub-id-1",
@@ -1146,31 +1255,63 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             "MCP_ACA_JOBS_POLICY_JSON": json.dumps(self._policy().model_dump(mode="json", by_alias=True)),
         }
         fake_blob_client = types.SimpleNamespace(upload_blob=AsyncMock())
-        fake_container_client = types.SimpleNamespace(get_blob_client=MagicMock(return_value=fake_blob_client), close=AsyncMock())
+        fake_container_client = types.SimpleNamespace(
+            get_blob_client=MagicMock(return_value=fake_blob_client),
+            close=AsyncMock(),
+        )
         fake_cosmos_container = types.SimpleNamespace()
         fake_cosmos_database = types.SimpleNamespace(get_container_client=MagicMock(return_value=fake_cosmos_container))
-        fake_cosmos_client = types.SimpleNamespace(get_database_client=MagicMock(return_value=fake_cosmos_database), close=AsyncMock())
-        with patch.dict(os.environ, env, clear=False), patch.object(app_mcp_server, "ManagedIdentityCredential") as managed_identity, patch.object(
-            app_mcp_server, "ContainerAppsAPIClient"
+        fake_cosmos_client = types.SimpleNamespace(
+            get_database_client=MagicMock(return_value=fake_cosmos_database),
+            close=AsyncMock(),
+        )
+        fake_sync_credential = types.SimpleNamespace(close=MagicMock())
+        fake_async_credential = types.SimpleNamespace(close=AsyncMock())
+        fake_app_client = types.SimpleNamespace(close=MagicMock())
+        with patch.dict(os.environ, env, clear=False), patch.object(
+            app_mcp_server, "ManagedIdentityCredential"
+        ) as managed_identity, patch.object(app_mcp_server, "AioManagedIdentityCredential") as aio_managed_identity, patch.object(
+            app_mcp_server, "ContainerAppsAPIClient", return_value=fake_app_client
         ) as jobs_client, patch.object(app_mcp_server, "CosmosClient", return_value=fake_cosmos_client) as cosmos_client, patch.object(
             app_mcp_server.ContainerClient, "from_container_url", return_value=fake_container_client
         ) as from_container_url:
-            credential = types.SimpleNamespace(close=AsyncMock())
-            managed_identity.return_value = credential
-            jobs_client.return_value = types.SimpleNamespace()
+            managed_identity.return_value = fake_sync_credential
+            aio_managed_identity.return_value = fake_async_credential
             runtime = app_mcp_server.runtime_from_env()
 
         managed_identity.assert_called_once_with(client_id="client-id-1")
-        jobs_client.assert_called_once_with(credential=credential, subscription_id="sub-id-1")
-        cosmos_client.assert_called_once_with("https://cosmos.example.com:443/", credential=credential)
-        from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=credential)
+        aio_managed_identity.assert_called_once_with(client_id="client-id-1")
+        jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1")
+        cosmos_client.assert_called_once_with("https://cosmos.example.com:443/", credential=fake_async_credential)
+        from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=fake_async_credential)
         self.assertIsInstance(runtime.policy, app_models.Policy)
         self.assertEqual(runtime.policy.jobs["batch"].job_name, "worker-job")
         self.assertIsNotNone(runtime.close)
-        with patch.object(app_mcp_server, "runtime_from_env", side_effect=AssertionError("runtime factory should not run for --help")):
+        await runtime.close()
+        fake_container_client.close.assert_awaited_once()
+        fake_cosmos_client.close.assert_awaited_once()
+        fake_app_client.close.assert_called_once()
+        fake_async_credential.close.assert_awaited_once()
+        fake_sync_credential.close.assert_called_once()
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            app_mcp_server, "runtime_from_env", side_effect=AssertionError("runtime factory should not run for --help")
+        ), patch.object(app_mcp_server, "build_server", side_effect=AssertionError("build_server should not run for --help")):
             with self.assertRaises(SystemExit) as exc:
                 app_mcp_server.main(["--help"])
         self.assertEqual(exc.exception.code, 0)
+
+    def test_main_runs_streamable_http_with_default_host_and_port(self) -> None:
+        runtime = self._runtime()
+        fake_server = types.SimpleNamespace(run=MagicMock())
+        with patch.object(app_mcp_server, "runtime_from_env", return_value=runtime) as runtime_from_env, patch.object(
+            app_mcp_server, "build_server", return_value=fake_server
+        ) as build_server:
+            exit_code = app_mcp_server.main([])
+
+        self.assertEqual(exit_code, 0)
+        runtime_from_env.assert_called_once()
+        build_server.assert_called_once_with(runtime)
+        fake_server.run.assert_called_once_with(transport="streamable-http", host="0.0.0.0", port=8080)
 
 
 if __name__ == "__main__":

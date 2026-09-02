@@ -70,6 +70,7 @@ class _ContainerProxy:
         self.create_item = AsyncMock()
         self.read_item = AsyncMock()
         self.replace_item = AsyncMock()
+        self.query_items = AsyncMock()
 
 
 class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
@@ -189,6 +190,83 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         invalid = succeeded.model_copy(update={"result_url": None})
         with self.assertRaises(InvalidTransition):
             await store.replace(invalid, succeeded.etag)
+
+    async def test_list_reconcilable_filters_and_deep_copies_in_memory(self) -> None:
+        store = InMemoryControlStore()
+        accepted = self.task.model_copy(update={"etag": "1"})
+        starting = self.task.model_copy(
+            update={"task_id": uuid.uuid4(), "lifecycle_state": LifecycleState.STARTING, "etag": "2"}
+        )
+        running = self.task.model_copy(
+            update={"task_id": uuid.uuid4(), "lifecycle_state": LifecycleState.RUNNING, "etag": "3"}
+        )
+        succeeded_pending = self.task.model_copy(
+            update={
+                "task_id": uuid.uuid4(),
+                "lifecycle_state": LifecycleState.SUCCEEDED,
+                "result_url": self.task.input_ref,
+                "callback_delivery_state": CallbackDeliveryState.PENDING,
+                "aca_execution_id": None,
+                "etag": "4",
+            }
+        )
+        finished = self.task.model_copy(
+            update={
+                "task_id": uuid.uuid4(),
+                "lifecycle_state": LifecycleState.SUCCEEDED,
+                "result_url": self.task.input_ref,
+                "callback_delivery_state": CallbackDeliveryState.DELIVERED,
+                "etag": "5",
+            }
+        )
+        store._records = {
+            (accepted.owner_scope, str(accepted.task_id)): accepted,
+            (starting.owner_scope, str(starting.task_id)): starting,
+            (running.owner_scope, str(running.task_id)): running,
+            (succeeded_pending.owner_scope, str(succeeded_pending.task_id)): succeeded_pending,
+            (finished.owner_scope, str(finished.task_id)): finished,
+        }
+
+        reconcilable = await store.list_reconcilable()
+        ids = {str(record.task_id) for record in reconcilable}
+        expected_ids = {
+            str(accepted.task_id),
+            str(starting.task_id),
+            str(running.task_id),
+            str(succeeded_pending.task_id),
+        }
+        self.assertEqual(ids, expected_ids)
+
+        reconcilable_by_id = {str(record.task_id): record for record in reconcilable}
+        reconcilable_by_id[str(accepted.task_id)].callback_alias = "mutated"
+        again = await store.list_reconcilable()
+        again_by_id = {str(record.task_id): record for record in again}
+        self.assertEqual(again_by_id[str(accepted.task_id)].callback_alias, accepted.callback_alias)
+        self.assertNotIn(str(finished.task_id), ids)
+
+    async def test_cosmos_list_reconcilable_uses_safe_query_without_cross_partition_flag(self) -> None:
+        container = _ContainerProxy()
+        store = CosmosControlStore(container)
+        accepted = self._cosmos_document(self.task, etag="7")
+        starting = self._cosmos_document(
+            self.task.model_copy(update={"task_id": uuid.uuid4(), "lifecycle_state": LifecycleState.STARTING}),
+            etag="8",
+        )
+        running = self._cosmos_document(
+            self.task.model_copy(update={"task_id": uuid.uuid4(), "lifecycle_state": LifecycleState.RUNNING}),
+            etag="9",
+        )
+        container.query_items.return_value = [accepted, starting, running]
+
+        reconcilable = await store.list_reconcilable()
+
+        self.assertEqual(
+            {str(record.task_id) for record in reconcilable},
+            {str(self.task.task_id), str(starting["taskId"]), str(running["taskId"])},
+        )
+        container.query_items.assert_awaited_once()
+        self.assertIn("c.lifecycleState IN ('Accepted', 'Starting', 'Running')", container.query_items.await_args.kwargs["query"])
+        self.assertNotIn("enable_cross_partition_query", container.query_items.await_args.kwargs)
 
     async def test_cosmos_create_get_replace_translate_statuses_and_use_expected_calls(self) -> None:
         container = _ContainerProxy()

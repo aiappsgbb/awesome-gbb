@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from copy import deepcopy
 from typing import Any, Protocol, runtime_checkable
 
 from azure.core import MatchConditions
 from pydantic import ValidationError
 
-from .models import LifecycleState, PublicError, TaskRecord
+from .models import CallbackDeliveryState, LifecycleState, PublicError, TaskRecord
 
 __all__ = [
     "ConcurrencyError",
@@ -35,6 +36,8 @@ class ControlStore(Protocol):
     async def get(self, owner_scope: str, task_id: str) -> TaskRecord: ...
 
     async def replace(self, task: TaskRecord, etag: str | None) -> TaskRecord: ...
+
+    async def list_reconcilable(self) -> list[TaskRecord]: ...
 
 
 _TERMINAL_STATES = frozenset(
@@ -73,6 +76,14 @@ _ALLOWED_TRANSITIONS: dict[LifecycleState, frozenset[LifecycleState]] = {
 }
 for _state in _TERMINAL_STATES:
     _ALLOWED_TRANSITIONS[_state] = frozenset({_state})
+
+_RECONCILABLE_LIFECYCLE_STATES = frozenset(
+    {
+        LifecycleState.ACCEPTED,
+        LifecycleState.STARTING,
+        LifecycleState.RUNNING,
+    }
+)
 
 _COSMOS_SERVICE_KEYS = frozenset({"id", "_rid", "_self", "_attachments", "_ts"})
 _COSMOS_404_INFRA_MARKERS = ("owner resource does not exist", "container", "database")
@@ -136,8 +147,31 @@ def _copy_task(task: TaskRecord) -> TaskRecord:
     return deepcopy(task)
 
 
+async def _consume_query_items(result: Any) -> list[Any]:
+    if inspect.isawaitable(result):
+        result = await result
+    if result is None:
+        return []
+    if hasattr(result, "__aiter__"):
+        items: list[Any] = []
+        async for item in result:
+            items.append(item)
+        return items
+    return list(result)
+
+
 def _task_key(owner_scope: str, task_id: str) -> tuple[str, str]:
     return owner_scope, task_id
+
+
+def _is_inmemory_reconcilable(task: TaskRecord) -> bool:
+    if task.lifecycle_state in _RECONCILABLE_LIFECYCLE_STATES:
+        return True
+    return (
+        task.lifecycle_state is LifecycleState.SUCCEEDED
+        and task.callback_delivery_state is CallbackDeliveryState.PENDING
+        and task.aca_execution_id is None
+    )
 
 
 class InMemoryControlStore:
@@ -185,6 +219,10 @@ class InMemoryControlStore:
             stored = validated.model_copy(update={"etag": new_etag})
             self._records[key] = _copy_task(stored)
             return _copy_task(stored)
+
+    async def list_reconcilable(self) -> list[TaskRecord]:
+        async with self._lock:
+            return [_copy_task(record) for record in self._records.values() if _is_inmemory_reconcilable(record)]
 
 
 class CosmosControlStore:
@@ -243,6 +281,15 @@ class CosmosControlStore:
             raise _safe_control_store_unavailable() from exc
 
         return _copy_task(_record_from_document(updated if updated is not None else body))
+
+    async def list_reconcilable(self) -> list[TaskRecord]:
+        query = "SELECT * FROM c WHERE c.lifecycleState IN ('Accepted', 'Starting', 'Running')"
+        try:
+            items = self._container.query_items(query=query)
+        except Exception as exc:  # pragma: no cover - exercised through status-translation tests.
+            raise _safe_control_store_unavailable() from exc
+        documents = await _consume_query_items(items)
+        return [_copy_task(_record_from_document(document)) for document in documents]
 
     async def _read_existing(self, owner_scope: str, task_id: str) -> TaskRecord:
         try:

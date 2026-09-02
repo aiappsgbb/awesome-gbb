@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
@@ -16,6 +17,7 @@ from typing import Any, Annotated, Protocol, runtime_checkable
 
 from azure.cosmos.aio import CosmosClient
 from azure.identity import ManagedIdentityCredential
+from azure.identity.aio import ManagedIdentityCredential as AioManagedIdentityCredential
 from azure.mgmt.appcontainers import ContainerAppsAPIClient
 from azure.storage.blob.aio import ContainerClient
 from fastmcp import FastMCP
@@ -46,6 +48,9 @@ _DEFAULT_HOST = "0.0.0.0"
 _DEFAULT_PORT = 8080
 _DEFAULT_PROTOCOL_VERSION = "2026-07-28"
 _TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
+_RECONCILE_SLEEP_MAX_SECONDS = 60.0
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -154,6 +159,7 @@ async def _reconcile_loop(runtime: Runtime, interval_seconds: float) -> None:
     list_reconcilable = getattr(runtime.store, "list_reconcilable", None)
     if list_reconcilable is None:
         return
+    sleep_seconds = max(0.1, min(interval_seconds, _RECONCILE_SLEEP_MAX_SECONDS))
     while True:
         try:
             candidates = list_reconcilable()
@@ -164,14 +170,19 @@ async def _reconcile_loop(runtime: Runtime, interval_seconds: float) -> None:
                 if owner_task is None:
                     continue
                 owner_scope, task_id = owner_task
-                await runtime.orchestrator.reconcile(owner_scope, task_id)
+                try:
+                    await runtime.orchestrator.reconcile(owner_scope, task_id)
+                except asyncio.CancelledError:
+                    raise
+                except PublicError as error:
+                    logger.warning("reconcile failed for owner=%s task=%s: %s", owner_scope, task_id, error.safe_message)
+                except Exception:
+                    logger.exception("reconcile failed for owner=%s task=%s", owner_scope, task_id)
         except asyncio.CancelledError:
             raise
         except Exception:
-            # Best-effort reconciliation. Request-driven reconciliation remains the
-            # primary path until a reconcilable store is explicitly configured.
-            pass
-        await asyncio.sleep(interval_seconds)
+            logger.exception("reconcile loop failed")
+        await asyncio.sleep(sleep_seconds)
 
 
 def _json_response(content: Any, *, status_code: int) -> JSONResponse:
@@ -268,21 +279,23 @@ def runtime_from_env() -> Runtime:
     callback_container_url = os.environ["MCP_ACA_JOBS_CALLBACK_CONTAINER_URL"]
     policy = Policy.model_validate_json(os.environ["MCP_ACA_JOBS_POLICY_JSON"])
 
-    credential = ManagedIdentityCredential(client_id=client_id)
-    cosmos_client = CosmosClient(cosmos_endpoint, credential=credential)
-    app_client = ContainerAppsAPIClient(credential=credential, subscription_id=subscription_id)
+    sync_credential = ManagedIdentityCredential(client_id=client_id)
+    async_credential = AioManagedIdentityCredential(client_id=client_id)
+    cosmos_client = CosmosClient(cosmos_endpoint, credential=async_credential)
+    app_client = ContainerAppsAPIClient(credential=sync_credential, subscription_id=subscription_id)
     database = cosmos_client.get_database_client(cosmos_database)
     container = database.get_container_client(cosmos_container)
     store = CosmosControlStore(container)
     jobs = AcaJobsAdapter(app_client)
     orchestrator = Orchestrator(store, jobs, policy, clock=_utcnow)
-    callback_capture = BlobCallbackCapture.from_container_url(callback_container_url, credential=credential)
+    callback_capture = BlobCallbackCapture.from_container_url(callback_container_url, credential=async_credential)
 
     async def close() -> None:
         await _close_resource(callback_capture)
         await _close_resource(cosmos_client)
-        await _close_resource(credential)
         await _close_resource(app_client)
+        await _close_resource(async_credential)
+        await _close_resource(sync_credential)
 
     return Runtime(
         orchestrator=orchestrator,
