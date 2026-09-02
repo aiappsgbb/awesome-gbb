@@ -678,6 +678,21 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
                 "resultUrl": output.urls[self._task_path(str(self.task.task_id))],
             },
         )
+        self.assertEqual(len(store.replace_calls), 4)
+        self.assertEqual(store.replace_calls[0][0].lifecycle_state, self.LifecycleState.RUNNING)
+        self.assertEqual(store.replace_calls[1][0].lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(store.replace_calls[1][0].callback_delivery_state, self.CallbackDeliveryState.PENDING)
+        self.assertIsNone(store.replace_calls[1][0].worker_claim_token)
+        self.assertIsNone(store.replace_calls[1][0].worker_claim_expires_at)
+        self.assertEqual(store.replace_calls[2][0].callback_delivery_state, self.CallbackDeliveryState.PENDING)
+        self.assertIsNotNone(store.replace_calls[2][0].worker_claim_token)
+        self.assertEqual(
+            store.replace_calls[2][0].worker_claim_expires_at,
+            self.fixed_now + timedelta(minutes=5),
+        )
+        self.assertEqual(store.replace_calls[3][0].callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertIsNone(store.replace_calls[3][0].worker_claim_token)
+        self.assertIsNone(store.replace_calls[3][0].worker_claim_expires_at)
         current = await store.get("scope-a", str(self.task.task_id))
         self.assertEqual(current.aca_execution_id, execution_id)
         self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
@@ -685,7 +700,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
         self.assertIsNone(current.callback_error_code)
         self.assertIsNone(current.worker_claim_token)
-        self.assertIsNone(current.worker_claimed_at)
+        self.assertIsNotNone(current.worker_claimed_at)
         self.assertIsNone(current.worker_claim_expires_at)
         self.assertEqual(store.replace_calls[0][0].lifecycle_state, self.LifecycleState.RUNNING)
         self.assertIsNotNone(store.replace_calls[0][0].worker_claimed_at)
@@ -836,6 +851,76 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(current.worker_claim_expires_at)
         self.assertEqual(output.write_calls[0][0], self._task_path(str(self.task.task_id)))
 
+    async def test_concurrent_succeeded_pending_runs_produce_exactly_one_callback_post(self) -> None:
+        callback_started = asyncio.Event()
+        release_callback = asyncio.Event()
+
+        class _BlockingCallbackSender(_FakeCallbackSender):
+            async def send(self, policy: Any, payload: dict[str, str]) -> None:
+                self.calls.append((policy, payload))
+                callback_started.set()
+                await release_callback.wait()
+
+        worker, store, handler, callback_sender, output = await self._build_worker(
+            callback_sender=_BlockingCallbackSender()
+        )
+        await self._seed_task(
+            store,
+            self.task.model_copy(
+                update={
+                    "lifecycle_state": self.LifecycleState.SUCCEEDED,
+                    "callback_delivery_state": self.CallbackDeliveryState.PENDING,
+                    "result_url": self.policy.validate_result("https://results.example.com/results/task/result.json"),
+                    "aca_execution_id": "execution-lease-1",
+                }
+            ),
+        )
+
+        first = asyncio.create_task(worker.run("scope-a", str(self.task.task_id)), name="callback-race-1")
+        await asyncio.wait_for(callback_started.wait(), timeout=1)
+        second = asyncio.create_task(worker.run("scope-a", str(self.task.task_id)), name="callback-race-2")
+        await asyncio.sleep(0)
+        release_callback.set()
+
+        self.assertEqual(await asyncio.wait_for(first, timeout=2), 0)
+        self.assertEqual(await asyncio.wait_for(second, timeout=2), 0)
+        self.assertEqual(len(callback_sender.calls), 1)
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(output.write_calls, [])
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertIsNone(current.worker_claim_token)
+        self.assertIsNone(current.worker_claim_expires_at)
+
+    async def test_expired_callback_lease_reclaims_and_delivers_callback(self) -> None:
+        worker, store, handler, callback_sender, output = await self._build_worker()
+        await self._seed_task(
+            store,
+            self.task.model_copy(
+                update={
+                    "lifecycle_state": self.LifecycleState.SUCCEEDED,
+                    "callback_delivery_state": self.CallbackDeliveryState.PENDING,
+                    "result_url": self.policy.validate_result("https://results.example.com/results/task/result.json"),
+                    "aca_execution_id": "execution-expired",
+                    "worker_claim_token": "lease-1",
+                    "worker_claim_expires_at": self.fixed_now - timedelta(seconds=1),
+                }
+            ),
+        )
+
+        code = await worker.run("scope-a", str(self.task.task_id))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(output.write_calls, [])
+        self.assertEqual(len(callback_sender.calls), 1)
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertIsNone(current.worker_claim_token)
+        self.assertIsNone(current.worker_claim_expires_at)
+
     async def test_duplicate_active_worker_exits_zero_without_handler(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
         claimed = self.task.model_copy(
@@ -955,6 +1040,8 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.EXHAUSTED)
         self.assertEqual(current.callback_error_code, "CALLBACK_DELIVERY_EXHAUSTED")
         self.assertIsNotNone(current.result_url)
+        self.assertIsNone(current.worker_claim_token)
+        self.assertIsNone(current.worker_claim_expires_at)
         self.assertEqual(len(callback_sender.calls), 1)
         self.assertEqual(len(handler.calls), 1)
         self.assertEqual(len(output.write_calls), 1)
@@ -979,6 +1066,8 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.EXHAUSTED)
         self.assertEqual(current.callback_error_code, "CALLBACK_DELIVERY_REJECTED")
         self.assertIsNotNone(current.result_url)
+        self.assertIsNone(current.worker_claim_token)
+        self.assertIsNone(current.worker_claim_expires_at)
         self.assertEqual(len(callback_sender.calls), 1)
         self.assertEqual(len(handler.calls), 1)
         self.assertEqual(len(output.write_calls), 1)
@@ -1004,7 +1093,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler.calls, [])
         self.assertEqual(callback_sender.calls, [])
         self.assertEqual(output.write_calls, [])
-        self.assertEqual(len(store.get_calls), 6)
+        self.assertEqual(len(store.get_calls), 7)
         self.assertEqual(sleep.await_count, 5)
         current = await store.get("scope-a", str(self.task.task_id))
         self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)

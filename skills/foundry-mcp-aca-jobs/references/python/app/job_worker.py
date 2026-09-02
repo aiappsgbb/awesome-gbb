@@ -154,7 +154,7 @@ class JobWorker:
             return 0
         if current.lifecycle_state is LifecycleState.SUCCEEDED:
             if current.callback_delivery_state is CallbackDeliveryState.PENDING:
-                await self._deliver_callback_if_ready(current)
+                await self._deliver_callback_if_ready(owner_scope, task_id)
             return 0
         if current.lifecycle_state in TERMINAL_STATES:
             return 0
@@ -190,7 +190,7 @@ class JobWorker:
                 result_url = await self._output.get(result_path)
 
         succeeded = await self._persist_succeeded(claimed, result_url)
-        await self._deliver_callback_if_ready(succeeded)
+        await self._deliver_callback_if_ready(succeeded.owner_scope, str(succeeded.task_id))
         return 0
 
     async def _claim(self, current: TaskRecord, now: datetime, execution_id: str | None = None) -> TaskRecord | None:
@@ -303,17 +303,55 @@ class JobWorker:
         def mutate(current: TaskRecord) -> TaskRecord:
             if current.lifecycle_state is not LifecycleState.SUCCEEDED:
                 return current
+            lease_cleared = state in {CallbackDeliveryState.DELIVERED, CallbackDeliveryState.EXHAUSTED}
             if current.callback_delivery_state is state and current.callback_error_code == callback_error_code:
+                if lease_cleared and (current.worker_claim_token is not None or current.worker_claim_expires_at is not None):
+                    return current.model_copy(
+                        update={
+                            "worker_claim_token": None,
+                            "worker_claim_expires_at": None,
+                            "updated_at": now,
+                        }
+                    )
                 return current
             return current.model_copy(
                 update={
                     "callback_delivery_state": state,
                     "callback_error_code": callback_error_code,
+                    "worker_claim_token": None if lease_cleared else current.worker_claim_token,
+                    "worker_claim_expires_at": None if lease_cleared else current.worker_claim_expires_at,
                     "updated_at": now,
                 }
             )
 
         return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
+
+    async def _claim_callback_delivery(self, task: TaskRecord) -> TaskRecord | None:
+        now = self._clock()
+        token = str(uuid4())
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if current.lifecycle_state is not LifecycleState.SUCCEEDED:
+                return current
+            if current.callback_delivery_state is not CallbackDeliveryState.PENDING:
+                return current
+            if current.result_url is None:
+                return current
+            if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
+                return current
+            return current.model_copy(
+                update={
+                    "worker_claimed_at": now,
+                    "worker_claim_token": token,
+                    "worker_claim_expires_at": now + self._lease,
+                    "updated_at": now,
+                }
+            )
+
+        claimed = await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
+        if claimed.worker_claim_token != token:
+            return None
+        return claimed
 
     async def _send_callback(self, task: TaskRecord, result_url: str) -> None:
         callback_policy = self._policy.callback(task.callback_alias)
@@ -350,11 +388,15 @@ class JobWorker:
             return latest
         return None
 
-    async def _deliver_callback_if_ready(self, task: TaskRecord) -> None:
-        latest = await self._await_callback_binding(task)
+    async def _deliver_callback_if_ready(self, owner_scope: str, task_id: str) -> None:
+        latest = await self._store.get(owner_scope, task_id)
+        latest = await self._await_callback_binding(latest)
         if latest is None or latest.result_url is None:
             return
-        await self._send_callback(latest, str(latest.result_url))
+        claimed = await self._claim_callback_delivery(latest)
+        if claimed is None:
+            return
+        await self._send_callback(claimed, str(claimed.result_url))
 
 
 async def demo_handler(input_ref: str, task_id: str) -> dict[str, str]:
