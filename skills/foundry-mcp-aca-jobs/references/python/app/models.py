@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from fastmcp_tasks.models import GetTaskResult
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
 
 __all__ = [
     "CallbackDeliveryState",
@@ -126,6 +126,12 @@ class TaskRecord(BaseModel):
     def _serialize_datetimes(self, value: datetime | None) -> str | None:
         return _to_utc_z(value)
 
+    @model_validator(mode="after")
+    def _validate_succeeded_requires_result_url(self) -> "TaskRecord":
+        if self.lifecycle_state is LifecycleState.SUCCEEDED and self.result_url is None:
+            raise ValueError("resultUrl is required when lifecycleState is Succeeded")
+        return self
+
     @classmethod
     def new(
         cls,
@@ -172,8 +178,6 @@ class TaskRecord(BaseModel):
             return GetTaskResult(status="cancelled", **task_fields)
 
         if self.lifecycle_state is LifecycleState.SUCCEEDED:
-            if self.result_url is None:
-                return GetTaskResult(status="working", **task_fields)
             result = {
                 "content": [{"type": "text", "text": str(self.result_url)}],
                 "structuredContent": {

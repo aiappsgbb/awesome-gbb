@@ -301,7 +301,7 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         succeeded_terminal = record.model_copy(
             update={
                 "lifecycle_state": LifecycleState.SUCCEEDED,
-                "result_url": None,
+                "result_url": "https://example.invalid/result.json",
             }
         )
         self.assertEqual(
@@ -425,15 +425,23 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             {"status": "Succeeded", "resultUrl": "https://example.invalid/result.json"},
         )
 
-        succeeded_without_result = record.model_copy(update={"lifecycle_state": LifecycleState.SUCCEEDED, "result_url": None})
-        succeeded_without_result_task = to_mcp_task(succeeded_without_result)
-        self._assert_task_result_wire(
-            succeeded_without_result_task,
-            task_id=str(record.task_id),
-            status="working",
-            created_at="2026-01-02T03:04:05Z",
-            last_updated_at="2026-01-02T03:04:05Z",
-        )
+        with self.assertRaises(ValidationError):
+            TaskRecord.model_validate(
+                {
+                    "taskId": str(record.task_id),
+                    "ownerScope": "scope-a",
+                    "jobType": "import",
+                    "idempotencyKeyHash": "hash-1",
+                    "requestFingerprint": "fingerprint-1",
+                    "inputRef": "https://example.invalid/input.json",
+                    "callbackAlias": "callback://jobs/import",
+                    "lifecycleState": "Succeeded",
+                    "resultUrl": None,
+                    "callbackDeliveryState": "NotStarted",
+                    "createdAt": "2026-01-02T03:04:05Z",
+                    "updatedAt": "2026-01-02T03:04:05Z",
+                }
+            )
 
         cancelled = record.model_copy(update={"lifecycle_state": LifecycleState.CANCELLED})
         cancelled_task = to_mcp_task(cancelled)
