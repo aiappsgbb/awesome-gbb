@@ -145,7 +145,7 @@ class JobWorker:
         self._sleep = sleep
         self._lease = lease
 
-    async def run(self, owner_scope: str, task_id: str) -> int:
+    async def run(self, owner_scope: str, task_id: str, execution_id: str | None = None) -> int:
         current = await self._store.get(owner_scope, task_id)
         if current.lifecycle_state is LifecycleState.SUCCEEDED:
             if current.callback_delivery_state is CallbackDeliveryState.PENDING:
@@ -155,10 +155,13 @@ class JobWorker:
             return 0
 
         now = self._clock()
+        if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
+            await self._persist_failure(current, "WORKER_EXECUTION_ID_MISMATCH")
+            return 0
         if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
             return 0
 
-        claimed = await self._claim(current, now)
+        claimed = await self._claim(current, now, execution_id)
         if claimed is None:
             return 0
 
@@ -188,7 +191,7 @@ class JobWorker:
         await self._deliver_callback_if_ready(succeeded)
         return 0
 
-    async def _claim(self, current: TaskRecord, now: datetime) -> TaskRecord | None:
+    async def _claim(self, current: TaskRecord, now: datetime, execution_id: str | None = None) -> TaskRecord | None:
         token = str(uuid4())
         next_task = current.model_copy(
             update={
@@ -199,12 +202,17 @@ class JobWorker:
                 "updated_at": now,
             }
         )
+        if current.aca_execution_id is None and execution_id is not None:
+            next_task = next_task.model_copy(update={"aca_execution_id": execution_id})
         for _ in range(3):
             try:
                 return await self._store.replace(next_task, current.etag)
             except ConcurrencyError:
                 current = await self._store.get(current.owner_scope, str(current.task_id))
                 if current.lifecycle_state in TERMINAL_STATES:
+                    return None
+                if execution_id is not None and current.aca_execution_id is not None and current.aca_execution_id != execution_id:
+                    await self._persist_failure(current, "WORKER_EXECUTION_ID_MISMATCH")
                     return None
                 if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
                     return None
@@ -217,6 +225,8 @@ class JobWorker:
                         "updated_at": now,
                     }
                 )
+                if current.aca_execution_id is None and execution_id is not None:
+                    next_task = next_task.model_copy(update={"aca_execution_id": execution_id})
         return None
 
     async def _persist_failure(self, task: TaskRecord, error_code: str) -> TaskRecord:
@@ -402,6 +412,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 async def _run_from_env(owner_scope: str, task_id: str) -> int:
     config = load_runtime_config_from_env()
     client_id = os.environ["AZURE_CLIENT_ID"]
+    execution_id = os.environ["CONTAINER_APP_JOB_EXECUTION_NAME"]
     cosmos_endpoint = os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]
     cosmos_database = os.environ["MCP_ACA_JOBS_COSMOS_DATABASE"]
     cosmos_container = os.environ["MCP_ACA_JOBS_COSMOS_CONTAINER"]
@@ -430,7 +441,7 @@ async def _run_from_env(owner_scope: str, task_id: str) -> int:
                 config=config,
                 credential=credential,
             )
-            return await worker.run(owner_scope, task_id)
+            return await worker.run(owner_scope, task_id, execution_id)
     finally:
         if output is not None:
             await _close_resource(output)

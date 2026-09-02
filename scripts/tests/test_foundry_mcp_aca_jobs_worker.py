@@ -531,6 +531,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             "MCP_ACA_JOBS_CALLBACK_URL": "https://hooks.example.com/jobs",
             "MCP_ACA_JOBS_CALLBACK_AUDIENCE": "api://mcp-callback",
             "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://results.example.com/container",
+            "CONTAINER_APP_JOB_EXECUTION_NAME": "job-exec-1",
             "MCP_ACA_JOBS_LEASE_MINUTES": "5",
         }
         with patch.dict(os.environ, env, clear=False), \
@@ -558,7 +559,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(build_kwargs["callback_sender"], fake_sender)
         self.assertIs(build_kwargs["credential"], fake_credential)
         self.assertEqual(build_kwargs["config"].lease, timedelta(minutes=5))
-        fake_worker.run.assert_awaited_once_with("scope-a", "task-1")
+        fake_worker.run.assert_awaited_once_with("scope-a", "task-1", "job-exec-1")
         fake_http_client.aclose.assert_awaited()
         fake_credential.close.assert_awaited()
         fake_output.close.assert_awaited()
@@ -587,6 +588,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             "MCP_ACA_JOBS_CALLBACK_VAULT_URL": "https://vault.example.com",
             "MCP_ACA_JOBS_CALLBACK_SECRET_NAME": "callback-secret",
             "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://results.example.com/container",
+            "CONTAINER_APP_JOB_EXECUTION_NAME": "job-exec-1",
             "MCP_ACA_JOBS_LEASE_MINUTES": "7",
         }
         with patch.dict(os.environ, env, clear=False), \
@@ -612,17 +614,51 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         build_worker_ctor.assert_called_once()
         _, build_kwargs = build_worker_ctor.call_args
         self.assertEqual(build_kwargs["config"].lease, timedelta(minutes=7))
-        fake_worker.run.assert_awaited_once_with("scope-a", "task-1")
+        fake_worker.run.assert_awaited_once_with("scope-a", "task-1", "job-exec-1")
         fake_http_client.aclose.assert_awaited()
         fake_secret_client.aclose.assert_awaited()
         fake_credential.close.assert_awaited()
         fake_output.close.assert_awaited()
 
+    async def test_run_from_env_requires_official_job_execution_name(self) -> None:
+        module = self._module()
+        fake_worker = types.SimpleNamespace(run=AsyncMock(return_value=17))
+        fake_output = _FakeContainerClient("https://results.example.com/container")
+        fake_credential = _FakeCredential("client-1")
+        fake_http_client = _FakeHttpClient()
+        fake_cosmos_client = _FakeCosmosClient("https://cosmos.example.com", fake_credential, container=object())
+        fake_sender = object()
+        env = {
+            "AZURE_CLIENT_ID": "client-1",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com",
+            "MCP_ACA_JOBS_COSMOS_DATABASE": "db-1",
+            "MCP_ACA_JOBS_COSMOS_CONTAINER": "container-1",
+            "MCP_ACA_JOBS_JOB_TYPE": "batch",
+            "MCP_ACA_JOBS_JOB_RESOURCE_GROUP": "rg",
+            "MCP_ACA_JOBS_JOB_NAME": "batch-job",
+            "MCP_ACA_JOBS_JOB_CONTAINER_NAME": "worker",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": "registry.azurecr.io/work@sha256:" + "a" * 64,
+            "MCP_ACA_JOBS_CALLBACK_URL": "https://hooks.example.com/jobs",
+            "MCP_ACA_JOBS_CALLBACK_AUDIENCE": "api://mcp-callback",
+            "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://results.example.com/container",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+            patch.object(module, "ManagedIdentityCredential", return_value=fake_credential), \
+            patch.object(module, "CosmosClient", return_value=fake_cosmos_client), \
+            patch.object(module.BlobOutputStore, "from_container_url", return_value=fake_output), \
+            patch.object(module.httpx, "AsyncClient", return_value=fake_http_client), \
+            patch.object(module, "CallbackSender", return_value=fake_sender), \
+            patch.object(module, "CosmosControlStore", return_value="store-from-cosmos"), \
+            patch.object(module, "build_worker_from_env", return_value=fake_worker):
+            with self.assertRaises(KeyError):
+                await module._run_from_env("scope-a", "task-1")
+
     async def test_first_worker_claims_runs_handler_persists_result_and_sends_exact_callback(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
-        await self._seed_task(store)
+        await self._seed_task(store, self.task.model_copy(update={"aca_execution_id": None}))
 
-        code = await worker.run("scope-a", str(self.task.task_id))
+        execution_id = "execution-real-1"
+        code = await worker.run("scope-a", str(self.task.task_id), execution_id)
 
         self.assertEqual(code, 0)
         self.assertEqual(len(handler.calls), 1)
@@ -637,12 +673,13 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             payload,
             {
                 "taskId": str(self.task.task_id),
-                "acaExecutionId": "execution-1",
+                "acaExecutionId": execution_id,
                 "status": "Succeeded",
                 "resultUrl": output.urls[self._task_path(str(self.task.task_id))],
             },
         )
         current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.aca_execution_id, execution_id)
         self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
         self.assertEqual(str(current.result_url), output.urls[self._task_path(str(self.task.task_id))])
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
@@ -653,10 +690,27 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.replace_calls[0][0].lifecycle_state, self.LifecycleState.RUNNING)
         self.assertIsNotNone(store.replace_calls[0][0].worker_claimed_at)
         self.assertIsNotNone(store.replace_calls[0][0].worker_claim_token)
+        self.assertEqual(store.replace_calls[0][0].aca_execution_id, execution_id)
         self.assertEqual(
             store.replace_calls[0][0].worker_claim_expires_at,
             self.fixed_now + timedelta(minutes=5),
         )
+
+    async def test_conflicting_execution_id_fails_without_handler(self) -> None:
+        worker, store, handler, callback_sender, output = await self._build_worker()
+        await self._seed_task(store)
+
+        code = await worker.run("scope-a", str(self.task.task_id), "execution-2")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(callback_sender.calls, [])
+        self.assertEqual(output.write_calls, [])
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.FAILED)
+        self.assertEqual(current.error_code, "WORKER_EXECUTION_ID_MISMATCH")
+        self.assertIsNone(current.result_url)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.NOT_STARTED)
 
     async def test_duplicate_active_worker_exits_zero_without_handler(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
