@@ -93,11 +93,26 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
 
     def test_start_request_rejects_non_https_and_long_idempotency_key(self) -> None:
         with self.assertRaises(ValidationError):
-            StartRequest(jobType="reindex", idempotencyKey="", inputRef="https://example.invalid/input.json")
+            StartRequest(
+                jobType="reindex",
+                idempotencyKey="",
+                inputRef="https://example.invalid/input.json",
+                callbackAlias="ops",
+            )
         with self.assertRaises(ValidationError):
-            StartRequest(jobType="reindex", idempotencyKey="x" * 201, inputRef="https://example.invalid/input.json")
+            StartRequest(
+                jobType="reindex",
+                idempotencyKey="x" * 201,
+                inputRef="https://example.invalid/input.json",
+                callbackAlias="ops",
+            )
         with self.assertRaises(ValidationError):
-            StartRequest(jobType="reindex", idempotencyKey="abc123", inputRef="http://example.invalid/input.json")
+            StartRequest(
+                jobType="reindex",
+                idempotencyKey="abc123",
+                inputRef="http://example.invalid/input.json",
+                callbackAlias="ops",
+            )
 
     def test_task_record_requires_callback_alias(self) -> None:
         with self.assertRaises(ValidationError):
