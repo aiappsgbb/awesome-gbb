@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import UUID
 from urllib.parse import parse_qsl, urlsplit
 
@@ -102,6 +102,10 @@ class CallbackPolicy(BaseModel):
     def _url_must_be_https(cls, value: HttpUrl) -> HttpUrl:
         if value.scheme != "https":
             raise ValueError("callback url must use https")
+        if value.username or value.password:
+            raise ValueError("callback url must not contain credentials")
+        if value.query:
+            raise ValueError("callback url must not contain query parameters")
         return value
 
     @model_validator(mode="after")
@@ -135,25 +139,43 @@ class Policy(BaseModel):
         except KeyError as exc:
             raise PublicError("INVALID_CALLBACK_ALIAS", "callback alias is not allowlisted") from exc
 
-    def validate_input(self, value: str | HttpUrl) -> str:
+    def validate_input(self, value: str | HttpUrl) -> HttpUrl:
         return self._validate_reference(value, self.input_hosts, "INVALID_INPUT_REFERENCE")
 
-    def validate_result(self, value: str | HttpUrl) -> str:
+    def validate_result(self, value: str | HttpUrl) -> HttpUrl:
         return self._validate_reference(value, self.result_hosts, "INVALID_RESULT_REFERENCE")
 
     @staticmethod
-    def _validate_reference(value: str | HttpUrl, allowed_hosts: set[str], code: str) -> str:
-        parsed = urlsplit(str(value))
-        hostname = (parsed.hostname or "").lower()
-        if parsed.scheme != "https" or not hostname:
+    def _validate_reference(value: str | HttpUrl, allowed_hosts: set[str], code: str) -> HttpUrl:
+        if isinstance(value, HttpUrl):
+            scheme = value.scheme
+            hostname = (value.host or "").lower()
+            username = value.username
+            password = value.password
+            query = value.query
+            raw_url = f"{value.scheme}://{value.host}{value.path}"
+            if value.port not in (None, 443):
+                raw_url = f"{value.scheme}://{value.host}:{value.port}{value.path}"
+            if value.query:
+                raw_url = f"{raw_url}?{value.query}"
+        else:
+            parsed = urlsplit(str(value))
+            scheme = parsed.scheme
+            hostname = (parsed.hostname or "").lower()
+            username = parsed.username
+            password = parsed.password
+            query = parsed.query
+            raw_url = parsed.geturl()
+
+        if scheme != "https" or not hostname:
             raise PublicError(code, "reference must use https")
-        if parsed.username or parsed.password:
+        if username or password:
             raise PublicError(code, "reference must not contain credentials")
         if hostname not in {host.lower() for host in allowed_hosts}:
             raise PublicError(code, "reference host is not allowlisted")
-        if any(_is_secret_query_key(name) for name, _ in parse_qsl(parsed.query, keep_blank_values=True)):
+        if any(_is_secret_query_key(name) for name, _ in parse_qsl(query, keep_blank_values=True)):
             raise PublicError(code, "reference query contains credentials")
-        return parsed.geturl()
+        return HttpUrl(raw_url)
 
 
 def _is_secret_query_key(name: str) -> bool:
@@ -321,6 +343,7 @@ def map_aca_state(
     aca_state: str,
     *,
     result_url: str | HttpUrl | None = None,
+    result_validator: Callable[[str], HttpUrl] | None = None,
     reconciliation_exhausted: bool = False,
 ) -> TaskRecord:
     if record.lifecycle_state in {
@@ -338,7 +361,21 @@ def map_aca_state(
         return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": _utcnow()})
 
     if aca_state == "Succeeded":
-        resolved_result_url = result_url if result_url is not None else record.result_url
+        resolved_result_url = record.result_url
+        if result_url is not None:
+            if result_validator is None:
+                raise PublicError("INVALID_RESULT_REFERENCE", "result reference must be validated before persistence")
+            if isinstance(result_url, HttpUrl):
+                if result_url.username or result_url.password:
+                    raise PublicError("INVALID_RESULT_REFERENCE", "reference must not contain credentials")
+                candidate_result_url = f"{result_url.scheme}://{result_url.host}{result_url.path}"
+                if result_url.port not in (None, 443):
+                    candidate_result_url = f"{result_url.scheme}://{result_url.host}:{result_url.port}{result_url.path}"
+                if result_url.query:
+                    candidate_result_url = f"{candidate_result_url}?{result_url.query}"
+            else:
+                candidate_result_url = result_url
+            resolved_result_url = result_validator(candidate_result_url)
         if resolved_result_url is None:
             if reconciliation_exhausted:
                 updates = {
@@ -354,8 +391,7 @@ def map_aca_state(
             "lifecycle_state": LifecycleState.SUCCEEDED,
             "updated_at": _utcnow(),
         }
-        if result_url is not None:
-            updates["result_url"] = result_url
+        updates["result_url"] = resolved_result_url
         if record.completed_at is None:
             updates["completed_at"] = _utcnow()
         return record.model_copy(update=updates)

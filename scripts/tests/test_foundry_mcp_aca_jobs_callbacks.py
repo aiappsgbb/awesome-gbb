@@ -16,7 +16,7 @@ from typing import Any
 from unittest import mock
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "skills" / "foundry-mcp-aca-jobs" / "references" / "python"
@@ -83,6 +83,26 @@ class _SecretClient:
     def get_secret(self, name: str) -> _Secret:
         self.calls.append(name)
         return _Secret(self.secret_value)
+
+
+class _FailingTokenCredential:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.scopes: list[str] = []
+
+    async def get_token(self, *scopes: str, **_: Any) -> _Token:
+        self.scopes.extend(scopes)
+        raise self.exc
+
+
+class _FailingSecretClient:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.calls: list[str] = []
+
+    def get_secret(self, name: str) -> _Secret:
+        self.calls.append(name)
+        raise self.exc
 
 
 class _LogCollector(logging.Handler):
@@ -174,6 +194,20 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
             self.CallbackPolicy(url="http://hooks.example.com/jobs", auth_mode="managed_identity", audience="api://mcp-callback")
 
         with self.assertRaises(ValidationError):
+            self.CallbackPolicy(
+                url="https://user:pass@hooks.example.com/jobs",
+                auth_mode="managed_identity",
+                audience="api://mcp-callback",
+            )
+
+        with self.assertRaises(ValidationError):
+            self.CallbackPolicy(
+                url="https://hooks.example.com/jobs?next=https://example.invalid",
+                auth_mode="managed_identity",
+                audience="api://mcp-callback",
+            )
+
+        with self.assertRaises(ValidationError):
             self.CallbackPolicy(url="https://hooks.example.com/jobs", auth_mode="managed_identity")
 
         with self.assertRaises(ValidationError):
@@ -253,7 +287,44 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
         request = requests[0]
         self.assertEqual(request.headers["Authorization"], "Bearer " + "test-token")
         self.assertEqual(json.loads(request.content), payload)
+        self.assertIn("callback attempt 1 to https://hooks.example.com/jobs", "\n".join(logs.output))
         self.assertNotIn("test-token", "\n".join(logs.output))
+
+    async def test_sender_logs_only_safe_host_and_path(self) -> None:
+        callbacks = self._callbacks_module()
+        payload = callbacks.callback_payload(
+            "task-1",
+            "execution-1",
+            "Succeeded",
+            "https://results.example.com/out/1",
+        )
+        policy = self.CallbackPolicy.model_construct(
+            url=HttpUrl("https://user:pass@hooks.example.com/jobs?next=https://example.invalid"),
+            auth_mode="managed_identity",
+            audience="api://mcp-callback",
+        )
+        credential = _TokenCredential("test-token")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, request=request)
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        collector = _LogCollector()
+        logger = logging.getLogger("app.callbacks")
+        logger.addHandler(collector)
+        logger.setLevel(logging.DEBUG)
+        try:
+            sender = callbacks.CallbackSender(client, credential)
+            await sender.send(policy, payload)
+        finally:
+            logger.removeHandler(collector)
+            await client.aclose()
+
+        joined = "\n".join(collector.messages)
+        self.assertIn("callback attempt 1 to https://hooks.example.com/jobs", joined)
+        self.assertNotIn("user:pass@", joined)
+        self.assertNotIn("?next=", joined)
 
     async def test_timeout_exception_retries_then_succeeds(self) -> None:
         callbacks = self._callbacks_module()
@@ -397,6 +468,84 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.headers["X-Callback-Key"], "kv-secret-456")
         self.assertEqual(json.loads(request.content), payload)
         self.assertNotIn("kv-secret-456", "\n".join(collector.messages))
+
+    async def test_managed_identity_auth_acquisition_retries_then_exhausts_without_secret_leak(self) -> None:
+        callbacks = self._callbacks_module()
+        payload = callbacks.callback_payload(
+            "task-1",
+            "execution-1",
+            "Succeeded",
+            "https://results.example.com/out/1",
+        )
+        credential = _FailingTokenCredential(RuntimeError("bearer token for test-token unavailable"))
+        attempts = 0
+        delays: list[float] = []
+        collector = _LogCollector()
+        logger = logging.getLogger("app.callbacks")
+        logger.addHandler(collector)
+        logger.setLevel(logging.DEBUG)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(200, request=request)
+
+        async def fake_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        sender = callbacks.CallbackSender(client, credential, sleep=fake_sleep, random=lambda: 0.0)
+        try:
+            with self.assertRaises(PublicError) as error:
+                await sender.send(self._make_policy().callback("ops"), payload)
+        finally:
+            logger.removeHandler(collector)
+            await client.aclose()
+
+        self.assertEqual(error.exception.code, "CALLBACK_DELIVERY_EXHAUSTED")
+        self.assertEqual(attempts, 0)
+        self.assertEqual(delays, [1.0, 2.0, 4.0, 8.0])
+        self.assertNotIn("test-token", str(error.exception))
+        self.assertNotIn("bearer token for test-token unavailable", str(error.exception))
+        self.assertNotIn("test-token", "\n".join(collector.messages))
+        self.assertNotIn("bearer token for test-token unavailable", "\n".join(collector.messages))
+
+    async def test_key_vault_auth_acquisition_retries_then_exhausts_without_secret_leak(self) -> None:
+        callbacks = self._callbacks_module()
+        payload = callbacks.callback_payload(
+            "task-1",
+            "execution-1",
+            "Succeeded",
+            "https://results.example.com/out/1",
+        )
+        secret_client = _FailingSecretClient(RuntimeError("kv-secret-456 unavailable"))
+        delays: list[float] = []
+        collector = _LogCollector()
+        logger = logging.getLogger("app.callbacks")
+        logger.addHandler(collector)
+        logger.setLevel(logging.DEBUG)
+
+        async def fake_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, request=request))
+        client = httpx.AsyncClient(transport=transport)
+        sender = callbacks.CallbackSender(client, _TokenCredential("unused"), secret_client=secret_client, sleep=fake_sleep, random=lambda: 0.0)
+        try:
+            with self.assertRaises(PublicError) as error:
+                await sender.send(self._make_policy(auth_mode="key_vault").callback("ops"), payload)
+        finally:
+            logger.removeHandler(collector)
+            await client.aclose()
+
+        self.assertEqual(error.exception.code, "CALLBACK_DELIVERY_EXHAUSTED")
+        self.assertEqual(secret_client.calls, ["callback-secret"] * 5)
+        self.assertEqual(delays, [1.0, 2.0, 4.0, 8.0])
+        self.assertNotIn("kv-secret-456", str(error.exception))
+        self.assertNotIn("kv-secret-456 unavailable", str(error.exception))
+        self.assertNotIn("kv-secret-456", "\n".join(collector.messages))
+        self.assertNotIn("kv-secret-456 unavailable", "\n".join(collector.messages))
 
     async def test_sender_retries_transient_failures_then_succeeds(self) -> None:
         callbacks = self._callbacks_module()

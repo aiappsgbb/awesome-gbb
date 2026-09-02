@@ -56,6 +56,7 @@ from app.models import (  # noqa: E402
     CallbackDeliveryState,
     LifecycleState,
     PublicError,
+    Policy,
     StartRequest,
     TaskRecord,
     map_aca_state,
@@ -284,15 +285,24 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
                 callback_alias="callback://jobs/import",
             )
 
+        policy = Policy(
+            input_hosts={"storage.example.com"},
+            result_hosts={"results.example.com"},
+        )
         self.assertEqual(map_aca_state(record, "Processing").lifecycle_state, LifecycleState.STARTING)
 
         claimed = record.model_copy(update={"worker_claimed_at": datetime(2026, 1, 2, 4, 0, 0, tzinfo=timezone.utc)})
         self.assertEqual(map_aca_state(claimed, "Processing").lifecycle_state, LifecycleState.RUNNING)
         self.assertEqual(map_aca_state(record, "Succeeded").lifecycle_state, LifecycleState.RUNNING)
 
-        completed = map_aca_state(record, "Succeeded", result_url="https://example.invalid/result.json")
+        completed = map_aca_state(
+            record,
+            "Succeeded",
+            result_url="https://results.example.com/result.json?version=1",
+            result_validator=policy.validate_result,
+        )
         self.assertEqual(completed.lifecycle_state, LifecycleState.SUCCEEDED)
-        self.assertEqual(str(completed.result_url), "https://example.invalid/result.json")
+        self.assertEqual(str(completed.result_url), "https://results.example.com/result.json?version=1")
 
         exhausted = map_aca_state(record, "Succeeded", reconciliation_exhausted=True)
         self.assertEqual(exhausted.lifecycle_state, LifecycleState.FAILED)
@@ -314,6 +324,39 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             map_aca_state(failed_terminal, "Unknown", reconciliation_exhausted=True).lifecycle_state,
             LifecycleState.FAILED,
         )
+
+    def test_map_aca_state_requires_result_validator_for_supplied_result_url(self) -> None:
+        with patch("app.models._utcnow", return_value=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)):
+            record = TaskRecord.new(
+                owner_scope="scope-a",
+                job_type="import",
+                idempotency_key_hash="hash-1",
+                request_fingerprint="fingerprint-1",
+                input_ref="https://example.invalid/input.json",
+                callback_alias="callback://jobs/import",
+            )
+
+        with self.assertRaises(PublicError) as error:
+            map_aca_state(record, "Succeeded", result_url="https://results.example.com/result.json")
+        self.assertEqual(error.exception.code, "INVALID_RESULT_REFERENCE")
+
+    def test_policy_validate_result_accepts_safe_urls_and_rejects_unsafe_ones(self) -> None:
+        policy = Policy(
+            input_hosts={"storage.example.com"},
+            result_hosts={"results.example.com"},
+        )
+
+        with self.assertRaises(PublicError):
+            policy.validate_result("javascript:alert(1)")
+
+        with self.assertRaises(PublicError):
+            policy.validate_result("https://evil.example.com/result.json")
+
+        with self.assertRaises(PublicError):
+            policy.validate_result("https://results.example.com/result.json?token=secret")
+
+        approved = policy.validate_result("https://results.example.com/result.json?version=1")
+        self.assertEqual(str(approved), "https://results.example.com/result.json?version=1")
 
     def test_map_aca_state_handles_failed_stopped_degraded_and_unknown(self) -> None:
         with patch("app.models._utcnow", return_value=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)):

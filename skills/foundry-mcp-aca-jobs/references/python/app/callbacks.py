@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import random as _random
+from urllib.parse import urlsplit
 from typing import Any, Callable, Protocol, runtime_checkable
 
 import httpx
+from pydantic import HttpUrl
 
 from .models import CallbackPolicy, PublicError
 
@@ -60,9 +62,23 @@ class CallbackSender:
         self._max_delay = max_delay
 
     async def send(self, policy: CallbackPolicy, payload: dict[str, str]) -> None:
-        headers = await self._headers_for(policy)
         for attempt in range(5):
-            logger.debug("callback attempt %s to %s", attempt + 1, policy.url)
+            logger.debug("callback attempt %s to %s", attempt + 1, _safe_callback_target(policy.url))
+            try:
+                headers = await self._headers_for(policy)
+            except PublicError:
+                raise
+            except Exception as exc:
+                logger.debug(
+                    "callback auth acquisition transient on attempt %s: %s",
+                    attempt + 1,
+                    exc.__class__.__name__,
+                )
+                if attempt == 4:
+                    raise PublicError("CALLBACK_DELIVERY_EXHAUSTED", "callback delivery exhausted") from exc
+                await self._sleep(self._delay_for_attempt(attempt))
+                continue
+
             try:
                 response = await self._client.post(
                     str(policy.url),
@@ -104,3 +120,14 @@ class CallbackSender:
 
     def _delay_for_attempt(self, attempt: int) -> float:
         return min(2**attempt, self._max_delay) + self._random()
+
+
+def _safe_callback_target(url: httpx.URL | str) -> str:
+    if isinstance(url, HttpUrl):
+        path = url.path or "/"
+        return f"{url.scheme}://{url.host}{path}"
+
+    parsed = urlsplit(str(url))
+    host = parsed.hostname or ""
+    path = parsed.path or "/"
+    return f"{parsed.scheme}://{host}{path}"
