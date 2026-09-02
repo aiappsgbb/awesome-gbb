@@ -1,8 +1,4 @@
-"""Canonical control-record models for foundry-mcp-aca-jobs.
-
-Source of truth for the prose example in `../../SKILL.md § Control record and
-lifecycle`.
-"""
+"""Canonical control-record models for foundry-mcp-aca-jobs."""
 
 from __future__ import annotations
 
@@ -24,6 +20,7 @@ __all__ = [
     "StartRequest",
     "TaskRecord",
     "map_aca_state",
+    "to_mcp_task",
 ]
 
 
@@ -40,19 +37,19 @@ def _to_utc_z(value: datetime | None) -> str | None:
 
 
 class LifecycleState(StrEnum):
-    Accepted = "Accepted"
-    Starting = "Starting"
-    Running = "Running"
-    Succeeded = "Succeeded"
-    Failed = "Failed"
-    Cancelled = "Cancelled"
+    ACCEPTED = "Accepted"
+    STARTING = "Starting"
+    RUNNING = "Running"
+    SUCCEEDED = "Succeeded"
+    FAILED = "Failed"
+    CANCELLED = "Cancelled"
 
 
 class CallbackDeliveryState(StrEnum):
-    NotStarted = "NotStarted"
-    Pending = "Pending"
-    Delivered = "Delivered"
-    Exhausted = "Exhausted"
+    NOT_STARTED = "NotStarted"
+    PENDING = "Pending"
+    DELIVERED = "Delivered"
+    EXHAUSTED = "Exhausted"
 
 
 class PublicError(Exception):
@@ -77,7 +74,7 @@ class StartRequest(BaseModel):
     job_type: str = Field(alias="jobType")
     idempotency_key: str = Field(alias="idempotencyKey", min_length=1, max_length=200)
     input_ref: HttpUrl = Field(alias="inputRef")
-    callback_alias: str | None = Field(default=None, alias="callbackAlias", min_length=1)
+    callback_alias: str = Field(alias="callbackAlias", min_length=1)
 
     @field_validator("input_ref")
     @classmethod
@@ -117,13 +114,13 @@ class TaskRecord(BaseModel):
     idempotency_key_hash: str = Field(alias="idempotencyKeyHash")
     request_fingerprint: str = Field(alias="requestFingerprint")
     input_ref: HttpUrl = Field(alias="inputRef")
-    callback_alias: str | None = Field(default=None, alias="callbackAlias")
-    lifecycle_state: LifecycleState = Field(default=LifecycleState.Accepted, alias="lifecycleState")
+    callback_alias: str = Field(alias="callbackAlias", min_length=1)
+    lifecycle_state: LifecycleState = Field(default=LifecycleState.ACCEPTED, alias="lifecycleState")
     aca_execution_id: str | None = Field(default=None, alias="acaExecutionId")
     result_url: HttpUrl | None = Field(default=None, alias="resultUrl")
     error_code: str | None = Field(default=None, alias="errorCode")
     callback_delivery_state: CallbackDeliveryState = Field(
-        default=CallbackDeliveryState.NotStarted,
+        default=CallbackDeliveryState.NOT_STARTED,
         alias="callbackDeliveryState",
     )
     callback_error_code: str | None = Field(default=None, alias="callbackErrorCode")
@@ -160,7 +157,7 @@ class TaskRecord(BaseModel):
         idempotency_key_hash: str,
         request_fingerprint: str,
         input_ref: str | HttpUrl,
-        callback_alias: str | None = None,
+        callback_alias: str,
     ) -> "TaskRecord":
         now = _utcnow()
         task_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{owner_scope}:{job_type}:{idempotency_key_hash}")
@@ -172,24 +169,24 @@ class TaskRecord(BaseModel):
             requestFingerprint=request_fingerprint,
             inputRef=input_ref,
             callbackAlias=callback_alias,
-            lifecycleState=LifecycleState.Accepted,
-            callbackDeliveryState=CallbackDeliveryState.NotStarted,
+            lifecycleState=LifecycleState.ACCEPTED,
+            callbackDeliveryState=CallbackDeliveryState.NOT_STARTED,
             createdAt=now,
             updatedAt=now,
         )
 
     def to_mcp_task(self) -> GetTaskResult:
         if self.lifecycle_state in {
-            LifecycleState.Accepted,
-            LifecycleState.Starting,
-            LifecycleState.Running,
+            LifecycleState.ACCEPTED,
+            LifecycleState.STARTING,
+            LifecycleState.RUNNING,
         }:
             return GetTaskResult(task_id=self.task_id, status="working")
 
-        if self.lifecycle_state is LifecycleState.Cancelled:
+        if self.lifecycle_state is LifecycleState.CANCELLED:
             return GetTaskResult(task_id=self.task_id, status="cancelled")
 
-        if self.lifecycle_state is LifecycleState.Succeeded:
+        if self.lifecycle_state is LifecycleState.SUCCEEDED:
             if self.result_url is None:
                 return GetTaskResult(task_id=self.task_id, status="working")
             result = {
@@ -198,7 +195,7 @@ class TaskRecord(BaseModel):
             }
             return GetTaskResult(task_id=self.task_id, status="completed", result=result)
 
-        if self.lifecycle_state is LifecycleState.Failed:
+        if self.lifecycle_state is LifecycleState.FAILED:
             result = {
                 "content": [{"type": "text", "text": self.error_code or "ACA_EXECUTION_FAILED"}],
                 "isError": True,
@@ -208,25 +205,39 @@ class TaskRecord(BaseModel):
         return GetTaskResult(task_id=self.task_id, status="working")
 
 
+def to_mcp_task(task: TaskRecord) -> GetTaskResult:
+    return task.to_mcp_task()
+
+
 def map_aca_state(
     record: TaskRecord,
     aca_state: str,
     *,
     result_url: str | HttpUrl | None = None,
+    reconciliation_exhausted: bool = False,
 ) -> TaskRecord:
     if aca_state == "Processing":
-        lifecycle_state = LifecycleState.Running if record.worker_claimed_at else LifecycleState.Starting
+        lifecycle_state = LifecycleState.RUNNING if record.worker_claimed_at else LifecycleState.STARTING
         return record.model_copy(update={"lifecycle_state": lifecycle_state, "updated_at": _utcnow()})
 
     if aca_state == "Running":
-        return record.model_copy(update={"lifecycle_state": LifecycleState.Running, "updated_at": _utcnow()})
+        return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": _utcnow()})
 
     if aca_state == "Succeeded":
         resolved_result_url = result_url if result_url is not None else record.result_url
         if resolved_result_url is None:
-            return record.model_copy(update={"lifecycle_state": LifecycleState.Running, "updated_at": _utcnow()})
+            if reconciliation_exhausted:
+                updates = {
+                    "lifecycle_state": LifecycleState.FAILED,
+                    "error_code": "RESULT_REFERENCE_MISSING",
+                    "updated_at": _utcnow(),
+                }
+                if record.completed_at is None:
+                    updates["completed_at"] = _utcnow()
+                return record.model_copy(update=updates)
+            return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": _utcnow()})
         updates: dict[str, Any] = {
-            "lifecycle_state": LifecycleState.Succeeded,
+            "lifecycle_state": LifecycleState.SUCCEEDED,
             "updated_at": _utcnow(),
         }
         if result_url is not None:
@@ -237,7 +248,7 @@ def map_aca_state(
 
     if aca_state == "Failed":
         updates = {
-            "lifecycle_state": LifecycleState.Failed,
+            "lifecycle_state": LifecycleState.FAILED,
             "error_code": record.error_code or "ACA_EXECUTION_FAILED",
             "updated_at": _utcnow(),
         }
@@ -248,14 +259,14 @@ def map_aca_state(
     if aca_state == "Stopped":
         if record.cancellation_requested_at is not None:
             updates = {
-                "lifecycle_state": LifecycleState.Cancelled,
+                "lifecycle_state": LifecycleState.CANCELLED,
                 "updated_at": _utcnow(),
             }
             if record.completed_at is None:
                 updates["completed_at"] = _utcnow()
             return record.model_copy(update=updates)
         updates = {
-            "lifecycle_state": LifecycleState.Failed,
+            "lifecycle_state": LifecycleState.FAILED,
             "error_code": record.error_code or "ACA_EXECUTION_STOPPED",
             "updated_at": _utcnow(),
         }
@@ -264,6 +275,15 @@ def map_aca_state(
         return record.model_copy(update=updates)
 
     if aca_state in {"Degraded", "Unknown"}:
+        if reconciliation_exhausted:
+            updates = {
+                "lifecycle_state": LifecycleState.FAILED,
+                "error_code": "ACA_EXECUTION_STATE_UNRESOLVED",
+                "updated_at": _utcnow(),
+            }
+            if record.completed_at is None:
+                updates["completed_at"] = _utcnow()
+            return record.model_copy(update=updates)
         return record
 
     raise ValueError(f"unsupported ACA state: {aca_state}")

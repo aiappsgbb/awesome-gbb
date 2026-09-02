@@ -1,8 +1,4 @@
-"""Canonical task-control package for foundry-mcp-aca-jobs.
-
-Source of truth for the prose example in `../../SKILL.md § Control record and
-lifecycle`.
-"""
+"""Canonical task-control package for foundry-mcp-aca-jobs."""
 
 from .models import (  # noqa: F401
     CallbackDeliveryState,
@@ -12,6 +8,7 @@ from .models import (  # noqa: F401
     StartRequest,
     TaskRecord,
     map_aca_state,
+    to_mcp_task,
 )
 
 __all__ = [
@@ -22,4 +19,5 @@ __all__ = [
     "StartRequest",
     "TaskRecord",
     "map_aca_state",
+    "to_mcp_task",
 ]
