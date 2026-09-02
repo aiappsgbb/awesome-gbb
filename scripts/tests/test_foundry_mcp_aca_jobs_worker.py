@@ -1139,6 +1139,64 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler.calls, [])
         self.assertEqual(output.write_calls, [])
 
+    async def test_succeeded_pending_recovery_uses_stored_execution_id_even_for_mismatched_loser(self) -> None:
+        callback_started = asyncio.Event()
+        release_callback = asyncio.Event()
+
+        class _BlockingCallbackSender(_FakeCallbackSender):
+            async def send(self, policy: Any, payload: dict[str, str]) -> None:
+                self.calls.append((policy, payload))
+                callback_started.set()
+                await release_callback.wait()
+
+        worker, store, handler, callback_sender, output = await self._build_worker(
+            callback_sender=_BlockingCallbackSender()
+        )
+        await self._seed_task(
+            store,
+            self.task.model_copy(
+                update={
+                    "lifecycle_state": self.LifecycleState.SUCCEEDED,
+                    "callback_delivery_state": self.CallbackDeliveryState.PENDING,
+                    "result_url": self.policy.validate_result("https://results.example.com/results/task/result.json"),
+                    "aca_execution_id": "execution-winner",
+                }
+            ),
+        )
+
+        loser = asyncio.create_task(
+            worker.run("scope-a", str(self.task.task_id), "execution-loser"),
+            name="callback-recovery-loser",
+        )
+        await asyncio.wait_for(callback_started.wait(), timeout=1)
+
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.PENDING)
+        self.assertIsNotNone(current.worker_claim_token)
+        self.assertEqual(current.aca_execution_id, "execution-winner")
+
+        duplicate = asyncio.create_task(
+            worker.run("scope-a", str(self.task.task_id), "execution-duplicate"),
+            name="callback-recovery-duplicate",
+        )
+        await asyncio.sleep(0)
+        release_callback.set()
+
+        self.assertEqual(await asyncio.wait_for(loser, timeout=2), 0)
+        self.assertEqual(await asyncio.wait_for(duplicate, timeout=2), 0)
+        self.assertEqual(len(callback_sender.calls), 1)
+        _, payload = callback_sender.calls[0]
+        self.assertEqual(payload["acaExecutionId"], "execution-winner")
+        self.assertEqual(payload["taskId"], str(self.task.task_id))
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(output.write_calls, [])
+        final = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(final.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(final.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertEqual(final.aca_execution_id, "execution-winner")
+        self.assertIsNone(final.worker_claim_token)
+        self.assertIsNone(final.worker_claim_expires_at)
+
     async def test_terminal_no_op(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
         terminal = self.task.model_copy(
