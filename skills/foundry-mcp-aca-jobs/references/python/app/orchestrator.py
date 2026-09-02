@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 from .aca_jobs import AcaExecution, AcaJobsClient
 from .control_store import ConcurrencyError, ControlStore
 from .models import LifecycleState, Policy, PublicError, StartRequest, TaskRecord, map_aca_state
+from .telemetry import Telemetry, telemetry as default_telemetry
 
 __all__ = ["Orchestrator"]
 
@@ -43,12 +44,14 @@ class Orchestrator:
         policy: Policy,
         clock: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[Any] | Any] | None = None,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._store = store
         self._jobs = jobs
         self._policy = policy
         self._clock = clock
         self._sleep = sleep or asyncio.sleep
+        self._telemetry = telemetry or default_telemetry
 
     @staticmethod
     def _canonical_request_fingerprint(request: StartRequest) -> str:
@@ -63,6 +66,28 @@ class Orchestrator:
     def _idempotency_key_hash(self, owner_scope: str, request: StartRequest) -> str:
         data = f"{owner_scope}\0{request.job_type}\0{request.idempotency_key}".encode("utf-8")
         return hashlib.sha256(data).hexdigest()
+
+    def _telemetry_attributes(
+        self,
+        task: TaskRecord,
+        operation: str,
+        *,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        azure_request_id: str | None = None,
+    ) -> dict[str, str]:
+        return self._telemetry.attributes(
+            {
+                "task.id": str(task.task_id),
+                "job.type": task.job_type,
+                "task.state": task.lifecycle_state.value,
+                "aca.execution.id": task.aca_execution_id,
+                "operation": operation,
+                "outcome": outcome,
+                "error.code": error_code,
+                "azure.request.id": azure_request_id,
+            }
+        )
 
     async def start(self, request: StartRequest, owner_scope: str) -> TaskRecord:
         job_policy = self._policy.job(request.job_type)
@@ -79,80 +104,123 @@ class Orchestrator:
             input_ref=validated_input,
             callback_alias=request.callback_alias,
         )
-        current = await self._store.create_or_get(task)
+        with self._telemetry.operation("orchestrator.start", self._telemetry_attributes(task, "orchestrator.start")):
+            with self._telemetry.operation("store.create_or_get", self._telemetry_attributes(task, "store.create_or_get")):
+                current = await self._store.create_or_get(task)
 
-        if (
-            current.lifecycle_state is not LifecycleState.ACCEPTED
-            or current.start_attempt_count > 0
-            or current.aca_execution_id is not None
-        ):
-            return current
+            if (
+                current.lifecycle_state is not LifecycleState.ACCEPTED
+                or current.start_attempt_count > 0
+                or current.aca_execution_id is not None
+            ):
+                self._telemetry.record(
+                    "duplicate",
+                    self._telemetry_attributes(current, "duplicate"),
+                    outcome="duplicate",
+                )
+                return current
 
-        claimed = await self._claim_start(current)
-        if claimed is None:
-            return await self._store.get(owner_scope, str(task.task_id))
+            claimed = await self._claim_start(current)
+            if claimed is None:
+                with self._telemetry.operation("store.get", self._telemetry_attributes(current, "store.get")):
+                    return await self._store.get(owner_scope, str(task.task_id))
 
-        try:
-            execution = await self._jobs.start(job_policy, owner_scope, str(task.task_id))
-        except PublicError as error:
-            if error.code == "ARM_START_REJECTED":
-                await self._persist_failed_start(claimed, error)
+            try:
+                with self._telemetry.operation("aca.start", self._telemetry_attributes(claimed, "aca.start")):
+                    execution = await self._jobs.start(job_policy, owner_scope, str(task.task_id))
+            except PublicError as error:
+                if error.code == "ARM_START_REJECTED":
+                    await self._persist_failed_start(claimed, error)
+                    raise
+                if error.code == "ARM_STATUS_UNAVAILABLE":
+                    return claimed
+                if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":
+                    self._telemetry.record(
+                        "digest_mismatch",
+                        self._telemetry_attributes(claimed, "digest_mismatch"),
+                        outcome="failure",
+                        error_code=error.code,
+                    )
                 raise
-            if error.code == "ARM_STATUS_UNAVAILABLE":
-                return claimed
-            raise
 
-        return await self._bind_execution(claimed, execution, job_policy)
+            return await self._bind_execution(claimed, execution, job_policy)
 
     async def get_status(self, owner_scope: str, task_id: str) -> TaskRecord:
-        task = await self._store.get(owner_scope, task_id)
-        if task.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
-            return task
-
-        if task.aca_execution_id is None:
-            if task.lifecycle_state is LifecycleState.STARTING:
-                return await self.reconcile(owner_scope, task_id)
-            return task
-
-        job_policy = self._policy.job(task.job_type)
-        try:
-            execution = await self._jobs.get(job_policy, task.aca_execution_id)
-        except PublicError as error:
-            if error.code == "ARM_STATUS_UNAVAILABLE":
+        with self._telemetry.operation("orchestrator.get", {"task.id": task_id, "operation": "orchestrator.get"}):
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                task = await self._store.get(owner_scope, task_id)
+            if task.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
                 return task
-            raise
 
-        return await self._bind_execution(task, execution, job_policy)
+            if task.aca_execution_id is None:
+                if task.lifecycle_state is LifecycleState.STARTING:
+                    return await self.reconcile(owner_scope, task_id)
+                return task
+
+            job_policy = self._policy.job(task.job_type)
+            try:
+                with self._telemetry.operation("aca.get", self._telemetry_attributes(task, "aca.get")):
+                    execution = await self._jobs.get(job_policy, task.aca_execution_id)
+            except PublicError as error:
+                if error.code == "ARM_STATUS_UNAVAILABLE":
+                    return task
+                if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":
+                    self._telemetry.record(
+                        "digest_mismatch",
+                        self._telemetry_attributes(task, "digest_mismatch"),
+                        outcome="failure",
+                        error_code=error.code,
+                    )
+                raise
+
+            return await self._bind_execution(task, execution, job_policy)
 
     async def cancel(self, owner_scope: str, task_id: str) -> TaskRecord:
-        task = await self._store.get(owner_scope, task_id)
-        if task.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
-            return task
+        with self._telemetry.operation("orchestrator.cancel", {"task.id": task_id, "operation": "orchestrator.cancel"}):
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                task = await self._store.get(owner_scope, task_id)
+            if task.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
+                return task
 
-        task = await self._mark_cancellation_requested(task)
-        if task.start_attempt_count == 0 and task.aca_execution_id is None:
-            return await self._persist_cancelled(task)
+            task = await self._mark_cancellation_requested(task)
+            self._telemetry.record(
+                "cancellation",
+                self._telemetry_attributes(task, "cancellation"),
+                outcome="requested",
+            )
+            if task.start_attempt_count == 0 and task.aca_execution_id is None:
+                return await self._persist_cancelled(task)
 
-        job_policy = self._policy.job(task.job_type)
-        if task.aca_execution_id is None:
-            task = await self._reconcile_without_restart(task, job_policy)
+            job_policy = self._policy.job(task.job_type)
             if task.aca_execution_id is None:
-                return task
+                task = await self._reconcile_without_restart(task, job_policy)
+                if task.aca_execution_id is None:
+                    return task
 
-        try:
-            await self._jobs.stop(job_policy, task.aca_execution_id)
-        except PublicError as error:
-            if error.code in {"ARM_STATUS_UNAVAILABLE", "ARM_STOP_REJECTED"}:
-                return task
-            raise
-        return task
+            try:
+                with self._telemetry.operation("aca.stop", self._telemetry_attributes(task, "aca.stop")):
+                    await self._jobs.stop(job_policy, task.aca_execution_id)
+            except PublicError as error:
+                if error.code in {"ARM_STATUS_UNAVAILABLE", "ARM_STOP_REJECTED"}:
+                    return task
+                if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":
+                    self._telemetry.record(
+                        "digest_mismatch",
+                        self._telemetry_attributes(task, "digest_mismatch"),
+                        outcome="failure",
+                        error_code=error.code,
+                    )
+                raise
+            return task
 
     async def reconcile(self, owner_scope: str, task_id: str) -> TaskRecord:
-        task = await self._store.get(owner_scope, task_id)
-        if task.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
-            return task
-        job_policy = self._policy.job(task.job_type)
-        return await self._reconcile(task, job_policy)
+        with self._telemetry.operation("orchestrator.reconcile", {"task.id": task_id, "operation": "orchestrator.reconcile"}):
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                task = await self._store.get(owner_scope, task_id)
+            if task.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
+                return task
+            job_policy = self._policy.job(task.job_type)
+            return await self._reconcile(task, job_policy)
 
     @staticmethod
     def _can_claim_start(current: TaskRecord, expected: TaskRecord) -> bool:
@@ -180,14 +248,22 @@ class Orchestrator:
             )
 
         for _ in range(3):
-            current = await self._store.get(task.owner_scope, str(task.task_id))
+            with self._telemetry.operation("store.get", self._telemetry_attributes(task, "store.get")):
+                current = await self._store.get(task.owner_scope, str(task.task_id))
             candidate = mutate(current)
             if candidate == current:
                 return None
             try:
-                return await self._store.replace(candidate, current.etag)
+                with self._telemetry.operation("store.replace", self._telemetry_attributes(candidate, "store.replace")):
+                    return await self._store.replace(candidate, current.etag)
             except ConcurrencyError:
-                current = await self._store.get(task.owner_scope, str(task.task_id))
+                self._telemetry.record(
+                    "etag_conflict",
+                    self._telemetry_attributes(current, "etag_conflict"),
+                    outcome="conflict",
+                )
+                with self._telemetry.operation("store.get", self._telemetry_attributes(task, "store.get")):
+                    current = await self._store.get(task.owner_scope, str(task.task_id))
                 if not self._can_claim_start(current, task):
                     return None
                 continue
@@ -308,18 +384,26 @@ class Orchestrator:
     ) -> TaskRecord:
         last_error: ConcurrencyError | None = None
         for _ in range(3):
-            current = await self._store.get(owner_scope, task_id)
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                current = await self._store.get(owner_scope, task_id)
             candidate = mutator(current)
             if candidate == current:
                 return current
             try:
-                return await self._store.replace(candidate, current.etag)
+                with self._telemetry.operation("store.replace", self._telemetry_attributes(candidate, "store.replace")):
+                    return await self._store.replace(candidate, current.etag)
             except ConcurrencyError as error:
                 last_error = error
+                self._telemetry.record(
+                    "etag_conflict",
+                    self._telemetry_attributes(current, "etag_conflict"),
+                    outcome="conflict",
+                )
                 continue
         if last_error is not None:
             raise last_error
-        return await self._store.get(owner_scope, task_id)
+        with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+            return await self._store.get(owner_scope, task_id)
 
     async def _reconcile_without_restart(self, task: TaskRecord, job_policy: Any) -> TaskRecord:
         matches = await self._matching_executions(task, job_policy)
@@ -365,15 +449,24 @@ class Orchestrator:
 
         claimed = await self._claim_start(task)
         if claimed is None:
-            return await self._store.get(task.owner_scope, str(task.task_id))
+            with self._telemetry.operation("store.get", {"task.id": str(task.task_id), "operation": "store.get"}):
+                return await self._store.get(task.owner_scope, str(task.task_id))
 
         try:
-            execution = await self._jobs.start(job_policy, task.owner_scope, str(task.task_id))
+            with self._telemetry.operation("aca.start", self._telemetry_attributes(claimed, "aca.start")):
+                execution = await self._jobs.start(job_policy, task.owner_scope, str(task.task_id))
         except PublicError as error:
             if error.code == "ARM_START_REJECTED":
                 return await self._persist_failed_start(claimed, error)
             if error.code == "ARM_STATUS_UNAVAILABLE":
                 return claimed
+            if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":
+                self._telemetry.record(
+                    "digest_mismatch",
+                    self._telemetry_attributes(claimed, "digest_mismatch"),
+                    outcome="failure",
+                    error_code=error.code,
+                )
             raise
         return await self._bind_execution(claimed, execution, job_policy)
 
@@ -401,7 +494,8 @@ class Orchestrator:
         return await self._persist_cancelled(task)
 
     async def _matching_executions(self, task: TaskRecord, job_policy: Any) -> list[AcaExecution]:
-        executions = await self._jobs.list(job_policy)
+        with self._telemetry.operation("aca.list", self._telemetry_attributes(task, "aca.list")):
+            executions = await self._jobs.list(job_policy)
         return [execution for execution in executions if execution.matches_task(str(task.task_id), task.start_attempted_at)]
 
     @staticmethod
@@ -417,8 +511,17 @@ class Orchestrator:
 
     async def _best_effort_stop(self, job_policy: Any, execution_id: str) -> None:
         try:
-            await self._jobs.stop(job_policy, execution_id)
+            with self._telemetry.operation("aca.stop", {"aca.execution.id": execution_id, "operation": "aca.stop"}):
+                await self._jobs.stop(job_policy, execution_id)
         except PublicError as error:
             if error.code in {"ARM_STATUS_UNAVAILABLE", "ARM_STOP_REJECTED", "TASK_NOT_FOUND"}:
+                return
+            if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":
+                self._telemetry.record(
+                    "digest_mismatch",
+                    {"aca.execution.id": execution_id, "operation": "digest_mismatch"},
+                    outcome="failure",
+                    error_code=error.code,
+                )
                 return
             raise

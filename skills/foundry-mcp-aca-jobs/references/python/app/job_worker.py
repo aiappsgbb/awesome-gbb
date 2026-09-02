@@ -28,6 +28,7 @@ from azure.storage.blob.aio import ContainerClient
 from .callbacks import CallbackSender, callback_payload
 from .control_store import ConcurrencyError, ControlStore, CosmosControlStore
 from .models import CallbackDeliveryState, CallbackPolicy, JobPolicy, LifecycleState, Policy, PublicError, TaskRecord
+from .telemetry import Telemetry, configure as configure_telemetry, telemetry as default_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,7 @@ class JobWorker:
         clock: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[Any] | Any] = asyncio.sleep,
         lease: timedelta = timedelta(minutes=5),
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._store = store
         self._output = output
@@ -147,51 +149,87 @@ class JobWorker:
         self._clock = clock
         self._sleep = sleep
         self._lease = lease
+        self._telemetry = telemetry or default_telemetry
+
+    def _telemetry_attributes(
+        self,
+        task: TaskRecord,
+        operation: str,
+        *,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        azure_request_id: str | None = None,
+    ) -> dict[str, str]:
+        return self._telemetry.attributes(
+            {
+                "task.id": str(task.task_id),
+                "job.type": task.job_type,
+                "task.state": task.lifecycle_state.value,
+                "aca.execution.id": task.aca_execution_id,
+                "operation": operation,
+                "outcome": outcome,
+                "error.code": error_code,
+                "azure.request.id": azure_request_id,
+            }
+        )
 
     async def run(self, owner_scope: str, task_id: str, execution_id: str | None = None) -> int:
-        current = await self._store.get(owner_scope, task_id)
-        if current.lifecycle_state is LifecycleState.SUCCEEDED:
-            if current.callback_delivery_state is CallbackDeliveryState.PENDING:
-                await self._deliver_callback_if_ready(owner_scope, task_id)
-            return 0
-        if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
-            return 0
-        if current.lifecycle_state in TERMINAL_STATES:
-            return 0
-
-        now = self._clock()
-        if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
-            return 0
-
-        claimed = await self._claim(current, now, execution_id)
-        if claimed is None:
-            return 0
-
-        result_path = (
-            self._output.result_path(str(claimed.task_id))
-            if hasattr(self._output, "result_path")
-            else f"results/{claimed.task_id}/result.json"
-        )
-        if await self._output.exists(result_path):
-            result_url = await self._output.get(result_path)
-        else:
-            try:
-                result = await _await_if_needed(self._handler(str(claimed.input_ref), str(claimed.task_id)))
-            except PublicError as error:
-                await self._persist_failure(claimed, error.code)
+        with self._telemetry.operation("worker.run", {"task.id": task_id, "operation": "worker.run"}):
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                current = await self._store.get(owner_scope, task_id)
+            if current.lifecycle_state is LifecycleState.SUCCEEDED:
+                if current.callback_delivery_state is CallbackDeliveryState.PENDING:
+                    await self._deliver_callback_if_ready(owner_scope, task_id)
                 return 0
-            except Exception:
-                await self._persist_failure(claimed, "WORKER_EXECUTION_FAILED")
+            if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
+                self._telemetry.record(
+                    "digest_mismatch",
+                    self._telemetry_attributes(current, "digest_mismatch"),
+                    outcome="failure",
+                    error_code="DEPLOYMENT_CONTRACT_MISMATCH",
+                )
+                return 0
+            if current.lifecycle_state in TERMINAL_STATES:
                 return 0
 
-            try:
-                result_url = await self._output.write_json(result_path, result, overwrite=False)
-            except ResourceExistsError:
-                result_url = await self._output.get(result_path)
+            now = self._clock()
+            if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
+                return 0
 
-        succeeded = await self._persist_succeeded(claimed, result_url)
-        await self._deliver_callback_if_ready(succeeded.owner_scope, str(succeeded.task_id))
-        return 0
+            with self._telemetry.operation("worker.claim", self._telemetry_attributes(current, "worker.claim")):
+                claimed = await self._claim(current, now, execution_id)
+            if claimed is None:
+                return 0
+
+            result_path = (
+                self._output.result_path(str(claimed.task_id))
+                if hasattr(self._output, "result_path")
+                else f"results/{claimed.task_id}/result.json"
+            )
+            if await self._output.exists(result_path):
+                with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
+                    result_url = await self._output.get(result_path)
+            else:
+                try:
+                    with self._telemetry.operation("worker.business", self._telemetry_attributes(claimed, "worker.business")):
+                        result = await _await_if_needed(self._handler(str(claimed.input_ref), str(claimed.task_id)))
+                except PublicError as error:
+                    await self._persist_failure(claimed, error.code)
+                    return 0
+                except Exception:
+                    await self._persist_failure(claimed, "WORKER_EXECUTION_FAILED")
+                    return 0
+
+                try:
+                    with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
+                        result_url = await self._output.write_json(result_path, result, overwrite=False)
+                except ResourceExistsError:
+                    with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
+                        result_url = await self._output.get(result_path)
+
+            succeeded = await self._persist_succeeded(claimed, result_url)
+            await self._deliver_callback_if_ready(succeeded.owner_scope, str(succeeded.task_id))
+            return 0
 
     async def _claim(self, current: TaskRecord, now: datetime, execution_id: str | None = None) -> TaskRecord | None:
         token = str(uuid4())
@@ -208,8 +246,14 @@ class JobWorker:
             next_task = next_task.model_copy(update={"aca_execution_id": execution_id})
         for _ in range(3):
             try:
-                return await self._store.replace(next_task, current.etag)
+                with self._telemetry.operation("store.replace", self._telemetry_attributes(next_task, "store.replace")):
+                    return await self._store.replace(next_task, current.etag)
             except ConcurrencyError:
+                self._telemetry.record(
+                    "etag_conflict",
+                    self._telemetry_attributes(current, "etag_conflict"),
+                    outcome="conflict",
+                )
                 current = await self._store.get(current.owner_scope, str(current.task_id))
                 if current.lifecycle_state in TERMINAL_STATES:
                     return None
@@ -238,18 +282,26 @@ class JobWorker:
     ) -> TaskRecord:
         last_error: ConcurrencyError | None = None
         for _ in range(3):
-            current = await self._store.get(owner_scope, task_id)
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                current = await self._store.get(owner_scope, task_id)
             candidate = mutator(current)
             if candidate == current:
                 return current
             try:
-                return await self._store.replace(candidate, current.etag)
+                with self._telemetry.operation("store.replace", self._telemetry_attributes(candidate, "store.replace")):
+                    return await self._store.replace(candidate, current.etag)
             except ConcurrencyError as error:
                 last_error = error
+                self._telemetry.record(
+                    "etag_conflict",
+                    self._telemetry_attributes(current, "etag_conflict"),
+                    outcome="conflict",
+                )
                 continue
         if last_error is not None:
             raise last_error
-        return await self._store.get(owner_scope, task_id)
+        with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+            return await self._store.get(owner_scope, task_id)
 
     async def _persist_failure(self, task: TaskRecord, error_code: str) -> TaskRecord:
         now = self._clock()
@@ -365,10 +417,18 @@ class JobWorker:
             result_url,
         )
         try:
-            await self._callback_sender.send(callback_policy, payload)
+            with self._telemetry.operation("worker.callback", self._telemetry_attributes(task, "worker.callback")):
+                await self._callback_sender.send(callback_policy, payload)
         except PublicError as error:
             if error.code not in {"CALLBACK_DELIVERY_EXHAUSTED", "CALLBACK_DELIVERY_REJECTED"}:
                 raise
+            if error.code == "CALLBACK_DELIVERY_EXHAUSTED":
+                self._telemetry.record(
+                    "callback_exhaustion",
+                    self._telemetry_attributes(task, "callback_exhaustion"),
+                    outcome="exhausted",
+                    error_code=error.code,
+                )
             await self._persist_callback_state(task, CallbackDeliveryState.EXHAUSTED, error.code)
             return
         await self._persist_callback_state(task, CallbackDeliveryState.DELIVERED, None)
@@ -383,13 +443,15 @@ class JobWorker:
             if attempt == 5:
                 break
             await _await_if_needed(self._sleep(5.0))
-            latest = await self._store.get(task.owner_scope, str(task.task_id))
+            with self._telemetry.operation("store.get", self._telemetry_attributes(task, "store.get")):
+                latest = await self._store.get(task.owner_scope, str(task.task_id))
         if latest.callback_delivery_state is CallbackDeliveryState.PENDING and latest.aca_execution_id is not None:
             return latest
         return None
 
     async def _deliver_callback_if_ready(self, owner_scope: str, task_id: str) -> None:
-        latest = await self._store.get(owner_scope, task_id)
+        with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+            latest = await self._store.get(owner_scope, task_id)
         latest = await self._await_callback_binding(latest)
         if latest is None or latest.result_url is None:
             return
@@ -491,6 +553,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 async def _run_from_env(owner_scope: str, task_id: str) -> int:
+    configure_telemetry()
     config = load_runtime_config_from_env()
     client_id = os.environ["AZURE_CLIENT_ID"]
     execution_id = os.environ["CONTAINER_APP_JOB_EXECUTION_NAME"]
