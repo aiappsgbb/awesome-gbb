@@ -7,18 +7,49 @@ discovery.
 
 from __future__ import annotations
 
+import types
 import sys
 import unittest
 import uuid
+from typing import Any, Literal
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "skills" / "foundry-mcp-aca-jobs" / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
+
+FASTMCP_TASKS_STUBBED = False
+try:  # pragma: no cover - exercised only when the real dependency exists locally.
+    from fastmcp_tasks.models import GetTaskResult  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - local test shim only.
+    FASTMCP_TASKS_STUBBED = True
+
+    class _StubGetTaskResult(BaseModel):
+        model_config = ConfigDict(populate_by_name=True, extra="forbid", strict=True)
+
+        task_id: str = Field(serialization_alias="taskId", min_length=1)
+        status: Literal["working", "input_required", "completed", "failed", "cancelled"]
+        created_at: str = Field(serialization_alias="createdAt", min_length=1)
+        last_updated_at: str = Field(serialization_alias="lastUpdatedAt", min_length=1)
+        ttl_ms: int | None = Field(default=None, serialization_alias="ttlMs")
+        poll_interval_ms: int | None = Field(default=None, serialization_alias="pollIntervalMs")
+        result: dict[str, Any] | None = None
+        error: dict[str, Any] | None = None
+        status_message: str | None = Field(default=None, serialization_alias="statusMessage")
+        result_type: Literal["complete"] = Field(default="complete", serialization_alias="resultType")
+
+    fastmcp_tasks = types.ModuleType("fastmcp_tasks")
+    fastmcp_tasks.__path__ = []  # type: ignore[attr-defined]
+    fastmcp_tasks_models = types.ModuleType("fastmcp_tasks.models")
+    fastmcp_tasks_models.GetTaskResult = _StubGetTaskResult
+    fastmcp_tasks.models = fastmcp_tasks_models
+    sys.modules["fastmcp_tasks"] = fastmcp_tasks
+    sys.modules["fastmcp_tasks.models"] = fastmcp_tasks_models
+    from fastmcp_tasks.models import GetTaskResult  # type: ignore  # noqa: E402
 
 from app import to_mcp_task  # noqa: E402
 from app.models import (  # noqa: E402
@@ -32,6 +63,30 @@ from app.models import (  # noqa: E402
 
 
 class FoundryMcpAcaJobsModelTests(unittest.TestCase):
+    def _assert_task_result_wire(
+        self,
+        task_result: GetTaskResult,
+        *,
+        task_id: str,
+        status: str,
+        created_at: str,
+        last_updated_at: str,
+        result: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        status_message: str | None = None,
+    ) -> None:
+        dumped = task_result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        self.assertEqual(dumped["taskId"], task_id)
+        self.assertEqual(dumped["status"], status)
+        self.assertEqual(dumped["createdAt"], created_at)
+        self.assertEqual(dumped["lastUpdatedAt"], last_updated_at)
+        self.assertEqual(dumped["ttlMs"], 86400000)
+        self.assertEqual(dumped["pollIntervalMs"], 2000)
+        self.assertEqual(dumped["resultType"], "complete")
+        self.assertEqual(dumped.get("result"), result)
+        self.assertEqual(dumped.get("error"), error)
+        self.assertEqual(dumped.get("statusMessage"), status_message)
+
     def test_enum_contracts(self) -> None:
         self.assertEqual([state.name for state in LifecycleState], [
             "ACCEPTED",
@@ -67,6 +122,29 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         self.assertEqual(error.code, "ACA_EXECUTION_FAILED")
         self.assertEqual(error.safe_message, "the task failed")
         self.assertEqual(str(error), "the task failed")
+
+    def test_stub_get_task_result_rejects_uuid_and_missing_fields(self) -> None:
+        if not FASTMCP_TASKS_STUBBED:
+            self.skipTest("real fastmcp_tasks is available")
+
+        with self.assertRaises(ValidationError):
+            GetTaskResult(
+                task_id=uuid.uuid4(),
+                status="working",
+                created_at="2026-01-02T03:04:05Z",
+                last_updated_at="2026-01-02T03:04:05Z",
+                ttl_ms=86400000,
+                poll_interval_ms=2000,
+            )
+
+        with self.assertRaises(ValidationError):
+            GetTaskResult(
+                status="working",
+                created_at="2026-01-02T03:04:05Z",
+                last_updated_at="2026-01-02T03:04:05Z",
+                ttl_ms=86400000,
+                poll_interval_ms=2000,
+            )
 
     def test_start_request_supports_aliases_and_https_only_input_ref(self) -> None:
         request = StartRequest(
@@ -299,8 +377,6 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         )
 
     def test_to_mcp_task_semantics(self) -> None:
-        from fastmcp_tasks.models import GetTaskResult  # noqa: E402
-
         with patch("app.models._utcnow", return_value=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)):
             record = TaskRecord.new(
                 owner_scope="scope-a",
@@ -314,7 +390,13 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         working = record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING})
         working_task = to_mcp_task(working)
         self.assertIsInstance(working_task, GetTaskResult)
-        self.assertEqual(working_task.status, "working")
+        self._assert_task_result_wire(
+            working_task,
+            task_id=str(record.task_id),
+            status="working",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+        )
 
         succeeded = record.model_copy(
             update={
@@ -323,17 +405,45 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             }
         )
         succeeded_task = to_mcp_task(succeeded)
-        self.assertEqual(succeeded_task.status, "completed")
-        self.assertEqual(succeeded_task.result["content"][0]["text"], "https://example.invalid/result.json")
+        self._assert_task_result_wire(
+            succeeded_task,
+            task_id=str(record.task_id),
+            status="completed",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+            result={
+                "content": [{"type": "text", "text": "https://example.invalid/result.json"}],
+                "structuredContent": {
+                    "status": "Succeeded",
+                    "resultUrl": "https://example.invalid/result.json",
+                },
+                "isError": False,
+            },
+        )
         self.assertEqual(
             succeeded_task.result["structuredContent"],
             {"status": "Succeeded", "resultUrl": "https://example.invalid/result.json"},
         )
-        self.assertFalse(succeeded_task.result["isError"])
+
+        succeeded_without_result = record.model_copy(update={"lifecycle_state": LifecycleState.SUCCEEDED, "result_url": None})
+        succeeded_without_result_task = to_mcp_task(succeeded_without_result)
+        self._assert_task_result_wire(
+            succeeded_without_result_task,
+            task_id=str(record.task_id),
+            status="working",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+        )
 
         cancelled = record.model_copy(update={"lifecycle_state": LifecycleState.CANCELLED})
         cancelled_task = to_mcp_task(cancelled)
-        self.assertEqual(cancelled_task.status, "cancelled")
+        self._assert_task_result_wire(
+            cancelled_task,
+            task_id=str(record.task_id),
+            status="cancelled",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+        )
 
         business_failed = record.model_copy(
             update={
@@ -342,9 +452,17 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             }
         )
         business_failed_task = to_mcp_task(business_failed)
-        self.assertEqual(business_failed_task.status, "completed")
-        self.assertEqual(business_failed_task.result["content"][0]["text"], "ACA_EXECUTION_FAILED")
-        self.assertTrue(business_failed_task.result["isError"])
+        self._assert_task_result_wire(
+            business_failed_task,
+            task_id=str(record.task_id),
+            status="completed",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+            result={
+                "content": [{"type": "text", "text": "ACA_EXECUTION_FAILED"}],
+                "isError": True,
+            },
+        )
         self.assertNotEqual(getattr(business_failed_task, "status", None), "failed")
 
 

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import sys
-import types
 import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from fastmcp_tasks.models import GetTaskResult
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator
 
 __all__ = [
@@ -84,27 +83,6 @@ class StartRequest(BaseModel):
         return value
 
 
-class _GetTaskResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    task_id: UUID | None = None
-    status: str
-    result: dict[str, Any] | None = None
-    error: dict[str, Any] | str | None = None
-    status_message: str | None = None
-
-
-try:  # pragma: no cover - exercised implicitly when the real dependency exists.
-    from fastmcp_tasks.models import GetTaskResult  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - local fallback only.
-    package = sys.modules.setdefault("fastmcp_tasks", types.ModuleType("fastmcp_tasks"))
-    _module = types.ModuleType("fastmcp_tasks.models")
-    _module.GetTaskResult = _GetTaskResult
-    package.models = _module
-    sys.modules["fastmcp_tasks.models"] = _module
-    GetTaskResult = _module.GetTaskResult
-
-
 class TaskRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -176,19 +154,26 @@ class TaskRecord(BaseModel):
         )
 
     def to_mcp_task(self) -> GetTaskResult:
+        task_fields = {
+            "task_id": str(self.task_id),
+            "created_at": _to_utc_z(self.created_at),
+            "last_updated_at": _to_utc_z(self.updated_at),
+            "ttl_ms": 86400000,
+            "poll_interval_ms": 2000,
+        }
         if self.lifecycle_state in {
             LifecycleState.ACCEPTED,
             LifecycleState.STARTING,
             LifecycleState.RUNNING,
         }:
-            return GetTaskResult(task_id=self.task_id, status="working")
+            return GetTaskResult(status="working", **task_fields)
 
         if self.lifecycle_state is LifecycleState.CANCELLED:
-            return GetTaskResult(task_id=self.task_id, status="cancelled")
+            return GetTaskResult(status="cancelled", **task_fields)
 
         if self.lifecycle_state is LifecycleState.SUCCEEDED:
             if self.result_url is None:
-                return GetTaskResult(task_id=self.task_id, status="working")
+                return GetTaskResult(status="working", **task_fields)
             result = {
                 "content": [{"type": "text", "text": str(self.result_url)}],
                 "structuredContent": {
@@ -197,16 +182,16 @@ class TaskRecord(BaseModel):
                 },
                 "isError": False,
             }
-            return GetTaskResult(task_id=self.task_id, status="completed", result=result)
+            return GetTaskResult(status="completed", result=result, **task_fields)
 
         if self.lifecycle_state is LifecycleState.FAILED:
             result = {
                 "content": [{"type": "text", "text": self.error_code or "ACA_EXECUTION_FAILED"}],
                 "isError": True,
             }
-            return GetTaskResult(task_id=self.task_id, status="completed", result=result)
+            return GetTaskResult(status="completed", result=result, **task_fields)
 
-        return GetTaskResult(task_id=self.task_id, status="working")
+        return GetTaskResult(status="working", **task_fields)
 
 
 def to_mcp_task(task: TaskRecord) -> GetTaskResult:
