@@ -82,6 +82,10 @@ def _safe_idempotency_reused() -> PublicError:
     return PublicError("IDEMPOTENCY_KEY_REUSED", "idempotency key reused")
 
 
+def _safe_control_store_unavailable() -> PublicError:
+    return PublicError("CONTROL_STORE_UNAVAILABLE", "control store unavailable")
+
+
 def _status_code(error: BaseException) -> int | None:
     return getattr(error, "status_code", None)
 
@@ -163,9 +167,7 @@ class CosmosControlStore:
                 if existing.request_fingerprint != validated.request_fingerprint:
                     raise _safe_idempotency_reused()
                 return _copy_task(existing)
-            if _status_code(exc) == 404:
-                raise _safe_not_found() from exc
-            raise _safe_not_found() from exc
+            raise _safe_control_store_unavailable() from exc
 
         return _copy_task(TaskRecord.model_validate(created if created is not None else payload))
 
@@ -175,7 +177,7 @@ class CosmosControlStore:
         except Exception as exc:  # pragma: no cover - exercised through status-translation tests.
             if _status_code(exc) == 404:
                 raise _safe_not_found() from exc
-            raise _safe_not_found() from exc
+            raise _safe_control_store_unavailable() from exc
         return _copy_task(TaskRecord.model_validate(current))
 
     async def replace(self, task: TaskRecord, etag: str | None) -> TaskRecord:
@@ -197,9 +199,7 @@ class CosmosControlStore:
         except Exception as exc:  # pragma: no cover - exercised through status-translation tests.
             if _status_code(exc) == 412:
                 raise ConcurrencyError("task etag no longer matches") from exc
-            if _status_code(exc) == 404:
-                raise _safe_not_found() from exc
-            raise _safe_not_found() from exc
+            raise _safe_control_store_unavailable() from exc
 
         return _copy_task(TaskRecord.model_validate(updated if updated is not None else body))
 
@@ -207,7 +207,5 @@ class CosmosControlStore:
         try:
             item = await self._container.read_item(item=task_id, partition_key=owner_scope)
         except Exception as exc:
-            if _status_code(exc) == 404:
-                raise _safe_not_found() from exc
-            raise _safe_not_found() from exc
+            raise _safe_control_store_unavailable() from exc
         return TaskRecord.model_validate(item)
