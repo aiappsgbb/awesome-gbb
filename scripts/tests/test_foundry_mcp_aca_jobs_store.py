@@ -239,68 +239,65 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConcurrencyError):
             await store.replace(callback_update, "9")
 
-    async def test_cosmos_unexpected_service_errors_become_control_store_unavailable(self) -> None:
+    async def test_cosmos_replace_exact_status_translation_and_unavailable_fallbacks(self) -> None:
         container = _ContainerProxy()
         store = CosmosControlStore(container)
-        create_body = self._task_dump(self.task)
         current = self.task.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "etag": "9"})
         replace_body = self._task_dump(current)
 
-        container.create_item.side_effect = _CosmosError(404, "missing container")
-        with self.assertRaises(PublicError) as error:
-            await store.create_or_get(self.task)
-        self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
-        self.assertEqual(error.exception.safe_message, "control store unavailable")
-        self.assertIsInstance(error.exception.__cause__, _CosmosError)
-        self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 404)
-        self.assertEqual(container.create_item.await_args.args[0], create_body)
-
-        container.create_item.reset_mock()
-        container.create_item.side_effect = _CosmosError(429, "too many requests")
-        with self.assertRaises(PublicError) as error:
-            await store.create_or_get(self.task)
-        self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
-        self.assertEqual(error.exception.safe_message, "control store unavailable")
-        self.assertEqual(str(error.exception), "control store unavailable")
-        self.assertIsInstance(error.exception.__cause__, _CosmosError)
-        self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 429)
-        self.assertEqual(container.create_item.await_args.args[0], create_body)
-
         container.read_item.reset_mock()
-        container.read_item.side_effect = _CosmosError(500, "server exploded")
-        with self.assertRaises(PublicError) as error:
-            await store.get(self.task.owner_scope, str(self.task.task_id))
-        self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
-        self.assertEqual(error.exception.safe_message, "control store unavailable")
-        self.assertIsInstance(error.exception.__cause__, _CosmosError)
-        self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 500)
-
-        container.read_item.reset_mock()
-        container.read_item.return_value = self._task_dump(current)
         container.read_item.side_effect = _CosmosError(404, "missing")
         with self.assertRaises(PublicError) as error:
             await store.replace(current, "9")
-        self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
-        self.assertEqual(error.exception.safe_message, "control store unavailable")
+        self.assertEqual(error.exception.code, "TASK_NOT_FOUND")
+        self.assertEqual(error.exception.safe_message, "task not found")
         self.assertIsInstance(error.exception.__cause__, _CosmosError)
         self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 404)
+        self.assertEqual(container.read_item.await_args.kwargs, {"item": str(self.task.task_id), "partition_key": self.task.owner_scope})
+        container.replace_item.assert_not_awaited()
 
         container.read_item.reset_mock()
         container.read_item.side_effect = None
         container.read_item.return_value = self._task_dump(current)
-        container.replace_item.side_effect = _CosmosError(500, "server exploded")
+        container.replace_item.side_effect = _CosmosError(404, "missing")
         with self.assertRaises(PublicError) as error:
             await store.replace(current, "9")
-        self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
-        self.assertEqual(error.exception.safe_message, "control store unavailable")
+        self.assertEqual(error.exception.code, "TASK_NOT_FOUND")
+        self.assertEqual(error.exception.safe_message, "task not found")
         self.assertIsInstance(error.exception.__cause__, _CosmosError)
-        self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 500)
-        self.assertEqual(container.replace_item.await_args.kwargs, {
-            "item": str(self.task.task_id),
-            "body": replace_body,
-            "etag": "9",
-            "match_condition": MatchConditions.IfNotModified,
-        })
+        self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 404)
+        container.replace_item.assert_awaited_once_with(
+            item=str(self.task.task_id),
+            body=replace_body,
+            etag="9",
+            match_condition=MatchConditions.IfNotModified,
+        )
+
+        container.read_item.reset_mock()
+        container.read_item.side_effect = None
+        container.read_item.return_value = self._task_dump(current)
+        container.replace_item.side_effect = _CosmosError(412, "precondition failed")
+        with self.assertRaises(ConcurrencyError):
+            await store.replace(current, "9")
+
+        for status_code in (429, 500):
+            container.read_item.reset_mock()
+            container.read_item.side_effect = None
+            container.read_item.return_value = self._task_dump(current)
+            container.replace_item.reset_mock()
+            container.replace_item.side_effect = _CosmosError(status_code, "server exploded")
+            with self.assertRaises(PublicError) as error:
+                await store.replace(current, "9")
+            self.assertEqual(error.exception.code, "CONTROL_STORE_UNAVAILABLE")
+            self.assertEqual(error.exception.safe_message, "control store unavailable")
+            self.assertIsInstance(error.exception.__cause__, _CosmosError)
+            self.assertEqual(getattr(error.exception.__cause__, "status_code", None), status_code)
+            container.replace_item.assert_awaited_once_with(
+                item=str(self.task.task_id),
+                body=replace_body,
+                etag="9",
+                match_condition=MatchConditions.IfNotModified,
+            )
 
 
 if __name__ == "__main__":

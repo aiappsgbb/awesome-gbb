@@ -197,6 +197,8 @@ class CosmosControlStore:
                 match_condition=MatchConditions.IfNotModified,
             )
         except Exception as exc:  # pragma: no cover - exercised through status-translation tests.
+            if _status_code(exc) == 404:
+                raise _safe_not_found() from exc
             if _status_code(exc) == 412:
                 raise ConcurrencyError("task etag no longer matches") from exc
             raise _safe_control_store_unavailable() from exc
@@ -207,5 +209,7 @@ class CosmosControlStore:
         try:
             item = await self._container.read_item(item=task_id, partition_key=owner_scope)
         except Exception as exc:
+            if _status_code(exc) == 404:
+                raise _safe_not_found() from exc
             raise _safe_control_store_unavailable() from exc
         return TaskRecord.model_validate(item)
