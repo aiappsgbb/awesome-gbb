@@ -230,7 +230,7 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
             "Succeeded",
             "https://results.example.com/out/1",
         )
-        credential = _TokenCredential("mi-token-123")
+        credential = _TokenCredential("test-token")
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -239,23 +239,119 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.MockTransport(handler)
         client = httpx.AsyncClient(transport=transport)
-        collector = _LogCollector()
         logger = logging.getLogger("app.callbacks")
-        logger.addHandler(collector)
         logger.setLevel(logging.DEBUG)
         try:
-            sender = callbacks.CallbackSender(client, credential)
-            await sender.send(self._make_policy().callback("ops"), payload)
+            with self.assertLogs("app.callbacks", level="DEBUG") as logs:
+                sender = callbacks.CallbackSender(client, credential)
+                await sender.send(self._make_policy().callback("ops"), payload)
         finally:
-            logger.removeHandler(collector)
             await client.aclose()
 
         self.assertEqual(credential.scopes, ["api://mcp-callback/.default"])
         self.assertEqual(len(requests), 1)
         request = requests[0]
-        self.assertEqual(request.headers["Authorization"], "Bearer mi-token-123")
+        self.assertEqual(request.headers["Authorization"], "Bearer " + "test-token")
         self.assertEqual(json.loads(request.content), payload)
-        self.assertNotIn("mi-token-123", "\n".join(collector.messages))
+        self.assertNotIn("test-token", "\n".join(logs.output))
+
+    async def test_timeout_exception_retries_then_succeeds(self) -> None:
+        callbacks = self._callbacks_module()
+        payload = callbacks.callback_payload(
+            "task-1",
+            "execution-1",
+            "Succeeded",
+            "https://results.example.com/out/1",
+        )
+        credential = _TokenCredential("test-token")
+        attempts = 0
+        delays: list[float] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.TimeoutException("timeout", request=request)
+            return httpx.Response(200, request=request)
+
+        async def fake_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        sender = callbacks.CallbackSender(client, credential, sleep=fake_sleep, random=lambda: 0.0)
+        try:
+            await sender.send(self._make_policy().callback("ops"), payload)
+        finally:
+            await client.aclose()
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(delays, [1.0])
+
+    async def test_request_error_retries_until_exhausted(self) -> None:
+        callbacks = self._callbacks_module()
+        payload = callbacks.callback_payload(
+            "task-1",
+            "execution-1",
+            "Succeeded",
+            "https://results.example.com/out/1",
+        )
+        credential = _TokenCredential("test-token")
+        attempts = 0
+        delays: list[float] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            raise httpx.RequestError("network down", request=request)
+
+        async def fake_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        sender = callbacks.CallbackSender(client, credential, sleep=fake_sleep, random=lambda: 0.0)
+        try:
+            with self.assertRaises(PublicError) as error:
+                await sender.send(self._make_policy().callback("ops"), payload)
+        finally:
+            await client.aclose()
+
+        self.assertEqual(error.exception.code, "CALLBACK_DELIVERY_EXHAUSTED")
+        self.assertEqual(attempts, 5)
+        self.assertEqual(delays, [1.0, 2.0, 4.0, 8.0])
+        self.assertNotIn("test-token", str(error.exception))
+
+    async def test_http_408_retries_then_succeeds(self) -> None:
+        callbacks = self._callbacks_module()
+        payload = callbacks.callback_payload(
+            "task-1",
+            "execution-1",
+            "Succeeded",
+            "https://results.example.com/out/1",
+        )
+        credential = _TokenCredential("test-token")
+        attempts: list[httpx.Request] = []
+        delays: list[float] = []
+        responses = [408, 200]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(request)
+            return httpx.Response(responses[len(attempts) - 1], request=request)
+
+        async def fake_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        sender = callbacks.CallbackSender(client, credential, sleep=fake_sleep, random=lambda: 0.0)
+        try:
+            await sender.send(self._make_policy().callback("ops"), payload)
+        finally:
+            await client.aclose()
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(delays, [1.0])
 
     async def test_key_vault_sender_uses_to_thread_and_secret_header(self) -> None:
         callbacks = self._callbacks_module()
@@ -310,7 +406,7 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
             "Succeeded",
             "https://results.example.com/out/1",
         )
-        credential = _TokenCredential("mi-token-123")
+        credential = _TokenCredential("test-token")
         attempts: list[httpx.Request] = []
         delays: list[float] = []
         responses = [429, 200]
@@ -341,7 +437,7 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
             "Succeeded",
             "https://results.example.com/out/1",
         )
-        credential = _TokenCredential("mi-token-123")
+        credential = _TokenCredential("test-token")
         attempts: list[httpx.Request] = []
         delays: list[float] = []
 
@@ -385,7 +481,7 @@ class FoundryMcpAcaJobsCallbackTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.MockTransport(handler)
         client = httpx.AsyncClient(transport=transport)
-        sender = callbacks.CallbackSender(client, _TokenCredential("mi-token-123"), sleep=fake_sleep)
+        sender = callbacks.CallbackSender(client, _TokenCredential("test-token"), sleep=fake_sleep)
         try:
             with self.assertRaises(PublicError) as error:
                 await sender.send(self._make_policy().callback("ops"), payload)

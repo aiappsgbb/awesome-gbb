@@ -94,7 +94,7 @@ class CallbackSender:
     async def _headers_for(self, policy: CallbackPolicy) -> dict[str, str]:
         if policy.auth_mode == "managed_identity":
             token = await self._credential.get_token(f"{policy.audience}/.default")
-            return {"Authorization": f"Bearer {token.token}"}
+            return {"Authorization": "Bearer " + token.token}
 
         if self._secret_client is None:
             raise PublicError("CALLBACK_DELIVERY_REJECTED", "callback secret client unavailable")
