@@ -404,6 +404,7 @@ async def _run_from_env(owner_scope: str, task_id: str) -> int:
     finally:
         if output is not None:
             await _close_resource(output)
+        await _close_resource(secret_client)
         await _close_resource(http_client)
         await _close_resource(credential)
 

@@ -12,7 +12,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -344,6 +344,7 @@ class _FakeSecretClient:
         self.vault_url = vault_url
         self.credential = credential
         self.calls: list[str] = []
+        self.close = Mock()
 
     def get_secret(self, name: str) -> Any:
         self.calls.append(name)
@@ -611,6 +612,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(build_kwargs["config"].lease, timedelta(minutes=7))
         fake_worker.run.assert_awaited_once_with("scope-a", "task-1")
         fake_http_client.aclose.assert_awaited()
+        fake_secret_client.close.assert_called_once_with()
         fake_credential.close.assert_awaited()
         fake_output.close.assert_awaited()
 
