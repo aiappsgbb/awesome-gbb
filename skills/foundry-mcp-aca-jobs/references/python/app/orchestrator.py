@@ -16,7 +16,17 @@ from .models import LifecycleState, Policy, PublicError, StartRequest, TaskRecor
 __all__ = ["Orchestrator"]
 
 _START_RECONCILIATION_GRACE = timedelta(seconds=2)
+_CANCELLATION_RECONCILIATION_GRACE = timedelta(seconds=30)
 _START_RECONCILIATION_BUDGET = timedelta(minutes=5)
+_ACA_EXECUTION_PRIORITY = {
+    "Succeeded": 0,
+    "Running": 1,
+    "Processing": 2,
+    "Failed": 3,
+    "Stopped": 4,
+    "Degraded": 5,
+    "Unknown": 6,
+}
 
 
 async def _await_if_needed(value: Any) -> Any:
@@ -322,6 +332,8 @@ class Orchestrator:
                     continue
                 await self._best_effort_stop(job_policy, execution.execution_id)
             return await self._bind_execution(task, winner, job_policy)
+        if task.cancellation_requested_at is not None:
+            return await self._persist_cancellation_if_ready(task)
         return task
 
     async def _reconcile(self, task: TaskRecord, job_policy: Any) -> TaskRecord:
@@ -382,13 +394,26 @@ class Orchestrator:
 
         return await self._apply_with_retry(task.owner_scope, str(task.task_id), mutate)
 
+    async def _persist_cancellation_if_ready(self, task: TaskRecord) -> TaskRecord:
+        now = self._clock()
+        if now - task.cancellation_requested_at < _CANCELLATION_RECONCILIATION_GRACE:
+            return task
+        return await self._persist_cancelled(task)
+
     async def _matching_executions(self, task: TaskRecord, job_policy: Any) -> list[AcaExecution]:
         executions = await self._jobs.list(job_policy)
         return [execution for execution in executions if execution.matches_task(str(task.task_id), task.start_attempted_at)]
 
     @staticmethod
     def _select_winner(executions: list[AcaExecution]) -> AcaExecution:
-        return sorted(executions, key=lambda execution: (execution.start_time, execution.execution_id))[0]
+        return sorted(
+            executions,
+            key=lambda execution: (
+                _ACA_EXECUTION_PRIORITY.get(execution.status, len(_ACA_EXECUTION_PRIORITY)),
+                execution.start_time,
+                execution.execution_id,
+            ),
+        )[0]
 
     async def _best_effort_stop(self, job_policy: Any, execution_id: str) -> None:
         try:

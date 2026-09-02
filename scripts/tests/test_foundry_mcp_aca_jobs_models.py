@@ -64,6 +64,28 @@ from app.models import (  # noqa: E402
 
 
 class FoundryMcpAcaJobsModelTests(unittest.TestCase):
+    @staticmethod
+    def _dump_task_result(task_result: GetTaskResult) -> dict[str, Any]:
+        if hasattr(task_result, "model_dump"):
+            return task_result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        if hasattr(task_result, "dict"):
+            return task_result.dict(by_alias=True, exclude_none=True)
+        raw = dict(vars(task_result))
+        aliases = {
+            "task_id": "taskId",
+            "created_at": "createdAt",
+            "last_updated_at": "lastUpdatedAt",
+            "ttl_ms": "ttlMs",
+            "poll_interval_ms": "pollIntervalMs",
+            "status_message": "statusMessage",
+            "result_type": "resultType",
+        }
+        dumped: dict[str, Any] = {}
+        for key, value in raw.items():
+            dumped[aliases.get(key, key)] = value
+        dumped.setdefault("resultType", "complete")
+        return dumped
+
     def _assert_task_result_wire(
         self,
         task_result: GetTaskResult,
@@ -76,7 +98,7 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         error: dict[str, Any] | None = None,
         status_message: str | None = None,
     ) -> None:
-        dumped = task_result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        dumped = self._dump_task_result(task_result)
         self.assertEqual(dumped["taskId"], task_id)
         self.assertEqual(dumped["status"], status)
         self.assertEqual(dumped["createdAt"], created_at)
@@ -478,7 +500,7 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             last_updated_at="2026-01-02T03:04:05Z",
             error={"code": -32603, "message": "RESULT_REFERENCE_MISSING"},
         )
-        dumped = succeeded_without_result_task.model_dump(mode="json", by_alias=True, exclude_none=True)
+        dumped = self._dump_task_result(succeeded_without_result_task)
         self.assertNotIn("completed", dumped["status"])
         self.assertNotIn("None", str(dumped))
 

@@ -429,6 +429,73 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.jobs.start.assert_not_awaited()
         self.jobs.stop.assert_awaited_once()
 
+    async def test_cancelled_starting_unbound_is_preserved_during_grace_without_restart(self) -> None:
+        store = InMemoryControlStore()
+        orchestrator = self._orchestrator(store)
+        created = await store.create_or_get(
+            TaskRecord.new(
+                owner_scope=self.owner_scope,
+                job_type="import",
+                idempotency_key_hash="hash-1",
+                request_fingerprint="fingerprint-1",
+                input_ref="https://input.example.invalid/input.json",
+                callback_alias="callback",
+            )
+        )
+        seeded = await store.replace(
+            created.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.STARTING,
+                    "start_attempt_count": 1,
+                    "start_attempted_at": self.fixed_now - timedelta(seconds=5),
+                    "cancellation_requested_at": self.fixed_now - timedelta(seconds=5),
+                }
+            ),
+            created.etag,
+        )
+        self.jobs.list.return_value = []
+
+        record = await orchestrator.reconcile(self.owner_scope, str(seeded.task_id))
+
+        self.assertEqual(record.lifecycle_state, LifecycleState.STARTING)
+        self.assertEqual(record.cancellation_requested_at, self.fixed_now - timedelta(seconds=5))
+        self.assertIsNone(record.completed_at)
+        self.jobs.start.assert_not_awaited()
+
+    async def test_cancelled_starting_unbound_persists_after_grace_without_restart(self) -> None:
+        store = InMemoryControlStore()
+        orchestrator = self._orchestrator(store)
+        created = await store.create_or_get(
+            TaskRecord.new(
+                owner_scope=self.owner_scope,
+                job_type="import",
+                idempotency_key_hash="hash-1",
+                request_fingerprint="fingerprint-1",
+                input_ref="https://input.example.invalid/input.json",
+                callback_alias="callback",
+            )
+        )
+        seeded = await store.replace(
+            created.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.STARTING,
+                    "start_attempt_count": 1,
+                    "start_attempted_at": self.fixed_now - timedelta(seconds=35),
+                    "cancellation_requested_at": self.fixed_now - timedelta(seconds=35),
+                }
+            ),
+            created.etag,
+        )
+        self.jobs.list.return_value = []
+
+        record = await orchestrator.reconcile(self.owner_scope, str(seeded.task_id))
+
+        self.assertEqual(record.lifecycle_state, LifecycleState.CANCELLED)
+        self.assertEqual(record.cancellation_requested_at, self.fixed_now - timedelta(seconds=35))
+        self.assertIsNotNone(record.completed_at)
+        self.assertEqual(record.updated_at, self.fixed_now)
+        self.jobs.start.assert_not_awaited()
+
     async def test_reconcile_zero_matches_retries_start_only_after_grace_and_without_cancellation(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)
@@ -505,6 +572,39 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.aca_execution_id, "aaa")
         self.jobs.stop.assert_awaited_once_with(self.policy.job("import"), "bbb")
 
+    async def test_reconcile_multiple_matches_prefers_succeeded_over_older_running(self) -> None:
+        store = InMemoryControlStore()
+        orchestrator = self._orchestrator(store)
+        self.jobs.start.side_effect = PublicError("ARM_STATUS_UNAVAILABLE", "arm status unavailable")
+        created = await orchestrator.start(self.request, self.owner_scope)
+        created = await store.replace(
+            created.model_copy(
+                update={
+                    "result_url": self.policy.validate_result("https://result.example.invalid/result.json"),
+                }
+            ),
+            created.etag,
+        )
+        running = self._make_execution(
+            execution_id="aaa",
+            status="Running",
+            start_time=self.fixed_now,
+            task_id=str(created.task_id),
+        )
+        succeeded = self._make_execution(
+            execution_id="bbb",
+            status="Succeeded",
+            start_time=self.fixed_now + timedelta(seconds=1),
+            task_id=str(created.task_id),
+        )
+        self.jobs.list.return_value = [running, succeeded]
+
+        record = await orchestrator.reconcile(self.owner_scope, str(created.task_id))
+
+        self.assertEqual(record.aca_execution_id, "bbb")
+        self.assertEqual(record.lifecycle_state, LifecycleState.SUCCEEDED)
+        self.jobs.stop.assert_awaited_once_with(self.policy.job("import"), "aaa")
+
     async def test_reconcile_duplicate_stop_is_best_effort(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)
@@ -530,6 +630,38 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(record.aca_execution_id, "aaa")
         self.assertEqual(self.jobs.stop.await_count, 1)
+
+    def test_select_winner_prefers_status_priority_then_start_time_then_execution_id(self) -> None:
+        earlier_running = self._make_execution(
+            execution_id="aaa",
+            status="Running",
+            start_time=self.fixed_now,
+            task_id="task-a",
+        )
+        later_succeeded = self._make_execution(
+            execution_id="bbb",
+            status="Succeeded",
+            start_time=self.fixed_now + timedelta(seconds=1),
+            task_id="task-a",
+        )
+        earlier_processing = self._make_execution(
+            execution_id="ccc",
+            status="Processing",
+            start_time=self.fixed_now - timedelta(seconds=1),
+            task_id="task-a",
+        )
+        tie_running = self._make_execution(
+            execution_id="ddd",
+            status="Running",
+            start_time=self.fixed_now,
+            task_id="task-a",
+        )
+
+        self.assertEqual(
+            Orchestrator._select_winner([earlier_running, later_succeeded, earlier_processing]),
+            later_succeeded,
+        )
+        self.assertEqual(Orchestrator._select_winner([tie_running, earlier_running]), earlier_running)
 
     async def test_reconcile_exhaustion_marks_failed_after_three_attempts_or_five_minutes(self) -> None:
         store = InMemoryControlStore()
