@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastmcp.server.context import Context
-from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.dependencies import get_http_headers, get_http_request
 from fastmcp.server.extensions import MethodBinding, ServerExtension
 from fastmcp_tasks import wire_production
 from fastmcp_tasks.models import (
@@ -25,6 +25,26 @@ from fastmcp_tasks.models import (
 from mcp.server.context import ServerRequestContext
 from mcp.shared.exceptions import MCPError
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS
+try:  # pragma: no cover - fallback for local stub environments.
+    from mcp.shared.inbound import MCP_NAME_HEADER, decode_header_value
+except ImportError:  # pragma: no cover
+    import base64
+
+    MCP_NAME_HEADER = "mcp-name"
+
+    def decode_header_value(value: str | None) -> str | None:
+        if value is None or not value.startswith("=?base64?") or not value.endswith("?="):
+            return value
+        payload = value[len("=?base64?") : -2]
+        try:
+            return base64.b64decode(payload, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+
+try:  # pragma: no cover - fallback for local stub environments.
+    from mcp_types.jsonrpc import HEADER_MISMATCH
+except ImportError:  # pragma: no cover
+    HEADER_MISMATCH = -32020
 
 from .models import PublicError, StartRequest, to_mcp_task
 
@@ -98,6 +118,25 @@ class AcaTasksExtension(ServerExtension):
                 data=missing_capability_error_data(),
             )
 
+    def _require_matching_task_route(self, task_id: str) -> None:
+        try:
+            request = get_http_request()
+        except RuntimeError:
+            return
+
+        header = request.headers.get(MCP_NAME_HEADER)
+        if header is None:
+            return
+        if decode_header_value(header) != task_id:
+            raise MCPError(
+                code=HEADER_MISMATCH,
+                message=f"{MCP_NAME_HEADER} header does not match the request body's 'taskId' parameter",
+            )
+
+    def _check_task_request(self, ctx: ServerRequestContext[Any, Any], task_id: str) -> None:
+        self._require_tasks_capability(ctx)
+        self._require_matching_task_route(task_id)
+
     def _owner_scope(self) -> str:
         headers = get_http_headers() or {}
         return self._owner_resolver(headers)
@@ -113,17 +152,17 @@ class AcaTasksExtension(ServerExtension):
             raise MCPError(code=INTERNAL_ERROR, message="task unavailable") from exc
 
     async def _get(self, ctx: ServerRequestContext[Any, Any], params: GetTaskParams) -> GetTaskResult:
-        self._require_tasks_capability(ctx)
+        self._check_task_request(ctx, params.task_id)
         task = await self._load_task(self._owner_scope(), params.task_id)
         return to_mcp_task(task)
 
     async def _update(self, ctx: ServerRequestContext[Any, Any], params: UpdateTaskParams) -> UpdateTaskResult:
-        self._require_tasks_capability(ctx)
+        self._check_task_request(ctx, params.task_id)
         await self._load_task(self._owner_scope(), params.task_id)
         return UpdateTaskResult()
 
     async def _cancel(self, ctx: ServerRequestContext[Any, Any], params: CancelTaskParams) -> CancelTaskResult:
-        self._require_tasks_capability(ctx)
+        self._check_task_request(ctx, params.task_id)
         owner_scope = self._owner_scope()
         try:
             await self._orchestrator.cancel(owner_scope, params.task_id)
@@ -155,9 +194,10 @@ class AcaTasksExtension(ServerExtension):
         except Exception as exc:  # pragma: no cover - defensive guard for unknown store errors.
             raise MCPError(code=INTERNAL_ERROR, message="task unavailable") from exc
 
+        task_result = to_mcp_task(task)
         return CreateTaskResult(
             task_id=str(task.task_id),
-            status="working",
+            status=task_result.status,
             created_at=_utc_z(getattr(task, "created_at", None)),
             last_updated_at=_utc_z(getattr(task, "updated_at", None)),
             ttl_ms=_TASK_TTL_MS,

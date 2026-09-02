@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 import types
 import unittest
@@ -37,6 +38,7 @@ def _install_stubs() -> None:
     fastmcp_context = _ensure_package("fastmcp.server.context")
     extensions = _ensure_package("fastmcp.server.extensions")
     dependencies = _ensure_package("fastmcp.server.dependencies")
+    shared_inbound = _ensure_package("mcp.shared.inbound")
     utilities = _ensure_package("fastmcp.utilities")
     utilities_tasks = _ensure_package("fastmcp.utilities.tasks")
 
@@ -81,7 +83,29 @@ def _install_stubs() -> None:
     extensions.MethodBinding = MethodBinding
     extensions.ServerExtension = ServerExtension
     fastmcp_context.Context = Context
+    shared_inbound.MCP_NAME_HEADER = "mcp-name"
+
+    def encode_header_value(value: str) -> str:
+        encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+        return f"=?base64?{encoded}?="
+
+    def decode_header_value(value: str | None) -> str | None:
+        if value is None or not value.startswith("=?base64?") or not value.endswith("?="):
+            return value
+        payload = value[len("=?base64?") : -2]
+        try:
+            return base64.b64decode(payload, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+
+    shared_inbound.encode_header_value = encode_header_value
+    shared_inbound.decode_header_value = decode_header_value
+
+    def get_http_request() -> Any:
+        raise RuntimeError("No active HTTP request found.")
+
     dependencies.get_http_headers = lambda: None
+    dependencies.get_http_request = get_http_request
     server.context = fastmcp_context
     server.extensions = extensions
     server.dependencies = dependencies
@@ -91,6 +115,7 @@ def _install_stubs() -> None:
 
     mcp = _ensure_package("mcp")
     mcp_shared = _ensure_package("mcp.shared")
+    mcp_shared.inbound = shared_inbound
     mcp_server = _ensure_package("mcp.server")
     mcp_server_context = _ensure_package("mcp.server.context")
     mcp_exceptions = _ensure_package("mcp.shared.exceptions")
@@ -132,6 +157,7 @@ def _install_stubs() -> None:
     mcp_types_jsonrpc = _ensure_package("mcp_types.jsonrpc")
     mcp_types_jsonrpc.INVALID_PARAMS = -32602
     mcp_types_jsonrpc.INTERNAL_ERROR = -32603
+    mcp_types_jsonrpc.HEADER_MISMATCH = -32020
     mcp_types_jsonrpc.MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
     mcp_types_version = _ensure_package("mcp_types.version")
     mcp_types_version.MODERN_PROTOCOL_VERSIONS = ("2026-07-28",)
@@ -220,9 +246,11 @@ from fastmcp_tasks.models import (  # noqa: E402
     missing_capability_error_data,
 )
 from fastmcp_tasks import wire_production  # noqa: E402
+from mcp.shared.inbound import MCP_NAME_HEADER, encode_header_value  # noqa: E402
 from mcp.server.context import ServerRequestContext  # noqa: E402
 from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp_types import INVALID_PARAMS  # noqa: E402
+from mcp_types.jsonrpc import HEADER_MISMATCH  # noqa: E402
 
 app_package = sys.modules["app"]
 app_package.to_mcp_task = app_models.to_mcp_task
@@ -302,6 +330,102 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             await self.extension._get(ctx, GetTaskParams(taskId="task-1"))
         self.assertEqual(exc.exception.code, MISSING_REQUIRED_CLIENT_CAPABILITY)
         self.assertEqual(exc.exception.data, missing_capability_error_data())
+
+    async def test_task_methods_allow_matching_task_header(self) -> None:
+        request = types.SimpleNamespace(headers={MCP_NAME_HEADER: encode_header_value(str(self.task.task_id))})
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
+
+        for name, method, params in (
+            ("get", AcaTasksExtension(self.orchestrator, self.owner_resolver)._get, GetTaskParams(taskId=str(self.task.task_id))),
+            (
+                "update",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._update,
+                UpdateTaskParams(taskId=str(self.task.task_id), inputResponses={"foo": "bar"}),
+            ),
+            (
+                "cancel",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._cancel,
+                CancelTaskParams(taskId=str(self.task.task_id)),
+            ),
+        ):
+            with self.subTest(method=name), patch("app.aca_tasks_extension.get_http_request", return_value=request):
+                outcome = await method(ctx, params)
+            if name == "get":
+                self.assertIsInstance(outcome, app_models.GetTaskResult)
+                self.assertEqual(outcome.task_id, str(self.task.task_id))
+                self.assertEqual(outcome.status, "working")
+            elif name == "update":
+                self.assertIsInstance(outcome, UpdateTaskResult)
+            else:
+                self.assertIsInstance(outcome, CancelTaskResult)
+
+    async def test_task_methods_allow_absent_task_header(self) -> None:
+        request = types.SimpleNamespace(headers={})
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
+
+        for name, method, params in (
+            ("get", AcaTasksExtension(self.orchestrator, self.owner_resolver)._get, GetTaskParams(taskId=str(self.task.task_id))),
+            (
+                "update",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._update,
+                UpdateTaskParams(taskId=str(self.task.task_id), inputResponses={"foo": "bar"}),
+            ),
+            (
+                "cancel",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._cancel,
+                CancelTaskParams(taskId=str(self.task.task_id)),
+            ),
+        ):
+            with self.subTest(method=name), patch("app.aca_tasks_extension.get_http_request", return_value=request):
+                await method(ctx, params)
+
+    async def test_task_methods_allow_no_http_request(self) -> None:
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
+
+        for name, method, params in (
+            ("get", AcaTasksExtension(self.orchestrator, self.owner_resolver)._get, GetTaskParams(taskId=str(self.task.task_id))),
+            (
+                "update",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._update,
+                UpdateTaskParams(taskId=str(self.task.task_id), inputResponses={"foo": "bar"}),
+            ),
+            (
+                "cancel",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._cancel,
+                CancelTaskParams(taskId=str(self.task.task_id)),
+            ),
+        ):
+            with self.subTest(method=name), patch("app.aca_tasks_extension.get_http_request", side_effect=RuntimeError("no request")):
+                await method(ctx, params)
+
+    async def test_task_methods_reject_mismatched_task_header(self) -> None:
+        wrong_header = types.SimpleNamespace(
+            headers={MCP_NAME_HEADER: encode_header_value("task-mismatch")}
+        )
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
+
+        for name, method, params in (
+            ("get", AcaTasksExtension(self.orchestrator, self.owner_resolver)._get, GetTaskParams(taskId=str(self.task.task_id))),
+            (
+                "update",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._update,
+                UpdateTaskParams(taskId=str(self.task.task_id), inputResponses={"foo": "bar"}),
+            ),
+            (
+                "cancel",
+                AcaTasksExtension(self.orchestrator, self.owner_resolver)._cancel,
+                CancelTaskParams(taskId=str(self.task.task_id)),
+            ),
+        ):
+            orchestrator = FakeOrchestrator(self.task)
+            extension = AcaTasksExtension(orchestrator, self.owner_resolver)
+            with self.subTest(method=name), patch("app.aca_tasks_extension.get_http_request", return_value=wrong_header):
+                with self.assertRaises(MCPError) as exc:
+                    await getattr(extension, f"_{name}")(ctx, params)
+            self.assertEqual(exc.exception.code, HEADER_MISMATCH)
+            self.assertFalse(orchestrator.get_status_calls)
+            self.assertFalse(orchestrator.cancel_calls)
+            self.assertFalse(orchestrator.start_calls)
 
     async def test_get_returns_full_task_result(self) -> None:
         ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
@@ -434,6 +558,61 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(owner_calls, [headers])
         self.assertEqual(orchestrator.start_calls[0][1], "owner-a")
         self.assertFalse(call_next.await_count)
+
+    async def test_awared_start_uses_task_status_from_to_mcp_task(self) -> None:
+        headers = {"x-ms-client-principal-id": "owner-a"}
+        cases = (
+            ("working", self.task.model_copy(update={"lifecycle_state": app_models.LifecycleState.RUNNING})),
+            (
+                "completed",
+                self.task.model_copy(
+                    update={
+                        "lifecycle_state": app_models.LifecycleState.SUCCEEDED,
+                        "result_url": "https://example.invalid/result.json",
+                    }
+                ),
+            ),
+            ("cancelled", self.task.model_copy(update={"lifecycle_state": app_models.LifecycleState.CANCELLED})),
+            (
+                "completed",
+                self.task.model_copy(
+                    update={
+                        "lifecycle_state": app_models.LifecycleState.FAILED,
+                        "error_code": "BUSINESS_FAIL",
+                    }
+                ),
+            ),
+        )
+
+        for expected_status, task in cases:
+            with self.subTest(status=expected_status):
+                orchestrator = FakeOrchestrator(task)
+                extension = AcaTasksExtension(orchestrator, self.owner_resolver)
+                call_next = AsyncMock(return_value="pass-through")
+                request = types.SimpleNamespace(
+                    name="start_aca_job",
+                    arguments={
+                        "jobType": "batch",
+                        "idempotencyKey": "key-1",
+                        "inputRef": "https://example.invalid/input.json",
+                        "callbackAlias": "callback",
+                    },
+                )
+                context = FastMCPContext(
+                    request_context=ServerRequestContext(protocol_version="2026-07-28"),
+                    settings={"enabled": True},
+                )
+                with patch("app.aca_tasks_extension.get_http_headers", return_value=headers), patch.object(
+                    extension,
+                    "client_settings",
+                    side_effect=AssertionError("intercept_tool_call must use context.client_extension_settings"),
+                ):
+                    outcome = await extension.intercept_tool_call(request, context, call_next)
+                self.assertIsInstance(outcome, CreateTaskResult)
+                dumped = _dump_model(outcome)
+                self.assertEqual(dumped["status"], app_models.to_mcp_task(task).status)
+                self.assertEqual(dumped["status"], expected_status)
+                self.assertFalse(call_next.await_count)
 
     async def test_lifespan_installs_and_uninstalls_serializer_only(self) -> None:
         with patch.object(wire_production, "install", MagicMock()) as install, patch.object(
