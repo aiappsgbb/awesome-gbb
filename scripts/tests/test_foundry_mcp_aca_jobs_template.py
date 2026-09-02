@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "failed to connect to the docker api",
             "cannot connect to the docker daemon",
             "is the docker daemon running",
+            "error during connect",
+            "docker daemon is not running",
             "docker.sock",
         )
         if any(marker in lower for marker in daemon_markers):
@@ -41,31 +44,34 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             ]
             body = "\n".join(excerpt[:20]) if excerpt else output.strip()
             return "docker-daemon\n" + body
-        if "fastmcp" not in lower and "fastmcp-tasks" not in lower:
+        package_markers = (
+            "no matching distribution found",
+            "could not find a version that satisfies the requirement",
+            "could not find any versions that satisfy the requirement",
+        )
+        if any(marker in lower for marker in package_markers):
             return None
-        if not any(
-            marker in lower
-            for marker in (
-                "no matching distribution found",
-                "could not find a version that satisfies the requirement",
-                "simple index",
-                "temporary failure in name resolution",
-                "name resolution",
-                "connection timed out",
-                "http error 403",
-                "http error 404",
-                "read timeout",
-                "ssl:",
-            )
-        ):
+        if os.getenv("ALLOW_NETWORK_DOCKER_SKIP") != "1":
+            return None
+        transport_markers = (
+            "temporary failure in name resolution",
+            "name resolution",
+            "connection timed out",
+            "read timeout",
+            "ssl:",
+            "certificate verify failed",
+            "tlsv1",
+            "server certificate verification failed",
+        )
+        if not any(marker in lower for marker in transport_markers):
             return None
         excerpt = [
             line
             for line in output.splitlines()
-            if any(token in line.lower() for token in ("fastmcp", "fastmcp-tasks", "simple index", "matching distribution", "could not find a version"))
+            if any(token in line.lower() for token in transport_markers)
         ]
         body = "\n".join(excerpt[:20]) if excerpt else output.strip()
-        return "fastmcp-index\n" + body
+        return "docker-network\n" + body
 
     def test_pyproject_dependencies_match_canonical_stack(self) -> None:
         template = self._template_dir() / "pyproject.toml"
@@ -157,17 +163,17 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 text=True,
             )
             if build.returncode != 0:
-                blocker = self._docker_blocker_excerpt(build.stdout + "\n" + build.stderr)
+                blocker = self._docker_blocker_excerpt(
+                    build.stdout + "\n" + build.stderr,
+                )
                 if blocker is not None:
                     blocker_kind, _, blocker_body = blocker.partition("\n")
                     if blocker_kind == "docker-daemon":
                         self.skipTest("docker daemon unavailable:\n" + blocker_body)
-                    self.skipTest(
-                        "FastMCP 4.0.1 simple index unavailable:\n"
-                        f"{blocker_body}"
-                    )
+                    if blocker_kind == "docker-network":
+                        self.skipTest("docker network transport unavailable:\n" + blocker_body)
                 self.fail(
-                    "docker build failed for a reason other than the known FastMCP blocker:\n"
+                    "docker build failed for a reason other than the known daemon/network blockers:\n"
                     f"stdout:\n{build.stdout}\n"
                     f"stderr:\n{build.stderr}"
                 )
@@ -194,6 +200,42 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             )
             self.assertIn("usage:", server_help.stdout.lower())
             self.assertIn("usage:", worker_help.stdout.lower())
+
+    def test_docker_blocker_classifier_skips_only_daemon_unavailability(self) -> None:
+        daemon_output = (
+            "Error response from daemon: Cannot connect to the Docker daemon "
+            "at unix:///var/run/docker.sock. Is the docker daemon running?"
+        )
+
+        self.assertTrue(self._docker_blocker_excerpt(daemon_output).startswith("docker-daemon"))
+
+    def test_docker_blocker_classifier_rejects_missing_package_versions(self) -> None:
+        package_output = (
+            "ERROR: Could not find a version that satisfies the requirement fastmcp==4.0.1 "
+            "(from versions: none)\nERROR: No matching distribution found for fastmcp==4.0.1"
+        )
+
+        self.assertIsNone(self._docker_blocker_excerpt(package_output))
+
+    def test_docker_blocker_classifier_allows_dns_only_with_env(self) -> None:
+        dns_output = (
+            "WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, "
+            "status=None)) after connection broken by 'NewConnectionError("
+            "<urllib3.connection.HTTPSConnection object at 0x0>: "
+            "Failed to establish a new connection: [Errno -2] Temporary failure in name resolution'"
+        )
+
+        self.assertIsNone(self._docker_blocker_excerpt(dns_output))
+
+        previous = os.environ.get("ALLOW_NETWORK_DOCKER_SKIP")
+        os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = "1"
+        try:
+            self.assertTrue(self._docker_blocker_excerpt(dns_output).startswith("docker-network"))
+        finally:
+            if previous is None:
+                os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)
+            else:
+                os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = previous
 
 
 if __name__ == "__main__":
