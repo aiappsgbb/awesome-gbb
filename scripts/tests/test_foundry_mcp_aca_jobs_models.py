@@ -425,6 +425,20 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             {"status": "Succeeded", "resultUrl": "https://example.invalid/result.json"},
         )
 
+        succeeded_without_result = record.model_copy(update={"lifecycle_state": LifecycleState.SUCCEEDED})
+        succeeded_without_result_task = to_mcp_task(succeeded_without_result)
+        self._assert_task_result_wire(
+            succeeded_without_result_task,
+            task_id=str(record.task_id),
+            status="failed",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+            error={"code": -32603, "message": "RESULT_REFERENCE_MISSING"},
+        )
+        dumped = succeeded_without_result_task.model_dump(mode="json", by_alias=True, exclude_none=True)
+        self.assertNotIn("completed", dumped["status"])
+        self.assertNotIn("None", str(dumped))
+
         with self.assertRaises(ValidationError):
             TaskRecord.model_validate(
                 {

@@ -178,6 +178,15 @@ class TaskRecord(BaseModel):
             return GetTaskResult(status="cancelled", **task_fields)
 
         if self.lifecycle_state is LifecycleState.SUCCEEDED:
+            if self.result_url is None:
+                return GetTaskResult(
+                    status="failed",
+                    error={
+                        "code": -32603,
+                        "message": "RESULT_REFERENCE_MISSING",
+                    },
+                    **task_fields,
+                )
             result = {
                 "content": [{"type": "text", "text": str(self.result_url)}],
                 "structuredContent": {
