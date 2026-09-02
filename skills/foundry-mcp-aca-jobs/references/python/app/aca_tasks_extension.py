@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+from fastmcp.server.context import Context
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.extensions import MethodBinding, ServerExtension
 from fastmcp_tasks import wire_production
@@ -21,6 +22,7 @@ from fastmcp_tasks.models import (
     UpdateTaskResult,
     missing_capability_error_data,
 )
+from mcp.server.context import ServerRequestContext
 from mcp.shared.exceptions import MCPError
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS
 
@@ -88,7 +90,7 @@ class AcaTasksExtension(ServerExtension):
             ),
         )
 
-    def _require_tasks_capability(self, ctx: Any) -> None:
+    def _require_tasks_capability(self, ctx: ServerRequestContext[Any, Any]) -> None:
         if self.client_settings(ctx) is None:
             raise MCPError(
                 code=MISSING_REQUIRED_CLIENT_CAPABILITY,
@@ -110,17 +112,17 @@ class AcaTasksExtension(ServerExtension):
         except Exception as exc:  # pragma: no cover - defensive guard for unknown store errors.
             raise MCPError(code=INTERNAL_ERROR, message="task unavailable") from exc
 
-    async def _get(self, ctx: Any, params: GetTaskParams) -> GetTaskResult:
+    async def _get(self, ctx: ServerRequestContext[Any, Any], params: GetTaskParams) -> GetTaskResult:
         self._require_tasks_capability(ctx)
         task = await self._load_task(self._owner_scope(), params.task_id)
         return to_mcp_task(task)
 
-    async def _update(self, ctx: Any, params: UpdateTaskParams) -> UpdateTaskResult:
+    async def _update(self, ctx: ServerRequestContext[Any, Any], params: UpdateTaskParams) -> UpdateTaskResult:
         self._require_tasks_capability(ctx)
         await self._load_task(self._owner_scope(), params.task_id)
         return UpdateTaskResult()
 
-    async def _cancel(self, ctx: Any, params: CancelTaskParams) -> CancelTaskResult:
+    async def _cancel(self, ctx: ServerRequestContext[Any, Any], params: CancelTaskParams) -> CancelTaskResult:
         self._require_tasks_capability(ctx)
         owner_scope = self._owner_scope()
         try:
@@ -133,10 +135,13 @@ class AcaTasksExtension(ServerExtension):
             raise MCPError(code=INTERNAL_ERROR, message="task unavailable") from exc
         return CancelTaskResult()
 
-    async def intercept_tool_call(self, params: Any, context: Any, call_next: Callable[[], Any]) -> Any:
+    async def intercept_tool_call(self, params: Any, context: Context, call_next: Callable[[], Any]) -> Any:
         if getattr(params, "name", None) != "start_aca_job":
             return await call_next()
-        if self.client_settings(context) is None:
+        request_context = context.request_context
+        if request_context is None or request_context.protocol_version not in MODERN_PROTOCOL_VERSIONS:
+            return await call_next()
+        if context.client_extension_settings(self.identifier) is None:
             return await call_next()
 
         request = StartRequest.model_validate(getattr(params, "arguments", {}) or {})

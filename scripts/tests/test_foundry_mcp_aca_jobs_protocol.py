@@ -34,6 +34,7 @@ def _install_stubs() -> None:
 
     fastmcp = _ensure_package("fastmcp")
     server = _ensure_package("fastmcp.server")
+    fastmcp_context = _ensure_package("fastmcp.server.context")
     extensions = _ensure_package("fastmcp.server.extensions")
     dependencies = _ensure_package("fastmcp.server.dependencies")
     utilities = _ensure_package("fastmcp.utilities")
@@ -62,9 +63,26 @@ def _install_stubs() -> None:
         def client_settings(self, ctx: Any) -> dict[str, Any] | None:
             return ctx.client_extension_settings(self.identifier)
 
+    class Context:
+        def __init__(
+            self,
+            *,
+            request_context: Any | None = None,
+            settings: dict[str, Any] | None = None,
+        ) -> None:
+            self.request_context = request_context
+            self._settings = settings
+
+        def client_extension_settings(self, identifier: str) -> dict[str, Any] | None:
+            if identifier != "io.modelcontextprotocol/tasks":
+                return None
+            return self._settings
+
     extensions.MethodBinding = MethodBinding
     extensions.ServerExtension = ServerExtension
+    fastmcp_context.Context = Context
     dependencies.get_http_headers = lambda: None
+    server.context = fastmcp_context
     server.extensions = extensions
     server.dependencies = dependencies
     fastmcp.server = server
@@ -73,6 +91,8 @@ def _install_stubs() -> None:
 
     mcp = _ensure_package("mcp")
     mcp_shared = _ensure_package("mcp.shared")
+    mcp_server = _ensure_package("mcp.server")
+    mcp_server_context = _ensure_package("mcp.server.context")
     mcp_exceptions = _ensure_package("mcp.shared.exceptions")
 
     class MCPError(Exception):
@@ -84,7 +104,25 @@ def _install_stubs() -> None:
 
     mcp_exceptions.MCPError = MCPError
     mcp_shared.exceptions = mcp_exceptions
+    class ServerRequestContext:
+        def __init__(
+            self,
+            *,
+            protocol_version: str,
+            settings: dict[str, Any] | None = None,
+        ) -> None:
+            self.protocol_version = protocol_version
+            self._settings = settings
+
+        def client_extension_settings(self, identifier: str) -> dict[str, Any] | None:
+            if identifier != "io.modelcontextprotocol/tasks":
+                return None
+            return self._settings
+
+    mcp_server_context.ServerRequestContext = ServerRequestContext
+    mcp_server.context = mcp_server_context
     mcp.shared = mcp_shared
+    mcp.server = mcp_server
 
     mcp_types = _ensure_package("mcp_types")
     mcp_types.INVALID_PARAMS = -32602
@@ -170,18 +208,19 @@ import app.models as app_models  # noqa: E402
 from app.aca_tasks_extension import AcaTasksExtension  # noqa: E402
 from app.models import PublicError, StartRequest, TaskRecord  # noqa: E402
 from fastmcp.server.extensions import MethodBinding  # noqa: E402
+from fastmcp.server.context import Context as FastMCPContext  # noqa: E402
 from fastmcp_tasks.models import (  # noqa: E402
     CancelTaskParams,
     CancelTaskResult,
     CreateTaskResult,
     GetTaskParams,
-    GetTaskResult,
     MISSING_REQUIRED_CLIENT_CAPABILITY,
     UpdateTaskParams,
     UpdateTaskResult,
     missing_capability_error_data,
 )
 from fastmcp_tasks import wire_production  # noqa: E402
+from mcp.server.context import ServerRequestContext  # noqa: E402
 from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp_types import INVALID_PARAMS  # noqa: E402
 
@@ -223,16 +262,12 @@ class FakeOrchestrator:
         return self.task
 
 
-class FakeContext:
-    def __init__(self, settings: dict[str, Any] | None) -> None:
-        self._settings = settings
-
-    def client_extension_settings(self, identifier: str) -> dict[str, Any] | None:
-        if identifier != "io.modelcontextprotocol/tasks":
-            return None
-        return self._settings
-
-
+def _dump_model(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(by_alias=True, exclude_none=True)
+    if hasattr(value, "dict"):
+        return value.dict(by_alias=True, exclude_none=True)
+    return dict(vars(value))
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.task = TaskRecord.new(
@@ -262,44 +297,43 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([binding.protocol_versions for binding in methods], [("2026-07-28",)] * 3)
 
     async def test_missing_task_capability_raises_protocol_error(self) -> None:
-        ctx = FakeContext(None)
+        ctx = ServerRequestContext(protocol_version="2026-07-28")
         with self.assertRaises(MCPError) as exc:
             await self.extension._get(ctx, GetTaskParams(taskId="task-1"))
         self.assertEqual(exc.exception.code, MISSING_REQUIRED_CLIENT_CAPABILITY)
         self.assertEqual(exc.exception.data, missing_capability_error_data())
 
     async def test_get_returns_full_task_result(self) -> None:
-        ctx = FakeContext({"enabled": True})
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
         result = await self.extension._get(ctx, GetTaskParams(taskId=str(self.task.task_id)))
-        self.assertIsInstance(result, GetTaskResult)
-        dumped = result.model_dump(by_alias=True, exclude_none=True)
-        self.assertEqual(dumped["taskId"], str(self.task.task_id))
-        self.assertEqual(dumped["status"], "working")
-        self.assertEqual(dumped["ttlMs"], 86400000)
-        self.assertEqual(dumped["pollIntervalMs"], 2000)
+        self.assertIsInstance(result, app_models.GetTaskResult)
+        self.assertEqual(result.task_id, str(self.task.task_id))
+        self.assertEqual(result.status, "working")
+        self.assertEqual(result.ttl_ms, 86400000)
+        self.assertEqual(result.poll_interval_ms, 2000)
         self.assertEqual(self.orchestrator.get_status_calls, [("owner-a", str(self.task.task_id))])
 
     async def test_update_validates_then_acknowledges(self) -> None:
-        ctx = FakeContext({"enabled": True})
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
         result = await self.extension._update(
             ctx,
             UpdateTaskParams(taskId=str(self.task.task_id), inputResponses={"foo": "bar"}),
         )
         self.assertIsInstance(result, UpdateTaskResult)
-        self.assertEqual(result.model_dump(by_alias=True, exclude_none=True)["resultType"], "complete")
+        self.assertEqual(_dump_model(result)["resultType"], "complete")
         self.assertEqual(self.orchestrator.get_status_calls, [("owner-a", str(self.task.task_id))])
 
     async def test_cancel_calls_orchestrator_and_acknowledges(self) -> None:
-        ctx = FakeContext({"enabled": True})
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
         result = await self.extension._cancel(ctx, CancelTaskParams(taskId=str(self.task.task_id)))
         self.assertIsInstance(result, CancelTaskResult)
-        self.assertEqual(result.model_dump(by_alias=True, exclude_none=True)["resultType"], "complete")
+        self.assertEqual(_dump_model(result)["resultType"], "complete")
         self.assertEqual(self.orchestrator.cancel_calls, [("owner-a", str(self.task.task_id))])
 
     async def test_update_translates_unknown_task_to_safe_protocol_error(self) -> None:
         orchestrator = FakeOrchestrator(exc=PublicError("TASK_NOT_FOUND", "task not found"))
         extension = AcaTasksExtension(orchestrator, self.owner_resolver)
-        ctx = FakeContext({"enabled": True})
+        ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
         with self.assertRaises(MCPError) as exc:
             await extension._update(
                 ctx,
@@ -312,13 +346,16 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         call_next = AsyncMock(return_value="pass-through")
         outcome = await self.extension.intercept_tool_call(
             types.SimpleNamespace(name="other_tool", arguments={}),
-            FakeContext({"enabled": True}),
+            FastMCPContext(
+                request_context=ServerRequestContext(protocol_version="2026-07-28"),
+                settings={"enabled": True},
+            ),
             call_next,
         )
         self.assertEqual(outcome, "pass-through")
         call_next.assert_awaited_once()
 
-    async def test_unaware_start_tool_calls_pass_through(self) -> None:
+    async def test_unaware_start_without_request_context_passes_through(self) -> None:
         call_next = AsyncMock(return_value="pass-through")
         outcome = await self.extension.intercept_tool_call(
             types.SimpleNamespace(
@@ -330,7 +367,28 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                     "callbackAlias": "callback",
                 },
             ),
-            FakeContext(None),
+            FastMCPContext(settings={"enabled": True}),
+            call_next,
+        )
+        self.assertEqual(outcome, "pass-through")
+        call_next.assert_awaited_once()
+
+    async def test_unaware_start_on_legacy_protocol_passes_through(self) -> None:
+        call_next = AsyncMock(return_value="pass-through")
+        outcome = await self.extension.intercept_tool_call(
+            types.SimpleNamespace(
+                name="start_aca_job",
+                arguments={
+                    "jobType": "batch",
+                    "idempotencyKey": "key-1",
+                    "inputRef": "https://example.invalid/input.json",
+                    "callbackAlias": "callback",
+                },
+            ),
+            FastMCPContext(
+                request_context=ServerRequestContext(protocol_version="2024-11-05"),
+                settings={"enabled": True},
+            ),
             call_next,
         )
         self.assertEqual(outcome, "pass-through")
@@ -357,10 +415,18 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 "callbackAlias": "callback",
             },
         )
-        with patch("app.aca_tasks_extension.get_http_headers", return_value=headers):
-            outcome = await extension.intercept_tool_call(request, FakeContext({"enabled": True}), call_next)
+        context = FastMCPContext(
+            request_context=ServerRequestContext(protocol_version="2026-07-28"),
+            settings={"enabled": True},
+        )
+        with patch("app.aca_tasks_extension.get_http_headers", return_value=headers), patch.object(
+            extension,
+            "client_settings",
+            side_effect=AssertionError("intercept_tool_call must use context.client_extension_settings"),
+        ):
+            outcome = await extension.intercept_tool_call(request, context, call_next)
         self.assertIsInstance(outcome, CreateTaskResult)
-        dumped = outcome.model_dump(by_alias=True, exclude_none=True)
+        dumped = _dump_model(outcome)
         self.assertEqual(dumped["taskId"], str(self.task.task_id))
         self.assertEqual(dumped["status"], "working")
         self.assertEqual(dumped["ttlMs"], 86400000)
