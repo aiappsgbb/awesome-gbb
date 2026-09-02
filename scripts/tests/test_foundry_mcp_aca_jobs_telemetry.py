@@ -425,7 +425,20 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
             self.assertLogs("app.telemetry", level="INFO") as logs:
             module.configure()
         configure.assert_not_called()
-        self.assertNotIn("InstrumentationKey=", "\n".join(logs.output))
+        self.assertIn("INFO:app.telemetry:application insights disabled; no connection string configured", logs.output)
+
+        with patch.dict(
+            os.environ,
+            {"APPLICATIONINSIGHTS_CONNECTION_STRING": "ApplicationId=abc;IngestionEndpoint=https://example.invalid/"},
+            clear=False,
+        ), patch.object(module, "configure_azure_monitor", MagicMock()) as configure, \
+            self.assertLogs("app.telemetry", level="WARNING") as logs:
+            module.configure()
+        configure.assert_not_called()
+        self.assertEqual(
+            logs.output,
+            ["WARNING:app.telemetry:application insights disabled; unsupported connection string (redacted)"],
+        )
 
         with patch.dict(
             os.environ,

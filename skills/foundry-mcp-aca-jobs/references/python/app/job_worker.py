@@ -183,10 +183,10 @@ class JobWorker:
                 return 0
             if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
                 self._telemetry.record(
-                    "digest_mismatch",
-                    self._telemetry_attributes(current, "digest_mismatch"),
+                    "execution_mismatch",
+                    self._telemetry_attributes(current, "execution_mismatch"),
                     outcome="failure",
-                    error_code="DEPLOYMENT_CONTRACT_MISMATCH",
+                    error_code="EXECUTION_ID_MISMATCH",
                 )
                 return 0
             if current.lifecycle_state in TERMINAL_STATES:

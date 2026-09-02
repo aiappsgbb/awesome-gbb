@@ -11,6 +11,7 @@ import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -765,6 +766,49 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
         self.assertIsNone(current.error_code)
+
+    async def test_mismatched_execution_id_records_execution_mismatch_not_digest_mismatch(self) -> None:
+        class _RecordingTelemetry:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, str], str | None, str | None]] = []
+
+            def attributes(self, values: dict[str, Any]) -> dict[str, str]:
+                return {key: str(value) for key, value in values.items() if value is not None}
+
+            @contextmanager
+            def operation(self, name: str, attributes: dict[str, Any] | None = None):
+                self.calls.append((name, self.attributes(attributes or {}), "enter", None))
+                try:
+                    yield
+                except Exception as exc:
+                    self.calls.append((name, self.attributes(attributes or {}), "failure", exc.__class__.__name__))
+                    raise
+                else:
+                    self.calls.append((name, self.attributes(attributes or {}), "success", None))
+
+            def record(
+                self,
+                operation: str,
+                attributes: dict[str, Any] | None = None,
+                *,
+                outcome: str | None = None,
+                error_code: str | None = None,
+            ) -> None:
+                self.calls.append((operation, self.attributes(attributes or {}), outcome, error_code))
+
+        telemetry = _RecordingTelemetry()
+        worker, store, handler, callback_sender, output = await self._build_worker()
+        worker._telemetry = telemetry
+        await self._seed_task(store, self.task.model_copy(update={"aca_execution_id": "execution-winner"}))
+
+        code = await worker.run("scope-a", str(self.task.task_id), "execution-loser")
+
+        self.assertEqual(code, 0)
+        self.assertTrue(any(call[0] == "execution_mismatch" for call in telemetry.calls))
+        self.assertFalse(any(call[0] == "digest_mismatch" for call in telemetry.calls))
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(callback_sender.calls, [])
+        self.assertEqual(output.write_calls, [])
 
     async def test_success_persistence_survives_concurrent_cancellation_intent_and_delivers_callback(self) -> None:
         handler_started = asyncio.Event()

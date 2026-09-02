@@ -133,8 +133,11 @@ class Telemetry:
 
 def configure() -> None:
     connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+    if not connection_string.strip():
+        logger.info("application insights disabled; no connection string configured")
+        return
     if not connection_string.startswith("InstrumentationKey="):
-        logger.info("application insights disabled; unsupported connection string prefix")
+        logger.warning("application insights disabled; unsupported connection string (redacted)")
         return
     if configure_azure_monitor is None:
         logger.warning("application insights configuration failed: %s", "ModuleNotFoundError")
