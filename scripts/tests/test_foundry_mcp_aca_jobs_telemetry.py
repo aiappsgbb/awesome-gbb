@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import importlib
 import logging
 import os
@@ -300,6 +301,16 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
                 "azure.request.id",
             },
         )
+        self.assertEqual(
+            self.telemetry.METRIC_KEYS,
+            {
+                "operation",
+                "job.type",
+                "task.state",
+                "outcome",
+                "error.code",
+            },
+        )
         telem = self.telemetry.Telemetry(tracer=_FakeTracer(), meter=_FakeMeter())
         attrs = telem.attributes(
             {
@@ -329,6 +340,54 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
                 "outcome": "success",
                 "azure.request.id": "req-1",
             },
+        )
+
+    def test_record_filters_metric_attributes_and_drops_ids(self) -> None:
+        tracer = _FakeTracer()
+        meter = _FakeMeter()
+        telem = self.telemetry.Telemetry(tracer=tracer, meter=meter)
+
+        filtered = telem.record(
+            "worker.business",
+            {
+                "task.id": "task-1",
+                "aca.execution.id": "exec-1",
+                "azure.request.id": "req-1",
+                "job.type": "import",
+                "task.state": "Running",
+                "operation": "ignored",
+                "outcome": "ignored",
+                "error.code": "ignored",
+                "extra": "drop-me",
+            },
+            outcome="success",
+            error_code="E100",
+        )
+
+        self.assertEqual(
+            filtered,
+            {
+                "operation": "worker.business",
+                "job.type": "import",
+                "task.state": "Running",
+                "outcome": "success",
+                "error.code": "E100",
+            },
+        )
+        self.assertEqual(
+            meter.counter.calls,
+            [
+                (
+                    1,
+                    {
+                        "operation": "worker.business",
+                        "job.type": "import",
+                        "task.state": "Running",
+                        "outcome": "success",
+                        "error.code": "E100",
+                    },
+                )
+            ],
         )
 
     def test_operation_records_success_failure_and_latency(self) -> None:
@@ -364,24 +423,18 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
             "azure.request.id": "req-1",
         })])
         self.assertEqual(meter.counter.calls, [(1, {
-            "task.id": "task-1",
             "job.type": "import",
             "task.state": "Accepted",
-            "aca.execution.id": "exec-1",
             "operation": "orchestrator.start",
             "outcome": "success",
             "error.code": "ignored",
-            "azure.request.id": "req-1",
         })])
         self.assertEqual(meter.histogram.calls, [(3.5, {
-            "task.id": "task-1",
             "job.type": "import",
             "task.state": "Accepted",
-            "aca.execution.id": "exec-1",
             "operation": "orchestrator.start",
-            "outcome": "ignored",
+            "outcome": "success",
             "error.code": "ignored",
-            "azure.request.id": "req-1",
         })])
 
         meter = _FakeMeter()
@@ -401,24 +454,19 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
                 ):
                     raise RuntimeError("boom")
         self.assertEqual(meter.counter.calls[-1], (1, {
-            "task.id": "task-2",
             "job.type": "import",
             "task.state": "Running",
-            "aca.execution.id": "exec-2",
             "operation": "worker.business",
             "outcome": "failure",
-            "azure.request.id": "req-2",
         }))
         self.assertEqual(meter.histogram.calls[-1], (1.25, {
-            "task.id": "task-2",
             "job.type": "import",
             "task.state": "Running",
-            "aca.execution.id": "exec-2",
             "operation": "worker.business",
-            "azure.request.id": "req-2",
+            "outcome": "failure",
         }))
 
-    def test_configure_only_calls_azure_monitor_for_ikey_and_masks_errors(self) -> None:
+    def test_configure_parses_semicolon_connection_string_and_masks_errors(self) -> None:
         module = self.telemetry
         with patch.dict(os.environ, {"APPLICATIONINSIGHTS_CONNECTION_STRING": ""}, clear=False), \
             patch.object(module, "configure_azure_monitor", MagicMock()) as configure, \
@@ -429,7 +477,18 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
 
         with patch.dict(
             os.environ,
-            {"APPLICATIONINSIGHTS_CONNECTION_STRING": "ApplicationId=abc;IngestionEndpoint=https://example.invalid/"},
+            {"APPLICATIONINSIGHTS_CONNECTION_STRING": "ApplicationId=abc;InstrumentationKey=secret-ikey;IngestionEndpoint=https://example.invalid/"},
+            clear=False,
+        ), patch.object(module, "configure_azure_monitor", MagicMock(side_effect=ValueError("boom"))) as configure, \
+            self.assertLogs("app.telemetry", level="WARNING") as logs:
+            module.configure()
+        configure.assert_called_once()
+        self.assertEqual(logs.output, ["WARNING:app.telemetry:application insights configuration failed: ValueError"])
+        self.assertNotIn("secret-ikey", "\n".join(logs.output))
+
+        with patch.dict(
+            os.environ,
+            {"APPLICATIONINSIGHTS_CONNECTION_STRING": "ApplicationId=abc;InstrumentationKey=   ;IngestionEndpoint=https://example.invalid/"},
             clear=False,
         ), patch.object(module, "configure_azure_monitor", MagicMock()) as configure, \
             self.assertLogs("app.telemetry", level="WARNING") as logs:
@@ -437,21 +496,34 @@ class FoundryMcpAcaJobsTelemetryTests(unittest.TestCase):
         configure.assert_not_called()
         self.assertEqual(
             logs.output,
-            ["WARNING:app.telemetry:application insights disabled; unsupported connection string (redacted)"],
+            ["WARNING:app.telemetry:application insights disabled; invalid connection string (redacted)"],
         )
+
+    def test_configure_logs_optional_import_exception_class_without_leaking_value(self) -> None:
+        module = self.telemetry
+        real_import = builtins.__import__
+
+        def fake_import(name: str, globals=None, locals=None, fromlist=(), level: int = 0):
+            if name == "azure.monitor.opentelemetry":
+                raise RuntimeError("boom secret-ikey")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            reloaded = importlib.reload(module)
+        self.addCleanup(importlib.reload, module)
+
+        self.assertIsNone(reloaded.configure_azure_monitor)
+        self.assertEqual(reloaded._configure_azure_monitor_import_error.__name__, "RuntimeError")
 
         with patch.dict(
             os.environ,
-            {"APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=secret-ikey;IngestionEndpoint=https://example.invalid/"},
+            {"APPLICATIONINSIGHTS_CONNECTION_STRING": "Foo=bar;InstrumentationKey=secret-ikey;IngestionEndpoint=https://example.invalid/"},
             clear=False,
-        ), patch.object(module, "configure_azure_monitor", MagicMock(side_effect=ValueError("boom secret-ikey"))) as configure, \
-            self.assertLogs("app.telemetry", level="WARNING") as logs:
-            module.configure()
-        configure.assert_called_once()
+        ), self.assertLogs("app.telemetry", level="WARNING") as logs:
+            reloaded.configure()
         joined = "\n".join(logs.output)
-        self.assertIn("ValueError", joined)
+        self.assertIn("RuntimeError", joined)
         self.assertNotIn("secret-ikey", joined)
-        self.assertNotIn("IngestionEndpoint=https://example.invalid/", joined)
 
     def test_orchestrator_records_safe_duplicate_etag_conflict_and_cancellation(self) -> None:
         telemetry = _FakeTelemetry()

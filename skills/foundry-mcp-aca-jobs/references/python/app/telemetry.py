@@ -16,14 +16,20 @@ except Exception:  # pragma: no cover - local fallback only.
     _metrics = None
     _trace = None
 
+_configure_azure_monitor_import_error: type[BaseException] | None = None
+
 try:  # pragma: no cover - optional dependency fallback.
     from azure.monitor.opentelemetry import configure_azure_monitor as _configure_azure_monitor
-except Exception:  # pragma: no cover - local fallback only.
+except ModuleNotFoundError as exc:  # pragma: no cover - local fallback only.
     _configure_azure_monitor = None
+    _configure_azure_monitor_import_error = exc.__class__
+except Exception as exc:  # pragma: no cover - local fallback only.
+    _configure_azure_monitor = None
+    _configure_azure_monitor_import_error = exc.__class__
 
 configure_azure_monitor = _configure_azure_monitor
 
-__all__ = ["SAFE_KEYS", "Telemetry", "configure", "telemetry"]
+__all__ = ["SAFE_KEYS", "METRIC_KEYS", "Telemetry", "configure", "telemetry"]
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +42,14 @@ SAFE_KEYS = {
     "outcome",
     "error.code",
     "azure.request.id",
+}
+
+METRIC_KEYS = {
+    "operation",
+    "job.type",
+    "task.state",
+    "outcome",
+    "error.code",
 }
 
 
@@ -97,6 +111,14 @@ class Telemetry:
                 safe[key] = str(value)
         return safe
 
+    def metric_attributes(self, values: Mapping[str, Any] | None = None) -> dict[str, str]:
+        values = values or {}
+        safe: dict[str, str] = {}
+        for key, value in values.items():
+            if key in METRIC_KEYS and value is not None:
+                safe[key] = str(value)
+        return safe
+
     def record(
         self,
         operation: str,
@@ -105,7 +127,7 @@ class Telemetry:
         outcome: str | None = None,
         error_code: str | None = None,
     ) -> dict[str, str]:
-        safe = self.attributes(attributes)
+        safe = self.metric_attributes(attributes)
         safe["operation"] = operation
         if outcome is not None:
             safe["outcome"] = outcome
@@ -117,18 +139,35 @@ class Telemetry:
     @contextmanager
     def operation(self, name: str, attributes: Mapping[str, Any] | None = None):
         started = monotonic()
-        safe = self.attributes(attributes)
-        safe["operation"] = name
-        with self.tracer.start_as_current_span(name, attributes=safe):
+        span_attrs = self.attributes(attributes)
+        span_attrs["operation"] = name
+        metric_attrs = self.metric_attributes(attributes)
+        metric_attrs["operation"] = name
+        with self.tracer.start_as_current_span(name, attributes=span_attrs):
             try:
                 yield
             except Exception:
-                self.record(name, safe, outcome="failure", error_code=safe.get("error.code"))
+                metric_attrs["outcome"] = "failure"
+                self.record(name, metric_attrs, outcome="failure", error_code=metric_attrs.get("error.code"))
                 raise
             else:
-                self.record(name, safe, outcome="success", error_code=safe.get("error.code"))
+                metric_attrs["outcome"] = "success"
+                self.record(name, metric_attrs, outcome="success", error_code=metric_attrs.get("error.code"))
             finally:
-                self.latency.record(monotonic() - started, safe)
+                self.latency.record(monotonic() - started, metric_attrs)
+
+
+def _parse_connection_string(connection_string: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for segment in connection_string.split(";"):
+        key, separator, value = segment.partition("=")
+        if not separator:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key:
+            parsed[key] = value
+    return parsed
 
 
 def configure() -> None:
@@ -136,13 +175,17 @@ def configure() -> None:
     if not connection_string.strip():
         logger.info("application insights disabled; no connection string configured")
         return
-    if not connection_string.startswith("InstrumentationKey="):
-        logger.warning("application insights disabled; unsupported connection string (redacted)")
+    parsed = _parse_connection_string(connection_string.strip())
+    instrumentation_key = parsed.get("InstrumentationKey", "")
+    if not instrumentation_key.strip():
+        logger.warning("application insights disabled; invalid connection string (redacted)")
         return
     if configure_azure_monitor is None:
-        logger.warning("application insights configuration failed: %s", "ModuleNotFoundError")
+        import_error = _configure_azure_monitor_import_error.__name__ if _configure_azure_monitor_import_error is not None else "ModuleNotFoundError"
+        logger.warning("application insights configuration failed: %s", import_error)
         return
     try:
+        os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = connection_string.strip()
         configure_azure_monitor()
     except Exception as exc:  # pragma: no cover - configuration path is guarded in tests.
         logger.warning("application insights configuration failed: %s", exc.__class__.__name__)
