@@ -310,6 +310,30 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         for param in ("inputHosts array", "resultHosts array"):
             self.assertIn(f"param {param}", main)
 
+        self.assertIn("type CallbackAuthMode = 'managed_identity' | 'key_vault'", main)
+        for param in (
+            "callbackAuthMode CallbackAuthMode = 'managed_identity'",
+            "externalCallbackUrl string = ''",
+            "callbackAudience string = 'api://${authClientId}'",
+            "callbackSecretName string = ''",
+            "keyVaultName string = ''",
+        ):
+            self.assertIn(f"param {param}", main)
+
+        self.assertIn("'managed_identity'", main)
+        self.assertIn("'key_vault'", main)
+        self.assertIn("callbackAuthMode == 'managed_identity' ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs' : externalCallbackUrl", normalized)
+        self.assertIn("auth_mode: callbackAuthMode", main)
+        self.assertIn("ops: callbackPolicy", main)
+        self.assertIn("callbackAuthMode == 'managed_identity' ? [", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_AUDIENCE'", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_VAULT_URL'", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_SECRET_NAME'", main)
+        self.assertIn("value: callbackAudience", main)
+        self.assertIn("value: callbackSecretName", main)
+        self.assertIn("environment().suffixes.keyvaultDns", main)
+        self.assertIn("callbackAuthMode == 'key_vault' ? keyVaultName : ''", normalized)
+
         for required in (
             "AZURE_CLIENT_ID",
             "AZURE_SUBSCRIPTION_ID",
@@ -326,6 +350,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "MCP_ACA_JOBS_CALLBACK_URL",
             "MCP_ACA_JOBS_CALLBACK_AUTH_MODE",
             "MCP_ACA_JOBS_CALLBACK_AUDIENCE",
+            "MCP_ACA_JOBS_CALLBACK_VAULT_URL",
+            "MCP_ACA_JOBS_CALLBACK_SECRET_NAME",
             "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL",
             "MCP_ACA_JOBS_INPUT_HOSTS",
             "MCP_ACA_JOBS_RESULT_HOSTS",
@@ -336,16 +362,17 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("string({", main)
         self.assertIn("managedEnvironment.properties.defaultDomain", main)
         self.assertIn("callbacks: {", main)
-        self.assertIn("ops: {", main)
-        self.assertIn("auth_mode: 'managed_identity'", main)
-        self.assertIn("audience: 'api://${authClientId}'", main)
+        self.assertIn("audience: callbackAudience", main)
         self.assertIn("join(inputHosts, ',')", normalized)
         self.assertIn("join(resultHosts, ',')", normalized)
         self.assertNotIn("CONTAINER_APP_JOB_EXECUTION_NAME", main)
         self.assertNotIn("AZURE_CLIENT_SECRET", main)
-        self.assertNotIn("MCP_ACA_JOBS_CALLBACK_SECRET_NAME", main)
+        self.assertNotIn("auth_mode: 'managed_identity'", main)
+        self.assertNotIn("MCP_ACA_JOBS_CALLBACK_SECRET_VALUE", main)
+        self.assertNotIn("callbackSecretValue", main)
         self.assertNotIn("secretRef", main)
         self.assertNotIn("secureValue", main)
+        self.assertNotIn("CALLBACK_SECRET_VALUE", main)
 
         module_order = [
             "module identities",
@@ -359,6 +386,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions), msg=f"unexpected module order: {module_order}")
         self.assertIn("dependsOn: [\n    preRuntimeRbac\n  ]", main)
         self.assertIn("dependsOn: [\n    app\n    preRuntimeRbac\n  ]", main)
+
+        identity_rbac = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
+        self.assertIn("keyVaultName: callbackAuthMode == 'key_vault' ? keyVaultName : ''", main)
+        self.assertIn("keyVaultName: keyVaultName", identity_rbac)
+        self.assertIn("if (!empty(keyVaultName))", (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8"))
 
     def test_bicep_builds_without_experimental_assertion_warnings(self) -> None:
         files = [

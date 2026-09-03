@@ -54,15 +54,42 @@ param jobIdentityName string = '${jobName}-uami'
 @description('Entra app client ID used to validate inbound app tokens.')
 param authClientId string
 
+type CallbackAuthMode = 'managed_identity' | 'key_vault'
+
 @description('Immutable OCI digest used by both the app and the job.')
 param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48'
 
-@description('Optional Key Vault name for the job callback secret path.')
+@description('Callback delivery mode. key_vault requires externalCallbackUrl, callbackSecretName, and keyVaultName.')
+param callbackAuthMode CallbackAuthMode = 'managed_identity'
+
+@description('External callback URL used when callbackAuthMode is key_vault. Required together with callbackSecretName and keyVaultName in that mode.')
+param externalCallbackUrl string = ''
+
+@description('Managed-identity callback audience used when callbackAuthMode is managed_identity.')
+param callbackAudience string = 'api://${authClientId}'
+
+@description('Key Vault secret name used when callbackAuthMode is key_vault. Required together with externalCallbackUrl and keyVaultName in that mode.')
+param callbackSecretName string = ''
+
+@description('Existing Key Vault name used when callbackAuthMode is key_vault. Required together with externalCallbackUrl and callbackSecretName in that mode.')
 param keyVaultName string = ''
 
-var callbackRouteUrl = 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
+var callbackRouteUrl = callbackAuthMode == 'managed_identity'
+  ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
+  : externalCallbackUrl
 var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'
 var callbackStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${callbackStorageContainerName}'
+var callbackPolicy = callbackAuthMode == 'managed_identity'
+  ? {
+      url: callbackRouteUrl
+      auth_mode: callbackAuthMode
+      audience: callbackAudience
+    }
+  : {
+      url: callbackRouteUrl
+      auth_mode: callbackAuthMode
+      secret_name: callbackSecretName
+    }
 var appPolicyJson = string({
   jobs: {
     'short-job': {
@@ -78,15 +105,26 @@ var appPolicyJson = string({
     }
   }
   callbacks: {
-    ops: {
-      url: callbackRouteUrl
-      auth_mode: 'managed_identity'
-      audience: 'api://${authClientId}'
-    }
+    ops: callbackPolicy
   }
   input_hosts: inputHosts
   result_hosts: resultHosts
 })
+var jobCallbackEnvironmentVariables = callbackAuthMode == 'managed_identity' ? [
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_AUDIENCE'
+    value: callbackAudience
+  }
+] : [
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_VAULT_URL'
+    value: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
+  }
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_SECRET_NAME'
+    value: callbackSecretName
+  }
+]
 var appEnvironmentVariables = [
   {
     name: 'AZURE_CLIENT_ID'
@@ -117,7 +155,7 @@ var appEnvironmentVariables = [
     value: appPolicyJson
   }
 ]
-var jobEnvironmentVariables = [
+var jobEnvironmentVariables = concat([
   {
     name: 'AZURE_CLIENT_ID'
     value: identities.outputs.jobUamiClientId
@@ -160,12 +198,9 @@ var jobEnvironmentVariables = [
   }
   {
     name: 'MCP_ACA_JOBS_CALLBACK_AUTH_MODE'
-    value: 'managed_identity'
+    value: callbackAuthMode
   }
-  {
-    name: 'MCP_ACA_JOBS_CALLBACK_AUDIENCE'
-    value: 'api://${authClientId}'
-  }
+], jobCallbackEnvironmentVariables, [
   {
     name: 'MCP_ACA_JOBS_OUTPUT_CONTAINER_URL'
     value: outputStorageUrl
@@ -178,7 +213,7 @@ var jobEnvironmentVariables = [
     name: 'MCP_ACA_JOBS_RESULT_HOSTS'
     value: join(resultHosts, ',')
   }
-]
+])
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   scope: resourceGroup(resourceGroupName)
@@ -226,7 +261,7 @@ module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
     storageAccountName: storageAccountName
     outputStorageContainerName: outputStorageContainerName
     callbackStorageContainerName: callbackStorageContainerName
-    keyVaultName: keyVaultName
+    keyVaultName: callbackAuthMode == 'key_vault' ? keyVaultName : ''
     appPrincipalId: identities.outputs.appUamiPrincipalId
     jobPrincipalId: identities.outputs.jobUamiPrincipalId
     acrPullRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
