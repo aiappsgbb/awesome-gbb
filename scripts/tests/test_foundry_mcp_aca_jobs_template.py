@@ -355,8 +355,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn("param callbackStorageContainerName", main)
         self.assertIn("@maxLength(53)", main)
         self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", main)
+        self.assertIn(
+            "var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'",
+            main,
+        )
         self.assertIn("callbackStorageContainerUrl", main)
-        self.assertIn("var storageHost = '${storageAccountName}.${environment().suffixes.storage}'", main)
+        self.assertIn("var storageHost = '${storageAccountName}.blob.${environment().suffixes.storage}'", main)
         self.assertIn("var effectiveResultHosts = union(resultHosts, [storageHost])", main)
 
         self.assertIn("var authAudience = 'api://${authClientId}'", main)
@@ -606,13 +610,11 @@ param callbackConfig = {
         self.assertIn("appImageDigest", main)
 
     def test_policy_validates_the_template_output_storage_url_when_storage_host_is_allowlisted(self) -> None:
-        policy = Policy(
-            input_hosts={"input.example.com"},
-            result_hosts={"results.example.com", "storagejobs.blob.core.windows.net"},
-        )
+        policy = Policy(input_hosts={"input.example.com"}, result_hosts={"results.example.com", "storagejobs.blob.core.windows.net"})
 
         approved = policy.validate_result("https://storagejobs.blob.core.windows.net/outputs")
         self.assertEqual(str(approved), "https://storagejobs.blob.core.windows.net/outputs")
+        self.assertIn("storagejobs.blob.core.windows.net", policy.result_hosts)
 
     def test_source_modules_expose_both_helpable_clis(self) -> None:
         server_source = (self._reference_app_dir() / "mcp_server.py").read_text(encoding="utf-8")

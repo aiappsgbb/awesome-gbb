@@ -76,7 +76,7 @@ param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
-var storageHost = '${storageAccountName}.${environment().suffixes.storage}'
+var storageHost = '${storageAccountName}.blob.${environment().suffixes.storage}'
 var effectiveResultHosts = union(resultHosts, [storageHost])
 var callbackRouteUrl = callbackConfig.authMode == 'managed_identity'
   ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
