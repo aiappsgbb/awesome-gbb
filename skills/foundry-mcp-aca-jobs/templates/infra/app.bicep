@@ -62,7 +62,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'app'
+          name: 'mcp'
           image: imageDigest
           command: [
             'python'

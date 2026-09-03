@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import importlib.util
 import re
 import sys
 import shutil
@@ -13,6 +14,9 @@ import json
 import tempfile
 import tomllib
 import unittest
+from types import SimpleNamespace
+
+import yaml
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -79,6 +83,20 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     @staticmethod
     def _reference_app_dir() -> pathlib.Path:
         return SKILL / "references" / "python" / "app"
+
+    @staticmethod
+    def _script_dir() -> pathlib.Path:
+        return SKILL / "templates" / "infra" / "scripts"
+
+    @classmethod
+    def _load_script(cls, filename: str, module_name: str):
+        path = cls._script_dir() / filename
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        assert spec is not None and spec.loader is not None, path
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
 
     @staticmethod
     def _docker_blocker_excerpt(output: str) -> str | None:
@@ -224,6 +242,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("targetPort: 8080", app)
         self.assertIn("transport: 'http'", app)
         self.assertIn("allowInsecure: false", app)
+        self.assertIn("name: 'mcp'", app)
         self.assertIn("image: imageDigest", app)
         self.assertIn("command: [ 'python' '-m' 'app.mcp_server' ]", normalized)
         self.assertIn("MCP_ACA_JOBS_AUTH_MODE", app)
@@ -626,6 +645,429 @@ param callbackConfig = {
         self.assertIn("def main(", worker_source)
         self.assertIn("raise SystemExit(main())", server_source)
         self.assertIn("raise SystemExit(main())", worker_source)
+
+    def test_azure_yaml_has_one_service_and_one_postdeploy_chain(self) -> None:
+        azure_yaml_path = self._template_dir() / "azure.yaml"
+        text = azure_yaml_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(text)
+
+        self.assertEqual(list(data["services"].keys()), ["mcp"])
+        self.assertEqual(data["services"]["mcp"]["project"], ".")
+        self.assertEqual(data["services"]["mcp"]["language"], "python")
+        self.assertEqual(data["services"]["mcp"]["host"], "containerapp")
+        self.assertEqual(data["services"]["mcp"]["docker"], {"path": "Dockerfile", "context": "."})
+        self.assertIn("postdeploy", data["hooks"])
+        self.assertIn("converge_image.py", text)
+        self.assertIn("verify_deployment.py", text)
+        self.assertIn("uv sync --frozen", text)
+        self.assertIn('EXPECTED_IMAGE_DIGEST="$(uv run converge_image.py)"', text)
+        self.assertIn('EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run verify_deployment.py', text)
+        self.assertIn("uv run converge_image.py", text)
+        self.assertIn("uv run verify_deployment.py", text)
+        for forbidden in ("az acr build", "az containerapp job", "azd-service-name: job"):
+            self.assertNotIn(forbidden, text)
+
+    def test_converge_image_parses_digest_and_updates_drifting_resources_once(self) -> None:
+        module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image")
+        image_name = "myregistry.azurecr.io/mcp/service:20260903.1"
+        env_values = {
+            "SERVICE_MCP_IMAGE_NAME": image_name,
+            "MCP_APP_NAME": "mcp-app",
+            "ACA_JOB_NAME": "mcp-job",
+            "AZURE_RESOURCE_GROUP": "rg-jobs",
+            "AZURE_SUBSCRIPTION_ID": "sub-id",
+        }
+        manifest_digest = "sha256:" + "a" * 64
+        expected_image = "myregistry.azurecr.io/mcp/service@" + manifest_digest
+
+        app_container = SimpleNamespace(
+            name="mcp",
+            image=image_name,
+            command=["python", "-m", "app.mcp_server"],
+            env=[SimpleNamespace(name="APP_ENV", value="1")],
+            secrets=[SimpleNamespace(name="APP_SECRET", value="redacted")],
+        )
+        job_container = SimpleNamespace(
+            name="job",
+            image=image_name,
+            command=["python", "-m", "app.job_worker"],
+            env=[SimpleNamespace(name="JOB_ENV", value="1")],
+            secrets=[SimpleNamespace(name="JOB_SECRET", value="redacted")],
+        )
+        app_identity = SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}})
+        job_identity = SimpleNamespace(type="UserAssigned", userAssignedIdentities={"job-id": {}})
+        app = SimpleNamespace(
+            identity=app_identity,
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(
+                    ingress=SimpleNamespace(external=True, targetPort=8080, transport="http", allowInsecure=False),
+                    registries=[SimpleNamespace(server="myregistry.azurecr.io", identity="app-id")],
+                    secrets=[SimpleNamespace(name="APP_SECRET")],
+                    activeRevisionsMode="Single",
+                ),
+                template=SimpleNamespace(containers=[app_container]),
+            ),
+        )
+        job = SimpleNamespace(
+            identity=job_identity,
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(
+                    triggerType="Manual",
+                    registries=[SimpleNamespace(server="myregistry.azurecr.io", identity="job-id")],
+                    secrets=[SimpleNamespace(name="JOB_SECRET")],
+                ),
+                template=SimpleNamespace(containers=[job_container]),
+            ),
+        )
+        app_result = SimpleNamespace(result=lambda: app)
+        job_result = SimpleNamespace(result=lambda: job)
+        app_updates: list[tuple[str, str, object]] = []
+        job_updates: list[tuple[str, str, object]] = []
+
+        client = SimpleNamespace(
+            container_apps=SimpleNamespace(
+                get=lambda resource_group, name: app,
+                begin_create_or_update=lambda resource_group, name, body: app_updates.append((resource_group, name, body)) or app_result,
+            ),
+            jobs=SimpleNamespace(
+                get=lambda resource_group, name: job,
+                begin_create_or_update=lambda resource_group, name, body: job_updates.append((resource_group, name, body)) or job_result,
+            ),
+        )
+
+        digest_calls: list[tuple[list[str], dict[str, object]]] = []
+
+        def fake_run(args, **kwargs):
+            digest_calls.append((list(args), kwargs))
+            return SimpleNamespace(stdout=json.dumps(env_values), returncode=0)
+
+        def fake_check_output(args, **kwargs):
+            self.assertEqual(
+                list(args),
+                [
+                    "az",
+                    "acr",
+                    "manifest",
+                    "show-metadata",
+                    "--registry",
+                    "myregistry",
+                    "--name",
+                    "mcp/service:20260903.1",
+                    "--query",
+                    "digest",
+                    "-o",
+                    "tsv",
+                ],
+            )
+            return manifest_digest
+
+        result = module.converge_image(
+            run=fake_run,
+            check_output=fake_check_output,
+            credential_factory=lambda: object(),
+            client_factory=lambda credential, subscription_id: client,
+        )
+
+        self.assertEqual(result, expected_image)
+        self.assertEqual(len(digest_calls), 1)
+        self.assertEqual(len(app_updates), 1)
+        self.assertEqual(len(job_updates), 1)
+        self.assertEqual(app_updates[0][0:2], ("rg-jobs", "mcp-app"))
+        self.assertEqual(job_updates[0][0:2], ("rg-jobs", "mcp-job"))
+        self.assertEqual(app_updates[0][2].properties.template.containers[0].image, expected_image)
+        self.assertEqual(job_updates[0][2].properties.template.containers[0].image, expected_image)
+        self.assertEqual(app.properties.template.containers[0].env[0].value, "1")
+        self.assertEqual(job.properties.template.containers[0].secrets[0].name, "JOB_SECRET")
+
+    def test_converge_image_rejects_invalid_tag_digest_and_contract_drift(self) -> None:
+        module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_invalid")
+        env_values = {
+            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.io/mcp/service:20260903.1",
+            "MCP_APP_NAME": "mcp-app",
+            "ACA_JOB_NAME": "mcp-job",
+            "AZURE_RESOURCE_GROUP": "rg-jobs",
+            "AZURE_SUBSCRIPTION_ID": "sub-id",
+        }
+        base_run = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(env_values), returncode=0)
+        base_check_output = lambda *args, **kwargs: "sha256:" + "b" * 64
+
+        with self.assertRaises(ValueError):
+            module.parse_image_reference("not-a-registry-image")
+        with self.assertRaises(ValueError):
+            module.parse_image_reference("myregistry.example.com/mcp/service:tag")
+        with self.assertRaises(ValueError):
+            module.parse_image_reference("myregistry.azurecr.io/mcp/service")
+        with self.assertRaises(ValueError):
+            module.resolve_image_digest(
+                "myregistry.azurecr.io/mcp/service:20260903.1",
+                check_output=lambda *args, **kwargs: "not-a-digest",
+            )
+
+        app = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(registries=[], secrets=[], activeRevisionsMode="Single"),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="mcp",
+                            image="myregistry.azurecr.io/mcp/service@sha256:" + "c" * 64,
+                            command=["python", "-m", "app.other_server"],
+                            env=[],
+                            secrets=[],
+                        )
+                    ]
+                ),
+            ),
+        )
+        job = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(triggerType="Manual", registries=[], secrets=[]),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="job",
+                            image="myregistry.azurecr.io/mcp/service@sha256:" + "c" * 64,
+                            command=["python", "-m", "app.job_worker"],
+                            env=[],
+                            secrets=[],
+                        )
+                    ]
+                ),
+            ),
+        )
+        client = SimpleNamespace(
+            container_apps=SimpleNamespace(
+                get=lambda resource_group, name: app,
+                begin_create_or_update=lambda *args, **kwargs: self.fail("should not update on contract drift"),
+            ),
+            jobs=SimpleNamespace(
+                get=lambda resource_group, name: job,
+                begin_create_or_update=lambda *args, **kwargs: self.fail("should not update on contract drift"),
+            ),
+        )
+
+        with self.assertRaises(RuntimeError):
+            module.converge_image(
+                run=base_run,
+                check_output=base_check_output,
+                credential_factory=lambda: object(),
+                client_factory=lambda credential, subscription_id: client,
+            )
+
+        app.properties.template.containers[0].command = ["python", "-m", "app.mcp_server"]
+        app.properties.template.containers[0].image = "myregistry.azurecr.io/mcp/service@sha256:" + "b" * 64
+        job.properties.template.containers[0].image = "myregistry.azurecr.io/mcp/service@sha256:" + "b" * 64
+        job.identity.userAssignedIdentities = {"app-id": {}}
+        with self.assertRaises(RuntimeError):
+            module.converge_image(
+                run=base_run,
+                check_output=base_check_output,
+                credential_factory=lambda: object(),
+                client_factory=lambda credential, subscription_id: client,
+            )
+
+    def test_converge_image_is_idempotent_when_both_resources_match(self) -> None:
+        module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_idempotent")
+        env_values = {
+            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.io/mcp/service:20260903.1",
+            "MCP_APP_NAME": "mcp-app",
+            "ACA_JOB_NAME": "mcp-job",
+            "AZURE_RESOURCE_GROUP": "rg-jobs",
+            "AZURE_SUBSCRIPTION_ID": "sub-id",
+        }
+        manifest_digest = "sha256:" + "d" * 64
+        expected_image = "myregistry.azurecr.io/mcp/service@" + manifest_digest
+        app = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(registries=[], secrets=[], activeRevisionsMode="Single"),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="mcp",
+                            image=expected_image,
+                            command=["python", "-m", "app.mcp_server"],
+                            env=[],
+                            secrets=[],
+                        )
+                    ]
+                ),
+            ),
+        )
+        job = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"job-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(triggerType="Manual", registries=[], secrets=[]),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="job",
+                            image=expected_image,
+                            command=["python", "-m", "app.job_worker"],
+                            env=[],
+                            secrets=[],
+                        )
+                    ]
+                ),
+            ),
+        )
+        client = SimpleNamespace(
+            container_apps=SimpleNamespace(
+                get=lambda resource_group, name: app,
+                begin_create_or_update=lambda *args, **kwargs: self.fail("idempotent converge should not update"),
+            ),
+            jobs=SimpleNamespace(
+                get=lambda resource_group, name: job,
+                begin_create_or_update=lambda *args, **kwargs: self.fail("idempotent converge should not update"),
+            ),
+        )
+
+        result = module.converge_image(
+            run=lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(env_values), returncode=0),
+            check_output=lambda *args, **kwargs: manifest_digest,
+            credential_factory=lambda: object(),
+            client_factory=lambda credential, subscription_id: client,
+        )
+
+        self.assertEqual(result, expected_image)
+
+    def test_verify_deployment_prints_markers_and_rejects_drift(self) -> None:
+        module = self._load_script("verify_deployment.py", "foundry_mcp_aca_jobs_verify_deployment")
+        expected_image = "myregistry.azurecr.io/mcp/service@sha256:" + "e" * 64
+        env_values = {
+            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.io/mcp/service:20260903.1",
+            "MCP_APP_NAME": "mcp-app",
+            "ACA_JOB_NAME": "mcp-job",
+            "AZURE_RESOURCE_GROUP": "rg-jobs",
+            "AZURE_SUBSCRIPTION_ID": "sub-id",
+            "EXPECTED_IMAGE_DIGEST": expected_image,
+        }
+        app = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(
+                    ingress=SimpleNamespace(external=True, targetPort=8080, transport="http", allowInsecure=False),
+                    registries=[],
+                    secrets=[],
+                    activeRevisionsMode="Single",
+                ),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="mcp",
+                            image=expected_image,
+                            command=["python", "-m", "app.mcp_server"],
+                            env=[
+                                SimpleNamespace(name="MCP_ACA_JOBS_AUTH_MODE", value="aca-easy-auth"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_CALLBACK_CONTAINER_URL", value="https://storage.example.com/outputs-callbacks"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID", value="job-principal-id"),
+                            ],
+                            secrets=[SimpleNamespace(name="APP_SECRET")],
+                        )
+                    ]
+                ),
+            ),
+        )
+        auth_config = SimpleNamespace(
+            properties=SimpleNamespace(
+                platform=SimpleNamespace(enabled=True),
+                globalValidation=SimpleNamespace(unauthenticatedClientAction="Return401"),
+                identityProviders=SimpleNamespace(
+                    azureActiveDirectory=SimpleNamespace(
+                        enabled=True,
+                        registration=SimpleNamespace(clientId="auth-client-id"),
+                        validation=SimpleNamespace(
+                            allowedAudiences=["api://auth-client-id", "auth-client-id"],
+                        ),
+                    )
+                ),
+            )
+        )
+        job = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"job-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(
+                    triggerType="Manual",
+                    registries=[],
+                    secrets=[],
+                ),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="job",
+                            image=expected_image,
+                            command=["python", "-m", "app.job_worker"],
+                            env=[
+                                SimpleNamespace(name="MCP_ACA_JOBS_JOB_TYPE", value="short-job"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_CALLBACK_AUTH_MODE", value="managed_identity"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_CALLBACK_URL", value="https://mcp-app.example.com/callbacks/jobs"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_INPUT_HOSTS", value="input.example.com"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_OUTPUT_CONTAINER_URL", value="https://storage.example.com/outputs"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_COSMOS_ENDPOINT", value="https://cosmos.example.com"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_COSMOS_DATABASE", value="jobs"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_COSMOS_CONTAINER", value="tasks"),
+                                SimpleNamespace(name="MCP_ACA_JOBS_RESULT_HOSTS", value="results.example.com,storage.example.com"),
+                            ],
+                            secrets=[SimpleNamespace(name="JOB_SECRET")],
+                        )
+                    ]
+                ),
+            ),
+        )
+        client = SimpleNamespace(
+            container_apps=SimpleNamespace(get=lambda resource_group, name: app),
+            jobs=SimpleNamespace(get=lambda resource_group, name: job),
+            container_apps_auth_configs=SimpleNamespace(get=lambda resource_group, app_name, auth_name: auth_config),
+        )
+
+        stdout = tempfile.TemporaryFile(mode="w+")
+        try:
+            result = module.verify_deployment(
+                run=lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(env_values), returncode=0),
+                credential_factory=lambda: object(),
+                client_factory=lambda credential, subscription_id: client,
+                stdout=stdout,
+            )
+            stdout.seek(0)
+            text = stdout.read()
+        finally:
+            stdout.close()
+
+        self.assertIsNone(result)
+        self.assertIn("SHARED_IMAGE_DIGEST_MATCH", text)
+        self.assertIn("ENTRYPOINTS_MATCH", text)
+
+        bad_job = SimpleNamespace(
+            identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"job-id": {}}),
+            properties=SimpleNamespace(
+                configuration=SimpleNamespace(triggerType="Manual", registries=[], secrets=[]),
+                template=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="job",
+                            image=expected_image,
+                            command=["python", "-m", "app.other_worker"],
+                            env=[],
+                            secrets=[],
+                        )
+                    ]
+                ),
+            ),
+        )
+        bad_client = SimpleNamespace(
+            container_apps=SimpleNamespace(get=lambda resource_group, name: app),
+            jobs=SimpleNamespace(get=lambda resource_group, name: bad_job),
+            container_apps_auth_configs=SimpleNamespace(get=lambda resource_group, app_name, auth_name: auth_config),
+        )
+        with self.assertRaises(RuntimeError):
+            module.verify_deployment(
+                run=lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(env_values), returncode=0),
+                credential_factory=lambda: object(),
+                client_factory=lambda credential, subscription_id: bad_client,
+                stdout=tempfile.TemporaryFile(mode="w+"),
+            )
 
     def test_built_image_runs_both_entrypoint_help_commands(self) -> None:
         docker = shutil.which("docker")
