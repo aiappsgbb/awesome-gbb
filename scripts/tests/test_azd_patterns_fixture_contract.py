@@ -119,6 +119,43 @@ class AzdPatternsFixtureContractTests(unittest.TestCase):
         lines = [line for line in excerpt.group(1).splitlines() if line.strip()]
         self.assertLessEqual(len(lines), 20)
 
+    def test_foundry_observability_uses_scheduled_aca_job_module(self) -> None:
+        skill = (ROOT / "skills" / "foundry-observability" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("// infra/modules/aca-scheduled-job.bicep", skill)
+        self.assertIn(
+            "The scheduled/event-trigger module family is owned by `threadlight-event-triggers`",
+            skill,
+        )
+        self.assertIn("azd-patterns/references/bicep/aca-job.bicep", skill)
+        self.assertNotIn("// infra/modules/aca-job.bicep", skill)
+
+    def test_fixture_frames_canonical_coverage_as_legacy_debug_playbook(self) -> None:
+        fixture = (ROOT / "skills" / "azd-patterns" / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("legacy debug-playbook coverage for the **ACA Job**", fixture)
+        self.assertIn("canonical module's live Azure coverage is", fixture)
+        self.assertIn("exercised by the separate `foundry-mcp-aca-jobs` fixture", fixture)
+        self.assertIn("deliberate minimal legacy debug-playbook variant", fixture)
+        self.assertNotIn("proves the canonical `Microsoft.App/jobs@2024-03-01` resource shape", fixture)
+
+    def test_no_skill_other_than_azd_patterns_describes_schedule_on_aca_job_bicep(self) -> None:
+        offenders = []
+        for skill_path in sorted((ROOT / "skills").glob("*/SKILL.md")):
+            if skill_path.parent.name in {"azd-patterns", "foundry-observability"}:
+                continue
+            text = skill_path.read_text(encoding="utf-8")
+            if "aca-job.bicep" in text and "Schedule" in text:
+                offenders.append(skill_path.parent.name)
+
+        self.assertEqual(
+            offenders,
+            [],
+            msg=f"Unexpected schedule-era aca-job.bicep references: {offenders}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
