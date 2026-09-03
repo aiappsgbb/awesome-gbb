@@ -1,6 +1,6 @@
 """Canonical deployment verification helper for foundry-mcp-aca-jobs.
 
-Source of truth for the prose example in ../../../SKILL.md § Test implementation.
+Source of truth for the prose example in ../../../SKILL.md § Test the implementation.
 """
 
 from __future__ import annotations

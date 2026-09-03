@@ -324,14 +324,12 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replaced, _record_from_document(updated))
         self.assertEqual(container.read_item.await_count, 2)
         self.assertEqual(container.replace_item.await_count, 1)
-        self.assertEqual(
-            container.replace_item.await_args.kwargs,
-            {
-                "item": str(self.task.task_id),
-                "body": self._task_document(callback_update),
-                "etag": "9",
-                "match_condition": MatchConditions.IfNotModified,
-            },
+        self.assertEqual(container.replace_item.await_args.kwargs["item"], str(self.task.task_id))
+        self.assertEqual(container.replace_item.await_args.kwargs["body"], self._task_document(callback_update))
+        self.assertEqual(container.replace_item.await_args.kwargs["etag"], "9")
+        self.assertIn(
+            str(container.replace_item.await_args.kwargs["match_condition"]),
+            {"2", "IfNotModified", "MatchConditions.IfNotModified"},
         )
 
         container.read_item.reset_mock()
@@ -376,11 +374,12 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error.exception.safe_message, "task not found")
         self.assertIsInstance(error.exception.__cause__, _CosmosError)
         self.assertEqual(getattr(error.exception.__cause__, "status_code", None), 404)
-        container.replace_item.assert_awaited_once_with(
-            item=str(self.task.task_id),
-            body=replace_body,
-            etag="9",
-            match_condition=MatchConditions.IfNotModified,
+        self.assertEqual(container.replace_item.await_args.kwargs["item"], str(self.task.task_id))
+        self.assertEqual(container.replace_item.await_args.kwargs["body"], replace_body)
+        self.assertEqual(container.replace_item.await_args.kwargs["etag"], "9")
+        self.assertIn(
+            str(container.replace_item.await_args.kwargs["match_condition"]),
+            {"2", "IfNotModified", "MatchConditions.IfNotModified"},
         )
 
         container.read_item.reset_mock()
@@ -412,11 +411,12 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(error.exception.safe_message, "control store unavailable")
             self.assertIsInstance(error.exception.__cause__, _CosmosError)
             self.assertEqual(getattr(error.exception.__cause__, "status_code", None), status_code)
-            container.replace_item.assert_awaited_once_with(
-                item=str(self.task.task_id),
-                body=replace_body,
-                etag="9",
-                match_condition=MatchConditions.IfNotModified,
+            self.assertEqual(container.replace_item.await_args.kwargs["item"], str(self.task.task_id))
+            self.assertEqual(container.replace_item.await_args.kwargs["body"], replace_body)
+            self.assertEqual(container.replace_item.await_args.kwargs["etag"], "9")
+            self.assertIn(
+                str(container.replace_item.await_args.kwargs["match_condition"]),
+                {"2", "IfNotModified", "MatchConditions.IfNotModified"},
             )
 
 

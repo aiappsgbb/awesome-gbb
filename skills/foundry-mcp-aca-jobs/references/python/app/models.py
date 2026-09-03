@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, fi
 
 try:  # pragma: no cover - exercised only when the real dependency exists locally.
     from fastmcp_tasks.models import GetTaskResult
-except ModuleNotFoundError:  # pragma: no cover - local test shim and CLI help fallback.
+except ImportError:  # pragma: no cover - local test shim and CLI help fallback.
     class GetTaskResult(BaseModel):
         model_config = ConfigDict(populate_by_name=True, extra="forbid", strict=True)
 
@@ -349,10 +349,10 @@ class TaskRecord(BaseModel):
         if self.lifecycle_state is LifecycleState.SUCCEEDED:
             if self.result_url is None:
                 return GetTaskResult(
-                    status="failed",
-                    error={
-                        "code": -32603,
-                        "message": "RESULT_REFERENCE_MISSING",
+                    status="completed",
+                    result={
+                        "content": [{"type": "text", "text": "RESULT_REFERENCE_MISSING"}],
+                        "isError": True,
                     },
                     **task_fields,
                 )

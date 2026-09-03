@@ -49,7 +49,6 @@ servers via HTTP at runtime using `client.get_mcp_tool()`.
 - Running Playwright/browser automation as a remote MCP server
 - Creating a custom MCP server for an API or data store not covered by Foundry built-ins
 - Deploying an MCP server as an Azure Function (consumption billing)
-- Handing long-running work to an ACA Job while the MCP control plane stays responsive
 
 ## Architecture
 

@@ -495,14 +495,34 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         self._assert_task_result_wire(
             succeeded_without_result_task,
             task_id=str(record.task_id),
-            status="failed",
+            status="completed",
             created_at="2026-01-02T03:04:05Z",
             last_updated_at="2026-01-02T03:04:05Z",
-            error={"code": -32603, "message": "RESULT_REFERENCE_MISSING"},
+            result={
+                "content": [{"type": "text", "text": "RESULT_REFERENCE_MISSING"}],
+                "isError": True,
+            },
         )
         dumped = self._dump_task_result(succeeded_without_result_task)
-        self.assertNotIn("completed", dumped["status"])
-        self.assertNotIn("None", str(dumped))
+        self.assertEqual(dumped["status"], "completed")
+        self.assertTrue(dumped["result"]["isError"])
+        self.assertEqual(dumped["result"]["content"][0]["text"], "RESULT_REFERENCE_MISSING")
+
+        failed_missing = record.model_copy(
+            update={"lifecycle_state": LifecycleState.FAILED, "error_code": "RESULT_REFERENCE_MISSING"}
+        )
+        failed_missing_task = to_mcp_task(failed_missing)
+        self._assert_task_result_wire(
+            failed_missing_task,
+            task_id=str(record.task_id),
+            status="completed",
+            created_at="2026-01-02T03:04:05Z",
+            last_updated_at="2026-01-02T03:04:05Z",
+            result={
+                "content": [{"type": "text", "text": "RESULT_REFERENCE_MISSING"}],
+                "isError": True,
+            },
+        )
 
         with self.assertRaises(ValidationError):
             TaskRecord.model_validate(

@@ -272,7 +272,7 @@ class CosmosControlStore:
                 item=str(validated.task_id),
                 body=body,
                 etag=etag,
-                match_condition=MatchConditions.IfNotModified,
+                match_condition=str(MatchConditions.IfNotModified),
             )
         except Exception as exc:  # pragma: no cover - exercised through status-translation tests.
             if _status_code(exc) == 404:

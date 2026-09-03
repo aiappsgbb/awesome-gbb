@@ -1,6 +1,6 @@
 """Canonical orchestration service for foundry-mcp-aca-jobs.
 
-Source of truth for the prose example in ../../../SKILL.md § Protocol contract (Tasks + Compatibility tools).
+Source of truth for the prose example in ../../../SKILL.md § Idempotency and uncertain-start reconciliation.
 """
 
 from __future__ import annotations

@@ -304,43 +304,93 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
 
     def test_skill_frontmatter_and_section_map_match_contract(self) -> None:
+        skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         skill_fm, body = self._frontmatter_and_body(SKILL / "SKILL.md")
         headings = re.findall(r"(?m)^## (.+)$", body)
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.0.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.1.0")
+        self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
+        self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
+        self.assertEqual(
+            headings,
+            [
+                "When to use this skill",
+                "Architecture and shared-image contract",
+                "Protocol contract",
+                "Standards-first MCP Tasks path",
+                "Compatibility tools",
+                "Control record and lifecycle",
+                "Idempotency and uncertain-start reconciliation",
+                "Callback contract",
+                "Security and least-privilege RBAC",
+                "Deploy with azd",
+                "Operate and observe",
+                "Stable errors",
+                "Test the implementation",
+                "Non-goals",
+                "Related skills",
+            ],
+        )
+
+        canonical_links = (
+            "references/python/app/__init__.py",
+            "references/python/app/aca_jobs.py",
+            "references/python/app/aca_tasks_extension.py",
+            "references/python/app/callbacks.py",
+            "references/python/app/control_store.py",
+            "references/python/app/job_worker.py",
+            "references/python/app/mcp_server.py",
+            "references/python/app/models.py",
+            "references/python/app/orchestrator.py",
+            "references/python/app/telemetry.py",
+            "templates/Dockerfile",
+            "templates/pyproject.toml",
+            "templates/azure.yaml",
+            "templates/infra/main.bicep",
+            "templates/infra/app.bicep",
+            "templates/infra/cosmos.bicep",
+            "templates/infra/identity-rbac.bicep",
+            "templates/infra/scripts/converge_image.py",
+            "templates/infra/scripts/verify_deployment.py",
+            "../azd-patterns/references/bicep/aca-job.bicep",
+        )
+        for rel_path in canonical_links:
+            self.assertIn(f"[{rel_path}]({rel_path})", body)
+
         for required in (
             "MCP Tasks",
             "SEP-2663",
             "ACA Jobs",
-            "long-running/asynchronous MCP tools",
+            "durable result claims",
             "callbacks",
             "external job orchestration",
-            "foundry-mcp-aca",
-            "Docket",
+            "shared-image worker handoff",
+            "Service Bus/queue/event-dispatch workflows",
+            "TasksExtension",
+            "docket_lifespan",
+            "RESULT_REFERENCE_MISSING",
+            "isError: true",
+            "TASK_NOT_FOUND",
+            "TASK_FORBIDDEN",
+            "ARM_STATUS_UNAVAILABLE",
+            "ARM_START_REJECTED",
+            "ARM_STOP_REJECTED",
+            "START_RECONCILIATION_EXHAUSTED",
+            "ACA_EXECUTION_FAILED",
+            "ACA_EXECUTION_STOPPED",
+            "ACA_EXECUTION_STATE_UNRESOLVED",
+            "CALLBACK_DELIVERY_REJECTED",
+            "CALLBACK_DELIVERY_EXHAUSTED",
+            "CALLBACK_PAYLOAD_CONFLICT",
+            "CONTROL_STORE_UNAVAILABLE",
+            "DEPLOYMENT_CONTRACT_MISMATCH",
+            "WORKER_EXECUTION_FAILED",
         ):
             self.assertIn(required, skill_fm["description"] + "\n" + body)
-        for heading in (
-            "When to use",
-            "Architecture and shared-image contract",
-            "Protocol contract (Tasks + Compatibility tools)",
-            "Control record and lifecycle",
-            "Idempotency and uncertain-start reconciliation",
-            "Callback contract",
-            "Security and least-privilege RBAC",
-            "Deploy with azd",
-            "Operate and observe",
-            "Stable errors",
-            "Test implementation",
-            "Non-goals",
-            "Related skills",
-        ):
-            self.assertIn(heading, headings)
         self.assertIn("[foundry-mcp-aca](../foundry-mcp-aca/SKILL.md)", body)
         self.assertIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
-        self.assertIn("CALLBACK_DELIVERY_REJECTED", body)
-        self.assertIn("WORKER_EXECUTION_FAILED", body)
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
@@ -348,10 +398,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             self._reference_app_dir() / "models.py": ("../../../SKILL.md", "Control record and lifecycle"),
             self._reference_app_dir() / "callbacks.py": ("../../../SKILL.md", "Callback contract"),
             self._reference_app_dir() / "control_store.py": ("../../../SKILL.md", "Idempotency and uncertain-start reconciliation"),
-            self._reference_app_dir() / "orchestrator.py": ("../../../SKILL.md", "Protocol contract (Tasks + Compatibility tools)"),
+            self._reference_app_dir() / "orchestrator.py": ("../../../SKILL.md", "Idempotency and uncertain-start reconciliation"),
             self._reference_app_dir() / "aca_jobs.py": ("../../../SKILL.md", "Architecture and shared-image contract"),
-            self._reference_app_dir() / "aca_tasks_extension.py": ("../../../SKILL.md", "Protocol contract (Tasks + Compatibility tools)"),
-            self._reference_app_dir() / "mcp_server.py": ("../../../SKILL.md", "Protocol contract (Tasks + Compatibility tools)"),
+            self._reference_app_dir() / "aca_tasks_extension.py": ("../../../SKILL.md", "Standards-first MCP Tasks path"),
+            self._reference_app_dir() / "mcp_server.py": ("../../../SKILL.md", "Protocol contract"),
             self._reference_app_dir() / "job_worker.py": ("../../../SKILL.md", "Operate and observe"),
             self._reference_app_dir() / "telemetry.py": ("../../../SKILL.md", "Operate and observe"),
             self._infra_dir() / "app.bicep": ("../../SKILL.md", "Architecture and shared-image contract"),
@@ -362,7 +412,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             self._infra_dir() / "identity-rbac" / "uami.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
             self._infra_dir() / "main.bicep": ("../../SKILL.md", "Deploy with azd"),
             self._script_dir() / "converge_image.py": ("../../../SKILL.md", "Deploy with azd"),
-            self._script_dir() / "verify_deployment.py": ("../../../SKILL.md", "Test implementation"),
+            self._script_dir() / "verify_deployment.py": ("../../../SKILL.md", "Test the implementation"),
         }
         skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         skill_headings = {match.group(1) for match in re.finditer(r"(?m)^## (.+)$", skill_text)}
@@ -418,12 +468,23 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         script = pin_fm["validation"]["script"]
         for dep in expected:
             self.assertIn(f'"{dep}"', script)
-        for marker in ("ok fastmcp task extension methods", "ok no Docket lifespan", "ok ACA jobs SDK methods"):
-            self.assertIn(marker, pin_fm["validation"]["expected_output"])
+        self.assertEqual(
+            pin_fm["validation"]["expected_output"],
+            [
+                "ok fastmcp external tasks adapter",
+                "ok aca jobs sdk surface",
+                "ok foundry-mcp-aca-jobs imports",
+            ],
+        )
         self.assertIn("prefecthq/fastmcp/issues/2754".lower(), str(pin_fm["known_issues"][0]["upstream_url"]).lower())
+        self.assertIn("from fastmcp_tasks import TasksExtension", script)
+        self.assertIn("inspect.getsource(TasksExtension.lifespan)", script)
+        self.assertIn('assert "docket_lifespan" in tasks_source', script)
+        self.assertIn('assert "docket_lifespan" not in aca_source', script)
         self.assertIn("AcaTasksExtension", script)
         self.assertIn("JobsOperations", script)
-        self.assertIn("Docket", script)
+        self.assertIn("TasksExtension", script)
+        self.assertIn("docket_lifespan", script)
 
     def test_dockerfile_contract_is_single_shared_runtime_image(self) -> None:
         templates = self._template_dir()

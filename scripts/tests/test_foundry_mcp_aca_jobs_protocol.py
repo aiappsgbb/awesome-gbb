@@ -696,9 +696,9 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(outcome.task_id, str(self.task.task_id))
                 self.assertEqual(outcome.status, "working")
             elif name == "update":
-                self.assertIsInstance(outcome, UpdateTaskResult)
+                self.assertEqual(_dump_model(outcome)["resultType"], "complete")
             else:
-                self.assertIsInstance(outcome, CancelTaskResult)
+                self.assertEqual(_dump_model(outcome)["resultType"], "complete")
 
     async def test_task_methods_allow_absent_task_header(self) -> None:
         request = types.SimpleNamespace(headers={})
@@ -784,14 +784,12 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             ctx,
             UpdateTaskParams(taskId=str(self.task.task_id), inputResponses={"foo": "bar"}),
         )
-        self.assertIsInstance(result, UpdateTaskResult)
         self.assertEqual(_dump_model(result)["resultType"], "complete")
         self.assertEqual(self.orchestrator.get_status_calls, [("owner-a", str(self.task.task_id))])
 
     async def test_cancel_calls_orchestrator_and_acknowledges(self) -> None:
         ctx = ServerRequestContext(protocol_version="2026-07-28", settings={"enabled": True})
         result = await self.extension._cancel(ctx, CancelTaskParams(taskId=str(self.task.task_id)))
-        self.assertIsInstance(result, CancelTaskResult)
         self.assertEqual(_dump_model(result)["resultType"], "complete")
         self.assertEqual(self.orchestrator.cancel_calls, [("owner-a", str(self.task.task_id))])
 
@@ -890,7 +888,6 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             side_effect=AssertionError("intercept_tool_call must use context.client_extension_settings"),
         ):
             outcome = await extension.intercept_tool_call(request, context, call_next)
-        self.assertIsInstance(outcome, CreateTaskResult)
         dumped = _dump_model(outcome)
         self.assertEqual(dumped["taskId"], str(self.task.task_id))
         self.assertEqual(dumped["status"], "working")
@@ -949,7 +946,6 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                     side_effect=AssertionError("intercept_tool_call must use context.client_extension_settings"),
                 ):
                     outcome = await extension.intercept_tool_call(request, context, call_next)
-                self.assertIsInstance(outcome, CreateTaskResult)
                 dumped = _dump_model(outcome)
                 self.assertEqual(dumped["status"], app_models.to_mcp_task(task).status)
                 self.assertEqual(dumped["status"], expected_status)

@@ -7,8 +7,8 @@ upstream:
   type: pypi
   notes: |
     FastMCP 4 + ACA Job orchestration stack for job-backed MCP servers.
-    The skill keeps a strict adapter boundary around the Tasks serializer
-    shim until upstream behavior is revalidated.
+    The skill keeps a strict adapter boundary around the public Tasks
+    result-claim path until upstream behavior is revalidated end to end.
 
 packages:
   - name: fastmcp
@@ -117,10 +117,10 @@ docs_to_revalidate:
 
 known_issues:
   - id: KI-001
-    description: FastMCP's claimed-result serializer shim and Tasks adapter remain an upstream compatibility boundary. Keep the adapter seam in the skill until the behavior is revalidated end to end.
+    description: FastMCP's claimed-result serializer shim and Tasks adapter remain an upstream compatibility boundary. Keep the adapter seam in the skill until the public Tasks result-claim API is revalidated end to end.
     upstream_url: https://github.com/PrefectHQ/fastmcp/issues/2754
     status: open
-    workaround_location: SKILL.md § Protocol contract (Tasks + Compatibility tools)
+    workaround_location: SKILL.md § Standards-first MCP Tasks path
 
 validation:
   requires: [pypi]
@@ -135,6 +135,7 @@ validation:
     import inspect
     from azure.mgmt.appcontainers.operations import JobsOperations, JobExecutionsOperations
     from fastmcp.server.extensions import ServerExtension
+    from fastmcp_tasks import TasksExtension
     from app import (
         AsyncTokenCredential,
         CallbackDeliveryState,
@@ -166,8 +167,10 @@ validation:
     assert hasattr(AcaTasksExtension, "methods"), "AcaTasksExtension.methods missing"
     assert hasattr(AcaTasksExtension, "intercept_tool_call"), "AcaTasksExtension.intercept_tool_call missing"
     assert hasattr(AcaTasksExtension, "lifespan"), "AcaTasksExtension.lifespan missing"
-    source = inspect.getsource(AcaTasksExtension.lifespan)
-    assert "Docket" not in source, "Docket lifespan must not leak into the adapter"
+    tasks_source = inspect.getsource(TasksExtension.lifespan)
+    aca_source = inspect.getsource(AcaTasksExtension.lifespan)
+    assert "docket_lifespan" in tasks_source, "TasksExtension.lifespan must expose docket_lifespan"
+    assert "docket_lifespan" not in aca_source, "AcaTasksExtension.lifespan must not leak Docket lifecycle wiring"
 
     assert hasattr(JobsOperations, "get"), "JobsOperations.get missing"
     assert hasattr(JobsOperations, "begin_start"), "JobsOperations.begin_start missing"
@@ -181,14 +184,14 @@ validation:
     assert callable(build_worker_from_env)
     assert callable(build_worker_arg_parser)
     assert callable(demo_handler)
-    print("ok fastmcp task extension methods")
-    print("ok no Docket lifespan")
-    print("ok ACA jobs SDK methods")
+    print("ok fastmcp external tasks adapter")
+    print("ok aca jobs sdk surface")
+    print("ok foundry-mcp-aca-jobs imports")
     PY
   expected_output:
-    - "ok fastmcp task extension methods"
-    - "ok no Docket lifespan"
-    - "ok ACA jobs SDK methods"
+    - "ok fastmcp external tasks adapter"
+    - "ok aca jobs sdk surface"
+    - "ok foundry-mcp-aca-jobs imports"
 
 last_validated: 2026-09-02
 validated_by: copilot-bot
@@ -219,13 +222,17 @@ Foundry MCP pattern. It intentionally avoids live Azure validation.
 
 ## Verification checklist
 
-Run the `validation.script` front-matter block. Expected output contains the three
-`ok ...` markers above.
+Run the `validation.script` front-matter block. Expected output must match the
+three exact markers above:
+
+- `ok fastmcp external tasks adapter`
+- `ok aca jobs sdk surface`
+- `ok foundry-mcp-aca-jobs imports`
 
 ## Known issues
 
 ### KI-001 — FastMCP claimed-result serializer shim
 
 FastMCP's claimed-result serializer shim and Tasks adapter are still an upstream
-compatibility boundary. Keep the adapter seam in the skill until the behavior is
-revalidated end to end.
+compatibility boundary. Keep the adapter seam in the skill until the public
+Tasks result-claim API is revalidated end to end.

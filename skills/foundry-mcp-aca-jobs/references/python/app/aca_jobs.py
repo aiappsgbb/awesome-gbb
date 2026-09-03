@@ -249,11 +249,19 @@ class AcaJobsAdapter:
     def __init__(self, client: ContainerAppsAPIClient) -> None:
         self._client = client
 
+    @staticmethod
+    def _translate_client_error(error: Exception, *, phase: str) -> None:
+        if getattr(error, "status_code", None) is None:
+            raise error
+        _translate_http_error(error, phase=phase)
+
     async def start(self, policy: JobPolicy, owner_scope: str, task_id: str) -> AcaExecution:
         try:
             job = await asyncio.to_thread(self._client.jobs.get, policy.resource_group, policy.job_name)
         except HttpResponseError as error:
             _translate_http_error(error, phase="read")
+        except Exception as error:
+            self._translate_client_error(error, phase="read")
 
         template = _execution_template_for_start(job, policy, owner_scope, task_id)
 
@@ -261,11 +269,15 @@ class AcaJobsAdapter:
             poller = await asyncio.to_thread(self._client.jobs.begin_start, policy.resource_group, policy.job_name, template)
         except HttpResponseError as error:
             _translate_http_error(error, phase="start")
+        except Exception as error:
+            self._translate_client_error(error, phase="start")
 
         try:
             response = await asyncio.to_thread(poller.result)
         except HttpResponseError as error:
             _translate_http_error(error, phase="start")
+        except Exception as error:
+            self._translate_client_error(error, phase="start")
 
         execution_id = _execution_id_from_response(response)
         status = _execution_status(response)
@@ -285,6 +297,8 @@ class AcaJobsAdapter:
             )
         except HttpResponseError as error:
             _translate_http_error(error, phase="read")
+        except Exception as error:
+            self._translate_client_error(error, phase="read")
         return _execution_from_response(response, execution_id=execution_id, container_name=policy.container_name)
 
     async def list(self, policy: JobPolicy) -> list[AcaExecution]:
@@ -294,6 +308,8 @@ class AcaJobsAdapter:
             )
         except HttpResponseError as error:
             _translate_http_error(error, phase="read")
+        except Exception as error:
+            self._translate_client_error(error, phase="read")
         return [_execution_from_response(item, container_name=policy.container_name) for item in response]
 
     async def stop(self, policy: JobPolicy, execution_id: str) -> None:
@@ -306,8 +322,12 @@ class AcaJobsAdapter:
             )
         except HttpResponseError as error:
             _translate_http_error(error, phase="stop")
+        except Exception as error:
+            self._translate_client_error(error, phase="stop")
         try:
             await asyncio.to_thread(poller.result)
         except HttpResponseError as error:
             _translate_http_error(error, phase="stop")
+        except Exception as error:
+            self._translate_client_error(error, phase="stop")
         return None

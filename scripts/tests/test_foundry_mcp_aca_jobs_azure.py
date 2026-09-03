@@ -73,7 +73,13 @@ def _http_response_error(status_code: int, message: str = "boom") -> HttpRespons
         headers={},
         text=message,
     )
-    return HttpResponseError(message, response=response)
+    class _HttpResponseError(Exception):
+        pass
+
+    error = _HttpResponseError(message)
+    error.response = response
+    error.status_code = status_code
+    return error
 
 
 class _Poller:
