@@ -47,8 +47,9 @@ class AzdPatternsFixtureContractTests(unittest.TestCase):
             self.assertNotRegex(sample, pattern)
 
     def test_reference_module_builds_without_repo_bicepconfig(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             workdir = pathlib.Path(temp_dir)
+            self.assertFalse(ROOT in workdir.resolve().parents)
             copied = workdir / ACA_JOB.name
             shutil.copy2(ACA_JOB, copied)
 
@@ -77,7 +78,20 @@ class AzdPatternsFixtureContractTests(unittest.TestCase):
                     f"stderr:\n{result.stderr}"
                 ),
             )
+            self.assertNotIn("assertions feature", result.stderr.lower())
             self.assertTrue((workdir / "aca-job.json").exists())
+
+    def test_skill_module_catalog_aca_job_row_matches_canonical_contract(self) -> None:
+        skill = SKILL.read_text(encoding="utf-8")
+        expected_row = (
+            "| **aca-job** | `infra/modules/aca-job.bicep` | `aca-job: yes` "
+            "(params: `[{ name, imageDigest, containerName, command, args, "
+            "environmentVariables, uamiResourceId, acrServer, environmentId }]`) | "
+            "`id`, `name` | Manual only; `threadlight-event-triggers` owns the "
+            "cron/event variant |"
+        )
+
+        self.assertIn(expected_row, skill)
 
     def test_skill_bicep_job_pattern_references_canonical_module(self) -> None:
         skill = SKILL.read_text(encoding="utf-8")
