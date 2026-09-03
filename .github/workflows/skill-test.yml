@@ -180,16 +180,18 @@ jobs:
     #     Teardown                                             ~2 min
     #     ───────────────────────────────────────────────────────────
     #     WORST CASE                                           ~43 min
-    # - 60 min: Task15's foundry-mcp-aca-jobs leg is now the longest:
-    #     azd up + hosted build/deploy                         ~32 min
-    #     task/callback polls + authenticated convergence     ~15 min
-    #     marker-first cleanup                                 ~3 min
+    # - 120 min: Task15's foundry-mcp-aca-jobs leg is now the longest,
+    #   and the ceiling must cover a complete primary + retry path:
+    #     Primary Task15 P99                                  ~50 min
+    #     Pattern 19 cooldown (jittered 90-180 s)              ~3 min
+    #     Retry Task15 P99 (cached build / clean retry)       ~42 min
+    #     marker evaluation + teardown tail                    ~5 min
     #     ───────────────────────────────────────────────────────────
-    #     OBSERVED/PLANNED P99                                ~50 min
-    # Pattern 14 requires at least 20% headroom, so the shared ceiling is
-    # 60 min. Do NOT bisect this comment block when shaving — bump only
-    # if a NEW measurement exceeds the budget.
-    timeout-minutes: 60
+    #     COMPOUND BUDGET                                    ~100 min
+    # Pattern 14 requires at least 20% headroom over the compound budget,
+    # so the shared ceiling is 120 min. This is a ceiling only and adds no
+    # cost to fast legs. Do NOT bisect this comment block when shaving.
+    timeout-minutes: 120
     permissions:
       id-token: write
       contents: read

@@ -29,7 +29,7 @@ SKILL_DIR = SKILL / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
 _install_stubs()
 
-from app.models import Policy
+from app.models import Policy, TaskRecord
 
 
 class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
@@ -188,6 +188,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     @staticmethod
     def _param_names(text: str) -> list[str]:
         return re.findall(r"(?m)^\s*param\s+(\w+)\s+\w+", text)
+
+    @staticmethod
+    def _allowlist_assertions_accept(
+        client_ids: list[str], principal_ids: list[str]
+    ) -> bool:
+        exactly_one_mode = bool(client_ids) != bool(principal_ids)
+        client_values_are_nonempty = all(value.strip() for value in client_ids)
+        principal_values_are_nonempty = all(value.strip() for value in principal_ids)
+        return (
+            exactly_one_mode
+            and client_values_are_nonempty
+            and principal_values_are_nonempty
+        )
 
     def _build_bicepparam(self, name: str, contents: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object] | None]:
         param_file = self._infra_dir() / name
@@ -677,6 +690,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
         self.assertNotIn('assert "start_aca_job" in evidence', fixture)
         self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
+
+    def test_legacy_fallback_reads_serialized_task_record_lifecycle_alias(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        lifecycle_alias = TaskRecord.model_fields["lifecycle_state"].alias
+        self.assertEqual(lifecycle_alias, "lifecycleState")
+        fallback = fixture.split("    fallback = dict(request)", 1)[1].split(
+            "    callback_url = (", 1
+        )[0]
+
+        self.assertEqual(fallback.count(f'cancelled["{lifecycle_alias}"]'), 2)
+        self.assertNotIn('cancelled["status"]', fallback)
 
     def test_agent_smoke_input_refs_are_uploaded_before_invocation(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
@@ -1279,12 +1305,17 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         workflow = yaml.safe_load(workflow_text)
         matrix = workflow["jobs"]["copilot-cli-matrix"]
 
-        self.assertEqual(matrix["timeout-minutes"], 60)
+        self.assertEqual(matrix["timeout-minutes"], 120)
+        self.assertIn(
+            "- name: Retry once on classified-transient failure", workflow_text
+        )
+        self.assertIn("COOLDOWN=$((90 + RANDOM % 90))", workflow_text)
         for phrase in (
-            "azd up",
-            "hosted build/deploy",
-            "task/callback polls",
-            "cleanup",
+            "Primary Task15 P99",
+            "Pattern 19 cooldown",
+            "Retry Task15 P99",
+            "teardown",
+            "COMPOUND BUDGET",
             "Pattern 14",
         ):
             self.assertIn(phrase, workflow_text)
@@ -1932,7 +1963,7 @@ param callbackConfig = {
         self.assertIn("externalCallbackUrl", result.stderr)
         self.assertIn("keyVaultName", result.stderr)
 
-    def test_easy_auth_allowlist_parameter_variants_and_runtime_assert_contract(
+    def test_easy_auth_allowlist_parameter_variants_have_exact_truth_table(
         self,
     ) -> None:
         def variant(
@@ -1972,10 +2003,15 @@ param callbackConfig = {{
                 ".test-easy-auth-allowlist.bicepparam", contents
             )
 
-        for label, client_ids, principal_ids in (
-            ("client-only", ["caller-client"], []),
-            ("principal-only", [], ["caller-principal"]),
-        ):
+        cases = (
+            ("client-only", ["caller-client"], [], True),
+            ("principal-only", [], ["caller-principal"], True),
+            ("both", ["caller-client"], ["caller-principal"], False),
+            ("neither", [], [], False),
+            ("client-empty-entry", [""], [], False),
+            ("principal-whitespace-entry", [], ["   "], False),
+        )
+        for label, client_ids, principal_ids, expected in cases:
             with self.subTest(label=label):
                 result, compiled = variant(client_ids, principal_ids)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -1989,26 +2025,30 @@ param callbackConfig = {{
                     compiled["parameters"]["allowedMcpCallerPrincipalIds"]["value"],
                     principal_ids,
                 )
-
-        for label, client_ids, principal_ids in (
-            ("both", ["caller-client"], ["caller-principal"]),
-            ("neither", [], []),
-            ("client-empty-entry", [""], []),
-            ("principal-whitespace-entry", [], ["   "]),
-        ):
-            with self.subTest(label=label):
-                result, _ = variant(client_ids, principal_ids)
                 self.assertEqual(
-                    result.returncode,
-                    0,
-                    "Bicep deployment assertions are evaluated by ARM, not build-params",
-                )
-                self.assertFalse(
-                    (bool(client_ids) != bool(principal_ids))
-                    and all(value.strip() for value in client_ids + principal_ids),
-                    f"{label} must be rejected by the deployment assertion",
+                    self._allowlist_assertions_accept(client_ids, principal_ids),
+                    expected,
                 )
 
+    def test_compiled_arm_contains_exact_easy_auth_allowlist_assertions(
+        self,
+    ) -> None:
+        expected_asserts = {
+            "exactlyOneMcpCallerAllowlistMode": (
+                "[or(and(empty(parameters('allowedMcpCallerClientIds')), "
+                "not(empty(parameters('allowedMcpCallerPrincipalIds')))), "
+                "and(not(empty(parameters('allowedMcpCallerClientIds'))), "
+                "empty(parameters('allowedMcpCallerPrincipalIds'))))]"
+            ),
+            "nonemptyMcpCallerClientIds": (
+                "[empty(filter(parameters('allowedMcpCallerClientIds'), "
+                "lambda('id', empty(trim(lambdaVariables('id'))))))]"
+            ),
+            "nonemptyMcpCallerPrincipalIds": (
+                "[empty(filter(parameters('allowedMcpCallerPrincipalIds'), "
+                "lambda('id', empty(trim(lambdaVariables('id'))))))]"
+            ),
+        }
         for source in (
             self._infra_dir() / "app.bicep",
             self._infra_dir() / "main.bicep",
@@ -2029,32 +2069,19 @@ param callbackConfig = {{
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 compiled = json.loads(result.stdout)
-                assertion = compiled["asserts"]["exactlyOneMcpCallerAllowlistMode"]
-                self.assertIn(
-                    "empty(parameters('allowedMcpCallerClientIds'))", assertion
+                self.assertEqual(compiled["languageVersion"], "2.1-experimental")
+                for assertion_name, expression in expected_asserts.items():
+                    self.assertEqual(compiled["asserts"][assertion_name], expression)
+                expressions = " ".join(
+                    compiled["asserts"][name] for name in expected_asserts
                 )
-                self.assertIn(
-                    "empty(parameters('allowedMcpCallerPrincipalIds'))", assertion
-                )
-                self.assertIn("or(and(", assertion)
-                for assertion_name, parameter_name in (
-                    (
-                        "nonemptyMcpCallerClientIds",
-                        "allowedMcpCallerClientIds",
-                    ),
-                    (
-                        "nonemptyMcpCallerPrincipalIds",
-                        "allowedMcpCallerPrincipalIds",
-                    ),
+                for token in (
+                    "parameters('allowedMcpCallerClientIds')",
+                    "parameters('allowedMcpCallerPrincipalIds')",
+                    "filter(",
+                    "trim(",
                 ):
-                    value_assertion = compiled["asserts"][assertion_name]
-                    self.assertIn(
-                        f"parameters('{parameter_name}')", value_assertion
-                    )
-                    self.assertIn("lambda(", value_assertion)
-                    self.assertIn("filter(", value_assertion)
-                    self.assertIn("trim(", value_assertion)
-                    self.assertIn("empty(", value_assertion)
+                    self.assertIn(token, expressions)
 
     def test_bicep_builds_without_experimental_assertion_warnings(self) -> None:
         files = [

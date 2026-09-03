@@ -418,13 +418,13 @@ async def main():
         )
         assert cancelled["taskId"] == fallback_id and "resultType" not in cancelled
         for _ in range(30):
-            if cancelled["status"] in TERMINAL:
+            if cancelled["lifecycleState"] in TERMINAL:
                 break
             await asyncio.sleep(5)
             cancelled = payload(
                 await client.call_tool("get_aca_job_status", {"taskId": fallback_id})
             )
-        assert cancelled["status"] in TERMINAL
+        assert cancelled["lifecycleState"] in TERMINAL
 
     callback_url = (
         f"{os.environ['CALLBACK_CONTAINER_URL']}/callbacks/{task.task_id}.json"
