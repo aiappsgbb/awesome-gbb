@@ -2377,14 +2377,16 @@ part of what they asked for?" YES → hard. NO → best-effort.
 
 **Janitor contract.** The `<ci-resource-group>` resource group
 is the catch-all for orphaned fixture resources under Pattern
-25. A periodic cron (manual today; automation deferred) prunes:
+25. The manual janitor process (automation deferred) prunes:
 
 - ACR repositories matching `ci-smoke-*` older than 7 days
 - Foundry agent versions matching `ci-smoke-*` older than 7 days
 - ACA Container Apps matching `ci-smoke-*` older than 7 days
 - Role assignments scoped to deleted principals
+- Cosmos native SQL role assignments (`az cosmosdb sql role assignment`);
+  these are not ordinary ARM RBAC and can survive deleted principals
 
-The janitor's existence is what lets fixtures soft-PASS without
+The manual janitor process is what lets fixtures soft-PASS without
 unbounded resource leak. Do NOT use Pattern 25 in production
 deployments — the janitor lives only in CI infrastructure.
 
@@ -3059,7 +3061,7 @@ Consequences:
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
-| Unit tests | 784 |
+| Unit tests | 785 |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

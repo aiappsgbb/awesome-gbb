@@ -89,6 +89,14 @@ packages:
     upstream_changelog: https://pypi.org/project/uvicorn/#history
     notes: |
       Local server runner for the MCP app.
+  - name: azure-ai-projects
+    source: pypi
+    version: "2.3.0"
+    upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
+    notes: |
+      Prompt Agent and MCPTool authorization surface used by the live fixture.
+      Keep this direct pin below 2.4 to stay coherent with the hosted-agent
+      dependency train.
 
 docs_to_revalidate:
   - https://modelcontextprotocol.io/extensions/tasks/overview
@@ -114,6 +122,9 @@ docs_to_revalidate:
   - https://pypi.org/project/httpx/
   - https://pypi.org/project/pydantic/
   - https://pypi.org/project/uvicorn/
+  - https://pypi.org/project/azure-ai-projects/
+  - https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptool
+  - https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.promptagentdefinition
 
 known_issues:
   - id: KI-001
@@ -136,10 +147,11 @@ validation:
     python -m venv .venv
     . .venv/bin/activate
     export PYTHONPATH="$REPO_ROOT/skills/foundry-mcp-aca-jobs/references/python${PYTHONPATH:+:$PYTHONPATH}"
-    pip install --quiet       "fastmcp~=4.0.1"       "fastmcp-tasks~=4.0.1"       "mcp~=2.1.1"       "azure-cosmos[aio]~=4.16.4"       "azure-identity~=1.25.3"       "azure-keyvault-secrets~=4.11.2"       "azure-mgmt-appcontainers~=5.0.0"       "azure-monitor-opentelemetry~=1.8.9"       "azure-storage-blob[aio]~=12.30.1"       "httpx~=0.28.1"       "pydantic~=2.13.5"       "uvicorn~=0.52.4"
+    pip install --quiet       "fastmcp~=4.0.1"       "fastmcp-tasks~=4.0.1"       "mcp~=2.1.1"       "azure-cosmos[aio]~=4.16.4"       "azure-identity~=1.25.3"       "azure-keyvault-secrets~=4.11.2"       "azure-mgmt-appcontainers~=5.0.0"       "azure-monitor-opentelemetry~=1.8.9"       "azure-storage-blob[aio]~=12.30.1"       "httpx~=0.28.1"       "pydantic~=2.13.5"       "uvicorn~=0.52.4"       "azure-ai-projects~=2.3.0"
     python - <<'PY'
     import inspect
     from azure.mgmt.appcontainers.operations import JobsOperations, JobsExecutionsOperations
+    from azure.ai.projects.models import MCPTool, PromptAgentDefinition
     from fastmcp.server.extensions import ServerExtension
     from fastmcp_tasks import TasksExtension
     from app.aca_jobs import AcaExecution, AcaJobsAdapter, AcaJobsClient
@@ -166,6 +178,18 @@ validation:
     assert hasattr(JobsOperations, "begin_stop_execution"), "JobsOperations.begin_stop_execution missing"
     assert hasattr(JobsExecutionsOperations, "list"), "JobsExecutionsOperations.list missing"
 
+    mcp_tool = MCPTool(
+        server_label="task20",
+        server_url="https://example.invalid/mcp",
+        authorization="task20-token",
+        require_approval="never",
+    )
+    prompt_definition = PromptAgentDefinition(
+        model="task20-model",
+        tools=[mcp_tool],
+    )
+    assert prompt_definition.tools[0].authorization == "task20-token"
+
     assert callable(callback_payload)
     assert callable(CallbackSender)
     assert callable(to_mcp_task)
@@ -176,14 +200,16 @@ validation:
     assert callable(demo_handler)
     print("ok fastmcp external tasks adapter")
     print("ok aca jobs sdk surface")
+    print("ok azure ai projects prompt mcp authorization surface")
     print("ok foundry-mcp-aca-jobs imports")
     PY
   expected_output:
     - "ok fastmcp external tasks adapter"
     - "ok aca jobs sdk surface"
+    - "ok azure ai projects prompt mcp authorization surface"
     - "ok foundry-mcp-aca-jobs imports"
 
-last_validated: 2026-09-02
+last_validated: 2026-09-03
 validated_by: copilot-bot
 known_issues_count: 1
 ---
@@ -209,15 +235,22 @@ Foundry MCP pattern. It intentionally avoids live Azure validation.
 | `httpx` | PyPI | **0.28.1** | Callback transport |
 | `pydantic` | PyPI | **2.13.5** | Control-record models |
 | `uvicorn` | PyPI | **0.52.4** | Local server runner |
+| `azure-ai-projects` | PyPI | **2.3.0** | Prompt Agent and MCPTool `authorization`; held below 2.4 for the hosted dependency train |
 
 ## Verification checklist
 
 Run the `validation.script` front-matter block. Expected output must match the
-three exact markers above:
+four exact markers above:
 
 - `ok fastmcp external tasks adapter`
 - `ok aca jobs sdk surface`
+- `ok azure ai projects prompt mcp authorization surface`
 - `ok foundry-mcp-aca-jobs imports`
+
+The Task20 live Prompt Agent call already proved the
+`PromptAgentDefinition` plus `MCPTool.authorization` surface. This refresh
+records that contract in the bounded local validation without duplicating
+tenant, subscription, resource, or evidence identifiers.
 
 ## Known issues
 

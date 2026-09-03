@@ -342,7 +342,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.2")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.3")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -1083,16 +1083,25 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn('select(.id == "azure.ai.agents")', fixture)
         self.assertIn("RBAC_PROVIDER_ACTIONS_MATCH", fixture)
         self.assertIn(
-            "select(ascii_downcase == ($action | ascii_downcase))",
+            '.name? | select(type == "string") |\n'
+            "     select(ascii_downcase == ($action | ascii_downcase))",
             fixture,
         )
-        for action in (
+        expected_provider_actions = (
             "Microsoft.App/jobs/read",
             "Microsoft.App/jobs/start/action",
             "Microsoft.App/jobs/execution/read",
             "Microsoft.App/jobs/executions/read",
             "Microsoft.App/jobs/stop/execution/action",
-        ):
+        )
+        provider_loop = fixture.split("for action in \\", 1)[1].split(
+            "echo RBAC_PROVIDER_ACTIONS_MATCH", 1
+        )[0]
+        self.assertEqual(
+            re.findall(r"(?m)^  (Microsoft\.App/\S+)(?: \\)?$", provider_loop),
+            list(expected_provider_actions),
+        )
+        for action in expected_provider_actions:
             self.assertIn(action, fixture)
         self.assertIn("SHARED_IMAGE_DIGEST_MATCH", fixture)
         self.assertIn("ENTRYPOINTS_MATCH", fixture)
@@ -1565,14 +1574,17 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_upstream_pin_and_validation_contract_match_pyproject(self) -> None:
         pin_fm, body = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
         pyproject = tomllib.loads((self._template_dir() / "pyproject.toml").read_text(encoding="utf-8"))
-        expected = [dep for dep in pyproject["project"]["dependencies"]]
+        expected = [
+            *pyproject["project"]["dependencies"],
+            *pyproject["dependency-groups"]["fixture"],
+        ]
 
         self.assertEqual(pin_fm["schema_version"], 2)
         self.assertEqual(pin_fm["freshness_tier"], "B")
         self.assertEqual(pin_fm["automation_tier"], "auto")
         self.assertEqual(pin_fm["validation"]["requires"], ["pypi"])
         self.assertTrue(pin_fm["validation"]["runnable"])
-        self.assertEqual(len(pin_fm["packages"]), 12)
+        self.assertEqual(len(pin_fm["packages"]), 13)
 
         normalized_expected = []
         for dep in expected:
@@ -1589,6 +1601,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             [
                 "ok fastmcp external tasks adapter",
                 "ok aca jobs sdk surface",
+                "ok azure ai projects prompt mcp authorization surface",
                 "ok foundry-mcp-aca-jobs imports",
             ],
         )
@@ -1601,6 +1614,62 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("JobsOperations", script)
         self.assertIn("TasksExtension", script)
         self.assertIn("docket_lifespan", script)
+        projects_package = next(
+            package
+            for package in pin_fm["packages"]
+            if package["name"] == "azure-ai-projects"
+        )
+        self.assertEqual(projects_package["version"], "2.3.0")
+        self.assertEqual(
+            projects_package["upstream_changelog"],
+            "https://pypi.org/project/azure-ai-projects/#history",
+        )
+        self.assertIn(
+            "https://pypi.org/project/azure-ai-projects/",
+            pin_fm["docs_to_revalidate"],
+        )
+        self.assertIn(
+            "https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptool",
+            pin_fm["docs_to_revalidate"],
+        )
+        self.assertIn(
+            "https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.promptagentdefinition",
+            pin_fm["docs_to_revalidate"],
+        )
+        self.assertIn(
+            "from azure.ai.projects.models import MCPTool, PromptAgentDefinition",
+            script,
+        )
+        self.assertIn(
+            'authorization="task20-token"',
+            script,
+        )
+        self.assertIn(
+            'assert prompt_definition.tools[0].authorization == "task20-token"',
+            script,
+        )
+        self.assertIn(
+            'print("ok azure ai projects prompt mcp authorization surface")',
+            script,
+        )
+        self.assertIn(
+            "| `azure-ai-projects` | PyPI | **2.3.0** |",
+            body,
+        )
+        self.assertIn("Task20", body)
+
+    def test_pattern25_assigns_manual_cosmos_native_role_cleanup(self) -> None:
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        janitor = agents.split("**Janitor contract.**", 1)[1].split(
+            "**Diagnostic protocol.**", 1
+        )[0]
+
+        self.assertIn(
+            "- Cosmos native SQL role assignments (`az cosmosdb sql role assignment`)",
+            janitor,
+        )
+        self.assertIn("manual", janitor.lower())
+        self.assertIn("deleted principals", janitor)
 
     def test_validation_script_uses_concrete_imports_and_compiles(self) -> None:
         pin_fm, _ = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
@@ -1631,6 +1700,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "from app.telemetry import Telemetry, configure, telemetry",
             'print("ok fastmcp external tasks adapter")',
             'print("ok aca jobs sdk surface")',
+            "from azure.ai.projects.models import MCPTool, PromptAgentDefinition",
+            'mcp_tool = MCPTool(',
+            'authorization="task20-token"',
+            'prompt_definition = PromptAgentDefinition(',
+            'assert prompt_definition.tools[0].authorization == "task20-token"',
+            'print("ok azure ai projects prompt mcp authorization surface")',
             'print("ok foundry-mcp-aca-jobs imports")',
         ):
             self.assertIn(required, script)
@@ -2385,6 +2460,9 @@ param callbackConfig = {{
         self.assertEqual(data["services"]["mcp"]["docker"], {"path": "Dockerfile", "context": "."})
         self.assertIn("postdeploy", data["hooks"])
         self.assertEqual(data["hooks"]["postdeploy"]["shell"], "sh")
+        hook_lines = data["hooks"]["postdeploy"]["run"].splitlines()
+        self.assertEqual(hook_lines[0], "set -eu")
+        self.assertNotIn("pipefail", data["hooks"]["postdeploy"]["run"])
         self.assertIn("converge_image.py", text)
         self.assertIn("verify_deployment.py", text)
         self.assertIn("cd infra/scripts && uv sync --frozen", text)

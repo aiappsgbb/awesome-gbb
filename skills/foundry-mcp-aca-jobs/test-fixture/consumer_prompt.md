@@ -231,7 +231,7 @@ for action in \
   Microsoft.App/jobs/stop/execution/action
 do
   jq -e --arg action "$action" \
-    '.. | objects | .name? // empty |
+    '.. | objects | .name? | select(type == "string") |
      select(ascii_downcase == ($action | ascii_downcase))' \
     <<<"$provider_json" >/dev/null ||
     fail "Microsoft.App provider action missing: $action"

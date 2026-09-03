@@ -16,7 +16,7 @@ hooks:
     interactive: false
     continueOnError: false
     run: |
-      set -euo pipefail
+      set -eu
       cd infra/scripts && uv sync --frozen
       EXPECTED_IMAGE_DIGEST="$(uv run --frozen python converge_image.py)"
       EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run --frozen python verify_deployment.py
