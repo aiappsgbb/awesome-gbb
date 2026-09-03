@@ -328,7 +328,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.2.1")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.2.2")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -506,8 +506,18 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             for step in fixture_steps
         ]
         self.assertEqual(extracted, [expected] * len(fixture_steps))
-        self.assertNotIn("Optional standing Entra app client id", workflow_text)
-        self.assertNotIn("fixture skips the auth sub-test", workflow_text)
+        self.assertEqual(
+            workflow_text.count(
+                "Required only for the foundry-mcp-aca-jobs fixture; other matrix"
+            ),
+            len(fixture_steps),
+        )
+        self.assertEqual(
+            workflow_text.count(
+                "Shared optional caller app client ID; foundry-mcp-aca-jobs"
+            ),
+            len(fixture_steps),
+        )
 
     def test_relocated_template_layout_compiles_with_canonical_job_module(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
@@ -656,6 +666,34 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn('assert "start_aca_job" in evidence', fixture)
         self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
 
+    def test_agent_smoke_input_refs_are_uploaded_before_invocation(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        upload_step = fixture.split(
+            "## Step 4 — task-aware and fallback client smoke", 1
+        )[1].split("## Step 5 — prompt agent smoke", 1)[0]
+        self.assertIn("agent_input_refs = (", upload_step)
+        for marker in (
+            "PROMPT_AGENT_MCP_PASS",
+            "HOSTED_AGENT_MCP_PASS",
+        ):
+            self.assertIn(
+                f'f"{{storage_url}}/{{output_container}}/inputs/{marker}-"'
+                "\n"
+                "        f\"{os.environ['SUFFIX']}.json\"",
+                upload_step,
+            )
+        self.assertIn("for agent_input_ref in agent_input_refs:", upload_step)
+        self.assertIn(
+            "agent_input_blob = BlobClient.from_blob_url(",
+            upload_step,
+        )
+        self.assertIn(
+            "await agent_input_blob.upload_blob(",
+            upload_step,
+        )
+
     def test_agent_smoke_retries_report_redacted_last_exception(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
             encoding="utf-8"
@@ -716,6 +754,44 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(f"[{path}]({path})", skill)
                 self.assertIn(f"- `{path}`", skill)
+
+    def test_skill_and_readme_document_self_contained_sibling_catalog_layout(self) -> None:
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        readme = (SKILL / "README.md").read_text(encoding="utf-8")
+        for text in (skill, readme):
+            normalized = " ".join(text.split())
+            self.assertIn(
+                "requires the sibling catalog checkout layout",
+                normalized,
+            )
+            self.assertIn(
+                "skills/foundry-mcp-aca-jobs/templates/infra/main.bicep",
+                text,
+            )
+            self.assertIn(
+                "skills/azd-patterns/references/bicep/aca-job.bicep",
+                text,
+            )
+            self.assertIn(
+                "skills/foundry-mcp-aca-jobs/templates",
+                text,
+            )
+            self.assertIn(
+                'WORKDIR="<workdir>"',
+                text,
+            )
+            self.assertIn(
+                'cp -R skills/foundry-mcp-aca-jobs/templates "$WORKDIR/skills/foundry-mcp-aca-jobs/"',
+                text,
+            )
+            self.assertIn(
+                'cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patterns/references/bicep/"',
+                text,
+            )
+        self.assertIn(
+            "Composition root; requires the sibling catalog checkout layout",
+            skill,
+        )
 
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
@@ -860,6 +936,136 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertGreaterEqual(len(python_heredocs), 3)
         for index, source in enumerate(python_heredocs):
             compile(source, f"<consumer_prompt heredoc {index}>", "exec")
+
+    def test_hosted_agent_instance_identity_is_added_to_easy_auth_allowlist(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(fixture.split())
+
+        self.assertIn('print("HOSTED_AGENT_ACTIVE")', fixture)
+        self.assertIn(
+            '--url "${FOUNDRY_PROJECT_ENDPOINT%/}/agents/${HOSTED_NAME}?api-version=v1"',
+            fixture,
+        )
+        self.assertIn("--resource https://ai.azure.com", fixture)
+        self.assertIn("--query instance_identity.principal_id", fixture)
+        self.assertIn("az ad sp show", fixture)
+        self.assertIn('--id "$HOSTED_PRINCIPAL_ID"', fixture)
+        self.assertIn("--query appId", fixture)
+        self.assertIn("--output tsv", fixture)
+        self.assertIn(
+            'FOUNDRY_AGENT_INSTANCE_CLIENT_ID="$HOSTED_CLIENT_ID"',
+            fixture,
+        )
+        self.assertIn(
+            'resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01',
+            fixture,
+        )
+        self.assertIn('AUTH_CONFIG_PROPERTIES="$(', fixture)
+        self.assertIn(
+            ".identityProviders.azureActiveDirectory.validation."
+            "defaultAuthorizationPolicy.allowedApplications",
+            fixture,
+        )
+        self.assertIn("unique", fixture)
+        self.assertIn(
+            ".defaultAuthorizationPolicy.allowedApplications + [$client_id]",
+            normalized,
+        )
+        self.assertIn("| {properties: .}", fixture)
+        self.assertIn("--method put", fixture)
+        self.assertIn('--body "$UPDATED_AUTH_CONFIG_BODY"', fixture)
+        self.assertIn("for attempt in $(seq 1 12); do", fixture)
+        self.assertIn('sleep 5', fixture)
+        self.assertIn(
+            "hosted agent identity lookup failed",
+            fixture,
+        )
+        self.assertIn(
+            "hosted agent client ID resolution failed",
+            fixture,
+        )
+        self.assertIn(
+            "Easy Auth configuration read failed",
+            fixture,
+        )
+        self.assertIn(
+            "Easy Auth allowedApplications update failed",
+            fixture,
+        )
+        self.assertIn(
+            "hosted agent client ID missing from Easy Auth allowedApplications after bounded poll",
+            fixture,
+        )
+        self.assertNotIn('echo "$HOSTED_PRINCIPAL_ID"', fixture)
+        self.assertNotIn('echo "$FOUNDRY_AGENT_INSTANCE_CLIENT_ID"', fixture)
+
+        deploy = fixture.index('azd deploy "$HOSTED_NAME"')
+        active = fixture.index('print("HOSTED_AGENT_ACTIVE")')
+        identity = fixture.index("--query instance_identity.principal_id")
+        update = fixture.index("--method put", identity)
+        invoke = fixture.index("project.agents.update_details(", update)
+        self.assertLess(deploy, active)
+        self.assertLess(active, identity)
+        self.assertLess(identity, update)
+        self.assertLess(update, invoke)
+
+        jq_program_match = re.search(
+            r"UPDATED_AUTH_CONFIG_BODY=\"\$\(.*?"
+            r"jq -c --arg client_id \"\$FOUNDRY_AGENT_INSTANCE_CLIENT_ID\" '"
+            r"(?P<program>.*?)"
+            r"'\s+<<<\"\$AUTH_CONFIG_PROPERTIES\"",
+            fixture,
+            re.S,
+        )
+        self.assertIsNotNone(jq_program_match)
+        original_properties = {
+            "platform": {"enabled": True},
+            "globalValidation": {"unauthenticatedClientAction": "Return401"},
+            "identityProviders": {
+                "azureActiveDirectory": {
+                    "registration": {"clientId": "resource-app-client"},
+                    "validation": {
+                        "allowedAudiences": ["api://resource-app-client"],
+                        "defaultAuthorizationPolicy": {
+                            "allowedApplications": [
+                                "existing-caller-client",
+                                "hosted-caller-client",
+                            ]
+                        },
+                    },
+                }
+            },
+            "sentinel": {"mustRemain": ["full", "properties", "object"]},
+        }
+        transformed = subprocess.run(
+            [
+                "jq",
+                "-c",
+                "--arg",
+                "client_id",
+                "hosted-caller-client",
+                jq_program_match.group("program"),
+            ],
+            input=json.dumps(original_properties),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(transformed.returncode, 0, transformed.stderr)
+        updated_body = json.loads(transformed.stdout)
+        self.assertEqual(
+            updated_body["properties"]["sentinel"],
+            original_properties["sentinel"],
+        )
+        allowed = updated_body["properties"]["identityProviders"][
+            "azureActiveDirectory"
+        ]["validation"]["defaultAuthorizationPolicy"]["allowedApplications"]
+        self.assertEqual(
+            allowed,
+            ["existing-caller-client", "hosted-caller-client"],
+        )
 
     def test_fixture_workflow_installs_pinned_uv(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(encoding="utf-8")

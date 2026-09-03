@@ -10,6 +10,25 @@ ACA Job-backed companion to `foundry-mcp-aca`.
 | `references/` | Canonical Python modules and the upstream pin contract. |
 | `templates/` | Copy-verbatim azd/Bicep/Dockerfile/script templates for the shared-image ACA Job pattern. |
 
+The composition root at
+`skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` requires the sibling
+catalog checkout layout. Keep `skills/foundry-mcp-aca-jobs/templates` beside
+`skills/azd-patterns/references/bicep/aca-job.bicep` under the same checkout:
+
+```text
+<workdir>/skills/
+├── foundry-mcp-aca-jobs/templates/
+└── azd-patterns/references/bicep/aca-job.bicep
+```
+
+```bash
+WORKDIR="<workdir>"
+mkdir -p "$WORKDIR/skills/foundry-mcp-aca-jobs" \
+  "$WORKDIR/skills/azd-patterns/references/bicep"
+cp -R skills/foundry-mcp-aca-jobs/templates "$WORKDIR/skills/foundry-mcp-aca-jobs/"
+cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patterns/references/bicep/"
+```
+
 ## Install
 
 Install the catalog plugin from the repo root:

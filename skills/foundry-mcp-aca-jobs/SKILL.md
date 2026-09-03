@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.2.1"
+  version: "1.2.2"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -35,7 +35,7 @@ inline here.
 | [templates/pyproject.toml](templates/pyproject.toml) | Runtime dependency lock contract |
 | [templates/uv.lock](templates/uv.lock) | Hash-verified runtime dependency resolution |
 | [templates/azure.yaml](templates/azure.yaml) | `azd` service wiring and postdeploy flow |
-| [templates/infra/main.bicep](templates/infra/main.bicep) | Main deployment composition |
+| [templates/infra/main.bicep](templates/infra/main.bicep) | Composition root; requires the sibling catalog checkout layout described in [Deploy with azd](#deploy-with-azd) |
 | [templates/infra/main.parameters.json](templates/infra/main.parameters.json) | Complete `azd` parameter contract |
 | [templates/infra/app.bicep](templates/infra/app.bicep) | MCP app module |
 | [templates/infra/cosmos.bicep](templates/infra/cosmos.bicep) | Durable control-store module |
@@ -211,6 +211,31 @@ dispatch hooks.
 
 The deployment contract is `azd` only. Copy the canonical files verbatim; do
 not fork the template shapes here.
+
+`skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` requires the sibling
+catalog checkout layout: `skills/foundry-mcp-aca-jobs` and
+`skills/azd-patterns` must coexist under the same catalog root because the
+composition root imports
+`skills/azd-patterns/references/bicep/aca-job.bicep`. Copy or scaffold the
+template with this exact layout; do not duplicate or rewrite the shared Bicep:
+
+```text
+<workdir>/
+└── skills/
+    ├── foundry-mcp-aca-jobs/
+    │   └── templates/
+    │       └── infra/main.bicep
+    └── azd-patterns/
+        └── references/bicep/aca-job.bicep
+```
+
+```bash
+WORKDIR="<workdir>"
+mkdir -p "$WORKDIR/skills/foundry-mcp-aca-jobs" \
+  "$WORKDIR/skills/azd-patterns/references/bicep"
+cp -R skills/foundry-mcp-aca-jobs/templates "$WORKDIR/skills/foundry-mcp-aca-jobs/"
+cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patterns/references/bicep/"
+```
 
 - `templates/azure.yaml`
 - `templates/uv.lock`

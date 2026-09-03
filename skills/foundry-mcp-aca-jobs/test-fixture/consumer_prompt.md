@@ -326,6 +326,20 @@ async def main():
     input_blob = BlobClient.from_blob_url(input_ref, credential=credential)
     await input_blob.upload_blob(b'{"durationSeconds":2}', overwrite=True)
     await input_blob.close()
+    agent_input_refs = (
+        f"{storage_url}/{output_container}/inputs/PROMPT_AGENT_MCP_PASS-"
+        f"{os.environ['SUFFIX']}.json",
+        f"{storage_url}/{output_container}/inputs/HOSTED_AGENT_MCP_PASS-"
+        f"{os.environ['SUFFIX']}.json",
+    )
+    for agent_input_ref in agent_input_refs:
+        agent_input_blob = BlobClient.from_blob_url(
+            agent_input_ref, credential=credential
+        )
+        await agent_input_blob.upload_blob(
+            b'{"durationSeconds":2}', overwrite=True
+        )
+        await agent_input_blob.close()
 
     access_token = (
         await credential.get_token(f"api://{os.environ['MCP_AUTH_APP_CLIENT_ID']}/.default")
@@ -639,6 +653,113 @@ EOF
 cd "$PROJECT_DIR"
 uv run --frozen --group fixture python - <<'PY'
 import os
+import time
+
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+
+credential = DefaultAzureCredential()
+project = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
+)
+try:
+    for _ in range(24):
+        version = project.agents.get_version(
+            agent_name=os.environ["HOSTED_NAME"], agent_version="1"
+        )
+        status = version.get("status") if isinstance(version, dict) else version.status
+        if status == "active":
+            print("HOSTED_AGENT_ACTIVE")
+            break
+        if status == "failed":
+            raise RuntimeError("hosted agent version failed")
+        time.sleep(10)
+    else:
+        raise TimeoutError("hosted agent version did not become active")
+finally:
+    project.close()
+    credential.close()
+PY
+) || fail "hosted agent did not become active"
+
+HOSTED_PRINCIPAL_ID="$(
+  az rest \
+    --method get \
+    --url "${FOUNDRY_PROJECT_ENDPOINT%/}/agents/${HOSTED_NAME}?api-version=v1" \
+    --resource https://ai.azure.com \
+    --query instance_identity.principal_id \
+    --output tsv
+)" || fail "hosted agent identity lookup failed"
+test -n "$HOSTED_PRINCIPAL_ID" ||
+  fail "hosted agent identity lookup failed"
+
+HOSTED_CLIENT_ID="$(
+  az ad sp show \
+    --id "$HOSTED_PRINCIPAL_ID" \
+    --query appId \
+    --output tsv
+)" || fail "hosted agent client ID resolution failed"
+test -n "$HOSTED_CLIENT_ID" ||
+  fail "hosted agent client ID resolution failed"
+FOUNDRY_AGENT_INSTANCE_CLIENT_ID="$HOSTED_CLIENT_ID"
+export FOUNDRY_AGENT_INSTANCE_CLIENT_ID
+
+AUTH_CONFIG_URL="https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01"
+AUTH_CONFIG_PROPERTIES="$(
+  az rest \
+    --method get \
+    --url "$AUTH_CONFIG_URL" \
+    --query properties \
+    --output json
+)" || fail "Easy Auth configuration read failed"
+UPDATED_AUTH_CONFIG_BODY="$(
+  jq -c --arg client_id "$FOUNDRY_AGENT_INSTANCE_CLIENT_ID" '
+    (.identityProviders.azureActiveDirectory.validation
+      .defaultAuthorizationPolicy.allowedApplications //= [])
+    | .identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications =
+        ((.identityProviders.azureActiveDirectory.validation
+          .defaultAuthorizationPolicy.allowedApplications + [$client_id])
+         | unique)
+    | {properties: .}
+  ' <<<"$AUTH_CONFIG_PROPERTIES"
+)" || fail "Easy Auth allowedApplications update construction failed"
+az rest \
+  --method put \
+  --url "$AUTH_CONFIG_URL" \
+  --headers "Content-Type=application/json" \
+  --body "$UPDATED_AUTH_CONFIG_BODY" \
+  --output none ||
+  fail "Easy Auth allowedApplications update failed"
+
+AUTH_ALLOWLIST_CONVERGED=false
+for attempt in $(seq 1 12); do
+  CURRENT_ALLOWED_APPLICATIONS="$(
+    az rest \
+      --method get \
+      --url "$AUTH_CONFIG_URL" \
+      --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications \
+      --output json
+  )" || fail "Easy Auth allowedApplications propagation poll failed"
+  if jq -e --arg client_id "$FOUNDRY_AGENT_INSTANCE_CLIENT_ID" \
+    'index($client_id) != null' \
+    <<<"$CURRENT_ALLOWED_APPLICATIONS" >/dev/null
+  then
+    AUTH_ALLOWLIST_CONVERGED=true
+    break
+  fi
+  if [[ "$attempt" -lt 12 ]]; then
+    sleep 5
+  fi
+done
+[[ "$AUTH_ALLOWLIST_CONVERGED" == true ]] ||
+  fail "hosted agent client ID missing from Easy Auth allowedApplications after bounded poll"
+
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import os
 import re
 import time
 
@@ -663,17 +784,6 @@ project = AIProjectClient(
     endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
 )
 name = os.environ["HOSTED_NAME"]
-version = None
-for _ in range(24):
-    version = project.agents.get_version(agent_name=name, agent_version="1")
-    status = version.get("status") if isinstance(version, dict) else version.status
-    if status == "active":
-        break
-    if status == "failed":
-        raise RuntimeError("hosted agent version failed")
-    time.sleep(10)
-else:
-    raise TimeoutError("hosted agent version did not become active")
 
 project.agents.update_details(
     agent_name=name,
