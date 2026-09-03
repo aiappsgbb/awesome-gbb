@@ -128,7 +128,11 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
-    REPO_ROOT="$PIN_VALIDATION_REPO_ROOT"
+    REPO_ROOT="${PIN_VALIDATION_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
+    if [[ -z "$REPO_ROOT" ]] || ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "ERROR: could not determine repository root; set PIN_VALIDATION_REPO_ROOT or run this validation from inside the awesome-gbb git repository." >&2
+      exit 1
+    fi
     python -m venv .venv
     . .venv/bin/activate
     export PYTHONPATH="$REPO_ROOT/skills/foundry-mcp-aca-jobs/references/python${PYTHONPATH:+:$PYTHONPATH}"

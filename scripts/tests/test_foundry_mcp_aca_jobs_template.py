@@ -495,7 +495,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         pin_fm, _ = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
         script = pin_fm["validation"]["script"]
 
-        self.assertIn('REPO_ROOT="$PIN_VALIDATION_REPO_ROOT"', script)
+        self.assertIn('REPO_ROOT="${PIN_VALIDATION_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"', script)
+        self.assertIn('git -C "$REPO_ROOT" rev-parse --is-inside-work-tree', script)
+        self.assertIn(
+            "could not determine repository root; set PIN_VALIDATION_REPO_ROOT or run this validation from inside the awesome-gbb git repository.",
+            script,
+        )
         self.assertIn(
             'export PYTHONPATH="$REPO_ROOT/skills/foundry-mcp-aca-jobs/references/python${PYTHONPATH:+:$PYTHONPATH}"',
             script,
@@ -522,6 +527,15 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         match = re.search(r"python - <<'PY'\n(?P<body>.*)\n\s*PY\n?", script, re.S)
         self.assertIsNotNone(match)
         compile(match.group("body"), "<foundry-mcp-aca-jobs validation.script>", "exec")
+
+    def test_validation_script_falls_back_to_git_repo_root(self) -> None:
+        pin_fm, _ = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
+        script = pin_fm["validation"]["script"]
+
+        self.assertIn("git rev-parse --show-toplevel", script)
+        self.assertIn("git -C \"$REPO_ROOT\" rev-parse --is-inside-work-tree", script)
+        self.assertIn("PIN_VALIDATION_REPO_ROOT:-", script)
+        self.assertIn("could not determine repository root", script)
 
     def test_stable_errors_document_all_raised_public_error_codes(self) -> None:
         skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
