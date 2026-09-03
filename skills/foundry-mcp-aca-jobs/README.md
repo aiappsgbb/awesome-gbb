@@ -43,6 +43,13 @@ Use this skill when the MCP server should stay responsive and an ACA Job should
 do the real work. The server handles Tasks, compatibility tools, callbacks, and
 state; the job handles execution and writes the durable result URL.
 
+ACA Easy Auth caller allowlisting has two mutually exclusive modes: client ID
+mode emits only `allowedApplications`, while principal object ID mode emits
+only `allowedPrincipals.identities`. Choose exactly one nonempty list because
+the `2025-01-01` authConfig API applies logical AND when both are present.
+Hosted agent instance callers use principal object ID mode; client ID mode
+remains supported for app-only callers.
+
 For producer-side MCP hosting without an external worker, use
 [`foundry-mcp-aca`](../foundry-mcp-aca/SKILL.md). For the canonical ACA Job
 module and azd wiring, use [`azd-patterns`](../azd-patterns/SKILL.md).

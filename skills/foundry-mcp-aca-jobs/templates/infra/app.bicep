@@ -25,6 +25,9 @@ param authClientId string
 @description('Allowed app-only caller client IDs for default authorization.')
 param allowedMcpCallerClientIds array = []
 
+@description('Allowed caller principal object IDs for default authorization.')
+param allowedMcpCallerPrincipalIds array = []
+
 @description('azure.yaml service key used by azd to discover this Container App.')
 param azdServiceName string = 'mcp'
 
@@ -35,6 +38,7 @@ param environmentVariables array = []
 param tags object = {}
 
 var authAudience = 'api://${authClientId}'
+assert exactlyOneMcpCallerAllowlistMode = (empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) || (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
@@ -143,8 +147,12 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
             authAudience
             authClientId
           ]
-          defaultAuthorizationPolicy: {
+          defaultAuthorizationPolicy: !empty(allowedMcpCallerClientIds) ? {
             allowedApplications: allowedMcpCallerClientIds
+          } : {
+            allowedPrincipals: {
+              identities: allowedMcpCallerPrincipalIds
+            }
           }
         }
       }

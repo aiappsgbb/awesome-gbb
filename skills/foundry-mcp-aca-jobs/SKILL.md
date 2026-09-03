@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.2.3"
+  version: "1.3.0"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -203,6 +203,19 @@ The app and job use separate UAMIs, even though they share the same image
 digest. That separation is intentional: one identity reads and updates the
 control plane; the other executes the job and writes output.
 
+Easy Auth caller allowlisting supports two mutually exclusive modes:
+
+- client ID mode sets only
+  `defaultAuthorizationPolicy.allowedApplications`;
+- principal object ID mode sets only
+  `defaultAuthorizationPolicy.allowedPrincipals.identities`.
+
+Choose exactly one nonempty list. With the `2025-01-01` authConfig API, setting
+both lists applies both checks with logical AND; it does not broaden access.
+Use principal object ID mode for hosted agent instance identities. Client ID
+mode remains available for app-only callers whose token identifies an
+allowlisted client application.
+
 Do not accept caller-supplied image references, commands, environment
 overrides, ARM IDs, secrets, large result bodies, callback URLs, or event
 dispatch hooks.
@@ -257,8 +270,9 @@ cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patte
 
 Use `azd up` or `azd deploy` to run the converged postdeploy flow. Do not hand
 roll `az` deploy sequences or reimplement the digest convergence logic here.
-Post-deploy hosted-agent callers are allowlisted by the instance identity object ID
-in `defaultAuthorizationPolicy.allowedPrincipals.identities`, not a Graph-resolved appId.
+Post-deploy hosted-agent callers use principal object ID mode and are
+allowlisted by the instance identity object ID in
+`defaultAuthorizationPolicy.allowedPrincipals.identities`.
 
 For a brownfield platform, keep `resourceGroupName` as the child resource group
 that receives the app, Job, and UAMIs, and set `platformResourceGroupName` to

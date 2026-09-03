@@ -29,7 +29,10 @@ param storageAccountUrl string
 param outputStorageContainerName string
 
 @description('Allowed app-only caller client IDs for the MCP app.')
-param allowedMcpCallerClientIds array
+param allowedMcpCallerClientIds array = []
+
+@description('Allowed caller principal object IDs for the MCP app.')
+param allowedMcpCallerPrincipalIds array = []
 
 @description('Explicit allowlisted input hosts for the MCP policy and job worker.')
 param inputHosts array
@@ -90,6 +93,7 @@ param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld
 param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
+assert exactlyOneMcpCallerAllowlistMode = (empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) || (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 var storageAccountUrlHost = replace(replace(storageAccountUrl, 'https://', ''), 'http://', '')
 var storageAccountNameFromUrl = split(storageAccountUrlHost, '.')[0]
@@ -359,9 +363,16 @@ module app 'app.bicep' = {
     uamiResourceId: identities.outputs.appUamiResourceId
     acrServer: acr.properties.loginServer
     authClientId: authClientId
-    allowedMcpCallerClientIds: union(allowedMcpCallerClientIds, [
-      identities.outputs.jobUamiClientId
-    ])
+    allowedMcpCallerClientIds: !empty(allowedMcpCallerClientIds)
+      ? union(allowedMcpCallerClientIds, [
+          identities.outputs.jobUamiClientId
+        ])
+      : []
+    allowedMcpCallerPrincipalIds: !empty(allowedMcpCallerPrincipalIds)
+      ? union(allowedMcpCallerPrincipalIds, [
+          identities.outputs.jobUamiPrincipalId
+        ])
+      : []
     environmentVariables: appEnvironmentVariables
   }
   dependsOn: [

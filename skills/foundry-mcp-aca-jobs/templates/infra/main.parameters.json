@@ -60,8 +60,11 @@
       "value": "mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48"
     },
     "allowedMcpCallerClientIds": {
+      "value": []
+    },
+    "allowedMcpCallerPrincipalIds": {
       "value": [
-        "${AZURE_CLIENT_ID}"
+        "${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}"
       ]
     },
     "inputHosts": {

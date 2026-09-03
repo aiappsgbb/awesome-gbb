@@ -328,7 +328,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.2.3")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -793,6 +793,20 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             skill,
         )
 
+    def test_skill_and_readme_document_mutually_exclusive_easy_auth_modes(
+        self,
+    ) -> None:
+        for path in (SKILL / "SKILL.md", SKILL / "README.md"):
+            with self.subTest(path=path.name):
+                normalized = " ".join(path.read_text(encoding="utf-8").split())
+                self.assertIn("client ID", normalized)
+                self.assertIn("principal object ID", normalized)
+                self.assertIn("mutually exclusive", normalized)
+                self.assertIn("hosted", normalized.lower())
+                self.assertNotIn(
+                    "adding the principal ID alongside client IDs", normalized
+                )
+
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
         normalized = " ".join(fixture.split())
@@ -951,8 +965,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             fixture,
         )
         self.assertIn("--resource https://ai.azure.com", fixture)
-        self.assertIn("--query instance_identity.principal_id", fixture)
-        self.assertIn("--output tsv", fixture)
+        self.assertIn("--output json", fixture)
+        self.assertIn(".instance_identity.principal_id", fixture)
+        self.assertIn(".versions.latest.instance_identity.principal_id", fixture)
         self.assertIn("for attempt in $(seq 1 6); do", fixture)
         self.assertIn("HOSTED_IDENTITY_LAST_ERROR", fixture)
         self.assertIn('sleep 10', fixture)
@@ -963,9 +978,13 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
         self.assertIn('AUTH_CONFIG_PROPERTIES="$(', fixture)
         self.assertIn(
-            ".identityProviders.azureActiveDirectory.validation."
-            "defaultAuthorizationPolicy.allowedPrincipals.identities",
-            fixture,
+            re.sub(
+                r"\s+",
+                "",
+                ".identityProviders.azureActiveDirectory.validation."
+                "defaultAuthorizationPolicy.allowedPrincipals.identities",
+            ),
+            compact,
         )
         self.assertIn("index($principal_id)", fixture)
         self.assertNotIn("| unique", fixture)
@@ -983,6 +1002,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn('--body "$UPDATED_AUTH_CONFIG_BODY"', fixture)
         self.assertIn("for attempt in $(seq 1 12); do", fixture)
         self.assertIn('sleep 5', fixture)
+        self.assertIn(
+            "--query properties.identityProviders.azureActiveDirectory."
+            "validation.defaultAuthorizationPolicy",
+            normalized,
+        )
+        self.assertIn("(.allowedApplications? == null)", fixture)
         self.assertIn(
             "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR",
             fixture,
@@ -1010,20 +1035,71 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, fixture)
         self.assertIn(
-            "hosted-agent callers are allowlisted by the instance identity object ID",
+            "Post-deploy hosted-agent callers use principal object ID mode",
             skill,
         )
-        self.assertIn("not a Graph-resolved appId", skill)
+        self.assertIn(
+            "defaultAuthorizationPolicy.allowedPrincipals.identities", skill
+        )
 
         deploy = fixture.index('azd deploy "$HOSTED_NAME"')
         active = fixture.index('print("HOSTED_AGENT_ACTIVE")')
-        identity = fixture.index("--query instance_identity.principal_id")
+        identity = fixture.index(".instance_identity.principal_id")
         update = fixture.index("--method put", identity)
+        restart = fixture.index(
+            'az containerapp revision restart --resource-group "$CHILD_RG" '
+            '--name "$APP_NAME" --revision "$revision"',
+            update,
+        )
         invoke = fixture.index("project.agents.update_details(", update)
         self.assertLess(deploy, active)
         self.assertLess(active, identity)
         self.assertLess(identity, update)
-        self.assertLess(update, invoke)
+        self.assertLess(update, restart)
+        self.assertLess(restart, invoke)
+
+        identity_assignment = fixture.index('if HOSTED_PRINCIPAL_ID="$(')
+        identity_filter_start = (
+            fixture.index("jq -er '", identity_assignment) + len("jq -er '")
+        )
+        identity_filter_end = fixture.index(
+            '\' <<<"$HOSTED_IDENTITY_RESPONSE"', identity_filter_start
+        )
+        identity_filter = fixture[identity_filter_start:identity_filter_end]
+        for response_shape in (
+            {"instance_identity": {"principal_id": "hosted-principal-object-id"}},
+            {
+                "versions": {
+                    "latest": {
+                        "instance_identity": {
+                            "principal_id": "hosted-principal-object-id"
+                        }
+                    }
+                }
+            },
+            {
+                "instance_identity": {"principal_id": ""},
+                "versions": {
+                    "latest": {
+                        "instance_identity": {
+                            "principal_id": "hosted-principal-object-id"
+                        }
+                    }
+                },
+            },
+        ):
+            with self.subTest(response_shape=response_shape):
+                parsed = subprocess.run(
+                    ["jq", "-er", identity_filter],
+                    input=json.dumps(response_shape),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(parsed.returncode, 0, parsed.stderr)
+                self.assertEqual(
+                    parsed.stdout.strip(), "hosted-principal-object-id"
+                )
 
         jq_program_match = re.search(
             r"UPDATED_AUTH_CONFIG_BODY=\"\$\(.*?"
@@ -1049,7 +1125,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                             ],
                             "allowedPrincipals": {
                                 "identities": [
-                                    "z-existing-principal-object-id",
+                                    "ci-uami-principal-object-id",
+                                    "job-uami-principal-object-id",
                                 ]
                             },
                         },
@@ -1081,13 +1158,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         policy = updated_body["properties"]["identityProviders"][
             "azureActiveDirectory"
         ]["validation"]["defaultAuthorizationPolicy"]
-        self.assertEqual(
-            policy["allowedApplications"],
-            ["existing-caller-client", "hosted-caller-client"],
-        )
+        self.assertNotIn("allowedApplications", policy)
         self.assertEqual(
             policy["allowedPrincipals"]["identities"],
-            ["z-existing-principal-object-id", "hosted-principal-object-id"],
+            [
+                "ci-uami-principal-object-id",
+                "job-uami-principal-object-id",
+                "hosted-principal-object-id",
+            ],
         )
         transformed_again = subprocess.run(
             [
@@ -1110,8 +1188,93 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             ]["azureActiveDirectory"]["validation"]["defaultAuthorizationPolicy"][
                 "allowedPrincipals"
             ]["identities"],
-            ["z-existing-principal-object-id", "hosted-principal-object-id"],
+            [
+                "ci-uami-principal-object-id",
+                "job-uami-principal-object-id",
+                "hosted-principal-object-id",
+            ],
         )
+
+    def test_fixture_resolves_ci_uami_principal_through_arm_before_single_azd_up(
+        self,
+    ) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(fixture.split())
+        parameters = json.loads(
+            (self._infra_dir() / "main.parameters.json").read_text(encoding="utf-8")
+        )["parameters"]
+
+        self.assertEqual(parameters["allowedMcpCallerClientIds"]["value"], [])
+        self.assertEqual(
+            parameters["allowedMcpCallerPrincipalIds"]["value"],
+            ["${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}"],
+        )
+        self.assertIn("az resource list", fixture)
+        self.assertIn(
+            "--resource-type Microsoft.ManagedIdentity/userAssignedIdentities",
+            normalized,
+        )
+        self.assertIn("properties.clientId", fixture)
+        self.assertIn('MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$(', fixture)
+        self.assertIn(
+            'MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"',
+            fixture,
+        )
+        self.assertNotIn('echo "$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"', fixture)
+        self.assertEqual(fixture.count("azd up --no-prompt"), 1)
+        self.assertLess(
+            fixture.index("Microsoft.ManagedIdentity/userAssignedIdentities"),
+            fixture.index("azd up --no-prompt"),
+        )
+        for forbidden in (
+            "az ad sp show",
+            "Application.Read.All",
+            "Directory.Read.All",
+            "ServicePrincipal.Read.All",
+        ):
+            self.assertNotIn(forbidden, fixture)
+
+    def test_fixture_restarts_active_revisions_after_auth_put_before_invoke(
+        self,
+    ) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        update = fixture.index("--method put")
+        convergence = fixture.index("AUTH_ALLOWLIST_CONVERGED", update)
+        restart = fixture.index(
+            'az containerapp revision restart --resource-group "$CHILD_RG" '
+            '--name "$APP_NAME" --revision "$revision"',
+            convergence,
+        )
+        invoke = fixture.index("project.agents.update_details(", restart)
+
+        self.assertIn("az containerapp revision list", fixture)
+        self.assertIn("[?properties.active].name", fixture)
+        self.assertIn("for attempt in $(seq 1 6); do", fixture[convergence:invoke])
+        self.assertIn("active Container App revision restart failed", fixture)
+        self.assertLess(update, convergence)
+        self.assertLess(convergence, restart)
+        self.assertLess(restart, invoke)
+
+    def test_copilot_cli_matrix_timeout_covers_longest_task15_leg(self) -> None:
+        workflow_text = (
+            ROOT / ".github" / "workflows" / "skill-test.yml"
+        ).read_text(encoding="utf-8")
+        workflow = yaml.safe_load(workflow_text)
+        matrix = workflow["jobs"]["copilot-cli-matrix"]
+
+        self.assertEqual(matrix["timeout-minutes"], 60)
+        for phrase in (
+            "azd up",
+            "hosted build/deploy",
+            "task/callback polls",
+            "cleanup",
+            "Pattern 14",
+        ):
+            self.assertIn(phrase, workflow_text)
 
     def test_fixture_workflow_installs_pinned_uv(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(encoding="utf-8")
@@ -1138,7 +1301,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "${MCP_ACA_JOBS_COSMOS_DATABASE}",
             "${MCP_ACA_JOBS_COSMOS_CONTAINER}",
             "${MCP_AUTH_APP_CLIENT_ID}",
-            "${AZURE_CLIENT_ID}",
+            "${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}",
         ):
             self.assertIn(binding, parameters)
         parsed = json.loads(parameters)
@@ -1358,7 +1521,20 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("clientId: authClientId", app)
         self.assertIn("allowedAudiences", app)
         self.assertIn("environment().authentication.loginEndpoint", app)
-        self.assertIn("allowedMcpCallerClientIds", app)
+        self.assertIn("param allowedMcpCallerClientIds array = []", app)
+        self.assertIn("param allowedMcpCallerPrincipalIds array = []", app)
+        self.assertIn(
+            "assert exactlyOneMcpCallerAllowlistMode = "
+            "(empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) "
+            "|| (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))",
+            normalized,
+        )
+        self.assertIn(
+            "defaultAuthorizationPolicy: !empty(allowedMcpCallerClientIds) "
+            "? { allowedApplications: allowedMcpCallerClientIds } "
+            ": { allowedPrincipals: { identities: allowedMcpCallerPrincipalIds } }",
+            normalized,
+        )
         self.assertIn("param azdServiceName string = 'mcp'", app)
         self.assertIn("'azd-service-name': azdServiceName", app)
         self.assertNotIn("'azd-service-name': name", app)
@@ -1722,6 +1898,109 @@ param callbackConfig = {
         self.assertIn("externalCallbackUrl", result.stderr)
         self.assertIn("keyVaultName", result.stderr)
 
+    def test_easy_auth_allowlist_parameter_variants_and_runtime_assert_contract(
+        self,
+    ) -> None:
+        def variant(
+            client_ids: list[str], principal_ids: list[str]
+        ) -> tuple[subprocess.CompletedProcess[str], dict[str, object] | None]:
+            def array(values: list[str]) -> str:
+                if not values:
+                    return "[]"
+                return "[\n" + "".join(f"  '{value}'\n" for value in values) + "]"
+
+            contents = f"""using './main.bicep'
+
+param resourceGroupName = 'rg-jobs'
+param location = 'swedencentral'
+param acrName = 'acr-jobs'
+param environmentName = 'env-jobs'
+param storageAccountName = 'storagejobs'
+param storageAccountUrl = 'https://storagejobs.blob.core.windows.net'
+param outputStorageContainerName = 'outputs'
+param allowedMcpCallerClientIds = {array(client_ids)}
+param allowedMcpCallerPrincipalIds = {array(principal_ids)}
+param inputHosts = [
+  'input.example.com'
+]
+param resultHosts = [
+  'results.example.com'
+]
+param cosmosAccountName = 'cosmos-jobs'
+param appName = 'mcp-app'
+param jobName = 'mcp-job'
+param authClientId = 'auth-client-id'
+param callbackConfig = {{
+  authMode: 'managed_identity'
+}}
+"""
+            return self._build_bicepparam(
+                ".test-easy-auth-allowlist.bicepparam", contents
+            )
+
+        for label, client_ids, principal_ids in (
+            ("client-only", ["caller-client"], []),
+            ("principal-only", [], ["caller-principal"]),
+        ):
+            with self.subTest(label=label):
+                result, compiled = variant(client_ids, principal_ids)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIsNotNone(compiled)
+                assert compiled is not None
+                self.assertEqual(
+                    compiled["parameters"]["allowedMcpCallerClientIds"]["value"],
+                    client_ids,
+                )
+                self.assertEqual(
+                    compiled["parameters"]["allowedMcpCallerPrincipalIds"]["value"],
+                    principal_ids,
+                )
+
+        for label, client_ids, principal_ids in (
+            ("both", ["caller-client"], ["caller-principal"]),
+            ("neither", [], []),
+        ):
+            with self.subTest(label=label):
+                result, _ = variant(client_ids, principal_ids)
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    "Bicep deployment assertions are evaluated by ARM, not build-params",
+                )
+                self.assertFalse(
+                    bool(client_ids) != bool(principal_ids),
+                    f"{label} must be rejected by the deployment assertion",
+                )
+
+        for source in (
+            self._infra_dir() / "app.bicep",
+            self._infra_dir() / "main.bicep",
+        ):
+            with self.subTest(source=source.name):
+                result = subprocess.run(
+                    [
+                        "az",
+                        "bicep",
+                        "build",
+                        "--file",
+                        str(source),
+                        "--stdout",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                compiled = json.loads(result.stdout)
+                assertion = compiled["asserts"]["exactlyOneMcpCallerAllowlistMode"]
+                self.assertIn(
+                    "empty(parameters('allowedMcpCallerClientIds'))", assertion
+                )
+                self.assertIn(
+                    "empty(parameters('allowedMcpCallerPrincipalIds'))", assertion
+                )
+                self.assertIn("or(and(", assertion)
+
     def test_bicep_builds_without_experimental_assertion_warnings(self) -> None:
         files = [
             self._infra_dir() / "app.bicep",
@@ -1770,10 +2049,25 @@ param callbackConfig = {
         normalized = " ".join(main.split())
         self.assertIn("../../../azd-patterns/references/bicep/aca-job.bicep", main)
         self.assertIn("mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48", main)
-        self.assertIn("allowedMcpCallerClientIds array", main)
+        self.assertIn("param allowedMcpCallerClientIds array = []", main)
+        self.assertIn("param allowedMcpCallerPrincipalIds array = []", main)
+        self.assertIn(
+            "assert exactlyOneMcpCallerAllowlistMode = "
+            "(empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) "
+            "|| (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))",
+            normalized,
+        )
         self.assertRegex(
             normalized,
-            r"allowedMcpCallerClientIds:\s*union\(allowedMcpCallerClientIds,\s*\[\s*identities\.outputs\.jobUamiClientId\s*\]\)",
+            r"allowedMcpCallerClientIds:\s*!empty\(allowedMcpCallerClientIds\)\s*"
+            r"\?\s*union\(allowedMcpCallerClientIds,\s*\[\s*identities\.outputs\.jobUamiClientId\s*\]\)\s*"
+            r":\s*\[\]",
+        )
+        self.assertRegex(
+            normalized,
+            r"allowedMcpCallerPrincipalIds:\s*!empty\(allowedMcpCallerPrincipalIds\)\s*"
+            r"\?\s*union\(allowedMcpCallerPrincipalIds,\s*\[\s*identities\.outputs\.jobUamiPrincipalId\s*\]\)\s*"
+            r":\s*\[\]",
         )
         self.assertIn("param outputStorageContainerName string", main)
         self.assertIn("@maxLength(53)", main)

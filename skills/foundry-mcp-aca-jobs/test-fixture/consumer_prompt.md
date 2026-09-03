@@ -124,12 +124,27 @@ MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$(
 MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]).hostname or "").split(".")[0])'
 )"
+CI_CALLER_PRINCIPAL_IDS="$(
+  az resource list \
+    --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
+    --query "[?properties.clientId=='${AZURE_CLIENT_ID}'].properties.principalId" \
+    --output json
+)" || fail "CI caller identity ARM lookup failed"
+jq -e \
+  'type == "array" and length == 1 and
+   (.[0] | type == "string" and length > 0)' \
+  <<<"$CI_CALLER_PRINCIPAL_IDS" >/dev/null ||
+  fail "CI caller identity ARM lookup did not return exactly one nonempty principalId"
+MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$(
+  jq -r '.[0]' <<<"$CI_CALLER_PRINCIPAL_IDS"
+)"
 export SUFFIX SCRATCH_ROOT PROJECT_DIR CANONICAL_JOB_DIR
 export CHILD_RG AZD_ENV_NAME APP_NAME JOB_NAME HOSTED_NAME
 export ACR_NAME MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP
 export MCP_ACA_JOBS_ENVIRONMENT_NAME MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME
 export MCP_ACA_JOBS_COSMOS_DATABASE MCP_ACA_JOBS_COSMOS_CONTAINER
 export MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME
+export MCP_ACA_JOBS_CALLER_PRINCIPAL_ID
 
 [[ "$SCRATCH_ROOT" == "$GITHUB_WORKSPACE/.scratch/"* ]] ||
   fail "scratch workspace escaped GITHUB_WORKSPACE/.scratch"
@@ -192,6 +207,7 @@ MCP_ACA_JOBS_COSMOS_DATABASE="$MCP_ACA_JOBS_COSMOS_DATABASE"
 MCP_ACA_JOBS_COSMOS_CONTAINER="$MCP_ACA_JOBS_COSMOS_CONTAINER"
 MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT="true"
 MCP_AUTH_APP_CLIENT_ID="$MCP_AUTH_APP_CLIENT_ID"
+MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"
 FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
 AZURE_AI_PROJECT_ID="$AZURE_AI_PROJECT_ID"
 AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
@@ -684,28 +700,33 @@ PY
 ) || fail "hosted agent did not become active"
 
 HOSTED_PRINCIPAL_ID=""
-HOSTED_IDENTITY_LAST_ERROR="instance_identity.principal_id was empty"
+HOSTED_IDENTITY_LAST_ERROR="hosted agent principal ID was empty"
 for attempt in $(seq 1 6); do
-  HOSTED_IDENTITY_LOOKUP_OUTPUT=""
-  if HOSTED_IDENTITY_LOOKUP_OUTPUT="$(
+  HOSTED_IDENTITY_RESPONSE=""
+  if HOSTED_IDENTITY_RESPONSE="$(
     az rest \
       --method get \
       --url "${FOUNDRY_PROJECT_ENDPOINT%/}/agents/${HOSTED_NAME}?api-version=v1" \
       --resource https://ai.azure.com \
-      --query instance_identity.principal_id \
-      --output tsv 2>&1
+      --output json 2>&1
   )"; then
-    if [[ -n "$HOSTED_IDENTITY_LOOKUP_OUTPUT" ]] &&
-      [[ "$HOSTED_IDENTITY_LOOKUP_OUTPUT" != "null" ]] &&
-      [[ "$HOSTED_IDENTITY_LOOKUP_OUTPUT" != "None" ]]
+    if HOSTED_PRINCIPAL_ID="$(
+      jq -er '
+        [
+          .instance_identity.principal_id?,
+          .versions.latest.instance_identity.principal_id?
+        ]
+        | map(select(type == "string" and length > 0))
+        | first // empty
+      ' <<<"$HOSTED_IDENTITY_RESPONSE"
+    )"
     then
-      HOSTED_PRINCIPAL_ID="$HOSTED_IDENTITY_LOOKUP_OUTPUT"
       break
     fi
-    HOSTED_IDENTITY_LAST_ERROR="instance_identity.principal_id was empty"
+    HOSTED_IDENTITY_LAST_ERROR="hosted agent principal ID was empty in both supported response shapes"
   else
     HOSTED_IDENTITY_LAST_ERROR="$(
-      printf '%s\n' "$HOSTED_IDENTITY_LOOKUP_OUTPUT" | tail -n 1
+      printf '%s\n' "$HOSTED_IDENTITY_RESPONSE" | tail -n 1
     )"
     test -n "$HOSTED_IDENTITY_LAST_ERROR" ||
       HOSTED_IDENTITY_LAST_ERROR="az rest failed without a diagnostic"
@@ -732,6 +753,8 @@ UPDATED_AUTH_CONFIG_BODY="$(
     | (.identityProviders.azureActiveDirectory.validation //= {})
     | (.identityProviders.azureActiveDirectory.validation
         .defaultAuthorizationPolicy //= {})
+    | del(.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedApplications)
     | (.identityProviders.azureActiveDirectory.validation
         .defaultAuthorizationPolicy.allowedPrincipals //= {})
     | (.identityProviders.azureActiveDirectory.validation
@@ -756,16 +779,17 @@ az rest \
 
 AUTH_ALLOWLIST_CONVERGED=false
 for attempt in $(seq 1 12); do
-  CURRENT_ALLOWED_IDENTITIES="$(
+  CURRENT_AUTHORIZATION_POLICY="$(
     az rest \
       --method get \
       --url "$AUTH_CONFIG_URL" \
-      --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.identities \
+      --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy \
       --output json
   )" || fail "Easy Auth allowed principal identities propagation poll failed"
   if jq -e --arg principal_id "$HOSTED_PRINCIPAL_ID" \
-    'index($principal_id) != null' \
-    <<<"$CURRENT_ALLOWED_IDENTITIES" >/dev/null
+    '(.allowedApplications? == null) and
+     ((.allowedPrincipals.identities // []) | index($principal_id) != null)' \
+    <<<"$CURRENT_AUTHORIZATION_POLICY" >/dev/null
   then
     AUTH_ALLOWLIST_CONVERGED=true
     break
@@ -776,6 +800,41 @@ for attempt in $(seq 1 12); do
 done
 [[ "$AUTH_ALLOWLIST_CONVERGED" == true ]] ||
   fail "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll"
+
+ACTIVE_REVISIONS=""
+for attempt in $(seq 1 6); do
+  if ACTIVE_REVISIONS="$(
+    az containerapp revision list \
+      --resource-group "$CHILD_RG" \
+      --name "$APP_NAME" \
+      --query "[?properties.active].name" \
+      --output tsv
+  )" && [[ -n "$ACTIVE_REVISIONS" ]]
+  then
+    break
+  fi
+  if [[ "$attempt" -lt 6 ]]; then
+    sleep 5
+  fi
+done
+test -n "$ACTIVE_REVISIONS" ||
+  fail "active Container App revision lookup failed after 6 attempts"
+while IFS= read -r revision; do
+  test -n "$revision" || continue
+  REVISION_RESTARTED=false
+  for attempt in $(seq 1 6); do
+    if az containerapp revision restart --resource-group "$CHILD_RG" --name "$APP_NAME" --revision "$revision"
+    then
+      REVISION_RESTARTED=true
+      break
+    fi
+    if [[ "$attempt" -lt 6 ]]; then
+      sleep 5
+    fi
+  done
+  [[ "$REVISION_RESTARTED" == true ]] ||
+    fail "active Container App revision restart failed after 6 attempts"
+done <<<"$ACTIVE_REVISIONS"
 
 (
 cd "$PROJECT_DIR"
