@@ -306,31 +306,31 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_skill_frontmatter_and_section_map_match_contract(self) -> None:
         skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         skill_fm, body = self._frontmatter_and_body(SKILL / "SKILL.md")
-        headings = re.findall(r"(?m)^## (.+)$", body)
+        headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.1.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.1.1")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
         self.assertEqual(
             headings,
             [
-                "When to use this skill",
-                "Architecture and shared-image contract",
-                "Protocol contract",
-                "Standards-first MCP Tasks path",
-                "Compatibility tools",
-                "Control record and lifecycle",
-                "Idempotency and uncertain-start reconciliation",
-                "Callback contract",
-                "Security and least-privilege RBAC",
-                "Deploy with azd",
-                "Operate and observe",
-                "Stable errors",
-                "Test the implementation",
-                "Non-goals",
-                "Related skills",
+                (2, "When to use this skill"),
+                (2, "Architecture and shared-image contract"),
+                (2, "Protocol contract"),
+                (3, "Standards-first MCP Tasks path"),
+                (3, "Compatibility tools"),
+                (2, "Control record and lifecycle"),
+                (2, "Idempotency and uncertain-start reconciliation"),
+                (2, "Callback contract"),
+                (2, "Security and least-privilege RBAC"),
+                (2, "Deploy with azd"),
+                (2, "Operate and observe"),
+                (2, "Stable errors"),
+                (2, "Test the implementation"),
+                (2, "Non-goals"),
+                (2, "Related skills"),
             ],
         )
 
@@ -387,42 +387,47 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "CONTROL_STORE_UNAVAILABLE",
             "DEPLOYMENT_CONTRACT_MISMATCH",
             "WORKER_EXECUTION_FAILED",
+            "foundry-prompt-agents",
         ):
             self.assertIn(required, skill_fm["description"] + "\n" + body)
         self.assertIn("[foundry-mcp-aca](../foundry-mcp-aca/SKILL.md)", body)
         self.assertIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
+        self.assertIn("[foundry-prompt-agents](../foundry-prompt-agents/SKILL.md)", body)
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
-            self._reference_app_dir() / "__init__.py": ("../../../SKILL.md", "Control record and lifecycle"),
-            self._reference_app_dir() / "models.py": ("../../../SKILL.md", "Control record and lifecycle"),
-            self._reference_app_dir() / "callbacks.py": ("../../../SKILL.md", "Callback contract"),
-            self._reference_app_dir() / "control_store.py": ("../../../SKILL.md", "Idempotency and uncertain-start reconciliation"),
-            self._reference_app_dir() / "orchestrator.py": ("../../../SKILL.md", "Idempotency and uncertain-start reconciliation"),
-            self._reference_app_dir() / "aca_jobs.py": ("../../../SKILL.md", "Architecture and shared-image contract"),
-            self._reference_app_dir() / "aca_tasks_extension.py": ("../../../SKILL.md", "Standards-first MCP Tasks path"),
-            self._reference_app_dir() / "mcp_server.py": ("../../../SKILL.md", "Protocol contract"),
-            self._reference_app_dir() / "job_worker.py": ("../../../SKILL.md", "Operate and observe"),
-            self._reference_app_dir() / "telemetry.py": ("../../../SKILL.md", "Operate and observe"),
-            self._infra_dir() / "app.bicep": ("../../SKILL.md", "Architecture and shared-image contract"),
-            self._infra_dir() / "cosmos.bicep": ("../../SKILL.md", "Control record and lifecycle"),
-            self._infra_dir() / "identity-rbac.bicep": ("../../SKILL.md", "Security and least-privilege RBAC"),
-            self._infra_dir() / "identity-rbac" / "assignments.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
-            self._infra_dir() / "identity-rbac" / "job-operator.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
-            self._infra_dir() / "identity-rbac" / "uami.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
-            self._infra_dir() / "main.bicep": ("../../SKILL.md", "Deploy with azd"),
-            self._script_dir() / "converge_image.py": ("../../../SKILL.md", "Deploy with azd"),
-            self._script_dir() / "verify_deployment.py": ("../../../SKILL.md", "Test the implementation"),
+            self._reference_app_dir() / "__init__.py": ("../../../SKILL.md", 2, "Control record and lifecycle"),
+            self._reference_app_dir() / "models.py": ("../../../SKILL.md", 2, "Control record and lifecycle"),
+            self._reference_app_dir() / "callbacks.py": ("../../../SKILL.md", 2, "Callback contract"),
+            self._reference_app_dir() / "control_store.py": ("../../../SKILL.md", 2, "Idempotency and uncertain-start reconciliation"),
+            self._reference_app_dir() / "orchestrator.py": ("../../../SKILL.md", 2, "Idempotency and uncertain-start reconciliation"),
+            self._reference_app_dir() / "aca_jobs.py": ("../../../SKILL.md", 2, "Architecture and shared-image contract"),
+            self._reference_app_dir() / "aca_tasks_extension.py": ("../../../SKILL.md", 3, "Standards-first MCP Tasks path"),
+            self._reference_app_dir() / "mcp_server.py": ("../../../SKILL.md", 2, "Protocol contract"),
+            self._reference_app_dir() / "job_worker.py": ("../../../SKILL.md", 2, "Operate and observe"),
+            self._reference_app_dir() / "telemetry.py": ("../../../SKILL.md", 2, "Operate and observe"),
+            self._infra_dir() / "app.bicep": ("../../SKILL.md", 2, "Architecture and shared-image contract"),
+            self._infra_dir() / "cosmos.bicep": ("../../SKILL.md", 2, "Control record and lifecycle"),
+            self._infra_dir() / "identity-rbac.bicep": ("../../SKILL.md", 2, "Security and least-privilege RBAC"),
+            self._infra_dir() / "identity-rbac" / "assignments.bicep": ("../../../SKILL.md", 2, "Security and least-privilege RBAC"),
+            self._infra_dir() / "identity-rbac" / "job-operator.bicep": ("../../../SKILL.md", 2, "Security and least-privilege RBAC"),
+            self._infra_dir() / "identity-rbac" / "uami.bicep": ("../../../SKILL.md", 2, "Security and least-privilege RBAC"),
+            self._infra_dir() / "main.bicep": ("../../SKILL.md", 2, "Deploy with azd"),
+            self._script_dir() / "converge_image.py": ("../../../SKILL.md", 2, "Deploy with azd"),
+            self._script_dir() / "verify_deployment.py": ("../../../SKILL.md", 2, "Test the implementation"),
         }
         skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
-        skill_headings = {match.group(1) for match in re.finditer(r"(?m)^## (.+)$", skill_text)}
+        skill_headings = {
+            match.group(2): len(match.group(1))
+            for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", skill_text)
+        }
 
-        for path, (expected_relative_path, expected_heading) in section_map.items():
+        for path, (expected_relative_path, expected_level, expected_heading) in section_map.items():
             with self.subTest(path=path.name):
                 text = path.read_text(encoding="utf-8")
                 self.assertIn(expected_relative_path, text)
                 self.assertIn(expected_heading, text)
-                self.assertIn(expected_heading, skill_headings)
+                self.assertEqual(skill_headings[expected_heading], expected_level)
 
     def test_catalog_and_dependency_graph_include_new_skill(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -485,6 +490,58 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("JobsOperations", script)
         self.assertIn("TasksExtension", script)
         self.assertIn("docket_lifespan", script)
+
+    def test_validation_script_uses_concrete_imports_and_compiles(self) -> None:
+        pin_fm, _ = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
+        script = pin_fm["validation"]["script"]
+
+        self.assertIn('REPO_ROOT="$PIN_VALIDATION_REPO_ROOT"', script)
+        self.assertIn(
+            'export PYTHONPATH="$REPO_ROOT/skills/foundry-mcp-aca-jobs/references/python${PYTHONPATH:+:$PYTHONPATH}"',
+            script,
+        )
+        self.assertIn("from azure.mgmt.appcontainers.operations import JobsOperations, JobsExecutionsOperations", script)
+        self.assertNotIn("JobExecutionsOperations", script)
+        self.assertNotIn("from app import (", script)
+        for required in (
+            "from app.callbacks import AsyncTokenCredential, CallbackSender, callback_payload",
+            "from app.aca_jobs import AcaExecution, AcaJobsAdapter, AcaJobsClient",
+            "from app.aca_tasks_extension import AcaTasksExtension",
+            "from app.control_store import ControlStore, CosmosControlStore, InMemoryControlStore",
+            "from app.job_worker import JobWorker, build_arg_parser as build_worker_arg_parser, build_worker_from_env, demo_handler",
+            "from app.mcp_server import Runtime, build_server, owner_scope_from_headers, runtime_from_env",
+            "from app.models import CallbackDeliveryState, CallbackEvent, CallbackPolicy, GetTaskResult, JobPolicy, LifecycleState, Policy, PublicError, StartRequest, TaskRecord, map_aca_state, to_mcp_task",
+            "from app.orchestrator import Orchestrator",
+            "from app.telemetry import Telemetry, configure, telemetry",
+            'print("ok fastmcp external tasks adapter")',
+            'print("ok aca jobs sdk surface")',
+            'print("ok foundry-mcp-aca-jobs imports")',
+        ):
+            self.assertIn(required, script)
+
+        match = re.search(r"python - <<'PY'\n(?P<body>.*)\n\s*PY\n?", script, re.S)
+        self.assertIsNotNone(match)
+        compile(match.group("body"), "<foundry-mcp-aca-jobs validation.script>", "exec")
+
+    def test_stable_errors_document_all_raised_public_error_codes(self) -> None:
+        skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        stable_errors = skill_text.split("## Stable errors", 1)[1].split("## Test the implementation", 1)[0]
+
+        source_codes: set[str] = set()
+        for path in (
+            self._reference_app_dir() / "aca_jobs.py",
+            self._reference_app_dir() / "callbacks.py",
+            self._reference_app_dir() / "control_store.py",
+            self._reference_app_dir() / "mcp_server.py",
+            self._reference_app_dir() / "models.py",
+            self._reference_app_dir() / "orchestrator.py",
+        ):
+            source_codes.update(re.findall(r'(?:PublicError|_raise_public_error)\("([A-Z_]+)"', path.read_text(encoding="utf-8")))
+
+        self.assertTrue(source_codes, "expected to discover stable PublicError codes in source")
+        for code in sorted(source_codes):
+            with self.subTest(code=code):
+                self.assertIn(code, stable_errors)
 
     def test_dockerfile_contract_is_single_shared_runtime_image(self) -> None:
         templates = self._template_dir()

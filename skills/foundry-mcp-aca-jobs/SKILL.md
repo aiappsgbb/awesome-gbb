@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -89,7 +89,7 @@ Both paths share the same control record, callback, and durable-result contract.
 Do not model this skill as Service Bus, queues, topics, subscriptions, or any
 event-dispatch fanout pattern.
 
-## Standards-first MCP Tasks path
+### Standards-first MCP Tasks path
 
 Prefer the public MCP Tasks result-claim path whenever the client supports it.
 `AcaTasksExtension` binds the `io.modelcontextprotocol/tasks` extension to the
@@ -100,7 +100,7 @@ validation must import `TasksExtension` from `fastmcp_tasks`, `inspect` its
 `lifespan` source, confirm `docket_lifespan` is present there, and confirm the
 `AcaTasksExtension` source/lifespan does not contain that Docket path.
 
-## Compatibility tools
+### Compatibility tools
 
 For clients without MCP Tasks, expose the explicit tools:
 
@@ -246,6 +246,8 @@ These codes are user-visible and must stay stable within the `1.x` contract:
 | Family | Stable codes |
 |---|---|
 | `TASK_*` | `TASK_NOT_FOUND`, `TASK_FORBIDDEN` |
+| `INVALID_*` | `INVALID_JOB_TYPE`, `INVALID_CALLBACK_ALIAS`, `INVALID_INPUT_REFERENCE`, `INVALID_RESULT_REFERENCE` |
+| `IDEMPOTENCY_*` | `IDEMPOTENCY_KEY_REUSED` |
 | `ARM_*` | `ARM_STATUS_UNAVAILABLE`, `ARM_START_REJECTED`, `ARM_STOP_REJECTED` |
 | `START_*` | `START_RECONCILIATION_EXHAUSTED` |
 | `ACA_EXECUTION_*` | `ACA_EXECUTION_FAILED`, `ACA_EXECUTION_STOPPED`, `ACA_EXECUTION_STATE_UNRESOLVED` |
@@ -296,5 +298,6 @@ Pin validation must print exactly:
 |---|---|
 | [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md) | producer-side MCP server hosting |
 | [azd-patterns](../azd-patterns/SKILL.md) | canonical ACA Job Bicep and digest convergence |
+| [foundry-prompt-agents](../foundry-prompt-agents/SKILL.md) | prompt-agent fallback when tool work needs durable job-backed execution or callbacks |
 | [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) | hosted agents that consume MCP tools |
 | [foundry-observability](../foundry-observability/SKILL.md) | telemetry and log/trace wiring |

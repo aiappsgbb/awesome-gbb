@@ -179,6 +179,10 @@ agent = project.agents.create_version(
 > **MCP servers for prompt agents** are hosted remotely (not in-process).
 > Use `foundry-mcp-aca` skill to deploy MCP servers on Azure Container Apps,
 > then wire them here via `MCPTool(server_url=...)`.
+> If the tool work needs durable result claims, external callbacks, or
+> execution that must outlive one request, fall back to
+> [foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md) for the worker
+> path and keep the prompt agent as the orchestrator.
 
 ### Build 2026 additions (preview)
 
@@ -621,6 +625,7 @@ from azure.ai.projects.models import (
 |------|-------|
 | Container/code agents with MAF | `foundry-hosted-agents` |
 | Deploy MCP servers for tool wiring | `foundry-mcp-aca` |
+| Durable tool execution or callback fallback | `foundry-mcp-aca-jobs` |
 | RAG via Knowledge Bases | `foundry-iq` |
 | Agent evaluation | `foundry-evals` |
 | MAF hosted-agent action governance (not prompt-agent GuardrailTool selection) | `foundry-agt` |

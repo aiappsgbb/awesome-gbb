@@ -128,38 +128,23 @@ validation:
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
+    REPO_ROOT="$PIN_VALIDATION_REPO_ROOT"
     python -m venv .venv
     . .venv/bin/activate
+    export PYTHONPATH="$REPO_ROOT/skills/foundry-mcp-aca-jobs/references/python${PYTHONPATH:+:$PYTHONPATH}"
     pip install --quiet       "fastmcp~=4.0.1"       "fastmcp-tasks~=4.0.1"       "mcp~=2.1.1"       "azure-cosmos[aio]~=4.16.4"       "azure-identity~=1.25.3"       "azure-keyvault-secrets~=4.11.2"       "azure-mgmt-appcontainers~=5.0.0"       "azure-monitor-opentelemetry~=1.8.9"       "azure-storage-blob[aio]~=12.30.1"       "httpx~=0.28.1"       "pydantic~=2.13.5"       "uvicorn~=0.52.4"
     python - <<'PY'
     import inspect
-    from azure.mgmt.appcontainers.operations import JobsOperations, JobExecutionsOperations
+    from azure.mgmt.appcontainers.operations import JobsOperations, JobsExecutionsOperations
     from fastmcp.server.extensions import ServerExtension
     from fastmcp_tasks import TasksExtension
-    from app import (
-        AsyncTokenCredential,
-        CallbackDeliveryState,
-        CallbackPolicy,
-        CallbackSender,
-        GetTaskResult,
-        JobPolicy,
-        LifecycleState,
-        Orchestrator,
-        Policy,
-        PublicError,
-        StartRequest,
-        TaskRecord,
-        callback_payload,
-        map_aca_state,
-        to_mcp_task,
-    )
     from app.aca_jobs import AcaExecution, AcaJobsAdapter, AcaJobsClient
     from app.aca_tasks_extension import AcaTasksExtension
-    from app.callbacks import CallbackSender as CanonicalCallbackSender
+    from app.callbacks import AsyncTokenCredential, CallbackSender, callback_payload
     from app.control_store import ControlStore, CosmosControlStore, InMemoryControlStore
     from app.job_worker import JobWorker, build_arg_parser as build_worker_arg_parser, build_worker_from_env, demo_handler
     from app.mcp_server import Runtime, build_server, owner_scope_from_headers, runtime_from_env
-    from app.models import CallbackEvent, CallbackPolicy, JobPolicy, Policy, TaskRecord, map_aca_state, to_mcp_task
+    from app.models import CallbackDeliveryState, CallbackEvent, CallbackPolicy, GetTaskResult, JobPolicy, LifecycleState, Policy, PublicError, StartRequest, TaskRecord, map_aca_state, to_mcp_task
     from app.orchestrator import Orchestrator
     from app.telemetry import Telemetry, configure, telemetry
 
@@ -175,9 +160,10 @@ validation:
     assert hasattr(JobsOperations, "get"), "JobsOperations.get missing"
     assert hasattr(JobsOperations, "begin_start"), "JobsOperations.begin_start missing"
     assert hasattr(JobsOperations, "begin_stop_execution"), "JobsOperations.begin_stop_execution missing"
-    assert hasattr(JobExecutionsOperations, "list"), "JobExecutionsOperations.list missing"
+    assert hasattr(JobsExecutionsOperations, "list"), "JobsExecutionsOperations.list missing"
 
     assert callable(callback_payload)
+    assert callable(CallbackSender)
     assert callable(to_mcp_task)
     assert callable(map_aca_state)
     assert callable(build_server)
