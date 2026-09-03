@@ -370,6 +370,7 @@ class JobWorker:
                     "worker_claimed_at": None,
                     "worker_claim_token": None,
                     "worker_claim_expires_at": None,
+                    "reconciliation_unresolved_since": None,
                     "updated_at": now,
                     "completed_at": now,
                 }
@@ -393,6 +394,7 @@ class JobWorker:
                     "worker_claimed_at": None,
                     "worker_claim_token": None,
                     "worker_claim_expires_at": None,
+                    "reconciliation_unresolved_since": None,
                     "updated_at": now,
                     "completed_at": now,
                 }

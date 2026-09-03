@@ -195,7 +195,7 @@ single sources of truth, not duplicate snippets in `SKILL.md`.
 
 | File | Responsibility |
 |---|---|
-| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.3.5`. |
+| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.3.6`. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py` | Canonical FastMCP server assembly and HTTP entrypoint. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py` | Small MCP Tasks `ServerExtension` adapter when the pinned FastMCP Tasks extension cannot bind directly to external ACA execution state. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py` | Shared start, get, cancel, idempotency, status translation, and reconciliation service used by Tasks and fallback tools. |
@@ -309,7 +309,9 @@ the task ID, current lifecycle state, and `cancellationRequested: true`.
 If cancellation arrives before an execution ID is bound, the intent blocks any
 new start attempt. A task that has not reached ARM becomes `Cancelled`; an
 uncertain start is reconciled only far enough to find and stop any matching
-execution.
+execution. If ARM start is already in flight, ETag-safe binding preserves the
+cancellation intent and cooperatively stops the execution immediately after its
+ID becomes durable.
 
 The fallback tools and Tasks methods call the same orchestrator. Their
 authorization, idempotency, status mapping, cancellation, and error semantics
@@ -390,7 +392,8 @@ caller-provided key; the raw key is not stored.
 | `callbackErrorCode` | Delivery-specific stable warning code or null; it does not convert successful business work to `Failed`. |
 | `cancellationRequestedAt` | Timestamp or null; cancellation intent does not create an extra lifecycle state. |
 | `startAttemptedAt` / `startAttemptCount` | Uncertain-start reconciliation bounds. |
-| `workerClaimedAt` | Job-side idempotency evidence. |
+| `workerClaimedAt` / `workerClaimToken` / `workerClaimExpiresAt` | Job-side idempotency evidence and active-lease boundary. |
+| `reconciliationUnresolvedSince` | First durable observation of `Degraded`, `Unknown`, or `Succeeded` without a result reference; starts the separate terminal-reconciliation budget. |
 | `createdAt` / `updatedAt` / `completedAt` | UTC ISO-8601 lifecycle timestamps. |
 | `_etag` | Cosmos optimistic concurrency token used on every mutation. |
 
@@ -429,11 +432,15 @@ ACA execution states map as follows:
 |---|---|
 | `Processing` | `Starting` until the worker claim is visible, then `Running`. |
 | `Running` | `Running` |
-| `Succeeded` | `Succeeded` only after the result reference is available; otherwise remain `Running` during a bounded result-reconciliation window, then `Failed` with `RESULT_REFERENCE_MISSING`. |
+| `Succeeded` | `Succeeded` only after the result reference is available; otherwise record `reconciliationUnresolvedSince`, remain `Running` for at least ten minutes and while a worker lease is active, then `Failed` with `RESULT_REFERENCE_MISSING`. |
 | `Failed` | `Failed` with `ACA_EXECUTION_FAILED` unless the worker already persisted a more specific stable code. |
 | `Stopped` | `Cancelled` when cancellation was requested; otherwise `Failed` with `ACA_EXECUTION_STOPPED`. |
-| `Degraded` | Preserve the current non-terminal state, expose a safe status message, and reconcile with backoff; fail with `ACA_EXECUTION_STATE_UNRESOLVED` after the bounded degraded-state budget is exhausted. |
-| `Unknown` | Preserve the current non-terminal state and reconcile with backoff; fail with `ACA_EXECUTION_STATE_UNRESOLVED` only after the bounded unknown-state budget is exhausted. |
+| `Degraded` | Record `reconciliationUnresolvedSince`, remain `Running` for at least ten minutes and while a worker lease is active, then fail with `ACA_EXECUTION_STATE_UNRESOLVED`. |
+| `Unknown` | Record `reconciliationUnresolvedSince`, remain `Running` for at least ten minutes and while a worker lease is active, then fail with `ACA_EXECUTION_STATE_UNRESOLVED`. |
+
+Resolved execution state or a durable result clears
+`reconciliationUnresolvedSince`. Exhaustion clears the worker claim fields only
+after the lease is no longer active.
 
 ### 9.2 MCP Tasks mapping
 
@@ -502,14 +509,17 @@ For a `Starting` record whose start outcome is uncertain:
 1. list executions only for the allowlisted Job and the recorded attempt
    window;
 2. match the opaque `taskId` in the server-controlled execution arguments;
-3. bind the single match to `acaExecutionId`;
-4. if multiple matches exist, select one deterministically, record protected
-   telemetry, and best-effort stop duplicates; the worker idempotency guard
-   remains authoritative;
-5. if no match appears after the consistency grace period, retry the start with
+3. re-fetch the current ETag-protected record and treat an existing
+   `acaExecutionId` or worker claim as authoritative;
+4. when unbound, conditionally bind the selected match before stopping anything;
+5. stop only discovered executions whose ID differs from the persisted
+   authoritative ID; never replace a bound execution merely because sorting
+   favors another match;
+6. if no match appears after the consistency grace period, retry the start with
    the same `taskId`; and
-6. after the configured attempt and time budget, transition to `Failed` with
-   `START_RECONCILIATION_EXHAUSTED`.
+7. after the configured attempt and time budget, transition an unbound uncertain
+   start to `Failed` with `START_RECONCILIATION_EXHAUSTED`. A bound execution
+   remains `Running` when an ARM list is temporarily empty.
 
 No reconciliation path creates a new MCP `taskId` or accepts a caller-provided
 execution identifier.

@@ -386,7 +386,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.5")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.6")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -458,6 +458,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "ACA_EXECUTION_FAILED",
             "ACA_EXECUTION_STOPPED",
             "ACA_EXECUTION_STATE_UNRESOLVED",
+            "reconciliationUnresolvedSince",
+            "ten-minute unresolved-reconciliation budget",
+            "active worker lease",
+            "authoritative bound execution",
+            "resourceGroupTags",
+            "MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT",
             "CALLBACK_DELIVERY_REJECTED",
             "CALLBACK_DELIVERY_EXHAUSTED",
             "CALLBACK_PAYLOAD_CONFLICT",
@@ -847,6 +853,82 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )["parameters"]
         self.assertEqual(set(parameters), declared)
 
+    def test_subscription_main_provisions_and_scopes_the_child_resource_group(self) -> None:
+        main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
+        parameters = json.loads(
+            (self._infra_dir() / "main.parameters.json").read_text(
+                encoding="utf-8"
+            )
+        )["parameters"]
+
+        self.assertIn("param resourceGroupTags object = {}", main)
+        self.assertIn(
+            "resource workloadResourceGroup "
+            "'Microsoft.Resources/resourceGroups@2025-04-01' = {",
+            main,
+        )
+        self.assertRegex(
+            main,
+            (
+                r"resource workloadResourceGroup "
+                r"'Microsoft\.Resources/resourceGroups@2025-04-01' = \{\s+"
+                r"name: resourceGroupName\s+location: location\s+"
+                r"tags: resourceGroupTags\s+\}"
+            ),
+        )
+        self.assertIn(
+            "resource platformResourceGroup "
+            "'Microsoft.Resources/resourceGroups@2025-04-01' existing = {",
+            main,
+        )
+        self.assertNotIn("scope: resourceGroup(resourceGroupName)", main)
+        self.assertRegex(
+            main,
+            (
+                r"(?s)module cosmos [^=]+=\s*if \(!cosmosUseExistingAccount\) "
+                r"\{.*?scope: workloadResourceGroup"
+            ),
+        )
+        self.assertRegex(
+            main,
+            (
+                r"(?s)module existingCosmos [^=]+=\s*if "
+                r"\(cosmosUseExistingAccount\) \{.*?"
+                r"scope: platformResourceGroup"
+            ),
+        )
+        for module_name in (
+            "preRuntimeCosmosRbac",
+            "app",
+            "job",
+            "jobOperator",
+        ):
+            self.assertRegex(
+                main,
+                rf"(?s)module {module_name} [^=]+=[^{{]*\{{.*?scope: workloadResourceGroup",
+            )
+        self.assertRegex(
+            main,
+            (
+                r"(?s)module identities [^=]+=\s*\{.*?"
+                r"scope: subscription\(\).*?"
+                r"dependsOn:\s*\[\s*workloadResourceGroup\s*\]"
+            ),
+        )
+        self.assertEqual(parameters["resourceGroupTags"]["value"], {})
+
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
+        self.assertIn(
+            'document["parameters"]["resourceGroupTags"]["value"]',
+            fixture,
+        )
+        self.assertIn('"cleanup": "true"', fixture)
+        self.assertIn('"created-by": "ci-smoke"', fixture)
+        self.assertIn('"ci-smoke-suffix": sys.argv[2]', fixture)
+
     def test_locks_use_only_hash_verified_registry_artifacts(self) -> None:
         tracked = subprocess.check_output(
             ["git", "ls-files", str(SKILL.relative_to(ROOT))],
@@ -1124,8 +1206,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("uuidgen", fixture)
         self.assertIn("cut -c1-8", fixture)
         self.assertIn('CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"', fixture)
-        self.assertIn('az group create --name "$CHILD_RG"', fixture)
-        self.assertIn("--tags cleanup=true created-by=ci-smoke", fixture)
+        self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
+        self.assertIn(
+            'document["parameters"]["resourceGroupTags"]["value"]',
+            fixture,
+        )
         self.assertIn('AZURE_RESOURCE_GROUP="$CHILD_RG"', fixture)
         self.assertIn('MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="rg-awesome-gbb-ci"', fixture)
         self.assertNotIn(f'AZURE_RESOURCE_GROUP="{shared_rg}"', fixture)
@@ -1605,16 +1690,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
         main_bicep = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
         self.assertIn("param platformResourceGroupName string = resourceGroupName", main_bicep)
-        self.assertIn("scope: resourceGroup(platformResourceGroupName)", main_bicep)
-        self.assertIn(
-            "scope: resourceGroup(cosmosUseExistingAccount ? platformResourceGroupName : resourceGroupName)",
-            main_bicep,
-        )
+        self.assertIn("scope: platformResourceGroup", main_bicep)
+        self.assertIn("module cosmos 'cosmos.bicep' = if (!cosmosUseExistingAccount)", main_bicep)
+        self.assertIn("module existingCosmos 'cosmos.bicep' = if (cosmosUseExistingAccount)", main_bicep)
         self.assertIn("module preRuntimeCosmosRbac", main_bicep)
-        self.assertIn(
-            "scope: resourceGroup(cosmosUseExistingAccount ? platformResourceGroupName : resourceGroupName)",
-            main_bicep,
-        )
+        self.assertIn("scope: workloadResourceGroup", main_bicep)
         assignments = (
             self._infra_dir() / "identity-rbac" / "assignments.bicep"
         ).read_text(encoding="utf-8")
@@ -2553,6 +2633,83 @@ param callbackConfig = {{
         self.assertIn("uv run --frozen python verify_deployment.py", text)
         for forbidden in ("az acr build", "az containerapp job", "azd-service-name: job"):
             self.assertNotIn(forbidden, text)
+
+    def test_postdeploy_required_env_is_available_from_normal_azd_contract(self) -> None:
+        module = self._load_script(
+            "converge_image.py",
+            "foundry_mcp_aca_jobs_converge_image_env_contract",
+        )
+        main_bicep = (self._infra_dir() / "main.bicep").read_text(
+            encoding="utf-8"
+        )
+        parameters = json.loads(
+            (self._infra_dir() / "main.parameters.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        parameter_refs = {
+            match
+            for value in parameters["parameters"].values()
+            for match in re.findall(
+                r"\$\{([A-Z][A-Z0-9_]*)\}",
+                json.dumps(value),
+            )
+        }
+        output_names = set(
+            re.findall(
+                r"^output\s+([A-Za-z][A-Za-z0-9_]*)\s+",
+                main_bicep,
+                flags=re.MULTILINE,
+            )
+        )
+        azd_builtins = {"AZURE_SUBSCRIPTION_ID", "SERVICE_MCP_IMAGE_NAME"}
+
+        self.assertEqual(
+            set(module._REQUIRED_ENV_KEYS)
+            - azd_builtins
+            - parameter_refs
+            - output_names,
+            set(),
+        )
+        self.assertTrue(
+            {
+                "MCP_APP_NAME",
+                "ACA_JOB_NAME",
+                "MCP_ACA_JOBS_COSMOS_ENDPOINT",
+                "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME",
+                "MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT",
+                "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL",
+                "MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME",
+            }.issubset(output_names)
+        )
+        self.assertIn(
+            "output MCP_ACA_JOBS_COSMOS_ENDPOINT string = effectiveCosmosEndpoint",
+            main_bicep,
+        )
+        self.assertIn(
+            "output MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME string = effectiveCosmosAccountName",
+            main_bicep,
+        )
+        self.assertIn(
+            "cosmosUseExistingAccount ? existingCosmos!.outputs.endpoint : "
+            "cosmos!.outputs.endpoint",
+            main_bicep,
+        )
+        self.assertIn(
+            "output MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT string = "
+            "cosmosUseExistingAccount ? 'true' : 'false'",
+            main_bicep,
+        )
+
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        for alias in (
+            "MCP_APP_NAME",
+            "ACA_JOB_NAME",
+            "MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT",
+        ):
+            self.assertNotRegex(fixture, rf"(?m)^{alias}=")
 
     def test_infra_scripts_pyproject_and_lockfile_are_present(self) -> None:
         scripts = self._script_dir()

@@ -712,6 +712,48 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.fixed_now + timedelta(minutes=5),
         )
 
+    async def test_worker_terminal_writes_clear_unresolved_reconciliation_timestamp(self) -> None:
+        worker, store, _, _, _ = await self._build_worker()
+        unresolved_since = self.fixed_now - timedelta(minutes=2)
+        succeeded_seed = await self._seed_task(
+            store,
+            self.task.model_copy(
+                update={
+                    "lifecycle_state": self.LifecycleState.RUNNING,
+                    "reconciliation_unresolved_since": unresolved_since,
+                }
+            ),
+        )
+
+        succeeded = await worker._persist_succeeded(
+            succeeded_seed,
+            "https://results.example.com/results/task/result.json",
+        )
+
+        self.assertIsNone(succeeded.reconciliation_unresolved_since)
+
+        failed_task = self.TaskRecord.new(
+            owner_scope="scope-a",
+            job_type="batch",
+            idempotency_key_hash="hash-failed",
+            request_fingerprint="fingerprint-failed",
+            input_ref="https://input.example.com/jobs/failed",
+            callback_alias="ops",
+        ).model_copy(
+            update={
+                "lifecycle_state": self.LifecycleState.RUNNING,
+                "reconciliation_unresolved_since": unresolved_since,
+            }
+        )
+        failed_seed = await self._seed_task(store, failed_task)
+
+        failed = await worker._persist_failure(
+            failed_seed,
+            "WORKER_EXECUTION_FAILED",
+        )
+
+        self.assertIsNone(failed.reconciliation_unresolved_since)
+
     async def test_duplicate_loser_exits_zero_without_mutation_while_winner_completes(self) -> None:
         handler_started = asyncio.Event()
         release_handler = asyncio.Event()

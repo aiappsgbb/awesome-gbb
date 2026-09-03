@@ -22,6 +22,7 @@ __all__ = ["Orchestrator"]
 _START_RECONCILIATION_GRACE = timedelta(seconds=2)
 _CANCELLATION_RECONCILIATION_GRACE = timedelta(seconds=30)
 _START_RECONCILIATION_BUDGET = timedelta(minutes=5)
+_UNRESOLVED_RECONCILIATION_BUDGET = timedelta(minutes=10)
 _ACA_EXECUTION_PRIORITY = {
     "Succeeded": 0,
     "Running": 1,
@@ -202,8 +203,7 @@ class Orchestrator:
             job_policy = self._policy.job(task.job_type)
             if task.aca_execution_id is None:
                 task = await self._reconcile_without_restart(task, job_policy)
-                if task.aca_execution_id is None:
-                    return task
+                return task
 
             try:
                 with self._telemetry.operation("aca.stop", self._telemetry_attributes(task, "aca.stop")):
@@ -301,11 +301,37 @@ class Orchestrator:
         def mutate(current: TaskRecord) -> TaskRecord:
             if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
                 return current
+            if current.aca_execution_id not in {None, execution.execution_id}:
+                return current
             result_url = str(current.result_url) if current.result_url is not None else None
             result_validator = self._policy.validate_result if result_url is not None else None
+            unresolved = execution.status in {"Degraded", "Unknown"} or (
+                execution.status == "Succeeded" and result_url is None
+            )
+            unresolved_since = (
+                current.reconciliation_unresolved_since or now
+                if unresolved
+                else None
+            )
+            active_worker_lease = (
+                current.worker_claim_expires_at is not None
+                and current.worker_claim_expires_at > now
+            )
+            reconciliation_exhausted = (
+                unresolved
+                and unresolved_since is not None
+                and now - unresolved_since >= _UNRESOLVED_RECONCILIATION_BUDGET
+                and not active_worker_lease
+            )
             candidate = current.model_copy(
                 update={
                     "aca_execution_id": execution.execution_id,
+                    "lifecycle_state": (
+                        LifecycleState.RUNNING
+                        if unresolved
+                        else current.lifecycle_state
+                    ),
+                    "reconciliation_unresolved_since": unresolved_since,
                     "updated_at": now,
                 }
             )
@@ -314,7 +340,17 @@ class Orchestrator:
                 execution.status,
                 result_url=result_url,
                 result_validator=result_validator,
+                reconciliation_exhausted=reconciliation_exhausted,
+                now=now,
             )
+            if reconciliation_exhausted:
+                mapped = mapped.model_copy(
+                    update={
+                        "worker_claimed_at": None,
+                        "worker_claim_token": None,
+                        "worker_claim_expires_at": None,
+                    }
+                )
             if (
                 mapped.lifecycle_state is LifecycleState.SUCCEEDED
                 and current.lifecycle_state is LifecycleState.STARTING
@@ -329,17 +365,28 @@ class Orchestrator:
 
         persisted = await self._apply_with_retry(task.owner_scope, str(task.task_id), mutate)
         if (
+            persisted.cancellation_requested_at is not None
+            and persisted.lifecycle_state
+            not in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}
+            and persisted.aca_execution_id == execution.execution_id
+        ):
+            await self._best_effort_stop(job_policy, execution.execution_id)
+        if (
             execution.status == "Succeeded"
             and persisted.lifecycle_state is LifecycleState.RUNNING
             and persisted.result_url is not None
+            and persisted.aca_execution_id == execution.execution_id
         ):
             result_url = str(persisted.result_url)
             result_validator = self._policy.validate_result
 
             def promote(current: TaskRecord) -> TaskRecord:
+                if current.aca_execution_id != execution.execution_id:
+                    return current
                 candidate = current.model_copy(
                     update={
                         "aca_execution_id": execution.execution_id,
+                        "reconciliation_unresolved_since": None,
                         "updated_at": now,
                     }
                 )
@@ -348,6 +395,7 @@ class Orchestrator:
                     execution.status,
                     result_url=result_url,
                     result_validator=result_validator,
+                    now=now,
                 )
 
             return await self._apply_with_retry(task.owner_scope, str(task.task_id), promote)
@@ -413,35 +461,62 @@ class Orchestrator:
         with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
             return await self._store.get(owner_scope, task_id)
 
+    async def _reconcile_matches(
+        self,
+        task: TaskRecord,
+        job_policy: Any,
+        matches: list[AcaExecution],
+    ) -> tuple[TaskRecord, bool]:
+        with self._telemetry.operation("store.get", self._telemetry_attributes(task, "store.get")):
+            current = await self._store.get(task.owner_scope, str(task.task_id))
+        if current.lifecycle_state in {
+            LifecycleState.SUCCEEDED,
+            LifecycleState.FAILED,
+            LifecycleState.CANCELLED,
+        }:
+            return current, True
+        if not matches:
+            return current, False
+
+        candidate = next(
+            (
+                execution
+                for execution in matches
+                if execution.execution_id == current.aca_execution_id
+            ),
+            None,
+        )
+        if current.aca_execution_id is None:
+            candidate = self._select_winner(matches)
+
+        persisted = current
+        if candidate is not None:
+            persisted = await self._bind_execution(current, candidate, job_policy)
+
+        authoritative_id = persisted.aca_execution_id
+        for execution in matches:
+            if execution.execution_id != authoritative_id:
+                await self._best_effort_stop(job_policy, execution.execution_id)
+        return persisted, True
+
     async def _reconcile_without_restart(self, task: TaskRecord, job_policy: Any) -> TaskRecord:
         matches = await self._matching_executions(task, job_policy)
-        if len(matches) == 1:
-            return await self._bind_execution(task, matches[0], job_policy)
-        if len(matches) > 1:
-            winner = self._select_winner(matches)
-            for execution in matches:
-                if execution.execution_id == winner.execution_id:
-                    continue
-                await self._best_effort_stop(job_policy, execution.execution_id)
-            return await self._bind_execution(task, winner, job_policy)
-        if task.cancellation_requested_at is not None:
-            return await self._persist_cancellation_if_ready(task)
-        return task
+        current, handled = await self._reconcile_matches(task, job_policy, matches)
+        if handled:
+            return current
+        if current.cancellation_requested_at is not None:
+            return await self._persist_cancellation_if_ready(current)
+        return current
 
     async def _reconcile(self, task: TaskRecord, job_policy: Any) -> TaskRecord:
         if task.cancellation_requested_at is not None:
             return await self._reconcile_without_restart(task, job_policy)
 
         matches = await self._matching_executions(task, job_policy)
-        if len(matches) == 1:
-            return await self._bind_execution(task, matches[0], job_policy)
-        if len(matches) > 1:
-            winner = self._select_winner(matches)
-            for execution in matches:
-                if execution.execution_id == winner.execution_id:
-                    continue
-                await self._best_effort_stop(job_policy, execution.execution_id)
-            return await self._bind_execution(task, winner, job_policy)
+        current, handled = await self._reconcile_matches(task, job_policy, matches)
+        if handled or current.aca_execution_id is not None:
+            return current
+        task = current
 
         if task.start_attempted_at is None:
             return task
@@ -449,8 +524,16 @@ class Orchestrator:
         now = self._clock()
         elapsed = now - task.start_attempted_at
         if task.start_attempt_count >= 3 or elapsed >= _START_RECONCILIATION_BUDGET:
-            await self._persist_reconciliation_exhausted(task)
-            raise PublicError("START_RECONCILIATION_EXHAUSTED", "start reconciliation exhausted")
+            exhausted = await self._persist_reconciliation_exhausted(task)
+            if (
+                exhausted.lifecycle_state is LifecycleState.FAILED
+                and exhausted.error_code == "START_RECONCILIATION_EXHAUSTED"
+            ):
+                raise PublicError(
+                    "START_RECONCILIATION_EXHAUSTED",
+                    "start reconciliation exhausted",
+                )
+            return exhausted
 
         if elapsed < _START_RECONCILIATION_GRACE:
             return task
@@ -483,6 +566,14 @@ class Orchestrator:
 
         def mutate(current: TaskRecord) -> TaskRecord:
             if current.lifecycle_state is LifecycleState.FAILED and current.error_code == "START_RECONCILIATION_EXHAUSTED":
+                return current
+            if (
+                current.lifecycle_state
+                not in {LifecycleState.ACCEPTED, LifecycleState.STARTING}
+                or current.aca_execution_id is not None
+                or current.worker_claimed_at is not None
+                or current.cancellation_requested_at is not None
+            ):
                 return current
             return current.model_copy(
                 update={

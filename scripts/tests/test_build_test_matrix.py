@@ -18,6 +18,7 @@ runs the assertions.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -157,6 +158,53 @@ class TestFullMatrix(unittest.TestCase):
                 "foundry-prompt-agents",
             ],
         )
+
+
+class TestUnitWorkflowContract(unittest.TestCase):
+    def test_unit_install_contains_bounded_mcp_aca_jobs_dependencies(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        install = next(
+            step
+            for step in workflow["jobs"]["unit-tests"]["steps"]
+            if step.get("name") == "Install deps"
+        )
+        installed = set(shlex.split(install["run"]))
+
+        self.assertIn("--quiet", installed)
+        self.assertTrue(
+            {
+                "pydantic~=2.13.5",
+                "httpx~=0.28.1",
+                "azure-mgmt-appcontainers~=5.0.0",
+                "azure-cosmos[aio]~=4.16.4",
+                "azure-storage-blob[aio]~=12.30.1",
+                "azure-keyvault-secrets~=4.11.2",
+                "fastmcp~=4.0.1",
+                "fastmcp-tasks~=4.0.1",
+                "mcp~=2.1.1",
+            }.issubset(installed)
+        )
+
+    def test_clean_unittest_discovery_has_no_failed_test_modules(self) -> None:
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "scripts" / "tests"),
+            pattern="test_*.py",
+        )
+
+        def failed_test_names(candidate: unittest.TestSuite) -> list[str]:
+            names: list[str] = []
+            for item in candidate:
+                if isinstance(item, unittest.TestSuite):
+                    names.extend(failed_test_names(item))
+                elif item.__class__.__name__ == "_FailedTest":
+                    names.append(str(item))
+            return names
+
+        self.assertEqual(failed_test_names(suite), [])
 
 
 class TestChangedOnly(unittest.TestCase):

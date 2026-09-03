@@ -6,6 +6,9 @@ targetScope = 'subscription'
 @description('Resource group receiving the MCP app, ACA Job, and their managed identities.')
 param resourceGroupName string
 
+@description('Optional tags applied to the deployment resource group.')
+param resourceGroupTags object = {}
+
 @description('Resource group containing existing brownfield ACR, ACA environment, storage, and optionally Cosmos resources. Defaults to the deployment resource group for greenfield use.')
 param platformResourceGroupName string = resourceGroupName
 
@@ -176,19 +179,19 @@ var appEnvironmentVariables = [
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_ENDPOINT'
-    value: cosmos.outputs.endpoint
+    value: effectiveCosmosEndpoint
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME'
-    value: cosmos.outputs.accountName
+    value: effectiveCosmosAccountName
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_DATABASE'
-    value: cosmos.outputs.databaseName
+    value: effectiveCosmosDatabaseName
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_CONTAINER'
-    value: cosmos.outputs.containerName
+    value: effectiveCosmosContainerName
   }
   {
     name: 'MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID'
@@ -218,19 +221,19 @@ var jobEnvironmentVariables = concat([
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_ENDPOINT'
-    value: cosmos.outputs.endpoint
+    value: effectiveCosmosEndpoint
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME'
-    value: cosmos.outputs.accountName
+    value: effectiveCosmosAccountName
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_DATABASE'
-    value: cosmos.outputs.databaseName
+    value: effectiveCosmosDatabaseName
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_CONTAINER'
-    value: cosmos.outputs.containerName
+    value: effectiveCosmosContainerName
   }
   {
     name: 'MCP_ACA_JOBS_JOB_TYPE'
@@ -275,13 +278,23 @@ var jobEnvironmentVariables = concat([
   }
 ])
 
+resource workloadResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
+  name: resourceGroupName
+  location: location
+  tags: resourceGroupTags
+}
+
+resource platformResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' existing = {
+  name: platformResourceGroupName
+}
+
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  scope: resourceGroup(platformResourceGroupName)
+  scope: platformResourceGroup
   name: acrName
 }
 
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
-  scope: resourceGroup(platformResourceGroupName)
+  scope: platformResourceGroup
   name: environmentName
 }
 
@@ -297,11 +310,14 @@ module identities 'identity-rbac.bicep' = {
     createAssignments: false
     roleDefinitionName: 'foundry-mcp-aca-jobs-job-operator'
   }
+  dependsOn: [
+    workloadResourceGroup
+  ]
 }
 
-module cosmos 'cosmos.bicep' = {
+module cosmos 'cosmos.bicep' = if (!cosmosUseExistingAccount) {
   name: 'create-cosmos'
-  scope: resourceGroup(cosmosUseExistingAccount ? platformResourceGroupName : resourceGroupName)
+  scope: workloadResourceGroup
   params: {
     name: cosmosAccountName
     location: location
@@ -312,14 +328,32 @@ module cosmos 'cosmos.bicep' = {
   }
 }
 
+module existingCosmos 'cosmos.bicep' = if (cosmosUseExistingAccount) {
+  name: 'use-existing-cosmos'
+  scope: platformResourceGroup
+  params: {
+    name: cosmosAccountName
+    location: location
+    databaseName: cosmosDatabaseName
+    containerName: cosmosContainerName
+    useExistingAccount: cosmosUseExistingAccount
+    existingAccountEndpoint: cosmosAccountEndpoint
+  }
+}
+
+var effectiveCosmosEndpoint = cosmosUseExistingAccount ? existingCosmos!.outputs.endpoint : cosmos!.outputs.endpoint
+var effectiveCosmosAccountName = cosmosUseExistingAccount ? existingCosmos!.outputs.accountName : cosmos!.outputs.accountName
+var effectiveCosmosDatabaseName = cosmosUseExistingAccount ? existingCosmos!.outputs.databaseName : cosmos!.outputs.databaseName
+var effectiveCosmosContainerName = cosmosUseExistingAccount ? existingCosmos!.outputs.containerName : cosmos!.outputs.containerName
+
 module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
   name: 'assign-pre-runtime-rbac'
-  scope: resourceGroup(platformResourceGroupName)
+  scope: platformResourceGroup
   params: {
     acrName: acrName
-    cosmosAccountName: cosmos.outputs.accountName
-    cosmosDatabaseName: cosmos.outputs.databaseName
-    cosmosContainerName: cosmos.outputs.containerName
+    cosmosAccountName: effectiveCosmosAccountName
+    cosmosDatabaseName: effectiveCosmosDatabaseName
+    cosmosContainerName: effectiveCosmosContainerName
     storageAccountName: storageAccountName
     outputStorageContainerName: outputStorageContainerName
     keyVaultName: callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''
@@ -335,12 +369,12 @@ module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
 
 module preRuntimeCosmosRbac 'identity-rbac/assignments.bicep' = if (!cosmosUseExistingAccount) {
   name: 'assign-cosmos-rbac'
-  scope: resourceGroup(resourceGroupName)
+  scope: workloadResourceGroup
   params: {
     acrName: acrName
-    cosmosAccountName: cosmos.outputs.accountName
-    cosmosDatabaseName: cosmos.outputs.databaseName
-    cosmosContainerName: cosmos.outputs.containerName
+    cosmosAccountName: effectiveCosmosAccountName
+    cosmosDatabaseName: effectiveCosmosDatabaseName
+    cosmosContainerName: effectiveCosmosContainerName
     storageAccountName: storageAccountName
     outputStorageContainerName: outputStorageContainerName
     keyVaultName: ''
@@ -356,7 +390,7 @@ module preRuntimeCosmosRbac 'identity-rbac/assignments.bicep' = if (!cosmosUseEx
 
 module app 'app.bicep' = {
   name: 'create-app'
-  scope: resourceGroup(resourceGroupName)
+  scope: workloadResourceGroup
   params: {
     name: appName
     location: location
@@ -385,7 +419,7 @@ module app 'app.bicep' = {
 
 module job '../../../azd-patterns/references/bicep/aca-job.bicep' = {
   name: 'create-job'
-  scope: resourceGroup(resourceGroupName)
+  scope: workloadResourceGroup
   params: {
     name: jobName
     location: location
@@ -411,7 +445,7 @@ module job '../../../azd-patterns/references/bicep/aca-job.bicep' = {
 
 module jobOperator 'identity-rbac/job-operator.bicep' = {
   name: 'assign-job-operator'
-  scope: resourceGroup(resourceGroupName)
+  scope: workloadResourceGroup
   params: {
     jobName: job.outputs.name
     appPrincipalId: identities.outputs.appUamiPrincipalId
@@ -422,15 +456,23 @@ module jobOperator 'identity-rbac/job-operator.bicep' = {
 output appResourceName string = app.outputs.name
 output jobResourceName string = job.outputs.name
 output appFqdn string = app.outputs.fqdn
+output MCP_APP_NAME string = app.outputs.name
+output ACA_JOB_NAME string = job.outputs.name
+output AZURE_RESOURCE_GROUP string = workloadResourceGroup.name
 output ACR_NAME string = acr.name
 output ACR_LOGIN_SERVER string = acr.properties.loginServer
+output MCP_ACA_JOBS_STORAGE_ACCOUNT_URL string = storageAccountUrl
+output MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME string = storageAccountName
+output MCP_ACA_JOBS_COSMOS_ENDPOINT string = effectiveCosmosEndpoint
+output MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME string = effectiveCosmosAccountName
+output MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT string = cosmosUseExistingAccount ? 'true' : 'false'
 output appIdentityResourceId string = identities.outputs.appUamiResourceId
 output jobIdentityResourceId string = identities.outputs.jobUamiResourceId
 output appIdentityPrincipalId string = identities.outputs.appUamiPrincipalId
 output jobIdentityPrincipalId string = identities.outputs.jobUamiPrincipalId
 output appIdentityClientId string = identities.outputs.appUamiClientId
 output jobIdentityClientId string = identities.outputs.jobUamiClientId
-output cosmosEndpoint string = cosmos.outputs.endpoint
+output cosmosEndpoint string = effectiveCosmosEndpoint
 output outputStorageContainerUrl string = outputStorageUrl
 output callbackStorageContainerUrl string = callbackStorageUrl
 output authAudience string = app.outputs.authAudience

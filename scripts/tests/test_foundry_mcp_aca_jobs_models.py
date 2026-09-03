@@ -296,6 +296,39 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         self.assertIn("_etag", dumped)
         self.assertEqual(dumped["_etag"], "etag-1")
 
+    def test_task_record_round_trips_unresolved_reconciliation_timestamp(self) -> None:
+        unresolved_since = datetime(2026, 1, 2, 3, 14, 5, tzinfo=timezone.utc)
+        record = TaskRecord.model_validate(
+            {
+                "taskId": str(uuid.uuid4()),
+                "ownerScope": "scope-a",
+                "jobType": "import",
+                "idempotencyKeyHash": "hash-1",
+                "requestFingerprint": "fingerprint-1",
+                "inputRef": "https://example.invalid/input.json",
+                "callbackAlias": "callback://jobs/import",
+                "lifecycleState": "Running",
+                "callbackDeliveryState": "NotStarted",
+                "reconciliationUnresolvedSince": "2026-01-02T03:14:05Z",
+                "createdAt": "2026-01-02T03:04:05Z",
+                "updatedAt": "2026-01-02T03:14:05Z",
+                "_etag": "etag-2",
+            }
+        )
+
+        self.assertEqual(record.reconciliation_unresolved_since, unresolved_since)
+        dumped = record.model_dump(mode="json", by_alias=True, exclude_none=True)
+        self.assertEqual(
+            dumped["reconciliationUnresolvedSince"],
+            "2026-01-02T03:14:05Z",
+        )
+        self.assertNotIn(
+            "reconciliationUnresolvedSince",
+            record.model_copy(
+                update={"reconciliation_unresolved_since": None}
+            ).model_dump(mode="json", by_alias=True, exclude_none=True),
+        )
+
     def test_map_aca_state_honors_processing_running_and_succeeded_rules(self) -> None:
         with patch("app.models._utcnow", return_value=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)):
             record = TaskRecord.new(

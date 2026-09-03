@@ -150,12 +150,6 @@ export MCP_ACA_JOBS_CALLER_PRINCIPAL_ID
 [[ "$CHILD_RG" == rg-foundry-mcp-aca-jobs-ci-* ]] ||
   fail "child resource group name is invalid"
 
-az group create --name "$CHILD_RG" \
-  --location swedencentral \
-  --tags cleanup=true created-by=ci-smoke \
-  --only-show-errors >/dev/null ||
-  fail "child resource group creation failed"
-
 ## Step 2 — deterministic scaffold
 
 mkdir -p "$PROJECT_DIR" "$CANONICAL_JOB_DIR"
@@ -169,7 +163,7 @@ cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-jo
 cp -R skills/foundry-mcp-aca-jobs/references/python/app "$PROJECT_DIR/app"
 mkdir -p "$PROJECT_DIR/.azure/$AZD_ENV_NAME"
 
-python3 - "$PROJECT_DIR/infra/main.parameters.json" <<'PY'
+python3 - "$PROJECT_DIR/infra/main.parameters.json" "$SUFFIX" <<'PY'
 import json
 import pathlib
 import sys
@@ -177,6 +171,11 @@ import sys
 path = pathlib.Path(sys.argv[1])
 document = json.loads(path.read_text(encoding="utf-8"))
 document["parameters"]["cosmosUseExistingAccount"]["value"] = True
+document["parameters"]["resourceGroupTags"]["value"] = {
+    "cleanup": "true",
+    "created-by": "ci-smoke",
+    "ci-smoke-suffix": sys.argv[2],
+}
 path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 PY
 
@@ -196,8 +195,6 @@ MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="$MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP"
 MCP_ACA_JOBS_ENVIRONMENT_NAME="$MCP_ACA_JOBS_ENVIRONMENT_NAME"
 MCP_ACA_JOBS_APP_NAME="$APP_NAME"
 MCP_ACA_JOBS_JOB_NAME="$JOB_NAME"
-MCP_APP_NAME="$APP_NAME"
-ACA_JOB_NAME="$JOB_NAME"
 MCP_ACA_JOBS_STORAGE_ACCOUNT_URL="${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL%/}"
 MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME"
 MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME="$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME"
@@ -205,7 +202,6 @@ MCP_ACA_JOBS_COSMOS_ENDPOINT="${MCP_ACA_JOBS_COSMOS_ENDPOINT%/}"
 MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"
 MCP_ACA_JOBS_COSMOS_DATABASE="$MCP_ACA_JOBS_COSMOS_DATABASE"
 MCP_ACA_JOBS_COSMOS_CONTAINER="$MCP_ACA_JOBS_COSMOS_CONTAINER"
-MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT="true"
 MCP_AUTH_APP_CLIENT_ID="$MCP_AUTH_APP_CLIENT_ID"
 MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"
 FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"

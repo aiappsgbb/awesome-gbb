@@ -277,6 +277,10 @@ class TaskRecord(BaseModel):
     worker_claimed_at: datetime | None = Field(default=None, alias="workerClaimedAt")
     worker_claim_token: str | None = Field(default=None, alias="workerClaimToken")
     worker_claim_expires_at: datetime | None = Field(default=None, alias="workerClaimExpiresAt")
+    reconciliation_unresolved_since: datetime | None = Field(
+        default=None,
+        alias="reconciliationUnresolvedSince",
+    )
     created_at: datetime = Field(default_factory=_utcnow, alias="createdAt")
     updated_at: datetime = Field(default_factory=_utcnow, alias="updatedAt")
     completed_at: datetime | None = Field(default=None, alias="completedAt")
@@ -287,6 +291,7 @@ class TaskRecord(BaseModel):
         "start_attempted_at",
         "worker_claimed_at",
         "worker_claim_expires_at",
+        "reconciliation_unresolved_since",
         "created_at",
         "updated_at",
         "completed_at",
@@ -387,7 +392,9 @@ def map_aca_state(
     result_url: str | HttpUrl | None = None,
     result_validator: Callable[[str], HttpUrl] | None = None,
     reconciliation_exhausted: bool = False,
+    now: datetime | None = None,
 ) -> TaskRecord:
+    observed_at = now or _utcnow()
     if record.lifecycle_state in {
         LifecycleState.SUCCEEDED,
         LifecycleState.FAILED,
@@ -397,10 +404,10 @@ def map_aca_state(
 
     if aca_state == "Processing":
         lifecycle_state = LifecycleState.RUNNING if record.worker_claimed_at else LifecycleState.STARTING
-        return record.model_copy(update={"lifecycle_state": lifecycle_state, "updated_at": _utcnow()})
+        return record.model_copy(update={"lifecycle_state": lifecycle_state, "updated_at": observed_at})
 
     if aca_state == "Running":
-        return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": _utcnow()})
+        return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": observed_at})
 
     if aca_state == "Succeeded":
         resolved_result_url = record.result_url
@@ -423,47 +430,47 @@ def map_aca_state(
                 updates = {
                     "lifecycle_state": LifecycleState.FAILED,
                     "error_code": "RESULT_REFERENCE_MISSING",
-                    "updated_at": _utcnow(),
+                    "updated_at": observed_at,
                 }
                 if record.completed_at is None:
-                    updates["completed_at"] = _utcnow()
+                    updates["completed_at"] = observed_at
                 return record.model_copy(update=updates)
-            return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": _utcnow()})
+            return record.model_copy(update={"lifecycle_state": LifecycleState.RUNNING, "updated_at": observed_at})
         updates: dict[str, Any] = {
             "lifecycle_state": LifecycleState.SUCCEEDED,
-            "updated_at": _utcnow(),
+            "updated_at": observed_at,
         }
         updates["result_url"] = resolved_result_url
         if record.completed_at is None:
-            updates["completed_at"] = _utcnow()
+            updates["completed_at"] = observed_at
         return record.model_copy(update=updates)
 
     if aca_state == "Failed":
         updates = {
             "lifecycle_state": LifecycleState.FAILED,
             "error_code": record.error_code or "ACA_EXECUTION_FAILED",
-            "updated_at": _utcnow(),
+            "updated_at": observed_at,
         }
         if record.completed_at is None:
-            updates["completed_at"] = _utcnow()
+            updates["completed_at"] = observed_at
         return record.model_copy(update=updates)
 
     if aca_state == "Stopped":
         if record.cancellation_requested_at is not None:
             updates = {
                 "lifecycle_state": LifecycleState.CANCELLED,
-                "updated_at": _utcnow(),
+                "updated_at": observed_at,
             }
             if record.completed_at is None:
-                updates["completed_at"] = _utcnow()
+                updates["completed_at"] = observed_at
             return record.model_copy(update=updates)
         updates = {
             "lifecycle_state": LifecycleState.FAILED,
             "error_code": record.error_code or "ACA_EXECUTION_STOPPED",
-            "updated_at": _utcnow(),
+            "updated_at": observed_at,
         }
         if record.completed_at is None:
-            updates["completed_at"] = _utcnow()
+            updates["completed_at"] = observed_at
         return record.model_copy(update=updates)
 
     if aca_state in {"Degraded", "Unknown"}:
@@ -471,10 +478,10 @@ def map_aca_state(
             updates = {
                 "lifecycle_state": LifecycleState.FAILED,
                 "error_code": "ACA_EXECUTION_STATE_UNRESOLVED",
-                "updated_at": _utcnow(),
+                "updated_at": observed_at,
             }
             if record.completed_at is None:
-                updates["completed_at"] = _utcnow()
+                updates["completed_at"] = observed_at
             return record.model_copy(update=updates)
         return record
 

@@ -176,6 +176,36 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidTransition):
             await store.replace(terminal.model_copy(update={"lifecycle_state": LifecycleState.ACCEPTED}), callback_saved.etag)
 
+    async def test_in_memory_persists_and_clears_unresolved_timestamp_with_monotonic_etags(self) -> None:
+        store = InMemoryControlStore()
+        created = await store.create_or_get(self.task)
+        unresolved_since = datetime(2026, 1, 2, 3, 14, 5, tzinfo=timezone.utc)
+
+        unresolved = await store.replace(
+            created.model_copy(
+                update={"reconciliation_unresolved_since": unresolved_since}
+            ),
+            created.etag,
+        )
+        reread = await store.get(self.task.owner_scope, str(self.task.task_id))
+
+        self.assertEqual(unresolved.etag, "2")
+        self.assertEqual(reread.reconciliation_unresolved_since, unresolved_since)
+        self.assertEqual(
+            reread.model_dump(mode="json", by_alias=True, exclude_none=True)[
+                "reconciliationUnresolvedSince"
+            ],
+            "2026-01-02T03:14:05Z",
+        )
+
+        cleared = await store.replace(
+            reread.model_copy(update={"reconciliation_unresolved_since": None}),
+            reread.etag,
+        )
+
+        self.assertEqual(cleared.etag, "3")
+        self.assertIsNone(cleared.reconciliation_unresolved_since)
+
     async def test_in_memory_replace_revalidates_full_record_before_accepting_model_copy_mutations(self) -> None:
         store = InMemoryControlStore()
         current = await store.create_or_get(self.task)

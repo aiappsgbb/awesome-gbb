@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.3.5"
+  version: "1.3.6"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -133,7 +133,8 @@ The control record is the source of truth. It carries `taskId`, `ownerScope`,
 `callbackAlias`, `lifecycleState`, `acaExecutionId`, `resultUrl`, `errorCode`,
 `callbackDeliveryState`, `callbackErrorCode`, `cancellationRequestedAt`,
 `startAttemptedAt`, `startAttemptCount`, `workerClaimedAt`, `workerClaimToken`,
-`workerClaimExpiresAt`, `createdAt`, `updatedAt`, `completedAt`, and `_etag`.
+`workerClaimExpiresAt`, `reconciliationUnresolvedSince`, `createdAt`,
+`updatedAt`, `completedAt`, and `_etag`.
 
 | Control record state | MCP `status` | Public result |
 |---|---|---|
@@ -164,12 +165,30 @@ the existing record. If the fingerprint changes, the store raises
 Uncertain starts are reconciled deterministically:
 
 - `Accepted`/`Starting` tasks are re-checked until the ACA execution appears.
-- If multiple executions match, the worker selects a winner by status priority,
-  start time, and execution ID, then best-effort stops the losers.
+- A persisted `acaExecutionId` is the authoritative bound execution. Re-fetch
+  the ETag-protected record before choosing a candidate, never overwrite a
+  worker-bound execution, bind before stopping duplicates, and stop only
+  discovered non-authoritative executions.
+- If no execution is bound and multiple executions match, select a candidate by
+  status priority, start time, and execution ID, persist it with an ETag, then
+  best-effort stop the losers.
+- A cancellation request that races with start is retained during binding. Once
+  that execution ID is durable, issue a cooperative best-effort stop without
+  changing the returned nonterminal task state.
 - If the start never becomes observable, the task stays `Starting` until the
   reconciliation budget expires.
-- After three attempts or five minutes, the start path fails with
-  `START_RECONCILIATION_EXHAUSTED`.
+- After three attempts or five minutes, only an unbound uncertain start fails
+  with `START_RECONCILIATION_EXHAUSTED`; a bound or worker-claimed execution
+  remains authoritative even when an ARM list is temporarily empty.
+
+Terminal reconciliation uses a distinct ten-minute unresolved-reconciliation budget.
+The first `Degraded`/`Unknown` observation, or `Succeeded` observation
+without a durable `resultUrl`, records `reconciliationUnresolvedSince` and keeps
+the task `Running`. Never terminalize while an active worker lease has
+`workerClaimExpiresAt` in the future. Once the budget has elapsed and no lease is
+active, clear worker claim fields and fail with
+`ACA_EXECUTION_STATE_UNRESOLVED` or `RESULT_REFERENCE_MISSING`. A resolved ACA
+state or durable result clears `reconciliationUnresolvedSince`.
 
 The store itself uses optimistic concurrency (`_etag`) and rejects stale
 claims. Cosmos failures map to `CONTROL_STORE_UNAVAILABLE`.
@@ -294,6 +313,16 @@ existing resources explicitly across resource groups while preserving the
 single-resource-group default. The named output and callback blob containers
 are created in the existing storage account; they are not pre-existing
 containers.
+
+The subscription-scope composition root creates `resourceGroupName` itself and
+applies the optional `resourceGroupTags` object (empty by default). Do not
+pre-create that resource group. Its exact azd outputs include `MCP_APP_NAME`,
+`ACA_JOB_NAME`, `MCP_ACA_JOBS_STORAGE_ACCOUNT_URL`,
+`MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME`, `MCP_ACA_JOBS_COSMOS_ENDPOINT`,
+`MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME`, and
+`MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT`; the last value is the lowercase
+string `true` or `false`. Postdeploy consumes these outputs directly, including
+the Cosmos module endpoint created by an ordinary greenfield `azd up`.
 
 ## Operate and observe
 
