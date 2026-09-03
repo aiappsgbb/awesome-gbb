@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -97,7 +98,7 @@ def verify_deployment(
     stdout: TextIO | None = None,
 ) -> None:
     env = load_azd_env_values(run=run)
-    expected_image = env.get("EXPECTED_IMAGE_DIGEST")
+    expected_image = os.environ.get("EXPECTED_IMAGE_DIGEST") or env.get("EXPECTED_IMAGE_DIGEST")
     if not expected_image:
         raise RuntimeError("EXPECTED_IMAGE_DIGEST is required")
     if "@sha256:" not in expected_image:

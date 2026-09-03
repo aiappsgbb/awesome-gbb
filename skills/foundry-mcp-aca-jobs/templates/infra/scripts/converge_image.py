@@ -65,7 +65,10 @@ def load_azd_env_values(
         raise RuntimeError("azd env get-values did not return valid JSON") from exc
 
     env: dict[str, str] = {}
-    candidate = payload.get("values", payload) if isinstance(payload, Mapping) else payload
+    if isinstance(payload, Mapping) and set(payload.keys()) == {"values"}:
+        candidate = payload["values"]
+    else:
+        candidate = payload
     if isinstance(candidate, Mapping):
         for key, value in candidate.items():
             env[str(key)] = "" if value is None else str(value)
