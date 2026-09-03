@@ -138,16 +138,30 @@ class AzdPatternsFixtureContractTests(unittest.TestCase):
         normalized = " ".join(fixture.split())
         self.assertIn("legacy/minimal debug-playbook coverage for the **ACA Job**", normalized)
         self.assertIn(
-            "This fixture does **not** exercise the canonical `Microsoft.App/jobs@2026-01-01` module.",
+            "it exercises only the `Microsoft.App/jobs@2024-03-01` debug path with `triggerType: 'Manual'` + `replicaCompletionCount: 1`.",
             normalized,
         )
         self.assertIn(
-            "This branch must not be considered complete until the separate `foundry-mcp-aca-jobs` fixture is added and registered.",
+            "Canonical live coverage for the `Microsoft.App/jobs@2026-01-01` module is pending Task15 on this branch;",
             normalized,
         )
-        self.assertIn("executed and verified on this current commit", normalized)
-        self.assertNotIn("exercised by the separate `foundry-mcp-aca-jobs` fixture", normalized)
+        self.assertIn("do not treat this fixture as proof of that newer module.", normalized)
+        self.assertNotIn("covered live", normalized)
         self.assertNotIn("proves the canonical `Microsoft.App/jobs@2024-03-01` resource shape", normalized)
+
+    def test_fixture_rejects_false_live_coverage_claims(self) -> None:
+        fixture = (ROOT / "skills" / "azd-patterns" / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        forbidden_phrases = [
+            "covered live",
+            "canonical `Microsoft.App/jobs@2026-01-01` module is live",
+            "existing separate coverage",
+        ]
+
+        for phrase in forbidden_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, fixture)
 
     def test_no_skill_other_than_azd_patterns_describes_schedule_on_aca_job_bicep(self) -> None:
         offenders = []

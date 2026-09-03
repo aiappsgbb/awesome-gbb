@@ -19,10 +19,9 @@ deploys end-to-end against the live Azure CI infrastructure. The pattern
 here is the legacy/minimal debug-playbook coverage for the **ACA Job**
 documented at SKILL.md § "Bicep: ACA Job Pattern" (~L545) —
 `Microsoft.App/jobs@2024-03-01` provisioned via Bicep, then manually
-executed and verified on this current commit. This fixture does **not**
-exercise the canonical `Microsoft.App/jobs@2026-01-01` module. This
-branch must not be considered complete until the separate
-`foundry-mcp-aca-jobs` fixture is added and registered.
+executed and verified on this current commit. Canonical live coverage
+for the `Microsoft.App/jobs@2026-01-01` module is pending Task15 on
+this branch; do not treat this fixture as proof of that newer module.
 
 **Expected per-run cost: ≤ $0.005** — one ACA Job execution on an
 existing Container App Environment (no new env to provision), 1 vCPU
@@ -194,12 +193,12 @@ choice.
    }
    ```
 
-   This is a deliberate minimal legacy debug-playbook variant of SKILL.md
-   L549-587 — no UAMI, no ACR, no `fetch-container-image` indirection. The
-   canonical `Microsoft.App/jobs@2024-03-01` resource shape plus the
-   `triggerType: 'Manual'` + `replicaCompletionCount: 1` pattern is covered
-   live by the separate `foundry-mcp-aca-jobs` fixture. The fuller ACR-image
-   + UAMI + cron variant in the SKILL is audited per the 21-class catalog at
+   This is the legacy/minimal debug-playbook coverage for the **ACA Job**:
+   it exercises only the `Microsoft.App/jobs@2024-03-01` debug path with
+   `triggerType: 'Manual'` + `replicaCompletionCount: 1`. Canonical live
+   coverage for the `Microsoft.App/jobs@2026-01-01` module is pending
+   Task15 on this branch; do not treat this fixture as proof of that newer
+   module. The fuller ACR-image + UAMI + cron variant in the SKILL is audited per the 21-class catalog at
    `docs/audit/azd-patterns-audit-trail.md` but not exercised here (see
    Out-of-scope coverage note below).
 
