@@ -22,6 +22,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         return SKILL / "templates"
 
     @staticmethod
+    def _infra_dir() -> pathlib.Path:
+        return SKILL / "templates" / "infra"
+
+    @staticmethod
     def _reference_app_dir() -> pathlib.Path:
         return SKILL / "references" / "python" / "app"
 
@@ -133,6 +137,97 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertLess(dockerfile.index("RUN pip install --no-cache-dir ."), dockerfile.index("RUN python -m py_compile app/*.py"))
         self.assertLess(dockerfile.index("RUN python -m py_compile app/*.py"), dockerfile.index("USER appuser"))
         self.assertLess(dockerfile.index("USER appuser"), dockerfile.index('CMD ["python", "-m", "app.mcp_server"]'))
+
+    def test_canonical_aca_job_module_contract_is_shared_with_azd_patterns(self) -> None:
+        job = (ROOT / "skills" / "azd-patterns" / "references" / "bicep" / "aca-job.bicep").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("param imageDigest string", job)
+        self.assertIn("param command array", job)
+        self.assertIn("param args array = []", job)
+        self.assertIn("param environmentVariables array = []", job)
+        self.assertIn("resource job 'Microsoft.App/jobs@2026-01-01' = {", job)
+        self.assertIn("triggerType: 'Manual'", job)
+        self.assertIn("image: imageDigest", job)
+        self.assertIn("command: command", job)
+        self.assertIn("args: args", job)
+        self.assertIn("env: environmentVariables", job)
+        self.assertNotIn("jobs/write", job)
+        self.assertNotIn("delete", job.lower())
+
+    def test_infra_template_files_exist(self) -> None:
+        infra = self._infra_dir()
+        self.assertEqual(
+            sorted(path.name for path in infra.glob("*.bicep")),
+            ["app.bicep", "cosmos.bicep", "identity-rbac.bicep", "main.bicep"],
+        )
+        self.assertTrue((infra / "identity-rbac" / "uami.bicep").is_file())
+        self.assertTrue((infra / "identity-rbac" / "assignments.bicep").is_file())
+
+    def test_app_module_contract_includes_auth_and_health(self) -> None:
+        app = (self._infra_dir() / "app.bicep").read_text(encoding="utf-8")
+        normalized = " ".join(app.split())
+        self.assertIn("resource app 'Microsoft.App/containerApps@", app)
+        self.assertIn("external: true", app)
+        self.assertIn("targetPort: 8080", app)
+        self.assertIn("transport: 'http'", app)
+        self.assertIn("allowInsecure: false", app)
+        self.assertIn("image: imageDigest", app)
+        self.assertIn("command: [ 'python' '-m' 'app.mcp_server' ]", normalized)
+        self.assertIn("MCP_ACA_JOBS_AUTH_MODE", app)
+        self.assertIn("aca-easy-auth", app)
+        self.assertIn("authConfigs@2025-01-01", app)
+        self.assertIn("unauthenticatedClientAction: 'Return401'", app)
+        self.assertIn("clientId: authClientId", app)
+        self.assertIn("allowedAudiences", app)
+        self.assertIn("livenessProbe", app)
+        self.assertIn("startupProbe", app)
+
+    def test_cosmos_module_contract_is_keyless_serverless_with_control_container(self) -> None:
+        cosmos = (self._infra_dir() / "cosmos.bicep").read_text(encoding="utf-8")
+        normalized = " ".join(cosmos.split())
+        self.assertIn("Microsoft.DocumentDB/databaseAccounts@", cosmos)
+        self.assertIn("EnableServerless", cosmos)
+        self.assertIn("disableLocalAuth: true", cosmos)
+        self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15", cosmos)
+        self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15", cosmos)
+        self.assertIn("paths: [ '/ownerScope' ]", normalized)
+        self.assertIn("paths: [ '/idempotencyKeyHash' ]", normalized)
+        self.assertNotIn("COSMOS_AUTH_KEY", cosmos)
+
+    def test_identity_rbac_contract_uses_two_uamis_and_only_allowed_job_actions(self) -> None:
+        identity = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
+        assignments = (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8")
+        rbac = identity + "\n" + assignments
+        for token in ("appUami", "jobUami", "roleDefinition", "assignableScopes", "scope: job", "AcrPull"):
+            self.assertIn(token, rbac)
+        for action in (
+            "Microsoft.App/jobs/read",
+            "Microsoft.App/jobs/start/action",
+            "Microsoft.App/jobs/execution/read",
+            "Microsoft.App/jobs/executions/read",
+            "Microsoft.App/jobs/stop/execution/action",
+        ):
+            self.assertIn(action, rbac)
+        self.assertIn("ba92f5b4-2d11-453d-a403-e96b0029c9fe", rbac)
+        self.assertIn("00000000-0000-0000-0000-000000000002", rbac)
+        self.assertNotIn("Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c'", rbac)
+        for forbidden in ("jobs/write", "jobs/delete", "listsecrets", "stop/multiple"):
+            self.assertNotIn(forbidden, rbac)
+
+    def test_main_module_composes_shared_digest_and_outputs_contract(self) -> None:
+        main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
+        self.assertIn("../../../azd-patterns/references/bicep/aca-job.bicep", main)
+        self.assertIn("mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48", main)
+        self.assertIn("appName", main)
+        self.assertIn("jobName", main)
+        self.assertIn("fqdn", main)
+        self.assertIn("appIdentity", main)
+        self.assertIn("jobIdentity", main)
+        self.assertIn("cosmosEndpoint", main)
+        self.assertIn("storageUrl", main)
+        self.assertIn("authAudience", main)
+        self.assertIn("imageDigest", main)
 
     def test_source_modules_expose_both_helpable_clis(self) -> None:
         server_source = (self._reference_app_dir() / "mcp_server.py").read_text(encoding="utf-8")
