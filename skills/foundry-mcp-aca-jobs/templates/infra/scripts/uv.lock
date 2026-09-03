@@ -2,9 +2,6 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
-[options]
-exclude-newer = "2026-05-30T22:00:00Z"
-
 [[package]]
 name = "azure-core"
 version = "1.41.0"
@@ -37,14 +34,15 @@ wheels = [
 [[package]]
 name = "azure-mgmt-appcontainers"
 version = "5.0.0"
-source = { registry = ".wheelhouse" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-mgmt-core" },
     { name = "isodate" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/05/f6/ee9e9408345b420bc64a8ef8fcb31e428c6a47571bf25daff3babceb6c2e/azure_mgmt_appcontainers-5.0.0.tar.gz", hash = "sha256:a3cb592741f09a2d8d63a68a202eb62a2daaf0b1c42c2bc160c2018e5b340efe", size = 260615 }
 wheels = [
-    { path = "azure_mgmt_appcontainers-5.0.0-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/09/95/4ef0bf9edfe346e5a0af35c7dece90682010fa0c2e66a7fbf5c574492872/azure_mgmt_appcontainers-5.0.0-py3-none-any.whl", hash = "sha256:1c94d1c7b5ded159353ff2c087f96d485d2e05ce3eedd5309fcdb474532aba61", size = 229829 },
 ]
 
 [[package]]

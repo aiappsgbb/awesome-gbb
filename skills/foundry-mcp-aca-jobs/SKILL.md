@@ -8,13 +8,11 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
 > The MCP server owns protocol and state; the ACA Job owns execution.
-
-For the companion itself, see [foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md).
 
 # Foundry MCP ACA Jobs
 
@@ -35,11 +33,18 @@ inline here.
 | [references/python/app/telemetry.py](references/python/app/telemetry.py) | Safe telemetry wiring |
 | [templates/Dockerfile](templates/Dockerfile) | Shared runtime image |
 | [templates/pyproject.toml](templates/pyproject.toml) | Runtime dependency lock contract |
+| [templates/uv.lock](templates/uv.lock) | Hash-verified runtime dependency resolution |
 | [templates/azure.yaml](templates/azure.yaml) | `azd` service wiring and postdeploy flow |
 | [templates/infra/main.bicep](templates/infra/main.bicep) | Main deployment composition |
+| [templates/infra/main.parameters.json](templates/infra/main.parameters.json) | Complete `azd` parameter contract |
 | [templates/infra/app.bicep](templates/infra/app.bicep) | MCP app module |
 | [templates/infra/cosmos.bicep](templates/infra/cosmos.bicep) | Durable control-store module |
 | [templates/infra/identity-rbac.bicep](templates/infra/identity-rbac.bicep) | Least-privilege identity/RBAC module |
+| [templates/infra/identity-rbac/assignments.bicep](templates/infra/identity-rbac/assignments.bicep) | App and worker data-plane role assignments |
+| [templates/infra/identity-rbac/job-operator.bicep](templates/infra/identity-rbac/job-operator.bicep) | Scoped ACA Job operator role |
+| [templates/infra/identity-rbac/uami.bicep](templates/infra/identity-rbac/uami.bicep) | User-assigned managed identity module |
+| [templates/infra/scripts/pyproject.toml](templates/infra/scripts/pyproject.toml) | Postdeploy helper dependency contract |
+| [templates/infra/scripts/uv.lock](templates/infra/scripts/uv.lock) | Hash-verified postdeploy helper resolution |
 | [templates/infra/scripts/converge_image.py](templates/infra/scripts/converge_image.py) | Digest convergence helper |
 | [templates/infra/scripts/verify_deployment.py](templates/infra/scripts/verify_deployment.py) | Deployment verification helper |
 | [../azd-patterns/references/bicep/aca-job.bicep](../azd-patterns/references/bicep/aca-job.bicep) | Canonical ACA Job module |
@@ -208,10 +213,17 @@ The deployment contract is `azd` only. Copy the canonical files verbatim; do
 not fork the template shapes here.
 
 - `templates/azure.yaml`
+- `templates/uv.lock`
 - `templates/infra/main.bicep`
+- `templates/infra/main.parameters.json`
 - `templates/infra/app.bicep`
 - `templates/infra/cosmos.bicep`
 - `templates/infra/identity-rbac.bicep`
+- `templates/infra/identity-rbac/assignments.bicep`
+- `templates/infra/identity-rbac/job-operator.bicep`
+- `templates/infra/identity-rbac/uami.bicep`
+- `templates/infra/scripts/pyproject.toml`
+- `templates/infra/scripts/uv.lock`
 - `templates/infra/scripts/converge_image.py`
 - `templates/infra/scripts/verify_deployment.py`
 - `templates/pyproject.toml`

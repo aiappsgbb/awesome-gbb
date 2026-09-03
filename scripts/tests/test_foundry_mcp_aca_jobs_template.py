@@ -328,7 +328,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.2.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.2.1")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -410,7 +410,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         ):
             self.assertIn(required, skill_fm["description"] + "\n" + body)
         self.assertIn("[foundry-mcp-aca](../foundry-mcp-aca/SKILL.md)", body)
-        self.assertIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
+        self.assertNotIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
         self.assertIn("[foundry-prompt-agents](../foundry-prompt-agents/SKILL.md)", body)
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
@@ -469,6 +469,253 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertEqual(marketplace["metadata"]["version"], "4.30.0")
         self.assertEqual(marketplace["plugins"][0]["version"], "4.30.0")
         self.assertIn("foundry-mcp-aca-jobs", marketplace["metadata"]["description"])
+
+    def test_dependency_graph_matches_the_approved_four_skill_contract(self) -> None:
+        deps = yaml.safe_load(
+            (ROOT / ".github" / "skill-deps.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            deps["skills"]["foundry-mcp-aca-jobs"]["depends_on"],
+            [
+                "azd-patterns",
+                "foundry-hosted-agents",
+                "foundry-mcp-aca",
+                "foundry-prompt-agents",
+            ],
+        )
+
+    def test_fixture_workflow_maps_required_jobs_secrets_identically(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "skill-test.yml"
+        workflow_text = workflow_path.read_text(encoding="utf-8")
+        workflow = yaml.safe_load(workflow_text)
+        steps = workflow["jobs"]["copilot-cli-matrix"]["steps"]
+        fixture_steps = [
+            step
+            for step in steps
+            if step.get("name", "").startswith("Run consumer prompt")
+            or step.get("name", "").startswith("Retry")
+        ]
+        self.assertGreaterEqual(len(fixture_steps), 2)
+        expected = {
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}",
+            "MCP_AUTH_APP_CLIENT_ID": "${{ secrets.MCP_AUTH_APP_CLIENT_ID }}",
+        }
+        extracted = [
+            {name: step["env"].get(name) for name in expected}
+            for step in fixture_steps
+        ]
+        self.assertEqual(extracted, [expected] * len(fixture_steps))
+        self.assertNotIn("Optional standing Entra app client id", workflow_text)
+        self.assertNotIn("fixture skips the auth sub-test", workflow_text)
+
+    def test_relocated_template_layout_compiles_with_canonical_job_module(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'PROJECT_DIR="$SCRATCH_ROOT/skills/foundry-mcp-aca-jobs/templates"',
+            fixture,
+        )
+        self.assertIn(
+            'CANONICAL_JOB_DIR="$SCRATCH_ROOT/skills/azd-patterns/references/bicep"',
+            fixture,
+        )
+        self.assertIn(
+            'cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-job.bicep"',
+            fixture,
+        )
+
+        scratch = ROOT / ".scratch"
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="relocated-mcp-aca-jobs-", dir=scratch
+        ) as directory:
+            mirror = pathlib.Path(directory)
+            relocated_template = (
+                mirror / "skills" / "foundry-mcp-aca-jobs" / "templates"
+            )
+            relocated_job_dir = (
+                mirror / "skills" / "azd-patterns" / "references" / "bicep"
+            )
+            shutil.copytree(self._template_dir(), relocated_template)
+            relocated_job_dir.mkdir(parents=True)
+            shutil.copy2(
+                ROOT
+                / "skills"
+                / "azd-patterns"
+                / "references"
+                / "bicep"
+                / "aca-job.bicep",
+                relocated_job_dir / "aca-job.bicep",
+            )
+            result = subprocess.run(
+                [
+                    "az",
+                    "bicep",
+                    "build",
+                    "--file",
+                    str(relocated_template / "infra" / "main.bicep"),
+                    "--outfile",
+                    str(mirror / "relocated-main.json"),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_main_parameters_exactly_match_all_declared_main_params(self) -> None:
+        main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
+        declared = set(
+            re.findall(
+                r"(?m)^\s*param\s+([A-Za-z_][A-Za-z0-9_]*)\s+",
+                main,
+            )
+        )
+        parameters = json.loads(
+            (self._infra_dir() / "main.parameters.json").read_text(
+                encoding="utf-8"
+            )
+        )["parameters"]
+        self.assertEqual(set(parameters), declared)
+
+    def test_locks_use_only_hash_verified_registry_artifacts(self) -> None:
+        tracked = subprocess.check_output(
+            ["git", "ls-files", str(SKILL.relative_to(ROOT))],
+            cwd=ROOT,
+            text=True,
+        ).splitlines()
+        self.assertFalse(
+            [
+                path
+                for path in tracked
+                if ("/.wheelhouse/" in path or path.endswith(".whl"))
+                and (ROOT / path).exists()
+            ]
+        )
+        for lock_path in (
+            self._template_dir() / "uv.lock",
+            self._infra_dir() / "scripts" / "uv.lock",
+        ):
+            with self.subTest(lock=lock_path):
+                lock = lock_path.read_text(encoding="utf-8")
+                self.assertNotIn("exclude-newer", lock)
+                self.assertNotIn(".wheelhouse", lock)
+                self.assertNotIn("{ path =", lock)
+                for line in lock.splitlines():
+                    if "source = { registry =" in line:
+                        self.assertIn("https://pypi.org/simple", line)
+                    if "{ url =" in line:
+                        self.assertIn('hash = "sha256:', line)
+
+    def test_fixture_documents_standing_blob_role_without_regranting(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        for text in (fixture, agents):
+            self.assertIn("Storage Blob Data Contributor", text)
+            self.assertIn("<ci-uami-name>", text)
+            self.assertIn("<ci-storage-account>", text)
+        prerequisite = fixture[
+            fixture.index("Storage Blob Data Contributor")
+            - 300 : fixture.index("Storage Blob Data Contributor")
+            + 500
+        ]
+        self.assertIn("do not re-grant", prerequisite.lower())
+        self.assertNotIn("az role assignment create", prerequisite)
+
+    def test_agent_smokes_grade_actual_mcp_call_outputs(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            fixture.count(
+                'getattr(item, "type", None) == "mcp_call"'
+            ),
+            2,
+        )
+        call_sets = re.findall(
+            r'assert set\(calls_by_name\) == \{(.*?)\}, f"required MCP calls missing',
+            fixture,
+            re.S,
+        )
+        self.assertEqual(len(call_sets), 2)
+        for call_set in call_sets:
+            self.assertIn('"start_aca_job"', call_set)
+            self.assertIn('"get_aca_job_status"', call_set)
+        self.assertEqual(
+            fixture.count('getattr(item, "error", None) in ('),
+            2,
+        )
+        self.assertEqual(
+            fixture.count("assert marker in str("),
+            2,
+        )
+        self.assertNotIn('assert "start_aca_job" in evidence', fixture)
+        self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
+
+    def test_agent_smoke_retries_report_redacted_last_exception(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(fixture.count("last_error = None"), 2)
+        self.assertEqual(
+            fixture.count("last_error_repr = redact_error(repr(last_error))"),
+            2,
+        )
+        self.assertEqual(
+            fixture.count('assert response is not None, f"invoke never succeeded: {last_error_repr}"'),
+            2,
+        )
+        self.assertEqual(fixture.count("last_error={last_error_repr}"), 6)
+        self.assertIn("<redacted-bearer>", fixture)
+        self.assertIn("<redacted-jwt>", fixture)
+
+    def test_fixture_captures_and_checks_exact_deployment_verifier_markers(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('verifier_output="$(', fixture)
+        self.assertIn(
+            'grep -Fxq "SHARED_IMAGE_DIGEST_MATCH" <<<"$verifier_output"',
+            fixture,
+        )
+        self.assertIn(
+            'grep -Fxq "ENTRYPOINTS_MATCH" <<<"$verifier_output"',
+            fixture,
+        )
+
+    def test_static_mcp_bearers_are_marked_smoke_only(self) -> None:
+        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertGreaterEqual(
+            fixture.count(
+                "Static bearer is smoke-only; production must use a header provider."
+            ),
+            2,
+        )
+
+    def test_skill_canonical_tables_cover_deploy_inputs_without_self_link(self) -> None:
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "For the companion itself, see [foundry-mcp-aca-jobs]",
+            skill,
+        )
+        for path in (
+            "templates/uv.lock",
+            "templates/infra/main.parameters.json",
+            "templates/infra/identity-rbac/assignments.bicep",
+            "templates/infra/identity-rbac/job-operator.bicep",
+            "templates/infra/identity-rbac/uami.bicep",
+            "templates/infra/scripts/pyproject.toml",
+            "templates/infra/scripts/uv.lock",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(f"[{path}]({path})", skill)
+                self.assertIn(f"- `{path}`", skill)
 
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
@@ -599,8 +846,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("## Step 7 — marker-first teardown", fixture)
         pass_write = f"printf 'SMOKE_RESULT=PASS\\n' > {marker}"
         self.assertIn(pass_write, fixture)
-        self.assertIn('rm -rf "$PROJECT_DIR"', fixture)
-        self.assertLess(fixture.index(pass_write), fixture.index('rm -rf "$PROJECT_DIR"'))
+        self.assertIn('rm -rf "$SCRATCH_ROOT"', fixture)
+        self.assertLess(fixture.index(pass_write), fixture.index('rm -rf "$SCRATCH_ROOT"'))
         self.assertNotIn("az account get-access-token", fixture)
         self.assertNotIn("az deployment", fixture)
         self.assertNotIn("az containerapp create", fixture)
@@ -627,8 +874,6 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         for binding in (
             "${AZURE_RESOURCE_GROUP}",
             "${AZURE_LOCATION}",
-            "${AZURE_SUBSCRIPTION_ID}",
-            "${AZURE_TENANT_ID}",
             "${ACR_NAME}",
             "${MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP}",
             "${MCP_ACA_JOBS_ENVIRONMENT_NAME}",
@@ -645,6 +890,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         ):
             self.assertIn(binding, parameters)
         parsed = json.loads(parameters)
+        self.assertNotIn("expectedSubscriptionId", parsed["parameters"])
+        self.assertNotIn("expectedTenantId", parsed["parameters"])
         self.assertFalse(
             parsed["parameters"]["cosmosUseExistingAccount"]["value"],
             "ordinary consumer default must provision a new Cosmos account",
@@ -1112,6 +1359,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("output storageAccountContractMatches bool", main)
         self.assertIn("output cosmosAccountNameFromEndpoint string", main)
         self.assertIn("output cosmosAccountContractMatches bool", main)
+        self.assertIn(
+            "assert storageAccountUrlMatchesName = storageAccountContractMatches",
+            main,
+        )
+        self.assertIn(
+            "assert cosmosEndpointMatchesName = cosmosAccountContractMatches",
+            main,
+        )
 
     def test_callback_config_bicepparam_variants_compile_and_invalid_key_vault_is_rejected(self) -> None:
         managed_identity_params = """using './main.bicep'
@@ -1225,35 +1480,38 @@ param callbackConfig = {
             self._infra_dir() / "identity-rbac" / "job-operator.bicep",
             self._infra_dir() / "identity-rbac" / "uami.bicep",
         ]
-        for source in files:
-            with self.subTest(source=source.name):
-                result = subprocess.run(
-                    [
-                        "az",
-                        "bicep",
-                        "build",
-                        "--file",
-                        str(source),
-                        "--outfile",
-                        str(source.with_suffix(".json")),
-                    ],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                self.assertEqual(result.returncode, 0, msg=result.stderr)
-                combined = f"{result.stdout}\n{result.stderr}"
-                warning_lines = [
-                    line
-                    for line in combined.splitlines()
-                    if line.lower().startswith("warning:")
-                ]
-                for line in warning_lines:
-                    self.assertTrue(
-                        "a new bicep release is available" in line.lower()
-                        or "experimental bicep features have been enabled" in line.lower(),
-                        msg=f"unexpected bicep warning for {source.name}: {line}",
+        scratch = ROOT / ".scratch"
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="bicep-builds-", dir=scratch) as directory:
+            for index, source in enumerate(files):
+                with self.subTest(source=source.name):
+                    result = subprocess.run(
+                        [
+                            "az",
+                            "bicep",
+                            "build",
+                            "--file",
+                            str(source),
+                            "--outfile",
+                            str(pathlib.Path(directory) / f"{index}-{source.stem}.json"),
+                        ],
+                        check=False,
+                        capture_output=True,
+                        text=True,
                     )
+                    self.assertEqual(result.returncode, 0, msg=result.stderr)
+                    combined = f"{result.stdout}\n{result.stderr}"
+                    warning_lines = [
+                        line
+                        for line in combined.splitlines()
+                        if line.lower().startswith("warning:")
+                    ]
+                    for line in warning_lines:
+                        self.assertTrue(
+                            "a new bicep release is available" in line.lower()
+                            or "experimental bicep features have been enabled" in line.lower(),
+                            msg=f"unexpected bicep warning for {source.name}: {line}",
+                        )
 
     def test_main_module_composes_shared_digest_and_outputs_contract(self) -> None:
         main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")

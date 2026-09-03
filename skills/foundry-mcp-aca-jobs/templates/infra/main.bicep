@@ -96,6 +96,8 @@ var storageAccountNameFromUrl = split(storageAccountUrlHost, '.')[0]
 var cosmosAccountNameFromEndpoint = split(replace(replace(cosmosAccountEndpoint, 'https://', ''), 'http://', ''), '.')[0]
 var storageAccountContractMatches = storageAccountNameFromUrl == storageAccountName
 var cosmosAccountContractMatches = !cosmosUseExistingAccount || cosmosAccountNameFromEndpoint == cosmosAccountName
+assert storageAccountUrlMatchesName = storageAccountContractMatches
+assert cosmosEndpointMatchesName = cosmosAccountContractMatches
 var storageHost = storageAccountUrlHost
 var effectiveResultHosts = union(resultHosts, [storageHost])
 var callbackRouteUrl = callbackConfig.authMode == 'managed_identity'

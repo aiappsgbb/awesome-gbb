@@ -11,12 +11,6 @@
     "location": {
       "value": "${AZURE_LOCATION}"
     },
-    "expectedSubscriptionId": {
-      "value": "${AZURE_SUBSCRIPTION_ID}"
-    },
-    "expectedTenantId": {
-      "value": "${AZURE_TENANT_ID}"
-    },
     "acrName": {
       "value": "${ACR_NAME}"
     },
@@ -28,6 +22,12 @@
     },
     "jobName": {
       "value": "${MCP_ACA_JOBS_JOB_NAME}"
+    },
+    "appIdentityName": {
+      "value": "${MCP_ACA_JOBS_APP_NAME}-uami"
+    },
+    "jobIdentityName": {
+      "value": "${MCP_ACA_JOBS_JOB_NAME}-uami"
     },
     "storageAccountUrl": {
       "value": "${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL}"
@@ -55,6 +55,9 @@
     },
     "authClientId": {
       "value": "${MCP_AUTH_APP_CLIENT_ID}"
+    },
+    "imageDigest": {
+      "value": "mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48"
     },
     "allowedMcpCallerClientIds": {
       "value": [

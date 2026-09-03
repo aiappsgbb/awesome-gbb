@@ -16,6 +16,12 @@ Do NOT browse the repository. Do not view, glob, grep, or search files.
 **CRITICAL — never invoke `copilot` recursively from a Bash tool.** You are
 already the running Copilot CLI process. Execute the commands below directly.
 
+**Pre-granted live-infrastructure prerequisite:** the `<ci-uami-name>` identity
+already has **Storage Blob Data Contributor** at the
+`<ci-storage-account>` scope. The fixture needs that standing grant to create,
+read, and delete its UUID-scoped blobs and containers. **Do NOT re-grant** this
+role in the fixture: RBAC propagation would race the smoke timeout.
+
 ## Step 0 — auth context and deterministic failure contract
 
 The workflow has installed `az`, `azd`, `uv`, `curl`, `jq`, `python3`, and
@@ -98,7 +104,9 @@ azd auth login \
 ## Step 1 — goal and constraints
 
 SUFFIX="$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)"
-PROJECT_DIR="$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-$SUFFIX"
+SCRATCH_ROOT="$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-$SUFFIX"
+PROJECT_DIR="$SCRATCH_ROOT/skills/foundry-mcp-aca-jobs/templates"
+CANONICAL_JOB_DIR="$SCRATCH_ROOT/skills/azd-patterns/references/bicep"
 CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"
 AZD_ENV_NAME="ci-smoke-mcp-jobs-$SUFFIX"
 APP_NAME="ci-smoke-mcp-jobs-$SUFFIX"
@@ -116,13 +124,14 @@ MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$(
 MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]).hostname or "").split(".")[0])'
 )"
-export SUFFIX PROJECT_DIR CHILD_RG AZD_ENV_NAME APP_NAME JOB_NAME HOSTED_NAME
+export SUFFIX SCRATCH_ROOT PROJECT_DIR CANONICAL_JOB_DIR
+export CHILD_RG AZD_ENV_NAME APP_NAME JOB_NAME HOSTED_NAME
 export ACR_NAME MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP
 export MCP_ACA_JOBS_ENVIRONMENT_NAME MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME
 export MCP_ACA_JOBS_COSMOS_DATABASE MCP_ACA_JOBS_COSMOS_CONTAINER
 export MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME
 
-[[ "$PROJECT_DIR" == "$GITHUB_WORKSPACE/.scratch/"* ]] ||
+[[ "$SCRATCH_ROOT" == "$GITHUB_WORKSPACE/.scratch/"* ]] ||
   fail "scratch workspace escaped GITHUB_WORKSPACE/.scratch"
 [[ "$CHILD_RG" == rg-foundry-mcp-aca-jobs-ci-* ]] ||
   fail "child resource group name is invalid"
@@ -135,12 +144,13 @@ az group create --name "$CHILD_RG" \
 
 ## Step 2 — deterministic scaffold
 
-mkdir -p "$PROJECT_DIR"
+mkdir -p "$PROJECT_DIR" "$CANONICAL_JOB_DIR"
 cp skills/foundry-mcp-aca-jobs/templates/azure.yaml "$PROJECT_DIR/azure.yaml"
 cp skills/foundry-mcp-aca-jobs/templates/Dockerfile "$PROJECT_DIR/Dockerfile"
 cp skills/foundry-mcp-aca-jobs/templates/pyproject.toml "$PROJECT_DIR/pyproject.toml"
 cp skills/foundry-mcp-aca-jobs/templates/uv.lock "$PROJECT_DIR/uv.lock"
 cp -R skills/foundry-mcp-aca-jobs/templates/infra "$PROJECT_DIR/infra"
+cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-job.bicep"
 cp -R skills/foundry-mcp-aca-jobs/references/python/app "$PROJECT_DIR/app"
 mkdir -p "$PROJECT_DIR/.azure/$AZD_ENV_NAME"
 
@@ -247,12 +257,15 @@ EXPECTED_IMAGE_DIGEST="$(az containerapp show \
 [[ "$EXPECTED_IMAGE_DIGEST" == "$ACR_LOGIN_SERVER/"*"@sha256:"* ]] ||
   fail "app image is not the expected immutable ACR digest"
 export EXPECTED_IMAGE_DIGEST
-(
+verifier_output="$(
   cd "$PROJECT_DIR/infra/scripts"
   AZURE_ENV_NAME="$AZD_ENV_NAME" uv run --frozen python verify_deployment.py
-) || fail "shared digest or entrypoint verification failed"
-# The canonical verifier must emit SHARED_IMAGE_DIGEST_MATCH and
-# ENTRYPOINTS_MATCH after asserting the exact app/job digest and commands.
+)" || fail "shared digest or entrypoint verification failed"
+printf '%s\n' "$verifier_output"
+grep -Fxq "SHARED_IMAGE_DIGEST_MATCH" <<<"$verifier_output" ||
+ fail "shared image digest verifier marker missing"
+grep -Fxq "ENTRYPOINTS_MATCH" <<<"$verifier_output" ||
+ fail "entrypoint verifier marker missing"
 
 ## Step 4 — task-aware and fallback client smoke
 
@@ -423,8 +436,8 @@ PY
 (
 cd "$PROJECT_DIR"
 uv run --frozen --group fixture python - <<'PY'
-import json
 import os
+import re
 import time
 
 from azure.ai.projects import AIProjectClient
@@ -432,10 +445,9 @@ from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 from azure.identity import DefaultAzureCredential
 
 
-def text(value):
-    if hasattr(value, "model_dump_json"):
-        return value.model_dump_json()
-    return json.dumps(value, default=str)
+def redact_error(value):
+    value = re.sub(r"(?i)Bearer\s+\S+", "<redacted-bearer>", value)
+    return re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "<redacted-jwt>", value)
 
 
 credential = DefaultAzureCredential()
@@ -454,12 +466,14 @@ try:
             model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
             instructions=(
                 "Call start_aca_job once, then get_aca_job_status with its taskId. "
-                "Emit PROMPT_AGENT_MCP_PASS only after both calls."
+                "Use the requested inputRef exactly. Do not emit the verification "
+                "marker as assistant text."
             ),
             tools=[
                 MCPTool(
                     server_label="aca_jobs",
                     server_url=os.environ["MCP_URL"],
+                    # Static bearer is smoke-only; production must use a header provider.
                     headers={"Authorization": "Bearer " + access_token},
                     require_approval="never",
                 )
@@ -469,6 +483,8 @@ try:
     openai = project.get_openai_client()
     conversation = openai.conversations.create()
     response = None
+    last_error = None
+    marker = "PROMPT_AGENT_MCP_PASS"
     for _ in range(12):
         try:
             response = openai.responses.create(
@@ -481,20 +497,35 @@ try:
                     f"prompt-{os.environ['SUFFIX']}, inputRef "
                     f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
                     f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
-                    f"{os.environ['SUFFIX']}.json, and callbackAlias ops. Then call "
-                    "get_aca_job_status with the returned taskId and finish with "
-                    "PROMPT_AGENT_MCP_PASS."
+                    f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
+                    "Then call get_aca_job_status with the returned taskId."
                 ),
             )
             break
-        except Exception:
+        except Exception as exc:
+            last_error = exc
             time.sleep(10)
-    assert response is not None
-    evidence = text(response)
-    assert "start_aca_job" in evidence
-    assert "get_aca_job_status" in evidence
-    assert "PROMPT_AGENT_MCP_PASS" in evidence
-    print("PROMPT_AGENT_MCP_PASS")
+    last_error_repr = redact_error(repr(last_error))
+    assert response is not None, f"invoke never succeeded: {last_error_repr}"
+    calls = [
+        item
+        for item in response.output
+        if getattr(item, "type", None) == "mcp_call"
+    ]
+    calls_by_name = {getattr(item, "name", None): item for item in calls}
+    assert set(calls_by_name) == {
+        "start_aca_job",
+        "get_aca_job_status",
+    }, f"required MCP calls missing; last_error={last_error_repr}"
+    for item in calls_by_name.values():
+        assert getattr(item, "error", None) in (
+            None,
+            "",
+        ), f"MCP call returned error; last_error={last_error_repr}"
+        assert marker in str(
+            getattr(item, "output", "")
+        ), f"MCP output missing marker; last_error={last_error_repr}"
+    print("PROMPT_AGENT_MCP_CALLS_VALID")
 finally:
     if version is not None:
         try:
@@ -538,6 +569,7 @@ def main():
     mcp_tool = client.get_mcp_tool(
         name="ACA Jobs",
         url=os.environ["MCP_SERVER_URL"],
+        # Static bearer is smoke-only; production must use a header provider.
         headers={"Authorization": "Bearer " + access_token},
         approval_mode="never_require",
     )
@@ -545,7 +577,8 @@ def main():
         client=client,
         instructions=(
             "Call start_aca_job once, then get_aca_job_status with its taskId. "
-            "Emit HOSTED_AGENT_MCP_PASS only after both calls."
+            "Use the requested inputRef exactly. Do not emit the verification "
+            "marker as assistant text."
         ),
         tools=[mcp_tool],
         default_options={"store": False},
@@ -605,8 +638,8 @@ EOF
 (
 cd "$PROJECT_DIR"
 uv run --frozen --group fixture python - <<'PY'
-import json
 import os
+import re
 import time
 
 from azure.ai.projects import AIProjectClient
@@ -618,6 +651,11 @@ from azure.ai.projects.models import (
     VersionSelector,
 )
 from azure.identity import DefaultAzureCredential
+
+
+def redact_error(value):
+    value = re.sub(r"(?i)Bearer\s+\S+", "<redacted-bearer>", value)
+    return re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "<redacted-jwt>", value)
 
 
 credential = DefaultAzureCredential()
@@ -654,6 +692,8 @@ project.agents.update_details(
 )
 openai = project.get_openai_client(agent_name=name)
 response = None
+last_error = None
+marker = "HOSTED_AGENT_MCP_PASS"
 for _ in range(12):
     try:
         response = openai.responses.create(
@@ -662,27 +702,38 @@ for _ in range(12):
                 f"hosted-{os.environ['SUFFIX']}, inputRef "
                 f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
                 f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
-                f"{os.environ['SUFFIX']}.json, and callbackAlias ops. Then call "
-                "get_aca_job_status with the returned taskId and finish with "
-                "HOSTED_AGENT_MCP_PASS."
+                f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
+                "Then call get_aca_job_status with the returned taskId."
             ),
             stream=False,
         )
         break
-    except Exception:
+    except Exception as exc:
+        last_error = exc
         time.sleep(10)
-assert response is not None
-evidence = (
-    response.model_dump_json()
-    if hasattr(response, "model_dump_json")
-    else json.dumps(response, default=str)
-)
-assert "start_aca_job" in evidence
-assert "get_aca_job_status" in evidence
-assert "HOSTED_AGENT_MCP_PASS" in evidence
+last_error_repr = redact_error(repr(last_error))
+assert response is not None, f"invoke never succeeded: {last_error_repr}"
+calls = [
+    item
+    for item in response.output
+    if getattr(item, "type", None) == "mcp_call"
+]
+calls_by_name = {getattr(item, "name", None): item for item in calls}
+assert set(calls_by_name) == {
+    "start_aca_job",
+    "get_aca_job_status",
+}, f"required MCP calls missing; last_error={last_error_repr}"
+for item in calls_by_name.values():
+    assert getattr(item, "error", None) in (
+        None,
+        "",
+    ), f"MCP call returned error; last_error={last_error_repr}"
+    assert marker in str(
+        getattr(item, "output", "")
+    ), f"MCP output missing marker; last_error={last_error_repr}"
 project.close()
 credential.close()
-print("HOSTED_AGENT_MCP_PASS")
+print("HOSTED_AGENT_MCP_CALLS_VALID")
 PY
 )
 
@@ -732,7 +783,7 @@ except Exception as exc:
 PY
 ) || true
 
-rm -rf "$PROJECT_DIR"
+rm -rf "$SCRATCH_ROOT"
 echo "CLEANUP_BEST_EFFORT_COMPLETE"
 ```
 

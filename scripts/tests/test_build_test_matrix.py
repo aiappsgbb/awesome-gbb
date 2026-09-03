@@ -24,7 +24,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 SCRIPT = Path(__file__).resolve().parents[1] / "build-test-matrix.py"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _run(repo_root: Path) -> list[str]:
@@ -141,6 +144,20 @@ class TestFullMatrix(unittest.TestCase):
             _write_quarantine(repo)
             self.assertEqual(_run(repo), ["alpha", "mu", "zeta"])
 
+    def test_foundry_mcp_aca_jobs_has_approved_dependency_fanout(self) -> None:
+        deps = yaml.safe_load(
+            (ROOT / ".github" / "skill-deps.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            deps["skills"]["foundry-mcp-aca-jobs"]["depends_on"],
+            [
+                "azd-patterns",
+                "foundry-hosted-agents",
+                "foundry-mcp-aca",
+                "foundry-prompt-agents",
+            ],
+        )
+
 
 class TestChangedOnly(unittest.TestCase):
     """Behaviour with `--changed-only --base-ref <sha>`: emit only the
@@ -180,6 +197,40 @@ class TestChangedOnly(unittest.TestCase):
             _git(repo, "add", "-A")
             _git(repo, "commit", "-q", "-m", "edit alpha")
             self.assertEqual(_run_changed_only(repo, base), ["alpha", "beta"])
+
+    def test_foundry_mcp_aca_jobs_fans_out_from_all_approved_dependencies(self) -> None:
+        scratch = ROOT / ".scratch"
+        scratch.mkdir(exist_ok=True)
+        dependencies = [
+            "azd-patterns",
+            "foundry-hosted-agents",
+            "foundry-mcp-aca",
+            "foundry-prompt-agents",
+        ]
+        with tempfile.TemporaryDirectory(prefix="matrix-fanout-", dir=scratch) as td:
+            repo = Path(td)
+            for name in [*dependencies, "foundry-mcp-aca-jobs"]:
+                _write_fixture(repo, name)
+            _write_quarantine(repo)
+            _write_deps(
+                repo,
+                {
+                    **{name: [] for name in dependencies},
+                    "foundry-mcp-aca-jobs": dependencies,
+                },
+            )
+            _init_repo(repo)
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "baseline")
+            base = _git(repo, "rev-parse", "HEAD")
+            for name in dependencies:
+                (repo / "skills" / name / "SKILL.md").write_text("changed\n")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit approved dependencies")
+            self.assertEqual(
+                _run_changed_only(repo, base),
+                sorted([*dependencies, "foundry-mcp-aca-jobs"]),
+            )
 
     def test_changed_only_force_full_on_infra_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:

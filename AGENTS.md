@@ -866,6 +866,9 @@ stays useful without leaking inventory.
 **RBAC on `<ci-uami-name>`:**
 - Contributor on `<ci-resource-group>`
 - AcrPush on `<ci-container-registry>`
+- Storage Blob Data Contributor on `<ci-storage-account>` for the
+  `foundry-mcp-aca-jobs` fixture's standing input/output storage. This is a
+  pre-provisioned prerequisite; fixtures must not re-grant it during a run.
 - Cognitive Services OpenAI User on `<ci-foundry-account>`
 - Foundry User on `<ci-foundry-account>`
 - Role Based Access Control Administrator on `<ci-foundry-account>`,
