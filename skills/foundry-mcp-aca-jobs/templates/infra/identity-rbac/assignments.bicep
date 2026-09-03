@@ -18,7 +18,7 @@ param cosmosContainerName string
 @description('Existing storage account name.')
 param storageAccountName string
 
-@description('Existing blob container name used for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
+@description('Blob container name to create for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
 @maxLength(53)
 param outputStorageContainerName string
 
@@ -61,12 +61,12 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01'
   name: 'default'
 }
 
-resource outputStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' existing = {
+resource outputStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   parent: blobService
   name: outputStorageContainerName
 }
 
-resource callbackStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' existing = {
+resource callbackStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   parent: blobService
   name: callbackStorageContainerName
 }

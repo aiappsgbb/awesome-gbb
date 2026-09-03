@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourceGroupName": {
+      "value": "${AZURE_RESOURCE_GROUP}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "expectedSubscriptionId": {
+      "value": "${AZURE_SUBSCRIPTION_ID}"
+    },
+    "expectedTenantId": {
+      "value": "${AZURE_TENANT_ID}"
+    },
+    "acrName": {
+      "value": "${ACR_NAME}"
+    },
+    "environmentName": {
+      "value": "${MCP_ACA_JOBS_ENVIRONMENT_NAME}"
+    },
+    "appName": {
+      "value": "${MCP_ACA_JOBS_APP_NAME}"
+    },
+    "jobName": {
+      "value": "${MCP_ACA_JOBS_JOB_NAME}"
+    },
+    "storageAccountUrl": {
+      "value": "${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL}"
+    },
+    "storageAccountName": {
+      "value": "${MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME}"
+    },
+    "outputStorageContainerName": {
+      "value": "${MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME}"
+    },
+    "cosmosUseExistingAccount": {
+      "value": false
+    },
+    "cosmosAccountEndpoint": {
+      "value": "${MCP_ACA_JOBS_COSMOS_ENDPOINT}"
+    },
+    "cosmosAccountName": {
+      "value": "${MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME}"
+    },
+    "cosmosDatabaseName": {
+      "value": "${MCP_ACA_JOBS_COSMOS_DATABASE}"
+    },
+    "cosmosContainerName": {
+      "value": "${MCP_ACA_JOBS_COSMOS_CONTAINER}"
+    },
+    "authClientId": {
+      "value": "${MCP_AUTH_APP_CLIENT_ID}"
+    },
+    "allowedMcpCallerClientIds": {
+      "value": [
+        "${AZURE_CLIENT_ID}"
+      ]
+    },
+    "inputHosts": {
+      "value": [
+        "${MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
+      ]
+    },
+    "resultHosts": {
+      "value": [
+        "${MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
+      ]
+    },
+    "callbackConfig": {
+      "value": {
+        "authMode": "managed_identity"
+      }
+    }
+  }
+}

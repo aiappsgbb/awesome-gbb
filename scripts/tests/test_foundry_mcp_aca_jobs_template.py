@@ -43,6 +43,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "AZURE_SUBSCRIPTION_ID": "sub-id",
             "ACR_NAME": "task13acr",
             "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://storage.example.com",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME": "storage",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
+            "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME": "cosmos",
+            "MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT": "true",
         }
 
     @staticmethod
@@ -74,6 +79,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     ) -> SimpleNamespace:
         app_env = {
             "MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://storage.example.com",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME": "storage",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
+            "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME": "cosmos",
             "MCP_ACA_JOBS_CALLBACK_CONTAINER_URL": "https://storage.example.com/outputs-callbacks",
             "MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID": "job-principal-id",
         }
@@ -86,7 +95,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "MCP_ACA_JOBS_CALLBACK_URL": "https://mcp-app.example.com/callbacks/jobs",
             "MCP_ACA_JOBS_INPUT_HOSTS": "input.example.com",
             "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://storage.example.com/outputs",
-            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://storage.example.com",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME": "storage",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
+            "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME": "cosmos",
             "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs",
             "MCP_ACA_JOBS_COSMOS_CONTAINER": "tasks",
             "MCP_ACA_JOBS_RESULT_HOSTS": "results.example.com,storage.example.com",
@@ -309,7 +321,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.1.1")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.1.2")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -453,26 +465,30 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
 
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
+        helper = (SKILL / "test-fixture" / "run_e2e.py").read_text(encoding="utf-8")
         normalized = " ".join(fixture.split())
 
         self.assertIn("## Step -1 — acknowledge the skill contract", fixture)
         self.assertIn('echo "skills/foundry-mcp-aca-jobs/SKILL.md"', fixture)
         self.assertIn("Do NOT browse the repository.", fixture)
         self.assertIn("never invoke `copilot` recursively", fixture)
-        self.assertIn("/tmp/foundry-mcp-aca-jobs-smoke-result", fixture)
+        self.assertIn(".foundry-mcp-aca-jobs-smoke-result", fixture)
         self.assertIn("## Step 0 — auth context", fixture)
         self.assertIn("AZURE_CLIENT_ID", fixture)
         self.assertIn("AZURE_TENANT_ID", fixture)
         self.assertIn("AZURE_SUBSCRIPTION_ID", fixture)
+        self.assertIn("ACR_NAME", fixture)
         self.assertIn("ACR_LOGIN_SERVER", fixture)
         self.assertIn("FOUNDRY_PROJECT_ENDPOINT", fixture)
         self.assertIn("AZURE_AI_PROJECT_ID", fixture)
         self.assertIn("MCP_AUTH_APP_CLIENT_ID", fixture)
         self.assertIn("MCP_ACA_JOBS_COSMOS_ENDPOINT", fixture)
+        self.assertIn("MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME", fixture)
+        self.assertIn("MCP_ACA_JOBS_STORAGE_ACCOUNT_URL", fixture)
         self.assertIn("MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME", fixture)
         self.assertIn("MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME", fixture)
-        self.assertIn("unique Cosmos database/container", normalized)
-        self.assertIn("existing storage account", normalized)
+        self.assertIn("MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT", fixture)
+        self.assertIn("brownfield Cosmos CI mode", normalized)
         self.assertIn("Hard-fail if any required value is missing", normalized)
         self.assertIn("az account show --output table || echo", fixture)
         self.assertIn(
@@ -484,17 +500,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("uuidgen", fixture)
         self.assertIn("cut -c1-8", fixture)
         self.assertIn("STATE_FILE=", fixture)
-        self.assertIn("mv \"$STATE_TMP\" \"$STATE_FILE\"", fixture)
-        self.assertIn("skills/foundry-mcp-aca-jobs/templates", fixture)
-        self.assertIn(".scratch/azd-patterns/references/bicep/aca-job.bicep", fixture)
+        self.assertIn("run_e2e.py scaffold", fixture)
+        self.assertIn("run_e2e.py provider", fixture)
+        self.assertIn("run_e2e.py deploy", fixture)
+        self.assertIn("run_e2e.py tasks", fixture)
+        self.assertIn("run_e2e.py prompt-agent", fixture)
+        self.assertIn("run_e2e.py hosted-agent", fixture)
+        self.assertIn("run_e2e.py cleanup", fixture)
         self.assertIn("No repository writes outside `.scratch/`.", fixture)
         self.assertIn("RBAC_PROVIDER_ACTIONS_MATCH", fixture)
-        self.assertIn("az provider operation show --namespace Microsoft.App", fixture)
+        self.assertIn("Microsoft.App/jobs/stop/execution/action", fixture)
         self.assertIn("SHARED_IMAGE_DIGEST_MATCH", fixture)
         self.assertIn("ENTRYPOINTS_MATCH", fixture)
         self.assertIn("TasksClientExtension", fixture)
-        self.assertIn("auth=access_token", fixture)
-        self.assertIn("tasks/get", fixture)
         self.assertIn("MCP_TASKS_COMPLETED", fixture)
         self.assertIn("FALLBACK_TOOLS_COMPLETED", fixture)
         self.assertIn("IDEMPOTENCY_DUPLICATE_SAME_TASK", fixture)
@@ -514,6 +532,74 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("## Step 5 — prompt agent smoke", fixture)
         self.assertIn("## Step 6 — hosted agent smoke", fixture)
         self.assertIn("## Step 7 — marker-first teardown", fixture)
+        self.assertIn('printf \'AZD_ENV_NAME=%s\\n\'', fixture)
+
+        self.assertIn("from fastmcp import Client", helper)
+        self.assertIn("from fastmcp_tasks.client import TasksClientExtension", helper)
+        self.assertIn("from fastmcp_tasks.client import call_tool_task", helper)
+        self.assertIn("await task.wait(timeout=", helper)
+        self.assertIn("await task.result()", helper)
+        self.assertIn("await cancel_task.cancel()", helper)
+        self.assertIn("auth=access_token", helper)
+        self.assertIn("extensions=[]", helper)
+        self.assertIn('mode="legacy"', helper)
+        self.assertIn("resultType", helper)
+        self.assertIn("PromptAgentDefinition", helper)
+        self.assertIn("MCPTool", helper)
+        self.assertIn("project.agents.create_version(", helper)
+        self.assertIn("openai.conversations.create()", helper)
+        self.assertIn("openai.responses.create(", helper)
+        self.assertIn("project.agents.delete_version(", helper)
+        self.assertIn("client.get_mcp_tool(", helper)
+        self.assertIn('approval_mode="never_require"', helper)
+        self.assertIn("ResponsesHostServer", helper)
+        self.assertIn('"azd", "deploy"', helper)
+        self.assertIn('"agent_reference"', helper)
+        self.assertIn("BlobClient.from_blob_url", helper)
+        self.assertIn("_copy_hosted_agent_scaffold", helper)
+        self.assertIn('SKILL_ROOT / "references" / "python" / "app"', helper)
+        self.assertNotIn("example.invalid", helper)
+        self.assertNotIn("az account get-access-token", helper)
+        self.assertNotIn("az deployment", helper)
+        self.assertNotIn("az containerapp create", helper)
+        self.assertIn("ResponsesHostServer", fixture)
+
+    def test_azd_parameters_bind_every_brownfield_value(self) -> None:
+        parameters = (
+            self._infra_dir() / "main.parameters.json"
+        ).read_text(encoding="utf-8")
+
+        for binding in (
+            "${AZURE_RESOURCE_GROUP}",
+            "${AZURE_LOCATION}",
+            "${AZURE_SUBSCRIPTION_ID}",
+            "${AZURE_TENANT_ID}",
+            "${ACR_NAME}",
+            "${MCP_ACA_JOBS_ENVIRONMENT_NAME}",
+            "${MCP_ACA_JOBS_APP_NAME}",
+            "${MCP_ACA_JOBS_JOB_NAME}",
+            "${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL}",
+            "${MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME}",
+            "${MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME}",
+            "${MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME}",
+            "${MCP_ACA_JOBS_COSMOS_DATABASE}",
+            "${MCP_ACA_JOBS_COSMOS_CONTAINER}",
+            "${MCP_AUTH_APP_CLIENT_ID}",
+            "${AZURE_CLIENT_ID}",
+        ):
+            self.assertIn(binding, parameters)
+        parsed = json.loads(parameters)
+        self.assertFalse(
+            parsed["parameters"]["cosmosUseExistingAccount"]["value"],
+            "ordinary consumer default must provision a new Cosmos account",
+        )
+        callback = parsed["parameters"]["callbackConfig"]["value"]
+        self.assertEqual(
+            callback,
+            {
+                "authMode": "managed_identity",
+            },
+        )
 
     def test_upstream_pin_and_validation_contract_match_pyproject(self) -> None:
         pin_fm, body = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
@@ -701,6 +787,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("allowedAudiences", app)
         self.assertIn("environment().authentication.loginEndpoint", app)
         self.assertIn("allowedMcpCallerClientIds", app)
+        self.assertIn("param azdServiceName string = 'mcp'", app)
+        self.assertIn("'azd-service-name': azdServiceName", app)
+        self.assertNotIn("'azd-service-name': name", app)
         self.assertIn("livenessProbe", app)
         self.assertIn("startupProbe", app)
 
@@ -710,12 +799,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("Microsoft.DocumentDB/databaseAccounts@", cosmos)
         self.assertIn("EnableServerless", cosmos)
         self.assertIn("disableLocalAuth: true", cosmos)
+        self.assertIn("param useExistingAccount bool = false", cosmos)
+        self.assertIn("param existingAccountEndpoint string = ''", cosmos)
         self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15", cosmos)
         self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15", cosmos)
+        self.assertIn("resource existingAccount 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = if (useExistingAccount)", cosmos)
+        self.assertIn("resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' = if (useExistingAccount)", cosmos)
+        self.assertIn("resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount)", cosmos)
+        self.assertNotIn("existingDatabase", cosmos)
+        self.assertNotIn("existingTasks", cosmos)
         self.assertIn("paths: [ '/ownerScope' ]", normalized)
         self.assertIn("paths: [ '/idempotencyKeyHash' ]", normalized)
         self.assertNotIn("COSMOS_AUTH_KEY", cosmos)
-        self.assertIn("environment().suffixes.storage", (self._infra_dir() / "main.bicep").read_text(encoding="utf-8"))
+        self.assertIn("storageAccountUrlHost = replace(replace(storageAccountUrl, 'https://', ''), 'http://', '')", (self._infra_dir() / "main.bicep").read_text(encoding="utf-8"))
 
     def test_identity_rbac_contract_uses_two_uamis_and_only_allowed_job_actions(self) -> None:
         identity = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
@@ -797,6 +893,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
 
         self.assertIn("resource outputStorageContainer", assignments)
         self.assertIn("resource callbackStorageContainer", assignments)
+        self.assertNotRegex(
+            assignments,
+            r"resource outputStorageContainer [^{\n]+ existing =",
+        )
+        self.assertNotRegex(
+            assignments,
+            r"resource callbackStorageContainer [^{\n]+ existing =",
+        )
         self.assertNotIn("resource storageContainer ", assignments)
         self.assertIn("scope: callbackStorageContainer", assignments)
         self.assertIn("scope: outputStorageContainer", assignments)
@@ -820,15 +924,25 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn("param callbackSecretName", main)
         self.assertNotIn("param keyVaultName", main)
         self.assertNotIn("param callbackStorageContainerName", main)
+        self.assertIn("param storageAccountUrl string", main)
+        self.assertIn("param cosmosAccountEndpoint string = ''", main)
+        self.assertIn("param cosmosUseExistingAccount bool = false", main)
         self.assertIn("@maxLength(53)", main)
+        self.assertIn("var storageAccountUrlHost = replace(replace(storageAccountUrl, 'https://', ''), 'http://', '')", main)
+        self.assertIn("var storageAccountNameFromUrl = split(storageAccountUrlHost, '.')[0]", main)
+        self.assertIn("var cosmosAccountNameFromEndpoint = split(replace(replace(cosmosAccountEndpoint, 'https://', ''), 'http://', ''), '.')[0]", main)
+        self.assertIn("var storageAccountContractMatches = storageAccountNameFromUrl == storageAccountName", main)
+        self.assertIn("var cosmosAccountContractMatches = !cosmosUseExistingAccount || cosmosAccountNameFromEndpoint == cosmosAccountName", main)
         self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", main)
         self.assertIn(
-            "var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'",
+            "var outputStorageUrl = '${storageAccountUrl}/${outputStorageContainerName}'",
             main,
         )
         self.assertIn("callbackStorageContainerUrl", main)
-        self.assertIn("var storageHost = '${storageAccountName}.blob.${environment().suffixes.storage}'", main)
+        self.assertIn("var storageHost = storageAccountUrlHost", main)
         self.assertIn("var effectiveResultHosts = union(resultHosts, [storageHost])", main)
+        self.assertIn("useExistingAccount: cosmosUseExistingAccount", main)
+        self.assertIn("existingAccountEndpoint: cosmosAccountEndpoint", main)
 
         self.assertIn("var authAudience = 'api://${authClientId}'", main)
         self.assertIn("callbackConfig.authMode == 'managed_identity' ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs' : callbackConfig.externalCallbackUrl", normalized)
@@ -839,6 +953,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_VAULT_URL'", main)
         self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_SECRET_NAME'", main)
         self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID'", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME'", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME'", main)
         self.assertIn("value: authAudience", main)
         self.assertIn("value: callbackConfig.callbackSecretName", main)
         self.assertIn("value: identities.outputs.jobUamiPrincipalId", main)
@@ -849,7 +966,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         for required in (
             "AZURE_CLIENT_ID",
             "AZURE_SUBSCRIPTION_ID",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME",
             "MCP_ACA_JOBS_COSMOS_ENDPOINT",
+            "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME",
             "MCP_ACA_JOBS_COSMOS_DATABASE",
             "MCP_ACA_JOBS_COSMOS_CONTAINER",
             "MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID",
@@ -906,6 +1026,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("keyVaultName: callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''", main)
         self.assertIn("keyVaultName: keyVaultName", identity_rbac)
         self.assertIn("if (!empty(keyVaultName))", (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8"))
+        self.assertIn("output storageAccountNameFromUrl string", main)
+        self.assertIn("output storageAccountContractMatches bool", main)
+        self.assertIn("output cosmosAccountNameFromEndpoint string", main)
+        self.assertIn("output cosmosAccountContractMatches bool", main)
 
     def test_callback_config_bicepparam_variants_compile_and_invalid_key_vault_is_rejected(self) -> None:
         managed_identity_params = """using './main.bicep'
@@ -915,6 +1039,7 @@ param location = 'swedencentral'
 param acrName = 'acr-jobs'
 param environmentName = 'env-jobs'
 param storageAccountName = 'storagejobs'
+param storageAccountUrl = 'https://storagejobs.blob.core.windows.net'
 param outputStorageContainerName = 'outputs'
 param allowedMcpCallerClientIds = []
 param inputHosts = [
@@ -946,6 +1071,7 @@ param location = 'swedencentral'
 param acrName = 'acr-jobs'
 param environmentName = 'env-jobs'
 param storageAccountName = 'storagejobs'
+param storageAccountUrl = 'https://storagejobs.blob.core.windows.net'
 param outputStorageContainerName = 'outputs'
 param allowedMcpCallerClientIds = []
 param inputHosts = [
@@ -983,6 +1109,7 @@ param location = 'swedencentral'
 param acrName = 'acr-jobs'
 param environmentName = 'env-jobs'
 param storageAccountName = 'storagejobs'
+param storageAccountUrl = 'https://storagejobs.blob.core.windows.net'
 param outputStorageContainerName = 'outputs'
 param allowedMcpCallerClientIds = []
 param inputHosts = [
@@ -1145,15 +1272,7 @@ param callbackConfig = {
     def test_converge_image_parses_digest_and_updates_drifting_resources_once(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image")
         image_name = "myregistry.azurecr.us/mcp/service:20260903.1"
-        env_values = {
-            "SERVICE_MCP_IMAGE_NAME": image_name,
-            "MCP_APP_NAME": "mcp-app",
-            "ACA_JOB_NAME": "mcp-job",
-            "AZURE_RESOURCE_GROUP": "rg-jobs",
-            "AZURE_SUBSCRIPTION_ID": "sub-id",
-            "ACR_NAME": "task13acr",
-            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
-        }
+        env_values = self._azd_env_values()
         manifest_digest = "sha256:" + "a" * 64
         expected_image = "myregistry.azurecr.us/mcp/service@" + manifest_digest
 
@@ -1258,15 +1377,7 @@ param callbackConfig = {
 
     def test_converge_image_rejects_invalid_tag_digest_and_contract_drift(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_invalid")
-        env_values = {
-            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.us/mcp/service:20260903.1",
-            "MCP_APP_NAME": "mcp-app",
-            "ACA_JOB_NAME": "mcp-job",
-            "AZURE_RESOURCE_GROUP": "rg-jobs",
-            "AZURE_SUBSCRIPTION_ID": "sub-id",
-            "ACR_NAME": "task13acr",
-            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
-        }
+        env_values = self._azd_env_values()
         base_run = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(env_values), returncode=0)
         base_check_output = lambda *args, **kwargs: "sha256:" + "b" * 64
 
@@ -1353,15 +1464,7 @@ param callbackConfig = {
 
     def test_converge_image_is_idempotent_when_both_resources_match(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_idempotent")
-        env_values = {
-            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.us/mcp/service:20260903.1",
-            "MCP_APP_NAME": "mcp-app",
-            "ACA_JOB_NAME": "mcp-job",
-            "AZURE_RESOURCE_GROUP": "rg-jobs",
-            "AZURE_SUBSCRIPTION_ID": "sub-id",
-            "ACR_NAME": "task13acr",
-            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
-        }
+        env_values = self._azd_env_values()
         manifest_digest = "sha256:" + "d" * 64
         expected_image = "myregistry.azurecr.us/mcp/service@" + manifest_digest
         app = SimpleNamespace(
@@ -1443,6 +1546,33 @@ param callbackConfig = {
         for payload in (missing_registry, {"values": missing_registry}):
             with self.subTest(missing_registry=payload):
                 with self.assertRaisesRegex(RuntimeError, r"missing required azd env values: .*ACR_NAME"):
+                    module.load_azd_env_values(
+                        run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
+                    )
+
+        missing_storage_url = env_values.copy()
+        missing_storage_url.pop("MCP_ACA_JOBS_STORAGE_ACCOUNT_URL")
+        for payload in (missing_storage_url, {"values": missing_storage_url}):
+            with self.subTest(missing_storage_url=payload):
+                with self.assertRaisesRegex(RuntimeError, r"missing required azd env values: .*MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"):
+                    module.load_azd_env_values(
+                        run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
+                    )
+
+        missing_cosmos_account = env_values.copy()
+        missing_cosmos_account.pop("MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME")
+        for payload in (missing_cosmos_account, {"values": missing_cosmos_account}):
+            with self.subTest(missing_cosmos_account=payload):
+                with self.assertRaisesRegex(RuntimeError, r"missing required azd env values: .*MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"):
+                    module.load_azd_env_values(
+                        run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
+                    )
+
+        missing_cosmos_mode = env_values.copy()
+        missing_cosmos_mode.pop("MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT")
+        for payload in (missing_cosmos_mode, {"values": missing_cosmos_mode}):
+            with self.subTest(missing_cosmos_mode=payload):
+                with self.assertRaisesRegex(RuntimeError, r"missing required azd env values: .*MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT"):
                     module.load_azd_env_values(
                         run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
                     )

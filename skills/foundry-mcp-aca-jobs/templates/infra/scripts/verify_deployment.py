@@ -11,6 +11,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -58,6 +59,13 @@ def _ensure(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def _account_name_from_url(url: str) -> str:
+    host = urlsplit(url).netloc or urlsplit(f"https://{url}").netloc
+    if not host:
+        raise RuntimeError(f"could not derive account name from {url!r}")
+    return host.split(".", 1)[0]
+
+
 def _assert_easy_auth_contract(auth_config: Any) -> None:
     properties = _field(auth_config, "properties")
     platform = _field(properties, "platform")
@@ -80,17 +88,47 @@ def _assert_env_contracts(app: Any, job: Any) -> None:
     job_env = _env_map(job, "job")
 
     _ensure(app_env.get("MCP_ACA_JOBS_AUTH_MODE") == "aca-easy-auth", "app easy-auth mode missing")
+    _ensure("MCP_ACA_JOBS_STORAGE_ACCOUNT_URL" in app_env, "app storage account url missing")
+    _ensure("MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME" in app_env, "app storage account name missing")
     _ensure("MCP_ACA_JOBS_CALLBACK_CONTAINER_URL" in app_env, "app callback storage url missing")
     _ensure("MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID" in app_env, "app callback principal id missing")
+    _ensure("MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME" in app_env, "app cosmos account name missing")
     _ensure("MCP_ACA_JOBS_OUTPUT_CONTAINER_URL" in job_env, "job output storage url missing")
+    _ensure("MCP_ACA_JOBS_STORAGE_ACCOUNT_URL" in job_env, "job storage account url missing")
+    _ensure("MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME" in job_env, "job storage account name missing")
     _ensure("MCP_ACA_JOBS_INPUT_HOSTS" in job_env, "job input host allowlist missing")
     _ensure("MCP_ACA_JOBS_RESULT_HOSTS" in job_env, "job result host allowlist missing")
     _ensure("MCP_ACA_JOBS_JOB_TYPE" in job_env, "job type missing")
     _ensure("MCP_ACA_JOBS_CALLBACK_AUTH_MODE" in job_env, "job callback auth mode missing")
+    _ensure("MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME" in job_env, "job cosmos account name missing")
     _ensure("MCP_ACA_JOBS_AUTH_MODE" not in job_env, "job must not inherit app easy-auth mode")
     _ensure(app_env["MCP_ACA_JOBS_CALLBACK_CONTAINER_URL"] != job_env["MCP_ACA_JOBS_OUTPUT_CONTAINER_URL"], "storage scopes must be distinct")
     _ensure(app_env["MCP_ACA_JOBS_AUTH_MODE"] == "aca-easy-auth", "app easy-auth contract failed")
     _ensure(job_env["MCP_ACA_JOBS_CALLBACK_AUTH_MODE"] in {"managed_identity", "key_vault"}, "job callback auth mode invalid")
+    _ensure(
+        app_env["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"] == job_env["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"],
+        "storage account url must be shared",
+    )
+    _ensure(
+        app_env["MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME"] == job_env["MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME"],
+        "storage account name must be shared",
+    )
+    _ensure(
+        app_env["MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"] == job_env["MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"],
+        "cosmos account name must be shared",
+    )
+    _ensure(
+        app_env["MCP_ACA_JOBS_COSMOS_ENDPOINT"] == job_env["MCP_ACA_JOBS_COSMOS_ENDPOINT"],
+        "cosmos endpoint must be shared",
+    )
+    _ensure(
+        app_env["MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME"] == _account_name_from_url(app_env["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"]),
+        "storage account name must match storage account url",
+    )
+    _ensure(
+        app_env["MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"] == _account_name_from_url(app_env["MCP_ACA_JOBS_COSMOS_ENDPOINT"]),
+        "cosmos account name must match cosmos endpoint",
+    )
 
 
 def verify_deployment(

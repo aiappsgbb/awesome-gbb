@@ -18,6 +18,9 @@ param environmentName string
 @description('Existing storage account name used for job output and callback capture.')
 param storageAccountName string
 
+@description('Existing blob storage account URL used for job output and callback capture.')
+param storageAccountUrl string
+
 @description('Existing blob container name used for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
 @maxLength(53)
 param outputStorageContainerName string
@@ -33,6 +36,12 @@ param resultHosts array
 
 @description('Cosmos DB account name for the control store.')
 param cosmosAccountName string
+
+@description('Existing Cosmos DB account endpoint for brownfield CI mode.')
+param cosmosAccountEndpoint string = ''
+
+@description('Use the existing Cosmos DB account rather than creating a new one.')
+param cosmosUseExistingAccount bool = false
 
 @description('Cosmos DB database name for the control store.')
 param cosmosDatabaseName string = 'jobs'
@@ -79,13 +88,18 @@ param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
-var storageHost = '${storageAccountName}.blob.${environment().suffixes.storage}'
+var storageAccountUrlHost = replace(replace(storageAccountUrl, 'https://', ''), 'http://', '')
+var storageAccountNameFromUrl = split(storageAccountUrlHost, '.')[0]
+var cosmosAccountNameFromEndpoint = split(replace(replace(cosmosAccountEndpoint, 'https://', ''), 'http://', ''), '.')[0]
+var storageAccountContractMatches = storageAccountNameFromUrl == storageAccountName
+var cosmosAccountContractMatches = !cosmosUseExistingAccount || cosmosAccountNameFromEndpoint == cosmosAccountName
+var storageHost = storageAccountUrlHost
 var effectiveResultHosts = union(resultHosts, [storageHost])
 var callbackRouteUrl = callbackConfig.authMode == 'managed_identity'
   ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
   : callbackConfig.externalCallbackUrl
-var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'
-var callbackStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${callbackStorageContainerName}'
+var outputStorageUrl = '${storageAccountUrl}/${outputStorageContainerName}'
+var callbackStorageUrl = '${storageAccountUrl}/${callbackStorageContainerName}'
 var callbackPolicy = callbackConfig.authMode == 'managed_identity'
   ? {
       url: callbackRouteUrl
@@ -142,8 +156,20 @@ var appEnvironmentVariables = [
     value: subscription().subscriptionId
   }
   {
+    name: 'MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'
+    value: storageAccountUrl
+  }
+  {
+    name: 'MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME'
+    value: storageAccountName
+  }
+  {
     name: 'MCP_ACA_JOBS_COSMOS_ENDPOINT'
     value: cosmos.outputs.endpoint
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME'
+    value: cosmos.outputs.accountName
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_DATABASE'
@@ -172,8 +198,20 @@ var jobEnvironmentVariables = concat([
     value: identities.outputs.jobUamiClientId
   }
   {
+    name: 'MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'
+    value: storageAccountUrl
+  }
+  {
+    name: 'MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME'
+    value: storageAccountName
+  }
+  {
     name: 'MCP_ACA_JOBS_COSMOS_ENDPOINT'
     value: cosmos.outputs.endpoint
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME'
+    value: cosmos.outputs.accountName
   }
   {
     name: 'MCP_ACA_JOBS_COSMOS_DATABASE'
@@ -258,6 +296,8 @@ module cosmos 'cosmos.bicep' = {
     location: location
     databaseName: cosmosDatabaseName
     containerName: cosmosContainerName
+    useExistingAccount: cosmosUseExistingAccount
+    existingAccountEndpoint: cosmosAccountEndpoint
   }
 }
 
@@ -352,3 +392,7 @@ output outputStorageContainerUrl string = outputStorageUrl
 output callbackStorageContainerUrl string = callbackStorageUrl
 output authAudience string = app.outputs.authAudience
 output appImageDigest string = imageDigest
+output storageAccountNameFromUrl string = storageAccountNameFromUrl
+output storageAccountContractMatches bool = storageAccountContractMatches
+output cosmosAccountNameFromEndpoint string = cosmosAccountNameFromEndpoint
+output cosmosAccountContractMatches bool = cosmosAccountContractMatches

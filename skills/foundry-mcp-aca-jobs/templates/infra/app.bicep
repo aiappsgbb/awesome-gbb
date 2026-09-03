@@ -25,6 +25,9 @@ param authClientId string
 @description('Allowed app-only caller client IDs for default authorization.')
 param allowedMcpCallerClientIds array = []
 
+@description('azure.yaml service key used by azd to discover this Container App.')
+param azdServiceName string = 'mcp'
+
 @description('Additional environment variables to append to the MCP app.')
 param environmentVariables array = []
 
@@ -37,7 +40,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
   tags: union(tags, {
-    'azd-service-name': name
+    'azd-service-name': azdServiceName
   })
   identity: {
     type: 'UserAssigned'
