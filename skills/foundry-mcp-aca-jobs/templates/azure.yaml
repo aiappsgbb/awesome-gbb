@@ -18,5 +18,5 @@ hooks:
     run: |
       set -euo pipefail
       cd infra/scripts && uv sync --frozen
-      EXPECTED_IMAGE_DIGEST="$(uv run python converge_image.py)"
-      EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run python verify_deployment.py
+      EXPECTED_IMAGE_DIGEST="$(uv run --frozen python converge_image.py)"
+      EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run --frozen python verify_deployment.py

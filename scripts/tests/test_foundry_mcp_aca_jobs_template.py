@@ -780,10 +780,13 @@ param callbackConfig = {
         self.assertIn("converge_image.py", text)
         self.assertIn("verify_deployment.py", text)
         self.assertIn("cd infra/scripts && uv sync --frozen", text)
-        self.assertIn('EXPECTED_IMAGE_DIGEST="$(uv run python converge_image.py)"', text)
-        self.assertIn('EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run python verify_deployment.py', text)
-        self.assertIn("uv run python converge_image.py", text)
-        self.assertIn("uv run python verify_deployment.py", text)
+        self.assertIn('EXPECTED_IMAGE_DIGEST="$(uv run --frozen python converge_image.py)"', text)
+        self.assertIn(
+            'EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run --frozen python verify_deployment.py',
+            text,
+        )
+        self.assertIn("uv run --frozen python converge_image.py", text)
+        self.assertIn("uv run --frozen python verify_deployment.py", text)
         for forbidden in ("az acr build", "az containerapp job", "azd-service-name: job"):
             self.assertNotIn(forbidden, text)
 
