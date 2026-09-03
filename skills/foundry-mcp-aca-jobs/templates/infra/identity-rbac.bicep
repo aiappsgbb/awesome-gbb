@@ -42,9 +42,6 @@ param callbackStorageContainerName string = ''
 @description('Existing Key Vault name (optional).')
 param keyVaultName string = ''
 
-@description('Existing ACA Job name.')
-param jobName string = ''
-
 @description('Principal ID of the app UAMI when creating RBAC assignments.')
 param appPrincipalId string = ''
 
@@ -115,13 +112,11 @@ module assignments './identity-rbac/assignments.bicep' = if (createAssignments) 
     outputStorageContainerName: outputStorageContainerName
     callbackStorageContainerName: callbackStorageContainerName
     keyVaultName: keyVaultName
-    jobName: jobName
     appPrincipalId: appPrincipalId
     jobPrincipalId: jobPrincipalId
     acrPullRoleDefinitionId: acrPullRoleDefinitionId
     blobDataContributorRoleDefinitionId: blobDataContributorRoleDefinitionId
     keyVaultUserRoleDefinitionId: keyVaultUserRoleDefinitionId
-    customRoleDefinitionId: customRoleDefinitionResourceId
   }
 }
 

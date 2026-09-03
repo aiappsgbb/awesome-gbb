@@ -183,6 +183,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
         self.assertTrue((infra / "identity-rbac" / "uami.bicep").is_file())
         self.assertTrue((infra / "identity-rbac" / "assignments.bicep").is_file())
+        self.assertTrue((infra / "identity-rbac" / "job-operator.bicep").is_file())
 
     def test_app_module_contract_includes_auth_and_health(self) -> None:
         app = (self._infra_dir() / "app.bicep").read_text(encoding="utf-8")
@@ -221,14 +222,20 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_identity_rbac_contract_uses_two_uamis_and_only_allowed_job_actions(self) -> None:
         identity = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
         assignments = (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8")
+        job_operator = (self._infra_dir() / "identity-rbac" / "job-operator.bicep").read_text(
+            encoding="utf-8"
+        )
         identity_params = self._param_names(identity)
         assignment_params = self._param_names(assignments)
+        job_operator_params = self._param_names(job_operator)
         self.assertIn("outputStorageContainerName", identity_params)
         self.assertIn("callbackStorageContainerName", identity_params)
         self.assertIn("outputStorageContainerName", assignment_params)
         self.assertIn("callbackStorageContainerName", assignment_params)
         self.assertNotIn("storageContainerName", identity_params)
         self.assertNotIn("storageContainerName", assignment_params)
+        self.assertIn("jobName", job_operator_params)
+        self.assertIn("customRoleDefinitionId", job_operator_params)
         self.assertIn("appUami", identity)
         self.assertIn("jobUami", identity)
         self.assertIn("roleDefinition", identity)
@@ -261,8 +268,17 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("sqlRoleDefinitions/00000000-0000-0000-0000-000000000002", assignments)
         self.assertIn("dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}", assignments)
         self.assertNotIn("Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c'", identity + "\n" + assignments)
-        for forbidden in ("jobs/write", "jobs/delete", "listsecrets", "stop/multiple"):
-            self.assertNotIn(forbidden, identity + "\n" + assignments)
+        for forbidden in ("jobs/write", "jobs/delete", "listsecrets", "stop/multiple", "appJobOperator"):
+            self.assertNotIn(forbidden, assignments)
+
+        self.assertNotIn("jobName", assignments)
+        self.assertNotIn("customRoleDefinitionId", assignments)
+        self.assertIn("resource job 'Microsoft.App/jobs@2026-01-01' existing = {", job_operator)
+        self.assertIn("scope: job", job_operator)
+        self.assertIn("name: jobName", job_operator)
+        self.assertIn("roleDefinitionId: customRoleDefinitionId", job_operator)
+        self.assertNotIn("Microsoft.App/jobs/read", job_operator)
+        self.assertNotIn("ba92f5b4-2d11-453d-a403-e96b0029c9fe", job_operator)
 
         scope_expectations = {
             "appAcrPull": "acr",
@@ -272,7 +288,6 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "appBlobData": "callbackStorageContainer",
             "jobBlobData": "outputStorageContainer",
             "jobKeyVaultSecretsUser": "keyVault",
-            "appJobOperator": "job",
         }
         for resource_name, expected_scope in scope_expectations.items():
             block = self._extract_bicep_block(assignments, f"resource {resource_name} ")
@@ -286,6 +301,104 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("scope: callbackStorageContainer", assignments)
         self.assertIn("scope: outputStorageContainer", assignments)
         self.assertNotIn("scope: storageContainer", assignments)
+        self.assertNotIn("jobRoleDefinition", assignments)
+
+    def test_main_module_wires_required_env_and_dependency_order(self) -> None:
+        main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
+        normalized = " ".join(main.split())
+
+        for param in ("inputHosts array", "resultHosts array"):
+            self.assertIn(f"param {param}", main)
+
+        for required in (
+            "AZURE_CLIENT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT",
+            "MCP_ACA_JOBS_COSMOS_DATABASE",
+            "MCP_ACA_JOBS_COSMOS_CONTAINER",
+            "MCP_ACA_JOBS_CALLBACK_CONTAINER_URL",
+            "MCP_ACA_JOBS_POLICY_JSON",
+            "MCP_ACA_JOBS_JOB_TYPE",
+            "MCP_ACA_JOBS_JOB_RESOURCE_GROUP",
+            "MCP_ACA_JOBS_JOB_NAME",
+            "MCP_ACA_JOBS_JOB_CONTAINER_NAME",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST",
+            "MCP_ACA_JOBS_CALLBACK_URL",
+            "MCP_ACA_JOBS_CALLBACK_AUTH_MODE",
+            "MCP_ACA_JOBS_CALLBACK_AUDIENCE",
+            "MCP_ACA_JOBS_OUTPUT_CONTAINER_URL",
+            "MCP_ACA_JOBS_INPUT_HOSTS",
+            "MCP_ACA_JOBS_RESULT_HOSTS",
+        ):
+            self.assertIn(required, main)
+
+        self.assertIn("short-job", main)
+        self.assertIn("string({", main)
+        self.assertIn("managedEnvironment.properties.defaultDomain", main)
+        self.assertIn("callbacks: {", main)
+        self.assertIn("ops: {", main)
+        self.assertIn("auth_mode: 'managed_identity'", main)
+        self.assertIn("audience: 'api://${authClientId}'", main)
+        self.assertIn("join(inputHosts, ',')", normalized)
+        self.assertIn("join(resultHosts, ',')", normalized)
+        self.assertNotIn("CONTAINER_APP_JOB_EXECUTION_NAME", main)
+        self.assertNotIn("AZURE_CLIENT_SECRET", main)
+        self.assertNotIn("MCP_ACA_JOBS_CALLBACK_SECRET_NAME", main)
+        self.assertNotIn("secretRef", main)
+        self.assertNotIn("secureValue", main)
+
+        module_order = [
+            "module identities",
+            "module cosmos",
+            "module preRuntimeRbac",
+            "module app",
+            "module job",
+            "module jobOperator",
+        ]
+        positions = [main.index(marker) for marker in module_order]
+        self.assertEqual(positions, sorted(positions), msg=f"unexpected module order: {module_order}")
+        self.assertIn("dependsOn: [\n    preRuntimeRbac\n  ]", main)
+        self.assertIn("dependsOn: [\n    app\n    preRuntimeRbac\n  ]", main)
+
+    def test_bicep_builds_without_experimental_assertion_warnings(self) -> None:
+        files = [
+            self._infra_dir() / "app.bicep",
+            self._infra_dir() / "cosmos.bicep",
+            self._infra_dir() / "identity-rbac.bicep",
+            self._infra_dir() / "main.bicep",
+            self._infra_dir() / "identity-rbac" / "assignments.bicep",
+            self._infra_dir() / "identity-rbac" / "job-operator.bicep",
+            self._infra_dir() / "identity-rbac" / "uami.bicep",
+        ]
+        for source in files:
+            with self.subTest(source=source.name):
+                result = subprocess.run(
+                    [
+                        "az",
+                        "bicep",
+                        "build",
+                        "--file",
+                        str(source),
+                        "--outfile",
+                        str(source.with_suffix(".json")),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, msg=result.stderr)
+                combined = f"{result.stdout}\n{result.stderr}"
+                warning_lines = [
+                    line
+                    for line in combined.splitlines()
+                    if line.lower().startswith("warning:")
+                ]
+                for line in warning_lines:
+                    self.assertTrue(
+                        "a new bicep release is available" in line.lower()
+                        or "experimental bicep features have been enabled" in line.lower(),
+                        msg=f"unexpected bicep warning for {source.name}: {line}",
+                    )
 
     def test_main_module_composes_shared_digest_and_outputs_contract(self) -> None:
         main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
@@ -300,21 +413,21 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("param outputStorageContainerName string", main)
         self.assertIn("param callbackStorageContainerName string", main)
         self.assertNotIn("param storageContainerName string", main)
-        self.assertIn("output outputStorageUrl string", main)
-        self.assertIn("output callbackStorageUrl string", main)
+        self.assertIn("output outputStorageContainerUrl string", main)
+        self.assertIn("output callbackStorageContainerUrl string", main)
         self.assertIn("/${outputStorageContainerName}", main)
         self.assertIn("/${callbackStorageContainerName}", main)
         self.assertNotIn("output storageUrl string", main)
-        self.assertIn("appName", main)
-        self.assertIn("jobName", main)
-        self.assertIn("fqdn", main)
+        self.assertIn("appResourceName", main)
+        self.assertIn("jobResourceName", main)
+        self.assertIn("appFqdn", main)
         self.assertIn("appIdentity", main)
         self.assertIn("jobIdentity", main)
         self.assertIn("cosmosEndpoint", main)
-        self.assertIn("outputStorageUrl", main)
-        self.assertIn("callbackStorageUrl", main)
+        self.assertIn("outputStorageContainerUrl", main)
+        self.assertIn("callbackStorageContainerUrl", main)
         self.assertIn("authAudience", main)
-        self.assertIn("imageDigest", main)
+        self.assertIn("appImageDigest", main)
 
     def test_source_modules_expose_both_helpable_clis(self) -> None:
         server_source = (self._reference_app_dir() / "mcp_server.py").read_text(encoding="utf-8")

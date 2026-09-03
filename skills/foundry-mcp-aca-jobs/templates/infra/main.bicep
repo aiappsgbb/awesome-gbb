@@ -24,6 +24,12 @@ param callbackStorageContainerName string
 @description('Allowed app-only caller client IDs for the MCP app.')
 param allowedMcpCallerClientIds array
 
+@description('Explicit allowlisted input hosts for the MCP policy and job worker.')
+param inputHosts array
+
+@description('Explicit allowlisted result hosts for the MCP policy and job worker.')
+param resultHosts array
+
 @description('Cosmos DB account name for the control store.')
 param cosmosAccountName string
 
@@ -54,8 +60,125 @@ param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld
 @description('Optional Key Vault name for the job callback secret path.')
 param keyVaultName string = ''
 
+var callbackRouteUrl = 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
 var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'
 var callbackStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${callbackStorageContainerName}'
+var appPolicyJson = string({
+  jobs: {
+    'short-job': {
+      resource_group: resourceGroupName
+      job_name: jobName
+      container_name: 'job'
+      image_digest: imageDigest
+      command: [
+        'python'
+        '-m'
+        'app.job_worker'
+      ]
+    }
+  }
+  callbacks: {
+    ops: {
+      url: callbackRouteUrl
+      auth_mode: 'managed_identity'
+      audience: 'api://${authClientId}'
+    }
+  }
+  input_hosts: inputHosts
+  result_hosts: resultHosts
+})
+var appEnvironmentVariables = [
+  {
+    name: 'AZURE_CLIENT_ID'
+    value: identities.outputs.appUamiClientId
+  }
+  {
+    name: 'AZURE_SUBSCRIPTION_ID'
+    value: subscription().subscriptionId
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_ENDPOINT'
+    value: cosmos.outputs.endpoint
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_DATABASE'
+    value: cosmos.outputs.databaseName
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_CONTAINER'
+    value: cosmos.outputs.containerName
+  }
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_CONTAINER_URL'
+    value: callbackStorageUrl
+  }
+  {
+    name: 'MCP_ACA_JOBS_POLICY_JSON'
+    value: appPolicyJson
+  }
+]
+var jobEnvironmentVariables = [
+  {
+    name: 'AZURE_CLIENT_ID'
+    value: identities.outputs.jobUamiClientId
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_ENDPOINT'
+    value: cosmos.outputs.endpoint
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_DATABASE'
+    value: cosmos.outputs.databaseName
+  }
+  {
+    name: 'MCP_ACA_JOBS_COSMOS_CONTAINER'
+    value: cosmos.outputs.containerName
+  }
+  {
+    name: 'MCP_ACA_JOBS_JOB_TYPE'
+    value: 'short-job'
+  }
+  {
+    name: 'MCP_ACA_JOBS_JOB_RESOURCE_GROUP'
+    value: resourceGroupName
+  }
+  {
+    name: 'MCP_ACA_JOBS_JOB_NAME'
+    value: jobName
+  }
+  {
+    name: 'MCP_ACA_JOBS_JOB_CONTAINER_NAME'
+    value: 'job'
+  }
+  {
+    name: 'MCP_ACA_JOBS_JOB_IMAGE_DIGEST'
+    value: imageDigest
+  }
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_URL'
+    value: callbackRouteUrl
+  }
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_AUTH_MODE'
+    value: 'managed_identity'
+  }
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_AUDIENCE'
+    value: 'api://${authClientId}'
+  }
+  {
+    name: 'MCP_ACA_JOBS_OUTPUT_CONTAINER_URL'
+    value: outputStorageUrl
+  }
+  {
+    name: 'MCP_ACA_JOBS_INPUT_HOSTS'
+    value: join(inputHosts, ',')
+  }
+  {
+    name: 'MCP_ACA_JOBS_RESULT_HOSTS'
+    value: join(resultHosts, ',')
+  }
+]
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   scope: resourceGroup(resourceGroupName)
@@ -92,6 +215,26 @@ module cosmos 'cosmos.bicep' = {
   }
 }
 
+module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
+  name: 'assign-pre-runtime-rbac'
+  scope: resourceGroup(resourceGroupName)
+  params: {
+    acrName: acrName
+    cosmosAccountName: cosmos.outputs.accountName
+    cosmosDatabaseName: cosmos.outputs.databaseName
+    cosmosContainerName: cosmos.outputs.containerName
+    storageAccountName: storageAccountName
+    outputStorageContainerName: outputStorageContainerName
+    callbackStorageContainerName: callbackStorageContainerName
+    keyVaultName: keyVaultName
+    appPrincipalId: identities.outputs.appUamiPrincipalId
+    jobPrincipalId: identities.outputs.jobUamiPrincipalId
+    acrPullRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    blobDataContributorRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    keyVaultUserRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+  }
+}
+
 module app 'app.bicep' = {
   name: 'create-app'
   scope: resourceGroup(resourceGroupName)
@@ -106,8 +249,11 @@ module app 'app.bicep' = {
     allowedMcpCallerClientIds: union(allowedMcpCallerClientIds, [
       identities.outputs.jobUamiClientId
     ])
-    environmentVariables: []
+    environmentVariables: appEnvironmentVariables
   }
+  dependsOn: [
+    preRuntimeRbac
+  ]
 }
 
 module job '../../../azd-patterns/references/bicep/aca-job.bicep' = {
@@ -125,40 +271,29 @@ module job '../../../azd-patterns/references/bicep/aca-job.bicep' = {
       'app.job_worker'
     ]
     args: []
-    environmentVariables: []
+    environmentVariables: jobEnvironmentVariables
     uamiResourceId: identities.outputs.jobUamiResourceId
     acrServer: acr.properties.loginServer
   }
+  dependsOn: [
+    app
+    preRuntimeRbac
+  ]
 }
 
-module rbac 'identity-rbac.bicep' = {
-  name: 'assign-rbac'
-  scope: subscription()
+module jobOperator 'identity-rbac/job-operator.bicep' = {
+  name: 'assign-job-operator'
+  scope: resourceGroup(resourceGroupName)
   params: {
-    resourceGroupName: resourceGroupName
-    location: location
-    appUamiName: appIdentityName
-    jobUamiName: jobIdentityName
-    createIdentities: false
-    createAssignments: true
-    acrName: acrName
-    cosmosAccountName: cosmos.outputs.accountName
-    cosmosDatabaseName: cosmos.outputs.databaseName
-    cosmosContainerName: cosmos.outputs.containerName
-    storageAccountName: storageAccountName
-    outputStorageContainerName: outputStorageContainerName
-    callbackStorageContainerName: callbackStorageContainerName
-    keyVaultName: keyVaultName
     jobName: job.outputs.name
     appPrincipalId: identities.outputs.appUamiPrincipalId
-    jobPrincipalId: identities.outputs.jobUamiPrincipalId
-    roleDefinitionName: 'foundry-mcp-aca-jobs-job-operator'
+    customRoleDefinitionId: identities.outputs.customRoleDefinitionId
   }
 }
 
-output appName string = app.outputs.name
-output jobName string = job.outputs.name
-output fqdn string = app.outputs.fqdn
+output appResourceName string = app.outputs.name
+output jobResourceName string = job.outputs.name
+output appFqdn string = app.outputs.fqdn
 output appIdentityResourceId string = identities.outputs.appUamiResourceId
 output jobIdentityResourceId string = identities.outputs.jobUamiResourceId
 output appIdentityPrincipalId string = identities.outputs.appUamiPrincipalId
@@ -166,7 +301,7 @@ output jobIdentityPrincipalId string = identities.outputs.jobUamiPrincipalId
 output appIdentityClientId string = identities.outputs.appUamiClientId
 output jobIdentityClientId string = identities.outputs.jobUamiClientId
 output cosmosEndpoint string = cosmos.outputs.endpoint
-output outputStorageUrl string = outputStorageUrl
-output callbackStorageUrl string = callbackStorageUrl
+output outputStorageContainerUrl string = outputStorageUrl
+output callbackStorageContainerUrl string = callbackStorageUrl
 output authAudience string = app.outputs.authAudience
-output imageDigest string = imageDigest
+output appImageDigest string = imageDigest
