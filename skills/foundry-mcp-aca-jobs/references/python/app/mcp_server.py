@@ -108,6 +108,7 @@ _DEFAULT_PORT = 8080
 _DEFAULT_PROTOCOL_VERSION = "2026-07-28"
 _TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 _RECONCILE_SLEEP_MAX_SECONDS = 60.0
+_FALLBACK_POLL_AFTER_MS = 2_000
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +305,48 @@ def _json_response(content: Any, *, status_code: int) -> JSONResponse:
     return JSONResponse(content, status_code=status_code)
 
 
+def _public_timestamp(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return (
+        value.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _start_response(task: TaskRecord) -> dict[str, Any]:
+    return {
+        "taskId": str(task.task_id),
+        "jobType": task.job_type,
+        "status": task.lifecycle_state.value,
+        "acaExecutionId": task.aca_execution_id,
+        "pollAfterMs": _FALLBACK_POLL_AFTER_MS,
+    }
+
+
+def _status_response(task: TaskRecord) -> dict[str, Any]:
+    return {
+        "taskId": str(task.task_id),
+        "jobType": task.job_type,
+        "status": task.lifecycle_state.value,
+        "acaExecutionId": task.aca_execution_id,
+        "resultUrl": None if task.result_url is None else str(task.result_url),
+        "errorCode": task.error_code,
+        "createdAt": _public_timestamp(task.created_at),
+        "updatedAt": _public_timestamp(task.updated_at),
+    }
+
+
+def _cancel_response(task: TaskRecord) -> dict[str, Any]:
+    return {
+        "taskId": str(task.task_id),
+        "status": task.lifecycle_state.value,
+        "cancellationRequested": True,
+    }
+
+
 async def _close_resource(resource: Any) -> None:
     close = getattr(resource, "close", None)
     if close is None:
@@ -388,19 +431,19 @@ def build_server(runtime: Runtime) -> FastMCP:
             }
         )
         task = await runtime.orchestrator.start(request, owner_scope)
-        return task.model_dump(mode="json", by_alias=True, exclude_none=False)
+        return _start_response(task)
 
     @server.tool
     async def get_aca_job_status(taskId: Annotated[str, Field(min_length=1)]) -> dict[str, Any]:
         owner_scope = resolve_owner_scope(get_http_headers() or {})
         task = await runtime.orchestrator.get_status(owner_scope, taskId)
-        return task.model_dump(mode="json", by_alias=True, exclude_none=False)
+        return _status_response(task)
 
     @server.tool
     async def cancel_aca_job(taskId: Annotated[str, Field(min_length=1)]) -> dict[str, Any]:
         owner_scope = resolve_owner_scope(get_http_headers() or {})
         task = await runtime.orchestrator.cancel(owner_scope, taskId)
-        return task.model_dump(mode="json", by_alias=True, exclude_none=False)
+        return _cancel_response(task)
 
     return server
 

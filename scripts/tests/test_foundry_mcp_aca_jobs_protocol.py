@@ -12,7 +12,7 @@ import os
 import sys
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -604,6 +604,7 @@ def _install_stubs() -> None:
 _install_stubs()
 try:
     import app.models as app_models  # noqa: E402
+    from app import aca_tasks_extension as app_aca_tasks_extension  # noqa: E402
     from app.aca_tasks_extension import AcaTasksExtension  # noqa: E402
     from app import mcp_server as app_mcp_server  # noqa: E402
     from app.aca_jobs import AcaExecution  # noqa: E402
@@ -630,6 +631,15 @@ try:
     from mcp_types.jsonrpc import HEADER_MISMATCH  # noqa: E402
 finally:
     _restore_stubbed_modules()
+
+_TASK_RESULT_MODELS = {
+    model.__name__: model
+    for model in (
+        CancelTaskResult,
+        CreateTaskResult,
+        UpdateTaskResult,
+    )
+}
 
 _STUB_RESTORE_ERRORS = [
     f"{name} leaked or was replaced"
@@ -732,9 +742,22 @@ class ProtocolFixtureIsolationTests(unittest.TestCase):
     def test_dependency_stubs_do_not_escape_fixture_import(self) -> None:
         self.assertEqual(_STUB_RESTORE_ERRORS, [])
 
+    def test_task_model_resolution_has_no_production_test_module_coupling(self) -> None:
+        source = (APP_DIR / "aca_tasks_extension.py").read_text(encoding="utf-8")
+        self.assertNotIn("import sys", source)
+        self.assertNotIn("sys.modules", source)
+        self.assertNotIn("test_foundry_mcp_aca_jobs", source)
+
 
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        task_model_patch = patch.object(
+            app_aca_tasks_extension,
+            "_task_model",
+            side_effect=lambda name: _TASK_RESULT_MODELS[name],
+        )
+        task_model_patch.start()
+        self.addCleanup(task_model_patch.stop)
         self.task = TaskRecord.new(
             owner_scope="owner-a",
             job_type="batch",
@@ -1162,6 +1185,15 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        task_model_patch = patch.object(
+            app_aca_tasks_extension,
+            "_task_model",
+            side_effect=lambda name: _TASK_RESULT_MODELS[name],
+        )
+        task_model_patch.start()
+        self.addCleanup(task_model_patch.stop)
+
     def _policy(self) -> app_models.Policy:
         return app_models.Policy(
             jobs={
@@ -1332,6 +1364,116 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tuple(inspect.signature(server.tools["get_aca_job_status"]).parameters), ("taskId",))
         self.assertEqual(tuple(inspect.signature(server.tools["cancel_aca_job"]).parameters), ("taskId",))
 
+    async def test_fallback_tools_return_exact_public_protocol_shapes(self) -> None:
+        fixed = datetime(2026, 9, 3, 17, 1, 2, tzinfo=timezone.utc)
+        base = TaskRecord.new(
+            owner_scope="secret-owner-scope",
+            job_type="batch",
+            idempotency_key_hash="secret-idempotency-hash",
+            request_fingerprint="secret-request-fingerprint",
+            input_ref="https://storage.example.com/input.json",
+            callback_alias="ops",
+        )
+        started_record = base.model_copy(
+            update={
+                "lifecycle_state": app_models.LifecycleState.RUNNING,
+                "aca_execution_id": "exec-start",
+                "created_at": fixed,
+                "updated_at": fixed,
+                "worker_claim_token": "secret-worker-token",
+                "etag": "secret-etag",
+            }
+        )
+        status_record = base.model_copy(
+            update={
+                "lifecycle_state": app_models.LifecycleState.FAILED,
+                "aca_execution_id": "exec-status",
+                "error_code": "ACA_EXECUTION_FAILED",
+                "created_at": fixed,
+                "updated_at": fixed + timedelta(seconds=5),
+                "completed_at": fixed + timedelta(seconds=5),
+                "worker_claim_token": "secret-worker-token",
+                "etag": "secret-etag",
+            }
+        )
+        cancelled_record = base.model_copy(
+            update={
+                "lifecycle_state": app_models.LifecycleState.RUNNING,
+                "aca_execution_id": "exec-cancel",
+                "cancellation_requested_at": fixed + timedelta(seconds=7),
+                "created_at": fixed,
+                "updated_at": fixed + timedelta(seconds=7),
+                "worker_claim_token": "secret-worker-token",
+                "etag": "secret-etag",
+            }
+        )
+        orchestrator = types.SimpleNamespace(
+            start=AsyncMock(return_value=started_record),
+            get_status=AsyncMock(return_value=status_record),
+            cancel=AsyncMock(return_value=cancelled_record),
+        )
+        runtime = self._runtime(
+            orchestrator=orchestrator,
+            trust_aca_auth_headers=True,
+        )
+        server = app_mcp_server.build_server(runtime)
+        client = server.client(
+            headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"},
+            task_capability=False,
+        )
+
+        started = await client.call_tool(
+            "start_aca_job",
+            {
+                "jobType": "batch",
+                "idempotencyKey": "key-public",
+                "inputRef": "https://storage.example.com/input.json",
+                "callbackAlias": "ops",
+            },
+        )
+        status = await client.call_tool(
+            "get_aca_job_status",
+            {"taskId": str(base.task_id)},
+        )
+        cancelled = await client.call_tool(
+            "cancel_aca_job",
+            {"taskId": str(base.task_id)},
+        )
+
+        self.assertEqual(
+            started.data,
+            {
+                "taskId": str(base.task_id),
+                "jobType": "batch",
+                "status": "Running",
+                "acaExecutionId": "exec-start",
+                "pollAfterMs": 2000,
+            },
+        )
+        self.assertEqual(
+            status.data,
+            {
+                "taskId": str(base.task_id),
+                "jobType": "batch",
+                "status": "Failed",
+                "acaExecutionId": "exec-status",
+                "resultUrl": None,
+                "errorCode": "ACA_EXECUTION_FAILED",
+                "createdAt": "2026-09-03T17:01:02Z",
+                "updatedAt": "2026-09-03T17:01:07Z",
+            },
+        )
+        self.assertEqual(
+            cancelled.data,
+            {
+                "taskId": str(base.task_id),
+                "status": "Running",
+                "cancellationRequested": True,
+            },
+        )
+        for response in (started.data, status.data, cancelled.data):
+            self.assertNotIn("resultType", response)
+
     async def test_tools_round_trip_and_restart_same_store(self) -> None:
         runtime = self._runtime(trust_aca_auth_headers=True)
         server = app_mcp_server.build_server(runtime)
@@ -1348,7 +1490,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertLess(monotonic() - started_at, 1.0)
-        self.assertEqual(started.data["lifecycleState"], "Running")
+        self.assertEqual(started.data["status"], "Running")
         task_id = started.data["taskId"]
         self.assertEqual(
             runtime.orchestrator._jobs.start_calls[0][1],

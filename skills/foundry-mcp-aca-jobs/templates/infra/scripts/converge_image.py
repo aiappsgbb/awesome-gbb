@@ -9,7 +9,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from copy import deepcopy
 from typing import Any
 
@@ -28,6 +28,9 @@ _REQUIRED_ENV_KEYS = (
     "MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT",
 )
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_IMMUTABLE_IMAGE_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+_APP_POLICY_ENV = "MCP_ACA_JOBS_POLICY_JSON"
+_JOB_IMAGE_ENV = "MCP_ACA_JOBS_JOB_IMAGE_DIGEST"
 
 
 def _field(obj: Any, *names: str, default: Any = None) -> Any:
@@ -181,10 +184,90 @@ def _container_image(container: Any) -> str:
 
 def _set_container_image(resource: Any, container_name: str, image: str) -> None:
     container = _find_container(resource, container_name)
-    if isinstance(container, Mapping):
+    if isinstance(container, MutableMapping):
         container["image"] = image
-    else:
+    elif hasattr(container, "image"):
         setattr(container, "image", image)
+    else:
+        _raise(f"container {container_name!r} does not expose a mutable image")
+
+
+def _find_env_item(resource: Any, container_name: str, env_name: str) -> Any:
+    container = _find_container(resource, container_name)
+    matches = [
+        item
+        for item in _as_list(_field(container, "env", default=[]))
+        if _field(item, "name") == env_name
+    ]
+    if len(matches) != 1:
+        _raise(f"{env_name} must appear exactly once in {container_name!r} env")
+    return matches[0]
+
+
+def _required_env_value(resource: Any, container_name: str, env_name: str) -> str:
+    value = _field(_find_env_item(resource, container_name, env_name), "value")
+    if not isinstance(value, str) or not value:
+        _raise(f"{env_name} must have one non-empty literal value")
+    return value
+
+
+def _set_env_value(
+    resource: Any,
+    container_name: str,
+    env_name: str,
+    value: str,
+) -> None:
+    item = _find_env_item(resource, container_name, env_name)
+    if isinstance(item, MutableMapping):
+        item["value"] = value
+    elif hasattr(item, "value"):
+        setattr(item, "value", value)
+    else:
+        _raise(f"{env_name} does not expose a mutable value")
+
+
+def _app_policy(resource: Any) -> dict[str, Any]:
+    raw = _required_env_value(resource, "mcp", _APP_POLICY_ENV)
+    try:
+        policy = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{_APP_POLICY_ENV} must contain valid JSON") from exc
+    if not isinstance(policy, dict):
+        _raise(f"{_APP_POLICY_ENV} must be a JSON object")
+    jobs = policy.get("jobs")
+    if not isinstance(jobs, dict) or not jobs:
+        _raise(f"{_APP_POLICY_ENV}.jobs must be a non-empty object")
+    for job_type, job_policy in jobs.items():
+        if not isinstance(job_type, str) or not job_type or not isinstance(job_policy, dict):
+            _raise(f"{_APP_POLICY_ENV}.jobs entries must be named objects")
+        image = job_policy.get("image_digest")
+        if not isinstance(image, str) or not _IMMUTABLE_IMAGE_RE.fullmatch(image):
+            _raise(
+                f"{_APP_POLICY_ENV}.jobs[{job_type!r}].image_digest "
+                "must be an immutable image reference"
+            )
+    return policy
+
+
+def _policy_image_digests(resource: Any) -> tuple[str, ...]:
+    policy = _app_policy(resource)
+    return tuple(
+        str(job_policy["image_digest"])
+        for job_policy in policy["jobs"].values()
+    )
+
+
+def _updated_policy_json(resource: Any, image: str) -> tuple[str, bool]:
+    policy = _app_policy(resource)
+    changed = False
+    for job_policy in policy["jobs"].values():
+        if job_policy["image_digest"] != image:
+            job_policy["image_digest"] = image
+            changed = True
+    return (
+        json.dumps(policy, sort_keys=True, separators=(",", ":")),
+        changed,
+    )
 
 
 def _clear_revision_suffix(resource: Any) -> None:
@@ -261,19 +344,31 @@ def converge_image(
         check_output=check_output,
     )
 
-    if not _resource_changed(app, "mcp", desired_image) and not _resource_changed(job, "job", desired_image):
+    desired_policy_json, policy_changed = _updated_policy_json(app, desired_image)
+    job_digest = _required_env_value(job, "job", _JOB_IMAGE_ENV)
+    if not _IMMUTABLE_IMAGE_RE.fullmatch(job_digest):
+        _raise(f"{_JOB_IMAGE_ENV} must be an immutable image reference")
+
+    app_image_changed = _resource_changed(app, "mcp", desired_image)
+    job_image_changed = _resource_changed(job, "job", desired_image)
+    job_digest_changed = job_digest != desired_image
+    app_changed = app_image_changed or policy_changed
+    job_changed = job_image_changed or job_digest_changed
+    if not app_changed and not job_changed:
         return desired_image
 
-    if _resource_changed(app, "mcp", desired_image):
+    if app_changed:
         app_copy = deepcopy(app)
         _set_container_image(app_copy, "mcp", desired_image)
+        _set_env_value(app_copy, "mcp", _APP_POLICY_ENV, desired_policy_json)
         _clear_revision_suffix(app_copy)
         app_poller = client.container_apps.begin_create_or_update(env["AZURE_RESOURCE_GROUP"], env["MCP_APP_NAME"], app_copy)
         _wait_for_result(app_poller)
 
-    if _resource_changed(job, "job", desired_image):
+    if job_changed:
         job_copy = deepcopy(job)
         _set_container_image(job_copy, "job", desired_image)
+        _set_env_value(job_copy, "job", _JOB_IMAGE_ENV, desired_image)
         job_poller = client.jobs.begin_create_or_update(env["AZURE_RESOURCE_GROUP"], env["ACA_JOB_NAME"], job_copy)
         _wait_for_result(job_poller)
 

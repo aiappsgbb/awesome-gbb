@@ -11,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+from azure.mgmt.appcontainers.models import JobExecution
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "skills" / "foundry-mcp-aca-jobs" / "references" / "python"
@@ -285,6 +287,75 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
                 args=["--task-id", "task-id"],
             ).matches_task("task-id", start_time + timedelta(seconds=1))
         )
+
+    def test_execution_start_time_reads_real_job_execution_wire_start_time(self) -> None:
+        execution = JobExecution(
+            {
+                "id": (
+                    "/subscriptions/sub/resourceGroups/rg/providers/"
+                    "Microsoft.App/jobs/job-worker/executions/execution-1"
+                ),
+                "name": "execution-1",
+                "properties": {
+                    "status": "Running",
+                    "startTime": "2026-09-03T19:01:02.9876543+02:00",
+                    "template": {"containers": []},
+                },
+            }
+        )
+
+        self.assertEqual(
+            self.module._execution_start_time(execution),
+            datetime(2026, 9, 3, 17, 1, 2, tzinfo=timezone.utc),
+        )
+
+    def test_execution_start_time_supports_sdk_attributes_and_rfc3339_strings(self) -> None:
+        cases = (
+            (
+                "snake datetime",
+                SimpleNamespace(
+                    properties=SimpleNamespace(
+                        start_time=datetime(
+                            2026,
+                            9,
+                            3,
+                            19,
+                            1,
+                            2,
+                            987654,
+                            tzinfo=timezone(timedelta(hours=2)),
+                        )
+                    )
+                ),
+            ),
+            (
+                "wire zulu string",
+                {"properties": {"startTime": "2026-09-03T17:01:02.987654Z"}},
+            ),
+            (
+                "snake string",
+                {"properties": {"start_time": "2026-09-03T19:01:02+02:00"}},
+            ),
+        )
+        expected = datetime(2026, 9, 3, 17, 1, 2, tzinfo=timezone.utc)
+        for label, execution in cases:
+            with self.subTest(label=label):
+                self.assertEqual(
+                    self.module._execution_start_time(execution),
+                    expected,
+                )
+
+        fallback = datetime(2026, 9, 3, 20, 0, 0, tzinfo=timezone.utc)
+        for value in (None, "", "not-rfc3339", 42):
+            with self.subTest(fallback=value), patch.object(
+                self.module, "_utcnow", return_value=fallback
+            ):
+                execution = (
+                    {"properties": {}}
+                    if value is None
+                    else {"properties": {"startTime": value}}
+                )
+                self.assertIs(self.module._execution_start_time(execution), fallback)
 
     async def test_start_builds_trusted_template_and_rejects_contract_mismatch(self) -> None:
         policy = self._policy()

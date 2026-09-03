@@ -22,6 +22,7 @@ from unittest.mock import patch
 import yaml
 
 from scripts.tests.test_foundry_mcp_aca_jobs_protocol import _install_stubs
+from azure.mgmt.appcontainers.models import EnvironmentVar as AcaEnvironmentVar
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -30,7 +31,7 @@ SKILL_DIR = SKILL / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
 _install_stubs()
 
-from app.models import Policy, TaskRecord
+from app.models import Policy
 
 
 class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
@@ -52,8 +53,32 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _env_items(values: dict[str, str]) -> list[SimpleNamespace]:
-        return [SimpleNamespace(name=name, value=value) for name, value in values.items()]
+    def _env_items(
+        values: dict[str, str],
+        *,
+        mappings: bool = False,
+    ) -> list[AcaEnvironmentVar] | list[dict[str, str]]:
+        if mappings:
+            return [{"name": name, "value": value} for name, value in values.items()]
+        return [
+            AcaEnvironmentVar({"name": name, "value": value})
+            for name, value in values.items()
+        ]
+
+    @staticmethod
+    def _policy_json(image: str, *, second_image: str | None = None) -> str:
+        return json.dumps(
+            {
+                "jobs": {
+                    "short-job": {"image_digest": image},
+                    "second-job": {
+                        "image_digest": second_image if second_image is not None else image
+                    },
+                }
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     @staticmethod
     def _frontmatter_and_body(path: pathlib.Path) -> tuple[dict[str, object], str]:
@@ -77,6 +102,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         job_image: str | None = None,
         app_command: list[str] | None = None,
         job_command: list[str] | None = None,
+        mapping_env: bool = False,
     ) -> SimpleNamespace:
         app_env = {
             "MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth",
@@ -86,6 +112,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME": "cosmos",
             "MCP_ACA_JOBS_CALLBACK_CONTAINER_URL": "https://storage.example.com/outputs-callbacks",
             "MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID": "job-principal-id",
+            "MCP_ACA_JOBS_POLICY_JSON": cls._policy_json(expected_image),
         }
         if app_env_overrides:
             app_env.update(app_env_overrides)
@@ -103,6 +130,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs",
             "MCP_ACA_JOBS_COSMOS_CONTAINER": "tasks",
             "MCP_ACA_JOBS_RESULT_HOSTS": "results.example.com,storage.example.com",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": expected_image,
         }
         if job_env_overrides:
             job_env.update(job_env_overrides)
@@ -122,7 +150,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                             name="mcp",
                             image=app_image or expected_image,
                             command=app_command or ["python", "-m", "app.mcp_server"],
-                            env=cls._env_items(app_env),
+                            env=cls._env_items(app_env, mappings=mapping_env),
                             secrets=[SimpleNamespace(name="APP_SECRET")],
                         )
                     ]
@@ -143,7 +171,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                             name="job",
                             image=job_image or expected_image,
                             command=job_command or ["python", "-m", "app.job_worker"],
-                            env=cls._env_items(job_env),
+                            env=cls._env_items(job_env, mappings=mapping_env),
                             secrets=[SimpleNamespace(name="JOB_SECRET")],
                         )
                     ]
@@ -290,6 +318,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "ssl:",
             "certificate verify failed",
             "tlsv1",
+            "tls handshake eof",
             "server certificate verification failed",
         )
         if not any(marker in lower for marker in transport_markers):
@@ -342,7 +371,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.3")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.4")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -426,6 +455,21 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("[foundry-mcp-aca](../foundry-mcp-aca/SKILL.md)", body)
         self.assertNotIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
         self.assertIn("[foundry-prompt-agents](../foundry-prompt-agents/SKILL.md)", body)
+        compatibility = body.split("### Compatibility tools", 1)[1].split(
+            "## Control record and lifecycle",
+            1,
+        )[0]
+        for response_contract in (
+            "`start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, and `pollAfterMs`",
+            "`get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, and `updatedAt`",
+            "`cancel_aca_job` returns exactly `taskId`, `status`, and `cancellationRequested`",
+            "Never return the internal `TaskRecord`",
+        ):
+            self.assertIn(response_contract, compatibility)
+        prompt_fm, _ = self._frontmatter_and_body(
+            ROOT / "skills" / "foundry-prompt-agents" / "SKILL.md"
+        )
+        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.9")
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
@@ -864,18 +908,16 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn('assert "start_aca_job" in evidence', fixture)
         self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
 
-    def test_legacy_fallback_reads_serialized_task_record_lifecycle_alias(self) -> None:
+    def test_legacy_fallback_reads_public_status_field(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
             encoding="utf-8"
         )
-        lifecycle_alias = TaskRecord.model_fields["lifecycle_state"].alias
-        self.assertEqual(lifecycle_alias, "lifecycleState")
         fallback = fixture.split("    fallback = dict(request)", 1)[1].split(
             "    callback_url = (", 1
         )[0]
 
-        self.assertEqual(fallback.count(f'cancelled["{lifecycle_alias}"]'), 2)
-        self.assertNotIn('cancelled["status"]', fallback)
+        self.assertEqual(fallback.count('cancelled["status"]'), 2)
+        self.assertNotIn('cancelled["lifecycleState"]', fallback)
 
     def test_agent_smoke_input_refs_are_uploaded_before_invocation(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
@@ -1753,12 +1795,22 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
 
         dockerfile = (templates / "Dockerfile").read_text(encoding="utf-8")
-        self.assertTrue(dockerfile.startswith("FROM python:3.12-slim"))
+        python_image = (
+            "python:3.12-slim@sha256:"
+            "78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea"
+        )
+        uv_image = (
+            "ghcr.io/astral-sh/uv:0.12.6@sha256:"
+            "88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d"
+        )
+        self.assertTrue(dockerfile.startswith(f"FROM {python_image}\n"))
         self.assertEqual(dockerfile.count("FROM "), 1)
         self.assertIn("WORKDIR /srv", dockerfile)
-        self.assertIn("COPY pyproject.toml .", dockerfile)
+        self.assertIn(f"COPY --from={uv_image} /uv /uvx /bin/", dockerfile)
+        self.assertIn("COPY pyproject.toml uv.lock ./", dockerfile)
         self.assertIn("COPY app ./app", dockerfile)
-        self.assertIn("RUN pip install --no-cache-dir .", dockerfile)
+        self.assertIn("RUN uv sync --frozen --no-dev --no-editable", dockerfile)
+        self.assertIn('ENV PATH="/srv/.venv/bin:$PATH"', dockerfile)
         self.assertIn("RUN python -m py_compile app/*.py", dockerfile)
         self.assertIn("RUN useradd --create-home --shell /usr/sbin/nologin appuser", dockerfile)
         self.assertIn("USER appuser", dockerfile)
@@ -1769,11 +1821,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn("ADD ", dockerfile)
         self.assertNotIn("ARG ", dockerfile)
         self.assertNotIn("--mount=type=secret", dockerfile)
+        self.assertNotIn("pip install", dockerfile)
         for token in ("SECRET", "TOKEN", "PASSWORD", "GITHUB_TOKEN", "AZURE_CLIENT_SECRET"):
             self.assertNotIn(token, dockerfile)
-        self.assertLess(dockerfile.index("COPY pyproject.toml ."), dockerfile.index("RUN pip install --no-cache-dir ."))
-        self.assertLess(dockerfile.index("COPY app ./app"), dockerfile.index("RUN pip install --no-cache-dir ."))
-        self.assertLess(dockerfile.index("RUN pip install --no-cache-dir ."), dockerfile.index("RUN python -m py_compile app/*.py"))
+        self.assertLess(dockerfile.index("COPY pyproject.toml uv.lock ./"), dockerfile.index("RUN uv sync --frozen --no-dev --no-editable"))
+        self.assertLess(dockerfile.index("COPY app ./app"), dockerfile.index("RUN uv sync --frozen --no-dev --no-editable"))
+        self.assertLess(dockerfile.index("RUN uv sync --frozen --no-dev --no-editable"), dockerfile.index("RUN python -m py_compile app/*.py"))
         self.assertLess(dockerfile.index("RUN python -m py_compile app/*.py"), dockerfile.index("USER appuser"))
         self.assertLess(dockerfile.index("USER appuser"), dockerfile.index('CMD ["python", "-m", "app.mcp_server"]'))
 
@@ -1904,7 +1957,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("jobUami", identity)
         self.assertIn("roleDefinition", identity)
         self.assertIn("assignableScopes", identity)
-        self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", identity)
+        self.assertNotIn("callbackStorageContainerName", identity)
         self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", assignments)
 
         job_role = self._extract_bicep_block(identity, "jobRoleDefinition")
@@ -2509,14 +2562,24 @@ param callbackConfig = {{
             name="mcp",
             image=image_name,
             command=["python", "-m", "app.mcp_server"],
-            env=[SimpleNamespace(name="APP_ENV", value="1")],
+            env=self._env_items(
+                {
+                    "MCP_ACA_JOBS_POLICY_JSON": self._policy_json(expected_image),
+                    "APP_ENV": "1",
+                }
+            ),
             secrets=[SimpleNamespace(name="APP_SECRET", value="redacted")],
         )
         job_container = SimpleNamespace(
             name="job",
             image=image_name,
             command=["python", "-m", "app.job_worker"],
-            env=[SimpleNamespace(name="JOB_ENV", value="1")],
+            env=self._env_items(
+                {
+                    "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": expected_image,
+                    "JOB_ENV": "1",
+                }
+            ),
             secrets=[SimpleNamespace(name="JOB_SECRET", value="redacted")],
         )
         app_identity = SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}})
@@ -2605,8 +2668,22 @@ param callbackConfig = {{
         self.assertEqual(app_updates[0][2].properties.template.containers[0].image, expected_image)
         self.assertIsNone(app_updates[0][2].properties.template.revision_suffix)
         self.assertEqual(job_updates[0][2].properties.template.containers[0].image, expected_image)
+        updated_policy = json.loads(
+            app_updates[0][2].properties.template.containers[0].env[0].value
+        )
+        self.assertEqual(
+            {
+                value["image_digest"]
+                for value in updated_policy["jobs"].values()
+            },
+            {expected_image},
+        )
+        self.assertEqual(
+            job_updates[0][2].properties.template.containers[0].env[0].value,
+            expected_image,
+        )
         self.assertEqual(app.properties.template.revision_suffix, "azd-existing")
-        self.assertEqual(app.properties.template.containers[0].env[0].value, "1")
+        self.assertEqual(app.properties.template.containers[0].env[1].value, "1")
         self.assertEqual(job.properties.template.containers[0].secrets[0].name, "JOB_SECRET")
 
     def test_converge_image_rejects_invalid_tag_digest_and_contract_drift(self) -> None:
@@ -2641,7 +2718,14 @@ param callbackConfig = {{
                             name="mcp",
                             image="myregistry.azurecr.us/mcp/service@sha256:" + "c" * 64,
                             command=["python", "-m", "app.other_server"],
-                            env=[],
+                            env=self._env_items(
+                                {
+                                    "MCP_ACA_JOBS_POLICY_JSON": self._policy_json(
+                                        "myregistry.azurecr.us/mcp/service@sha256:"
+                                        + "b" * 64
+                                    )
+                                }
+                            ),
                             secrets=[],
                         )
                     ]
@@ -2658,7 +2742,14 @@ param callbackConfig = {{
                             name="job",
                             image="myregistry.azurecr.us/mcp/service@sha256:" + "c" * 64,
                             command=["python", "-m", "app.job_worker"],
-                            env=[],
+                            env=self._env_items(
+                                {
+                                    "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": (
+                                        "myregistry.azurecr.us/mcp/service@sha256:"
+                                        + "b" * 64
+                                    )
+                                }
+                            ),
                             secrets=[],
                         )
                     ]
@@ -2696,6 +2787,190 @@ param callbackConfig = {{
                 client_factory=lambda credential, subscription_id: client,
             )
 
+    def test_converge_image_updates_stale_policy_and_job_env_with_mapping_env_shapes(self) -> None:
+        module = self._load_script(
+            "converge_image.py",
+            "foundry_mcp_aca_jobs_converge_image_mapping_policy",
+        )
+        manifest_digest = "sha256:" + "d" * 64
+        expected_image = "myregistry.azurecr.us/mcp/service@" + manifest_digest
+        stale_image = "myregistry.azurecr.us/mcp/service@sha256:" + "c" * 64
+        app = {
+            "identity": {"userAssignedIdentities": {"app-id": {}}},
+            "properties": {
+                "template": {
+                    "revisionSuffix": "app-revision",
+                    "containers": [
+                        {
+                            "name": "mcp",
+                            "image": expected_image,
+                            "command": ["python", "-m", "app.mcp_server"],
+                            "env": [
+                                {
+                                    "name": "MCP_ACA_JOBS_POLICY_JSON",
+                                    "value": self._policy_json(
+                                        stale_image,
+                                        second_image=expected_image,
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        job = {
+            "identity": {"userAssignedIdentities": {"job-id": {}}},
+            "properties": {
+                "template": {
+                    "revisionSuffix": "job-value-must-remain",
+                    "containers": [
+                        {
+                            "name": "job",
+                            "image": expected_image,
+                            "command": ["python", "-m", "app.job_worker"],
+                            "env": [
+                                {
+                                    "name": "MCP_ACA_JOBS_JOB_IMAGE_DIGEST",
+                                    "value": stale_image,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+        app_updates: list[dict[str, object]] = []
+        job_updates: list[dict[str, object]] = []
+        client = SimpleNamespace(
+            container_apps=SimpleNamespace(
+                get=lambda resource_group, name: app,
+                begin_create_or_update=lambda resource_group, name, body: (
+                    app_updates.append(body)
+                    or SimpleNamespace(result=lambda: body)
+                ),
+            ),
+            jobs=SimpleNamespace(
+                get=lambda resource_group, name: job,
+                begin_create_or_update=lambda resource_group, name, body: (
+                    job_updates.append(body)
+                    or SimpleNamespace(result=lambda: body)
+                ),
+            ),
+        )
+
+        result = module.converge_image(
+            run=lambda *args, **kwargs: SimpleNamespace(
+                stdout=json.dumps(self._azd_env_values()),
+                returncode=0,
+            ),
+            check_output=lambda *args, **kwargs: manifest_digest,
+            credential_factory=lambda: object(),
+            client_factory=lambda credential, subscription_id: client,
+        )
+
+        self.assertEqual(result, expected_image)
+        self.assertEqual(len(app_updates), 1)
+        self.assertEqual(len(job_updates), 1)
+        app_template = app_updates[0]["properties"]["template"]
+        job_template = job_updates[0]["properties"]["template"]
+        self.assertNotIn("revisionSuffix", app_template)
+        self.assertEqual(job_template["revisionSuffix"], "job-value-must-remain")
+        app_container = app_template["containers"][0]
+        job_container = job_template["containers"][0]
+        self.assertEqual(app_container["image"], expected_image)
+        self.assertEqual(job_container["image"], expected_image)
+        policy = json.loads(app_container["env"][0]["value"])
+        self.assertEqual(
+            {
+                entry["image_digest"]
+                for entry in policy["jobs"].values()
+            },
+            {expected_image},
+        )
+        self.assertEqual(job_container["env"][0]["value"], expected_image)
+        self.assertEqual(
+            json.loads(app["properties"]["template"]["containers"][0]["env"][0]["value"])[
+                "jobs"
+            ]["short-job"]["image_digest"],
+            stale_image,
+        )
+        self.assertEqual(
+            job["properties"]["template"]["containers"][0]["env"][0]["value"],
+            stale_image,
+        )
+
+    def test_converge_image_rejects_invalid_policy_shapes_before_any_update(self) -> None:
+        module = self._load_script(
+            "converge_image.py",
+            "foundry_mcp_aca_jobs_converge_image_invalid_policy",
+        )
+        manifest_digest = "sha256:" + "d" * 64
+        expected_image = "myregistry.azurecr.us/mcp/service@" + manifest_digest
+        invalid_policies = (
+            "{",
+            "{}",
+            '{"jobs":[]}',
+            '{"jobs":{}}',
+            '{"jobs":{"short-job":[]}}',
+            '{"jobs":{"short-job":{}}}',
+            '{"jobs":{"short-job":{"image_digest":"repo:tag"}}}',
+        )
+
+        for invalid_policy in invalid_policies:
+            with self.subTest(policy=invalid_policy):
+                client = self._verify_deployment_client(
+                    expected_image=expected_image,
+                    app_env_overrides={
+                        "MCP_ACA_JOBS_POLICY_JSON": invalid_policy
+                    },
+                )
+                app_updates: list[object] = []
+                job_updates: list[object] = []
+                client.container_apps.begin_create_or_update = (
+                    lambda *args: app_updates.append(args)
+                )
+                client.jobs.begin_create_or_update = (
+                    lambda *args: job_updates.append(args)
+                )
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "MCP_ACA_JOBS_POLICY_JSON",
+                ):
+                    module.converge_image(
+                        run=lambda *args, **kwargs: SimpleNamespace(
+                            stdout=json.dumps(self._azd_env_values()),
+                            returncode=0,
+                        ),
+                        check_output=lambda *args, **kwargs: manifest_digest,
+                        credential_factory=lambda: object(),
+                        client_factory=lambda credential, subscription_id: client,
+                    )
+                self.assertEqual(app_updates, [])
+                self.assertEqual(job_updates, [])
+
+        client = self._verify_deployment_client(expected_image=expected_image)
+        job = client.jobs.get("rg-jobs", "mcp-job")
+        job.properties.template.containers[0].env = [
+            item
+            for item in job.properties.template.containers[0].env
+            if item.name != "MCP_ACA_JOBS_JOB_IMAGE_DIGEST"
+        ]
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST",
+        ):
+            module.converge_image(
+                run=lambda *args, **kwargs: SimpleNamespace(
+                    stdout=json.dumps(self._azd_env_values()),
+                    returncode=0,
+                ),
+                check_output=lambda *args, **kwargs: manifest_digest,
+                credential_factory=lambda: object(),
+                client_factory=lambda credential, subscription_id: client,
+            )
+
     def test_converge_image_is_idempotent_when_both_resources_match(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_idempotent")
         env_values = self._azd_env_values()
@@ -2711,7 +2986,13 @@ param callbackConfig = {{
                             name="mcp",
                             image=expected_image,
                             command=["python", "-m", "app.mcp_server"],
-                            env=[],
+                            env=self._env_items(
+                                {
+                                    "MCP_ACA_JOBS_POLICY_JSON": self._policy_json(
+                                        expected_image
+                                    )
+                                }
+                            ),
                             secrets=[],
                         )
                     ]
@@ -2728,7 +3009,11 @@ param callbackConfig = {{
                             name="job",
                             image=expected_image,
                             command=["python", "-m", "app.job_worker"],
-                            env=[],
+                            env=self._env_items(
+                                {
+                                    "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": expected_image
+                                }
+                            ),
                             secrets=[],
                         )
                     ]
@@ -2823,19 +3108,24 @@ param callbackConfig = {{
     def test_verify_deployment_reads_expected_digest_from_process_env_and_prints_markers(self) -> None:
         module = self._load_script("verify_deployment.py", "foundry_mcp_aca_jobs_verify_deployment")
         expected_image = "myregistry.azurecr.us/mcp/service@sha256:" + "e" * 64
-        client = self._verify_deployment_client(expected_image=expected_image)
-        stdout = io.StringIO()
+        for mapping_env in (False, True):
+            with self.subTest(mapping_env=mapping_env):
+                client = self._verify_deployment_client(
+                    expected_image=expected_image,
+                    mapping_env=mapping_env,
+                )
+                stdout = io.StringIO()
 
-        with patch.dict(os.environ, {"EXPECTED_IMAGE_DIGEST": expected_image}, clear=False):
-            result = module.verify_deployment(
-                run=lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(self._azd_env_values()), returncode=0),
-                credential_factory=lambda: object(),
-                client_factory=lambda credential, subscription_id: client,
-                stdout=stdout,
-            )
+                with patch.dict(os.environ, {"EXPECTED_IMAGE_DIGEST": expected_image}, clear=False):
+                    result = module.verify_deployment(
+                        run=lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(self._azd_env_values()), returncode=0),
+                        credential_factory=lambda: object(),
+                        client_factory=lambda credential, subscription_id: client,
+                        stdout=stdout,
+                    )
 
-        self.assertIsNone(result)
-        self.assertEqual(stdout.getvalue().splitlines(), ["SHARED_IMAGE_DIGEST_MATCH", "ENTRYPOINTS_MATCH"])
+                self.assertIsNone(result)
+                self.assertEqual(stdout.getvalue().splitlines(), ["SHARED_IMAGE_DIGEST_MATCH", "ENTRYPOINTS_MATCH"])
 
     def test_verify_deployment_rejects_contract_drift_without_printing_markers(self) -> None:
         module = self._load_script("verify_deployment.py", "foundry_mcp_aca_jobs_verify_deployment_drift")
@@ -2848,6 +3138,42 @@ param callbackConfig = {{
             ("app auth mode drift", {"app_env_overrides": {"MCP_ACA_JOBS_AUTH_MODE": "broken"}}, "app easy-auth mode missing"),
             ("job auth mode drift", {"job_env_overrides": {"MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth"}}, "job must not inherit app easy-auth mode"),
             ("callback auth mode drift", {"job_env_overrides": {"MCP_ACA_JOBS_CALLBACK_AUTH_MODE": "bogus"}}, "job callback auth mode invalid"),
+            (
+                "app policy image drift",
+                {
+                    "app_env_overrides": {
+                        "MCP_ACA_JOBS_POLICY_JSON": self._policy_json(
+                            expected_image,
+                            second_image=(
+                                "myregistry.azurecr.us/mcp/service@sha256:"
+                                + "f" * 64
+                            ),
+                        )
+                    }
+                },
+                "app policy image digest mismatch",
+            ),
+            (
+                "app policy invalid",
+                {
+                    "app_env_overrides": {
+                        "MCP_ACA_JOBS_POLICY_JSON": '{"jobs":[]}'
+                    }
+                },
+                "MCP_ACA_JOBS_POLICY_JSON",
+            ),
+            (
+                "job digest env drift",
+                {
+                    "job_env_overrides": {
+                        "MCP_ACA_JOBS_JOB_IMAGE_DIGEST": (
+                            "myregistry.azurecr.us/mcp/service@sha256:"
+                            + "f" * 64
+                        )
+                    }
+                },
+                "job image digest environment mismatch",
+            ),
             (
                 "storage url drift",
                 {"job_env_overrides": {"MCP_ACA_JOBS_OUTPUT_CONTAINER_URL": "https://storage.example.com/outputs-callbacks"}},
@@ -2878,6 +3204,7 @@ param callbackConfig = {{
             context = pathlib.Path(temp_dir)
             shutil.copy2(self._template_dir() / "Dockerfile", context / "Dockerfile")
             shutil.copy2(self._template_dir() / "pyproject.toml", context / "pyproject.toml")
+            shutil.copy2(self._template_dir() / "uv.lock", context / "uv.lock")
             shutil.copytree(self._reference_app_dir(), context / "app")
 
             build = subprocess.run(
@@ -2942,19 +3269,31 @@ param callbackConfig = {{
         self.assertIsNone(self._docker_blocker_excerpt(package_output))
 
     def test_docker_blocker_classifier_allows_dns_only_with_env(self) -> None:
-        dns_output = (
-            "WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, "
-            "status=None)) after connection broken by 'NewConnectionError("
-            "<urllib3.connection.HTTPSConnection object at 0x0>: "
-            "Failed to establish a new connection: [Errno -2] Temporary failure in name resolution'"
+        network_outputs = (
+            (
+                "WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, "
+                "status=None)) after connection broken by 'NewConnectionError("
+                "<urllib3.connection.HTTPSConnection object at 0x0>: "
+                "Failed to establish a new connection: [Errno -2] Temporary failure in name resolution'"
+            ),
+            (
+                "Failed to download pydantic-core: request failed after 3 retries; "
+                "client error (Connect): tls handshake eof"
+            ),
         )
 
-        self.assertIsNone(self._docker_blocker_excerpt(dns_output))
-
         previous = os.environ.get("ALLOW_NETWORK_DOCKER_SKIP")
-        os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = "1"
         try:
-            self.assertTrue(self._docker_blocker_excerpt(dns_output).startswith("docker-network"))
+            os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)
+            for output in network_outputs:
+                with self.subTest(skip_allowed=False, output=output):
+                    self.assertIsNone(self._docker_blocker_excerpt(output))
+            os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = "1"
+            for output in network_outputs:
+                with self.subTest(skip_allowed=True, output=output):
+                    classified = self._docker_blocker_excerpt(output)
+                    self.assertIsNotNone(classified)
+                    self.assertTrue(classified.startswith("docker-network"))
         finally:
             if previous is None:
                 os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)

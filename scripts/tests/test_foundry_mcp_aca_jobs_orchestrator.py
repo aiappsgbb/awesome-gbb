@@ -281,6 +281,80 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(error.exception.code, "INVALID_INPUT_REFERENCE")
 
+    async def test_start_denies_disallowed_owner_as_invalid_job_type_without_side_effects(self) -> None:
+        store = types.SimpleNamespace(
+            create_or_get=AsyncMock(
+                side_effect=AssertionError("denied owner must not reach the store")
+            )
+        )
+        restricted_job = self.policy.jobs["import"].model_copy(
+            update={"allowed_owner_scopes": {"owner-allowed"}}
+        )
+        restricted_policy = self.policy.model_copy(
+            update={"jobs": {"import": restricted_job}}
+        )
+        orchestrator = Orchestrator(
+            store,
+            self.jobs,
+            restricted_policy,
+            self.clock,
+            sleep=self.sleep,
+        )
+
+        with self.assertRaises(PublicError) as unknown:
+            await orchestrator.start(
+                self.request.model_copy(update={"job_type": "unknown"}),
+                self.owner_scope,
+            )
+        with self.assertRaises(PublicError) as denied:
+            await orchestrator.start(self.request, self.owner_scope)
+
+        self.assertEqual(
+            (denied.exception.code, denied.exception.safe_message),
+            (unknown.exception.code, unknown.exception.safe_message),
+        )
+        self.assertEqual(denied.exception.code, "INVALID_JOB_TYPE")
+        store.create_or_get.assert_not_awaited()
+        self.jobs.start.assert_not_awaited()
+
+    async def test_start_allows_listed_owner_and_none_remains_unrestricted(self) -> None:
+        for label, allowed_owner_scopes in (
+            ("listed", {self.owner_scope}),
+            ("unrestricted", None),
+        ):
+            with self.subTest(label=label):
+                store = InMemoryControlStore()
+                jobs = FakeJobs()
+                job_policy = self.policy.jobs["import"].model_copy(
+                    update={"allowed_owner_scopes": allowed_owner_scopes}
+                )
+                policy = self.policy.model_copy(
+                    update={"jobs": {"import": job_policy}}
+                )
+                jobs.start.return_value = self._make_execution(
+                    execution_id=f"exec-{label}",
+                    status="Processing",
+                    start_time=self.fixed_now,
+                    task_id=f"task-{label}",
+                )
+                orchestrator = Orchestrator(
+                    store,
+                    jobs,
+                    policy,
+                    self.clock,
+                    sleep=self.sleep,
+                )
+
+                record = await orchestrator.start(
+                    self.request.model_copy(
+                        update={"idempotency_key": f"key-{label}"}
+                    ),
+                    self.owner_scope,
+                )
+
+                self.assertEqual(record.aca_execution_id, f"exec-{label}")
+                jobs.start.assert_awaited_once()
+
     async def test_start_definitive_rejection_persists_failed_and_raises(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)

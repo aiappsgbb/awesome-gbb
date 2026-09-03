@@ -57,7 +57,6 @@ var blobDataContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Auth
 var keyVaultUserRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var customRoleDefinitionGuid = guid(subscription().id, roleDefinitionName)
 var customRoleDefinitionResourceId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', customRoleDefinitionGuid)
-var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 
 module appUami './identity-rbac/uami.bicep' = if (createIdentities) {
   name: 'appUami'

@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.3.3"
+  version: "1.3.4"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -116,6 +116,15 @@ For clients without MCP Tasks, expose the explicit tools:
 
 These tools are a compatibility path, not a second workflow model. They still
 write the same control record and still persist results through the same worker.
+Their public response shapes are closed:
+
+- `start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, and `pollAfterMs` (`2000`).
+- `get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, and `updatedAt`.
+- `cancel_aca_job` returns exactly `taskId`, `status`, and `cancellationRequested` (`true`).
+
+`status` is the public lifecycle value (`Accepted`, `Starting`, `Running`,
+`Succeeded`, `Failed`, or `Cancelled`). Never return the internal `TaskRecord`
+or expose owner scopes, hashes, worker tokens, ETags, or internal timestamps.
 
 ## Control record and lifecycle
 

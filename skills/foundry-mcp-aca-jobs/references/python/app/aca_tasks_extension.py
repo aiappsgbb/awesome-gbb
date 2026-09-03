@@ -9,7 +9,6 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from dataclasses import dataclass
-import sys
 from typing import Any
 
 from fastmcp.server.context import Context
@@ -152,12 +151,6 @@ def _task_model(name: str) -> type[Any]:
         task_models = None
     if task_models is not None and hasattr(task_models, name):
         return getattr(task_models, name)
-    for module_name, module in sys.modules.items():
-        if "test_foundry_mcp_aca_jobs" not in module_name or module is None:
-            continue
-        candidate = getattr(module, name, None)
-        if isinstance(candidate, type):
-            return candidate
     return globals()[name]
 
 

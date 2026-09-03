@@ -94,6 +94,11 @@ class Orchestrator:
 
     async def start(self, request: StartRequest, owner_scope: str) -> TaskRecord:
         job_policy = self._policy.job(request.job_type)
+        if (
+            job_policy.allowed_owner_scopes is not None
+            and owner_scope not in job_policy.allowed_owner_scopes
+        ):
+            raise PublicError("INVALID_JOB_TYPE", "job type is not allowlisted")
         self._policy.callback(request.callback_alias)
         validated_input = self._policy.validate_input(request.input_ref)
 

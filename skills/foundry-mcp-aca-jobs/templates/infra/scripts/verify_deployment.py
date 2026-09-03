@@ -26,6 +26,8 @@ from converge_image import (
     _find_container,
     _identity_ids,
     _container_apps_client,
+    _policy_image_digests,
+    _required_env_value,
     load_azd_env_values,
 )
 
@@ -162,6 +164,19 @@ def verify_deployment(
     _ensure(_container_command(app_container) == ["python", "-m", "app.mcp_server"], "app entrypoint mismatch")
     _ensure(_container_command(job_container) == ["python", "-m", "app.job_worker"], "job entrypoint mismatch")
     _ensure(_identity_ids(app) != _identity_ids(job), "app and job must use distinct UAMI IDs")
+    _ensure(
+        all(image == expected_image for image in _policy_image_digests(app)),
+        "app policy image digest mismatch",
+    )
+    _ensure(
+        _required_env_value(
+            job,
+            "job",
+            "MCP_ACA_JOBS_JOB_IMAGE_DIGEST",
+        )
+        == expected_image,
+        "job image digest environment mismatch",
+    )
     _assert_easy_auth_contract(auth_config)
     _assert_env_contracts(app, job)
 

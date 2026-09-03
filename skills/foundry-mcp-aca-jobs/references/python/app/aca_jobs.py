@@ -27,7 +27,7 @@ def _utcnow() -> datetime:
 
 def _normalize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).replace(microsecond=0)
 
 
@@ -103,9 +103,30 @@ def _execution_status(response: Any) -> AcaExecutionStatus:
 
 
 def _execution_start_time(response: Any) -> datetime:
-    raw = _raw_value(_raw_value(response, "properties", response), "start_time")
+    properties = _raw_value(response, "properties", response)
+    raw = None
+    if isinstance(properties, Mapping):
+        for name in ("startTime", "start_time"):
+            if name in properties:
+                raw = properties[name]
+                break
+    else:
+        for name in ("start_time", "startTime"):
+            if hasattr(properties, name):
+                raw = getattr(properties, name)
+                break
     if isinstance(raw, datetime):
         return _normalize_datetime(raw)
+    if isinstance(raw, str) and raw.strip():
+        value = raw.strip()
+        if value.endswith(("Z", "z")):
+            value = value[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            parsed = None
+        if parsed is not None and parsed.tzinfo is not None:
+            return _normalize_datetime(parsed)
     return _utcnow()
 
 

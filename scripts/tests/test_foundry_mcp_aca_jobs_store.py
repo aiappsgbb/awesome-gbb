@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from azure.core import MatchConditions
+from azure.cosmos.aio._container import _build_options as build_cosmos_options
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +76,9 @@ class _ContainerProxy:
 
 class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        match_conditions_patch = patch("app.control_store.MatchConditions", MatchConditions)
+        match_conditions_patch.start()
+        self.addCleanup(match_conditions_patch.stop)
         fixed = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
         with patch("app.models._utcnow", return_value=fixed):
             self.task = TaskRecord.new(
@@ -327,9 +331,9 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(container.replace_item.await_args.kwargs["item"], str(self.task.task_id))
         self.assertEqual(container.replace_item.await_args.kwargs["body"], self._task_document(callback_update))
         self.assertEqual(container.replace_item.await_args.kwargs["etag"], "9")
-        self.assertIn(
-            str(container.replace_item.await_args.kwargs["match_condition"]),
-            {"2", "IfNotModified", "MatchConditions.IfNotModified"},
+        self.assertIs(
+            container.replace_item.await_args.kwargs["match_condition"],
+            MatchConditions.IfNotModified,
         )
 
         container.read_item.reset_mock()
@@ -377,9 +381,9 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(container.replace_item.await_args.kwargs["item"], str(self.task.task_id))
         self.assertEqual(container.replace_item.await_args.kwargs["body"], replace_body)
         self.assertEqual(container.replace_item.await_args.kwargs["etag"], "9")
-        self.assertIn(
-            str(container.replace_item.await_args.kwargs["match_condition"]),
-            {"2", "IfNotModified", "MatchConditions.IfNotModified"},
+        self.assertIs(
+            container.replace_item.await_args.kwargs["match_condition"],
+            MatchConditions.IfNotModified,
         )
 
         container.read_item.reset_mock()
@@ -414,10 +418,48 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(container.replace_item.await_args.kwargs["item"], str(self.task.task_id))
             self.assertEqual(container.replace_item.await_args.kwargs["body"], replace_body)
             self.assertEqual(container.replace_item.await_args.kwargs["etag"], "9")
-            self.assertIn(
-                str(container.replace_item.await_args.kwargs["match_condition"]),
-                {"2", "IfNotModified", "MatchConditions.IfNotModified"},
+            self.assertIs(
+                container.replace_item.await_args.kwargs["match_condition"],
+                MatchConditions.IfNotModified,
             )
+
+    async def test_cosmos_replace_builds_real_sdk_if_match_options(self) -> None:
+        class SdkOptionContainer(_ContainerProxy):
+            def __init__(self) -> None:
+                super().__init__()
+                del self.replace_item
+                self.sdk_options: dict[str, object] | None = None
+
+            async def replace_item(
+                self,
+                *,
+                item: str,
+                body: dict[str, object],
+                etag: str,
+                match_condition: object,
+            ) -> dict[str, object]:
+                self.sdk_options = build_cosmos_options(
+                    {"etag": etag, "match_condition": match_condition}
+                )
+                return {**body, "_etag": "10"}
+
+        container = SdkOptionContainer()
+        current = self.task.model_copy(
+            update={"lifecycle_state": LifecycleState.RUNNING, "etag": "9"}
+        )
+        container.read_item.return_value = self._cosmos_document(current, etag="9")
+        store = CosmosControlStore(container)
+
+        replaced = await store.replace(current, "9")
+
+        self.assertEqual(replaced.etag, "10")
+        self.assertEqual(
+            container.sdk_options,
+            {
+                "operationStartTime": container.sdk_options["operationStartTime"],
+                "accessCondition": {"type": "IfMatch", "condition": "9"},
+            },
+        )
 
 
 if __name__ == "__main__":
