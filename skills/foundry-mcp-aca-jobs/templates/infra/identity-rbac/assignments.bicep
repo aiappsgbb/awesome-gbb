@@ -40,11 +40,17 @@ param blobDataContributorRoleDefinitionId string
 @description('Built-in Key Vault secrets user role definition ID.')
 param keyVaultUserRoleDefinitionId string
 
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+@description('Create ACR, storage, and optional Key Vault assignments in this resource group.')
+param createPlatformAssignments bool = true
+
+@description('Create Cosmos data-plane assignments in this resource group.')
+param createCosmosAssignments bool = true
+
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (createPlatformAssignments) {
   name: acrName
 }
 
-resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = {
+resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = if (createCosmosAssignments) {
   name: cosmosAccountName
 }
 
@@ -52,30 +58,30 @@ var cosmosDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/000
 var cosmosDataContributorScope = '${cosmos.id}/dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}'
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = if (createPlatformAssignments) {
   name: storageAccountName
 }
 
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' existing = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' existing = if (createPlatformAssignments) {
   parent: storageAccount
   name: 'default'
 }
 
-resource outputStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+resource outputStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = if (createPlatformAssignments) {
   parent: blobService
   name: outputStorageContainerName
 }
 
-resource callbackStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+resource callbackStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = if (createPlatformAssignments) {
   parent: blobService
   name: callbackStorageContainerName
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (!empty(keyVaultName)) {
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (createPlatformAssignments && !empty(keyVaultName)) {
   name: keyVaultName
 }
 
-resource appAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource appAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createPlatformAssignments) {
   scope: acr
   name: guid(acr.id, appPrincipalId, acrPullRoleDefinitionId)
   properties: {
@@ -85,7 +91,7 @@ resource appAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource jobAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource jobAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createPlatformAssignments) {
   scope: acr
   name: guid(acr.id, jobPrincipalId, acrPullRoleDefinitionId)
   properties: {
@@ -95,7 +101,7 @@ resource jobAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource appCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = {
+resource appCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = if (createCosmosAssignments) {
   parent: cosmos
   name: guid(cosmos.id, appPrincipalId, cosmosDataContributorRoleDefinitionId)
   properties: {
@@ -105,7 +111,7 @@ resource appCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments
   }
 }
 
-resource jobCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = {
+resource jobCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = if (createCosmosAssignments) {
   parent: cosmos
   name: guid(cosmos.id, jobPrincipalId, cosmosDataContributorRoleDefinitionId)
   properties: {
@@ -115,7 +121,7 @@ resource jobCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments
   }
 }
 
-resource appBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource appBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createPlatformAssignments) {
   scope: callbackStorageContainer
   name: guid(callbackStorageContainer.id, appPrincipalId, blobDataContributorRoleDefinitionId)
   properties: {
@@ -125,7 +131,7 @@ resource appBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource jobBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource jobBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createPlatformAssignments) {
   scope: outputStorageContainer
   name: guid(outputStorageContainer.id, jobPrincipalId, blobDataContributorRoleDefinitionId)
   properties: {
@@ -135,7 +141,7 @@ resource jobBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource jobKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(keyVaultName)) {
+resource jobKeyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createPlatformAssignments && !empty(keyVaultName)) {
   scope: keyVault
   name: guid(keyVault.id, jobPrincipalId, keyVaultUserRoleDefinitionId)
   properties: {

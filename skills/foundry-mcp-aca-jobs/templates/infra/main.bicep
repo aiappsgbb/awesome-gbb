@@ -3,8 +3,11 @@
 
 targetScope = 'subscription'
 
-@description('Resource group containing the existing ACR, ACA environment, storage account, and deployed runtime modules.')
+@description('Resource group receiving the MCP app, ACA Job, and their managed identities.')
 param resourceGroupName string
+
+@description('Resource group containing existing brownfield ACR, ACA environment, storage, and optionally Cosmos resources. Defaults to the deployment resource group for greenfield use.')
+param platformResourceGroupName string = resourceGroupName
 
 @description('Deployment location for the runtime resources.')
 param location string
@@ -21,7 +24,7 @@ param storageAccountName string
 @description('Existing blob storage account URL used for job output and callback capture.')
 param storageAccountUrl string
 
-@description('Existing blob container name used for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
+@description('Blob container name to create for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
 @maxLength(53)
 param outputStorageContainerName string
 
@@ -265,12 +268,12 @@ var jobEnvironmentVariables = concat([
 ])
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  scope: resourceGroup(resourceGroupName)
+  scope: resourceGroup(platformResourceGroupName)
   name: acrName
 }
 
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
-  scope: resourceGroup(resourceGroupName)
+  scope: resourceGroup(platformResourceGroupName)
   name: environmentName
 }
 
@@ -290,7 +293,7 @@ module identities 'identity-rbac.bicep' = {
 
 module cosmos 'cosmos.bicep' = {
   name: 'create-cosmos'
-  scope: resourceGroup(resourceGroupName)
+  scope: resourceGroup(cosmosUseExistingAccount ? platformResourceGroupName : resourceGroupName)
   params: {
     name: cosmosAccountName
     location: location
@@ -303,7 +306,7 @@ module cosmos 'cosmos.bicep' = {
 
 module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
   name: 'assign-pre-runtime-rbac'
-  scope: resourceGroup(resourceGroupName)
+  scope: resourceGroup(platformResourceGroupName)
   params: {
     acrName: acrName
     cosmosAccountName: cosmos.outputs.accountName
@@ -317,6 +320,29 @@ module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
     acrPullRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
     blobDataContributorRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
     keyVaultUserRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+    createPlatformAssignments: true
+    createCosmosAssignments: cosmosUseExistingAccount
+  }
+}
+
+module preRuntimeCosmosRbac 'identity-rbac/assignments.bicep' = if (!cosmosUseExistingAccount) {
+  name: 'assign-cosmos-rbac'
+  scope: resourceGroup(resourceGroupName)
+  params: {
+    acrName: acrName
+    cosmosAccountName: cosmos.outputs.accountName
+    cosmosDatabaseName: cosmos.outputs.databaseName
+    cosmosContainerName: cosmos.outputs.containerName
+    storageAccountName: storageAccountName
+    outputStorageContainerName: outputStorageContainerName
+    keyVaultName: ''
+    appPrincipalId: identities.outputs.appUamiPrincipalId
+    jobPrincipalId: identities.outputs.jobUamiPrincipalId
+    acrPullRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    blobDataContributorRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    keyVaultUserRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+    createPlatformAssignments: false
+    createCosmosAssignments: true
   }
 }
 
@@ -338,6 +364,7 @@ module app 'app.bicep' = {
   }
   dependsOn: [
     preRuntimeRbac
+    preRuntimeCosmosRbac
   ]
 }
 
@@ -363,6 +390,7 @@ module job '../../../azd-patterns/references/bicep/aca-job.bicep' = {
   dependsOn: [
     app
     preRuntimeRbac
+    preRuntimeCosmosRbac
   ]
 }
 

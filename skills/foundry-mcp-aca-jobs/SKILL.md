@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.1.2"
+  version: "1.2.0"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -220,6 +220,15 @@ not fork the template shapes here.
 
 Use `azd up` or `azd deploy` to run the converged postdeploy flow. Do not hand
 roll `az` deploy sequences or reimplement the digest convergence logic here.
+
+For a brownfield platform, keep `resourceGroupName` as the child resource group
+that receives the app, Job, and UAMIs, and set `platformResourceGroupName` to
+the resource group containing the existing ACR, Container Apps environment,
+storage account, and optional Cosmos account. The template scopes those
+existing resources explicitly across resource groups while preserving the
+single-resource-group default. The named output and callback blob containers
+are created in the existing storage account; they are not pre-existing
+containers.
 
 ## Operate and observe
 

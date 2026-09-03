@@ -314,6 +314,13 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "uvicorn~=0.52.4",
             ],
         )
+        self.assertEqual(
+            pyproject["dependency-groups"]["fixture"],
+            [
+                "azure-ai-projects~=2.3.0",
+            ],
+        )
+        self.assertTrue((self._template_dir() / "uv.lock").is_file())
 
     def test_skill_frontmatter_and_section_map_match_contract(self) -> None:
         skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
@@ -321,7 +328,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.1.2")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.2.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -465,62 +472,120 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
 
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
-        helper = (SKILL / "test-fixture" / "run_e2e.py").read_text(encoding="utf-8")
         normalized = " ".join(fixture.split())
+        marker = "/tmp/foundry-mcp-aca-jobs-smoke-result"
+        shared_rg = "rg-awesome-gbb-ci"
 
         self.assertIn("## Step -1 — acknowledge the skill contract", fixture)
         self.assertIn('echo "skills/foundry-mcp-aca-jobs/SKILL.md"', fixture)
         self.assertIn("Do NOT browse the repository.", fixture)
         self.assertIn("never invoke `copilot` recursively", fixture)
-        self.assertIn(".foundry-mcp-aca-jobs-smoke-result", fixture)
+        self.assertFalse((SKILL / "test-fixture" / "run_e2e.py").exists())
+        self.assertIn(marker, fixture)
+        self.assertNotIn(".foundry-mcp-aca-jobs-smoke-result", fixture)
+        self.assertNotIn("do not use `/tmp`", fixture.lower())
         self.assertIn("## Step 0 — auth context", fixture)
-        self.assertIn("AZURE_CLIENT_ID", fixture)
-        self.assertIn("AZURE_TENANT_ID", fixture)
-        self.assertIn("AZURE_SUBSCRIPTION_ID", fixture)
-        self.assertIn("ACR_NAME", fixture)
-        self.assertIn("ACR_LOGIN_SERVER", fixture)
-        self.assertIn("FOUNDRY_PROJECT_ENDPOINT", fixture)
-        self.assertIn("AZURE_AI_PROJECT_ID", fixture)
-        self.assertIn("MCP_AUTH_APP_CLIENT_ID", fixture)
-        self.assertIn("MCP_ACA_JOBS_COSMOS_ENDPOINT", fixture)
-        self.assertIn("MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME", fixture)
-        self.assertIn("MCP_ACA_JOBS_STORAGE_ACCOUNT_URL", fixture)
-        self.assertIn("MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME", fixture)
-        self.assertIn("MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME", fixture)
-        self.assertIn("MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT", fixture)
+        required_env = (
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "ACR_LOGIN_SERVER",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "AZURE_AI_PROJECT_ID",
+            "FOUNDRY_MODEL_DEPLOYMENT",
+            "MCP_AUTH_APP_CLIENT_ID",
+            "MCP_ACA_JOBS_COSMOS_ENDPOINT",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL",
+        )
+        for variable in required_env:
+            self.assertIn(
+                f"SMOKE_RESULT=FAIL missing {variable}",
+                fixture,
+                f"{variable} hard precondition needs a deterministic FAIL marker",
+            )
         self.assertIn("brownfield Cosmos CI mode", normalized)
-        self.assertIn("Hard-fail if any required value is missing", normalized)
         self.assertIn("az account show --output table || echo", fixture)
         self.assertIn(
             "azd auth login \\\n  --federated-credential-provider github \\\n  --client-id \"$AZURE_CLIENT_ID\" \\\n  --tenant-id \"$AZURE_TENANT_ID\"",
             fixture,
         )
+        self.assertIn("SMOKE_RESULT=FAIL azd auth login failed", fixture)
         self.assertIn("## Step 1 — goal and constraints", fixture)
         self.assertIn(".scratch/ci-smoke-mcp-jobs-", fixture)
         self.assertIn("uuidgen", fixture)
         self.assertIn("cut -c1-8", fixture)
-        self.assertIn("STATE_FILE=", fixture)
-        self.assertIn("run_e2e.py scaffold", fixture)
-        self.assertIn("run_e2e.py provider", fixture)
-        self.assertIn("run_e2e.py deploy", fixture)
-        self.assertIn("run_e2e.py tasks", fixture)
-        self.assertIn("run_e2e.py prompt-agent", fixture)
-        self.assertIn("run_e2e.py hosted-agent", fixture)
-        self.assertIn("run_e2e.py cleanup", fixture)
+        self.assertIn('CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"', fixture)
+        self.assertIn('az group create --name "$CHILD_RG"', fixture)
+        self.assertIn("--tags cleanup=true created-by=ci-smoke", fixture)
+        self.assertIn('AZURE_RESOURCE_GROUP="$CHILD_RG"', fixture)
+        self.assertIn('MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="rg-awesome-gbb-ci"', fixture)
+        self.assertNotIn(f'AZURE_RESOURCE_GROUP="{shared_rg}"', fixture)
+        self.assertNotRegex(fixture, rf"azd (?:up|deploy|down)[^\n]*{shared_rg}")
         self.assertIn("No repository writes outside `.scratch/`.", fixture)
+        self.assertIn("`uv`", fixture)
+        self.assertIn("uv sync --frozen --group fixture", fixture)
+        self.assertIn("uv run --frozen --group fixture python - <<'PY'", fixture)
+        self.assertNotIn("pip install", fixture)
+        self.assertIn("azd ext install microsoft.foundry", fixture)
+        self.assertIn('select(.id == "microsoft.foundry")', fixture)
+        self.assertIn('select(.id == "azure.ai.agents")', fixture)
         self.assertIn("RBAC_PROVIDER_ACTIONS_MATCH", fixture)
-        self.assertIn("Microsoft.App/jobs/stop/execution/action", fixture)
+        for action in (
+            "Microsoft.App/jobs/read",
+            "Microsoft.App/jobs/start/action",
+            "Microsoft.App/jobs/execution/read",
+            "Microsoft.App/jobs/executions/read",
+            "Microsoft.App/jobs/stop/execution/action",
+        ):
+            self.assertIn(action, fixture)
         self.assertIn("SHARED_IMAGE_DIGEST_MATCH", fixture)
         self.assertIn("ENTRYPOINTS_MATCH", fixture)
-        self.assertIn("TasksClientExtension", fixture)
+        self.assertIn("from fastmcp_tasks.client import TasksClientExtension", fixture)
+        self.assertIn("from fastmcp_tasks.client import call_tool_task", fixture)
+        self.assertIn("extensions=[TasksClientExtension()]", fixture)
+        self.assertIn("await task.wait(timeout=", fixture)
+        self.assertIn("await task.result()", fixture)
+        self.assertIn("await cancel_task.cancel()", fixture)
+        self.assertIn("auth=access_token", fixture)
+        self.assertIn("extensions=[]", fixture)
+        self.assertIn('mode="legacy"', fixture)
+        self.assertIn("resultType", fixture)
         self.assertIn("MCP_TASKS_COMPLETED", fixture)
         self.assertIn("FALLBACK_TOOLS_COMPLETED", fixture)
         self.assertIn("IDEMPOTENCY_DUPLICATE_SAME_TASK", fixture)
         self.assertIn("CALLBACK_PAYLOAD_VALID", fixture)
         self.assertIn("CANCELLATION_TERMINAL", fixture)
-        self.assertIn("PromptAgentDefinition", fixture)
-        self.assertIn("MCPTool", fixture)
-        self.assertIn("FoundryChatClient.get_mcp_tool", fixture)
+        self.assertIn("from azure.ai.projects.models import MCPTool, PromptAgentDefinition", fixture)
+        self.assertIn("definition=PromptAgentDefinition(", fixture)
+        self.assertIn("MCPTool(", fixture)
+        self.assertEqual(
+            fixture.count('headers={"Authorization": "Bearer " + access_token}'),
+            2,
+        )
+        self.assertNotIn('headers={"Authorization": f"Bearer {access_token}"}', fixture)
+        self.assertIn("project.agents.create_version(", fixture)
+        self.assertIn("openai.conversations.create()", fixture)
+        self.assertIn("openai.responses.create(", fixture)
+        self.assertIn("project.agents.delete_version(", fixture)
+        self.assertIn("from agent_framework.foundry import FoundryChatClient", fixture)
+        self.assertIn("from azure.identity import DefaultAzureCredential", fixture)
+        self.assertIn(
+            "from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential",
+            fixture,
+        )
+        self.assertIn(
+            "from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential",
+            fixture,
+        )
+        self.assertIn("token_credential = SyncDefaultAzureCredential()", fixture)
+        self.assertIn("credential=AsyncDefaultAzureCredential()", fixture)
+        self.assertIn("token_credential.get_token(", fixture)
+        self.assertIn('os.environ["MCP_AUTH_AUDIENCE"]', fixture)
+        self.assertIn("client.get_mcp_tool(", fixture)
+        self.assertIn('approval_mode="never_require"', fixture)
+        self.assertIn("ResponsesHostServer", fixture)
+        self.assertNotIn("MCP_BEARER_TOKEN", fixture)
+        self.assertNotRegex(fixture, r"(?m)^[^#\n]*(?:TOKEN|access_token)=[^=\n]*>>.*\\.azure")
         self.assertIn("PROMPT_AGENT_MCP_PASS", fixture)
         self.assertIn("HOSTED_AGENT_MCP_PASS", fixture)
         self.assertIn("exact four fields", normalized)
@@ -532,37 +597,27 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("## Step 5 — prompt agent smoke", fixture)
         self.assertIn("## Step 6 — hosted agent smoke", fixture)
         self.assertIn("## Step 7 — marker-first teardown", fixture)
-        self.assertIn('printf \'AZD_ENV_NAME=%s\\n\'', fixture)
+        pass_write = f"printf 'SMOKE_RESULT=PASS\\n' > {marker}"
+        self.assertIn(pass_write, fixture)
+        self.assertIn('rm -rf "$PROJECT_DIR"', fixture)
+        self.assertLess(fixture.index(pass_write), fixture.index('rm -rf "$PROJECT_DIR"'))
+        self.assertNotIn("az account get-access-token", fixture)
+        self.assertNotIn("az deployment", fixture)
+        self.assertNotIn("az containerapp create", fixture)
 
-        self.assertIn("from fastmcp import Client", helper)
-        self.assertIn("from fastmcp_tasks.client import TasksClientExtension", helper)
-        self.assertIn("from fastmcp_tasks.client import call_tool_task", helper)
-        self.assertIn("await task.wait(timeout=", helper)
-        self.assertIn("await task.result()", helper)
-        self.assertIn("await cancel_task.cancel()", helper)
-        self.assertIn("auth=access_token", helper)
-        self.assertIn("extensions=[]", helper)
-        self.assertIn('mode="legacy"', helper)
-        self.assertIn("resultType", helper)
-        self.assertIn("PromptAgentDefinition", helper)
-        self.assertIn("MCPTool", helper)
-        self.assertIn("project.agents.create_version(", helper)
-        self.assertIn("openai.conversations.create()", helper)
-        self.assertIn("openai.responses.create(", helper)
-        self.assertIn("project.agents.delete_version(", helper)
-        self.assertIn("client.get_mcp_tool(", helper)
-        self.assertIn('approval_mode="never_require"', helper)
-        self.assertIn("ResponsesHostServer", helper)
-        self.assertIn('"azd", "deploy"', helper)
-        self.assertIn('"agent_reference"', helper)
-        self.assertIn("BlobClient.from_blob_url", helper)
-        self.assertIn("_copy_hosted_agent_scaffold", helper)
-        self.assertIn('SKILL_ROOT / "references" / "python" / "app"', helper)
-        self.assertNotIn("example.invalid", helper)
-        self.assertNotIn("az account get-access-token", helper)
-        self.assertNotIn("az deployment", helper)
-        self.assertNotIn("az containerapp create", helper)
-        self.assertIn("ResponsesHostServer", fixture)
+        python_heredocs = re.findall(
+            r"(?:uv run --frozen --group fixture python -|cat > \"\\$HOSTED_DIR/container\\.py\") <<'PY'\n(.*?)\nPY",
+            fixture,
+            re.S,
+        )
+        self.assertGreaterEqual(len(python_heredocs), 3)
+        for index, source in enumerate(python_heredocs):
+            compile(source, f"<consumer_prompt heredoc {index}>", "exec")
+
+    def test_fixture_workflow_installs_pinned_uv(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(encoding="utf-8")
+        self.assertIn("uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9", workflow)
+        self.assertIn('version: "0.12.6"', workflow)
 
     def test_azd_parameters_bind_every_brownfield_value(self) -> None:
         parameters = (
@@ -575,6 +630,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "${AZURE_SUBSCRIPTION_ID}",
             "${AZURE_TENANT_ID}",
             "${ACR_NAME}",
+            "${MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP}",
             "${MCP_ACA_JOBS_ENVIRONMENT_NAME}",
             "${MCP_ACA_JOBS_APP_NAME}",
             "${MCP_ACA_JOBS_JOB_NAME}",
@@ -593,6 +649,23 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             parsed["parameters"]["cosmosUseExistingAccount"]["value"],
             "ordinary consumer default must provision a new Cosmos account",
         )
+        main_bicep = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
+        self.assertIn("param platformResourceGroupName string = resourceGroupName", main_bicep)
+        self.assertIn("scope: resourceGroup(platformResourceGroupName)", main_bicep)
+        self.assertIn(
+            "scope: resourceGroup(cosmosUseExistingAccount ? platformResourceGroupName : resourceGroupName)",
+            main_bicep,
+        )
+        self.assertIn("module preRuntimeCosmosRbac", main_bicep)
+        self.assertIn(
+            "scope: resourceGroup(cosmosUseExistingAccount ? platformResourceGroupName : resourceGroupName)",
+            main_bicep,
+        )
+        assignments = (
+            self._infra_dir() / "identity-rbac" / "assignments.bicep"
+        ).read_text(encoding="utf-8")
+        self.assertIn("param createPlatformAssignments bool = true", assignments)
+        self.assertIn("param createCosmosAssignments bool = true", assignments)
         callback = parsed["parameters"]["callbackConfig"]["value"]
         self.assertEqual(
             callback,
@@ -1013,19 +1086,28 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "module identities",
             "module cosmos",
             "module preRuntimeRbac",
+            "module preRuntimeCosmosRbac",
             "module app",
             "module job",
             "module jobOperator",
         ]
         positions = [main.index(marker) for marker in module_order]
         self.assertEqual(positions, sorted(positions), msg=f"unexpected module order: {module_order}")
-        self.assertIn("dependsOn: [\n    preRuntimeRbac\n  ]", main)
-        self.assertIn("dependsOn: [\n    app\n    preRuntimeRbac\n  ]", main)
+        self.assertIn("dependsOn: [\n    preRuntimeRbac\n    preRuntimeCosmosRbac\n  ]", main)
+        self.assertIn(
+            "dependsOn: [\n    app\n    preRuntimeRbac\n    preRuntimeCosmosRbac\n  ]",
+            main,
+        )
 
         identity_rbac = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
         self.assertIn("keyVaultName: callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''", main)
         self.assertIn("keyVaultName: keyVaultName", identity_rbac)
-        self.assertIn("if (!empty(keyVaultName))", (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8"))
+        self.assertIn(
+            "if (createPlatformAssignments && !empty(keyVaultName))",
+            (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(
+                encoding="utf-8"
+            ),
+        )
         self.assertIn("output storageAccountNameFromUrl string", main)
         self.assertIn("output storageAccountContractMatches bool", main)
         self.assertIn("output cosmosAccountNameFromEndpoint string", main)

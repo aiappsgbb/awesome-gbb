@@ -1,14 +1,7 @@
 # Customer goal — `foundry-mcp-aca-jobs` skill smoke
 
-You are a developer on a customer team. You installed the `awesome-gbb` Copilot CLI plugin and want to prove that the `foundry-mcp-aca-jobs` skill works end-to-end against the CI Foundry project.
-
-Do whatever the skill tells you to do. Read the skill’s `SKILL.md` first, but do not browse the repository or improvise from training-data memory. This is an execution smoke, not a catalog inspection.
-
-**CRITICAL — execution smoke, no repo browsing.** Do NOT browse the repository. Do NOT view files, glob, grep, or search for fixes. The first Bash action must be `echo "skills/foundry-mcp-aca-jobs/SKILL.md"`.
-
-**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You are the running Copilot CLI process. Do not run `copilot -p`, `copilot --version`, `npm install -g @github/copilot`, or any other `copilot ...` invocation from inside Bash. The workflow already captures your output; your job is to execute the smoke steps directly.
-
----
+Execute this live Azure smoke exactly as written. Do not replace commands,
+invent fallback implementations, or browse the repository.
 
 ## Step -1 — acknowledge the skill contract
 
@@ -18,16 +11,40 @@ Your first Bash action must be:
 echo "skills/foundry-mcp-aca-jobs/SKILL.md"
 ```
 
-Do not open any other repository file.
+Do NOT browse the repository. Do not view, glob, grep, or search files.
 
----
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You are
+already the running Copilot CLI process. Execute the commands below directly.
 
-## Step 0 — auth context (show, do not assert)
+## Step 0 — auth context and deterministic failure contract
 
-Print the auth context for the run log. Hard-fail if any required value is missing. Do not compare subscription IDs, decode tokens, or gate on Azure CLI cache visibility.
+The workflow has installed `az`, `azd`, `uv`, `curl`, `jq`, `python3`, and
+`uuidgen`. Never install tools or search for binaries. CI grades only
+`/tmp/foundry-mcp-aca-jobs-smoke-result`, not assistant prose.
+
+Run every remaining step in one Bash action using the exact block below.
+The `ERR` trap writes a deterministic FAIL marker for any unhandled hard
+abort; explicit preconditions write a more precise FAIL marker.
 
 ```bash
 set -Eeuo pipefail
+MARKER=/tmp/foundry-mcp-aca-jobs-smoke-result
+rm -f "$MARKER"
+
+fail() {
+  printf 'SMOKE_RESULT=FAIL %s\n' "$1" > "$MARKER"
+  exit 1
+}
+on_error() {
+  local status=$?
+  trap - ERR
+  if [[ ! -f "$MARKER" ]]; then
+    printf 'SMOKE_RESULT=FAIL hard abort at line %s (exit %s)\n' "$1" "$status" > "$MARKER"
+  fi
+  exit "$status"
+}
+trap 'on_error "$LINENO"' ERR
+
 echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID:+set}"
 echo "AZURE_TENANT_ID=${AZURE_TENANT_ID:+set}"
 echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID:+set}"
@@ -39,297 +56,688 @@ echo "MCP_AUTH_APP_CLIENT_ID=${MCP_AUTH_APP_CLIENT_ID:+set}"
 echo "MCP_ACA_JOBS_COSMOS_ENDPOINT=${MCP_ACA_JOBS_COSMOS_ENDPOINT:+set}"
 echo "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL=${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL:+set}"
 
-: "${AZURE_CLIENT_ID:?missing AZURE_CLIENT_ID}"
-: "${AZURE_TENANT_ID:?missing AZURE_TENANT_ID}"
-: "${AZURE_SUBSCRIPTION_ID:?missing AZURE_SUBSCRIPTION_ID}"
-: "${ACR_LOGIN_SERVER:?missing ACR_LOGIN_SERVER}"
-: "${FOUNDRY_PROJECT_ENDPOINT:?missing FOUNDRY_PROJECT_ENDPOINT}"
-: "${AZURE_AI_PROJECT_ID:?missing AZURE_AI_PROJECT_ID}"
-: "${FOUNDRY_MODEL_DEPLOYMENT:?missing FOUNDRY_MODEL_DEPLOYMENT}"
-: "${MCP_AUTH_APP_CLIENT_ID:?missing MCP_AUTH_APP_CLIENT_ID}"
-: "${MCP_ACA_JOBS_COSMOS_ENDPOINT:?missing MCP_ACA_JOBS_COSMOS_ENDPOINT}"
-: "${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL:?missing MCP_ACA_JOBS_STORAGE_ACCOUNT_URL}"
+test -n "${AZURE_CLIENT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_CLIENT_ID\n' > "$MARKER"; exit 1;
+}
+test -n "${AZURE_TENANT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_TENANT_ID\n' > "$MARKER"; exit 1;
+}
+test -n "${AZURE_SUBSCRIPTION_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_SUBSCRIPTION_ID\n' > "$MARKER"; exit 1;
+}
+test -n "${ACR_LOGIN_SERVER:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing ACR_LOGIN_SERVER\n' > "$MARKER"; exit 1;
+}
+test -n "${FOUNDRY_PROJECT_ENDPOINT:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing FOUNDRY_PROJECT_ENDPOINT\n' > "$MARKER"; exit 1;
+}
+test -n "${AZURE_AI_PROJECT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing AZURE_AI_PROJECT_ID\n' > "$MARKER"; exit 1;
+}
+test -n "${FOUNDRY_MODEL_DEPLOYMENT:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing FOUNDRY_MODEL_DEPLOYMENT\n' > "$MARKER"; exit 1;
+}
+test -n "${MCP_AUTH_APP_CLIENT_ID:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing MCP_AUTH_APP_CLIENT_ID\n' > "$MARKER"; exit 1;
+}
+test -n "${MCP_ACA_JOBS_COSMOS_ENDPOINT:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing MCP_ACA_JOBS_COSMOS_ENDPOINT\n' > "$MARKER"; exit 1;
+}
+test -n "${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL:-}" || {
+  printf 'SMOKE_RESULT=FAIL missing MCP_ACA_JOBS_STORAGE_ACCOUNT_URL\n' > "$MARKER"; exit 1;
+}
 
-ACR_NAME="${ACR_NAME:-${ACR_LOGIN_SERVER%%.*}}"
-MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$(
-  python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"]).hostname or "").split(".")[0])'
-)"
-MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$(
-  python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]).hostname or "").split(".")[0])'
-)"
-MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT=true
-export ACR_NAME MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME
-export MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT
-echo "ACR_NAME=${ACR_NAME:+set}"
-echo "MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME=${MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME:+set}"
-echo "MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME=${MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME:+set}"
-echo "MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT=${MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT:+set}"
 az account show --output table || echo "(az cache not inherited — relying on azd auth login below)"
 azd auth login \
   --federated-credential-provider github \
   --client-id "$AZURE_CLIENT_ID" \
-  --tenant-id "$AZURE_TENANT_ID"
-```
-
-If any env var prints empty, the workflow’s `env:` block is broken. That is a workflow bug, not a skill bug.
-
----
+  --tenant-id "$AZURE_TENANT_ID" || {
+  printf 'SMOKE_RESULT=FAIL azd auth login failed\n' > "$MARKER"; exit 1;
+}
 
 ## Step 1 — goal and constraints
 
-You will deploy the canonical `foundry-mcp-aca-jobs` template into `$GITHUB_WORKSPACE/.scratch/` and prove the documented control plane and client contracts work.
-
-Use these CI-safe names:
-
-- resource group: `rg-awesome-gbb-ci`
-- Container Apps environment: `cae-awesome-gbb-ci`
-- every generated resource name must include a short UUID suffix
-
-Create a state file under `.scratch/` and use it to persist the derived names between Bash calls. Use a UUID suffix like:
-
-```bash
-SUFFIX="$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)"
-```
-
-Do not install tooling or hunt for binaries. `az`, `azd`, `curl`, `jq`, `python3`, and `uuidgen` are already available.
-
-Required contract notes:
-
-- use the existing storage account from env; do not provision a new one
-- use unique Cosmos database/container names derived from the UUID suffix
-- brownfield Cosmos CI mode must target the standing account and create only the UUID database/container
-- keep all repo writes inside `.scratch/`
-- do not grant ad hoc RBAC
-- do not browse the repository
-- do not use `/tmp`
-
----
-
-## Step 2 — deterministic scaffold
-
-Copy the canonical template files into a scratch workspace and write the exact `azd` environment file before any `azd up`. Do not hand-author source files.
-
-```bash
-set -Eeuo pipefail
 SUFFIX="$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)"
 PROJECT_DIR="$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-$SUFFIX"
+CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"
 AZD_ENV_NAME="ci-smoke-mcp-jobs-$SUFFIX"
-STATE_FILE="$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
+APP_NAME="ci-smoke-mcp-jobs-$SUFFIX"
+JOB_NAME="ci-smoke-mcp-jobs-worker-$SUFFIX"
+HOSTED_NAME="ci-smoke-mcp-jobs-hosted-$SUFFIX"
 ACR_NAME="${ACR_LOGIN_SERVER%%.*}"
+MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="rg-awesome-gbb-ci"
+MCP_ACA_JOBS_ENVIRONMENT_NAME="cae-awesome-gbb-ci"
+MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME="mcpjobs-$SUFFIX"
+MCP_ACA_JOBS_COSMOS_DATABASE="ci-smoke-mcp-jobs-db-$SUFFIX"
+MCP_ACA_JOBS_COSMOS_CONTAINER="ci-smoke-mcp-jobs-task-$SUFFIX"
 MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"]).hostname or "").split(".")[0])'
 )"
 MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]).hostname or "").split(".")[0])'
 )"
-MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME="mcpjobs-$SUFFIX"
-export ACR_NAME MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME
-export MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME
-mkdir -p "$GITHUB_WORKSPACE/.scratch"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py scaffold \
-  --project-dir "$PROJECT_DIR" \
-  --env-name "$AZD_ENV_NAME" \
-  --resource-group "rg-awesome-gbb-ci" \
-  --location "swedencentral" \
-  --environment-name "cae-awesome-gbb-ci" \
-  --app-name "ci-smoke-mcp-jobs-$SUFFIX" \
-  --job-name "ci-smoke-mcp-jobs-worker-$SUFFIX" \
-  --storage-account-url "$MCP_ACA_JOBS_STORAGE_ACCOUNT_URL" \
-  --storage-account-name "$MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME" \
-  --output-container-name "$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME" \
-  --cosmos-endpoint "$MCP_ACA_JOBS_COSMOS_ENDPOINT" \
-  --cosmos-account-name "$MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME" \
-  --cosmos-database-name "ci-smoke-mcp-jobs-db-$SUFFIX" \
-  --cosmos-container-name "ci-smoke-mcp-jobs-task-$SUFFIX" \
-  --cosmos-use-existing-account \
-  --cosmos-existing-account-endpoint "$MCP_ACA_JOBS_COSMOS_ENDPOINT" \
-  --service-mcp-image-name "$ACR_LOGIN_SERVER/mcp/service:ci-smoke-$SUFFIX" \
-  --acr-name "$ACR_NAME" \
-  --acr-login-server "$ACR_LOGIN_SERVER" \
-  --azure-client-id "$AZURE_CLIENT_ID" \
-  --azure-tenant-id "$AZURE_TENANT_ID" \
-  --azure-subscription-id "$AZURE_SUBSCRIPTION_ID" \
-  --mcp-auth-app-client-id "$MCP_AUTH_APP_CLIENT_ID" \
-  --foundry-project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --azure-ai-project-id "$AZURE_AI_PROJECT_ID" \
-  --model-deployment "$FOUNDRY_MODEL_DEPLOYMENT"
+export SUFFIX PROJECT_DIR CHILD_RG AZD_ENV_NAME APP_NAME JOB_NAME HOSTED_NAME
+export ACR_NAME MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP
+export MCP_ACA_JOBS_ENVIRONMENT_NAME MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME
+export MCP_ACA_JOBS_COSMOS_DATABASE MCP_ACA_JOBS_COSMOS_CONTAINER
+export MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME
 
-{
-  printf 'PROJECT_DIR=%s\n' "$PROJECT_DIR"
-  printf 'STATE_FILE=%s\n' "$STATE_FILE"
-  printf 'AZD_ENV_NAME=%s\n' "$AZD_ENV_NAME"
-  printf 'SUFFIX=%s\n' "$SUFFIX"
-  printf 'APP_NAME=%s\n' "ci-smoke-mcp-jobs-$SUFFIX"
-  printf 'JOB_NAME=%s\n' "ci-smoke-mcp-jobs-worker-$SUFFIX"
-  printf 'COSMOS_DATABASE_NAME=%s\n' "ci-smoke-mcp-jobs-db-$SUFFIX"
-  printf 'COSMOS_CONTAINER_NAME=%s\n' "ci-smoke-mcp-jobs-task-$SUFFIX"
-} > "$STATE_FILE"
-```
+[[ "$PROJECT_DIR" == "$GITHUB_WORKSPACE/.scratch/"* ]] ||
+  fail "scratch workspace escaped GITHUB_WORKSPACE/.scratch"
+[[ "$CHILD_RG" == rg-foundry-mcp-aca-jobs-ci-* ]] ||
+  fail "child resource group name is invalid"
 
-No repository writes outside `.scratch/`.
+az group create --name "$CHILD_RG" \
+  --location swedencentral \
+  --tags cleanup=true created-by=ci-smoke \
+  --only-show-errors >/dev/null ||
+  fail "child resource group creation failed"
 
----
+## Step 2 — deterministic scaffold
+
+mkdir -p "$PROJECT_DIR"
+cp skills/foundry-mcp-aca-jobs/templates/azure.yaml "$PROJECT_DIR/azure.yaml"
+cp skills/foundry-mcp-aca-jobs/templates/Dockerfile "$PROJECT_DIR/Dockerfile"
+cp skills/foundry-mcp-aca-jobs/templates/pyproject.toml "$PROJECT_DIR/pyproject.toml"
+cp skills/foundry-mcp-aca-jobs/templates/uv.lock "$PROJECT_DIR/uv.lock"
+cp -R skills/foundry-mcp-aca-jobs/templates/infra "$PROJECT_DIR/infra"
+cp -R skills/foundry-mcp-aca-jobs/references/python/app "$PROJECT_DIR/app"
+mkdir -p "$PROJECT_DIR/.azure/$AZD_ENV_NAME"
+
+python3 - "$PROJECT_DIR/infra/main.parameters.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+document["parameters"]["cosmosUseExistingAccount"]["value"] = True
+path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+
+cat > "$PROJECT_DIR/.azure/config.json" <<EOF
+{"defaultEnvironment":"$AZD_ENV_NAME"}
+EOF
+cat > "$PROJECT_DIR/.azure/$AZD_ENV_NAME/.env" <<EOF
+AZURE_ENV_NAME="$AZD_ENV_NAME"
+AZURE_LOCATION="swedencentral"
+AZURE_RESOURCE_GROUP="$CHILD_RG"
+AZURE_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
+AZURE_TENANT_ID="$AZURE_TENANT_ID"
+AZURE_CLIENT_ID="$AZURE_CLIENT_ID"
+ACR_NAME="$ACR_NAME"
+ACR_LOGIN_SERVER="$ACR_LOGIN_SERVER"
+MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="$MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP"
+MCP_ACA_JOBS_ENVIRONMENT_NAME="$MCP_ACA_JOBS_ENVIRONMENT_NAME"
+MCP_ACA_JOBS_APP_NAME="$APP_NAME"
+MCP_ACA_JOBS_JOB_NAME="$JOB_NAME"
+MCP_APP_NAME="$APP_NAME"
+ACA_JOB_NAME="$JOB_NAME"
+MCP_ACA_JOBS_STORAGE_ACCOUNT_URL="${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL%/}"
+MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME"
+MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME="$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME"
+MCP_ACA_JOBS_COSMOS_ENDPOINT="${MCP_ACA_JOBS_COSMOS_ENDPOINT%/}"
+MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"
+MCP_ACA_JOBS_COSMOS_DATABASE="$MCP_ACA_JOBS_COSMOS_DATABASE"
+MCP_ACA_JOBS_COSMOS_CONTAINER="$MCP_ACA_JOBS_COSMOS_CONTAINER"
+MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT="true"
+MCP_AUTH_APP_CLIENT_ID="$MCP_AUTH_APP_CLIENT_ID"
+FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
+AZURE_AI_PROJECT_ID="$AZURE_AI_PROJECT_ID"
+AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
+AZURE_CONTAINER_REGISTRY_ENDPOINT="$ACR_LOGIN_SERVER"
+SERVICE_MCP_IMAGE_NAME="$ACR_LOGIN_SERVER/mcp/service:ci-smoke-$SUFFIX"
+EOF
+
+(
+  cd "$PROJECT_DIR"
+  uv sync --frozen --group fixture
+) || fail "uv sync failed"
 
 ## Step 3 — provider and build verification
 
-1. Prove the Microsoft.App provider exposes the five custom role actions the skill documents.
-2. Run `azd up` exactly once. It must build one image and converge the app and job onto the same digest.
-3. Verify the deployed app and job both use that exact same digest and the expected commands.
+provider_json="$(az provider operation show --namespace Microsoft.App --output json)"
+for action in \
+  Microsoft.App/jobs/read \
+  Microsoft.App/jobs/start/action \
+  Microsoft.App/jobs/execution/read \
+  Microsoft.App/jobs/executions/read \
+  Microsoft.App/jobs/stop/execution/action
+do
+  jq -e --arg action "$action" \
+    '.. | objects | .name? // empty | select(. == $action)' \
+    <<<"$provider_json" >/dev/null ||
+    fail "Microsoft.App provider action missing: $action"
+done
+echo RBAC_PROVIDER_ACTIONS_MATCH
 
-Required success markers:
+azd ext install microsoft.foundry ||
+  fail "microsoft.foundry extension install failed"
+extensions_json="$(azd ext list --output json)"
+jq -e \
+  '[.[] | select(.id == "microsoft.foundry") | .installedVersion |
+    select(type == "string" and length > 0)] | length == 1' \
+  <<<"$extensions_json" >/dev/null ||
+  fail "microsoft.foundry extension not installed"
+jq -e \
+  '[.[] | select(.id == "azure.ai.agents") | .installedVersion |
+    select(type == "string" and length > 0)] | length == 1' \
+  <<<"$extensions_json" >/dev/null ||
+  fail "azure.ai.agents extension not installed"
 
-- `RBAC_PROVIDER_ACTIONS_MATCH`
-- `SHARED_IMAGE_DIGEST_MATCH`
-- `ENTRYPOINTS_MATCH`
+(
+  cd "$PROJECT_DIR"
+  AZURE_ENV_NAME="$AZD_ENV_NAME" azd up --no-prompt
+) || fail "azd up failed"
 
-Provider actions to prove, exactly:
+MCP_FQDN="$(az containerapp show \
+  --resource-group "$CHILD_RG" \
+  --name "$APP_NAME" \
+  --query properties.configuration.ingress.fqdn \
+  --output tsv)"
+test -n "$MCP_FQDN" || fail "MCP app FQDN missing"
+MCP_URL="https://$MCP_FQDN/mcp"
+export MCP_URL
 
-- `Microsoft.App/jobs/read`
-- `Microsoft.App/jobs/start/action`
-- `Microsoft.App/jobs/execution/read`
-- `Microsoft.App/jobs/executions/read`
-- `Microsoft.App/jobs/stop/execution/action`
-
-The hard gate is the deployed digest/command contract. Use the scratch state file, not ad hoc shell variables, to keep the names stable.
-
-```bash
-set -Eeuo pipefail
-# shellcheck disable=SC1090
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py provider --project-dir "$PROJECT_DIR"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py deploy \
-  --project-dir "$PROJECT_DIR" \
-  --env-name "$AZD_ENV_NAME"
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-```
-
-The digest verification block must run the canonical helpers: `converge_image.py` and `verify_deployment.py`. It must check the exact app/job command arrays `['python', '-m', 'app.mcp_server']` and `['python', '-m', 'app.job_worker']`.
-
----
+EXPECTED_IMAGE_DIGEST="$(az containerapp show \
+  --resource-group "$CHILD_RG" \
+  --name "$APP_NAME" \
+  --query 'properties.template.containers[0].image' \
+  --output tsv)"
+[[ "$EXPECTED_IMAGE_DIGEST" == "$ACR_LOGIN_SERVER/"*"@sha256:"* ]] ||
+  fail "app image is not the expected immutable ACR digest"
+export EXPECTED_IMAGE_DIGEST
+(
+  cd "$PROJECT_DIR/infra/scripts"
+  AZURE_ENV_NAME="$AZD_ENV_NAME" uv run --frozen python verify_deployment.py
+) || fail "shared digest or entrypoint verification failed"
+# The canonical verifier must emit SHARED_IMAGE_DIGEST_MATCH and
+# ENTRYPOINTS_MATCH after asserting the exact app/job digest and commands.
 
 ## Step 4 — task-aware and fallback client smoke
 
-First prove the standards-first path:
+export CALLBACK_CONTAINER_URL="${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL%/}/${MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME}-callbacks"
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import asyncio
+import json
+import os
+from urllib.parse import urlsplit
 
-- use `FastMCP Client`
-- attach `TasksClientExtension()`
-- pass the raw access token string as `auth=access_token`
-- start a short job
-- poll `tasks/get` until terminal
+from azure.core.exceptions import ResourceNotFoundError
+from azure.identity.aio import DefaultAzureCredential
+from azure.storage.blob.aio import BlobClient
+from fastmcp import Client
+from fastmcp_tasks.client import TasksClientExtension
+from fastmcp_tasks.client import call_tool_task
 
-The direct path must write:
+CALLBACK_FIELDS = {"taskId", "acaExecutionId", "status", "resultUrl"}
+TERMINAL = {"Succeeded", "Failed", "Cancelled"}
 
-- `MCP_TASKS_COMPLETED`
 
-Then prove the compatibility path without the Tasks extension:
+def dump(value):
+    return value.model_dump(mode="json", by_alias=True) if hasattr(value, "model_dump") else value
 
-- start the same job through the plain tool path
-- poll status
-- cancel immediately
-- verify the fallback tools work
 
-The fallback path must write:
+def payload(result):
+    for candidate in (
+        getattr(result, "data", None),
+        getattr(result, "structured_content", None),
+        dump(result),
+    ):
+        candidate = dump(candidate)
+        if isinstance(candidate, dict):
+            for key in ("structuredContent", "structured_content", "data"):
+                if isinstance(candidate.get(key), dict):
+                    return candidate[key]
+            return candidate
+    raise AssertionError("tool result has no structured object")
 
-- `FALLBACK_TOOLS_COMPLETED`
 
-Duplicate submission with the same idempotency key must return the same task ID and same result:
+def result_url(value, storage_host):
+    assert set(value) == {"status", "resultUrl"}
+    assert value["status"] == "Succeeded"
+    parsed = urlsplit(value["resultUrl"])
+    assert parsed.scheme == "https" and parsed.hostname == storage_host
+    assert not parsed.username and not parsed.password
+    assert not parsed.query and not parsed.fragment
+    return value["resultUrl"]
 
-- `IDEMPOTENCY_DUPLICATE_SAME_TASK`
 
-The callback receiver must capture the exact four fields and only a credential-free result URL:
+async def main():
+    credential = DefaultAzureCredential()
+    storage_url = os.environ["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"].rstrip("/")
+    output_container = os.environ["MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME"]
+    input_ref = f"{storage_url}/{output_container}/inputs/{os.environ['SUFFIX']}.json"
+    input_blob = BlobClient.from_blob_url(input_ref, credential=credential)
+    await input_blob.upload_blob(b'{"durationSeconds":2}', overwrite=True)
+    await input_blob.close()
 
-- `CALLBACK_PAYLOAD_VALID`
+    access_token = (
+        await credential.get_token(f"api://{os.environ['MCP_AUTH_APP_CLIENT_ID']}/.default")
+    ).token
+    request = {
+        "jobType": "short-job",
+        "idempotencyKey": f"direct-{os.environ['SUFFIX']}",
+        "inputRef": input_ref,
+        "callbackAlias": "ops",
+    }
+    async with Client(
+        os.environ["MCP_URL"],
+        extensions=[TasksClientExtension()],
+        auth=access_token,
+        timeout=90,
+    ) as client:
+        task = await call_tool_task(client, "start_aca_job", request, timeout=90)
+        terminal = await task.wait(timeout=600)
+        assert dump(terminal)["status"] == "completed"
+        direct = payload(await task.result())
+        direct_url = result_url(
+            direct, urlsplit(storage_url).hostname or ""
+        )
 
-Cancellation must reach a terminal state:
+        duplicate = await call_tool_task(client, "start_aca_job", request, timeout=90)
+        duplicate_terminal = await duplicate.wait(timeout=120)
+        assert dump(duplicate_terminal)["status"] == "completed"
+        duplicate_result = payload(await duplicate.result())
+        assert duplicate.task_id == task.task_id
+        assert duplicate_result == direct
+        assert duplicate_result["resultUrl"] == direct_url
 
-- `CANCELLATION_TERMINAL`
+        cancel_request = dict(request)
+        cancel_request["idempotencyKey"] = f"cancel-{os.environ['SUFFIX']}"
+        cancel_task = await call_tool_task(
+            client, "start_aca_job", cancel_request, timeout=90
+        )
+        await cancel_task.cancel()
+        cancel_terminal = await cancel_task.wait(timeout=300)
+        assert dump(cancel_terminal)["status"] in {"cancelled", "completed"}
 
-```bash
-set -Eeuo pipefail
-# shellcheck disable=SC1090
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py tasks \
-  --project-dir "$PROJECT_DIR" \
-  --mcp-auth-app-client-id "$MCP_AUTH_APP_CLIENT_ID"
-```
+    fallback = dict(request)
+    fallback["idempotencyKey"] = f"fallback-{os.environ['SUFFIX']}"
+    async with Client(
+        os.environ["MCP_URL"],
+        mode="legacy",
+        extensions=[],
+        auth=access_token,
+        timeout=90,
+    ) as client:
+        started = payload(await client.call_tool("start_aca_job", fallback))
+        assert "resultType" not in started
+        fallback_id = started["taskId"]
+        status = payload(
+            await client.call_tool("get_aca_job_status", {"taskId": fallback_id})
+        )
+        assert status["taskId"] == fallback_id and "resultType" not in status
+        cancelled = payload(
+            await client.call_tool("cancel_aca_job", {"taskId": fallback_id})
+        )
+        assert cancelled["taskId"] == fallback_id and "resultType" not in cancelled
+        for _ in range(30):
+            if cancelled["status"] in TERMINAL:
+                break
+            await asyncio.sleep(5)
+            cancelled = payload(
+                await client.call_tool("get_aca_job_status", {"taskId": fallback_id})
+            )
+        assert cancelled["status"] in TERMINAL
 
-The direct path must use `FastMCP Client` + `TasksClientExtension`; the fallback path must use a normal `Client` with `mode="legacy"` and `extensions=[]` so FastMCP 4's automatic internal Tasks extension is inert. Assert `resultType` absence, immediate start/status/cancel, and the duplicate-task identity check.
+    callback_url = (
+        f"{os.environ['CALLBACK_CONTAINER_URL']}/callbacks/{task.task_id}.json"
+    )
+    callback_blob = BlobClient.from_blob_url(callback_url, credential=credential)
+    try:
+        for _ in range(60):
+            try:
+                callback = json.loads(await (await callback_blob.download_blob()).readall())
+                break
+            except ResourceNotFoundError:
+                await asyncio.sleep(5)
+        else:
+            raise TimeoutError("callback did not arrive in 300 seconds")
+    finally:
+        await callback_blob.close()
+    assert set(callback) == CALLBACK_FIELDS
+    assert callback["taskId"] == task.task_id
+    assert callback["acaExecutionId"]
+    assert result_url(
+        {"status": callback["status"], "resultUrl": callback["resultUrl"]},
+        urlsplit(storage_url).hostname or "",
+    ) == direct_url
+    await credential.close()
 
----
+    print("MCP_TASKS_COMPLETED")
+    print("FALLBACK_TOOLS_COMPLETED")
+    print("IDEMPOTENCY_DUPLICATE_SAME_TASK")
+    print("CALLBACK_PAYLOAD_VALID")
+    print("CANCELLATION_TERMINAL")
+
+
+asyncio.run(main())
+PY
+)
 
 ## Step 5 — prompt agent smoke
 
-Use the current `foundry-prompt-agents` APIs:
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import json
+import os
+import time
 
-- `PromptAgentDefinition`
-- `MCPTool`
-- `create_version`
-- `openai.conversations.create()`
-- `openai.responses.create()`
-- `delete_version()`
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import MCPTool, PromptAgentDefinition
+from azure.identity import DefaultAzureCredential
 
-The prompt agent must call the fallback `start_aca_job` and `get_aca_job_status` tools against the deployed MCP endpoint and then write:
 
-- `PROMPT_AGENT_MCP_PASS`
+def text(value):
+    if hasattr(value, "model_dump_json"):
+        return value.model_dump_json()
+    return json.dumps(value, default=str)
 
-```bash
-set -Eeuo pipefail
-# shellcheck disable=SC1090
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py prompt-agent \
-  --project-dir "$PROJECT_DIR" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --mcp-auth-app-client-id "$MCP_AUTH_APP_CLIENT_ID"
-```
 
-The prompt agent must create a unique version, create a conversation, invoke the agent through `openai.responses.create(...)`, and best-effort delete the version afterward.
-
----
+credential = DefaultAzureCredential()
+project = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
+)
+name = f"ci-mcp-jobs-prompt-{os.environ['SUFFIX']}"
+version = None
+try:
+    access_token = credential.get_token(
+        f"api://{os.environ['MCP_AUTH_APP_CLIENT_ID']}/.default"
+    ).token
+    version = project.agents.create_version(
+        agent_name=name,
+        definition=PromptAgentDefinition(
+            model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
+            instructions=(
+                "Call start_aca_job once, then get_aca_job_status with its taskId. "
+                "Emit PROMPT_AGENT_MCP_PASS only after both calls."
+            ),
+            tools=[
+                MCPTool(
+                    server_label="aca_jobs",
+                    server_url=os.environ["MCP_URL"],
+                    headers={"Authorization": "Bearer " + access_token},
+                    require_approval="never",
+                )
+            ],
+        ),
+    )
+    openai = project.get_openai_client()
+    conversation = openai.conversations.create()
+    response = None
+    for _ in range(12):
+        try:
+            response = openai.responses.create(
+                conversation=conversation.id,
+                extra_body={
+                    "agent_reference": {"name": name, "type": "agent_reference"}
+                },
+                input=(
+                    "Call start_aca_job with jobType short-job, idempotencyKey "
+                    f"prompt-{os.environ['SUFFIX']}, inputRef "
+                    f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
+                    f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
+                    f"{os.environ['SUFFIX']}.json, and callbackAlias ops. Then call "
+                    "get_aca_job_status with the returned taskId and finish with "
+                    "PROMPT_AGENT_MCP_PASS."
+                ),
+            )
+            break
+        except Exception:
+            time.sleep(10)
+    assert response is not None
+    evidence = text(response)
+    assert "start_aca_job" in evidence
+    assert "get_aca_job_status" in evidence
+    assert "PROMPT_AGENT_MCP_PASS" in evidence
+    print("PROMPT_AGENT_MCP_PASS")
+finally:
+    if version is not None:
+        try:
+            project.agents.delete_version(name, str(version.version))
+        except Exception as exc:
+            print(f"NOTE prompt-agent delete best effort: {type(exc).__name__}")
+    project.close()
+    credential.close()
+PY
+)
 
 ## Step 6 — hosted agent smoke
 
-Use the current hosted-agent APIs:
+HOSTED_DIR="$PROJECT_DIR/hosted-agent"
+mkdir -p "$HOSTED_DIR"
+cp skills/foundry-hosted-agents/references/docker/Dockerfile "$HOSTED_DIR/Dockerfile"
+cp skills/foundry-hosted-agents/references/python/pyproject.toml "$HOSTED_DIR/pyproject.toml"
+printf 'Use the ACA Jobs MCP tools exactly as instructed.\n' \
+  > "$HOSTED_DIR/copilot-instructions.md"
 
-- `FoundryChatClient.get_mcp_tool(...)`
-- `Agent`
-- `ResponsesHostServer`
+cat > "$HOSTED_DIR/container.py" <<'PY'
+import os
 
-The hosted agent must deploy a unique hosted-agent version, invoke it against the same fallback `start_aca_job` and `get_aca_job_status` tools, and then write:
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 
-- `HOSTED_AGENT_MCP_PASS`
 
-```bash
-set -Eeuo pipefail
-# shellcheck disable=SC1090
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py hosted-agent \
-  --project-dir "$PROJECT_DIR" \
-  --project-endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
-  --mcp-auth-app-client-id "$MCP_AUTH_APP_CLIENT_ID"
-```
+def main():
+    token_credential = SyncDefaultAzureCredential()
+    access_token = token_credential.get_token(
+        os.environ["MCP_AUTH_AUDIENCE"]
+    ).token
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AsyncDefaultAzureCredential(),
+    )
+    mcp_tool = client.get_mcp_tool(
+        name="ACA Jobs",
+        url=os.environ["MCP_SERVER_URL"],
+        headers={"Authorization": "Bearer " + access_token},
+        approval_mode="never_require",
+    )
+    agent = Agent(
+        client=client,
+        instructions=(
+            "Call start_aca_job once, then get_aca_job_status with its taskId. "
+            "Emit HOSTED_AGENT_MCP_PASS only after both calls."
+        ),
+        tools=[mcp_tool],
+        default_options={"store": False},
+    )
+    ResponsesHostServer(agent).run()
 
-The hosted agent must use `FoundryChatClient.get_mcp_tool(name=..., url=..., headers={"Authorization": ...}, approval_mode="never_require")`, invoke the agent through the Foundry project endpoint, and best-effort delete its version afterward.
 
----
+if __name__ == "__main__":
+    main()
+PY
+
+cat > "$HOSTED_DIR/azure.yaml" <<EOF
+name: $HOSTED_NAME
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.4'
+services:
+  ai-project:
+    host: azure.ai.project
+    endpoint: \${FOUNDRY_PROJECT_ENDPOINT}
+  $HOSTED_NAME:
+    host: azure.ai.agent
+    project: .
+    language: docker
+    uses:
+      - ai-project
+    kind: hosted
+    name: $HOSTED_NAME
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: \${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - name: MCP_SERVER_URL
+        value: \${MCP_SERVER_URL}
+      - name: MCP_AUTH_AUDIENCE
+        value: \${MCP_AUTH_AUDIENCE}
+    container:
+      resources:
+        cpu: "1"
+        memory: 2Gi
+infra:
+  provider: microsoft.foundry
+EOF
+
+cp -R "$PROJECT_DIR/.azure" "$HOSTED_DIR/.azure"
+cat >> "$HOSTED_DIR/.azure/$AZD_ENV_NAME/.env" <<EOF
+MCP_SERVER_URL="$MCP_URL"
+MCP_AUTH_AUDIENCE="api://$MCP_AUTH_APP_CLIENT_ID/.default"
+EOF
+(
+  cd "$HOSTED_DIR"
+  AZURE_ENV_NAME="$AZD_ENV_NAME" azd deploy "$HOSTED_NAME" --no-prompt
+) || fail "hosted agent deploy failed"
+
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import json
+import os
+import time
+
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import (
+    AgentEndpointConfig,
+    FixedRatioVersionSelectionRule,
+    ProtocolConfiguration,
+    ResponsesProtocolConfiguration,
+    VersionSelector,
+)
+from azure.identity import DefaultAzureCredential
+
+
+credential = DefaultAzureCredential()
+project = AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
+)
+name = os.environ["HOSTED_NAME"]
+version = None
+for _ in range(24):
+    version = project.agents.get_version(agent_name=name, agent_version="1")
+    status = version.get("status") if isinstance(version, dict) else version.status
+    if status == "active":
+        break
+    if status == "failed":
+        raise RuntimeError("hosted agent version failed")
+    time.sleep(10)
+else:
+    raise TimeoutError("hosted agent version did not become active")
+
+project.agents.update_details(
+    agent_name=name,
+    agent_endpoint=AgentEndpointConfig(
+        version_selector=VersionSelector(
+            version_selection_rules=[
+                FixedRatioVersionSelectionRule(
+                    agent_version="1", traffic_percentage=100
+                )
+            ]
+        ),
+        protocol_configuration=ProtocolConfiguration(
+            responses=ResponsesProtocolConfiguration()
+        ),
+    ),
+)
+openai = project.get_openai_client(agent_name=name)
+response = None
+for _ in range(12):
+    try:
+        response = openai.responses.create(
+            input=(
+                "Call start_aca_job with jobType short-job, idempotencyKey "
+                f"hosted-{os.environ['SUFFIX']}, inputRef "
+                f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
+                f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
+                f"{os.environ['SUFFIX']}.json, and callbackAlias ops. Then call "
+                "get_aca_job_status with the returned taskId and finish with "
+                "HOSTED_AGENT_MCP_PASS."
+            ),
+            stream=False,
+        )
+        break
+    except Exception:
+        time.sleep(10)
+assert response is not None
+evidence = (
+    response.model_dump_json()
+    if hasattr(response, "model_dump_json")
+    else json.dumps(response, default=str)
+)
+assert "start_aca_job" in evidence
+assert "get_aca_job_status" in evidence
+assert "HOSTED_AGENT_MCP_PASS" in evidence
+project.close()
+credential.close()
+print("HOSTED_AGENT_MCP_PASS")
+PY
+)
 
 ## Step 7 — marker-first teardown
 
-Once all hard gates pass, write the exact PASS marker first:
+printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-aca-jobs-smoke-result
+trap - ERR
+set +e
 
-```bash
-set -Eeuo pipefail
-# shellcheck disable=SC1090
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-printf 'SMOKE_RESULT=PASS\n' > "$PROJECT_DIR/.foundry-mcp-aca-jobs-smoke-result"
+# Five-minute best-effort targeted cleanup. The PASS marker is authoritative.
+timeout 300 bash -c '
+  az group delete --name "$CHILD_RG" --yes --no-wait
+  az cosmosdb sql database delete \
+    --resource-group "$MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP" \
+    --account-name "$MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME" \
+    --name "$MCP_ACA_JOBS_COSMOS_DATABASE" --yes
+  for container in \
+    "$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME" \
+    "$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME-callbacks"
+  do
+    az storage container delete \
+      --account-name "$MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME" \
+      --name "$container" --auth-mode login
+  done
+  az acr repository delete --name "$ACR_NAME" \
+    --image "mcp/service:ci-smoke-$SUFFIX" --yes
+' || echo "NOTE best-effort Azure cleanup incomplete; PASS marker retained"
+
+(
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import os
+
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+
+try:
+    credential = DefaultAzureCredential()
+    project = AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
+    )
+    project.agents.delete(agent_name=os.environ["HOSTED_NAME"], force=True)
+    project.close()
+    credential.close()
+except Exception as exc:
+    print(f"NOTE hosted-agent delete best effort: {type(exc).__name__}")
+PY
+) || true
+
+rm -rf "$PROJECT_DIR"
+echo "CLEANUP_BEST_EFFORT_COMPLETE"
 ```
 
-Then do a five-minute best-effort targeted cleanup of the scratch workspace and the Azure resources you created. If teardown fails or times out, keep the PASS marker and stop. Cleanup is hygiene, not the contract.
-
-```bash
-set -Eeuo pipefail
-# shellcheck disable=SC1090
-source "$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-state.env"
-python3 skills/foundry-mcp-aca-jobs/test-fixture/run_e2e.py cleanup --project-dir "$PROJECT_DIR"
-```
-
-The final cleanup phase should only touch what this smoke created.
+No repository writes outside `.scratch/`. The brownfield Cosmos
+CI mode creates only the UUID database/container in the standing account.
+The callback payload must contain the exact four fields shown in Step 4.
+PASS is written before best-effort targeted cleanup, and cleanup failure must
+never replace it.

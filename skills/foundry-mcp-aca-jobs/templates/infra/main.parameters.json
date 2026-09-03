@@ -5,6 +5,9 @@
     "resourceGroupName": {
       "value": "${AZURE_RESOURCE_GROUP}"
     },
+    "platformResourceGroupName": {
+      "value": "${MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP}"
+    },
     "location": {
       "value": "${AZURE_LOCATION}"
     },

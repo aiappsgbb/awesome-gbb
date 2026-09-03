@@ -21,5 +21,10 @@ dependencies = [
   "uvicorn~=0.52.4",
 ]
 
+[dependency-groups]
+fixture = [
+  "azure-ai-projects~=2.3.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
