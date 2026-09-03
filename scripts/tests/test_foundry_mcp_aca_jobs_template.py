@@ -255,17 +255,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         assignment_params = self._param_names(assignments)
         job_operator_params = self._param_names(job_operator)
         self.assertIn("outputStorageContainerName", identity_params)
-        self.assertIn("callbackStorageContainerName", identity_params)
         self.assertIn("outputStorageContainerName", assignment_params)
-        self.assertIn("callbackStorageContainerName", assignment_params)
         self.assertNotIn("storageContainerName", identity_params)
         self.assertNotIn("storageContainerName", assignment_params)
+        self.assertNotIn("callbackStorageContainerName", identity_params)
+        self.assertNotIn("callbackStorageContainerName", assignment_params)
         self.assertIn("jobName", job_operator_params)
         self.assertIn("customRoleDefinitionId", job_operator_params)
         self.assertIn("appUami", identity)
         self.assertIn("jobUami", identity)
         self.assertIn("roleDefinition", identity)
         self.assertIn("assignableScopes", identity)
+        self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", identity)
+        self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", assignments)
 
         job_role = self._extract_bicep_block(identity, "jobRoleDefinition")
         actions_match = re.search(r"actions:\s*\[(.*?)\n\s*notActions:", job_role, re.S)
@@ -345,6 +347,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn("param callbackAudience", main)
         self.assertNotIn("param callbackSecretName", main)
         self.assertNotIn("param keyVaultName", main)
+        self.assertNotIn("param callbackStorageContainerName", main)
+        self.assertIn("@maxLength(53)", main)
+        self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", main)
+        self.assertIn("callbackStorageContainerUrl", main)
 
         self.assertIn("var authAudience = 'api://${authClientId}'", main)
         self.assertIn("callbackConfig.authMode == 'managed_identity' ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs' : callbackConfig.externalCallbackUrl", normalized)
@@ -360,6 +366,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("value: identities.outputs.jobUamiPrincipalId", main)
         self.assertIn("environment().suffixes.keyvaultDns", main)
         self.assertIn("callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''", normalized)
+        self.assertIn("callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", main)
 
         for required in (
             "AZURE_CLIENT_ID",
@@ -429,7 +436,6 @@ param acrName = 'acr-jobs'
 param environmentName = 'env-jobs'
 param storageAccountName = 'storagejobs'
 param outputStorageContainerName = 'outputs'
-param callbackStorageContainerName = 'callbacks'
 param allowedMcpCallerClientIds = []
 param inputHosts = [
   'input.example.com'
@@ -461,7 +467,6 @@ param acrName = 'acr-jobs'
 param environmentName = 'env-jobs'
 param storageAccountName = 'storagejobs'
 param outputStorageContainerName = 'outputs'
-param callbackStorageContainerName = 'callbacks'
 param allowedMcpCallerClientIds = []
 param inputHosts = [
   'input.example.com'
@@ -499,7 +504,6 @@ param acrName = 'acr-jobs'
 param environmentName = 'env-jobs'
 param storageAccountName = 'storagejobs'
 param outputStorageContainerName = 'outputs'
-param callbackStorageContainerName = 'callbacks'
 param allowedMcpCallerClientIds = []
 param inputHosts = [
   'input.example.com'
@@ -573,7 +577,8 @@ param callbackConfig = {
             r"allowedMcpCallerClientIds:\s*union\(allowedMcpCallerClientIds,\s*\[\s*identities\.outputs\.jobUamiClientId\s*\]\)",
         )
         self.assertIn("param outputStorageContainerName string", main)
-        self.assertIn("param callbackStorageContainerName string", main)
+        self.assertIn("@maxLength(53)", main)
+        self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", main)
         self.assertNotIn("param storageContainerName string", main)
         self.assertIn("output outputStorageContainerUrl string", main)
         self.assertIn("output callbackStorageContainerUrl string", main)

@@ -15,11 +15,9 @@ param cosmosContainerName string
 @description('Existing storage account name.')
 param storageAccountName string
 
-@description('Existing storage container name for job outputs. Must differ from the callback container name.')
+@description('Existing blob container name used for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
+@maxLength(53)
 param outputStorageContainerName string
-
-@description('Existing storage container name for callback capture. Must differ from the output container name.')
-param callbackStorageContainerName string
 
 @description('Existing Key Vault name (optional).')
 param keyVaultName string
@@ -49,6 +47,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = {
 
 var cosmosDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
 var cosmosDataContributorScope = '${cosmos.id}/dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}'
+var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: storageAccountName

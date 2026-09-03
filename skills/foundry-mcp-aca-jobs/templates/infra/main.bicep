@@ -15,11 +15,9 @@ param environmentName string
 @description('Existing storage account name used for job output and callback capture.')
 param storageAccountName string
 
-@description('Existing blob container name used for job outputs. Must differ from the callback container name.')
+@description('Existing blob container name used for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
+@maxLength(53)
 param outputStorageContainerName string
-
-@description('Existing blob container name used for callback capture. Must differ from the output container name.')
-param callbackStorageContainerName string
 
 @description('Allowed app-only caller client IDs for the MCP app.')
 param allowedMcpCallerClientIds array
@@ -77,6 +75,7 @@ param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld
 param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
+var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 var callbackRouteUrl = callbackConfig.authMode == 'managed_identity'
   ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
   : callbackConfig.externalCallbackUrl
@@ -267,7 +266,6 @@ module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
     cosmosContainerName: cosmos.outputs.containerName
     storageAccountName: storageAccountName
     outputStorageContainerName: outputStorageContainerName
-    callbackStorageContainerName: callbackStorageContainerName
     keyVaultName: callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''
     appPrincipalId: identities.outputs.appUamiPrincipalId
     jobPrincipalId: identities.outputs.jobUamiPrincipalId

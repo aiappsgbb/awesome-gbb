@@ -33,11 +33,9 @@ param cosmosContainerName string = ''
 @description('Existing storage account name.')
 param storageAccountName string = ''
 
-@description('Existing storage container name for job outputs. Must differ from the callback container name.')
+@description('Existing blob container name for job outputs. Azure blob container names are 3-63 lowercase letters, numbers, and hyphens. This value is capped at 53 chars so the derived -callbacks container stays within 63 chars.')
+@maxLength(53)
 param outputStorageContainerName string = ''
-
-@description('Existing storage container name for callback capture. Must differ from the output container name.')
-param callbackStorageContainerName string = ''
 
 @description('Existing Key Vault name (optional).')
 param keyVaultName string = ''
@@ -56,6 +54,7 @@ var blobDataContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Auth
 var keyVaultUserRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var customRoleDefinitionGuid = guid(subscription().id, roleDefinitionName)
 var customRoleDefinitionResourceId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', customRoleDefinitionGuid)
+var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 
 module appUami './identity-rbac/uami.bicep' = if (createIdentities) {
   name: 'appUami'
@@ -110,7 +109,6 @@ module assignments './identity-rbac/assignments.bicep' = if (createAssignments) 
     cosmosContainerName: cosmosContainerName
     storageAccountName: storageAccountName
     outputStorageContainerName: outputStorageContainerName
-    callbackStorageContainerName: callbackStorageContainerName
     keyVaultName: keyVaultName
     appPrincipalId: appPrincipalId
     jobPrincipalId: jobPrincipalId
