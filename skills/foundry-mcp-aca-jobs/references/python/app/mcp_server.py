@@ -75,14 +75,38 @@ def _header_value(headers: Mapping[str, Any], name: str) -> str | None:
     return None
 
 
-def owner_scope_from_headers(headers: Mapping[str, Any], trusted: bool = False) -> str:
+def _require_trusted_principal(headers: Mapping[str, Any], trusted: bool) -> str:
     if not trusted:
         raise PublicError("TASK_FORBIDDEN", "caller is not authorized")
     principal = _header_value(headers, "X-MS-CLIENT-PRINCIPAL-ID")
     if principal is None or not principal.strip():
         raise PublicError("TASK_FORBIDDEN", "caller is not authorized")
+    return principal.strip()
+
+
+def owner_scope_from_headers(
+    headers: Mapping[str, Any],
+    trusted: bool = False,
+    *,
+    callback_principal_id: str | None = None,
+) -> str:
+    principal = _require_trusted_principal(headers, trusted)
     normalized = _normalize_principal(principal)
+    if callback_principal_id is not None and normalized == _normalize_principal(callback_principal_id):
+        raise PublicError("TASK_FORBIDDEN", "caller is not authorized")
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def callback_principal_from_headers(
+    headers: Mapping[str, Any],
+    trusted: bool = False,
+    *,
+    callback_principal_id: str,
+) -> str:
+    principal = _require_trusted_principal(headers, trusted)
+    if _normalize_principal(principal) != _normalize_principal(callback_principal_id):
+        raise PublicError("TASK_FORBIDDEN", "caller is not authorized")
+    return principal
 
 
 @dataclass(slots=True)
@@ -91,6 +115,7 @@ class Runtime:
     store: Any
     policy: Policy
     callback_capture: CallbackCapture
+    callback_principal_id: str
     trust_aca_auth_headers: bool = False
     close: Callable[[], Awaitable[None]] | None = None
 
@@ -236,7 +261,18 @@ def build_server(runtime: Runtime) -> FastMCP:
     reconciler_interval = _reconcile_interval_seconds()
 
     def resolve_owner_scope(headers: Mapping[str, Any]) -> str:
-        return owner_scope_from_headers(headers, trusted=runtime.trust_aca_auth_headers)
+        return owner_scope_from_headers(
+            headers,
+            trusted=runtime.trust_aca_auth_headers,
+            callback_principal_id=runtime.callback_principal_id,
+        )
+
+    def resolve_callback_principal(headers: Mapping[str, Any]) -> str:
+        return callback_principal_from_headers(
+            headers,
+            trusted=runtime.trust_aca_auth_headers,
+            callback_principal_id=runtime.callback_principal_id,
+        )
 
     def public_error_response(error: PublicError) -> JSONResponse:
         status_code = 403 if error.code == "TASK_FORBIDDEN" else 409 if error.code == "CALLBACK_PAYLOAD_CONFLICT" else 400
@@ -267,7 +303,7 @@ def build_server(runtime: Runtime) -> FastMCP:
     @server.custom_route("/callbacks/jobs", methods=["POST"])
     async def callbacks_jobs(request: Request) -> JSONResponse | PlainTextResponse:
         try:
-            resolve_owner_scope(request.headers)
+            resolve_callback_principal(request.headers)
             body = await request.json()
             event = CallbackEvent.model_validate(body)
             await runtime.callback_capture.write(event)
@@ -317,6 +353,7 @@ def runtime_from_env() -> Runtime:
         raise RuntimeError("MCP_ACA_JOBS_AUTH_MODE must be exactly 'aca-easy-auth' to trust ACA auth headers")
     client_id = os.environ["AZURE_CLIENT_ID"]
     subscription_id = os.environ["AZURE_SUBSCRIPTION_ID"]
+    callback_principal_id = os.environ["MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID"]
     cosmos_endpoint = os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]
     cosmos_database = os.environ["MCP_ACA_JOBS_COSMOS_DATABASE"]
     cosmos_container = os.environ["MCP_ACA_JOBS_COSMOS_CONTAINER"]
@@ -346,6 +383,7 @@ def runtime_from_env() -> Runtime:
         store=store,
         policy=policy,
         callback_capture=callback_capture,
+        callback_principal_id=callback_principal_id,
         trust_aca_auth_headers=True,
         close=close,
     )

@@ -1007,6 +1007,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             store=store,
             policy=policy,
             callback_capture=types.SimpleNamespace(write=AsyncMock()),
+            callback_principal_id="callback-principal-id",
             close=close,
         )
         real_sleep = asyncio.sleep
@@ -1060,6 +1061,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             store=InMemoryControlStore(),
             policy=policy,
             callback_capture=types.SimpleNamespace(write=AsyncMock()),
+            callback_principal_id="callback-principal-id",
         )
         server = app_mcp_server.build_server(runtime)
         after = {name for name in sys.modules if name.startswith("pydocket")}
@@ -1096,6 +1098,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         orchestrator: Orchestrator | None = None,
         store: Any | None = None,
         callback_capture: Any | None = None,
+        callback_principal_id: str = "callback-principal-id",
         trust_aca_auth_headers: bool = False,
     ) -> app_mcp_server.Runtime:
         store = store or InMemoryControlStore()
@@ -1113,6 +1116,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             store=store,
             policy=policy,
             callback_capture=callback_capture,
+            callback_principal_id=callback_principal_id,
             trust_aca_auth_headers=trust_aca_auth_headers,
         )
 
@@ -1151,6 +1155,13 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             expected,
         )
         with self.assertRaises(PublicError) as exc:
+            app_mcp_server.owner_scope_from_headers(
+                {"X-MS-CLIENT-PRINCIPAL-ID": principal},
+                trusted=True,
+                callback_principal_id="alice@example.com",
+            )
+        self.assertEqual(exc.exception.code, "TASK_FORBIDDEN")
+        with self.assertRaises(PublicError) as exc:
             app_mcp_server.owner_scope_from_headers({}, trusted=True)
         self.assertEqual(exc.exception.code, "TASK_FORBIDDEN")
 
@@ -1159,6 +1170,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             "AZURE_CLIENT_ID": "client-id-1",
             "AZURE_SUBSCRIPTION_ID": "sub-id-1",
             "MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth",
+            "MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID": "callback-principal-id-1",
             "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
             "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs-db",
             "MCP_ACA_JOBS_COSMOS_CONTAINER": "jobs",
@@ -1191,6 +1203,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             runtime = app_mcp_server.runtime_from_env()
 
         self.assertTrue(runtime.trust_aca_auth_headers)
+        self.assertEqual(runtime.callback_principal_id, "callback-principal-id-1")
         managed_identity.assert_called_once_with(client_id="client-id-1")
         aio_managed_identity.assert_called_once_with(client_id="client-id-1")
         jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1")
@@ -1285,15 +1298,21 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_and_callback_route_validate_and_store_exact_fields(self) -> None:
         capture = app_mcp_server.InMemoryCallbackCapture()
-        runtime = self._runtime(callback_capture=capture, trust_aca_auth_headers=True)
+        callback_principal_id = "callback-principal-id-1"
+        runtime = self._runtime(
+            callback_capture=capture,
+            callback_principal_id=callback_principal_id,
+            trust_aca_auth_headers=True,
+        )
         server = app_mcp_server.build_server(runtime)
-        client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
+        callback_client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": callback_principal_id})
+        agent_client = server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
 
-        health = await client.request("GET", "/health")
+        health = await callback_client.request("GET", "/health")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.text, "ok")
 
-        accepted = await client.request(
+        accepted = await callback_client.request(
             "POST",
             "/callbacks/jobs",
             json={
@@ -1316,7 +1335,30 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        rejected = await client.request(
+        rejected = await agent_client.request(
+            "POST",
+            "/callbacks/jobs",
+            json={
+                "taskId": "task-2",
+                "acaExecutionId": "exec-2",
+                "status": "Succeeded",
+                "resultUrl": "https://results.example/jobs/task-2.json",
+            },
+        )
+        self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(json.loads(rejected.text), {"code": "TASK_FORBIDDEN", "detail": "caller is not authorized"})
+
+        with patch("app.mcp_server.get_http_headers", return_value={"X-MS-CLIENT-PRINCIPAL-ID": callback_principal_id}):
+            with self.assertRaises(PublicError) as exc:
+                await server.tools["start_aca_job"](
+                    jobType="batch",
+                    idempotencyKey="key-3",
+                    inputRef="https://storage.example.com/input.json",
+                    callbackAlias="ops",
+                )
+        self.assertEqual(exc.exception.code, "TASK_FORBIDDEN")
+
+        rejected = await callback_client.request(
             "POST",
             "/callbacks/jobs",
             json={
@@ -1330,6 +1372,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rejected.status_code, 422)
 
     async def test_callbacks_route_requires_trusted_perimeter_and_is_idempotent(self) -> None:
+        callback_principal_id = "callback-principal-id-2"
         untrusted_capture = app_mcp_server.BlobCallbackCapture(
             app_mcp_server.ContainerClient.from_container_url("https://callbacks.example/jobs")
         )
@@ -1355,10 +1398,11 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         container_client = app_mcp_server.ContainerClient.from_container_url("https://callbacks.example/jobs")
         trusted_runtime = self._runtime(
             callback_capture=app_mcp_server.BlobCallbackCapture(container_client),
+            callback_principal_id=callback_principal_id,
             trust_aca_auth_headers=True,
         )
         trusted_server = app_mcp_server.build_server(trusted_runtime)
-        trusted_client = trusted_server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": "Alice@example.com"})
+        trusted_client = trusted_server.client(headers={"X-MS-CLIENT-PRINCIPAL-ID": callback_principal_id})
         payload = {
             "taskId": "task-1",
             "acaExecutionId": "exec-1",
@@ -1392,6 +1436,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             "AZURE_CLIENT_ID": "client-id-1",
             "AZURE_SUBSCRIPTION_ID": "sub-id-1",
             "MCP_ACA_JOBS_AUTH_MODE": "aca-easy-auth",
+            "MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID": "callback-principal-id-1",
             "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.com:443/",
             "MCP_ACA_JOBS_COSMOS_DATABASE": "jobs-db",
             "MCP_ACA_JOBS_COSMOS_CONTAINER": "jobs",
@@ -1430,6 +1475,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=fake_async_credential)
         self.assertIsInstance(runtime.policy, app_models.Policy)
         self.assertEqual(runtime.policy.jobs["batch"].job_name, "worker-job")
+        self.assertEqual(runtime.callback_principal_id, "callback-principal-id-1")
         self.assertTrue(runtime.trust_aca_auth_headers)
         self.assertIsNotNone(runtime.close)
         await runtime.close()

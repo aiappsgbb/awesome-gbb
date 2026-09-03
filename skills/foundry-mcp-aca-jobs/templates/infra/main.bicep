@@ -56,39 +56,42 @@ param authClientId string
 
 type CallbackAuthMode = 'managed_identity' | 'key_vault'
 
+type CallbackManagedIdentityConfig = {
+  authMode: 'managed_identity'
+}
+
+type CallbackKeyVaultConfig = {
+  authMode: 'key_vault'
+  externalCallbackUrl: string
+  callbackSecretName: string
+  keyVaultName: string
+}
+
+@discriminator('authMode')
+type CallbackConfig = CallbackManagedIdentityConfig | CallbackKeyVaultConfig
+
 @description('Immutable OCI digest used by both the app and the job.')
 param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48'
 
-@description('Callback delivery mode. key_vault requires externalCallbackUrl, callbackSecretName, and keyVaultName.')
-param callbackAuthMode CallbackAuthMode = 'managed_identity'
+@description('Callback delivery configuration. managed_identity uses the app Easy Auth audience only; key_vault requires an external callback URL, secret name, and Key Vault name.')
+param callbackConfig CallbackConfig
 
-@description('External callback URL used when callbackAuthMode is key_vault. Required together with callbackSecretName and keyVaultName in that mode.')
-param externalCallbackUrl string = ''
-
-@description('Managed-identity callback audience used when callbackAuthMode is managed_identity.')
-param callbackAudience string = 'api://${authClientId}'
-
-@description('Key Vault secret name used when callbackAuthMode is key_vault. Required together with externalCallbackUrl and keyVaultName in that mode.')
-param callbackSecretName string = ''
-
-@description('Existing Key Vault name used when callbackAuthMode is key_vault. Required together with externalCallbackUrl and callbackSecretName in that mode.')
-param keyVaultName string = ''
-
-var callbackRouteUrl = callbackAuthMode == 'managed_identity'
+var authAudience = 'api://${authClientId}'
+var callbackRouteUrl = callbackConfig.authMode == 'managed_identity'
   ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
-  : externalCallbackUrl
+  : callbackConfig.externalCallbackUrl
 var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'
 var callbackStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${callbackStorageContainerName}'
-var callbackPolicy = callbackAuthMode == 'managed_identity'
+var callbackPolicy = callbackConfig.authMode == 'managed_identity'
   ? {
       url: callbackRouteUrl
-      auth_mode: callbackAuthMode
-      audience: callbackAudience
+      auth_mode: callbackConfig.authMode
+      audience: authAudience
     }
   : {
       url: callbackRouteUrl
-      auth_mode: callbackAuthMode
-      secret_name: callbackSecretName
+      auth_mode: callbackConfig.authMode
+      secret_name: callbackConfig.callbackSecretName
     }
 var appPolicyJson = string({
   jobs: {
@@ -110,19 +113,19 @@ var appPolicyJson = string({
   input_hosts: inputHosts
   result_hosts: resultHosts
 })
-var jobCallbackEnvironmentVariables = callbackAuthMode == 'managed_identity' ? [
+var jobCallbackEnvironmentVariables = callbackConfig.authMode == 'managed_identity' ? [
   {
     name: 'MCP_ACA_JOBS_CALLBACK_AUDIENCE'
-    value: callbackAudience
+    value: authAudience
   }
 ] : [
   {
     name: 'MCP_ACA_JOBS_CALLBACK_VAULT_URL'
-    value: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
+    value: 'https://${callbackConfig.keyVaultName}${environment().suffixes.keyvaultDns}'
   }
   {
     name: 'MCP_ACA_JOBS_CALLBACK_SECRET_NAME'
-    value: callbackSecretName
+    value: callbackConfig.callbackSecretName
   }
 ]
 var appEnvironmentVariables = [
@@ -145,6 +148,10 @@ var appEnvironmentVariables = [
   {
     name: 'MCP_ACA_JOBS_COSMOS_CONTAINER'
     value: cosmos.outputs.containerName
+  }
+  {
+    name: 'MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID'
+    value: identities.outputs.jobUamiPrincipalId
   }
   {
     name: 'MCP_ACA_JOBS_CALLBACK_CONTAINER_URL'
@@ -198,7 +205,7 @@ var jobEnvironmentVariables = concat([
   }
   {
     name: 'MCP_ACA_JOBS_CALLBACK_AUTH_MODE'
-    value: callbackAuthMode
+    value: callbackConfig.authMode
   }
 ], jobCallbackEnvironmentVariables, [
   {
@@ -261,7 +268,7 @@ module preRuntimeRbac 'identity-rbac/assignments.bicep' = {
     storageAccountName: storageAccountName
     outputStorageContainerName: outputStorageContainerName
     callbackStorageContainerName: callbackStorageContainerName
-    keyVaultName: callbackAuthMode == 'key_vault' ? keyVaultName : ''
+    keyVaultName: callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''
     appPrincipalId: identities.outputs.appUamiPrincipalId
     jobPrincipalId: identities.outputs.jobUamiPrincipalId
     acrPullRoleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')

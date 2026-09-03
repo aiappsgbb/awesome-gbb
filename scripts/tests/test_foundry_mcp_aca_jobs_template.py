@@ -8,6 +8,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import json
 import tempfile
 import tomllib
 import unittest
@@ -36,6 +37,31 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     @staticmethod
     def _param_names(text: str) -> list[str]:
         return re.findall(r"(?m)^\s*param\s+(\w+)\s+\w+", text)
+
+    def _build_bicepparam(self, name: str, contents: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object] | None]:
+        param_file = self._infra_dir() / name
+        output_file = param_file.with_suffix(".json")
+        param_file.write_text(contents, encoding="utf-8")
+        try:
+            result = subprocess.run(
+                [
+                    "az",
+                    "bicep",
+                    "build-params",
+                    "--file",
+                    str(param_file),
+                    "--outfile",
+                    str(output_file),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            compiled = json.loads(output_file.read_text(encoding="utf-8")) if output_file.exists() else None
+            return result, compiled
+        finally:
+            param_file.unlink(missing_ok=True)
+            output_file.unlink(missing_ok=True)
 
     @staticmethod
     def _template_dir() -> pathlib.Path:
@@ -311,28 +337,29 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             self.assertIn(f"param {param}", main)
 
         self.assertIn("type CallbackAuthMode = 'managed_identity' | 'key_vault'", main)
-        for param in (
-            "callbackAuthMode CallbackAuthMode = 'managed_identity'",
-            "externalCallbackUrl string = ''",
-            "callbackAudience string = 'api://${authClientId}'",
-            "callbackSecretName string = ''",
-            "keyVaultName string = ''",
-        ):
-            self.assertIn(f"param {param}", main)
+        self.assertIn("@discriminator('authMode')", main)
+        self.assertIn("type CallbackConfig = CallbackManagedIdentityConfig | CallbackKeyVaultConfig", main)
+        self.assertIn("param callbackConfig CallbackConfig", main)
+        self.assertNotIn("param callbackAuthMode", main)
+        self.assertNotIn("param externalCallbackUrl", main)
+        self.assertNotIn("param callbackAudience", main)
+        self.assertNotIn("param callbackSecretName", main)
+        self.assertNotIn("param keyVaultName", main)
 
-        self.assertIn("'managed_identity'", main)
-        self.assertIn("'key_vault'", main)
-        self.assertIn("callbackAuthMode == 'managed_identity' ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs' : externalCallbackUrl", normalized)
-        self.assertIn("auth_mode: callbackAuthMode", main)
+        self.assertIn("var authAudience = 'api://${authClientId}'", main)
+        self.assertIn("callbackConfig.authMode == 'managed_identity' ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs' : callbackConfig.externalCallbackUrl", normalized)
+        self.assertIn("auth_mode: callbackConfig.authMode", main)
         self.assertIn("ops: callbackPolicy", main)
-        self.assertIn("callbackAuthMode == 'managed_identity' ? [", main)
+        self.assertIn("callbackConfig.authMode == 'managed_identity' ? [", main)
         self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_AUDIENCE'", main)
         self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_VAULT_URL'", main)
         self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_SECRET_NAME'", main)
-        self.assertIn("value: callbackAudience", main)
-        self.assertIn("value: callbackSecretName", main)
+        self.assertIn("name: 'MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID'", main)
+        self.assertIn("value: authAudience", main)
+        self.assertIn("value: callbackConfig.callbackSecretName", main)
+        self.assertIn("value: identities.outputs.jobUamiPrincipalId", main)
         self.assertIn("environment().suffixes.keyvaultDns", main)
-        self.assertIn("callbackAuthMode == 'key_vault' ? keyVaultName : ''", normalized)
+        self.assertIn("callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''", normalized)
 
         for required in (
             "AZURE_CLIENT_ID",
@@ -340,6 +367,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "MCP_ACA_JOBS_COSMOS_ENDPOINT",
             "MCP_ACA_JOBS_COSMOS_DATABASE",
             "MCP_ACA_JOBS_COSMOS_CONTAINER",
+            "MCP_ACA_JOBS_CALLBACK_PRINCIPAL_ID",
             "MCP_ACA_JOBS_CALLBACK_CONTAINER_URL",
             "MCP_ACA_JOBS_POLICY_JSON",
             "MCP_ACA_JOBS_JOB_TYPE",
@@ -362,7 +390,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("string({", main)
         self.assertIn("managedEnvironment.properties.defaultDomain", main)
         self.assertIn("callbacks: {", main)
-        self.assertIn("audience: callbackAudience", main)
+        self.assertIn("audience: authAudience", main)
         self.assertIn("join(inputHosts, ',')", normalized)
         self.assertIn("join(resultHosts, ',')", normalized)
         self.assertNotIn("CONTAINER_APP_JOB_EXECUTION_NAME", main)
@@ -388,9 +416,111 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("dependsOn: [\n    app\n    preRuntimeRbac\n  ]", main)
 
         identity_rbac = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
-        self.assertIn("keyVaultName: callbackAuthMode == 'key_vault' ? keyVaultName : ''", main)
+        self.assertIn("keyVaultName: callbackConfig.authMode == 'key_vault' ? callbackConfig.keyVaultName : ''", main)
         self.assertIn("keyVaultName: keyVaultName", identity_rbac)
         self.assertIn("if (!empty(keyVaultName))", (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8"))
+
+    def test_callback_config_bicepparam_variants_compile_and_invalid_key_vault_is_rejected(self) -> None:
+        managed_identity_params = """using './main.bicep'
+
+param resourceGroupName = 'rg-jobs'
+param location = 'swedencentral'
+param acrName = 'acr-jobs'
+param environmentName = 'env-jobs'
+param storageAccountName = 'storagejobs'
+param outputStorageContainerName = 'outputs'
+param callbackStorageContainerName = 'callbacks'
+param allowedMcpCallerClientIds = []
+param inputHosts = [
+  'input.example.com'
+]
+param resultHosts = [
+  'results.example.com'
+]
+param cosmosAccountName = 'cosmos-jobs'
+param appName = 'mcp-app'
+param jobName = 'mcp-job'
+param authClientId = 'auth-client-id'
+param callbackConfig = {
+  authMode: 'managed_identity'
+}
+"""
+        result, compiled = self._build_bicepparam(".test-callback-mi.bicepparam", managed_identity_params)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIsNotNone(compiled)
+        self.assertEqual(
+            compiled["parameters"]["callbackConfig"]["value"]["authMode"],
+            "managed_identity",
+        )
+
+        key_vault_params = """using './main.bicep'
+
+param resourceGroupName = 'rg-jobs'
+param location = 'swedencentral'
+param acrName = 'acr-jobs'
+param environmentName = 'env-jobs'
+param storageAccountName = 'storagejobs'
+param outputStorageContainerName = 'outputs'
+param callbackStorageContainerName = 'callbacks'
+param allowedMcpCallerClientIds = []
+param inputHosts = [
+  'input.example.com'
+]
+param resultHosts = [
+  'results.example.com'
+]
+param cosmosAccountName = 'cosmos-jobs'
+param appName = 'mcp-app'
+param jobName = 'mcp-job'
+param authClientId = 'auth-client-id'
+param callbackConfig = {
+  authMode: 'key_vault'
+  externalCallbackUrl: 'https://callback.example.com/callbacks/jobs'
+  callbackSecretName: 'callback-secret'
+  keyVaultName: 'kv-jobs'
+}
+"""
+        result, compiled = self._build_bicepparam(".test-callback-kv.bicepparam", key_vault_params)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIsNotNone(compiled)
+        self.assertEqual(compiled["parameters"]["callbackConfig"]["value"]["authMode"], "key_vault")
+        self.assertEqual(
+            compiled["parameters"]["callbackConfig"]["value"]["externalCallbackUrl"],
+            "https://callback.example.com/callbacks/jobs",
+        )
+        self.assertEqual(compiled["parameters"]["callbackConfig"]["value"]["callbackSecretName"], "callback-secret")
+        self.assertEqual(compiled["parameters"]["callbackConfig"]["value"]["keyVaultName"], "kv-jobs")
+
+        invalid_key_vault_params = """using './main.bicep'
+
+param resourceGroupName = 'rg-jobs'
+param location = 'swedencentral'
+param acrName = 'acr-jobs'
+param environmentName = 'env-jobs'
+param storageAccountName = 'storagejobs'
+param outputStorageContainerName = 'outputs'
+param callbackStorageContainerName = 'callbacks'
+param allowedMcpCallerClientIds = []
+param inputHosts = [
+  'input.example.com'
+]
+param resultHosts = [
+  'results.example.com'
+]
+param cosmosAccountName = 'cosmos-jobs'
+param appName = 'mcp-app'
+param jobName = 'mcp-job'
+param authClientId = 'auth-client-id'
+param callbackConfig = {
+  authMode: 'key_vault'
+}
+"""
+        result, _ = self._build_bicepparam(".test-callback-kv-invalid.bicepparam", invalid_key_vault_params)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("BCP035", result.stderr)
+        self.assertIn("callbackSecretName", result.stderr)
+        self.assertIn("externalCallbackUrl", result.stderr)
+        self.assertIn("keyVaultName", result.stderr)
 
     def test_bicep_builds_without_experimental_assertion_warnings(self) -> None:
         files = [
