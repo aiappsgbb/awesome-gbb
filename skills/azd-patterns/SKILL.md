@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.5.1"
+  version: "1.5.2"
 ---
 
 # AZD Tips & Patterns
@@ -789,7 +789,7 @@ Phase 6.
 | `ai-search`        | yes       | sku: basic                                                   |
 | `foundry-iq-index` | yes       | knowledgeBases: [{ name: kyc-policies, sources: [...] }]    |
 | `azure-vision`     | yes       | model: gpt-5.4-mini                                          |
-| `aca-job`          | yes       | [{ name: sla-watcher, trigger: cron, schedule: "*/15 * * * *" }] |
+| `aca-job`          | yes       | [{ name: sla-watcher, imageDigest: acr.example.io/sla-watcher@sha256:<digest>, command: ['python', '-m', 'app.job_worker'] }] |
 | `aca-mcp`          | yes       | [{ name: customer-data-mcp, image: customer-mcp:latest }]   |
 | `aca-bot`          | yes       | manifest: ...                                                |
 | `key-vault`        | no        | (threadlight: keyless-by-mandate)                            |

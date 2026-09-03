@@ -92,6 +92,11 @@ class AzdPatternsFixtureContractTests(unittest.TestCase):
         )
 
         self.assertIn(expected_row, skill)
+        selector_excerpt = skill[skill.index("```markdown"): skill.index("```", skill.index("```markdown") + 1)]
+        self.assertNotIn("trigger: cron", selector_excerpt)
+        self.assertNotIn("trigger: schedule", selector_excerpt)
+        self.assertIn("imageDigest", selector_excerpt)
+        self.assertIn("command", selector_excerpt)
 
     def test_skill_bicep_job_pattern_references_canonical_module(self) -> None:
         skill = SKILL.read_text(encoding="utf-8")
