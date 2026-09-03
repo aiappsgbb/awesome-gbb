@@ -683,27 +683,39 @@ finally:
 PY
 ) || fail "hosted agent did not become active"
 
-HOSTED_PRINCIPAL_ID="$(
-  az rest \
-    --method get \
-    --url "${FOUNDRY_PROJECT_ENDPOINT%/}/agents/${HOSTED_NAME}?api-version=v1" \
-    --resource https://ai.azure.com \
-    --query instance_identity.principal_id \
-    --output tsv
-)" || fail "hosted agent identity lookup failed"
+HOSTED_PRINCIPAL_ID=""
+HOSTED_IDENTITY_LAST_ERROR="instance_identity.principal_id was empty"
+for attempt in $(seq 1 6); do
+  HOSTED_IDENTITY_LOOKUP_OUTPUT=""
+  if HOSTED_IDENTITY_LOOKUP_OUTPUT="$(
+    az rest \
+      --method get \
+      --url "${FOUNDRY_PROJECT_ENDPOINT%/}/agents/${HOSTED_NAME}?api-version=v1" \
+      --resource https://ai.azure.com \
+      --query instance_identity.principal_id \
+      --output tsv 2>&1
+  )"; then
+    if [[ -n "$HOSTED_IDENTITY_LOOKUP_OUTPUT" ]] &&
+      [[ "$HOSTED_IDENTITY_LOOKUP_OUTPUT" != "null" ]] &&
+      [[ "$HOSTED_IDENTITY_LOOKUP_OUTPUT" != "None" ]]
+    then
+      HOSTED_PRINCIPAL_ID="$HOSTED_IDENTITY_LOOKUP_OUTPUT"
+      break
+    fi
+    HOSTED_IDENTITY_LAST_ERROR="instance_identity.principal_id was empty"
+  else
+    HOSTED_IDENTITY_LAST_ERROR="$(
+      printf '%s\n' "$HOSTED_IDENTITY_LOOKUP_OUTPUT" | tail -n 1
+    )"
+    test -n "$HOSTED_IDENTITY_LAST_ERROR" ||
+      HOSTED_IDENTITY_LAST_ERROR="az rest failed without a diagnostic"
+  fi
+  if [[ "$attempt" -lt 6 ]]; then
+    sleep 10
+  fi
+done
 test -n "$HOSTED_PRINCIPAL_ID" ||
-  fail "hosted agent identity lookup failed"
-
-HOSTED_CLIENT_ID="$(
-  az ad sp show \
-    --id "$HOSTED_PRINCIPAL_ID" \
-    --query appId \
-    --output tsv
-)" || fail "hosted agent client ID resolution failed"
-test -n "$HOSTED_CLIENT_ID" ||
-  fail "hosted agent client ID resolution failed"
-FOUNDRY_AGENT_INSTANCE_CLIENT_ID="$HOSTED_CLIENT_ID"
-export FOUNDRY_AGENT_INSTANCE_CLIENT_ID
+  fail "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR"
 
 AUTH_CONFIG_URL="https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01"
 AUTH_CONFIG_PROPERTIES="$(
@@ -714,37 +726,46 @@ AUTH_CONFIG_PROPERTIES="$(
     --output json
 )" || fail "Easy Auth configuration read failed"
 UPDATED_AUTH_CONFIG_BODY="$(
-  jq -c --arg client_id "$FOUNDRY_AGENT_INSTANCE_CLIENT_ID" '
-    (.identityProviders.azureActiveDirectory.validation
-      .defaultAuthorizationPolicy.allowedApplications //= [])
-    | .identityProviders.azureActiveDirectory.validation
-        .defaultAuthorizationPolicy.allowedApplications =
-        ((.identityProviders.azureActiveDirectory.validation
-          .defaultAuthorizationPolicy.allowedApplications + [$client_id])
-         | unique)
+  jq -c --arg principal_id "$HOSTED_PRINCIPAL_ID" '
+    (.identityProviders //= {})
+    | (.identityProviders.azureActiveDirectory //= {})
+    | (.identityProviders.azureActiveDirectory.validation //= {})
+    | (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy //= {})
+    | (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedPrincipals //= {})
+    | (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedPrincipals.identities //= [])
+    | if (.identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedPrincipals.identities
+        | index($principal_id)) == null
+      then .identityProviders.azureActiveDirectory.validation
+        .defaultAuthorizationPolicy.allowedPrincipals.identities += [$principal_id]
+      else .
+      end
     | {properties: .}
   ' <<<"$AUTH_CONFIG_PROPERTIES"
-)" || fail "Easy Auth allowedApplications update construction failed"
+)" || fail "Easy Auth allowed principal identities update construction failed"
 az rest \
   --method put \
   --url "$AUTH_CONFIG_URL" \
   --headers "Content-Type=application/json" \
   --body "$UPDATED_AUTH_CONFIG_BODY" \
   --output none ||
-  fail "Easy Auth allowedApplications update failed"
+  fail "Easy Auth allowed principal identities update failed"
 
 AUTH_ALLOWLIST_CONVERGED=false
 for attempt in $(seq 1 12); do
-  CURRENT_ALLOWED_APPLICATIONS="$(
+  CURRENT_ALLOWED_IDENTITIES="$(
     az rest \
       --method get \
       --url "$AUTH_CONFIG_URL" \
-      --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications \
+      --query properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.identities \
       --output json
-  )" || fail "Easy Auth allowedApplications propagation poll failed"
-  if jq -e --arg client_id "$FOUNDRY_AGENT_INSTANCE_CLIENT_ID" \
-    'index($client_id) != null' \
-    <<<"$CURRENT_ALLOWED_APPLICATIONS" >/dev/null
+  )" || fail "Easy Auth allowed principal identities propagation poll failed"
+  if jq -e --arg principal_id "$HOSTED_PRINCIPAL_ID" \
+    'index($principal_id) != null' \
+    <<<"$CURRENT_ALLOWED_IDENTITIES" >/dev/null
   then
     AUTH_ALLOWLIST_CONVERGED=true
     break
@@ -754,7 +775,7 @@ for attempt in $(seq 1 12); do
   fi
 done
 [[ "$AUTH_ALLOWLIST_CONVERGED" == true ]] ||
-  fail "hosted agent client ID missing from Easy Auth allowedApplications after bounded poll"
+  fail "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll"
 
 (
 cd "$PROJECT_DIR"

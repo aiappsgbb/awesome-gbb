@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.2.2"
+  version: "1.2.3"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -257,6 +257,8 @@ cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patte
 
 Use `azd up` or `azd deploy` to run the converged postdeploy flow. Do not hand
 roll `az` deploy sequences or reimplement the digest convergence logic here.
+Post-deploy hosted-agent callers are allowlisted by the instance identity object ID
+in `defaultAuthorizationPolicy.allowedPrincipals.identities`, not a Graph-resolved appId.
 
 For a brownfield platform, keep `resourceGroupName` as the child resource group
 that receives the app, Job, and UAMIs, and set `platformResourceGroupName` to

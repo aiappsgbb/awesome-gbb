@@ -328,7 +328,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.2.2")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.2.3")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -942,6 +942,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             encoding="utf-8"
         )
         normalized = " ".join(fixture.split())
+        compact = re.sub(r"\s+", "", fixture)
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
 
         self.assertIn('print("HOSTED_AGENT_ACTIVE")', fixture)
         self.assertIn(
@@ -950,14 +952,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
         self.assertIn("--resource https://ai.azure.com", fixture)
         self.assertIn("--query instance_identity.principal_id", fixture)
-        self.assertIn("az ad sp show", fixture)
-        self.assertIn('--id "$HOSTED_PRINCIPAL_ID"', fixture)
-        self.assertIn("--query appId", fixture)
         self.assertIn("--output tsv", fixture)
-        self.assertIn(
-            'FOUNDRY_AGENT_INSTANCE_CLIENT_ID="$HOSTED_CLIENT_ID"',
-            fixture,
-        )
+        self.assertIn("for attempt in $(seq 1 6); do", fixture)
+        self.assertIn("HOSTED_IDENTITY_LAST_ERROR", fixture)
+        self.assertIn('sleep 10', fixture)
+        self.assertIn('test -n "$HOSTED_PRINCIPAL_ID"', fixture)
         self.assertIn(
             'resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01',
             fixture,
@@ -965,25 +964,27 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn('AUTH_CONFIG_PROPERTIES="$(', fixture)
         self.assertIn(
             ".identityProviders.azureActiveDirectory.validation."
-            "defaultAuthorizationPolicy.allowedApplications",
+            "defaultAuthorizationPolicy.allowedPrincipals.identities",
             fixture,
         )
-        self.assertIn("unique", fixture)
-        self.assertIn(
-            ".defaultAuthorizationPolicy.allowedApplications + [$client_id]",
-            normalized,
-        )
+        self.assertIn("index($principal_id)", fixture)
+        self.assertNotIn("| unique", fixture)
+        for initializer in (
+            "(.identityProviders //= {})",
+            "(.identityProviders.azureActiveDirectory //= {})",
+            "(.identityProviders.azureActiveDirectory.validation //= {})",
+            "(.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy //= {})",
+            "(.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals //= {})",
+            "(.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.identities //= [])",
+        ):
+            self.assertIn(re.sub(r"\s+", "", initializer), compact)
         self.assertIn("| {properties: .}", fixture)
         self.assertIn("--method put", fixture)
         self.assertIn('--body "$UPDATED_AUTH_CONFIG_BODY"', fixture)
         self.assertIn("for attempt in $(seq 1 12); do", fixture)
         self.assertIn('sleep 5', fixture)
         self.assertIn(
-            "hosted agent identity lookup failed",
-            fixture,
-        )
-        self.assertIn(
-            "hosted agent client ID resolution failed",
+            "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR",
             fixture,
         )
         self.assertIn(
@@ -991,15 +992,28 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             fixture,
         )
         self.assertIn(
-            "Easy Auth allowedApplications update failed",
+            "Easy Auth allowed principal identities update failed",
             fixture,
         )
         self.assertIn(
-            "hosted agent client ID missing from Easy Auth allowedApplications after bounded poll",
+            "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll",
             fixture,
         )
         self.assertNotIn('echo "$HOSTED_PRINCIPAL_ID"', fixture)
-        self.assertNotIn('echo "$FOUNDRY_AGENT_INSTANCE_CLIENT_ID"', fixture)
+        for forbidden in (
+            "az ad sp show",
+            "--query appId",
+            "Microsoft Graph",
+            "Application.Read.All",
+            "Directory.Read.All",
+            "ServicePrincipal.Read.All",
+        ):
+            self.assertNotIn(forbidden, fixture)
+        self.assertIn(
+            "hosted-agent callers are allowlisted by the instance identity object ID",
+            skill,
+        )
+        self.assertIn("not a Graph-resolved appId", skill)
 
         deploy = fixture.index('azd deploy "$HOSTED_NAME"')
         active = fixture.index('print("HOSTED_AGENT_ACTIVE")')
@@ -1013,7 +1027,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
 
         jq_program_match = re.search(
             r"UPDATED_AUTH_CONFIG_BODY=\"\$\(.*?"
-            r"jq -c --arg client_id \"\$FOUNDRY_AGENT_INSTANCE_CLIENT_ID\" '"
+            r"jq -c --arg principal_id \"\$HOSTED_PRINCIPAL_ID\" '"
             r"(?P<program>.*?)"
             r"'\s+<<<\"\$AUTH_CONFIG_PROPERTIES\"",
             fixture,
@@ -1032,7 +1046,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                             "allowedApplications": [
                                 "existing-caller-client",
                                 "hosted-caller-client",
-                            ]
+                            ],
+                            "allowedPrincipals": {
+                                "identities": [
+                                    "z-existing-principal-object-id",
+                                ]
+                            },
                         },
                     },
                 }
@@ -1044,8 +1063,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "jq",
                 "-c",
                 "--arg",
-                "client_id",
-                "hosted-caller-client",
+                "principal_id",
+                "hosted-principal-object-id",
                 jq_program_match.group("program"),
             ],
             input=json.dumps(original_properties),
@@ -1059,12 +1078,39 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             updated_body["properties"]["sentinel"],
             original_properties["sentinel"],
         )
-        allowed = updated_body["properties"]["identityProviders"][
+        policy = updated_body["properties"]["identityProviders"][
             "azureActiveDirectory"
-        ]["validation"]["defaultAuthorizationPolicy"]["allowedApplications"]
+        ]["validation"]["defaultAuthorizationPolicy"]
         self.assertEqual(
-            allowed,
+            policy["allowedApplications"],
             ["existing-caller-client", "hosted-caller-client"],
+        )
+        self.assertEqual(
+            policy["allowedPrincipals"]["identities"],
+            ["z-existing-principal-object-id", "hosted-principal-object-id"],
+        )
+        transformed_again = subprocess.run(
+            [
+                "jq",
+                "-c",
+                "--arg",
+                "principal_id",
+                "hosted-principal-object-id",
+                jq_program_match.group("program"),
+            ],
+            input=json.dumps(updated_body["properties"]),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(transformed_again.returncode, 0, transformed_again.stderr)
+        self.assertEqual(
+            json.loads(transformed_again.stdout)["properties"][
+                "identityProviders"
+            ]["azureActiveDirectory"]["validation"]["defaultAuthorizationPolicy"][
+                "allowedPrincipals"
+            ]["identities"],
+            ["z-existing-principal-object-id", "hosted-principal-object-id"],
         )
 
     def test_fixture_workflow_installs_pinned_uv(self) -> None:
