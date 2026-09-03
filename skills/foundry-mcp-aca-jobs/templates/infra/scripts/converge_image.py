@@ -187,6 +187,17 @@ def _set_container_image(resource: Any, container_name: str, image: str) -> None
         setattr(container, "image", image)
 
 
+def _clear_revision_suffix(resource: Any) -> None:
+    template = _field(_field(resource, "properties"), "template")
+    if isinstance(template, Mapping):
+        template.pop("revisionSuffix", None)
+        template.pop("revision_suffix", None)
+        return
+    for name in ("revision_suffix", "revisionSuffix"):
+        if hasattr(template, name):
+            setattr(template, name, None)
+
+
 def _container_command(container: Any) -> list[str]:
     command = _field(container, "command", default=[])
     return [str(part) for part in _as_list(command)]
@@ -256,6 +267,7 @@ def converge_image(
     if _resource_changed(app, "mcp", desired_image):
         app_copy = deepcopy(app)
         _set_container_image(app_copy, "mcp", desired_image)
+        _clear_revision_suffix(app_copy)
         app_poller = client.container_apps.begin_create_or_update(env["AZURE_RESOURCE_GROUP"], env["MCP_APP_NAME"], app_copy)
         _wait_for_result(app_poller)
 

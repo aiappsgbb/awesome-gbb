@@ -342,7 +342,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.1")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.2")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -940,11 +940,15 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
             encoding="utf-8"
         )
-        self.assertGreaterEqual(
+        self.assertEqual(
             fixture.count(
                 "Static bearer is smoke-only; production must use a header provider."
             ),
-            2,
+            1,
+        )
+        self.assertIn(
+            "Static bearer is smoke-only; production must use project_connection_id.",
+            fixture,
         )
 
     def test_skill_canonical_tables_cover_deploy_inputs_without_self_link(self) -> None:
@@ -1078,6 +1082,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn('select(.id == "microsoft.foundry")', fixture)
         self.assertIn('select(.id == "azure.ai.agents")', fixture)
         self.assertIn("RBAC_PROVIDER_ACTIONS_MATCH", fixture)
+        self.assertIn(
+            "select(ascii_downcase == ($action | ascii_downcase))",
+            fixture,
+        )
         for action in (
             "Microsoft.App/jobs/read",
             "Microsoft.App/jobs/start/action",
@@ -1106,9 +1114,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("from azure.ai.projects.models import MCPTool, PromptAgentDefinition", fixture)
         self.assertIn("definition=PromptAgentDefinition(", fixture)
         self.assertIn("MCPTool(", fixture)
+        self.assertIn("authorization=access_token", fixture)
         self.assertEqual(
             fixture.count('headers={"Authorization": "Bearer " + access_token}'),
-            2,
+            1,
         )
         self.assertNotIn('headers={"Authorization": f"Bearer {access_token}"}', fixture)
         self.assertIn("project.agents.create_version(", fixture)
@@ -2375,6 +2384,7 @@ param callbackConfig = {{
         self.assertEqual(data["services"]["mcp"]["host"], "containerapp")
         self.assertEqual(data["services"]["mcp"]["docker"], {"path": "Dockerfile", "context": "."})
         self.assertIn("postdeploy", data["hooks"])
+        self.assertEqual(data["hooks"]["postdeploy"]["shell"], "sh")
         self.assertIn("converge_image.py", text)
         self.assertIn("verify_deployment.py", text)
         self.assertIn("cd infra/scripts && uv sync --frozen", text)
@@ -2442,7 +2452,10 @@ param callbackConfig = {{
                     secrets=[SimpleNamespace(name="APP_SECRET")],
                     activeRevisionsMode="Single",
                 ),
-                template=SimpleNamespace(containers=[app_container]),
+                template=SimpleNamespace(
+                    containers=[app_container],
+                    revision_suffix="azd-existing",
+                ),
             ),
         )
         job = SimpleNamespace(
@@ -2512,7 +2525,9 @@ param callbackConfig = {{
         self.assertEqual(app_updates[0][0:2], ("rg-jobs", "mcp-app"))
         self.assertEqual(job_updates[0][0:2], ("rg-jobs", "mcp-job"))
         self.assertEqual(app_updates[0][2].properties.template.containers[0].image, expected_image)
+        self.assertIsNone(app_updates[0][2].properties.template.revision_suffix)
         self.assertEqual(job_updates[0][2].properties.template.containers[0].image, expected_image)
+        self.assertEqual(app.properties.template.revision_suffix, "azd-existing")
         self.assertEqual(app.properties.template.containers[0].env[0].value, "1")
         self.assertEqual(job.properties.template.containers[0].secrets[0].name, "JOB_SECRET")
 

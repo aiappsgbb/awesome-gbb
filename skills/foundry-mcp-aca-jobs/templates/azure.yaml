@@ -12,7 +12,7 @@ services:
 
 hooks:
   postdeploy:
-    shell: bash
+    shell: sh
     interactive: false
     continueOnError: false
     run: |

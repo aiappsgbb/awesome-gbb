@@ -231,7 +231,8 @@ for action in \
   Microsoft.App/jobs/stop/execution/action
 do
   jq -e --arg action "$action" \
-    '.. | objects | .name? // empty | select(. == $action)' \
+    '.. | objects | .name? // empty |
+     select(ascii_downcase == ($action | ascii_downcase))' \
     <<<"$provider_json" >/dev/null ||
     fail "Microsoft.App provider action missing: $action"
 done
@@ -503,8 +504,9 @@ try:
                 MCPTool(
                     server_label="aca_jobs",
                     server_url=os.environ["MCP_URL"],
-                    # Static bearer is smoke-only; production must use a header provider.
-                    headers={"Authorization": "Bearer " + access_token},
+                    # Static bearer is smoke-only; production must use project_connection_id.
+                    # The service rejects sensitive Authorization values in headers.
+                    authorization=access_token,
                     require_approval="never",
                 )
             ],
