@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.3.4"
+  version: "1.3.5"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -352,6 +352,7 @@ Pin validation must print exactly:
 
 - `ok fastmcp external tasks adapter`
 - `ok aca jobs sdk surface`
+- `ok azure ai projects prompt mcp authorization surface`
 - `ok foundry-mcp-aca-jobs imports`
 
 ## Non-goals

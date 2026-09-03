@@ -195,7 +195,7 @@ single sources of truth, not duplicate snippets in `SKILL.md`.
 
 | File | Responsibility |
 |---|---|
-| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.0.0`. |
+| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.3.5`. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py` | Canonical FastMCP server assembly and HTTP entrypoint. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py` | Small MCP Tasks `ServerExtension` adapter when the pinned FastMCP Tasks extension cannot bind directly to external ACA execution state. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py` | Shared start, get, cancel, idempotency, status translation, and reconciliation service used by Tasks and fallback tools. |

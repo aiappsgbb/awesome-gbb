@@ -89,6 +89,21 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         assert isinstance(data, dict), path
         return data, parts[2]
 
+    @staticmethod
+    def _bullets_after_heading(body: str, heading: str) -> list[str]:
+        lines = body.splitlines()
+        start = lines.index(heading) + 1
+        bullets: list[str] = []
+        for line in lines[start:]:
+            if line.startswith("## "):
+                break
+            if line.startswith("- "):
+                bullet = line[2:]
+                if bullet.startswith("`") and bullet.endswith("`"):
+                    bullet = bullet[1:-1]
+                bullets.append(bullet)
+        return bullets
+
     @classmethod
     def _verify_deployment_client(
         cls,
@@ -371,7 +386,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.4")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.5")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -1666,6 +1681,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             projects_package["upstream_changelog"],
             "https://pypi.org/project/azure-ai-projects/#history",
         )
+
         self.assertIn(
             "https://pypi.org/project/azure-ai-projects/",
             pin_fm["docs_to_revalidate"],
@@ -1699,6 +1715,15 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             body,
         )
         self.assertIn("Task20", body)
+
+    def test_skill_pin_validation_bullet_list_matches_upstream_pin_expected_output(self) -> None:
+        pin_fm, _ = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
+        _, skill_body = self._frontmatter_and_body(SKILL / "SKILL.md")
+
+        self.assertEqual(
+            self._bullets_after_heading(skill_body, "Pin validation must print exactly:"),
+            pin_fm["validation"]["expected_output"],
+        )
 
     def test_pattern25_assigns_manual_cosmos_native_role_cleanup(self) -> None:
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
