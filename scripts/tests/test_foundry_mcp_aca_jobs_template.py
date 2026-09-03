@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import sys
 import shutil
 import subprocess
 import json
@@ -16,6 +17,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "foundry-mcp-aca-jobs"
+SKILL_DIR = SKILL / "references" / "python"
+sys.path.insert(0, str(SKILL_DIR))
+
+from app.models import Policy
 
 
 class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
@@ -351,6 +356,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("@maxLength(53)", main)
         self.assertIn("var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'", main)
         self.assertIn("callbackStorageContainerUrl", main)
+        self.assertIn("var storageHost = '${storageAccountName}.${environment().suffixes.storage}'", main)
+        self.assertIn("var effectiveResultHosts = union(resultHosts, [storageHost])", main)
 
         self.assertIn("var authAudience = 'api://${authClientId}'", main)
         self.assertIn("callbackConfig.authMode == 'managed_identity' ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs' : callbackConfig.externalCallbackUrl", normalized)
@@ -399,7 +406,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("callbacks: {", main)
         self.assertIn("audience: authAudience", main)
         self.assertIn("join(inputHosts, ',')", normalized)
-        self.assertIn("join(resultHosts, ',')", normalized)
+        self.assertIn("result_hosts: effectiveResultHosts", main)
+        self.assertIn("join(effectiveResultHosts, ',')", normalized)
+        self.assertNotIn("join(resultHosts, ',')", normalized)
         self.assertNotIn("CONTAINER_APP_JOB_EXECUTION_NAME", main)
         self.assertNotIn("AZURE_CLIENT_SECRET", main)
         self.assertNotIn("auth_mode: 'managed_identity'", main)
@@ -595,6 +604,15 @@ param callbackConfig = {
         self.assertIn("callbackStorageContainerUrl", main)
         self.assertIn("authAudience", main)
         self.assertIn("appImageDigest", main)
+
+    def test_policy_validates_the_template_output_storage_url_when_storage_host_is_allowlisted(self) -> None:
+        policy = Policy(
+            input_hosts={"input.example.com"},
+            result_hosts={"results.example.com", "storagejobs.blob.core.windows.net"},
+        )
+
+        approved = policy.validate_result("https://storagejobs.blob.core.windows.net/outputs")
+        self.assertEqual(str(approved), "https://storagejobs.blob.core.windows.net/outputs")
 
     def test_source_modules_expose_both_helpable_clis(self) -> None:
         server_source = (self._reference_app_dir() / "mcp_server.py").read_text(encoding="utf-8")

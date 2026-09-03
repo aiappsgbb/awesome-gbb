@@ -76,6 +76,8 @@ param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
+var storageHost = '${storageAccountName}.${environment().suffixes.storage}'
+var effectiveResultHosts = union(resultHosts, [storageHost])
 var callbackRouteUrl = callbackConfig.authMode == 'managed_identity'
   ? 'https://${appName}.${managedEnvironment.properties.defaultDomain}/callbacks/jobs'
   : callbackConfig.externalCallbackUrl
@@ -110,7 +112,7 @@ var appPolicyJson = string({
     ops: callbackPolicy
   }
   input_hosts: inputHosts
-  result_hosts: resultHosts
+  result_hosts: effectiveResultHosts
 })
 var jobCallbackEnvironmentVariables = callbackConfig.authMode == 'managed_identity' ? [
   {
@@ -217,7 +219,7 @@ var jobEnvironmentVariables = concat([
   }
   {
     name: 'MCP_ACA_JOBS_RESULT_HOSTS'
-    value: join(resultHosts, ',')
+    value: join(effectiveResultHosts, ',')
   }
 ])
 
