@@ -114,7 +114,7 @@
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 - Create: `skills/foundry-mcp-aca-jobs/templates/pyproject.toml`
 
-- [ ] **Step 1: Write the failing dependency-contract test**
+- [x] **Step 1: Write the failing dependency-contract test**
 
 Create the test module with this initial test:
 
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the test and verify red**
+- [x] **Step 2: Run the test and verify red**
 
 Run:
 
@@ -166,7 +166,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 Expected: `ERROR` with `FileNotFoundError` for
 `skills/foundry-mcp-aca-jobs/templates/pyproject.toml`.
 
-- [ ] **Step 3: Add the minimal package manifest**
+- [x] **Step 3: Add the minimal package manifest**
 
 Create:
 
@@ -198,7 +198,7 @@ dependencies = [
 packages = ["app"]
 ```
 
-- [ ] **Step 4: Run the focused test and install probe**
+- [x] **Step 4: Run the focused test and install probe**
 
 Run:
 
@@ -224,7 +224,7 @@ PY
 Expected: one test passes and the probe prints
 `dependency and extension surface ok`.
 
-- [ ] **Step 5: Commit the dependency contract**
+- [x] **Step 5: Commit the dependency contract**
 
 ```bash
 git add scripts/tests/test_foundry_mcp_aca_jobs_template.py \
@@ -244,7 +244,7 @@ git commit -m "test(foundry-mcp-aca-jobs): lock dependency surface [skill-rewrit
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/models.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_models.py`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 The test must cover all seven current ACA states:
 
@@ -290,7 +290,7 @@ class StatusMappingTests(unittest.TestCase):
         self.assertTrue(result.result["isError"])
 ```
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -300,7 +300,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_models -v
 
 Expected: `ImportError` because `app.models` does not exist.
 
-- [ ] **Step 3: Implement the minimal typed model**
+- [x] **Step 3: Implement the minimal typed model**
 
 Implement these public types and functions:
 
@@ -375,7 +375,7 @@ class StartRequest(BaseModel):
 a `GetTaskResult`; internal business failures return `status="completed"` with
 `{"content": [{"type": "text", "text": error_code}], "isError": True}`.
 
-- [ ] **Step 4: Run the tests and type import check**
+- [x] **Step 4: Run the tests and type import check**
 
 Run:
 
@@ -386,7 +386,7 @@ python3 -m py_compile skills/foundry-mcp-aca-jobs/references/python/app/*.py
 
 Expected: all model tests pass; compile exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app \
@@ -402,7 +402,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): define task lifecycle [skill-rewrite]
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/callbacks.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_callbacks.py`
 
-- [ ] **Step 1: Write failing policy tests**
+- [x] **Step 1: Write failing policy tests**
 
 ```python
 class CallbackPolicyTests(unittest.TestCase):
@@ -431,7 +431,7 @@ class CallbackPolicyTests(unittest.TestCase):
         self.assertEqual(set(payload), {"taskId", "acaExecutionId", "status", "resultUrl"})
 ```
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -441,7 +441,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_callbacks -v
 
 Expected: import failure for `Policy`.
 
-- [ ] **Step 3: Implement policy and callback sender**
+- [x] **Step 3: Implement policy and callback sender**
 
 Add `JobPolicy`, `CallbackPolicy`, `Policy`, and `PublicError` to `models.py`.
 `Policy.callback()` and `Policy.job()` use dictionary keys only.
@@ -486,7 +486,7 @@ class CallbackSender:
                 await asyncio.sleep(min(2 ** attempt, 8) + random.random())
 ```
 
-- [ ] **Step 4: Run and verify green**
+- [x] **Step 4: Run and verify green**
 
 Run:
 
@@ -497,7 +497,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_callbacks -v
 Expected: all callback tests pass, including retry exhaustion and no secret in
 captured request JSON or logs.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/models.py \
@@ -513,7 +513,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): enforce target allowlists [skill-rewr
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/control_store.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_store.py`
 
-- [ ] **Step 1: Write failing store tests**
+- [x] **Step 1: Write failing store tests**
 
 Use `IsolatedAsyncioTestCase` to assert:
 
@@ -540,7 +540,7 @@ async def test_etag_and_terminal_state_are_enforced(self) -> None:
             update={"lifecycle_state": LifecycleState.ACCEPTED}), updated.etag)
 ```
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -550,7 +550,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_store -v
 
 Expected: import failure for `control_store`.
 
-- [ ] **Step 3: Implement the store protocol and in-memory store**
+- [x] **Step 3: Implement the store protocol and in-memory store**
 
 Define:
 
@@ -578,7 +578,7 @@ for state in TERMINAL:
 `InMemoryControlStore` uses `(owner_scope, task_id)` as key, increments a string
 ETag on replace, and checks `ALLOWED`.
 
-- [ ] **Step 4: Add Cosmos implementation and pass tests**
+- [x] **Step 4: Add Cosmos implementation and pass tests**
 
 `CosmosControlStore` uses:
 
@@ -605,7 +605,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_store -v
 
 Expected: all store tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/control_store.py \
@@ -620,7 +620,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): add ETag task store [skill-rewrite] [
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/aca_jobs.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_azure.py`
 
-- [ ] **Step 1: Write failing ARM adapter tests**
+- [x] **Step 1: Write failing ARM adapter tests**
 
 Mock `ContainerAppsAPIClient` and assert that:
 
@@ -640,7 +640,7 @@ Also assert `get()` calls the single-execution API, `list()` is used only by
 reconciliation, `stop()` calls the specific-execution API, and 403/404/429 map
 to `TASK_FORBIDDEN`, `TASK_NOT_FOUND`, and retryable `ARM_STATUS_UNAVAILABLE`.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -650,7 +650,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_azure -v
 
 Expected: import failure for `AcaJobsAdapter`.
 
-- [ ] **Step 3: Implement the trusted template builder**
+- [x] **Step 3: Implement the trusted template builder**
 
 Define `AcaExecution` and `AcaJobsClient` protocol. In `AcaJobsAdapter.start()`,
 first fetch the configured Job, verify its first container image equals
@@ -658,7 +658,7 @@ first fetch the configured Job, verify its first container image equals
 replace only `args`, and call `begin_start`. Reject mismatch with
 `DEPLOYMENT_CONTRACT_MISMATCH`.
 
-- [ ] **Step 4: Implement get/list/stop and run tests**
+- [x] **Step 4: Implement get/list/stop and run tests**
 
 Use SDK 5.0.0 surfaces:
 
@@ -680,7 +680,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_azure -v
 Expected: all ARM adapter tests pass and none require `jobs/write`, delete,
 list-secrets, or stop-multiple.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/aca_jobs.py \
@@ -695,7 +695,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): add least-privilege ACA adapter [skil
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_orchestrator.py`
 
-- [ ] **Step 1: Write failing start/idempotency tests**
+- [x] **Step 1: Write failing start/idempotency tests**
 
 Test `Orchestrator.start(StartRequest, owner_scope)` for:
 
@@ -705,7 +705,7 @@ Test `Orchestrator.start(StartRequest, owner_scope)` for:
 - definitive ARM rejection: terminal `Failed` and raised `ARM_START_REJECTED`;
 - timeout: return `Starting` with null execution ID.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -715,7 +715,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_orchestrator -v
 
 Expected: import failure for `Orchestrator`.
 
-- [ ] **Step 3: Implement minimal start/status/cancel**
+- [x] **Step 3: Implement minimal start/status/cancel**
 
 Use SHA-256 over `owner_scope + "\0" + job_type + "\0" + idempotency_key` for
 `idempotency_key_hash`, and canonical sorted JSON over
@@ -726,7 +726,7 @@ Every store mutation retries a 412 at most three times by re-reading.
 attempt occurred, transition directly to `Cancelled`; if start is uncertain,
 do not retry start.
 
-- [ ] **Step 4: Add reconciliation tests and code**
+- [x] **Step 4: Add reconciliation tests and code**
 
 Test zero/one/multiple matching executions. Match a task only when the trusted
 container's args contain the exact adjacent pair `--task-id`, task ID and the
@@ -758,7 +758,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_orchestrator -v
 
 Expected: all orchestrator tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py \
@@ -773,7 +773,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): reconcile durable executions [skill-r
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/job_worker.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_worker.py`
 
-- [ ] **Step 1: Write failing worker tests**
+- [x] **Step 1: Write failing worker tests**
 
 Use fake store, blob output, business handler, and callback sender. Assert:
 
@@ -787,7 +787,7 @@ Use fake store, blob output, business handler, and callback sender. Assert:
 5. callback exhaustion leaves lifecycle `Succeeded`, business `error_code`
    null, and callback state `Exhausted`.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -797,7 +797,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_worker -v
 
 Expected: import failure for `JobWorker`.
 
-- [ ] **Step 3: Implement worker claim and deterministic output**
+- [x] **Step 3: Implement worker claim and deterministic output**
 
 `JobWorker.run(owner_scope, task_id)` must:
 
@@ -823,7 +823,7 @@ result_url = await output.write_json(
 The sample handler returns a small metadata object; it does not process work in
 the MCP server.
 
-- [ ] **Step 4: Implement terminal persistence and callback; run green**
+- [x] **Step 4: Implement terminal persistence and callback; run green**
 
 If deterministic output already exists, read its metadata and continue without
 repeating an external side effect. Persist success before callback delivery.
@@ -838,7 +838,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_worker -v
 
 Expected: all worker tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/job_worker.py \
@@ -855,7 +855,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): add idempotent job worker [skill-rewr
 - Modify: `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py`
 - Modify: `skills/foundry-mcp-aca-jobs/references/python/app/job_worker.py`
 
-- [ ] **Step 1: Write failing telemetry tests**
+- [x] **Step 1: Write failing telemetry tests**
 
 Use fake tracer, meter, counters, and histograms. Assert emitted attributes are
 limited to `task.id`, `job.type`, `task.state`, `aca.execution.id`,
@@ -863,7 +863,7 @@ limited to `task.id`, `job.type`, `task.state`, `aca.execution.id`,
 an idempotency key, input URL query, output body, bearer token, and Key Vault
 secret; assert none appears in captured attributes or log records.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -873,7 +873,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_telemetry -v
 
 Expected: import failure for `app.telemetry`.
 
-- [ ] **Step 3: Implement the telemetry facade**
+- [x] **Step 3: Implement the telemetry facade**
 
 Implement one facade so business modules do not assemble ad hoc attributes:
 
@@ -915,7 +915,7 @@ class Telemetry:
 `APPLICATIONINSIGHTS_CONNECTION_STRING` starts with `InstrumentationKey=` and
 logs a safe warning otherwise.
 
-- [ ] **Step 4: Instrument orchestration and worker; run green**
+- [x] **Step 4: Instrument orchestration and worker; run green**
 
 Wrap Cosmos create/replace, ACA start/get/list/stop, reconciliation, worker
 claim, output persistence, and callback attempts. Add counters for duplicate
@@ -932,7 +932,7 @@ python3 -m unittest \
 
 Expected: all tests pass and redaction assertions find no sensitive values.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/telemetry.py \
@@ -953,7 +953,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): add safe telemetry [skill-rewrite] [m
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py`
 - Create: `scripts/tests/test_foundry_mcp_aca_jobs_protocol.py`
 
-- [ ] **Step 1: Write failing extension tests**
+- [x] **Step 1: Write failing extension tests**
 
 Construct `AcaTasksExtension` with fake orchestrator and owner resolver. Assert:
 
@@ -967,7 +967,7 @@ Construct `AcaTasksExtension` with fake orchestrator and owner resolver. Assert:
 - `tasks/update` acknowledges without changing lifecycle;
 - no `TasksExtension`, `TaskConfig`, Docket URL, or worker import occurs.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -977,7 +977,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_protocol -v
 
 Expected: import failure for `AcaTasksExtension`.
 
-- [ ] **Step 3: Implement the extension methods**
+- [x] **Step 3: Implement the extension methods**
 
 Use the public FastMCP surface:
 
@@ -1010,7 +1010,7 @@ Each `tasks/*` handler must verify per-request Tasks capability using
 `self.client_settings(ctx)`. Missing capability raises `MCPError` with
 `MISSING_REQUIRED_CLIENT_CAPABILITY` and `missing_capability_error_data()`.
 
-- [ ] **Step 4: Add serializer-only lifespan and run green**
+- [x] **Step 4: Add serializer-only lifespan and run green**
 
 Because FastMCP 4.0.1 cannot otherwise emit the claimed task result, use:
 
@@ -1035,7 +1035,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_protocol -v
 
 Expected: all extension tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py \
@@ -1050,7 +1050,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): map MCP Tasks to ACA [skill-rewrite] 
 - Create: `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_protocol.py`
 
-- [ ] **Step 1: Add failing in-process fallback tests**
+- [x] **Step 1: Add failing in-process fallback tests**
 
 Build the server with in-memory store and fake ACA client. Through FastMCP
 `Client`, call:
@@ -1069,7 +1069,7 @@ cancelled = await client.call_tool("cancel_aca_job",
 
 Assert all calls return in under one second and the task ID is identical.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1079,7 +1079,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_protocol -v
 
 Expected: failure because `build_server()` does not exist.
 
-- [ ] **Step 3: Implement server assembly and three tools**
+- [x] **Step 3: Implement server assembly and three tools**
 
 `build_server(runtime: Runtime) -> FastMCP` registers
 `AcaTasksExtension(runtime.orchestrator, resolve_owner_scope)`, `/health`,
@@ -1107,7 +1107,7 @@ class CallbackEvent(BaseModel):
     result_url: AnyHttpUrl | None = Field(alias="resultUrl")
 ```
 
-- [ ] **Step 4: Add restart and no-Docket assertions; run green**
+- [x] **Step 4: Add restart and no-Docket assertions; run green**
 
 Rebuild a second server around the same store after starting a task and verify
 status retrieval. Inspect imported modules and assert no module beginning with
@@ -1121,7 +1121,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_protocol -v
 
 Expected: all task-aware, unaware, cancellation, and restart tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py \
@@ -1140,7 +1140,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): expose fallback tools [skill-rewrite]
 - Create: `skills/foundry-mcp-aca-jobs/templates/Dockerfile`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write failing Docker contract tests**
+- [x] **Step 1: Write failing Docker contract tests**
 
 Assert one Dockerfile exists, copies the entire `app` package, exposes 8080,
 contains no secret values, and has a neutral default:
@@ -1153,7 +1153,7 @@ self.assertNotIn("app.job_worker", dockerfile.split("CMD", 1)[1])
 self.assertEqual(len(list((SKILL / "templates").glob("Dockerfile*"))), 1)
 ```
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1163,7 +1163,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: `FileNotFoundError` for Dockerfile.
 
-- [ ] **Step 3: Add the single Dockerfile**
+- [x] **Step 3: Add the single Dockerfile**
 
 ```dockerfile
 FROM python:3.12-slim
@@ -1178,7 +1178,7 @@ CMD ["python", "-m", "app.mcp_server"]
 
 The Job command is supplied by Bicep, not by a second image or Docker stage.
 
-- [ ] **Step 4: Build and run both entrypoints**
+- [x] **Step 4: Build and run both entrypoints**
 
 Run:
 
@@ -1197,7 +1197,7 @@ docker run --rm foundry-mcp-aca-jobs:test python -m app.job_worker --help
 
 Expected: image builds once; both commands exit 0 and print their CLI usage.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/templates/Dockerfile \
@@ -1213,7 +1213,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): ship shared runtime image [skill-rewr
 - Modify: `skills/azd-patterns/SKILL.md`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write the failing module contract test**
+- [x] **Step 1: Write the failing module contract test**
 
 Assert the module:
 
@@ -1225,7 +1225,7 @@ Assert the module:
 - sets explicit container `command` and `args`;
 - contains no role assignment or product-specific names.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1235,7 +1235,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: missing `aca-job.bicep`.
 
-- [ ] **Step 3: Implement the canonical Bicep module**
+- [x] **Step 3: Implement the canonical Bicep module**
 
 The public contract is:
 
@@ -1287,7 +1287,7 @@ output name string = job.name
 Add a Bicep assertion or deployment-script precondition that rejects a value
 without `@sha256:`.
 
-- [ ] **Step 4: Update azd-patterns and validate**
+- [x] **Step 4: Update azd-patterns and validate**
 
 Bump `metadata.version` to `1.5.0`. Replace the current inline ACA Job resource
 body in `## Bicep: ACA Job Pattern` with an imperative link to the new module,
@@ -1305,7 +1305,7 @@ python3 scripts/validate-skills.py
 Expected: Bicep builds, focused tests pass, and validator reports no broken
 reference heading or SemVer error.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/azd-patterns/SKILL.md \
@@ -1324,7 +1324,7 @@ git commit -m "feat(azd-patterns): add canonical ACA Job module [skill-rewrite] 
 - Create: `skills/foundry-mcp-aca-jobs/templates/infra/main.bicep`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write failing infrastructure contract tests**
+- [x] **Step 1: Write failing infrastructure contract tests**
 
 Assert:
 
@@ -1341,7 +1341,7 @@ Assert:
   `/idempotencyKeyHash`, and local auth is disabled;
 - app and Job identities receive only their documented data roles.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1351,7 +1351,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: missing infrastructure modules.
 
-- [ ] **Step 3: Implement app and Cosmos modules**
+- [x] **Step 3: Implement app and Cosmos modules**
 
 `app.bicep` accepts one `imageDigest` and sets the explicit server command,
 external HTTPS ingress, port 8080, UAMI registry pull, and health probe.
@@ -1377,7 +1377,7 @@ resource control 'sqlDatabases/containers' = {
 }
 ```
 
-- [ ] **Step 4: Implement identities/RBAC and composition; validate**
+- [x] **Step 4: Implement identities/RBAC and composition; validate**
 
 Create a deterministic custom role definition with only:
 
@@ -1406,7 +1406,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: all Bicep files build and template tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/templates/infra/*.bicep \
@@ -1423,7 +1423,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): provision least-privilege runtime [sk
 - Create: `skills/foundry-mcp-aca-jobs/templates/infra/scripts/verify_deployment.py`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write failing one-build tests**
+- [x] **Step 1: Write failing one-build tests**
 
 Assert `azure.yaml` has exactly one service with project `.`, host
 `containerapp`, and one Dockerfile.
@@ -1431,7 +1431,7 @@ Assert postdeploy invokes `converge_image.py` then `verify_deployment.py`.
 Assert both scripts reject tag-only images and compare exact digest plus exact
 commands.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1441,7 +1441,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: missing `azure.yaml`.
 
-- [ ] **Step 3: Implement digest convergence**
+- [x] **Step 3: Implement digest convergence**
 
 `converge_image.py` reads azd environment values
 `SERVICE_MCP_IMAGE_NAME`, `MCP_APP_NAME`, `ACA_JOB_NAME`, and
@@ -1461,7 +1461,7 @@ image_digest = f"{registry}.azurecr.io/{repository}@{digest}"
 Fetch app and Job, set both first-container images to `image_digest`, preserve
 their separate identities/configuration, and update only when drift exists.
 
-- [ ] **Step 4: Implement verification and run local structural tests**
+- [x] **Step 4: Implement verification and run local structural tests**
 
 `verify_deployment.py` reads both Azure resources and requires:
 
@@ -1482,7 +1482,7 @@ python3 -m py_compile skills/foundry-mcp-aca-jobs/templates/infra/scripts/*.py
 
 Expected: all tests pass and scripts compile.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/templates/azure.yaml \
@@ -1505,7 +1505,7 @@ git commit -m "feat(foundry-mcp-aca-jobs): converge one immutable image [skill-r
 - Modify: `skills/foundry-mcp-aca/SKILL.md`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write failing documentation contract tests**
+- [x] **Step 1: Write failing documentation contract tests**
 
 Assert fixed frontmatter shape, `metadata.version == "1.0.0"`, description
 length 200-1024, all required headings from spec §§4-16, imperative links to
@@ -1516,7 +1516,7 @@ codes, and no duplicated Python function bodies.
 Also assert `foundry-mcp-aca` points Job-backed tools to the new skill and bumps
 to `1.2.5`.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1526,7 +1526,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: missing `SKILL.md`.
 
-- [ ] **Step 3: Write SKILL.md and README**
+- [x] **Step 3: Write SKILL.md and README**
 
 Use this heading order:
 
@@ -1554,7 +1554,7 @@ Jobs, long-running MCP tools, async MCP, Job callbacks, and external Job
 orchestration; its `DO NOT USE FOR` routes general MCP hosting to
 `foundry-mcp-aca`.
 
-- [ ] **Step 4: Add the exact Tier-B pin and validate**
+- [x] **Step 4: Add the exact Tier-B pin and validate**
 
 The pin lists the twelve versions from Task 1, `automation_tier: auto`,
 `validation.requires: [pypi]`, and `runnable: true`. Add KI-001 documenting the
@@ -1581,7 +1581,7 @@ python3 scripts/validate-skills.py
 Expected: focused tests pass; validation reports no frontmatter, description,
 pin, reference-header, or cross-link error.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/SKILL.md \
@@ -1603,7 +1603,7 @@ git commit -m "docs: add foundry MCP ACA Jobs skill [skill-rewrite] [multi-skill
 - Create: `skills/foundry-mcp-aca-jobs/test-fixture/consumer_prompt.md`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write failing fixture structural tests**
+- [x] **Step 1: Write failing fixture structural tests**
 
 Require:
 
@@ -1621,7 +1621,7 @@ Require:
 - marker-first and best-effort teardown;
 - no repository writes outside `.scratch/`.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1631,7 +1631,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: missing fixture.
 
-- [ ] **Step 3: Author fixture Steps -1 through 4**
+- [x] **Step 3: Author fixture Steps -1 through 4**
 
 The fixture must prescribe:
 
@@ -1650,7 +1650,7 @@ The fixture must prescribe:
 If any required standing value is absent, write a precise FAIL marker. Do not
 skip the relevant assertion.
 
-- [ ] **Step 4: Author fixture Steps 5 through 10**
+- [x] **Step 4: Author fixture Steps 5 through 10**
 
 Prescribe exact hard gates:
 
@@ -1686,7 +1686,7 @@ async with Client(
 
 The Prompt Agent smoke uses `AIProjectClient.agents.create_version()` with a
 `PromptAgentDefinition` containing `MCPTool(server_label="aca_jobs",
-server_url=mcp_url, headers={"Authorization": f"Bearer {access_token}"})`.
+server_url=mcp_url, authorization=access_token)`.
 The Hosted Agent smoke uses
 `FoundryChatClient.get_mcp_tool(name="ACA Jobs", url=mcp_url,
 headers={"Authorization": f"Bearer {access_token}"},
@@ -1703,7 +1703,7 @@ python3 scripts/validate-skills.py
 
 Expected: fixture structural tests and catalog validation pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add skills/foundry-mcp-aca-jobs/test-fixture/consumer_prompt.md \
@@ -1720,7 +1720,7 @@ git commit -m "test(foundry-mcp-aca-jobs): add live Azure fixture [skill-rewrite
 - Modify: `scripts/tests/test_build_test_matrix.py`
 - Modify: `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
 
-- [ ] **Step 1: Write failing graph/workflow tests**
+- [x] **Step 1: Write failing graph/workflow tests**
 
 Add assertions that:
 
@@ -1741,7 +1741,7 @@ MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }
 MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
 ```
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1753,13 +1753,13 @@ python3 -m unittest \
 
 Expected: new dependency and env assertions fail.
 
-- [ ] **Step 3: Add graph entry and unit dependencies**
+- [x] **Step 3: Add graph entry and unit dependencies**
 
 Register the exact sorted dependency list. Extend workflow unit install with
 the bounded packages required to import new modules. Do not add a separate E2E
 job; the existing matrix discovers the fixture.
 
-- [ ] **Step 4: Add byte-identical fixture env and run green**
+- [x] **Step 4: Add byte-identical fixture env and run green**
 
 Update the initial, retry1, and retry2 Copilot fixture env blocks. Use a test to
 compare the three extracted mappings for equality.
@@ -1776,7 +1776,7 @@ python3 scripts/build-test-matrix.py --repo-root .
 Expected: tests pass and matrix JSON contains
 `"foundry-mcp-aca-jobs"`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github/skill-deps.yml .github/workflows/skill-test.yml \
@@ -1799,7 +1799,7 @@ git commit -m "ci: register foundry MCP ACA Jobs smoke [multi-skill]" \
 - Modify: `.github/plugin/marketplace.json`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Write failing catalog assertions**
+- [x] **Step 1: Write failing catalog assertions**
 
 Extend `test_foundry_mcp_aca_jobs_template.py` to assert:
 
@@ -1810,7 +1810,7 @@ Extend `test_foundry_mcp_aca_jobs_template.py` to assert:
 - AGENTS §12.3 reports the same 36/32/29/22 coverage totals and §12.5 reports
   36 skills, 32 pins, 29 auto-tier pins, and 22 fixtures.
 
-- [ ] **Step 2: Run and verify red**
+- [x] **Step 2: Run and verify red**
 
 Run:
 
@@ -1820,7 +1820,7 @@ python3 -m unittest scripts.tests.test_foundry_mcp_aca_jobs_template -v
 
 Expected: catalog assertions fail.
 
-- [ ] **Step 3: Update catalog and manifests**
+- [x] **Step 3: Update catalog and manifests**
 
 Add README description:
 
@@ -1833,7 +1833,7 @@ one immutable image with separate server/worker entrypoints.
 Bump plugin and marketplace versions from 4.29.6 to 4.30.0 and counts from 35
 to 36.
 
-- [ ] **Step 4: Recompute measured metrics and run catalog tests**
+- [x] **Step 4: Recompute measured metrics and run catalog tests**
 
 Run:
 
@@ -1850,7 +1850,7 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 Expected: counts are 36, 32, and 22; all tests pass. Record the emitted test
 count in `AGENTS.md §12.5`, replacing 135 with the measured total.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md scripts/build-site.py plugin.json \
@@ -1865,7 +1865,7 @@ git commit -m "docs: register foundry MCP ACA Jobs skill [multi-skill]" \
 **Files:**
 - Modify: `docs/**`
 
-- [ ] **Step 1: Run the site build**
+- [x] **Step 1: Run the site build**
 
 Run:
 
@@ -1876,7 +1876,7 @@ python3 scripts/build-site.py --out docs/
 Expected: exit 0 and generated skill page plus catalog entries for
 `foundry-mcp-aca-jobs`.
 
-- [ ] **Step 2: Verify generated references**
+- [x] **Step 2: Verify generated references**
 
 Run:
 
@@ -1891,7 +1891,7 @@ Expected: the new skill appears in generated HTML/LLM indexes; the second build
 is byte-identical and `git diff --exit-code` exits 0 after staging the first
 build.
 
-- [ ] **Step 3: Run catalog validators**
+- [x] **Step 3: Run catalog validators**
 
 Run:
 
@@ -1902,7 +1902,7 @@ python3 scripts/build-plugins.py --check
 
 Expected: both exit 0.
 
-- [ ] **Step 4: Inspect forced-text scope**
+- [x] **Step 4: Inspect forced-text scope**
 
 Run:
 
@@ -1916,7 +1916,7 @@ git --no-pager diff -a HEAD -- skills/azd-patterns \
 Expected: every change belongs to the allowlist in this plan; no reference data
 or unrelated skill body changed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/
@@ -1932,7 +1932,7 @@ git commit -m "docs: rebuild catalog for MCP ACA Jobs [multi-skill]" \
 
 **Files:** none unless a failure identifies an implementation defect.
 
-- [ ] **Step 1: Run focused behavioral tests**
+- [x] **Step 1: Run focused behavioral tests**
 
 ```bash
 python3 -m unittest \
@@ -1948,7 +1948,7 @@ python3 -m unittest \
 
 Expected: all focused tests pass with zero failures/errors.
 
-- [ ] **Step 2: Run full unit and catalog gates**
+- [x] **Step 2: Run full unit and catalog gates**
 
 ```bash
 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
@@ -1958,7 +1958,7 @@ python3 scripts/build-plugins.py --check
 
 Expected: all tests pass and both validators exit 0.
 
-- [ ] **Step 3: Run pin validation**
+- [x] **Step 3: Run pin validation**
 
 ```bash
 python3 scripts/run-pin-validation.py \
@@ -1967,7 +1967,7 @@ python3 scripts/run-pin-validation.py \
 
 Expected output includes all three strings from Task 14 and exits 0.
 
-- [ ] **Step 4: Run Bicep and image validation**
+- [x] **Step 4: Run Bicep and image validation**
 
 ```bash
 for f in skills/azd-patterns/references/bicep/aca-job.bicep \
@@ -1988,7 +1988,7 @@ docker run --rm foundry-mcp-aca-jobs:test python -m app.job_worker --help
 
 Expected: Bicep builds, image builds once, and both entrypoints exit 0.
 
-- [ ] **Step 5: Commit only if verification required a fix**
+- [x] **Step 5: Commit only if verification required a fix**
 
 For each defect, add a failing test first, apply the minimal fix, rerun the
 focused and full commands, then commit the exact affected files:
@@ -2096,28 +2096,30 @@ gh api --method PATCH "repos/aiappsgbb/awesome-gbb/pulls/$PR" \
 
 Expected: PR body contains the run and job links.
 
+Task20 status note (2026-09-03): local live validation passed ARM positive/negative assertions, shared immutable digest, exact entrypoints, distinct UAMIs, exact RBAC actions, protocol handshakes, and real Prompt+Hosted MCP calls. Tenant-enforced private Cosmos/storage networking blocked durable task persistence/job start, so completed task/idempotency/cancellation/callback markers remain pending. Private endpoint completion is infeasible without modifying or replacing the non-VNet-integrated shared ACA environment. Cleanup was best effort; a standing-resource lock prevented removing residual role assignments/empty containers. Evidence remains in session state and was not committed.
+
 ---
 
 ## Final acceptance checklist
 
-- [ ] `foundry-mcp-aca-jobs` exists at version 1.0.0 with valid fixed-shape frontmatter.
-- [ ] MCP Tasks uses `AcaTasksExtension`; Docket never executes business work.
-- [ ] Tasks-aware and unaware clients share one orchestrator and durable record.
-- [ ] Cosmos record includes every approved field and all writes are ETag guarded.
-- [ ] Duplicate scoped keys return one task; mismatched fingerprints fail.
-- [ ] Uncertain starts reconcile by task ID and stop physical duplicates.
-- [ ] Business effects and output paths are idempotent by task ID.
-- [ ] Caller selects only job type, input reference, idempotency key, and callback alias.
-- [ ] Callback is allowlisted, minimal, retried, and separate from business success.
-- [ ] MCP and Job identities are separate and least privilege.
-- [ ] One image is built once and both resources use the exact immutable digest.
-- [ ] MCP app command is `python -m app.mcp_server`.
-- [ ] ACA Job command is `python -m app.job_worker`.
-- [ ] Canonical ACA Job Bicep lives in `azd-patterns`, not duplicated.
-- [ ] Unit, protocol, image, Bicep, pin, and catalog tests pass.
+- [x] `foundry-mcp-aca-jobs` exists at version 1.3.3 with valid fixed-shape frontmatter.
+- [x] MCP Tasks uses `AcaTasksExtension`; Docket never executes business work.
+- [x] Tasks-aware and unaware clients share one orchestrator and durable record.
+- [x] Cosmos record includes every approved field and all writes are ETag guarded.
+- [x] Duplicate scoped keys return one task; mismatched fingerprints fail.
+- [x] Uncertain starts reconcile by task ID and stop physical duplicates.
+- [x] Business effects and output paths are idempotent by task ID.
+- [x] Caller selects only job type, input reference, idempotency key, and callback alias.
+- [x] Callback is allowlisted, minimal, retried, and separate from business success.
+- [x] MCP and Job identities are separate and least privilege.
+- [x] One image is built once and both resources use the exact immutable digest.
+- [x] MCP app command is `python -m app.mcp_server`.
+- [x] ACA Job command is `python -m app.job_worker`.
+- [x] Canonical ACA Job Bicep lives in `azd-patterns`, not duplicated.
+- [ ] Unit, protocol, Bicep, and catalog tests pass; image build/import succeeds, but the local pin/Docker network path remains externally blocked.
 - [ ] Live Azure proves Tasks, fallback, callback, cancellation, idempotency, digest, Prompt Agent, and Hosted Agent paths.
-- [ ] Plugin and marketplace are both 4.30.0 and report 36 skills.
-- [ ] Generated docs are rebuilt and byte-stable.
+- [x] Plugin and marketplace are both 4.30.0 and report 36 skills.
+- [x] Generated docs are rebuilt and byte-stable.
 - [ ] PR body contains live Azure evidence.
 
 ---
@@ -2144,6 +2146,4 @@ Expected: PR body contains the run and job links.
 | §17 risks | Dedicated tests for each risk in Tasks 3-15 |
 | §18 references | Task 14 link and pin validation |
 
-Self-review result: every approved requirement has an implementation task and
-an explicit verification command. The plan contains no deferred implementation
-markers, no unbound file names, and no alternate server/worker image path.
+Self-review result: implementation coverage is complete and every approved requirement has a corresponding task and verification command. The plan was checked for placeholders, contradictions, private identifiers, and incorrect checked items. Task20 durable outcomes remain pending until a policy-compliant networked CI environment and PR are available.
