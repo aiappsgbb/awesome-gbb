@@ -52,7 +52,6 @@ param jobPrincipalId string = ''
 param roleDefinitionName string = 'foundry-mcp-aca-jobs-job-operator'
 
 var acrPullRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-var cosmosDataContributorRoleDefinitionId = '00000000-0000-0000-0000-000000000002'
 var blobDataContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 var keyVaultUserRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var customRoleDefinitionGuid = guid(subscription().id, roleDefinitionName)
@@ -116,17 +115,16 @@ module assignments './identity-rbac/assignments.bicep' = if (createAssignments) 
     appPrincipalId: appPrincipalId
     jobPrincipalId: jobPrincipalId
     acrPullRoleDefinitionId: acrPullRoleDefinitionId
-    cosmosDataContributorRoleDefinitionId: cosmosDataContributorRoleDefinitionId
     blobDataContributorRoleDefinitionId: blobDataContributorRoleDefinitionId
     keyVaultUserRoleDefinitionId: keyVaultUserRoleDefinitionId
     customRoleDefinitionId: customRoleDefinitionResourceId
   }
 }
 
-output appUamiResourceId string = createIdentities ? appUami.outputs.resourceId : ''
-output appUamiPrincipalId string = createIdentities ? appUami.outputs.principalId : ''
-output appUamiClientId string = createIdentities ? appUami.outputs.clientId : ''
-output jobUamiResourceId string = createIdentities ? jobUami.outputs.resourceId : ''
-output jobUamiPrincipalId string = createIdentities ? jobUami.outputs.principalId : ''
-output jobUamiClientId string = createIdentities ? jobUami.outputs.clientId : ''
+output appUamiResourceId string = createIdentities ? appUami!.outputs.resourceId : ''
+output appUamiPrincipalId string = createIdentities ? appUami!.outputs.principalId : ''
+output appUamiClientId string = createIdentities ? appUami!.outputs.clientId : ''
+output jobUamiResourceId string = createIdentities ? jobUami!.outputs.resourceId : ''
+output jobUamiPrincipalId string = createIdentities ? jobUami!.outputs.principalId : ''
+output jobUamiClientId string = createIdentities ? jobUami!.outputs.clientId : ''
 output customRoleDefinitionId string = customRoleDefinitionResourceId

@@ -20,7 +20,7 @@ param acrServer string
 param authClientId string
 
 @description('Allowed app-only caller client IDs for default authorization.')
-param allowedCallerClientIds array = []
+param allowedMcpCallerClientIds array = []
 
 @description('Additional environment variables to append to the MCP app.')
 param environmentVariables array = []
@@ -130,7 +130,7 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
         enabled: true
         registration: {
           clientId: authClientId
-          openIdIssuer: 'https://login.microsoftonline.com/${subscription().tenantId}/v2.0'
+          openIdIssuer: '${environment().authentication.loginEndpoint}${subscription().tenantId}/v2.0'
         }
         validation: {
           allowedAudiences: [
@@ -138,7 +138,7 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
             authClientId
           ]
           defaultAuthorizationPolicy: {
-            allowedApplications: allowedCallerClientIds
+            allowedApplications: allowedMcpCallerClientIds
           }
         }
       }

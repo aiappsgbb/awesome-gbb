@@ -33,9 +33,6 @@ param jobPrincipalId string
 @description('Built-in ACR Pull role definition ID.')
 param acrPullRoleDefinitionId string
 
-@description('Built-in Cosmos SQL data contributor role definition ID.')
-param cosmosDataContributorRoleDefinitionId string
-
 @description('Built-in storage blob data contributor role definition ID.')
 param blobDataContributorRoleDefinitionId string
 
@@ -53,15 +50,8 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = {
   name: cosmosAccountName
 }
 
-resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' existing = {
-  parent: cosmos
-  name: cosmosDatabaseName
-}
-
-resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' existing = {
-  parent: cosmosDatabase
-  name: cosmosContainerName
-}
+var cosmosDataContributorRoleDefinitionId = '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+var cosmosDataContributorScope = '${cosmos.id}/dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: storageAccountName
@@ -111,7 +101,7 @@ resource appCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments
   properties: {
     principalId: appPrincipalId
     roleDefinitionId: cosmosDataContributorRoleDefinitionId
-    scope: cosmosContainer.id
+    scope: cosmosDataContributorScope
   }
 }
 
@@ -121,7 +111,7 @@ resource jobCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments
   properties: {
     principalId: jobPrincipalId
     roleDefinitionId: cosmosDataContributorRoleDefinitionId
-    scope: cosmosContainer.id
+    scope: cosmosDataContributorScope
   }
 }
 

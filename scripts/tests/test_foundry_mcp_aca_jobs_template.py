@@ -180,6 +180,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("unauthenticatedClientAction: 'Return401'", app)
         self.assertIn("clientId: authClientId", app)
         self.assertIn("allowedAudiences", app)
+        self.assertIn("environment().authentication.loginEndpoint", app)
+        self.assertIn("allowedMcpCallerClientIds", app)
         self.assertIn("livenessProbe", app)
         self.assertIn("startupProbe", app)
 
@@ -194,6 +196,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("paths: [ '/ownerScope' ]", normalized)
         self.assertIn("paths: [ '/idempotencyKeyHash' ]", normalized)
         self.assertNotIn("COSMOS_AUTH_KEY", cosmos)
+        self.assertIn("environment().suffixes.storage", (self._infra_dir() / "main.bicep").read_text(encoding="utf-8"))
 
     def test_identity_rbac_contract_uses_two_uamis_and_only_allowed_job_actions(self) -> None:
         identity = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
@@ -210,7 +213,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         ):
             self.assertIn(action, rbac)
         self.assertIn("ba92f5b4-2d11-453d-a403-e96b0029c9fe", rbac)
-        self.assertIn("00000000-0000-0000-0000-000000000002", rbac)
+        self.assertIn("sqlRoleDefinitions/00000000-0000-0000-0000-000000000002", rbac)
+        self.assertIn("dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}", rbac)
+        self.assertIn("scope: storageContainer", rbac)
         self.assertNotIn("Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c'", rbac)
         for forbidden in ("jobs/write", "jobs/delete", "listsecrets", "stop/multiple"):
             self.assertNotIn(forbidden, rbac)
@@ -219,6 +224,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
         self.assertIn("../../../azd-patterns/references/bicep/aca-job.bicep", main)
         self.assertIn("mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48", main)
+        self.assertIn("allowedMcpCallerClientIds array", main)
+        self.assertIn("union(allowedMcpCallerClientIds, [", " ".join(main.split()))
         self.assertIn("appName", main)
         self.assertIn("jobName", main)
         self.assertIn("fqdn", main)

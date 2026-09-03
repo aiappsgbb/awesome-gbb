@@ -18,6 +18,9 @@ param storageAccountName string
 @description('Existing blob container name used for job output and callback capture.')
 param storageContainerName string
 
+@description('Allowed app-only caller client IDs for the MCP app.')
+param allowedMcpCallerClientIds array
+
 @description('Cosmos DB account name for the control store.')
 param cosmosAccountName string
 
@@ -48,14 +51,14 @@ param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld
 @description('Optional Key Vault name for the job callback secret path.')
 param keyVaultName string = ''
 
-var outputStorageUrl = 'https://${storageAccountName}.blob.core.windows.net/${storageContainerName}'
+var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${storageContainerName}'
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   scope: resourceGroup(resourceGroupName)
   name: acrName
 }
 
-resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
+resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
   scope: resourceGroup(resourceGroupName)
   name: environmentName
 }
@@ -91,14 +94,14 @@ module app 'app.bicep' = {
   params: {
     name: appName
     location: location
-    environmentId: environment.id
+    environmentId: managedEnvironment.id
     imageDigest: imageDigest
     uamiResourceId: identities.outputs.appUamiResourceId
     acrServer: acr.properties.loginServer
     authClientId: authClientId
-    allowedCallerClientIds: [
+    allowedMcpCallerClientIds: union(allowedMcpCallerClientIds, [
       identities.outputs.jobUamiClientId
-    ]
+    ])
     environmentVariables: []
   }
 }
@@ -109,7 +112,7 @@ module job '../../../azd-patterns/references/bicep/aca-job.bicep' = {
   params: {
     name: jobName
     location: location
-    environmentId: environment.id
+    environmentId: managedEnvironment.id
     imageDigest: imageDigest
     containerName: 'job'
     command: [
