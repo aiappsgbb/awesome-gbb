@@ -26,8 +26,71 @@ SKILL_DIR = ROOT / "skills" / "foundry-mcp-aca-jobs" / "references" / "python"
 APP_DIR = SKILL_DIR / "app"
 sys.path.insert(0, str(SKILL_DIR))
 
+_STUBBED_MODULE_NAMES = (
+    "azure",
+    "azure.core",
+    "azure.core.exceptions",
+    "azure.identity",
+    "azure.identity.aio",
+    "azure.cosmos",
+    "azure.cosmos.aio",
+    "azure.storage",
+    "azure.storage.blob",
+    "azure.storage.blob.aio",
+    "azure.mgmt",
+    "azure.mgmt.appcontainers",
+    "fastmcp",
+    "fastmcp.server",
+    "fastmcp.server.context",
+    "fastmcp.server.extensions",
+    "fastmcp.server.dependencies",
+    "fastmcp.utilities",
+    "fastmcp.utilities.tests",
+    "fastmcp.utilities.tasks",
+    "fastmcp_tasks",
+    "fastmcp_tasks.models",
+    "fastmcp_tasks.wire_production",
+    "mcp",
+    "mcp.server",
+    "mcp.server.context",
+    "mcp.shared",
+    "mcp.shared.exceptions",
+    "mcp.shared.inbound",
+    "mcp_types",
+    "mcp_types.jsonrpc",
+    "mcp_types.version",
+    "starlette",
+    "starlette.requests",
+    "starlette.responses",
+)
+_MISSING_MODULE = object()
+_MODULES_BEFORE_STUBS = {
+    name: sys.modules.get(name, _MISSING_MODULE) for name in _STUBBED_MODULE_NAMES
+}
+_ATTRIBUTES_BEFORE_STUBS = {
+    (module_name, attribute): getattr(module, attribute, _MISSING_MODULE)
+    for module_name, attribute in (
+        ("azure.core.exceptions", "HttpResponseError"),
+        ("azure.core.exceptions", "ResourceExistsError"),
+        ("azure.identity.aio", "DefaultAzureCredential"),
+    )
+    if (module := sys.modules.get(module_name)) is not None
+}
+_ACTIVE_STUB_MODULES: dict[str, types.ModuleType] = {}
+
 
 def _ensure_package(name: str, *, path: list[str] | None = None) -> types.ModuleType:
+    if name in _STUBBED_MODULE_NAMES:
+        module = _ACTIVE_STUB_MODULES.get(name)
+        if module is None:
+            module = types.ModuleType(name)
+            module.__path__ = []  # type: ignore[attr-defined]
+            _ACTIVE_STUB_MODULES[name] = module
+            sys.modules[name] = module
+        if path is not None:
+            module.__path__ = path  # type: ignore[attr-defined]
+        return module
+
     module = sys.modules.get(name)
     if module is None:
         module = types.ModuleType(name)
@@ -36,6 +99,15 @@ def _ensure_package(name: str, *, path: list[str] | None = None) -> types.Module
     if path is not None:
         module.__path__ = path  # type: ignore[attr-defined]
     return module
+
+
+def _restore_stubbed_modules() -> None:
+    for name, original in _MODULES_BEFORE_STUBS.items():
+        if original is _MISSING_MODULE:
+            if sys.modules.get(name) is _ACTIVE_STUB_MODULES.get(name):
+                sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
 
 
 def _install_stubs() -> None:
@@ -530,32 +602,49 @@ def _install_stubs() -> None:
 
 
 _install_stubs()
+try:
+    import app.models as app_models  # noqa: E402
+    from app.aca_tasks_extension import AcaTasksExtension  # noqa: E402
+    from app import mcp_server as app_mcp_server  # noqa: E402
+    from app.aca_jobs import AcaExecution  # noqa: E402
+    from app.control_store import InMemoryControlStore  # noqa: E402
+    from app.orchestrator import Orchestrator  # noqa: E402
+    from app.models import PublicError, StartRequest, TaskRecord  # noqa: E402
+    from fastmcp.server.extensions import MethodBinding  # noqa: E402
+    from fastmcp.server.context import Context as FastMCPContext  # noqa: E402
+    from fastmcp_tasks.models import (  # noqa: E402
+        CancelTaskParams,
+        CancelTaskResult,
+        CreateTaskResult,
+        GetTaskParams,
+        MISSING_REQUIRED_CLIENT_CAPABILITY,
+        UpdateTaskParams,
+        UpdateTaskResult,
+        missing_capability_error_data,
+    )
+    from fastmcp_tasks import wire_production  # noqa: E402
+    from mcp.shared.inbound import MCP_NAME_HEADER, encode_header_value  # noqa: E402
+    from mcp.server.context import ServerRequestContext  # noqa: E402
+    from mcp.shared.exceptions import MCPError  # noqa: E402
+    from mcp_types import INVALID_PARAMS  # noqa: E402
+    from mcp_types.jsonrpc import HEADER_MISMATCH  # noqa: E402
+finally:
+    _restore_stubbed_modules()
 
-import app.models as app_models  # noqa: E402
-from app.aca_tasks_extension import AcaTasksExtension  # noqa: E402
-from app import mcp_server as app_mcp_server  # noqa: E402
-from app.aca_jobs import AcaExecution  # noqa: E402
-from app.control_store import InMemoryControlStore  # noqa: E402
-from app.orchestrator import Orchestrator  # noqa: E402
-from app.models import PublicError, StartRequest, TaskRecord  # noqa: E402
-from fastmcp.server.extensions import MethodBinding  # noqa: E402
-from fastmcp.server.context import Context as FastMCPContext  # noqa: E402
-from fastmcp_tasks.models import (  # noqa: E402
-    CancelTaskParams,
-    CancelTaskResult,
-    CreateTaskResult,
-    GetTaskParams,
-    MISSING_REQUIRED_CLIENT_CAPABILITY,
-    UpdateTaskParams,
-    UpdateTaskResult,
-    missing_capability_error_data,
+_STUB_RESTORE_ERRORS = [
+    f"{name} leaked or was replaced"
+    for name, original in _MODULES_BEFORE_STUBS.items()
+    if (
+        name in sys.modules
+        if original is _MISSING_MODULE
+        else sys.modules.get(name) is not original
+    )
+]
+_STUB_RESTORE_ERRORS.extend(
+    f"{module_name}.{attribute} was replaced"
+    for (module_name, attribute), original in _ATTRIBUTES_BEFORE_STUBS.items()
+    if getattr(sys.modules[module_name], attribute, _MISSING_MODULE) is not original
 )
-from fastmcp_tasks import wire_production  # noqa: E402
-from mcp.shared.inbound import MCP_NAME_HEADER, encode_header_value  # noqa: E402
-from mcp.server.context import ServerRequestContext  # noqa: E402
-from mcp.shared.exceptions import MCPError  # noqa: E402
-from mcp_types import INVALID_PARAMS  # noqa: E402
-from mcp_types.jsonrpc import HEADER_MISMATCH  # noqa: E402
 
 app_package = sys.modules["app"]
 app_package.to_mcp_task = app_models.to_mcp_task
@@ -637,6 +726,13 @@ def _dump_model(value: Any) -> dict[str, Any]:
     if hasattr(value, "dict"):
         return value.dict(by_alias=True, exclude_none=True)
     return dict(vars(value))
+
+
+class ProtocolFixtureIsolationTests(unittest.TestCase):
+    def test_dependency_stubs_do_not_escape_fixture_import(self) -> None:
+        self.assertEqual(_STUB_RESTORE_ERRORS, [])
+
+
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.task = TaskRecord.new(

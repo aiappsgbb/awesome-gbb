@@ -3059,7 +3059,7 @@ Consequences:
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
-| Unit tests | 783 |
+| Unit tests | 784 |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
