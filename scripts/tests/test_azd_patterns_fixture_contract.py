@@ -135,11 +135,19 @@ class AzdPatternsFixtureContractTests(unittest.TestCase):
         fixture = (ROOT / "skills" / "azd-patterns" / "test-fixture" / "consumer_prompt.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("legacy debug-playbook coverage for the **ACA Job**", fixture)
-        self.assertIn("canonical module's live Azure coverage is", fixture)
-        self.assertIn("exercised by the separate `foundry-mcp-aca-jobs` fixture", fixture)
-        self.assertIn("deliberate minimal legacy debug-playbook variant", fixture)
-        self.assertNotIn("proves the canonical `Microsoft.App/jobs@2024-03-01` resource shape", fixture)
+        normalized = " ".join(fixture.split())
+        self.assertIn("legacy/minimal debug-playbook coverage for the **ACA Job**", normalized)
+        self.assertIn(
+            "This fixture does **not** exercise the canonical `Microsoft.App/jobs@2026-01-01` module.",
+            normalized,
+        )
+        self.assertIn(
+            "This branch must not be considered complete until the separate `foundry-mcp-aca-jobs` fixture is added and registered.",
+            normalized,
+        )
+        self.assertIn("executed and verified on this current commit", normalized)
+        self.assertNotIn("exercised by the separate `foundry-mcp-aca-jobs` fixture", normalized)
+        self.assertNotIn("proves the canonical `Microsoft.App/jobs@2024-03-01` resource shape", normalized)
 
     def test_no_skill_other_than_azd_patterns_describes_schedule_on_aca_job_bicep(self) -> None:
         offenders = []

@@ -16,11 +16,13 @@ Context: this prompt is fed to the `copilot-cli-matrix` job in the
 awesome-gbb repo to verify that the `azd-patterns` skill (at
 `skills/azd-patterns/SKILL.md` in the current working directory) still
 deploys end-to-end against the live Azure CI infrastructure. The pattern
-here is the legacy debug-playbook coverage for the **ACA Job**
+here is the legacy/minimal debug-playbook coverage for the **ACA Job**
 documented at SKILL.md § "Bicep: ACA Job Pattern" (~L545) —
 `Microsoft.App/jobs@2024-03-01` provisioned via Bicep, then manually
-executed and verified. The canonical module's live Azure coverage is
-exercised by the separate `foundry-mcp-aca-jobs` fixture.
+executed and verified on this current commit. This fixture does **not**
+exercise the canonical `Microsoft.App/jobs@2026-01-01` module. This
+branch must not be considered complete until the separate
+`foundry-mcp-aca-jobs` fixture is added and registered.
 
 **Expected per-run cost: ≤ $0.005** — one ACA Job execution on an
 existing Container App Environment (no new env to provision), 1 vCPU
