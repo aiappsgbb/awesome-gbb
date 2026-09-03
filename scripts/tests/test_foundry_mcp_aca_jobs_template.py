@@ -33,11 +33,13 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     @staticmethod
     def _azd_env_values() -> dict[str, str]:
         return {
-            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.io/mcp/service:20260903.1",
+            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.us/mcp/service:20260903.1",
             "MCP_APP_NAME": "mcp-app",
             "ACA_JOB_NAME": "mcp-job",
             "AZURE_RESOURCE_GROUP": "rg-jobs",
             "AZURE_SUBSCRIPTION_ID": "sub-id",
+            "ACR_NAME": "task13acr",
+            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
         }
 
     @staticmethod
@@ -732,6 +734,8 @@ param callbackConfig = {
         self.assertIn("output callbackStorageContainerUrl string", main)
         self.assertIn("/${outputStorageContainerName}", main)
         self.assertIn("/${callbackStorageContainerName}", main)
+        self.assertIn("output ACR_NAME string =", main)
+        self.assertIn("output ACR_LOGIN_SERVER string =", main)
         self.assertNotIn("output storageUrl string", main)
         self.assertIn("appResourceName", main)
         self.assertIn("jobResourceName", main)
@@ -775,26 +779,50 @@ param callbackConfig = {
         self.assertIn("postdeploy", data["hooks"])
         self.assertIn("converge_image.py", text)
         self.assertIn("verify_deployment.py", text)
-        self.assertIn("uv sync --frozen", text)
-        self.assertIn('EXPECTED_IMAGE_DIGEST="$(uv run converge_image.py)"', text)
-        self.assertIn('EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run verify_deployment.py', text)
-        self.assertIn("uv run converge_image.py", text)
-        self.assertIn("uv run verify_deployment.py", text)
+        self.assertIn("cd infra/scripts && uv sync --frozen", text)
+        self.assertIn('EXPECTED_IMAGE_DIGEST="$(uv run python converge_image.py)"', text)
+        self.assertIn('EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run python verify_deployment.py', text)
+        self.assertIn("uv run python converge_image.py", text)
+        self.assertIn("uv run python verify_deployment.py", text)
         for forbidden in ("az acr build", "az containerapp job", "azd-service-name: job"):
             self.assertNotIn(forbidden, text)
 
+    def test_infra_scripts_pyproject_and_lockfile_are_present(self) -> None:
+        scripts = self._script_dir()
+        pyproject = tomllib.loads((scripts / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(pyproject["project"]["requires-python"], ">=3.12")
+        self.assertEqual(
+            pyproject["project"]["dependencies"],
+            [
+                "azure-identity~=1.25.3",
+                "azure-mgmt-appcontainers~=5.0.0",
+            ],
+        )
+        self.assertTrue((scripts / "uv.lock").is_file())
+
+    def test_parse_image_reference_requires_exact_login_server_match(self) -> None:
+        module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_parse")
+        self.assertEqual(
+            module.parse_image_reference("myregistry.azurecr.us/mcp/service:20260903.1", "myregistry.azurecr.us"),
+            ("myregistry.azurecr.us", "mcp/service", "20260903.1"),
+        )
+        with self.assertRaisesRegex(ValueError, r"must exactly match ACR_LOGIN_SERVER"):
+            module.parse_image_reference("other.azurecr.us/mcp/service:20260903.1", "myregistry.azurecr.us")
+
     def test_converge_image_parses_digest_and_updates_drifting_resources_once(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image")
-        image_name = "myregistry.azurecr.io/mcp/service:20260903.1"
+        image_name = "myregistry.azurecr.us/mcp/service:20260903.1"
         env_values = {
             "SERVICE_MCP_IMAGE_NAME": image_name,
             "MCP_APP_NAME": "mcp-app",
             "ACA_JOB_NAME": "mcp-job",
             "AZURE_RESOURCE_GROUP": "rg-jobs",
             "AZURE_SUBSCRIPTION_ID": "sub-id",
+            "ACR_NAME": "task13acr",
+            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
         }
         manifest_digest = "sha256:" + "a" * 64
-        expected_image = "myregistry.azurecr.io/mcp/service@" + manifest_digest
+        expected_image = "myregistry.azurecr.us/mcp/service@" + manifest_digest
 
         app_container = SimpleNamespace(
             name="mcp",
@@ -817,7 +845,7 @@ param callbackConfig = {
             properties=SimpleNamespace(
                 configuration=SimpleNamespace(
                     ingress=SimpleNamespace(external=True, targetPort=8080, transport="http", allowInsecure=False),
-                    registries=[SimpleNamespace(server="myregistry.azurecr.io", identity="app-id")],
+                    registries=[SimpleNamespace(server="myregistry.azurecr.us", identity="app-id")],
                     secrets=[SimpleNamespace(name="APP_SECRET")],
                     activeRevisionsMode="Single",
                 ),
@@ -829,7 +857,7 @@ param callbackConfig = {
             properties=SimpleNamespace(
                 configuration=SimpleNamespace(
                     triggerType="Manual",
-                    registries=[SimpleNamespace(server="myregistry.azurecr.io", identity="job-id")],
+                    registries=[SimpleNamespace(server="myregistry.azurecr.us", identity="job-id")],
                     secrets=[SimpleNamespace(name="JOB_SECRET")],
                 ),
                 template=SimpleNamespace(containers=[job_container]),
@@ -866,7 +894,7 @@ param callbackConfig = {
                     "manifest",
                     "show-metadata",
                     "--registry",
-                    "myregistry",
+                    "task13acr",
                     "--name",
                     "mcp/service:20260903.1",
                     "--query",
@@ -898,24 +926,30 @@ param callbackConfig = {
     def test_converge_image_rejects_invalid_tag_digest_and_contract_drift(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_invalid")
         env_values = {
-            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.io/mcp/service:20260903.1",
+            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.us/mcp/service:20260903.1",
             "MCP_APP_NAME": "mcp-app",
             "ACA_JOB_NAME": "mcp-job",
             "AZURE_RESOURCE_GROUP": "rg-jobs",
             "AZURE_SUBSCRIPTION_ID": "sub-id",
+            "ACR_NAME": "task13acr",
+            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
         }
         base_run = lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(env_values), returncode=0)
         base_check_output = lambda *args, **kwargs: "sha256:" + "b" * 64
 
         with self.assertRaises(ValueError):
-            module.parse_image_reference("not-a-registry-image")
+            module.parse_image_reference("not-a-registry-image", "myregistry.azurecr.us")
         with self.assertRaises(ValueError):
-            module.parse_image_reference("myregistry.example.com/mcp/service:tag")
+            module.parse_image_reference("myregistry.example.com/mcp/service:tag", "myregistry.azurecr.us")
         with self.assertRaises(ValueError):
-            module.parse_image_reference("myregistry.azurecr.io/mcp/service")
+            module.parse_image_reference("myregistry.azurecr.us/mcp/service", "myregistry.azurecr.us")
+        with self.assertRaises(ValueError):
+            module.parse_image_reference("other.azurecr.us/mcp/service:tag", "myregistry.azurecr.us")
         with self.assertRaises(ValueError):
             module.resolve_image_digest(
-                "myregistry.azurecr.io/mcp/service:20260903.1",
+                "myregistry.azurecr.us/mcp/service:20260903.1",
+                acr_name="task13acr",
+                acr_login_server="myregistry.azurecr.us",
                 check_output=lambda *args, **kwargs: "not-a-digest",
             )
 
@@ -927,7 +961,7 @@ param callbackConfig = {
                     containers=[
                         SimpleNamespace(
                             name="mcp",
-                            image="myregistry.azurecr.io/mcp/service@sha256:" + "c" * 64,
+                            image="myregistry.azurecr.us/mcp/service@sha256:" + "c" * 64,
                             command=["python", "-m", "app.other_server"],
                             env=[],
                             secrets=[],
@@ -944,7 +978,7 @@ param callbackConfig = {
                     containers=[
                         SimpleNamespace(
                             name="job",
-                            image="myregistry.azurecr.io/mcp/service@sha256:" + "c" * 64,
+                            image="myregistry.azurecr.us/mcp/service@sha256:" + "c" * 64,
                             command=["python", "-m", "app.job_worker"],
                             env=[],
                             secrets=[],
@@ -973,8 +1007,8 @@ param callbackConfig = {
             )
 
         app.properties.template.containers[0].command = ["python", "-m", "app.mcp_server"]
-        app.properties.template.containers[0].image = "myregistry.azurecr.io/mcp/service@sha256:" + "b" * 64
-        job.properties.template.containers[0].image = "myregistry.azurecr.io/mcp/service@sha256:" + "b" * 64
+        app.properties.template.containers[0].image = "myregistry.azurecr.us/mcp/service@sha256:" + "b" * 64
+        job.properties.template.containers[0].image = "myregistry.azurecr.us/mcp/service@sha256:" + "b" * 64
         job.identity.userAssignedIdentities = {"app-id": {}}
         with self.assertRaises(RuntimeError):
             module.converge_image(
@@ -987,14 +1021,16 @@ param callbackConfig = {
     def test_converge_image_is_idempotent_when_both_resources_match(self) -> None:
         module = self._load_script("converge_image.py", "foundry_mcp_aca_jobs_converge_image_idempotent")
         env_values = {
-            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.io/mcp/service:20260903.1",
+            "SERVICE_MCP_IMAGE_NAME": "myregistry.azurecr.us/mcp/service:20260903.1",
             "MCP_APP_NAME": "mcp-app",
             "ACA_JOB_NAME": "mcp-job",
             "AZURE_RESOURCE_GROUP": "rg-jobs",
             "AZURE_SUBSCRIPTION_ID": "sub-id",
+            "ACR_NAME": "task13acr",
+            "ACR_LOGIN_SERVER": "myregistry.azurecr.us",
         }
         manifest_digest = "sha256:" + "d" * 64
-        expected_image = "myregistry.azurecr.io/mcp/service@" + manifest_digest
+        expected_image = "myregistry.azurecr.us/mcp/service@" + manifest_digest
         app = SimpleNamespace(
             identity=SimpleNamespace(type="UserAssigned", userAssignedIdentities={"app-id": {}}),
             properties=SimpleNamespace(
@@ -1069,9 +1105,27 @@ param callbackConfig = {
                         run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
                     )
 
+        missing_registry = env_values.copy()
+        missing_registry.pop("ACR_NAME")
+        for payload in (missing_registry, {"values": missing_registry}):
+            with self.subTest(missing_registry=payload):
+                with self.assertRaisesRegex(RuntimeError, r"missing required azd env values: .*ACR_NAME"):
+                    module.load_azd_env_values(
+                        run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
+                    )
+
+        missing_login_server = env_values.copy()
+        missing_login_server.pop("ACR_LOGIN_SERVER")
+        for payload in (missing_login_server, {"values": missing_login_server}):
+            with self.subTest(missing_login_server=payload):
+                with self.assertRaisesRegex(RuntimeError, r"missing required azd env values: .*ACR_LOGIN_SERVER"):
+                    module.load_azd_env_values(
+                        run=lambda *args, payload=payload, **kwargs: SimpleNamespace(stdout=json.dumps(payload), returncode=0),
+                    )
+
     def test_verify_deployment_reads_expected_digest_from_process_env_and_prints_markers(self) -> None:
         module = self._load_script("verify_deployment.py", "foundry_mcp_aca_jobs_verify_deployment")
-        expected_image = "myregistry.azurecr.io/mcp/service@sha256:" + "e" * 64
+        expected_image = "myregistry.azurecr.us/mcp/service@sha256:" + "e" * 64
         client = self._verify_deployment_client(expected_image=expected_image)
         stdout = io.StringIO()
 
@@ -1088,10 +1142,10 @@ param callbackConfig = {
 
     def test_verify_deployment_rejects_contract_drift_without_printing_markers(self) -> None:
         module = self._load_script("verify_deployment.py", "foundry_mcp_aca_jobs_verify_deployment_drift")
-        expected_image = "myregistry.azurecr.io/mcp/service@sha256:" + "e" * 64
+        expected_image = "myregistry.azurecr.us/mcp/service@sha256:" + "e" * 64
         base_env = self._azd_env_values()
         failure_cases = (
-            ("image drift", {"job_image": "myregistry.azurecr.io/mcp/service@sha256:" + "f" * 64}, "shared image digest mismatch"),
+            ("image drift", {"job_image": "myregistry.azurecr.us/mcp/service@sha256:" + "f" * 64}, "shared image digest mismatch"),
             ("command drift", {"job_command": ["python", "-m", "app.other_worker"]}, "job entrypoint mismatch"),
             ("distinct uami drift", {"job_identity_id": "app-id"}, "app and job must use distinct UAMI IDs"),
             ("app auth mode drift", {"app_env_overrides": {"MCP_ACA_JOBS_AUTH_MODE": "broken"}}, "app easy-auth mode missing"),

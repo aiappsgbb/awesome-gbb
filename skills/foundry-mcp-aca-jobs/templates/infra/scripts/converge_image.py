@@ -16,6 +16,8 @@ _REQUIRED_ENV_KEYS = (
     "ACA_JOB_NAME",
     "AZURE_RESOURCE_GROUP",
     "AZURE_SUBSCRIPTION_ID",
+    "ACR_NAME",
+    "ACR_LOGIN_SERVER",
 )
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -89,29 +91,30 @@ def load_azd_env_values(
     return env
 
 
-def parse_image_reference(image_name: str) -> tuple[str, str, str]:
+def parse_image_reference(image_name: str, acr_login_server: str) -> tuple[str, str, str]:
     if "/" not in image_name:
         raise ValueError(f"invalid image reference: {image_name!r}")
     host, remainder = image_name.split("/", 1)
-    if not host.endswith(".azurecr.io"):
-        raise ValueError(f"image host must end with .azurecr.io: {host!r}")
+    if host != acr_login_server:
+        raise ValueError(
+            f"image host must exactly match ACR_LOGIN_SERVER: {host!r} != {acr_login_server!r}"
+        )
     if ":" not in remainder or "@" in remainder:
         raise ValueError(f"image reference must be repo:tag without digest: {image_name!r}")
     repository, tag = remainder.rsplit(":", 1)
     if not repository or not tag:
         raise ValueError(f"invalid image reference: {image_name!r}")
-    registry = host.removesuffix(".azurecr.io")
-    if not registry:
-        raise ValueError(f"invalid ACR host: {host!r}")
-    return registry, repository, tag
+    return host, repository, tag
 
 
 def resolve_image_digest(
     image_name: str,
     *,
+    acr_name: str,
+    acr_login_server: str,
     check_output: Callable[..., str] = subprocess.check_output,
 ) -> str:
-    registry, repository, tag = parse_image_reference(image_name)
+    _, repository, tag = parse_image_reference(image_name, acr_login_server)
     digest = str(
         check_output(
             [
@@ -120,7 +123,7 @@ def resolve_image_digest(
                 "manifest",
                 "show-metadata",
                 "--registry",
-                registry,
+                acr_name,
                 "--name",
                 f"{repository}:{tag}",
                 "--query",
@@ -133,7 +136,7 @@ def resolve_image_digest(
     ).strip()
     if not _SHA256_RE.fullmatch(digest):
         raise ValueError(f"invalid manifest digest: {digest!r}")
-    return f"{registry}.azurecr.io/{repository}@{digest}"
+    return f"{acr_login_server}/{repository}@{digest}"
 
 
 def _default_credential():
@@ -219,7 +222,6 @@ def converge_image(
     client_factory: Callable[[Any, str], Any] = _container_apps_client,
 ) -> str:
     env = load_azd_env_values(run=run)
-    desired_image = resolve_image_digest(env["SERVICE_MCP_IMAGE_NAME"], check_output=check_output)
 
     credential = credential_factory()
     client = client_factory(credential, env["AZURE_SUBSCRIPTION_ID"])
@@ -232,6 +234,13 @@ def converge_image(
 
     _resource_contract(app, container_name="mcp", expected_command=["python", "-m", "app.mcp_server"], label="app")
     _resource_contract(job, container_name="job", expected_command=["python", "-m", "app.job_worker"], label="job")
+
+    desired_image = resolve_image_digest(
+        env["SERVICE_MCP_IMAGE_NAME"],
+        acr_name=env["ACR_NAME"],
+        acr_login_server=env["ACR_LOGIN_SERVER"],
+        check_output=check_output,
+    )
 
     if not _resource_changed(app, "mcp", desired_image) and not _resource_changed(job, "job", desired_image):
         return desired_image
