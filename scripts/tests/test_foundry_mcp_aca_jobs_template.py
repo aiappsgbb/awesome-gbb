@@ -546,12 +546,18 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         pin_frontmatter = [
             self._frontmatter_and_body(path)[0] for path in pin_paths
         ]
+        pins_by_skill = {
+            path.parents[1].name: frontmatter
+            for path, frontmatter in zip(pin_paths, pin_frontmatter, strict=True)
+        }
         issue_only = sum(
             frontmatter["automation_tier"] == "issue_only"
-            and not frontmatter["validation"]["runnable"]
             for frontmatter in pin_frontmatter
         )
-        auto_tier = len(pin_paths) - issue_only
+        auto_tier = sum(
+            frontmatter["automation_tier"] == "auto"
+            for frontmatter in pin_frontmatter
+        )
 
         self.assertEqual(
             (
@@ -562,7 +568,15 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 len(skill_paths) - len(pin_paths),
                 len(fixture_paths),
             ),
-            (36, 32, 29, 3, 4, 22),
+            (36, 32, 28, 4, 4, 22),
+        )
+        self.assertEqual(
+            (
+                pins_by_skill["foundry-agt"]["automation_tier"],
+                pins_by_skill["foundry-agt"]["validation"]["runnable"],
+            ),
+            ("issue_only", True),
+            "foundry-agt remains human-only even though its validation is runnable",
         )
         self.assertEqual(plugin["version"], "4.30.0")
         self.assertIn("36 reusable building blocks", plugin["description"])
@@ -573,19 +587,74 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
 
         for expected in (
             "**Current coverage (36 skills, 32 with upstream pins):**",
-            "| Auto-tier (CI can refresh autonomously) | 29 pins |",
-            "| Issue-only (human / complex deploy) | 3 pins |",
+            "| Auto-tier (CI can refresh autonomously) | 28 pins |",
+            "| Issue-only (human / complex deploy) | 4 pins |",
             "| Internal IP (no pin) | 4 skills |",
             "| Copilot-CLI fixtures | 22 skills |",
             "| Total skills | 36 |",
             "| Skills with upstream pins | 32 |",
-            "| Auto-tier (CI can refresh autonomously) | 29 |",
-            "| Issue-only (human / complex deploy) | 3 |",
+            "| Auto-tier (CI can refresh autonomously) | 28 |",
+            "| Issue-only (human / complex deploy) | 4 |",
             "| Internal IP (no upstream) | 4 |",
-            "| Unit tests | 782 |",
         ):
             with self.subTest(expected=expected):
-                self.assertIn(expected, agents)
+                self.assertTrue(
+                    expected in agents,
+                    f"AGENTS.md is missing measured catalog value: {expected}",
+                )
+
+        count_probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import unittest; "
+                    "suite = unittest.defaultTestLoader.discover("
+                    "'scripts/tests', pattern='test*.py'); "
+                    "print(f'UNITTEST_CASE_COUNT={suite.countTestCases()}')"
+                ),
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        documented_unit_tests = re.search(
+            r"^\| Unit tests \| (\d+) \|$",
+            agents,
+            flags=re.MULTILINE,
+        )
+        discovered_unit_tests = re.search(
+            r"^UNITTEST_CASE_COUNT=(\d+)$",
+            count_probe.stdout,
+            flags=re.MULTILINE,
+        )
+        self.assertIsNotNone(documented_unit_tests)
+        self.assertIsNotNone(discovered_unit_tests)
+        self.assertEqual(
+            int(documented_unit_tests.group(1)),
+            int(discovered_unit_tests.group(1)),
+        )
+
+    def test_home_landing_renders_measured_skill_count(self) -> None:
+        from scripts.site_templates import render_home
+
+        skills = [{"name": f"skill-{index}"} for index in range(36)]
+        landing = render_home({}, skills, [])
+
+        self.assertTrue(
+            "all 36 skills, or pick individual ones." in landing,
+            "landing-page prose must derive its skill total from the skills list",
+        )
+        self.assertTrue(
+            '<span class="browse-count" aria-label="Skills count">36</span>'
+            in landing,
+            "landing-page browse card must show the measured skills-list count",
+        )
+        self.assertFalse(
+            "all 27 skills" in landing,
+            "landing-page prose contains the stale hardcoded skill count",
+        )
 
     def test_dependency_graph_matches_the_approved_four_skill_contract(self) -> None:
         deps = yaml.safe_load(
