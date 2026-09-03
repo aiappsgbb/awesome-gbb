@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,25 @@ SKILL = ROOT / "skills" / "foundry-mcp-aca-jobs"
 
 
 class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
+    @staticmethod
+    def _extract_bicep_block(text: str, marker: str) -> str:
+        start = text.index(marker)
+        open_brace = text.index("{", start)
+        depth = 0
+        for index in range(open_brace, len(text)):
+            char = text[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : index + 1]
+        raise AssertionError(f"unterminated Bicep block for {marker!r}")
+
+    @staticmethod
+    def _param_names(text: str) -> list[str]:
+        return re.findall(r"(?m)^\s*param\s+(\w+)\s+\w+", text)
+
     @staticmethod
     def _template_dir() -> pathlib.Path:
         return SKILL / "templates"
@@ -201,9 +221,34 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     def test_identity_rbac_contract_uses_two_uamis_and_only_allowed_job_actions(self) -> None:
         identity = (self._infra_dir() / "identity-rbac.bicep").read_text(encoding="utf-8")
         assignments = (self._infra_dir() / "identity-rbac" / "assignments.bicep").read_text(encoding="utf-8")
-        rbac = identity + "\n" + assignments
-        for token in ("appUami", "jobUami", "roleDefinition", "assignableScopes", "scope: job", "AcrPull"):
-            self.assertIn(token, rbac)
+        identity_params = self._param_names(identity)
+        assignment_params = self._param_names(assignments)
+        self.assertIn("outputStorageContainerName", identity_params)
+        self.assertIn("callbackStorageContainerName", identity_params)
+        self.assertIn("outputStorageContainerName", assignment_params)
+        self.assertIn("callbackStorageContainerName", assignment_params)
+        self.assertNotIn("storageContainerName", identity_params)
+        self.assertNotIn("storageContainerName", assignment_params)
+        self.assertIn("appUami", identity)
+        self.assertIn("jobUami", identity)
+        self.assertIn("roleDefinition", identity)
+        self.assertIn("assignableScopes", identity)
+
+        job_role = self._extract_bicep_block(identity, "jobRoleDefinition")
+        actions_match = re.search(r"actions:\s*\[(.*?)\n\s*notActions:", job_role, re.S)
+        self.assertIsNotNone(actions_match, "job custom role actions block missing")
+        actions = set(re.findall(r"'([^']+)'", actions_match.group(1)))
+        self.assertEqual(
+            actions,
+            {
+                "Microsoft.App/jobs/read",
+                "Microsoft.App/jobs/start/action",
+                "Microsoft.App/jobs/execution/read",
+                "Microsoft.App/jobs/executions/read",
+                "Microsoft.App/jobs/stop/execution/action",
+            },
+        )
+
         for action in (
             "Microsoft.App/jobs/read",
             "Microsoft.App/jobs/start/action",
@@ -211,28 +256,63 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "Microsoft.App/jobs/executions/read",
             "Microsoft.App/jobs/stop/execution/action",
         ):
-            self.assertIn(action, rbac)
-        self.assertIn("ba92f5b4-2d11-453d-a403-e96b0029c9fe", rbac)
-        self.assertIn("sqlRoleDefinitions/00000000-0000-0000-0000-000000000002", rbac)
-        self.assertIn("dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}", rbac)
-        self.assertIn("scope: storageContainer", rbac)
-        self.assertNotIn("Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c'", rbac)
+            self.assertIn(action, job_role)
+        self.assertIn("ba92f5b4-2d11-453d-a403-e96b0029c9fe", identity + "\n" + assignments)
+        self.assertIn("sqlRoleDefinitions/00000000-0000-0000-0000-000000000002", assignments)
+        self.assertIn("dbs/${cosmosDatabaseName}/colls/${cosmosContainerName}", assignments)
+        self.assertNotIn("Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c'", identity + "\n" + assignments)
         for forbidden in ("jobs/write", "jobs/delete", "listsecrets", "stop/multiple"):
-            self.assertNotIn(forbidden, rbac)
+            self.assertNotIn(forbidden, identity + "\n" + assignments)
+
+        scope_expectations = {
+            "appAcrPull": "acr",
+            "jobAcrPull": "acr",
+            "appCosmosData": "cosmos",
+            "jobCosmosData": "cosmos",
+            "appBlobData": "callbackStorageContainer",
+            "jobBlobData": "outputStorageContainer",
+            "jobKeyVaultSecretsUser": "keyVault",
+            "appJobOperator": "job",
+        }
+        for resource_name, expected_scope in scope_expectations.items():
+            block = self._extract_bicep_block(assignments, f"resource {resource_name} ")
+            scope_match = re.search(r"(?m)^\s*(scope|parent):\s*([A-Za-z_][A-Za-z0-9_]*)\s*$", block)
+            self.assertIsNotNone(scope_match, f"{resource_name} scope/parent missing")
+            self.assertEqual(scope_match.group(2), expected_scope, resource_name)
+
+        self.assertIn("resource outputStorageContainer", assignments)
+        self.assertIn("resource callbackStorageContainer", assignments)
+        self.assertNotIn("resource storageContainer ", assignments)
+        self.assertIn("scope: callbackStorageContainer", assignments)
+        self.assertIn("scope: outputStorageContainer", assignments)
+        self.assertNotIn("scope: storageContainer", assignments)
 
     def test_main_module_composes_shared_digest_and_outputs_contract(self) -> None:
         main = (self._infra_dir() / "main.bicep").read_text(encoding="utf-8")
+        normalized = " ".join(main.split())
         self.assertIn("../../../azd-patterns/references/bicep/aca-job.bicep", main)
         self.assertIn("mcr.microsoft.com/azuredocs/containerapps-helloworld@sha256:e9b3e7c34664c7cffd7144864b0e4eec369bfde80068f9095dc63b37058bec48", main)
         self.assertIn("allowedMcpCallerClientIds array", main)
-        self.assertIn("union(allowedMcpCallerClientIds, [", " ".join(main.split()))
+        self.assertRegex(
+            normalized,
+            r"allowedMcpCallerClientIds:\s*union\(allowedMcpCallerClientIds,\s*\[\s*identities\.outputs\.jobUamiClientId\s*\]\)",
+        )
+        self.assertIn("param outputStorageContainerName string", main)
+        self.assertIn("param callbackStorageContainerName string", main)
+        self.assertNotIn("param storageContainerName string", main)
+        self.assertIn("output outputStorageUrl string", main)
+        self.assertIn("output callbackStorageUrl string", main)
+        self.assertIn("/${outputStorageContainerName}", main)
+        self.assertIn("/${callbackStorageContainerName}", main)
+        self.assertNotIn("output storageUrl string", main)
         self.assertIn("appName", main)
         self.assertIn("jobName", main)
         self.assertIn("fqdn", main)
         self.assertIn("appIdentity", main)
         self.assertIn("jobIdentity", main)
         self.assertIn("cosmosEndpoint", main)
-        self.assertIn("storageUrl", main)
+        self.assertIn("outputStorageUrl", main)
+        self.assertIn("callbackStorageUrl", main)
         self.assertIn("authAudience", main)
         self.assertIn("imageDigest", main)
 

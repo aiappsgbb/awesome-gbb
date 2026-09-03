@@ -33,8 +33,11 @@ param cosmosContainerName string = ''
 @description('Existing storage account name.')
 param storageAccountName string = ''
 
-@description('Existing storage container name.')
-param storageContainerName string = ''
+@description('Existing storage container name for job outputs. Must differ from the callback container name.')
+param outputStorageContainerName string = ''
+
+@description('Existing storage container name for callback capture. Must differ from the output container name.')
+param callbackStorageContainerName string = ''
 
 @description('Existing Key Vault name (optional).')
 param keyVaultName string = ''
@@ -109,7 +112,8 @@ module assignments './identity-rbac/assignments.bicep' = if (createAssignments) 
     cosmosDatabaseName: cosmosDatabaseName
     cosmosContainerName: cosmosContainerName
     storageAccountName: storageAccountName
-    storageContainerName: storageContainerName
+    outputStorageContainerName: outputStorageContainerName
+    callbackStorageContainerName: callbackStorageContainerName
     keyVaultName: keyVaultName
     jobName: jobName
     appPrincipalId: appPrincipalId

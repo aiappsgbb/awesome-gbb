@@ -15,8 +15,11 @@ param environmentName string
 @description('Existing storage account name used for job output and callback capture.')
 param storageAccountName string
 
-@description('Existing blob container name used for job output and callback capture.')
-param storageContainerName string
+@description('Existing blob container name used for job outputs. Must differ from the callback container name.')
+param outputStorageContainerName string
+
+@description('Existing blob container name used for callback capture. Must differ from the output container name.')
+param callbackStorageContainerName string
 
 @description('Allowed app-only caller client IDs for the MCP app.')
 param allowedMcpCallerClientIds array
@@ -51,7 +54,8 @@ param imageDigest string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld
 @description('Optional Key Vault name for the job callback secret path.')
 param keyVaultName string = ''
 
-var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${storageContainerName}'
+var outputStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${outputStorageContainerName}'
+var callbackStorageUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${callbackStorageContainerName}'
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   scope: resourceGroup(resourceGroupName)
@@ -142,7 +146,8 @@ module rbac 'identity-rbac.bicep' = {
     cosmosDatabaseName: cosmos.outputs.databaseName
     cosmosContainerName: cosmos.outputs.containerName
     storageAccountName: storageAccountName
-    storageContainerName: storageContainerName
+    outputStorageContainerName: outputStorageContainerName
+    callbackStorageContainerName: callbackStorageContainerName
     keyVaultName: keyVaultName
     jobName: job.outputs.name
     appPrincipalId: identities.outputs.appUamiPrincipalId
@@ -161,6 +166,7 @@ output jobIdentityPrincipalId string = identities.outputs.jobUamiPrincipalId
 output appIdentityClientId string = identities.outputs.appUamiClientId
 output jobIdentityClientId string = identities.outputs.jobUamiClientId
 output cosmosEndpoint string = cosmos.outputs.endpoint
-output storageUrl string = outputStorageUrl
+output outputStorageUrl string = outputStorageUrl
+output callbackStorageUrl string = callbackStorageUrl
 output authAudience string = app.outputs.authAudience
 output imageDigest string = imageDigest

@@ -15,8 +15,11 @@ param cosmosContainerName string
 @description('Existing storage account name.')
 param storageAccountName string
 
-@description('Existing storage container name.')
-param storageContainerName string
+@description('Existing storage container name for job outputs. Must differ from the callback container name.')
+param outputStorageContainerName string
+
+@description('Existing storage container name for callback capture. Must differ from the output container name.')
+param callbackStorageContainerName string
 
 @description('Existing Key Vault name (optional).')
 param keyVaultName string
@@ -62,9 +65,14 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01'
   name: 'default'
 }
 
-resource storageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' existing = {
+resource outputStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' existing = {
   parent: blobService
-  name: storageContainerName
+  name: outputStorageContainerName
+}
+
+resource callbackStorageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' existing = {
+  parent: blobService
+  name: callbackStorageContainerName
 }
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (!empty(keyVaultName)) {
@@ -116,8 +124,8 @@ resource jobCosmosData 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments
 }
 
 resource appBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storageContainer
-  name: guid(storageContainer.id, appPrincipalId, blobDataContributorRoleDefinitionId)
+  scope: callbackStorageContainer
+  name: guid(callbackStorageContainer.id, appPrincipalId, blobDataContributorRoleDefinitionId)
   properties: {
     principalId: appPrincipalId
     principalType: 'ServicePrincipal'
@@ -126,8 +134,8 @@ resource appBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 resource jobBlobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storageContainer
-  name: guid(storageContainer.id, jobPrincipalId, blobDataContributorRoleDefinitionId)
+  scope: outputStorageContainer
+  name: guid(outputStorageContainer.id, jobPrincipalId, blobDataContributorRoleDefinitionId)
   properties: {
     principalId: jobPrincipalId
     principalType: 'ServicePrincipal'
