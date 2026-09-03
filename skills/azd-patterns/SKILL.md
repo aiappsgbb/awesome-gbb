@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.5.0"
+  version: "1.5.1"
 ---
 
 # AZD Tips & Patterns
@@ -546,7 +546,7 @@ Minimum verification checklist after `azd up`:
 
 `azd deploy` does **not** deploy ACA Jobs — it only runs `postdeploy`. Keep the job image update and `az containerapp job start` in that hook, and treat the job Bicep as the canonical module below.
 
-> **MUST:** Copy verbatim from [`references/bicep/aca-job.bicep`](references/bicep/aca-job.bicep). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical ACA Job module (manual trigger + UAMI + registry identity + immutable digest + explicit command/args/env + `id` / `name` outputs).
+> **MUST:** Copy verbatim from [`references/bicep/aca-job.bicep`](references/bicep/aca-job.bicep). Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical ACA Job module (manual trigger + UAMI + registry identity + immutable `imageDigest` contract + explicit command/args/env + `id` / `name` outputs). The module is portable: runtime/deployment precondition enforcement lives in Task13's `converge_image.py`, not in repo-local Bicep config.
 >
 > Structural usage excerpt (short form; keep the real module in the reference file):
 >
@@ -568,7 +568,7 @@ Minimum verification checklist after `azd up`:
 > }
 > ```
 
-The module keeps the image immutable with an explicit `@sha256:` digest assertion, wires `command` / `args` / `environmentVariables` as arrays, and defaults `replicaTimeout` to `300` and `replicaRetryLimit` to `1`.
+The module keeps the image immutable with an explicit `imageDigest` description contract, wires `command` / `args` / `environmentVariables` as arrays, defaults `replicaTimeout` to `300` and `replicaRetryLimit` to `1`, and compiles copy-verbatim without repo `bicepconfig`.
 
 Use `postdeploy` to apply the job update and trigger the manual run after the resource group deployment finishes.
 
@@ -765,7 +765,7 @@ modules) so they can be vendored independently.
 | **storage-blob** | `infra/modules/storage-blob.bicep` | `storage-blob: yes` (params: `containers: [...]`) | `accountName`, `containerNames[]`, `endpoint` | Document/image/audio storage for vision / doc-intel / speech |
 | **key-vault** | `infra/modules/key-vault.bicep` | `key-vault: yes` (params: `enabled: bool`) | `vaultName`, `vaultUri` | Required ONLY when external API keys must be secured (e.g., third-party data sources). NOT in always-include — threadlight pilots are keyless-by-mandate. |
 | **app-insights** | `infra/modules/app-insights.bicep` | (always — non-optional) | `connectionString`, `instrumentationKey`, `appId` | Always — required for `foundry-evals` continuous loop. **Telemetry wiring** (AppInsights connection string env injection, client-side instrumentation, retry on transient drops) is owned by [`foundry-observability`](../foundry-observability/) § Layer 2. This SKILL focuses on deploy mechanics; for telemetry configuration, see foundry-observability. |
-| **aca-job** | `infra/modules/aca-job.bicep` | `aca-job: yes` (params: `[{ name, trigger: 'cron' \| 'manual', ... }]`) | `jobName`, `jobResourceId` per entry | Wired by `threadlight-event-triggers` for receivers |
+| **aca-job** | `infra/modules/aca-job.bicep` | `aca-job: yes` (params: `[{ name, trigger: 'cron' \| 'manual', ... }]`) | `jobName`, `jobResourceId` per entry | Canonical generic/manual ACA Job module here; `threadlight-event-triggers` wires the event-trigger variant for receivers |
 | **aca-mcp** | `infra/modules/aca-mcp.bicep` | `aca-mcp: yes` (params: `[{ name, image, ... }]`) | `mcpEndpoints{}`, `mcpFqdns{}` | Wired by `foundry-mcp-aca` for each mocked or custom MCP server |
 | **aca-bot** | `infra/modules/aca-bot.bicep` | `aca-bot: yes` (params: `manifest: ...`) | `botFqdn`, `botResourceId`, `botAppId` | Wired by `foundry-teams-bot` when SPEC § 8 includes Teams |
 | **foundry-iq-index** | `infra/modules/foundry-iq-index.bicep` | `foundry-iq-index: yes` (params: `knowledgeBases: [...]`) | `indexNames[]`, `agentNames[]` | Provisions the AI Search index + Knowledge Agent. Implies `ai-search` and `storage-blob` |
@@ -1389,7 +1389,7 @@ scale: {
 | [**foundry-mcp-aca**](../foundry-mcp-aca/) | Owns the `aca-mcp.bicep` shape |
 | [**foundry-teams-bot**](../foundry-teams-bot/) | Owns the `aca-bot.bicep` shape |
 | [**foundry-iq**](../foundry-iq/) | Owns the `foundry-iq-index.bicep` shape |
-| [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the `aca-job.bicep` shape (cron + manual triggers) |
+| [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the event-trigger ACA Job variant (cron/manual receiver wiring); the canonical generic/manual `aca-job.bicep` module lives here |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | Owns the `foundry-account.bicep` shape |
 | [**citadel-spoke-onboarding**](../citadel-spoke-onboarding/) | Adds Citadel hub wiring AFTER the base Bicep is provisioned (opt-in via SPEC § 11b `citadel.required: yes`) |
 | [**azure-tenant-isolation**](../azure-tenant-isolation/) | Per-tenant `AZURE_CONFIG_DIR` so `azd up` lands in the right tenant |

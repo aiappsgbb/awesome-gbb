@@ -4,12 +4,15 @@
 // Source of truth for the prose example in ../../SKILL.md § Bicep: ACA Job Pattern.
 //
 // Manual-trigger ACA Job module with UAMI + registry identity, immutable
-// digest enforcement, explicit command/args/env wiring, and id/name outputs.
+// digest contract, explicit command/args/env wiring, and id/name outputs.
+// Runtime/deployment precondition enforcement lives in Task13 converge_image.py;
+// this module stays portable and copy-verbatim compiles without repo bicepconfig.
 // =============================================================================
 
 param name string
 param location string
 param environmentId string
+@description('registry/repo@sha256:<64 lowercase hex>.')
 param imageDigest string
 param containerName string
 param command array
@@ -19,8 +22,6 @@ param uamiResourceId string
 param acrServer string
 param replicaTimeout int = 300
 param replicaRetryLimit int = 1
-
-assert digestFormat = contains(imageDigest, '@sha256:') && length(split(imageDigest, '@sha256:')[1]) == 64
 
 resource job 'Microsoft.App/jobs@2026-01-01' = {
   name: name
@@ -53,8 +54,8 @@ resource job 'Microsoft.App/jobs@2026-01-01' = {
           args: args
           env: environmentVariables
           resources: {
-            cpu: 1
-            memory: '2Gi'
+            cpu: json('0.5')
+            memory: '1Gi'
           }
         }
       ]
