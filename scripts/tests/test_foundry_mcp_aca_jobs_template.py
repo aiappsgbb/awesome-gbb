@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import os
 import pathlib
@@ -482,6 +483,109 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertEqual(marketplace["metadata"]["version"], "4.30.0")
         self.assertEqual(marketplace["plugins"][0]["version"], "4.30.0")
         self.assertIn("foundry-mcp-aca-jobs", marketplace["metadata"]["description"])
+
+    def test_catalog_readme_has_one_approved_adjacent_row(self) -> None:
+        readme_lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+        producer_row = next(
+            index
+            for index, line in enumerate(readme_lines)
+            if line.startswith("| [**foundry-mcp-aca**]")
+        )
+        expected_row = (
+            "| [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | "
+            "Expose durable MCP tools backed by pre-provisioned ACA Jobs — "
+            "SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, "
+            "managed-identity callbacks, and one immutable image with separate "
+            "server/worker entrypoints. |"
+        )
+
+        self.assertEqual(
+            sum(
+                line.startswith("| [**foundry-mcp-aca-jobs**]")
+                for line in readme_lines
+            ),
+            1,
+        )
+        self.assertEqual(readme_lines[producer_row + 1], expected_row)
+
+    def test_build_site_category_places_jobs_skill_after_mcp_aca(self) -> None:
+        module = ast.parse(
+            (ROOT / "scripts" / "build-site.py").read_text(encoding="utf-8")
+        )
+        categories = next(
+            ast.literal_eval(node.value)
+            for node in module.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "CATEGORIES"
+        )
+        foundry_skills = categories["🏗️ Foundry Building Blocks"]
+        producer_index = foundry_skills.index("foundry-mcp-aca")
+
+        self.assertEqual(foundry_skills.count("foundry-mcp-aca-jobs"), 1)
+        self.assertEqual(
+            foundry_skills[producer_index + 1],
+            "foundry-mcp-aca-jobs",
+        )
+
+    def test_catalog_manifests_and_agents_report_measured_totals(self) -> None:
+        plugin = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))
+        marketplace = json.loads(
+            (ROOT / ".github" / "plugin" / "marketplace.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        skill_paths = list((ROOT / "skills").glob("*/SKILL.md"))
+        pin_paths = list(
+            (ROOT / "skills").glob("*/references/upstream-pin.md")
+        )
+        fixture_paths = list(
+            (ROOT / "skills").glob("*/test-fixture/consumer_prompt.md")
+        )
+        pin_frontmatter = [
+            self._frontmatter_and_body(path)[0] for path in pin_paths
+        ]
+        issue_only = sum(
+            frontmatter["automation_tier"] == "issue_only"
+            and not frontmatter["validation"]["runnable"]
+            for frontmatter in pin_frontmatter
+        )
+        auto_tier = len(pin_paths) - issue_only
+
+        self.assertEqual(
+            (
+                len(skill_paths),
+                len(pin_paths),
+                auto_tier,
+                issue_only,
+                len(skill_paths) - len(pin_paths),
+                len(fixture_paths),
+            ),
+            (36, 32, 29, 3, 4, 22),
+        )
+        self.assertEqual(plugin["version"], "4.30.0")
+        self.assertIn("36 reusable building blocks", plugin["description"])
+        self.assertEqual(marketplace["metadata"]["version"], "4.30.0")
+        self.assertIn("all 36 skills", marketplace["metadata"]["description"])
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.30.0")
+        self.assertIn("36 reusable GBB skills", marketplace["plugins"][0]["description"])
+
+        for expected in (
+            "**Current coverage (36 skills, 32 with upstream pins):**",
+            "| Auto-tier (CI can refresh autonomously) | 29 pins |",
+            "| Issue-only (human / complex deploy) | 3 pins |",
+            "| Internal IP (no pin) | 4 skills |",
+            "| Copilot-CLI fixtures | 22 skills |",
+            "| Total skills | 36 |",
+            "| Skills with upstream pins | 32 |",
+            "| Auto-tier (CI can refresh autonomously) | 29 |",
+            "| Issue-only (human / complex deploy) | 3 |",
+            "| Internal IP (no upstream) | 4 |",
+            "| Unit tests | 782 |",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, agents)
 
     def test_dependency_graph_matches_the_approved_four_skill_contract(self) -> None:
         deps = yaml.safe_load(
