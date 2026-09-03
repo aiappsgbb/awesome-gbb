@@ -92,6 +92,10 @@ skills:
     depends_on:
       - foundry-hosted-agents
 
+  foundry-mcp-aca-jobs:
+    depends_on:
+      - foundry-mcp-aca
+
   # foundry-network-runbook — operational runbook for network-layer
   # failures after a Foundry VNet deploy. Cross-references specific
   # sections in foundry-vnet-deploy (§ 11 verification matrix, Step 8

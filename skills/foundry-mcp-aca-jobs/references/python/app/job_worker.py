@@ -1,7 +1,6 @@
 """Canonical ACA Job worker for foundry-mcp-aca-jobs.
 
-This module keeps the business worker separate from the MCP server and
-persists job-owned output before any callback delivery.
+Source of truth for the prose example in ../../../SKILL.md § Operate and observe.
 """
 
 from __future__ import annotations

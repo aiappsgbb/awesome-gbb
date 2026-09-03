@@ -1,4 +1,7 @@
-"""Canonical ACA Job adapter for foundry-mcp-aca-jobs."""
+"""Canonical ACA Job adapter for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Architecture and shared-image contract.
+"""
 
 from __future__ import annotations
 

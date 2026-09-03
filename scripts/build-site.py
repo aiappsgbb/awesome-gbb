@@ -49,7 +49,7 @@ CATEGORIES: dict[str, list[str]] = {
     '🏗️ Foundry Building Blocks': [
         'foundry-prompt-agents', 'foundry-hosted-agents', 'foundry-teams-bot',
         'ghcp-hosted-agents',
-        'foundry-mcp-aca', 'foundry-evals', 'foundry-iq',
+        'foundry-mcp-aca', 'foundry-mcp-aca-jobs', 'foundry-evals', 'foundry-iq',
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
         'foundry-caphost-lifecycle',

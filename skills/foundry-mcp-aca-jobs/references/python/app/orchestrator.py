@@ -1,4 +1,7 @@
-"""Canonical orchestration service for foundry-mcp-aca-jobs."""
+"""Canonical orchestration service for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Protocol contract (Tasks + Compatibility tools).
+"""
 
 from __future__ import annotations
 

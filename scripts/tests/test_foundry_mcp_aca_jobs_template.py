@@ -20,11 +20,14 @@ from unittest.mock import patch
 
 import yaml
 
+from scripts.tests.test_foundry_mcp_aca_jobs_protocol import _install_stubs
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "foundry-mcp-aca-jobs"
 SKILL_DIR = SKILL / "references" / "python"
 sys.path.insert(0, str(SKILL_DIR))
+_install_stubs()
 
 from app.models import Policy
 
@@ -45,6 +48,15 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
     @staticmethod
     def _env_items(values: dict[str, str]) -> list[SimpleNamespace]:
         return [SimpleNamespace(name=name, value=value) for name, value in values.items()]
+
+    @staticmethod
+    def _frontmatter_and_body(path: pathlib.Path) -> tuple[dict[str, object], str]:
+        text = path.read_text(encoding="utf-8")
+        parts = text.split("---", 2)
+        assert len(parts) == 3, path
+        data = yaml.safe_load(parts[1])
+        assert isinstance(data, dict), path
+        return data, parts[2]
 
     @classmethod
     def _verify_deployment_client(
@@ -290,6 +302,128 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "uvicorn~=0.52.4",
             ],
         )
+
+    def test_skill_frontmatter_and_section_map_match_contract(self) -> None:
+        skill_fm, body = self._frontmatter_and_body(SKILL / "SKILL.md")
+        headings = re.findall(r"(?m)^## (.+)$", body)
+
+        self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.0.0")
+        self.assertLessEqual(len(skill_fm["description"]), 1024)
+        for required in (
+            "MCP Tasks",
+            "SEP-2663",
+            "ACA Jobs",
+            "long-running/asynchronous MCP tools",
+            "callbacks",
+            "external job orchestration",
+            "foundry-mcp-aca",
+            "Docket",
+        ):
+            self.assertIn(required, skill_fm["description"] + "\n" + body)
+        for heading in (
+            "When to use",
+            "Architecture and shared-image contract",
+            "Protocol contract (Tasks + Compatibility tools)",
+            "Control record and lifecycle",
+            "Idempotency and uncertain-start reconciliation",
+            "Callback contract",
+            "Security and least-privilege RBAC",
+            "Deploy with azd",
+            "Operate and observe",
+            "Stable errors",
+            "Test implementation",
+            "Non-goals",
+            "Related skills",
+        ):
+            self.assertIn(heading, headings)
+        self.assertIn("[foundry-mcp-aca](../foundry-mcp-aca/SKILL.md)", body)
+        self.assertIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
+        self.assertIn("CALLBACK_DELIVERY_REJECTED", body)
+        self.assertIn("WORKER_EXECUTION_FAILED", body)
+
+    def test_reference_headers_resolve_to_skill_sections(self) -> None:
+        section_map = {
+            self._reference_app_dir() / "__init__.py": ("../../../SKILL.md", "Control record and lifecycle"),
+            self._reference_app_dir() / "models.py": ("../../../SKILL.md", "Control record and lifecycle"),
+            self._reference_app_dir() / "callbacks.py": ("../../../SKILL.md", "Callback contract"),
+            self._reference_app_dir() / "control_store.py": ("../../../SKILL.md", "Idempotency and uncertain-start reconciliation"),
+            self._reference_app_dir() / "orchestrator.py": ("../../../SKILL.md", "Protocol contract (Tasks + Compatibility tools)"),
+            self._reference_app_dir() / "aca_jobs.py": ("../../../SKILL.md", "Architecture and shared-image contract"),
+            self._reference_app_dir() / "aca_tasks_extension.py": ("../../../SKILL.md", "Protocol contract (Tasks + Compatibility tools)"),
+            self._reference_app_dir() / "mcp_server.py": ("../../../SKILL.md", "Protocol contract (Tasks + Compatibility tools)"),
+            self._reference_app_dir() / "job_worker.py": ("../../../SKILL.md", "Operate and observe"),
+            self._reference_app_dir() / "telemetry.py": ("../../../SKILL.md", "Operate and observe"),
+            self._infra_dir() / "app.bicep": ("../../SKILL.md", "Architecture and shared-image contract"),
+            self._infra_dir() / "cosmos.bicep": ("../../SKILL.md", "Control record and lifecycle"),
+            self._infra_dir() / "identity-rbac.bicep": ("../../SKILL.md", "Security and least-privilege RBAC"),
+            self._infra_dir() / "identity-rbac" / "assignments.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
+            self._infra_dir() / "identity-rbac" / "job-operator.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
+            self._infra_dir() / "identity-rbac" / "uami.bicep": ("../../../SKILL.md", "Security and least-privilege RBAC"),
+            self._infra_dir() / "main.bicep": ("../../SKILL.md", "Deploy with azd"),
+            self._script_dir() / "converge_image.py": ("../../../SKILL.md", "Deploy with azd"),
+            self._script_dir() / "verify_deployment.py": ("../../../SKILL.md", "Test implementation"),
+        }
+        skill_text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        skill_headings = {match.group(1) for match in re.finditer(r"(?m)^## (.+)$", skill_text)}
+
+        for path, (expected_relative_path, expected_heading) in section_map.items():
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(expected_relative_path, text)
+                self.assertIn(expected_heading, text)
+                self.assertIn(expected_heading, skill_headings)
+
+    def test_catalog_and_dependency_graph_include_new_skill(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        build_site = (ROOT / "scripts" / "build-site.py").read_text(encoding="utf-8")
+        skill_deps = (ROOT / ".github" / "skill-deps.yml").read_text(encoding="utf-8")
+        producer = (ROOT / "skills" / "foundry-mcp-aca" / "SKILL.md").read_text(encoding="utf-8")
+        plugin = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))
+        marketplace = json.loads((ROOT / ".github" / "plugin" / "marketplace.json").read_text(encoding="utf-8"))
+
+        self.assertIn("foundry-mcp-aca-jobs", readme)
+        self.assertIn("Install all 36 skills", readme)
+        self.assertIn("skills-36-blue", readme)
+        self.assertIn("foundry-mcp-aca-jobs", build_site)
+        self.assertIn("foundry-mcp-aca-jobs:", skill_deps)
+        self.assertIn("- foundry-mcp-aca", skill_deps)
+        self.assertIn("foundry-mcp-aca-jobs", producer)
+        self.assertIn("1.2.5", producer)
+        self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
+        self.assertEqual(plugin["version"], "4.30.0")
+        self.assertEqual(marketplace["metadata"]["version"], "4.30.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.30.0")
+        self.assertIn("foundry-mcp-aca-jobs", marketplace["metadata"]["description"])
+
+    def test_upstream_pin_and_validation_contract_match_pyproject(self) -> None:
+        pin_fm, body = self._frontmatter_and_body(SKILL / "references" / "upstream-pin.md")
+        pyproject = tomllib.loads((self._template_dir() / "pyproject.toml").read_text(encoding="utf-8"))
+        expected = [dep for dep in pyproject["project"]["dependencies"]]
+
+        self.assertEqual(pin_fm["schema_version"], 2)
+        self.assertEqual(pin_fm["freshness_tier"], "B")
+        self.assertEqual(pin_fm["automation_tier"], "auto")
+        self.assertEqual(pin_fm["validation"]["requires"], ["pypi"])
+        self.assertTrue(pin_fm["validation"]["runnable"])
+        self.assertEqual(len(pin_fm["packages"]), 12)
+
+        normalized_expected = []
+        for dep in expected:
+            package, version = dep.split("~=", 1)
+            normalized_expected.append((package.replace("[aio]", ""), version))
+        actual = [(pkg["name"], pkg["version"]) for pkg in pin_fm["packages"]]
+        self.assertEqual(actual, normalized_expected)
+
+        script = pin_fm["validation"]["script"]
+        for dep in expected:
+            self.assertIn(f'"{dep}"', script)
+        for marker in ("ok fastmcp task extension methods", "ok no Docket lifespan", "ok ACA jobs SDK methods"):
+            self.assertIn(marker, pin_fm["validation"]["expected_output"])
+        self.assertIn("prefecthq/fastmcp/issues/2754".lower(), str(pin_fm["known_issues"][0]["upstream_url"]).lower())
+        self.assertIn("AcaTasksExtension", script)
+        self.assertIn("JobsOperations", script)
+        self.assertIn("Docket", script)
 
     def test_dockerfile_contract_is_single_shared_runtime_image(self) -> None:
         templates = self._template_dir()

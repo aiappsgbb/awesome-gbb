@@ -1,4 +1,7 @@
-"""Canonical durable task control store for foundry-mcp-aca-jobs."""
+"""Canonical durable task control store for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Idempotency and uncertain-start reconciliation.
+"""
 
 from __future__ import annotations
 

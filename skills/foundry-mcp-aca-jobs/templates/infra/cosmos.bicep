@@ -1,3 +1,6 @@
+// Canonical template contract for foundry-mcp-aca-jobs.
+// Source of truth for the prose example in ../../SKILL.md § Control record and lifecycle.
+
 @description('Cosmos DB account name.')
 param name string
 

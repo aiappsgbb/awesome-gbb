@@ -1,4 +1,7 @@
-"""Canonical control-record models for foundry-mcp-aca-jobs."""
+"""Canonical control-record models for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Control record and lifecycle.
+"""
 
 from __future__ import annotations
 

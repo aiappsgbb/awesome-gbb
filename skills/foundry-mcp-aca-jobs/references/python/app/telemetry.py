@@ -1,4 +1,7 @@
-"""Canonical safe telemetry support for foundry-mcp-aca-jobs."""
+"""Canonical safe telemetry support for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Operate and observe.
+"""
 
 from __future__ import annotations
 

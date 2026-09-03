@@ -11,6 +11,7 @@
 - [foundry-teams-bot](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-teams-bot/SKILL.md): Connect a Microsoft Foundry Hosted Agent to Microsoft Teams — generate the bot code, Bicep infrastructure, Teams manifest, and ACA deployment.
 - [ghcp-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-hosted-agents/SKILL.md): Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK authentication and Invocations protocol.
 - [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.
+- [foundry-mcp-aca-jobs](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca-jobs/SKILL.md): Build job-backed MCP servers for Foundry when the control plane must stay responsive and the real work belongs in an ACA Job.
 - [foundry-evals](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-evals/SKILL.md): Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry built-in evaluators.
 - [foundry-iq](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-iq/SKILL.md): Build enterprise RAG with Foundry IQ and Azure AI Search Knowledge Bases using agentic retrieval, multi-hop reasoning, query planning, and citation-backed responses.
 - [foundry-doc-vision-speech](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-doc-vision-speech/SKILL.md): Add vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) capabilities to a Foundry hosted agent.
@@ -56,4 +57,4 @@
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 35 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 36 reusable building blocks for Copilot-assisted engagements.

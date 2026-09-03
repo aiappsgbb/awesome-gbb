@@ -1,3 +1,6 @@
+// Canonical template contract for foundry-mcp-aca-jobs.
+// Source of truth for the prose example in ../../SKILL.md § Architecture and shared-image contract.
+
 @description('Name of the MCP Container App.')
 param name string
 

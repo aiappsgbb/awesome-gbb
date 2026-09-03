@@ -1,4 +1,7 @@
-"""Canonical image convergence helper for foundry-mcp-aca-jobs."""
+"""Canonical image convergence helper for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Deploy with azd.
+"""
 
 from __future__ import annotations
 

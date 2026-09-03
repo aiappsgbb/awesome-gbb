@@ -1,3 +1,6 @@
+// Canonical template contract for foundry-mcp-aca-jobs.
+// Source of truth for the prose example in ../../SKILL.md § Security and least-privilege RBAC.
+
 targetScope = 'subscription'
 
 @description('Deployment resource group that owns the runtime resources.')

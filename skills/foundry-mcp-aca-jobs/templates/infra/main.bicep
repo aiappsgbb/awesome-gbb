@@ -1,3 +1,6 @@
+// Canonical template contract for foundry-mcp-aca-jobs.
+// Source of truth for the prose example in ../../SKILL.md § Deploy with azd.
+
 targetScope = 'subscription'
 
 @description('Resource group containing the existing ACR, ACA environment, storage account, and deployed runtime modules.')

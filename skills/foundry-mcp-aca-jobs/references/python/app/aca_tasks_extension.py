@@ -1,4 +1,7 @@
-"""SEP-2663 adapter that projects ACA jobs as FastMCP tasks."""
+"""SEP-2663 adapter that projects ACA jobs as FastMCP tasks.
+
+Source of truth for the prose example in ../../../SKILL.md § Protocol contract (Tasks + Compatibility tools).
+"""
 
 from __future__ import annotations
 

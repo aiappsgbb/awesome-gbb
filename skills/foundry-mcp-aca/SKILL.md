@@ -10,11 +10,13 @@ description: >
   MCP for hosted agent, connect hosted agent to MCP, secure MCP server,
   harden MCP server, MCP authentication, MCP OAuth, ACA Easy Auth for MCP.
   DO NOT USE FOR: deploying the hosted agent itself (use threadlight-deploy),
-  local MCP development (use mcp-config.json directly), general Azure deploy.
+  long-running job-backed MCP orchestration or external ACA Job handoff (use
+  foundry-mcp-aca-jobs), local MCP development (use mcp-config.json directly),
+  general Azure deploy.
 metadata:
-  version: "1.2.4"
+  version: "1.2.5"
 ---
-> **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP.
+> **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP. If the MCP server should hand work to an ACA Job, use [foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md) instead.
 
 # Foundry MCP ACA Deployment
 
@@ -47,6 +49,7 @@ servers via HTTP at runtime using `client.get_mcp_tool()`.
 - Running Playwright/browser automation as a remote MCP server
 - Creating a custom MCP server for an API or data store not covered by Foundry built-ins
 - Deploying an MCP server as an Azure Function (consumption billing)
+- Handing long-running work to an ACA Job while the MCP control plane stays responsive
 
 ## Architecture
 
@@ -1043,3 +1046,4 @@ ONLY in dev/demo environments. Gate behind `DEV_BYPASS_AUTH=true`.
 | [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Composes the MCP ACA into the overall agent project (Phase 6 module composer) |
 | [**azd-patterns**](../azd-patterns/) | Bicep module library — `aca-mcp.bicep` is one of the composable modules |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | The hosted agent that consumes the MCP server's tools |
+| [**foundry-mcp-aca-jobs**](../foundry-mcp-aca-jobs/) | ACA Job-backed companion for long-running MCP Tasks and external job orchestration |

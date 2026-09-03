@@ -1,7 +1,6 @@
 """Canonical callback transport for foundry-mcp-aca-jobs.
 
-The section references for this file are not yet published in SKILL.md, so this
-module intentionally avoids unresolved section anchors in its docstring.
+Source of truth for the prose example in ../../../SKILL.md § Callback contract.
 """
 
 from __future__ import annotations
