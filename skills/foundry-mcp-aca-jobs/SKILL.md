@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -35,6 +35,7 @@ inline here.
 | [templates/pyproject.toml](templates/pyproject.toml) | Runtime dependency lock contract |
 | [templates/uv.lock](templates/uv.lock) | Hash-verified runtime dependency resolution |
 | [templates/azure.yaml](templates/azure.yaml) | `azd` service wiring and postdeploy flow |
+| [templates/bicepconfig.json](templates/bicepconfig.json) | Enables the Bicep assertion feature used by the deployment contract |
 | [templates/infra/main.bicep](templates/infra/main.bicep) | Composition root; requires the sibling catalog checkout layout described in [Deploy with azd](#deploy-with-azd) |
 | [templates/infra/main.parameters.json](templates/infra/main.parameters.json) | Complete `azd` parameter contract |
 | [templates/infra/app.bicep](templates/infra/app.bicep) | MCP app module |
@@ -237,6 +238,7 @@ template with this exact layout; do not duplicate or rewrite the shared Bicep:
 └── skills/
     ├── foundry-mcp-aca-jobs/
     │   └── templates/
+    │       ├── bicepconfig.json
     │       └── infra/main.bicep
     └── azd-patterns/
         └── references/bicep/aca-job.bicep
@@ -251,6 +253,7 @@ cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patte
 ```
 
 - `templates/azure.yaml`
+- `templates/bicepconfig.json`
 - `templates/uv.lock`
 - `templates/infra/main.bicep`
 - `templates/infra/main.parameters.json`

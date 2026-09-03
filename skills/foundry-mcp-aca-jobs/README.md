@@ -18,6 +18,7 @@ catalog checkout layout. Keep `skills/foundry-mcp-aca-jobs/templates` beside
 ```text
 <workdir>/skills/
 ├── foundry-mcp-aca-jobs/templates/
+│   └── bicepconfig.json
 └── azd-patterns/references/bicep/aca-job.bicep
 ```
 

@@ -94,6 +94,8 @@ param callbackConfig CallbackConfig
 
 var authAudience = 'api://${authClientId}'
 assert exactlyOneMcpCallerAllowlistMode = (empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) || (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))
+assert nonemptyMcpCallerClientIds = empty(filter(allowedMcpCallerClientIds, id => empty(trim(id))))
+assert nonemptyMcpCallerPrincipalIds = empty(filter(allowedMcpCallerPrincipalIds, id => empty(trim(id))))
 var callbackStorageContainerName = '${outputStorageContainerName}-callbacks'
 var storageAccountUrlHost = replace(replace(storageAccountUrl, 'https://', ''), 'http://', '')
 var storageAccountNameFromUrl = split(storageAccountUrlHost, '.')[0]

@@ -39,6 +39,8 @@ param tags object = {}
 
 var authAudience = 'api://${authClientId}'
 assert exactlyOneMcpCallerAllowlistMode = (empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) || (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))
+assert nonemptyMcpCallerClientIds = empty(filter(allowedMcpCallerClientIds, id => empty(trim(id))))
+assert nonemptyMcpCallerPrincipalIds = empty(filter(allowedMcpCallerPrincipalIds, id => empty(trim(id))))
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name

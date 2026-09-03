@@ -125,9 +125,8 @@ MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]).hostname or "").split(".")[0])'
 )"
 CI_CALLER_PRINCIPAL_IDS="$(
-  az resource list \
-    --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
-    --query "[?properties.clientId=='${AZURE_CLIENT_ID}'].properties.principalId" \
+  az identity list \
+    --query "[?clientId=='$AZURE_CLIENT_ID'].principalId" \
     --output json
 )" || fail "CI caller identity ARM lookup failed"
 jq -e \
@@ -164,6 +163,7 @@ cp skills/foundry-mcp-aca-jobs/templates/azure.yaml "$PROJECT_DIR/azure.yaml"
 cp skills/foundry-mcp-aca-jobs/templates/Dockerfile "$PROJECT_DIR/Dockerfile"
 cp skills/foundry-mcp-aca-jobs/templates/pyproject.toml "$PROJECT_DIR/pyproject.toml"
 cp skills/foundry-mcp-aca-jobs/templates/uv.lock "$PROJECT_DIR/uv.lock"
+cp skills/foundry-mcp-aca-jobs/templates/bicepconfig.json "$PROJECT_DIR/bicepconfig.json"
 cp -R skills/foundry-mcp-aca-jobs/templates/infra "$PROJECT_DIR/infra"
 cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-job.bicep"
 cp -R skills/foundry-mcp-aca-jobs/references/python/app "$PROJECT_DIR/app"

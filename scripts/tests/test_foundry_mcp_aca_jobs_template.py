@@ -328,7 +328,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.3.1")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -535,6 +535,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             'cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-job.bicep"',
             fixture,
         )
+        self.assertIn(
+            'cp skills/foundry-mcp-aca-jobs/templates/bicepconfig.json "$PROJECT_DIR/bicepconfig.json"',
+            fixture,
+        )
 
         scratch = ROOT / ".scratch"
         scratch.mkdir(exist_ok=True)
@@ -549,6 +553,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 mirror / "skills" / "azd-patterns" / "references" / "bicep"
             )
             shutil.copytree(self._template_dir(), relocated_template)
+            self.assertEqual(
+                json.loads(
+                    (relocated_template / "bicepconfig.json").read_text(
+                        encoding="utf-8"
+                    )
+                ),
+                {"experimentalFeaturesEnabled": {"assertions": True}},
+            )
             relocated_job_dir.mkdir(parents=True)
             shutil.copy2(
                 ROOT
@@ -1211,12 +1223,13 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             parameters["allowedMcpCallerPrincipalIds"]["value"],
             ["${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}"],
         )
-        self.assertIn("az resource list", fixture)
+        self.assertIn("az identity list", fixture)
         self.assertIn(
-            "--resource-type Microsoft.ManagedIdentity/userAssignedIdentities",
-            normalized,
+            "--query \"[?clientId=='$AZURE_CLIENT_ID'].principalId\"",
+            fixture,
         )
-        self.assertIn("properties.clientId", fixture)
+        self.assertNotIn("az resource list", fixture)
+        self.assertNotIn("properties.clientId", fixture)
         self.assertIn('MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$(', fixture)
         self.assertIn(
             'MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"',
@@ -1225,7 +1238,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn('echo "$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"', fixture)
         self.assertEqual(fixture.count("azd up --no-prompt"), 1)
         self.assertLess(
-            fixture.index("Microsoft.ManagedIdentity/userAssignedIdentities"),
+            fixture.index("az identity list"),
             fixture.index("azd up --no-prompt"),
         )
         for forbidden in (
@@ -1503,6 +1516,17 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertTrue((infra / "identity-rbac" / "assignments.bicep").is_file())
         self.assertTrue((infra / "identity-rbac" / "job-operator.bicep").is_file())
 
+    def test_standalone_template_manifest_includes_assertion_config(self) -> None:
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        readme = (SKILL / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "| [templates/bicepconfig.json](templates/bicepconfig.json) |",
+            skill,
+        )
+        self.assertIn("- `templates/bicepconfig.json`", skill)
+        self.assertIn("│   └── bicepconfig.json", readme)
+
     def test_app_module_contract_includes_auth_and_health(self) -> None:
         app = (self._infra_dir() / "app.bicep").read_text(encoding="utf-8")
         normalized = " ".join(app.split())
@@ -1527,6 +1551,16 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "assert exactlyOneMcpCallerAllowlistMode = "
             "(empty(allowedMcpCallerClientIds) && !empty(allowedMcpCallerPrincipalIds)) "
             "|| (!empty(allowedMcpCallerClientIds) && empty(allowedMcpCallerPrincipalIds))",
+            normalized,
+        )
+        self.assertIn(
+            "assert nonemptyMcpCallerClientIds = "
+            "empty(filter(allowedMcpCallerClientIds, id => empty(trim(id))))",
+            normalized,
+        )
+        self.assertIn(
+            "assert nonemptyMcpCallerPrincipalIds = "
+            "empty(filter(allowedMcpCallerPrincipalIds, id => empty(trim(id))))",
             normalized,
         )
         self.assertIn(
@@ -1959,6 +1993,8 @@ param callbackConfig = {{
         for label, client_ids, principal_ids in (
             ("both", ["caller-client"], ["caller-principal"]),
             ("neither", [], []),
+            ("client-empty-entry", [""], []),
+            ("principal-whitespace-entry", [], ["   "]),
         ):
             with self.subTest(label=label):
                 result, _ = variant(client_ids, principal_ids)
@@ -1968,7 +2004,8 @@ param callbackConfig = {{
                     "Bicep deployment assertions are evaluated by ARM, not build-params",
                 )
                 self.assertFalse(
-                    bool(client_ids) != bool(principal_ids),
+                    (bool(client_ids) != bool(principal_ids))
+                    and all(value.strip() for value in client_ids + principal_ids),
                     f"{label} must be rejected by the deployment assertion",
                 )
 
@@ -2000,6 +2037,24 @@ param callbackConfig = {{
                     "empty(parameters('allowedMcpCallerPrincipalIds'))", assertion
                 )
                 self.assertIn("or(and(", assertion)
+                for assertion_name, parameter_name in (
+                    (
+                        "nonemptyMcpCallerClientIds",
+                        "allowedMcpCallerClientIds",
+                    ),
+                    (
+                        "nonemptyMcpCallerPrincipalIds",
+                        "allowedMcpCallerPrincipalIds",
+                    ),
+                ):
+                    value_assertion = compiled["asserts"][assertion_name]
+                    self.assertIn(
+                        f"parameters('{parameter_name}')", value_assertion
+                    )
+                    self.assertIn("lambda(", value_assertion)
+                    self.assertIn("filter(", value_assertion)
+                    self.assertIn("trim(", value_assertion)
+                    self.assertIn("empty(", value_assertion)
 
     def test_bicep_builds_without_experimental_assertion_warnings(self) -> None:
         files = [
