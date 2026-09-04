@@ -3452,8 +3452,13 @@ param callbackConfig = {{
                     text=True,
                     timeout=300,
                 )
-            except subprocess.TimeoutExpired:
-                self.fail("docker build exceeded 300 seconds")
+            except subprocess.TimeoutExpired as exc:
+                timeout_seconds = int(getattr(exc, "timeout", 300) or 300)
+                if os.getenv("ALLOW_NETWORK_DOCKER_SKIP") == "1":
+                    self.skipTest(
+                        f"docker network transport unavailable after {timeout_seconds} seconds: docker build timed out"
+                    )
+                self.fail(f"docker build exceeded {timeout_seconds} seconds")
             if build.returncode != 0:
                 blocker = self._docker_blocker_excerpt(
                     build.stdout + "\n" + build.stderr,
@@ -3563,6 +3568,30 @@ param callbackConfig = {{
         self.assertEqual(len(temporary_directory_calls), 1)
         self.assertIn("docker build exceeded 300 seconds", source)
         self.assertIn("docker run exceeded 30 seconds", source)
+        self.assertIn(
+            'docker network transport unavailable after {timeout_seconds} seconds: docker build timed out',
+            source,
+        )
+
+        def _timeout_on_build(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout", 300))
+
+        with patch("shutil.which", return_value="/usr/bin/docker"), patch(
+            "subprocess.run",
+            side_effect=_timeout_on_build,
+        ):
+            with patch.dict(os.environ, {}, clear=False):
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    r"docker build exceeded 300 seconds",
+                ):
+                    self.test_built_image_runs_both_entrypoint_help_commands()
+            with patch.dict(os.environ, {"ALLOW_NETWORK_DOCKER_SKIP": "1"}, clear=False):
+                with self.assertRaisesRegex(
+                    unittest.SkipTest,
+                    r"docker network transport unavailable after 300 seconds",
+                ):
+                    self.test_built_image_runs_both_entrypoint_help_commands()
 
     def test_docker_blocker_classifier_skips_only_daemon_unavailability(self) -> None:
         daemon_output = (
