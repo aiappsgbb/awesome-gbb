@@ -8,9 +8,9 @@ cleaning up the temporary assets.
 
 **This is a self-contained EXECUTION smoke, not a catalog-inspection task.**
 Read `skills/foundry-agentops/SKILL.md` before acting. If that file does not
-exist yet, treat the contract as unresolved: set `failure_reason` to
-`missing skills/foundry-agentops/SKILL.md`, skip all later steps, and finish
-with the FAIL marker in Step 8.
+exist yet, treat the contract as unresolved: skip all later steps and finish
+with the FAIL marker in Step 8 using the literal one-line reason
+`missing skills/foundry-agentops/SKILL.md`.
 
 **CRITICAL - never invoke `copilot` recursively from a Bash tool.** You ARE the
 running Copilot CLI process. Do NOT run `copilot -p ...`, `copilot --version`,
@@ -58,9 +58,9 @@ echo "FOUNDRY_PROJECT_ENDPOINT=${FOUNDRY_PROJECT_ENDPOINT:+set}"
 az account show --output table || echo "(az cache not inherited - relying on DefaultAzureCredential)"
 ```
 
-If any required variable above prints empty, stop the run, set
-`failure_reason` to `auth context missing: <var-name>`, and finish with the
-FAIL marker in Step 8.
+If any required variable above prints empty, stop the run and finish with the
+FAIL marker in Step 8 using the literal one-line reason
+`auth context missing: <var-name>`.
 
 Do NOT run `command -v`, `find /`, or `curl -fsSL` to hunt for tooling. Use
 the preinstalled `python3`, `pip`, and `az` already on the runner.
@@ -76,8 +76,8 @@ Before writing any code or creating any resource:
    later deletes a temporary prompt agent using that dependency contract.
 
 If either file is missing, unreadable, or conflicts with the hard guardrails
-above, stop immediately, set `failure_reason` to the shortest precise reason,
-and finish with Step 8. Do NOT improvise from training data when the skill
+above, stop immediately and finish with Step 8 using the shortest precise
+literal one-line reason. Do NOT improvise from training data when the skill
 contracts are available.
 
 ---
@@ -87,6 +87,11 @@ contracts are available.
 Create a per-run workspace with a short UUID suffix so parallel runs do not
 collide. The workspace must be disposable and isolated from the repository
 checkout; do not write AgentOps artifacts into the tracked repo.
+
+Bash tool calls are stateless. Do NOT assume shell variables, the current
+directory, or virtual-environment activation survive from one Bash call to the
+next. Persist every file path and resolved value you need for later steps, and
+invoke tools by persisted absolute path.
 
 Suggested names:
 
@@ -101,11 +106,13 @@ Inside that workspace:
 4. if the `foundry-prompt-agents` skill requires Azure SDK helpers for prompt
    agent creation, install only the bounded packages and versions that skill
    documents - do NOT widen or replace the `agentops-accelerator==0.14.0` pin,
-5. persist the UUID, workspace path, and requested prompt-agent name so later
-   Bash calls can reuse them.
+5. define a stable absolute AgentOps executable path inside that workspace
+   (for example `$WORKSPACE/.venv/bin/agentops`) and persist it together with
+   the UUID, workspace path, and requested prompt-agent name so later Bash
+   calls can reuse them without re-activating the virtual environment.
 
-If the exact AgentOps install fails, set `failure_reason` to
-`agentops install failed` and finish with Step 8.
+If the exact AgentOps install fails, finish with Step 8 using the literal
+one-line reason `agentops install failed`.
 
 ---
 
@@ -124,8 +131,8 @@ Requirements:
 - Capture the resolved agent name and version returned by Foundry and persist
   them for later steps.
 
-If agent creation fails, set `failure_reason` to `prompt agent create failed`
-and finish with Step 8.
+If agent creation fails, finish with Step 8 using the literal one-line reason
+`prompt agent create failed`.
 
 ---
 
@@ -153,18 +160,17 @@ it minimal and deterministic. A valid example is:
 ```
 
 Do not add extra rows, Threadlight files, workflow files, or deployment
-artifacts. If `agentops.yaml` or the dataset row cannot be created, set
-`failure_reason` to `agentops workspace contract failed` and finish with
-Step 8.
+artifacts. If `agentops.yaml` or the dataset row cannot be created, finish with Step 8
+using the literal one-line reason `agentops workspace contract failed`.
 
 ---
 
-## Step 5 - Run `agentops eval analyze --format json`
+## Step 5 - Run `$AGENTOPS_BIN eval analyze --format json`
 
 From the isolated workspace, run:
 
 ```bash
-agentops eval analyze --format json
+$AGENTOPS_BIN eval analyze --format json
 ```
 
 Requirements:
@@ -174,8 +180,8 @@ Requirements:
 - `version == 1` must hold.
 
 Persist the JSON output for the run log or later inspection if helpful. If the
-analyze command errors, the JSON is invalid, or `version != 1`, set
-`failure_reason` to `eval analyze contract failed` and finish with Step 8.
+analyze command errors, the JSON is invalid, or `version != 1`, finish with
+Step 8 using the literal one-line reason `eval analyze contract failed`.
 
 ---
 
@@ -186,6 +192,8 @@ Run exactly one AgentOps evaluation for the temporary prompt agent.
 Requirements:
 
 - use the isolated workspace from Step 2,
+- invoke the persisted absolute AgentOps binary from Step 2 (for example
+  `$WORKSPACE/.venv/bin/agentops`), not a bare `agentops` command,
 - allow AgentOps' public eval exit-code contract:
   - `0` = succeeded and thresholds passed,
   - `2` = succeeded and thresholds failed,
@@ -198,17 +206,17 @@ Requirements:
   - `summary.overall_passed` exists and is a boolean
 
 If the eval command exits `1`, the results file is missing, the JSON is
-invalid, `version != 1`, or `summary.overall_passed` is not a boolean, set
-`failure_reason` to `eval results contract failed` and finish with Step 8.
+invalid, `version != 1`, or `summary.overall_passed` is not a boolean, finish
+with Step 8 using the literal one-line reason `eval results contract failed`.
 
 ---
 
-## Step 7 - Run `agentops doctor --evidence-pack`
+## Step 7 - Run `$AGENTOPS_BIN doctor --evidence-pack`
 
 From the same isolated workspace, run:
 
 ```bash
-agentops doctor --evidence-pack
+$AGENTOPS_BIN doctor --evidence-pack
 ```
 
 Requirements:
@@ -219,8 +227,8 @@ Requirements:
 - parse that file and assert `version == 1`.
 
 If the command exits `1`, the evidence file is missing, the JSON is invalid, or
-`version != 1`, set `failure_reason` to `doctor evidence contract failed` and
-finish with Step 8.
+`version != 1`, finish with Step 8 using the literal one-line reason
+`doctor evidence contract failed`.
 
 ---
 
@@ -257,8 +265,10 @@ printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-agentops-smoke-result
 On failure:
 
 ```bash
-printf 'SMOKE_RESULT=FAIL %s\n' "$failure_reason" > /tmp/foundry-agentops-smoke-result
+printf 'SMOKE_RESULT=FAIL %s\n' 'literal one-line reason here' > /tmp/foundry-agentops-smoke-result
 ```
+
+Substitute the actual literal one-line reason directly into that final command.
 
 The marker-file write is the single source of truth. Do not print the literal
 marker token anywhere else in your reply.
