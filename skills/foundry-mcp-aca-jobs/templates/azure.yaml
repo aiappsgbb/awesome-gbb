@@ -1,0 +1,22 @@
+# Canonical azd wiring for one-build digest convergence.
+name: foundry-mcp-aca-jobs
+
+services:
+  mcp:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+      context: .
+
+hooks:
+  postdeploy:
+    shell: sh
+    interactive: false
+    continueOnError: false
+    run: |
+      set -eu
+      cd infra/scripts && uv sync --frozen
+      EXPECTED_IMAGE_DIGEST="$(uv run --frozen python converge_image.py)"
+      EXPECTED_IMAGE_DIGEST="$EXPECTED_IMAGE_DIGEST" uv run --frozen python verify_deployment.py

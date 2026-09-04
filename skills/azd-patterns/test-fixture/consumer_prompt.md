@@ -15,10 +15,13 @@ evidence. Do not load the whole SKILL.md into context.
 Context: this prompt is fed to the `copilot-cli-matrix` job in the
 awesome-gbb repo to verify that the `azd-patterns` skill (at
 `skills/azd-patterns/SKILL.md` in the current working directory) still
-deploys end-to-end against the live Azure CI infrastructure. The marquee
-pattern we exercise is the **ACA Job** documented at SKILL.md
-§ "Bicep: ACA Job Pattern" (~L545) — `Microsoft.App/jobs@2024-03-01`
-provisioned via Bicep, then manually executed and verified.
+deploys end-to-end against the live Azure CI infrastructure. The pattern
+here is the legacy/minimal debug-playbook coverage for the **ACA Job**
+documented at SKILL.md § "Bicep: ACA Job Pattern" (~L545) —
+`Microsoft.App/jobs@2024-03-01` provisioned via Bicep, then manually
+executed and verified on this current commit. Canonical live coverage
+for the `Microsoft.App/jobs@2026-01-01` module is pending Task15 on
+this branch; do not treat this fixture as proof of that newer module.
 
 **Expected per-run cost: ≤ $0.005** — one ACA Job execution on an
 existing Container App Environment (no new env to provision), 1 vCPU
@@ -190,14 +193,14 @@ choice.
    }
    ```
 
-   This is a deliberate minimal variant of SKILL.md L549-587 — no
-   UAMI, no ACR, no `fetch-container-image` indirection. The fixture
-   proves the canonical `Microsoft.App/jobs@2024-03-01` resource
-   shape + the `triggerType: 'Manual'` + `replicaCompletionCount: 1`
-   pattern still deploys against an existing CAE. The fuller
-   ACR-image + UAMI + cron variant in the SKILL is audited per the
-   21-class catalog at `docs/audit/azd-patterns-audit-trail.md` but
-   not exercised here (see Out-of-scope coverage note below).
+   This is the legacy/minimal debug-playbook coverage for the **ACA Job**:
+   it exercises only the `Microsoft.App/jobs@2024-03-01` debug path with
+   `triggerType: 'Manual'` + `replicaCompletionCount: 1`. Canonical live
+   coverage for the `Microsoft.App/jobs@2026-01-01` module is pending
+   Task15 on this branch; do not treat this fixture as proof of that newer
+   module. The fuller ACR-image + UAMI + cron variant in the SKILL is audited per the 21-class catalog at
+   `docs/audit/azd-patterns-audit-trail.md` but not exercised here (see
+   Out-of-scope coverage note below).
 
 3. **Step 2 — Deploy via `az deployment group create`.** SKILL.md
    L26 explicitly notes that `azd` does NOT natively deploy Container

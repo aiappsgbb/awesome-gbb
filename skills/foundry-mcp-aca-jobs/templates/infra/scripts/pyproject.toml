@@ -1,0 +1,11 @@
+[project]
+name = "foundry-mcp-aca-jobs-converge-image"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "azure-identity~=1.25.3",
+  "azure-mgmt-appcontainers~=5.0.0",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,821 @@
+"""Canonical ACA Job worker for foundry-mcp-aca-jobs.
+
+Source of truth for the prose example in ../../../SKILL.md § Operate and observe.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import inspect
+import json
+import logging
+import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
+
+import httpx
+
+try:  # pragma: no cover - compatibility for local test environments.
+    from azure.core.exceptions import ResourceExistsError
+except ImportError:  # pragma: no cover
+    class ResourceExistsError(Exception):
+        pass
+
+try:  # pragma: no cover - compatibility for local test environments.
+    from azure.cosmos.aio import CosmosClient
+except ImportError:  # pragma: no cover
+    class CosmosClient:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "CosmosClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+try:  # pragma: no cover - compatibility for local test environments.
+    from azure.identity.aio import ManagedIdentityCredential
+except ImportError:  # pragma: no cover
+    class ManagedIdentityCredential:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        async def aclose(self) -> None:
+            return None
+
+try:  # pragma: no cover - compatibility for local test environments.
+    from azure.keyvault.secrets.aio import SecretClient
+except ImportError:  # pragma: no cover
+    class SecretClient:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        async def aclose(self) -> None:
+            return None
+
+try:  # pragma: no cover - compatibility for local test environments.
+    from azure.storage.blob.aio import ContainerClient
+except ImportError:  # pragma: no cover
+    class ContainerClient:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        @classmethod
+        def from_container_url(cls, container_url: str, credential: Any | None = None) -> "ContainerClient":
+            return cls(container_url, credential=credential)
+
+        def get_blob_client(self, path: str) -> Any:
+            raise NotImplementedError("azure.storage.blob.aio is unavailable")
+
+from .callbacks import CallbackSender, callback_payload
+from .control_store import ConcurrencyError, ControlStore, CosmosControlStore
+from .models import CallbackDeliveryState, CallbackPolicy, JobPolicy, LifecycleState, Policy, PublicError, TaskRecord
+from .telemetry import Telemetry, configure as configure_telemetry, telemetry as default_telemetry
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "BlobOutputStore",
+    "JobWorker",
+    "OutputStore",
+    "build_arg_parser",
+    "build_worker_from_env",
+    "demo_handler",
+    "main",
+]
+
+TERMINAL_STATES = {
+    LifecycleState.SUCCEEDED,
+    LifecycleState.FAILED,
+    LifecycleState.CANCELLED,
+}
+
+
+class _WorkerClaimLost(RuntimeError):
+    """Signals that a newer worker claim owns the task."""
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _serialize_json(payload: Any) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _strip_query(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+async def _await_if_needed(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _close_resource(resource: Any) -> None:
+    closer = getattr(resource, "aclose", None) or getattr(resource, "close", None)
+    if closer is None:
+        return
+    await _await_if_needed(closer())
+
+
+@runtime_checkable
+class OutputStore(Protocol):
+    async def write_json(self, path: str, payload: Any, overwrite: bool = False) -> str: ...
+
+    async def exists(self, path: str) -> bool: ...
+
+    async def get(self, path: str) -> str: ...
+
+
+class BlobOutputStore:
+    def __init__(self, container_client: ContainerClient) -> None:
+        self._container_client = container_client
+
+    @classmethod
+    def from_container_url(cls, container_url: str, credential: Any | None = None) -> "BlobOutputStore":
+        if credential is None:
+            credential = ManagedIdentityCredential()
+        return cls(ContainerClient.from_container_url(container_url, credential=credential))
+
+    @staticmethod
+    def result_path(task_id: str) -> str:
+        return f"results/{task_id}/result.json"
+
+    async def write_json(self, path: str, payload: Any, overwrite: bool = False) -> str:
+        blob_client = self._container_client.get_blob_client(path)
+        await blob_client.upload_blob(
+            _serialize_json(payload),
+            overwrite=overwrite,
+            content_type="application/json",
+        )
+        return _strip_query(str(blob_client.url))
+
+    async def exists(self, path: str) -> bool:
+        blob_client = self._container_client.get_blob_client(path)
+        return await blob_client.exists()
+
+    async def get(self, path: str) -> str:
+        blob_client = self._container_client.get_blob_client(path)
+        if not await blob_client.exists():
+            raise FileNotFoundError(path)
+        return _strip_query(str(blob_client.url))
+
+    async def close(self) -> None:
+        await _close_resource(self._container_client)
+
+
+@dataclass(frozen=True)
+class WorkerRuntimeConfig:
+    output_container_url: str
+    lease: timedelta
+    policy: Policy
+
+
+class JobWorker:
+    def __init__(
+        self,
+        store: ControlStore,
+        output: OutputStore,
+        handler: Callable[[str, str], Awaitable[Any] | Any],
+        callback_sender: Any,
+        policy: Policy,
+        clock: Callable[[], datetime],
+        sleep: Callable[[float], Awaitable[Any] | Any] = asyncio.sleep,
+        lease: timedelta = timedelta(minutes=5),
+        telemetry: Telemetry | None = None,
+    ) -> None:
+        self._store = store
+        self._output = output
+        self._handler = handler
+        self._callback_sender = callback_sender
+        self._policy = policy
+        self._clock = clock
+        self._sleep = sleep
+        self._lease = lease
+        lease_seconds = lease.total_seconds()
+        if lease_seconds <= 0:
+            raise ValueError("worker lease must be positive")
+        self._heartbeat_interval = min(
+            max(lease_seconds / 3, 0.1),
+            lease_seconds / 2,
+            60.0,
+        )
+        self._telemetry = telemetry or default_telemetry
+
+    def _telemetry_attributes(
+        self,
+        task: TaskRecord,
+        operation: str,
+        *,
+        outcome: str | None = None,
+        error_code: str | None = None,
+        azure_request_id: str | None = None,
+    ) -> dict[str, str]:
+        return self._telemetry.attributes(
+            {
+                "task.id": str(task.task_id),
+                "job.type": task.job_type,
+                "task.state": task.lifecycle_state.value,
+                "aca.execution.id": task.aca_execution_id,
+                "operation": operation,
+                "outcome": outcome,
+                "error.code": error_code,
+                "azure.request.id": azure_request_id,
+            }
+        )
+
+    async def run(self, owner_scope: str, task_id: str, execution_id: str | None = None) -> int:
+        with self._telemetry.operation("worker.run", {"task.id": task_id, "operation": "worker.run"}):
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                current = await self._store.get(owner_scope, task_id)
+            if current.lifecycle_state is LifecycleState.SUCCEEDED:
+                if current.callback_delivery_state is CallbackDeliveryState.PENDING:
+                    await self._deliver_callback_if_ready(owner_scope, task_id)
+                return 0
+            if current.aca_execution_id is not None and execution_id is not None and current.aca_execution_id != execution_id:
+                self._telemetry.record(
+                    "execution_mismatch",
+                    self._telemetry_attributes(current, "execution_mismatch"),
+                    outcome="failure",
+                    error_code="EXECUTION_ID_MISMATCH",
+                )
+                return 0
+            if current.lifecycle_state in TERMINAL_STATES:
+                return 0
+
+            now = self._clock()
+            if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
+                return 0
+
+            with self._telemetry.operation("worker.claim", self._telemetry_attributes(current, "worker.claim")):
+                claimed = await self._claim(current, now, execution_id)
+            if claimed is None:
+                return 0
+
+            result_path = (
+                self._output.result_path(str(claimed.task_id))
+                if hasattr(self._output, "result_path")
+                else f"results/{claimed.task_id}/result.json"
+            )
+            if await self._output.exists(result_path):
+                with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
+                    result_url = await self._output.get(result_path)
+            else:
+                claim_token = claimed.worker_claim_token
+                if claim_token is None:
+                    raise RuntimeError("worker claim token is required")
+                heartbeat = asyncio.create_task(
+                    self._heartbeat_worker_claim(
+                        claimed.owner_scope,
+                        str(claimed.task_id),
+                        claim_token,
+                    ),
+                    name=f"worker-heartbeat:{claimed.task_id}",
+                )
+                try:
+                    try:
+                        with self._telemetry.operation("worker.business", self._telemetry_attributes(claimed, "worker.business")):
+                            result = await self._run_handler(claimed)
+                    finally:
+                        await self._stop_heartbeat(
+                            heartbeat,
+                            str(claimed.task_id),
+                        )
+                except PublicError as error:
+                    try:
+                        await self._persist_failure(claimed, error.code)
+                    except _WorkerClaimLost:
+                        self._record_claim_lost(claimed)
+                    return 0
+                except Exception:
+                    try:
+                        await self._persist_failure(
+                            claimed,
+                            "WORKER_EXECUTION_FAILED",
+                        )
+                    except _WorkerClaimLost:
+                        self._record_claim_lost(claimed)
+                    return 0
+
+                try:
+                    with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
+                        result_url = await self._output.write_json(result_path, result, overwrite=False)
+                except ResourceExistsError:
+                    with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
+                        result_url = await self._output.get(result_path)
+
+            try:
+                succeeded = await self._persist_succeeded(claimed, result_url)
+            except _WorkerClaimLost:
+                self._record_claim_lost(claimed)
+                return 0
+            await self._deliver_callback_if_ready(succeeded.owner_scope, str(succeeded.task_id))
+            return 0
+
+    async def _run_handler(self, task: TaskRecord) -> Any:
+        args = (str(task.input_ref), str(task.task_id))
+        handler_call = getattr(self._handler, "__call__", None)
+        if inspect.iscoroutinefunction(self._handler) or inspect.iscoroutinefunction(
+            handler_call
+        ):
+            result = self._handler(*args)
+        else:
+            result = await asyncio.to_thread(self._handler, *args)
+        return await _await_if_needed(result)
+
+    async def _heartbeat_worker_claim(
+        self,
+        owner_scope: str,
+        task_id: str,
+        claim_token: str,
+    ) -> None:
+        while True:
+            await _await_if_needed(self._sleep(self._heartbeat_interval))
+            try:
+                renewed = await self._renew_worker_claim(
+                    owner_scope,
+                    task_id,
+                    claim_token,
+                )
+            except asyncio.CancelledError:
+                raise
+            except PublicError as error:
+                self._record_heartbeat_error(task_id, error.code)
+                continue
+            except Exception as error:
+                self._record_heartbeat_error(task_id, error.__class__.__name__)
+                continue
+            if not renewed:
+                return
+
+    async def _renew_worker_claim(
+        self,
+        owner_scope: str,
+        task_id: str,
+        claim_token: str,
+    ) -> bool:
+        for _ in range(3):
+            current = await self._store.get(owner_scope, task_id)
+            if (
+                current.lifecycle_state in TERMINAL_STATES
+                or current.worker_claim_token != claim_token
+            ):
+                return False
+            now = self._clock()
+            candidate = current.model_copy(
+                update={
+                    "worker_claim_expires_at": now + self._lease,
+                    "updated_at": now,
+                }
+            )
+            try:
+                await self._store.replace(candidate, current.etag)
+                return True
+            except ConcurrencyError:
+                continue
+        return False
+
+    def _record_heartbeat_error(self, task_id: str, error_code: str) -> None:
+        logger.warning(
+            "worker heartbeat renewal failed; taskId=%s error=%s",
+            task_id,
+            error_code,
+        )
+        try:
+            self._telemetry.record(
+                "worker.heartbeat",
+                {
+                    "task.id": task_id,
+                    "operation": "worker.heartbeat",
+                },
+                outcome="failure",
+                error_code=error_code,
+            )
+        except Exception as telemetry_error:
+            logger.warning(
+                "worker heartbeat telemetry failed; taskId=%s error=%s",
+                task_id,
+                telemetry_error.__class__.__name__,
+            )
+
+    def _record_claim_lost(self, task: TaskRecord) -> None:
+        self._telemetry.record(
+            "worker.claim_lost",
+            self._telemetry_attributes(task, "worker.claim_lost"),
+            outcome="conflict",
+            error_code="WORKER_CLAIM_LOST",
+        )
+
+    async def _stop_heartbeat(
+        self,
+        heartbeat: asyncio.Task[None],
+        task_id: str,
+    ) -> None:
+        if not heartbeat.done():
+            heartbeat.cancel()
+        try:
+            await heartbeat
+        except asyncio.CancelledError:
+            pass
+        except PublicError as error:
+            self._record_heartbeat_error(task_id, error.code)
+        except Exception as error:
+            self._record_heartbeat_error(task_id, error.__class__.__name__)
+
+    async def _claim(self, current: TaskRecord, now: datetime, execution_id: str | None = None) -> TaskRecord | None:
+        token = str(uuid4())
+        next_task = current.model_copy(
+            update={
+                "lifecycle_state": LifecycleState.RUNNING,
+                "worker_claimed_at": now,
+                "worker_claim_token": token,
+                "worker_claim_expires_at": now + self._lease,
+                "updated_at": now,
+            }
+        )
+        if current.aca_execution_id is None and execution_id is not None:
+            next_task = next_task.model_copy(update={"aca_execution_id": execution_id})
+        for _ in range(3):
+            try:
+                with self._telemetry.operation("store.replace", self._telemetry_attributes(next_task, "store.replace")):
+                    return await self._store.replace(next_task, current.etag)
+            except ConcurrencyError:
+                self._telemetry.record(
+                    "etag_conflict",
+                    self._telemetry_attributes(current, "etag_conflict"),
+                    outcome="conflict",
+                )
+                current = await self._store.get(current.owner_scope, str(current.task_id))
+                if current.lifecycle_state in TERMINAL_STATES:
+                    return None
+                if execution_id is not None and current.aca_execution_id is not None and current.aca_execution_id != execution_id:
+                    return None
+                if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
+                    return None
+                next_task = current.model_copy(
+                    update={
+                        "lifecycle_state": LifecycleState.RUNNING,
+                        "worker_claimed_at": now,
+                        "worker_claim_token": token,
+                        "worker_claim_expires_at": now + self._lease,
+                        "updated_at": now,
+                    }
+                )
+                if current.aca_execution_id is None and execution_id is not None:
+                    next_task = next_task.model_copy(update={"aca_execution_id": execution_id})
+        return None
+
+    async def _mutate_with_retry(
+        self,
+        owner_scope: str,
+        task_id: str,
+        mutator: Callable[[TaskRecord], TaskRecord],
+    ) -> TaskRecord:
+        last_error: ConcurrencyError | None = None
+        for _ in range(3):
+            with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+                current = await self._store.get(owner_scope, task_id)
+            candidate = mutator(current)
+            if candidate == current:
+                return current
+            try:
+                with self._telemetry.operation("store.replace", self._telemetry_attributes(candidate, "store.replace")):
+                    return await self._store.replace(candidate, current.etag)
+            except ConcurrencyError as error:
+                last_error = error
+                self._telemetry.record(
+                    "etag_conflict",
+                    self._telemetry_attributes(current, "etag_conflict"),
+                    outcome="conflict",
+                )
+                continue
+        if last_error is not None:
+            raise last_error
+        with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+            return await self._store.get(owner_scope, task_id)
+
+    async def _persist_failure(self, task: TaskRecord, error_code: str) -> TaskRecord:
+        now = self._clock()
+        claim_token = task.worker_claim_token
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if (
+                claim_token is None
+                or current.worker_claim_token is None
+                or current.worker_claim_token != claim_token
+            ):
+                raise _WorkerClaimLost
+            if current.lifecycle_state in TERMINAL_STATES:
+                return current
+            return current.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.FAILED,
+                    "error_code": error_code,
+                    "result_url": None,
+                    "callback_delivery_state": CallbackDeliveryState.NOT_STARTED,
+                    "callback_error_code": None,
+                    "worker_claimed_at": None,
+                    "worker_claim_token": None,
+                    "worker_claim_expires_at": None,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+
+        return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
+
+    async def _persist_succeeded(self, task: TaskRecord, result_url: str) -> TaskRecord:
+        now = self._clock()
+        claim_token = task.worker_claim_token
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if (
+                claim_token is None
+                or current.worker_claim_token is None
+                or current.worker_claim_token != claim_token
+            ):
+                raise _WorkerClaimLost
+            if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
+                return current
+            return current.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.SUCCEEDED,
+                    "result_url": self._policy.validate_result(result_url),
+                    "error_code": None,
+                    "callback_delivery_state": CallbackDeliveryState.PENDING,
+                    "callback_error_code": None,
+                    "worker_claimed_at": None,
+                    "worker_claim_token": None,
+                    "worker_claim_expires_at": None,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+
+        return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
+
+    async def _persist_callback_state(self, task: TaskRecord, state: CallbackDeliveryState, callback_error_code: str | None) -> TaskRecord:
+        now = self._clock()
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if current.lifecycle_state is not LifecycleState.SUCCEEDED:
+                return current
+            lease_cleared = state in {CallbackDeliveryState.DELIVERED, CallbackDeliveryState.EXHAUSTED}
+            if current.callback_delivery_state is state and current.callback_error_code == callback_error_code:
+                if lease_cleared and (current.worker_claim_token is not None or current.worker_claim_expires_at is not None):
+                    return current.model_copy(
+                        update={
+                            "worker_claim_token": None,
+                            "worker_claim_expires_at": None,
+                            "updated_at": now,
+                        }
+                    )
+                return current
+            return current.model_copy(
+                update={
+                    "callback_delivery_state": state,
+                    "callback_error_code": callback_error_code,
+                    "worker_claim_token": None if lease_cleared else current.worker_claim_token,
+                    "worker_claim_expires_at": None if lease_cleared else current.worker_claim_expires_at,
+                    "updated_at": now,
+                }
+            )
+
+        return await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
+
+    async def _claim_callback_delivery(self, task: TaskRecord) -> TaskRecord | None:
+        now = self._clock()
+        token = str(uuid4())
+
+        def mutate(current: TaskRecord) -> TaskRecord:
+            if current.lifecycle_state is not LifecycleState.SUCCEEDED:
+                return current
+            if current.callback_delivery_state is not CallbackDeliveryState.PENDING:
+                return current
+            if current.result_url is None:
+                return current
+            if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
+                return current
+            return current.model_copy(
+                update={
+                    "worker_claimed_at": now,
+                    "worker_claim_token": token,
+                    "worker_claim_expires_at": now + self._lease,
+                    "updated_at": now,
+                }
+            )
+
+        claimed = await self._mutate_with_retry(task.owner_scope, str(task.task_id), mutate)
+        if claimed.worker_claim_token != token:
+            return None
+        return claimed
+
+    async def _send_callback(self, task: TaskRecord, result_url: str) -> None:
+        callback_policy = self._policy.callback(task.callback_alias)
+        if task.aca_execution_id is None:
+            logger.debug("callback deferred for %s until execution binding is available", task.task_id)
+            return
+        payload = callback_payload(
+            str(task.task_id),
+            task.aca_execution_id,
+            "Succeeded",
+            result_url,
+        )
+        try:
+            with self._telemetry.operation("worker.callback", self._telemetry_attributes(task, "worker.callback")):
+                await self._callback_sender.send(callback_policy, payload)
+        except PublicError as error:
+            if error.code not in {"CALLBACK_DELIVERY_EXHAUSTED", "CALLBACK_DELIVERY_REJECTED"}:
+                raise
+            if error.code == "CALLBACK_DELIVERY_EXHAUSTED":
+                self._telemetry.record(
+                    "callback_exhaustion",
+                    self._telemetry_attributes(task, "callback_exhaustion"),
+                    outcome="exhausted",
+                    error_code=error.code,
+                )
+            await self._persist_callback_state(task, CallbackDeliveryState.EXHAUSTED, error.code)
+            return
+        await self._persist_callback_state(task, CallbackDeliveryState.DELIVERED, None)
+
+    async def _await_callback_binding(self, task: TaskRecord) -> TaskRecord | None:
+        latest = task
+        for attempt in range(6):
+            if latest.callback_delivery_state is not CallbackDeliveryState.PENDING:
+                return None
+            if latest.aca_execution_id is not None:
+                return latest
+            if attempt == 5:
+                break
+            await _await_if_needed(self._sleep(5.0))
+            with self._telemetry.operation("store.get", self._telemetry_attributes(task, "store.get")):
+                latest = await self._store.get(task.owner_scope, str(task.task_id))
+        if latest.callback_delivery_state is CallbackDeliveryState.PENDING and latest.aca_execution_id is not None:
+            return latest
+        return None
+
+    async def _deliver_callback_if_ready(self, owner_scope: str, task_id: str) -> None:
+        with self._telemetry.operation("store.get", {"task.id": task_id, "operation": "store.get"}):
+            latest = await self._store.get(owner_scope, task_id)
+        latest = await self._await_callback_binding(latest)
+        if latest is None or latest.result_url is None:
+            return
+        claimed = await self._claim_callback_delivery(latest)
+        if claimed is None:
+            return
+        await self._send_callback(claimed, str(claimed.result_url))
+
+
+async def demo_handler(input_ref: str, task_id: str) -> dict[str, str]:
+    parsed = urlsplit(input_ref)
+    return {
+        "taskId": task_id,
+        "inputHost": parsed.hostname or "",
+        "inputPath": parsed.path or "/",
+    }
+
+
+def _parse_hosts(value: str | None, *, default: set[str]) -> set[str]:
+    if value is None:
+        return set(default)
+    return {part.strip() for part in value.split(",") if part.strip()}
+
+
+def load_runtime_config_from_env() -> WorkerRuntimeConfig:
+    job_type = os.environ["MCP_ACA_JOBS_JOB_TYPE"]
+    job_resource_group = os.environ["MCP_ACA_JOBS_JOB_RESOURCE_GROUP"]
+    job_name = os.environ["MCP_ACA_JOBS_JOB_NAME"]
+    job_container_name = os.environ["MCP_ACA_JOBS_JOB_CONTAINER_NAME"]
+    job_image_digest = os.environ["MCP_ACA_JOBS_JOB_IMAGE_DIGEST"]
+    callback_url = os.environ["MCP_ACA_JOBS_CALLBACK_URL"]
+    callback_auth_mode = os.environ.get("MCP_ACA_JOBS_CALLBACK_AUTH_MODE", "managed_identity")
+    output_container_url = os.environ["MCP_ACA_JOBS_OUTPUT_CONTAINER_URL"]
+    input_hosts = _parse_hosts(os.environ.get("MCP_ACA_JOBS_INPUT_HOSTS"), default={"input.example.com"})
+    result_hosts = _parse_hosts(os.environ.get("MCP_ACA_JOBS_RESULT_HOSTS"), default={"results.example.com"})
+    lease_minutes = int(os.environ.get("MCP_ACA_JOBS_LEASE_MINUTES", "5"))
+    callback_kwargs: dict[str, Any] = {"url": callback_url, "auth_mode": callback_auth_mode}
+    if callback_auth_mode == "managed_identity":
+        callback_kwargs["audience"] = os.environ["MCP_ACA_JOBS_CALLBACK_AUDIENCE"]
+    elif callback_auth_mode == "key_vault":
+        callback_kwargs["secret_name"] = os.environ["MCP_ACA_JOBS_CALLBACK_SECRET_NAME"]
+    else:
+        raise ValueError(f"unsupported callback auth mode: {callback_auth_mode}")
+    policy = Policy(
+        jobs={
+            job_type: JobPolicy(
+                resource_group=job_resource_group,
+                job_name=job_name,
+                container_name=job_container_name,
+                image_digest=job_image_digest,
+                command=["python", "-m", "app.job_worker"],
+                allowed_owner_scopes=None,
+            )
+        },
+        callbacks={
+            "ops": CallbackPolicy(**callback_kwargs),
+        },
+        input_hosts=input_hosts,
+        result_hosts=result_hosts,
+    )
+    return WorkerRuntimeConfig(
+        output_container_url=output_container_url,
+        lease=timedelta(minutes=lease_minutes),
+        policy=policy,
+    )
+
+
+def build_worker_from_env(
+    store: ControlStore,
+    *,
+    clock: Callable[[], datetime] = _utcnow,
+    handler: Any = demo_handler,
+    callback_sender: Any | None = None,
+    output: OutputStore | None = None,
+    config: WorkerRuntimeConfig | None = None,
+    credential: Any | None = None,
+) -> JobWorker:
+    config = config or load_runtime_config_from_env()
+    if callback_sender is None:
+        raise RuntimeError("callback sender must be provided by the worker runtime")
+    if output is None:
+        output = BlobOutputStore.from_container_url(config.output_container_url, credential=credential)
+    return JobWorker(
+        store=store,
+        output=output,
+        handler=handler,
+        callback_sender=callback_sender,
+        policy=config.policy,
+        clock=clock,
+        lease=config.lease,
+    )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the foundry-mcp-aca-jobs ACA Job worker.")
+    parser.add_argument("--owner-scope", required=True, help="Owner scope for the durable control record.")
+    parser.add_argument("--task-id", required=True, help="Task identifier to process.")
+    return parser
+
+
+async def _run_from_env(owner_scope: str, task_id: str) -> int:
+    configure_telemetry()
+    config = load_runtime_config_from_env()
+    client_id = os.environ["AZURE_CLIENT_ID"]
+    execution_id = os.environ["CONTAINER_APP_JOB_EXECUTION_NAME"]
+    cosmos_endpoint = os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]
+    cosmos_database = os.environ["MCP_ACA_JOBS_COSMOS_DATABASE"]
+    cosmos_container = os.environ["MCP_ACA_JOBS_COSMOS_CONTAINER"]
+
+    credential = ManagedIdentityCredential(client_id=client_id)
+    http_client = httpx.AsyncClient()
+    output: BlobOutputStore | None = None
+    secret_client: Any | None = None
+    try:
+        output = BlobOutputStore.from_container_url(config.output_container_url, credential=credential)
+        async with CosmosClient(endpoint=cosmos_endpoint, credential=credential) as cosmos_client:
+            database = cosmos_client.get_database_client(cosmos_database)
+            container = database.get_container_client(cosmos_container)
+            store = CosmosControlStore(container)
+            callback_policy = config.policy.callback("ops")
+            if callback_policy.auth_mode == "key_vault":
+                secret_client = SecretClient(
+                    vault_url=os.environ["MCP_ACA_JOBS_CALLBACK_VAULT_URL"],
+                    credential=credential,
+                )
+            callback_sender = CallbackSender(http_client, credential, secret_client=secret_client)
+            worker = build_worker_from_env(
+                store,
+                output=output,
+                callback_sender=callback_sender,
+                config=config,
+                credential=credential,
+            )
+            return await worker.run(owner_scope, task_id, execution_id)
+    finally:
+        if output is not None:
+            await _close_resource(output)
+        await _close_resource(secret_client)
+        await _close_resource(http_client)
+        await _close_resource(credential)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    return asyncio.run(_run_from_env(args.owner_scope, args.task_id))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

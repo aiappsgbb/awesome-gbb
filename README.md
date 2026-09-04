@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-25-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-36-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -122,6 +122,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |
+| [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | Expose durable MCP tools backed by pre-provisioned ACA Jobs — SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, managed-identity callbacks, and one immutable image with separate server/worker entrypoints. |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate hosted agents — two-phase invoke+score, 6 built-in evaluators, enriched-dataset shape (`tool_calls` + `tool_outputs`), continuous loop |
 | [**foundry-iq**](skills/foundry-iq/) | Enterprise RAG with Foundry IQ — Azure AI Search Knowledge Bases, agentic retrieval, multi-hop reasoning, citation-backed responses, **hosted-agent runtime identity callout** + **7-item bootstrap hardening checklist** (no-`az rest`-uploads, fail-fast, key sanitization, 32k-byte chunking, RBAC propagation wait, post-upload count verify, idempotent recovery) |
 | [**foundry-doc-vision-speech**](skills/foundry-doc-vision-speech/) | Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) into a hosted agent — MCP and native Toolbox patterns + RBAC matrix |
@@ -196,7 +197,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install all 28 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
+> **Install all 36 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
 >
 > ```bash
 > # Register the marketplace once:
@@ -319,7 +320,7 @@ flowchart LR
 README.md                 # This file — catalog index + install instructions
 DEMOS.md                  # Demo guide for Foundry walkthroughs
 AGENTS.md                 # Contributor & sub-agent safety guide
-plugin.json               # Single plugin manifest (all 28 skills via "skills/")
+plugin.json               # Single plugin manifest (all 36 skills via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)

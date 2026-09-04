@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.2"
+  version: "1.2.3"
 ---
 
 # Foundry Observability
@@ -451,7 +451,7 @@ containers: [
 For ACA Jobs (cron `deadline-watcher`):
 
 ```bicep
-// infra/modules/aca-job.bicep
+// infra/modules/aca-scheduled-job.bicep
 configuration: {
   triggerType: 'Schedule'
   scheduleTriggerConfig: {
@@ -474,6 +474,8 @@ template: {
   ]
 }
 ```
+
+The scheduled/event-trigger module family is owned by `threadlight-event-triggers`; `azd-patterns/references/bicep/aca-job.bicep` stays the generic Manual module.
 
 > **The silent-cron lesson** (from recent pilot retrospectives — see
 > `azd-patterns` § ACA Job silent-failure playbook). When the cron

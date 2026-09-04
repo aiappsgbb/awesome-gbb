@@ -18,13 +18,17 @@ runs the assertions.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 SCRIPT = Path(__file__).resolve().parents[1] / "build-test-matrix.py"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _run(repo_root: Path) -> list[str]:
@@ -141,6 +145,81 @@ class TestFullMatrix(unittest.TestCase):
             _write_quarantine(repo)
             self.assertEqual(_run(repo), ["alpha", "mu", "zeta"])
 
+    def test_foundry_mcp_aca_jobs_has_approved_dependency_fanout(self) -> None:
+        deps = yaml.safe_load(
+            (ROOT / ".github" / "skill-deps.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            deps["skills"]["foundry-mcp-aca-jobs"]["depends_on"],
+            [
+                "azd-patterns",
+                "foundry-hosted-agents",
+                "foundry-mcp-aca",
+                "foundry-prompt-agents",
+            ],
+        )
+
+
+class TestUnitWorkflowContract(unittest.TestCase):
+    def test_unit_job_budget_covers_template_docker_and_bicep_tests(self) -> None:
+        workflow_text = (
+            ROOT / ".github" / "workflows" / "skill-test.yml"
+        ).read_text(encoding="utf-8")
+        workflow = yaml.safe_load(workflow_text)
+
+        self.assertEqual(workflow["jobs"]["unit-tests"]["timeout-minutes"], 15)
+        self.assertIn(
+            "69-test foundry-mcp-aca-jobs template suite",
+            workflow_text,
+        )
+        self.assertIn("Docker build/run and Bicep compilation", workflow_text)
+
+    def test_unit_install_contains_bounded_mcp_aca_jobs_dependencies(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        install = next(
+            step
+            for step in workflow["jobs"]["unit-tests"]["steps"]
+            if step.get("name") == "Install deps"
+        )
+        installed = set(shlex.split(install["run"]))
+
+        self.assertIn("--quiet", installed)
+        self.assertTrue(
+            {
+                "pydantic~=2.13.5",
+                "httpx~=0.28.1",
+                "azure-mgmt-appcontainers~=5.0.0",
+                "azure-cosmos[aio]~=4.16.4",
+                "azure-storage-blob[aio]~=12.30.1",
+                "azure-keyvault-secrets~=4.11.2",
+                "azure-monitor-query~=2.0.0",
+                "fastmcp~=4.0.1",
+                "fastmcp-tasks~=4.0.1",
+                "mcp~=2.1.1",
+            }.issubset(installed)
+        )
+
+    def test_clean_unittest_discovery_has_no_failed_test_modules(self) -> None:
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "scripts" / "tests"),
+            pattern="test_*.py",
+        )
+
+        def failed_test_names(candidate: unittest.TestSuite) -> list[str]:
+            names: list[str] = []
+            for item in candidate:
+                if isinstance(item, unittest.TestSuite):
+                    names.extend(failed_test_names(item))
+                elif item.__class__.__name__ == "_FailedTest":
+                    names.append(str(item))
+            return names
+
+        self.assertEqual(failed_test_names(suite), [])
+
 
 class TestChangedOnly(unittest.TestCase):
     """Behaviour with `--changed-only --base-ref <sha>`: emit only the
@@ -180,6 +259,40 @@ class TestChangedOnly(unittest.TestCase):
             _git(repo, "add", "-A")
             _git(repo, "commit", "-q", "-m", "edit alpha")
             self.assertEqual(_run_changed_only(repo, base), ["alpha", "beta"])
+
+    def test_foundry_mcp_aca_jobs_fans_out_from_all_approved_dependencies(self) -> None:
+        scratch = ROOT / ".scratch"
+        scratch.mkdir(exist_ok=True)
+        dependencies = [
+            "azd-patterns",
+            "foundry-hosted-agents",
+            "foundry-mcp-aca",
+            "foundry-prompt-agents",
+        ]
+        with tempfile.TemporaryDirectory(prefix="matrix-fanout-", dir=scratch) as td:
+            repo = Path(td)
+            for name in [*dependencies, "foundry-mcp-aca-jobs"]:
+                _write_fixture(repo, name)
+            _write_quarantine(repo)
+            _write_deps(
+                repo,
+                {
+                    **{name: [] for name in dependencies},
+                    "foundry-mcp-aca-jobs": dependencies,
+                },
+            )
+            _init_repo(repo)
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "baseline")
+            base = _git(repo, "rev-parse", "HEAD")
+            for name in dependencies:
+                (repo / "skills" / name / "SKILL.md").write_text("changed\n")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit approved dependencies")
+            self.assertEqual(
+                _run_changed_only(repo, base),
+                sorted([*dependencies, "foundry-mcp-aca-jobs"]),
+            )
 
     def test_changed_only_force_full_on_infra_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:

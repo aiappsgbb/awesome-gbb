@@ -47,7 +47,9 @@ jobs:
   # ── Job 1: Unit tests ──────────────────────────────────────────────
   unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The dependency install now activates the 69-test foundry-mcp-aca-jobs template suite,
+    # including Docker build/run and Bicep compilation.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -56,14 +58,30 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        # Probe-test modules (test_unit_foundry_rbac_audit.py,
-        # test_unit_azure_monitor_alert_baseline.py) load the skill's
-        # probe.py via importlib, which imports azure SDKs at module
-        # scope. The SDKs are MUST resolve even though every test mocks
-        # them via patch.object — patch.object requires the symbol to
-        # exist on the module. See AGENTS.md § 10.3 (skills that touch
-        # Azure must ship unit-tests that exercise the probe contract).
-        run: pip install --quiet pyyaml azure-identity azure-mgmt-authorization azure-mgmt-monitor "azure-mgmt-recoveryservices~=3.0.0" "azure-mgmt-recoveryservicesbackup~=9.1.0" "azure-mgmt-dataprotection~=2.0.1" "azure-mgmt-resource~=23.1.0"
+        # Probe tests and the nine foundry-mcp-aca-jobs modules import
+        # their bounded runtime SDKs during unittest discovery. Those
+        # imports must resolve before patch.object or local test shims can
+        # isolate Azure calls. See AGENTS.md § 10.3.
+        run: >-
+          pip install --quiet
+          pyyaml
+          azure-identity
+          azure-mgmt-authorization
+          azure-mgmt-monitor
+          "azure-mgmt-recoveryservices~=3.0.0"
+          "azure-mgmt-recoveryservicesbackup~=9.1.0"
+          "azure-mgmt-dataprotection~=2.0.1"
+          "azure-mgmt-resource~=23.1.0"
+          "pydantic~=2.13.5"
+          "httpx~=0.28.1"
+          "azure-mgmt-appcontainers~=5.0.0"
+          "azure-cosmos[aio]~=4.16.4"
+          "azure-storage-blob[aio]~=12.30.1"
+          "azure-keyvault-secrets~=4.11.2"
+          "azure-monitor-query~=2.0.0"
+          "fastmcp~=4.0.1"
+          "fastmcp-tasks~=4.0.1"
+          "mcp~=2.1.1"
 
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
@@ -160,7 +178,7 @@ jobs:
       # headroom) OR confirm new sub-quota allocation. See AGENTS.md § 9.7.
       max-parallel: 1
       matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
-    # 30 → 40 → 50 evolution:
+    # 30 → 40 → 50 → 60 evolution:
     # - 30 min: run 26698566215 emitted "PASS via marker file
     #   (deterministic)" 13 ms before the timeout fired
     #   (conclusion=cancelled). Bumped to 40.
@@ -180,11 +198,18 @@ jobs:
     #     Teardown                                             ~2 min
     #     ───────────────────────────────────────────────────────────
     #     WORST CASE                                           ~43 min
-    # 50 min ceiling gives ~7 min safety margin against the worst
-    # observed compound (smoke-retry) path. Do NOT bisect this comment
-    # block when shaving — bump only if a NEW measurement exceeds the
-    # budget (Pattern 14 rule).
-    timeout-minutes: 50
+    # - 120 min: Task15's foundry-mcp-aca-jobs leg is now the longest,
+    #   and the ceiling must cover a complete primary + retry path:
+    #     Primary Task15 P99                                  ~50 min
+    #     Pattern 19 cooldown (jittered 90-180 s)              ~3 min
+    #     Retry Task15 P99 (cached build / clean retry)       ~42 min
+    #     marker evaluation + teardown tail                    ~5 min
+    #     ───────────────────────────────────────────────────────────
+    #     COMPOUND BUDGET                                    ~100 min
+    # Pattern 14 requires at least 20% headroom over the compound budget,
+    # so the shared ceiling is 120 min. This is a ceiling only and adds no
+    # cost to fast legs. Do NOT bisect this comment block when shaving.
+    timeout-minutes: 120
     permissions:
       id-token: write
       contents: read
@@ -222,6 +247,13 @@ jobs:
         # to v2.3.0 (latest stable as of 2026-05) keeps drift visible.
         # See AGENTS.md § 9.7 Pattern 15.
         uses: Azure/setup-azd@v2.3.0
+
+      - name: Install uv
+        # Pattern 15: fixture tooling is installed by the workflow, never by
+        # the Copilot agent. Pin both the action SHA (v9.0.0) and uv release.
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.6"
 
       - name: Install awesome-gbb plugin from this checkout
         run: |
@@ -314,10 +346,12 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
-          # Optional standing Entra app client id for the foundry-mcp-aca
-          # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
-          # creates the secret; the fixture skips the auth sub-test when
-          # unset, so this is inert by default (AGENTS.md § 2.8).
+          # Required only for the foundry-mcp-aca-jobs fixture; other matrix
+          # legs leave these values unused.
+          MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          # Shared optional caller app client ID; foundry-mcp-aca-jobs
+          # elevates it to required in its explicit fixture precondition.
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 (AGENTS.md § 9.7 Pattern 11): App Insights + LAW
@@ -540,10 +574,12 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
-          # Optional standing Entra app client id for the foundry-mcp-aca
-          # Easy Auth 401->200 proof (Step 5b). Empty until a maintainer
-          # creates the secret; the fixture skips the auth sub-test when
-          # unset, so this is inert by default (AGENTS.md § 2.8).
+          # Required only for the foundry-mcp-aca-jobs fixture; other matrix
+          # legs leave these values unused.
+          MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          # Shared optional caller app client ID; foundry-mcp-aca-jobs
+          # elevates it to required in its explicit fixture precondition.
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 — mirror the initial-run env block per Pattern 11

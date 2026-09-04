@@ -8,7 +8,7 @@ that CI cannot catch through grep alone. They verify:
 - MCP protocol conformance (initialized must be status-gated, not || true)
 - Named tool invocation (echo with exact payload assertion, no first-tool fallback)
 - Prose/hard-gate consistency (all three protocol steps listed)
-- SKILL.md version is PATCH (1.2.4)
+- SKILL.md version is PATCH (1.2.5)
 - Pin script validates mcp explicitly
 """
 
@@ -919,8 +919,8 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
     # --- Issue #7: PATCH version ---
 
     def test_skill_version_is_patch(self) -> None:
-        """SKILL.md version must be 1.2.4 (PATCH)."""
-        self.assertIn('version: "1.2.4"', self.skill)
+        """SKILL.md version must be 1.2.5 (PATCH)."""
+        self.assertIn('version: "1.2.5"', self.skill)
 
     # --- Pin validation contracts ---
 
