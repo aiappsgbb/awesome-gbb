@@ -195,19 +195,19 @@ single sources of truth, not duplicate snippets in `SKILL.md`.
 
 | File | Responsibility |
 |---|---|
-| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.3.6`. |
+| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.0`. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py` | Canonical FastMCP server assembly and HTTP entrypoint. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py` | Small MCP Tasks `ServerExtension` adapter when the pinned FastMCP Tasks extension cannot bind directly to external ACA execution state. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py` | Shared start, get, cancel, idempotency, status translation, and reconciliation service used by Tasks and fallback tools. |
-| `skills/foundry-mcp-aca-jobs/references/python/app/control_store.py` | Cosmos point reads, creates, ETag-guarded state transitions, and idempotency lookup. |
+| `skills/foundry-mcp-aca-jobs/references/python/app/control_store.py` | Cosmos point reads, creates, ETag-guarded state transitions, idempotency lookup, and forward-compatible document filtering. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_jobs.py` | Narrow adapter around the documented ACA Job start, execution-list/read, and stop operations. |
-| `skills/foundry-mcp-aca-jobs/references/python/app/job_worker.py` | Example ACA Job entrypoint that loads the control record, enforces idempotency by `taskId`, writes job-owned output, persists the result reference, and sends the allowlisted callback. |
+| `skills/foundry-mcp-aca-jobs/references/python/app/job_worker.py` | Example ACA Job entrypoint that loads the control record, renews an exact-token worker lease while the handler runs, enforces idempotency by `taskId`, writes job-owned output, persists the result reference, and sends the allowlisted callback. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/models.py` | Typed request, response, control-record, lifecycle, and stable-error models shared by both entrypoints. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/callbacks.py` | Callback alias resolution, managed-identity or Key Vault authentication, bounded retries, and payload construction. |
 | `skills/foundry-mcp-aca-jobs/templates/pyproject.toml` | Bounded dependency pins for FastMCP, MCP Tasks support, Azure identity, App Containers management, Cosmos, storage, HTTP, and telemetry packages. |
 | `skills/foundry-mcp-aca-jobs/templates/Dockerfile` | One production image containing both entrypoints; no embedded secrets. |
 | `skills/foundry-mcp-aca-jobs/templates/azure.yaml` | azd service and hook wiring for a single build and digest convergence. |
-| `skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` | Composition root for the MCP app, shared image digest, Cosmos resources, identities, RBAC, and the canonical ACA Job module from `azd-patterns`. |
+| `skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` | Composition root for the MCP app, conditionally applied resource-group tags, shared image digest, Cosmos resources, identities, RBAC, and the canonical ACA Job module from `azd-patterns`. |
 | `skills/foundry-mcp-aca-jobs/references/upstream-pin.md` | Machine-readable bounded upstream pins, validation script, expected output, known issues, and audit trail. |
 | `skills/foundry-mcp-aca-jobs/test-fixture/consumer_prompt.md` | Live Copilot CLI Azure fixture. |
 | `skills/foundry-mcp-aca-jobs/tests/` | Unit and in-process MCP tests that import the canonical reference modules rather than redefining them. |
@@ -392,13 +392,16 @@ caller-provided key; the raw key is not stored.
 | `callbackErrorCode` | Delivery-specific stable warning code or null; it does not convert successful business work to `Failed`. |
 | `cancellationRequestedAt` | Timestamp or null; cancellation intent does not create an extra lifecycle state. |
 | `startAttemptedAt` / `startAttemptCount` | Uncertain-start reconciliation bounds. |
-| `workerClaimedAt` / `workerClaimToken` / `workerClaimExpiresAt` | Job-side idempotency evidence and active-lease boundary. |
-| `reconciliationUnresolvedSince` | First durable observation of `Degraded`, `Unknown`, or `Succeeded` without a result reference; starts the separate terminal-reconciliation budget. |
+| `workerClaimedAt` / `workerClaimToken` / `workerClaimExpiresAt` | Job-side idempotency evidence and active-lease boundary. The exact-token ETag heartbeat renews the expiry while a business handler runs. |
 | `createdAt` / `updatedAt` / `completedAt` | UTC ISO-8601 lifecycle timestamps. |
 | `_etag` | Cosmos optimistic concurrency token used on every mutation. |
 
 Large output never enters this record. `resultUrl` points to output owned and
 secured by the Job's data plane.
+
+Cosmos documents are filtered to known `TaskRecord` names and aliases before
+validation. Unknown future fields are ignored for rolling compatibility;
+malformed known fields fail closed as `CONTROL_STORE_UNAVAILABLE`.
 
 ---
 
@@ -430,17 +433,20 @@ ACA execution states map as follows:
 
 | ACA execution state | Control-state mapping |
 |---|---|
-| `Processing` | `Starting` until the worker claim is visible, then `Running`. |
+| `Processing` | `Starting` for unclaimed `Accepted`/`Starting` records; preserve `Running` once that state or a worker claim is visible. |
 | `Running` | `Running` |
-| `Succeeded` | `Succeeded` only after the result reference is available; otherwise record `reconciliationUnresolvedSince`, remain `Running` for at least ten minutes and while a worker lease is active, then `Failed` with `RESULT_REFERENCE_MISSING`. |
+| `Succeeded` | `Succeeded` only after the result reference is available; otherwise remain `Running` until the existing timestamp anchor is at least ten minutes old and no worker lease is active, then `Failed` with `RESULT_REFERENCE_MISSING`. |
 | `Failed` | `Failed` with `ACA_EXECUTION_FAILED` unless the worker already persisted a more specific stable code. |
 | `Stopped` | `Cancelled` when cancellation was requested; otherwise `Failed` with `ACA_EXECUTION_STOPPED`. |
-| `Degraded` | Record `reconciliationUnresolvedSince`, remain `Running` for at least ten minutes and while a worker lease is active, then fail with `ACA_EXECUTION_STATE_UNRESOLVED`. |
-| `Unknown` | Record `reconciliationUnresolvedSince`, remain `Running` for at least ten minutes and while a worker lease is active, then fail with `ACA_EXECUTION_STATE_UNRESOLVED`. |
+| `Degraded` | Remain `Running` until the existing timestamp anchor is at least ten minutes old and no worker lease is active, then fail with `ACA_EXECUTION_STATE_UNRESOLVED`. |
+| `Unknown` | Remain `Running` until the existing timestamp anchor is at least ten minutes old and no worker lease is active, then fail with `ACA_EXECUTION_STATE_UNRESOLVED`. |
 
-Resolved execution state or a durable result clears
-`reconciliationUnresolvedSince`. Exhaustion clears the worker claim fields only
-after the lease is no longer active.
+The distinct unresolved-reconciliation budget is anchored at
+`startAttemptedAt`, falling back to `updatedAt` for records without a start
+timestamp. It applies only to a bound `Degraded`/`Unknown` execution or
+`Succeeded` execution without a result. Start-reconciliation exhaustion never
+applies to bound tasks. Exhaustion clears worker claim fields only when it
+persists the resulting terminal failure.
 
 ### 9.2 MCP Tasks mapping
 
@@ -694,6 +700,11 @@ Tests use mocks/fakes for Azure and callback boundaries and cover:
 - simultaneous ETag claims and monotonic terminal transitions;
 - uncertain-start reconciliation with zero, one, and multiple execution
   matches;
+- bounded unresolved-state reconciliation from `startAttemptedAt` (falling back
+  to `updatedAt`) and protection by a renewed active worker lease;
+- exact-token, ETag-guarded worker heartbeats, off-loop synchronous handlers,
+  and heartbeat cleanup on completion, failure, cancellation, takeover, or a
+  terminal task;
 - callback alias and input-reference allowlists;
 - minimal callback payload construction and secret redaction;
 - ARM start, list/read, and stop success, transient, denied, not-found, and

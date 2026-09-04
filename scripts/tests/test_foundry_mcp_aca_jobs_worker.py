@@ -7,6 +7,7 @@ import asyncio
 import importlib
 import os
 import sys
+import threading
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -188,7 +189,9 @@ def _ensure_azure_worker_stubs() -> None:
 _ensure_azure_worker_stubs()
 
 from app.control_store import InMemoryControlStore  # noqa: E402
+from app.aca_jobs import AcaExecution  # noqa: E402
 from app.models import CallbackDeliveryState, LifecycleState, Policy, PublicError, TaskRecord  # noqa: E402
+from app.orchestrator import Orchestrator  # noqa: E402
 
 
 class _Clock:
@@ -197,6 +200,19 @@ class _Clock:
 
     def __call__(self) -> datetime:
         return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+class _ControlledSleep:
+    def __init__(self) -> None:
+        self.calls: asyncio.Queue[float] = asyncio.Queue()
+        self.releases: asyncio.Queue[None] = asyncio.Queue()
+
+    async def __call__(self, seconds: float) -> None:
+        await self.calls.put(seconds)
+        await self.releases.get()
 
 
 class _FakeOutputStore:
@@ -417,6 +433,7 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         handler: _RecordingHandler | None = None,
         callback_sender: _FakeCallbackSender | None = None,
         sleep: Any | None = None,
+        clock: _Clock | None = None,
         lease: timedelta = timedelta(minutes=5),
     ) -> tuple[Any, Any, _RecordingHandler, _FakeCallbackSender, _FakeOutputStore]:
         module = self._module()
@@ -430,8 +447,8 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             handler=handler,
             callback_sender=callback_sender,
             policy=self.policy,
-            clock=_Clock(self.fixed_now),
-            sleep=sleep or AsyncMock(),
+            clock=clock or _Clock(self.fixed_now),
+            sleep=sleep or asyncio.sleep,
             lease=lease,
         )
         return worker, store, handler, callback_sender, output
@@ -439,6 +456,14 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def _seed_task(self, store: Any, task: TaskRecord | None = None) -> TaskRecord:
         task = task or self.task
         return await store.create_or_get(task)
+
+    @staticmethod
+    def _active_heartbeat_tasks(task_id: str) -> list[asyncio.Task[Any]]:
+        return [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == f"worker-heartbeat:{task_id}" and not task.done()
+        ]
 
     def test_blob_output_store_result_path_and_query_free_url(self) -> None:
         module = self._module()
@@ -712,47 +737,293 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.fixed_now + timedelta(minutes=5),
         )
 
-    async def test_worker_terminal_writes_clear_unresolved_reconciliation_timestamp(self) -> None:
-        worker, store, _, _, _ = await self._build_worker()
-        unresolved_since = self.fixed_now - timedelta(minutes=2)
-        succeeded_seed = await self._seed_task(
-            store,
-            self.task.model_copy(
-                update={
-                    "lifecycle_state": self.LifecycleState.RUNNING,
-                    "reconciliation_unresolved_since": unresolved_since,
-                }
-            ),
+    async def test_long_handler_heartbeat_extends_claim_beyond_original_lease(self) -> None:
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+
+        class _LongHandler:
+            async def __call__(self, input_ref: str, task_id: str) -> dict[str, str]:
+                handler_started.set()
+                await release_handler.wait()
+                return {"taskId": task_id}
+
+        clock = _Clock(self.fixed_now)
+        sleep = _ControlledSleep()
+        lease = timedelta(seconds=90)
+        worker, store, _, _, _ = await self._build_worker(
+            handler=_LongHandler(),
+            sleep=sleep,
+            clock=clock,
+            lease=lease,
+        )
+        await self._seed_task(store)
+        run_task = asyncio.create_task(
+            worker.run("scope-a", str(self.task.task_id)),
+            name="long-handler-run",
         )
 
-        succeeded = await worker._persist_succeeded(
-            succeeded_seed,
-            "https://results.example.com/results/task/result.json",
+        try:
+            await asyncio.wait_for(handler_started.wait(), timeout=1)
+            initial = await store.get("scope-a", str(self.task.task_id))
+            original_expiry = initial.worker_claim_expires_at
+            self.assertEqual(original_expiry, self.fixed_now + lease)
+            try:
+                first_interval = await asyncio.wait_for(sleep.calls.get(), timeout=1)
+            except TimeoutError:
+                self.fail("worker did not start a lease heartbeat")
+            self.assertEqual(first_interval, 30.0)
+
+            clock.advance(first_interval)
+            sleep.releases.put_nowait(None)
+            second_interval = await asyncio.wait_for(sleep.calls.get(), timeout=1)
+            self.assertEqual(second_interval, first_interval)
+            renewed = await store.get("scope-a", str(self.task.task_id))
+            self.assertEqual(renewed.worker_claim_token, initial.worker_claim_token)
+            self.assertEqual(
+                renewed.worker_claim_expires_at,
+                clock.now + lease,
+            )
+
+            clock.advance(61)
+            self.assertGreater(clock.now, original_expiry)
+            still_active = await store.get("scope-a", str(self.task.task_id))
+            self.assertGreater(still_active.worker_claim_expires_at, clock.now)
+        finally:
+            release_handler.set()
+            await asyncio.wait_for(run_task, timeout=2)
+
+    async def test_sync_handler_runs_off_loop_and_returned_awaitable_is_awaited(self) -> None:
+        handler_started = threading.Event()
+        event_loop_progressed = threading.Event()
+        awaitable_awaited = asyncio.Event()
+
+        class _SyncHandler:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            def __call__(self, input_ref: str, task_id: str) -> Any:
+                self.calls.append((input_ref, task_id))
+                handler_started.set()
+                if not event_loop_progressed.wait(timeout=0.5):
+                    raise RuntimeError("event loop was blocked by sync handler")
+
+                async def finish() -> dict[str, str]:
+                    awaitable_awaited.set()
+                    return {"taskId": task_id}
+
+                return finish()
+
+        handler = _SyncHandler()
+        worker, store, _, _, output = await self._build_worker(
+            handler=handler,
+            sleep=asyncio.sleep,
+            lease=timedelta(seconds=90),
+        )
+        await self._seed_task(store)
+        run_task = asyncio.create_task(
+            worker.run("scope-a", str(self.task.task_id)),
+            name="sync-handler-run",
         )
 
-        self.assertIsNone(succeeded.reconciliation_unresolved_since)
+        started = await asyncio.wait_for(
+            asyncio.to_thread(handler_started.wait, 1),
+            timeout=2,
+        )
+        self.assertTrue(started)
+        event_loop_progressed.set()
+        self.assertEqual(await asyncio.wait_for(run_task, timeout=2), 0)
 
-        failed_task = self.TaskRecord.new(
-            owner_scope="scope-a",
-            job_type="batch",
-            idempotency_key_hash="hash-failed",
-            request_fingerprint="fingerprint-failed",
-            input_ref="https://input.example.com/jobs/failed",
-            callback_alias="ops",
-        ).model_copy(
+        self.assertTrue(awaitable_awaited.is_set())
+        self.assertEqual(
+            handler.calls,
+            [("https://input.example.com/jobs/1", str(self.task.task_id))],
+        )
+        self.assertEqual(
+            output.payloads[self._task_path(str(self.task.task_id))],
+            {"taskId": str(self.task.task_id)},
+        )
+
+    async def test_renewed_worker_lease_blocks_unresolved_orchestrator_exhaustion(self) -> None:
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+
+        class _LongHandler:
+            async def __call__(self, input_ref: str, task_id: str) -> dict[str, str]:
+                handler_started.set()
+                await release_handler.wait()
+                return {"taskId": task_id}
+
+        class _Jobs:
+            def __init__(self, execution: AcaExecution) -> None:
+                self.get = AsyncMock(return_value=execution)
+
+        clock = _Clock(self.fixed_now)
+        sleep = _ControlledSleep()
+        lease = timedelta(seconds=90)
+        store = _RecordingStore()
+        seeded = self.task.model_copy(
             update={
-                "lifecycle_state": self.LifecycleState.RUNNING,
-                "reconciliation_unresolved_since": unresolved_since,
+                "start_attempted_at": self.fixed_now - timedelta(minutes=11),
+                "start_attempt_count": 1,
             }
         )
-        failed_seed = await self._seed_task(store, failed_task)
-
-        failed = await worker._persist_failure(
-            failed_seed,
-            "WORKER_EXECUTION_FAILED",
+        await self._seed_task(store, seeded)
+        worker, _, _, _, _ = await self._build_worker(
+            store=store,
+            handler=_LongHandler(),
+            sleep=sleep,
+            clock=clock,
+            lease=lease,
+        )
+        execution = AcaExecution(
+            execution_id="execution-1",
+            status="Degraded",
+            start_time=self.fixed_now,
+            args=[
+                "--owner-scope",
+                "scope-a",
+                "--task-id",
+                str(self.task.task_id),
+            ],
+        )
+        orchestrator = Orchestrator(
+            store,
+            _Jobs(execution),
+            self.policy,
+            clock,
+        )
+        run_task = asyncio.create_task(
+            worker.run("scope-a", str(self.task.task_id), "execution-1"),
+            name="heartbeat-orchestrator-run",
         )
 
-        self.assertIsNone(failed.reconciliation_unresolved_since)
+        try:
+            await asyncio.wait_for(handler_started.wait(), timeout=1)
+            interval = await asyncio.wait_for(sleep.calls.get(), timeout=1)
+            clock.advance(interval)
+            sleep.releases.put_nowait(None)
+            await asyncio.wait_for(sleep.calls.get(), timeout=1)
+            renewed = await store.get("scope-a", str(self.task.task_id))
+            original_expiry = self.fixed_now + lease
+            self.assertGreater(renewed.worker_claim_expires_at, original_expiry)
+
+            clock.advance(61)
+            self.assertGreater(clock.now, original_expiry)
+            reconciled = await orchestrator.get_status(
+                "scope-a",
+                str(self.task.task_id),
+            )
+            self.assertEqual(reconciled.lifecycle_state, self.LifecycleState.RUNNING)
+            self.assertEqual(
+                reconciled.worker_claim_token,
+                renewed.worker_claim_token,
+            )
+            self.assertGreater(reconciled.worker_claim_expires_at, clock.now)
+        finally:
+            release_handler.set()
+            await asyncio.wait_for(run_task, timeout=2)
+
+    async def test_heartbeat_stops_on_token_takeover_or_terminal_task(self) -> None:
+        for terminal in (False, True):
+            with self.subTest(terminal=terminal):
+                clock = _Clock(self.fixed_now)
+                sleep = _ControlledSleep()
+                store = _RecordingStore()
+                claimed = self.task.model_copy(
+                    update={
+                        "lifecycle_state": self.LifecycleState.RUNNING,
+                        "worker_claimed_at": self.fixed_now,
+                        "worker_claim_token": "claim-original",
+                        "worker_claim_expires_at": self.fixed_now
+                        + timedelta(seconds=90),
+                    }
+                )
+                await self._seed_task(store, claimed)
+                worker, _, _, _, _ = await self._build_worker(
+                    store=store,
+                    sleep=sleep,
+                    clock=clock,
+                    lease=timedelta(seconds=90),
+                )
+                heartbeat = asyncio.create_task(
+                    worker._heartbeat_worker_claim(
+                        "scope-a",
+                        str(self.task.task_id),
+                        "claim-original",
+                    ),
+                    name=f"worker-heartbeat:{self.task.task_id}",
+                )
+                interval = await asyncio.wait_for(sleep.calls.get(), timeout=1)
+                current = await store.get("scope-a", str(self.task.task_id))
+                if terminal:
+                    replacement = current.model_copy(
+                        update={
+                            "lifecycle_state": self.LifecycleState.FAILED,
+                            "error_code": "EXTERNAL_FAILURE",
+                            "completed_at": clock.now,
+                        }
+                    )
+                else:
+                    replacement = current.model_copy(
+                        update={"worker_claim_token": "claim-takeover"}
+                    )
+                replaced = await store.replace(replacement, current.etag)
+                replace_count = len(store.replace_calls)
+
+                clock.advance(interval)
+                sleep.releases.put_nowait(None)
+                await asyncio.wait_for(heartbeat, timeout=1)
+
+                self.assertEqual(len(store.replace_calls), replace_count)
+                final = await store.get("scope-a", str(self.task.task_id))
+                self.assertEqual(final.etag, replaced.etag)
+                if terminal:
+                    self.assertEqual(final.lifecycle_state, self.LifecycleState.FAILED)
+                else:
+                    self.assertEqual(final.worker_claim_token, "claim-takeover")
+
+    async def test_normal_exception_and_cancellation_paths_cleanup_heartbeat(self) -> None:
+        task_id = str(self.task.task_id)
+        for exc in (None, RuntimeError("boom")):
+            with self.subTest(path="normal" if exc is None else "exception"):
+                worker, store, _, _, _ = await self._build_worker(
+                    handler=_RecordingHandler(exc=exc),
+                    sleep=asyncio.sleep,
+                    lease=timedelta(seconds=90),
+                )
+                await self._seed_task(store)
+
+                self.assertEqual(await worker.run("scope-a", task_id), 0)
+
+                self.assertEqual(self._active_heartbeat_tasks(task_id), [])
+
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+
+        class _CancelledHandler:
+            async def __call__(self, input_ref: str, downstream_task_id: str) -> None:
+                handler_started.set()
+                await release_handler.wait()
+
+        sleep = _ControlledSleep()
+        worker, store, _, _, _ = await self._build_worker(
+            handler=_CancelledHandler(),
+            sleep=sleep,
+            lease=timedelta(seconds=90),
+        )
+        await self._seed_task(store)
+        run_task = asyncio.create_task(
+            worker.run("scope-a", task_id),
+            name="cancelled-handler-run",
+        )
+        await asyncio.wait_for(handler_started.wait(), timeout=1)
+        await asyncio.wait_for(sleep.calls.get(), timeout=1)
+        self.assertEqual(len(self._active_heartbeat_tasks(task_id)), 1)
+
+        run_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await run_task
+        self.assertEqual(self._active_heartbeat_tasks(task_id), [])
 
     async def test_duplicate_loser_exits_zero_without_mutation_while_winner_completes(self) -> None:
         handler_started = asyncio.Event()
@@ -1187,7 +1458,9 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(current.aca_execution_id)
 
     async def test_succeeded_pending_with_later_execution_id_delivers_callback_on_second_run(self) -> None:
-        worker, store, handler, callback_sender, output = await self._build_worker()
+        worker, store, handler, callback_sender, output = await self._build_worker(
+            sleep=AsyncMock()
+        )
         await self._seed_task(
             store,
             self.task.model_copy(

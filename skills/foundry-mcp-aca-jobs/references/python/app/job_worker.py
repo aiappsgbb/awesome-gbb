@@ -200,6 +200,14 @@ class JobWorker:
         self._clock = clock
         self._sleep = sleep
         self._lease = lease
+        lease_seconds = lease.total_seconds()
+        if lease_seconds <= 0:
+            raise ValueError("worker lease must be positive")
+        self._heartbeat_interval = min(
+            max(lease_seconds / 3, 0.1),
+            lease_seconds / 2,
+            60.0,
+        )
         self._telemetry = telemetry or default_telemetry
 
     def _telemetry_attributes(
@@ -261,9 +269,23 @@ class JobWorker:
                 with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
                     result_url = await self._output.get(result_path)
             else:
+                claim_token = claimed.worker_claim_token
+                if claim_token is None:
+                    raise RuntimeError("worker claim token is required")
+                heartbeat = asyncio.create_task(
+                    self._heartbeat_worker_claim(
+                        claimed.owner_scope,
+                        str(claimed.task_id),
+                        claim_token,
+                    ),
+                    name=f"worker-heartbeat:{claimed.task_id}",
+                )
                 try:
-                    with self._telemetry.operation("worker.business", self._telemetry_attributes(claimed, "worker.business")):
-                        result = await _await_if_needed(self._handler(str(claimed.input_ref), str(claimed.task_id)))
+                    try:
+                        with self._telemetry.operation("worker.business", self._telemetry_attributes(claimed, "worker.business")):
+                            result = await self._run_handler(claimed)
+                    finally:
+                        await self._stop_heartbeat(heartbeat)
                 except PublicError as error:
                     await self._persist_failure(claimed, error.code)
                     return 0
@@ -281,6 +303,68 @@ class JobWorker:
             succeeded = await self._persist_succeeded(claimed, result_url)
             await self._deliver_callback_if_ready(succeeded.owner_scope, str(succeeded.task_id))
             return 0
+
+    async def _run_handler(self, task: TaskRecord) -> Any:
+        args = (str(task.input_ref), str(task.task_id))
+        handler_call = getattr(self._handler, "__call__", None)
+        if inspect.iscoroutinefunction(self._handler) or inspect.iscoroutinefunction(
+            handler_call
+        ):
+            result = self._handler(*args)
+        else:
+            result = await asyncio.to_thread(self._handler, *args)
+        return await _await_if_needed(result)
+
+    async def _heartbeat_worker_claim(
+        self,
+        owner_scope: str,
+        task_id: str,
+        claim_token: str,
+    ) -> None:
+        while True:
+            await _await_if_needed(self._sleep(self._heartbeat_interval))
+            if not await self._renew_worker_claim(
+                owner_scope,
+                task_id,
+                claim_token,
+            ):
+                return
+
+    async def _renew_worker_claim(
+        self,
+        owner_scope: str,
+        task_id: str,
+        claim_token: str,
+    ) -> bool:
+        for _ in range(3):
+            current = await self._store.get(owner_scope, task_id)
+            if (
+                current.lifecycle_state in TERMINAL_STATES
+                or current.worker_claim_token != claim_token
+            ):
+                return False
+            now = self._clock()
+            candidate = current.model_copy(
+                update={
+                    "worker_claim_expires_at": now + self._lease,
+                    "updated_at": now,
+                }
+            )
+            try:
+                await self._store.replace(candidate, current.etag)
+                return True
+            except ConcurrencyError:
+                continue
+        return False
+
+    @staticmethod
+    async def _stop_heartbeat(heartbeat: asyncio.Task[None]) -> None:
+        if not heartbeat.done():
+            heartbeat.cancel()
+        try:
+            await heartbeat
+        except asyncio.CancelledError:
+            pass
 
     async def _claim(self, current: TaskRecord, now: datetime, execution_id: str | None = None) -> TaskRecord | None:
         token = str(uuid4())
@@ -370,7 +454,6 @@ class JobWorker:
                     "worker_claimed_at": None,
                     "worker_claim_token": None,
                     "worker_claim_expires_at": None,
-                    "reconciliation_unresolved_since": None,
                     "updated_at": now,
                     "completed_at": now,
                 }
@@ -394,7 +477,6 @@ class JobWorker:
                     "worker_claimed_at": None,
                     "worker_claim_token": None,
                     "worker_claim_expires_at": None,
-                    "reconciliation_unresolved_since": None,
                     "updated_at": now,
                     "completed_at": now,
                 }

@@ -308,19 +308,15 @@ class Orchestrator:
             unresolved = execution.status in {"Degraded", "Unknown"} or (
                 execution.status == "Succeeded" and result_url is None
             )
-            unresolved_since = (
-                current.reconciliation_unresolved_since or now
-                if unresolved
-                else None
-            )
+            reconciliation_anchor = current.start_attempted_at or current.updated_at
             active_worker_lease = (
-                current.worker_claim_expires_at is not None
+                current.worker_claim_token is not None
+                and current.worker_claim_expires_at is not None
                 and current.worker_claim_expires_at > now
             )
             reconciliation_exhausted = (
                 unresolved
-                and unresolved_since is not None
-                and now - unresolved_since >= _UNRESOLVED_RECONCILIATION_BUDGET
+                and now - reconciliation_anchor >= _UNRESOLVED_RECONCILIATION_BUDGET
                 and not active_worker_lease
             )
             candidate = current.model_copy(
@@ -331,7 +327,6 @@ class Orchestrator:
                         if unresolved
                         else current.lifecycle_state
                     ),
-                    "reconciliation_unresolved_since": unresolved_since,
                     "updated_at": now,
                 }
             )
@@ -343,7 +338,7 @@ class Orchestrator:
                 reconciliation_exhausted=reconciliation_exhausted,
                 now=now,
             )
-            if reconciliation_exhausted:
+            if reconciliation_exhausted and mapped.lifecycle_state is LifecycleState.FAILED:
                 mapped = mapped.model_copy(
                     update={
                         "worker_claimed_at": None,
@@ -386,7 +381,6 @@ class Orchestrator:
                 candidate = current.model_copy(
                     update={
                         "aca_execution_id": execution.execution_id,
-                        "reconciliation_unresolved_since": None,
                         "updated_at": now,
                     }
                 )

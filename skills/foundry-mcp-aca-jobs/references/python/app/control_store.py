@@ -88,8 +88,12 @@ _RECONCILABLE_LIFECYCLE_STATES = frozenset(
     }
 )
 
-_COSMOS_SERVICE_KEYS = frozenset({"id", "_rid", "_self", "_attachments", "_ts"})
 _COSMOS_404_INFRA_MARKERS = ("owner resource does not exist", "container", "database")
+_TASK_RECORD_DOCUMENT_KEYS = frozenset(TaskRecord.model_fields) | frozenset(
+    field.alias
+    for field in TaskRecord.model_fields.values()
+    if isinstance(field.alias, str)
+)
 
 
 def _safe_not_found() -> PublicError:
@@ -133,10 +137,15 @@ def _task_document(record: TaskRecord) -> dict[str, Any]:
 
 
 def _record_from_document(document: Any) -> TaskRecord:
-    data = dict(document)
-    for key in _COSMOS_SERVICE_KEYS:
-        data.pop(key, None)
-    return TaskRecord.model_validate(data)
+    data = {
+        key: value
+        for key, value in dict(document).items()
+        if key in _TASK_RECORD_DOCUMENT_KEYS
+    }
+    try:
+        return TaskRecord.model_validate(data)
+    except ValidationError as exc:
+        raise _safe_control_store_unavailable() from exc
 
 
 def _validate_full_task(task: TaskRecord) -> TaskRecord:

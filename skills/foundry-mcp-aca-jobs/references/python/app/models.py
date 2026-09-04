@@ -277,10 +277,6 @@ class TaskRecord(BaseModel):
     worker_claimed_at: datetime | None = Field(default=None, alias="workerClaimedAt")
     worker_claim_token: str | None = Field(default=None, alias="workerClaimToken")
     worker_claim_expires_at: datetime | None = Field(default=None, alias="workerClaimExpiresAt")
-    reconciliation_unresolved_since: datetime | None = Field(
-        default=None,
-        alias="reconciliationUnresolvedSince",
-    )
     created_at: datetime = Field(default_factory=_utcnow, alias="createdAt")
     updated_at: datetime = Field(default_factory=_utcnow, alias="updatedAt")
     completed_at: datetime | None = Field(default=None, alias="completedAt")
@@ -291,7 +287,6 @@ class TaskRecord(BaseModel):
         "start_attempted_at",
         "worker_claimed_at",
         "worker_claim_expires_at",
-        "reconciliation_unresolved_since",
         "created_at",
         "updated_at",
         "completed_at",
@@ -403,7 +398,11 @@ def map_aca_state(
         return record
 
     if aca_state == "Processing":
-        lifecycle_state = LifecycleState.RUNNING if record.worker_claimed_at else LifecycleState.STARTING
+        lifecycle_state = (
+            LifecycleState.RUNNING
+            if record.lifecycle_state is LifecycleState.RUNNING or record.worker_claimed_at
+            else LifecycleState.STARTING
+        )
         return record.model_copy(update={"lifecycle_state": lifecycle_state, "updated_at": observed_at})
 
     if aca_state == "Running":

@@ -386,7 +386,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.3.6")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.4.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -458,7 +458,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "ACA_EXECUTION_FAILED",
             "ACA_EXECUTION_STOPPED",
             "ACA_EXECUTION_STATE_UNRESOLVED",
-            "reconciliationUnresolvedSince",
+            "anchored at the existing durable `startAttemptedAt`",
             "ten-minute unresolved-reconciliation budget",
             "active worker lease",
             "authoritative bound execution",
@@ -862,6 +862,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )["parameters"]
 
         self.assertIn("param resourceGroupTags object = {}", main)
+        self.assertRegex(
+            main,
+            (
+                r"var workloadResourceGroupOptions = \{\s+"
+                r"\.\.\.\(!empty\(resourceGroupTags\) "
+                r"\? \{\s*tags: resourceGroupTags\s*\} : \{\}\)\s+\}"
+            ),
+        )
         self.assertIn(
             "resource workloadResourceGroup "
             "'Microsoft.Resources/resourceGroups@2025-04-01' = {",
@@ -873,9 +881,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 r"resource workloadResourceGroup "
                 r"'Microsoft\.Resources/resourceGroups@2025-04-01' = \{\s+"
                 r"name: resourceGroupName\s+location: location\s+"
-                r"tags: resourceGroupTags\s+\}"
+                r"tags: workloadResourceGroupOptions\.\?tags\s+\}"
             ),
         )
+        resource_group_block = self._extract_bicep_block(
+            main,
+            "resource workloadResourceGroup ",
+        )
+        self.assertNotIn("tags: resourceGroupTags", resource_group_block)
         self.assertIn(
             "resource platformResourceGroup "
             "'Microsoft.Resources/resourceGroups@2025-04-01' existing = {",
@@ -928,6 +941,48 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn('"cleanup": "true"', fixture)
         self.assertIn('"created-by": "ci-smoke"', fixture)
         self.assertIn('"ci-smoke-suffix": sys.argv[2]', fixture)
+
+    def test_compiled_arm_conditionally_omits_default_empty_resource_group_tags(self) -> None:
+        result = subprocess.run(
+            [
+                "az",
+                "bicep",
+                "build",
+                "--file",
+                str(self._infra_dir() / "main.bicep"),
+                "--stdout",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        template = json.loads(result.stdout)
+        resource_group = template["resources"]["workloadResourceGroup"]
+        compiled = json.dumps(resource_group, sort_keys=True)
+        options = template["variables"]["workloadResourceGroupOptions"]
+
+        self.assertEqual(
+            template["parameters"]["resourceGroupTags"]["defaultValue"],
+            {},
+        )
+        self.assertNotEqual(
+            resource_group.get("tags"),
+            "[parameters('resourceGroupTags')]",
+        )
+        self.assertNotEqual(resource_group.get("tags"), {})
+        self.assertEqual(
+            resource_group["tags"],
+            "[tryGet(variables('workloadResourceGroupOptions'), 'tags')]",
+        )
+        self.assertIn("if(", options)
+        self.assertIn("empty(parameters('resourceGroupTags'))", options)
+        self.assertIn(
+            "createObject('tags', parameters('resourceGroupTags'))",
+            options,
+        )
+        self.assertIn("createObject()", options)
+        self.assertNotIn("parameters('resourceGroupTags')]", compiled)
 
     def test_locks_use_only_hash_verified_registry_artifacts(self) -> None:
         tracked = subprocess.check_output(

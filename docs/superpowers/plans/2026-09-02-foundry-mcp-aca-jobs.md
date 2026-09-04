@@ -2102,7 +2102,7 @@ Task20 status note (2026-09-03): local live validation passed ARM positive/negat
 
 ## Final acceptance checklist
 
-- [x] `foundry-mcp-aca-jobs` exists at version 1.3.6 with valid fixed-shape frontmatter.
+- [x] `foundry-mcp-aca-jobs` exists at version 1.4.0 with valid fixed-shape frontmatter.
 - [x] MCP Tasks uses `AcaTasksExtension`; Docket never executes business work.
 - [x] Tasks-aware and unaware clients share one orchestrator and durable record.
 - [x] Cosmos record includes every approved field and all writes are ETag guarded.

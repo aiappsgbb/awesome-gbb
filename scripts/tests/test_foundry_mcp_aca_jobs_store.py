@@ -109,6 +109,34 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
             document["_etag"] = etag
         return document
 
+    def test_record_from_document_ignores_unknown_future_fields(self) -> None:
+        document = self._cosmos_document(self.task, etag="7")
+        document["futureSchemaField"] = {"nested": "value"}
+
+        try:
+            record = _record_from_document(document)
+        except (PublicError, ValidationError) as error:
+            self.fail(f"unknown Cosmos fields must be ignored: {error}")
+
+        self.assertEqual(record.task_id, self.task.task_id)
+        self.assertEqual(record.etag, "7")
+        self.assertNotIn("futureSchemaField", record.model_dump(by_alias=True))
+
+    def test_record_from_document_maps_malformed_known_field_to_safe_error(self) -> None:
+        document = self._cosmos_document(self.task, etag="7")
+        document["lifecycleState"] = "CorruptedState"
+
+        try:
+            _record_from_document(document)
+        except PublicError as error:
+            self.assertEqual(error.code, "CONTROL_STORE_UNAVAILABLE")
+            self.assertEqual(error.safe_message, "control store unavailable")
+            self.assertIsInstance(error.__cause__, ValidationError)
+        except ValidationError as error:
+            self.fail(f"malformed persisted data leaked a validation error: {error}")
+        else:
+            self.fail("malformed persisted data was accepted")
+
     async def test_in_memory_duplicate_conflict_etags_and_owner_isolation(self) -> None:
         store = InMemoryControlStore()
 
@@ -175,36 +203,6 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(InvalidTransition):
             await store.replace(terminal.model_copy(update={"lifecycle_state": LifecycleState.ACCEPTED}), callback_saved.etag)
-
-    async def test_in_memory_persists_and_clears_unresolved_timestamp_with_monotonic_etags(self) -> None:
-        store = InMemoryControlStore()
-        created = await store.create_or_get(self.task)
-        unresolved_since = datetime(2026, 1, 2, 3, 14, 5, tzinfo=timezone.utc)
-
-        unresolved = await store.replace(
-            created.model_copy(
-                update={"reconciliation_unresolved_since": unresolved_since}
-            ),
-            created.etag,
-        )
-        reread = await store.get(self.task.owner_scope, str(self.task.task_id))
-
-        self.assertEqual(unresolved.etag, "2")
-        self.assertEqual(reread.reconciliation_unresolved_since, unresolved_since)
-        self.assertEqual(
-            reread.model_dump(mode="json", by_alias=True, exclude_none=True)[
-                "reconciliationUnresolvedSince"
-            ],
-            "2026-01-02T03:14:05Z",
-        )
-
-        cleared = await store.replace(
-            reread.model_copy(update={"reconciliation_unresolved_since": None}),
-            reread.etag,
-        )
-
-        self.assertEqual(cleared.etag, "3")
-        self.assertIsNone(cleared.reconciliation_unresolved_since)
 
     async def test_in_memory_replace_revalidates_full_record_before_accepting_model_copy_mutations(self) -> None:
         store = InMemoryControlStore()

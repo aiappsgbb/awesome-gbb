@@ -278,10 +278,16 @@ var jobEnvironmentVariables = concat([
   }
 ])
 
+var workloadResourceGroupOptions = {
+  ...(!empty(resourceGroupTags) ? {
+    tags: resourceGroupTags
+  } : {})
+}
+
 resource workloadResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
   name: resourceGroupName
   location: location
-  tags: resourceGroupTags
+  tags: workloadResourceGroupOptions.?tags
 }
 
 resource platformResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' existing = {

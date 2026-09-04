@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.3.6"
+  version: "1.4.0"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -133,8 +133,7 @@ The control record is the source of truth. It carries `taskId`, `ownerScope`,
 `callbackAlias`, `lifecycleState`, `acaExecutionId`, `resultUrl`, `errorCode`,
 `callbackDeliveryState`, `callbackErrorCode`, `cancellationRequestedAt`,
 `startAttemptedAt`, `startAttemptCount`, `workerClaimedAt`, `workerClaimToken`,
-`workerClaimExpiresAt`, `reconciliationUnresolvedSince`, `createdAt`,
-`updatedAt`, `completedAt`, and `_etag`.
+`workerClaimExpiresAt`, `createdAt`, `updatedAt`, `completedAt`, and `_etag`.
 
 | Control record state | MCP `status` | Public result |
 |---|---|---|
@@ -181,17 +180,27 @@ Uncertain starts are reconciled deterministically:
   with `START_RECONCILIATION_EXHAUSTED`; a bound or worker-claimed execution
   remains authoritative even when an ARM list is temporarily empty.
 
-Terminal reconciliation uses a distinct ten-minute unresolved-reconciliation budget.
-The first `Degraded`/`Unknown` observation, or `Succeeded` observation
-without a durable `resultUrl`, records `reconciliationUnresolvedSince` and keeps
-the task `Running`. Never terminalize while an active worker lease has
-`workerClaimExpiresAt` in the future. Once the budget has elapsed and no lease is
-active, clear worker claim fields and fail with
-`ACA_EXECUTION_STATE_UNRESOLVED` or `RESULT_REFERENCE_MISSING`. A resolved ACA
-state or durable result clears `reconciliationUnresolvedSince`.
+Terminal reconciliation uses a distinct ten-minute unresolved-reconciliation budget
+anchored at the existing durable `startAttemptedAt`, falling back to
+`updatedAt` for records without a start timestamp. A bound execution reported as
+`Degraded`/`Unknown`, or `Succeeded` without a durable `resultUrl`, stays
+`Running` inside that budget. A later `Processing` observation never downgrades
+an already-`Running` task to `Starting`. Never terminalize while
+an active worker lease for the exact claim token has `workerClaimExpiresAt` in
+the future. Once the budget has elapsed
+and no lease is active, fail with `ACA_EXECUTION_STATE_UNRESOLVED` or
+`RESULT_REFERENCE_MISSING`; clear worker claim fields only with that terminal
+failure.
+
+While the business handler runs, the worker renews `workerClaimExpiresAt` under
+the current ETag and exact claim token at an interval below the lease. It stops
+the heartbeat before success or failure persistence. Synchronous handlers run
+off the event loop, and any awaitable they return is still awaited.
 
 The store itself uses optimistic concurrency (`_etag`) and rejects stale
-claims. Cosmos failures map to `CONTROL_STORE_UNAVAILABLE`.
+claims. Cosmos documents are filtered to known `TaskRecord` names and aliases:
+unknown future fields are ignored, while malformed known fields and Cosmos
+failures map to `CONTROL_STORE_UNAVAILABLE`.
 
 ## Callback contract
 
@@ -315,8 +324,9 @@ are created in the existing storage account; they are not pre-existing
 containers.
 
 The subscription-scope composition root creates `resourceGroupName` itself and
-applies the optional `resourceGroupTags` object (empty by default). Do not
-pre-create that resource group. Its exact azd outputs include `MCP_APP_NAME`,
+applies `resourceGroupTags` only when the object is nonempty. The empty default
+omits the ARM `tags` value so an existing resource group's tags are preserved.
+Do not pre-create that resource group. Its exact azd outputs include `MCP_APP_NAME`,
 `ACA_JOB_NAME`, `MCP_ACA_JOBS_STORAGE_ACCOUNT_URL`,
 `MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME`, `MCP_ACA_JOBS_COSMOS_ENDPOINT`,
 `MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME`, and

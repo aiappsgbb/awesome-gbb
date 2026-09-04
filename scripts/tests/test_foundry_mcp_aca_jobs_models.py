@@ -296,37 +296,34 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
         self.assertIn("_etag", dumped)
         self.assertEqual(dumped["_etag"], "etag-1")
 
-    def test_task_record_round_trips_unresolved_reconciliation_timestamp(self) -> None:
-        unresolved_since = datetime(2026, 1, 2, 3, 14, 5, tzinfo=timezone.utc)
-        record = TaskRecord.model_validate(
-            {
-                "taskId": str(uuid.uuid4()),
-                "ownerScope": "scope-a",
-                "jobType": "import",
-                "idempotencyKeyHash": "hash-1",
-                "requestFingerprint": "fingerprint-1",
-                "inputRef": "https://example.invalid/input.json",
-                "callbackAlias": "callback://jobs/import",
-                "lifecycleState": "Running",
-                "callbackDeliveryState": "NotStarted",
-                "reconciliationUnresolvedSince": "2026-01-02T03:14:05Z",
-                "createdAt": "2026-01-02T03:04:05Z",
-                "updatedAt": "2026-01-02T03:14:05Z",
-                "_etag": "etag-2",
-            }
-        )
-
-        self.assertEqual(record.reconciliation_unresolved_since, unresolved_since)
-        dumped = record.model_dump(mode="json", by_alias=True, exclude_none=True)
+    def test_task_record_schema_is_closed_and_stable(self) -> None:
         self.assertEqual(
-            dumped["reconciliationUnresolvedSince"],
-            "2026-01-02T03:14:05Z",
-        )
-        self.assertNotIn(
-            "reconciliationUnresolvedSince",
-            record.model_copy(
-                update={"reconciliation_unresolved_since": None}
-            ).model_dump(mode="json", by_alias=True, exclude_none=True),
+            set(TaskRecord.model_fields),
+            {
+                "task_id",
+                "owner_scope",
+                "job_type",
+                "idempotency_key_hash",
+                "request_fingerprint",
+                "input_ref",
+                "callback_alias",
+                "lifecycle_state",
+                "aca_execution_id",
+                "result_url",
+                "error_code",
+                "callback_delivery_state",
+                "callback_error_code",
+                "cancellation_requested_at",
+                "start_attempted_at",
+                "start_attempt_count",
+                "worker_claimed_at",
+                "worker_claim_token",
+                "worker_claim_expires_at",
+                "created_at",
+                "updated_at",
+                "completed_at",
+                "etag",
+            },
         )
 
     def test_map_aca_state_honors_processing_running_and_succeeded_rules(self) -> None:
@@ -345,6 +342,20 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             result_hosts={"results.example.com"},
         )
         self.assertEqual(map_aca_state(record, "Processing").lifecycle_state, LifecycleState.STARTING)
+        starting = record.model_copy(
+            update={"lifecycle_state": LifecycleState.STARTING}
+        )
+        self.assertEqual(
+            map_aca_state(starting, "Processing").lifecycle_state,
+            LifecycleState.STARTING,
+        )
+        running = record.model_copy(
+            update={"lifecycle_state": LifecycleState.RUNNING}
+        )
+        self.assertEqual(
+            map_aca_state(running, "Processing").lifecycle_state,
+            LifecycleState.RUNNING,
+        )
 
         claimed = record.model_copy(update={"worker_claimed_at": datetime(2026, 1, 2, 4, 0, 0, tzinfo=timezone.utc)})
         self.assertEqual(map_aca_state(claimed, "Processing").lifecycle_state, LifecycleState.RUNNING)
