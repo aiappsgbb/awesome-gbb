@@ -285,7 +285,10 @@ class JobWorker:
                         with self._telemetry.operation("worker.business", self._telemetry_attributes(claimed, "worker.business")):
                             result = await self._run_handler(claimed)
                     finally:
-                        await self._stop_heartbeat(heartbeat)
+                        await self._stop_heartbeat(
+                            heartbeat,
+                            str(claimed.task_id),
+                        )
                 except PublicError as error:
                     await self._persist_failure(claimed, error.code)
                     return 0
@@ -323,11 +326,21 @@ class JobWorker:
     ) -> None:
         while True:
             await _await_if_needed(self._sleep(self._heartbeat_interval))
-            if not await self._renew_worker_claim(
-                owner_scope,
-                task_id,
-                claim_token,
-            ):
+            try:
+                renewed = await self._renew_worker_claim(
+                    owner_scope,
+                    task_id,
+                    claim_token,
+                )
+            except asyncio.CancelledError:
+                raise
+            except PublicError as error:
+                self._record_heartbeat_error(task_id, error.code)
+                continue
+            except Exception as error:
+                self._record_heartbeat_error(task_id, error.__class__.__name__)
+                continue
+            if not renewed:
                 return
 
     async def _renew_worker_claim(
@@ -357,14 +370,44 @@ class JobWorker:
                 continue
         return False
 
-    @staticmethod
-    async def _stop_heartbeat(heartbeat: asyncio.Task[None]) -> None:
+    def _record_heartbeat_error(self, task_id: str, error_code: str) -> None:
+        logger.warning(
+            "worker heartbeat renewal failed; taskId=%s error=%s",
+            task_id,
+            error_code,
+        )
+        try:
+            self._telemetry.record(
+                "worker.heartbeat",
+                {
+                    "task.id": task_id,
+                    "operation": "worker.heartbeat",
+                },
+                outcome="failure",
+                error_code=error_code,
+            )
+        except Exception as telemetry_error:
+            logger.warning(
+                "worker heartbeat telemetry failed; taskId=%s error=%s",
+                task_id,
+                telemetry_error.__class__.__name__,
+            )
+
+    async def _stop_heartbeat(
+        self,
+        heartbeat: asyncio.Task[None],
+        task_id: str,
+    ) -> None:
         if not heartbeat.done():
             heartbeat.cancel()
         try:
             await heartbeat
         except asyncio.CancelledError:
             pass
+        except PublicError as error:
+            self._record_heartbeat_error(task_id, error.code)
+        except Exception as error:
+            self._record_heartbeat_error(task_id, error.__class__.__name__)
 
     async def _claim(self, current: TaskRecord, now: datetime, execution_id: str | None = None) -> TaskRecord | None:
         token = str(uuid4())

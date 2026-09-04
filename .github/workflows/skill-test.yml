@@ -47,7 +47,9 @@ jobs:
   # ── Job 1: Unit tests ──────────────────────────────────────────────
   unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The dependency install now activates the 69-test foundry-mcp-aca-jobs template suite,
+    # including Docker build/run and Bicep compilation.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

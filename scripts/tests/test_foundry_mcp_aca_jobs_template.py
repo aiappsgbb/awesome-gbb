@@ -386,7 +386,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.4.0")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.4.1")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -3444,12 +3444,16 @@ param callbackConfig = {{
             shutil.copy2(self._template_dir() / "uv.lock", context / "uv.lock")
             shutil.copytree(self._reference_app_dir(), context / "app")
 
-            build = subprocess.run(
-                [docker, "build", "--progress=plain", "-t", "foundry-mcp-aca-jobs:test", str(context)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            try:
+                build = subprocess.run(
+                    [docker, "build", "--progress=plain", "-t", "foundry-mcp-aca-jobs:test", str(context)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+            except subprocess.TimeoutExpired:
+                self.fail("docker build exceeded 300 seconds")
             if build.returncode != 0:
                 blocker = self._docker_blocker_excerpt(
                     build.stdout + "\n" + build.stderr,
@@ -3466,28 +3470,99 @@ param callbackConfig = {{
                     f"stderr:\n{build.stderr}"
                 )
 
-            uid = subprocess.run(
-                [docker, "run", "--rm", "foundry-mcp-aca-jobs:test", "id", "-u"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
+            def run_container(label: str, *command: str) -> subprocess.CompletedProcess[str]:
+                try:
+                    return subprocess.run(
+                        [
+                            docker,
+                            "run",
+                            "--rm",
+                            "foundry-mcp-aca-jobs:test",
+                            *command,
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                except subprocess.TimeoutExpired:
+                    self.fail(f"docker run exceeded 30 seconds: {label}")
+
+            uid = run_container("non-root UID probe", "id", "-u").stdout.strip()
             self.assertNotEqual(uid, "0", "built image must run as a non-root user")
 
-            server_help = subprocess.run(
-                [docker, "run", "--rm", "foundry-mcp-aca-jobs:test", "python", "-m", "app.mcp_server", "--help"],
-                check=True,
-                capture_output=True,
-                text=True,
+            server_help = run_container(
+                "MCP server help",
+                "python",
+                "-m",
+                "app.mcp_server",
+                "--help",
             )
-            worker_help = subprocess.run(
-                [docker, "run", "--rm", "foundry-mcp-aca-jobs:test", "python", "-m", "app.job_worker", "--help"],
-                check=True,
-                capture_output=True,
-                text=True,
+            worker_help = run_container(
+                "job worker help",
+                "python",
+                "-m",
+                "app.job_worker",
+                "--help",
             )
             self.assertIn("usage:", server_help.stdout.lower())
             self.assertIn("usage:", worker_help.stdout.lower())
+
+    def test_docker_image_test_has_bounded_subprocess_timeouts(self) -> None:
+        source = pathlib.Path(__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        image_test = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "test_built_image_runs_both_entrypoint_help_commands"
+        )
+        subprocess_timeouts = [
+            ast.literal_eval(keyword.value)
+            for node in ast.walk(image_test)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.func.attr == "run"
+            for keyword in node.keywords
+            if keyword.arg == "timeout"
+        ]
+        timeout_handlers = [
+            node
+            for node in ast.walk(image_test)
+            if isinstance(node, ast.ExceptHandler)
+            and isinstance(node.type, ast.Attribute)
+            and isinstance(node.type.value, ast.Name)
+            and node.type.value.id == "subprocess"
+            and node.type.attr == "TimeoutExpired"
+        ]
+        timeout_failures = [
+            call
+            for handler in timeout_handlers
+            for call in ast.walk(handler)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "self"
+            and call.func.attr == "fail"
+        ]
+        temporary_directory_calls = [
+            call
+            for call in ast.walk(image_test)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "tempfile"
+            and call.func.attr == "TemporaryDirectory"
+        ]
+
+        self.assertEqual(sorted(subprocess_timeouts), [30, 300])
+        self.assertEqual(len(timeout_handlers), 2)
+        self.assertEqual(len(timeout_failures), 2)
+        self.assertEqual(len(temporary_directory_calls), 1)
+        self.assertIn("docker build exceeded 300 seconds", source)
+        self.assertIn("docker run exceeded 30 seconds", source)
 
     def test_docker_blocker_classifier_skips_only_daemon_unavailability(self) -> None:
         daemon_output = (

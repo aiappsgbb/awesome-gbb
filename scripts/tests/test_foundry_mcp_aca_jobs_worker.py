@@ -294,6 +294,44 @@ class _RecordingStore:
         return await self.inner.replace(task, etag)
 
 
+class _HeartbeatFaultStore(_RecordingStore):
+    def __init__(self, operation: str, error: Exception) -> None:
+        super().__init__()
+        self.operation = operation
+        self.error = error
+        self.armed = False
+        self.failure_count = 0
+        self.failure_observed = asyncio.Event()
+        self.recovery_observed = asyncio.Event()
+
+    @staticmethod
+    def _is_heartbeat() -> bool:
+        task = asyncio.current_task()
+        return task is not None and task.get_name().startswith("worker-heartbeat:")
+
+    def _raise_once(self, operation: str) -> None:
+        if (
+            self.armed
+            and self.failure_count == 0
+            and self.operation == operation
+            and self._is_heartbeat()
+        ):
+            self.failure_count += 1
+            self.failure_observed.set()
+            raise self.error
+
+    async def get(self, owner_scope: str, task_id: str) -> TaskRecord:
+        self._raise_once("get")
+        return await super().get(owner_scope, task_id)
+
+    async def replace(self, task: TaskRecord, etag: str | None) -> TaskRecord:
+        self._raise_once("replace")
+        result = await super().replace(task, etag)
+        if self.armed and self.failure_count == 1 and self._is_heartbeat():
+            self.recovery_observed.set()
+        return result
+
+
 class _FakeBlobClient:
     def __init__(self, url: str, *, exists: bool = True) -> None:
         self.url = url
@@ -791,6 +829,161 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release_handler.set()
             await asyncio.wait_for(run_task, timeout=2)
+
+    async def _assert_heartbeat_fault_recovers(
+        self,
+        *,
+        operation: str,
+        error: Exception,
+        expected_error_code: str,
+    ) -> None:
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+
+        class _LongHandler:
+            async def __call__(self, input_ref: str, task_id: str) -> dict[str, str]:
+                handler_started.set()
+                await release_handler.wait()
+                return {"taskId": task_id}
+
+        clock = _Clock(self.fixed_now)
+        sleep = _ControlledSleep()
+        store = _HeartbeatFaultStore(operation, error)
+        worker, _, _, callback_sender, output = await self._build_worker(
+            store=store,
+            handler=_LongHandler(),
+            sleep=sleep,
+            clock=clock,
+            lease=timedelta(seconds=90),
+        )
+        await self._seed_task(store)
+        task_id = str(self.task.task_id)
+        result_path = self._task_path(task_id)
+        run_task = asyncio.create_task(
+            worker.run("scope-a", task_id),
+            name=f"fault-recovery:{operation}",
+        )
+
+        with patch.object(
+            worker._telemetry,
+            "record",
+            wraps=worker._telemetry.record,
+        ) as record:
+            try:
+                await asyncio.wait_for(handler_started.wait(), timeout=1)
+                first_interval = await asyncio.wait_for(sleep.calls.get(), timeout=1)
+                store.armed = True
+                clock.advance(first_interval)
+                sleep.releases.put_nowait(None)
+                await asyncio.wait_for(store.failure_observed.wait(), timeout=1)
+                try:
+                    second_interval = await asyncio.wait_for(
+                        sleep.calls.get(),
+                        timeout=0.2,
+                    )
+                except TimeoutError:
+                    release_handler.set()
+                    await asyncio.wait_for(run_task, timeout=2)
+                    failed = await store.inner.get("scope-a", task_id)
+                    self.fail(
+                        "heartbeat did not recover after one transient; "
+                        f"state={failed.lifecycle_state.value}, "
+                        f"result_blob={result_path in output.payloads}"
+                    )
+                clock.advance(second_interval)
+                sleep.releases.put_nowait(None)
+                await asyncio.wait_for(store.recovery_observed.wait(), timeout=1)
+                release_handler.set()
+                self.assertEqual(await asyncio.wait_for(run_task, timeout=2), 0)
+            finally:
+                release_handler.set()
+                if not run_task.done():
+                    await asyncio.wait_for(run_task, timeout=2)
+
+        current = await store.get("scope-a", task_id)
+        self.assertEqual(store.failure_count, 1)
+        self.assertEqual(output.payloads[result_path], {"taskId": task_id})
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.SUCCEEDED)
+        self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
+        self.assertEqual(len(callback_sender.calls), 1)
+        self.assertEqual(self._active_heartbeat_tasks(task_id), [])
+        heartbeat_records = [
+            call
+            for call in record.call_args_list
+            if call.args and call.args[0] == "worker.heartbeat"
+        ]
+        self.assertEqual(len(heartbeat_records), 1)
+        self.assertEqual(
+            heartbeat_records[0].args[1],
+            {"task.id": task_id, "operation": "worker.heartbeat"},
+        )
+        self.assertEqual(heartbeat_records[0].kwargs["outcome"], "failure")
+        self.assertEqual(
+            heartbeat_records[0].kwargs["error_code"],
+            expected_error_code,
+        )
+
+    async def test_transient_heartbeat_store_failure_recovers_without_data_loss(self) -> None:
+        module = self._module()
+        for operation in ("get", "replace"):
+            with self.subTest(operation=operation), self.assertLogs(
+                module.logger.name,
+                level="WARNING",
+            ) as captured:
+                await self._assert_heartbeat_fault_recovers(
+                    operation=operation,
+                    error=self.PublicError(
+                        "CONTROL_STORE_UNAVAILABLE",
+                        "secret=https://control.example.invalid/?sig=hidden",
+                    ),
+                    expected_error_code="CONTROL_STORE_UNAVAILABLE",
+                )
+            log_text = "\n".join(captured.output)
+            self.assertIn(str(self.task.task_id), log_text)
+            self.assertIn("CONTROL_STORE_UNAVAILABLE", log_text)
+            self.assertNotIn("control.example.invalid", log_text)
+            self.assertNotIn("hidden", log_text)
+
+    async def test_unexpected_heartbeat_store_failure_recovers_without_data_loss(self) -> None:
+        module = self._module()
+        with self.assertLogs(module.logger.name, level="WARNING") as captured:
+            await self._assert_heartbeat_fault_recovers(
+                operation="get",
+                error=RuntimeError(
+                    "secret=https://control.example.invalid/?sig=hidden"
+                ),
+                expected_error_code="RuntimeError",
+            )
+        log_text = "\n".join(captured.output)
+        self.assertIn(str(self.task.task_id), log_text)
+        self.assertIn("RuntimeError", log_text)
+        self.assertNotIn("control.example.invalid", log_text)
+        self.assertNotIn("hidden", log_text)
+
+    async def test_stop_heartbeat_suppresses_stored_exception_without_sensitive_log(
+        self,
+    ) -> None:
+        module = self._module()
+        worker, _, _, _, _ = await self._build_worker()
+        task_id = str(self.task.task_id)
+
+        async def failed_heartbeat() -> None:
+            raise RuntimeError("secret=https://control.example.invalid/?sig=hidden")
+
+        heartbeat = asyncio.create_task(
+            failed_heartbeat(),
+            name=f"worker-heartbeat:{task_id}",
+        )
+        await asyncio.sleep(0)
+
+        with self.assertLogs(module.logger.name, level="WARNING") as captured:
+            await worker._stop_heartbeat(heartbeat, task_id)
+
+        log_text = "\n".join(captured.output)
+        self.assertIn(task_id, log_text)
+        self.assertIn("RuntimeError", log_text)
+        self.assertNotIn("control.example.invalid", log_text)
+        self.assertNotIn("hidden", log_text)
 
     async def test_sync_handler_runs_off_loop_and_returned_awaitable_is_awaited(self) -> None:
         handler_started = threading.Event()

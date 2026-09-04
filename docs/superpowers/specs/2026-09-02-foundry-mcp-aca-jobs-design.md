@@ -195,7 +195,7 @@ single sources of truth, not duplicate snippets in `SKILL.md`.
 
 | File | Responsibility |
 |---|---|
-| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.0`. |
+| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.1`. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py` | Canonical FastMCP server assembly and HTTP entrypoint. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py` | Small MCP Tasks `ServerExtension` adapter when the pinned FastMCP Tasks extension cannot bind directly to external ACA execution state. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py` | Shared start, get, cancel, idempotency, status translation, and reconciliation service used by Tasks and fallback tools. |
@@ -392,7 +392,7 @@ caller-provided key; the raw key is not stored.
 | `callbackErrorCode` | Delivery-specific stable warning code or null; it does not convert successful business work to `Failed`. |
 | `cancellationRequestedAt` | Timestamp or null; cancellation intent does not create an extra lifecycle state. |
 | `startAttemptedAt` / `startAttemptCount` | Uncertain-start reconciliation bounds. |
-| `workerClaimedAt` / `workerClaimToken` / `workerClaimExpiresAt` | Job-side idempotency evidence and active-lease boundary. The exact-token ETag heartbeat renews the expiry while a business handler runs. |
+| `workerClaimedAt` / `workerClaimToken` / `workerClaimExpiresAt` | Job-side idempotency evidence and active-lease boundary. The exact-token ETag heartbeat renews the expiry while a business handler runs. Renewal failures are best-effort and safely logged; the next interval retries, while a persistent outage lets the lease expire naturally. |
 | `createdAt` / `updatedAt` / `completedAt` | UTC ISO-8601 lifecycle timestamps. |
 | `_etag` | Cosmos optimistic concurrency token used on every mutation. |
 
@@ -702,7 +702,8 @@ Tests use mocks/fakes for Azure and callback boundaries and cover:
   matches;
 - bounded unresolved-state reconciliation from `startAttemptedAt` (falling back
   to `updatedAt`) and protection by a renewed active worker lease;
-- exact-token, ETag-guarded worker heartbeats, off-loop synchronous handlers,
+- exact-token, ETag-guarded worker heartbeats, transient and unexpected
+  heartbeat-error recovery without data loss, off-loop synchronous handlers,
   and heartbeat cleanup on completion, failure, cancellation, takeover, or a
   terminal task;
 - callback alias and input-reference allowlists;

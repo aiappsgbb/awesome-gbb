@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -195,7 +195,11 @@ failure.
 While the business handler runs, the worker renews `workerClaimExpiresAt` under
 the current ETag and exact claim token at an interval below the lease. It stops
 the heartbeat before success or failure persistence. Synchronous handlers run
-off the event loop, and any awaitable they return is still awaited.
+off the event loop, and any awaitable they return is still awaited. Heartbeat
+store failures are best-effort: record only the task ID and stable error code or
+exception class, retry on the next interval, and let the lease expire naturally
+during a persistent outage. A heartbeat failure must never replace a successful
+handler result or expose exception payloads, URLs, or secrets.
 
 The store itself uses optimistic concurrency (`_etag`) and rejects stale
 claims. Cosmos documents are filtered to known `TaskRecord` names and aliases:

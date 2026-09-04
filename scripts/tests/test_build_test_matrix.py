@@ -161,6 +161,19 @@ class TestFullMatrix(unittest.TestCase):
 
 
 class TestUnitWorkflowContract(unittest.TestCase):
+    def test_unit_job_budget_covers_template_docker_and_bicep_tests(self) -> None:
+        workflow_text = (
+            ROOT / ".github" / "workflows" / "skill-test.yml"
+        ).read_text(encoding="utf-8")
+        workflow = yaml.safe_load(workflow_text)
+
+        self.assertEqual(workflow["jobs"]["unit-tests"]["timeout-minutes"], 15)
+        self.assertIn(
+            "69-test foundry-mcp-aca-jobs template suite",
+            workflow_text,
+        )
+        self.assertIn("Docker build/run and Bicep compilation", workflow_text)
+
     def test_unit_install_contains_bounded_mcp_aca_jobs_dependencies(self) -> None:
         workflow = yaml.safe_load(
             (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(
