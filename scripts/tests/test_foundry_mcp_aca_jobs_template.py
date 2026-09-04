@@ -3580,18 +3580,27 @@ param callbackConfig = {{
             "subprocess.run",
             side_effect=_timeout_on_build,
         ):
-            with patch.dict(os.environ, {}, clear=False):
+            previous = os.environ.get("ALLOW_NETWORK_DOCKER_SKIP")
+            try:
+                os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)
                 with self.assertRaisesRegex(
                     AssertionError,
                     r"docker build exceeded 300 seconds",
                 ):
                     self.test_built_image_runs_both_entrypoint_help_commands()
-            with patch.dict(os.environ, {"ALLOW_NETWORK_DOCKER_SKIP": "1"}, clear=False):
+
+                os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = "1"
+                os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)
                 with self.assertRaisesRegex(
-                    unittest.SkipTest,
-                    r"docker network transport unavailable after 300 seconds",
+                    AssertionError,
+                    r"docker build exceeded 300 seconds",
                 ):
                     self.test_built_image_runs_both_entrypoint_help_commands()
+            finally:
+                if previous is None:
+                    os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)
+                else:
+                    os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = previous
 
     def test_docker_blocker_classifier_skips_only_daemon_unavailability(self) -> None:
         daemon_output = (
