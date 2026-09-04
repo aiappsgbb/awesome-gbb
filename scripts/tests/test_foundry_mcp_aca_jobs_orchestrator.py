@@ -830,6 +830,128 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exhausted.lifecycle_state, LifecycleState.FAILED)
         self.assertEqual(exhausted.error_code, "ACA_EXECUTION_STATE_UNRESOLVED")
 
+    async def test_repeated_unknown_without_start_timestamp_preserves_budget_anchor(self) -> None:
+        store = InMemoryControlStore()
+        orchestrator = self._orchestrator(store)
+        created = await store.create_or_get(
+            TaskRecord.new(
+                owner_scope=self.owner_scope,
+                job_type="import",
+                idempotency_key_hash="repeated-unknown-hash",
+                request_fingerprint="repeated-unknown-fingerprint",
+                input_ref="https://input.example.invalid/input.json",
+                callback_alias="callback",
+            )
+        )
+        bound = await store.replace(
+            created.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.RUNNING,
+                    "aca_execution_id": "repeated-unknown-exec",
+                    "start_attempted_at": None,
+                    "updated_at": self.fixed_now,
+                }
+            ),
+            created.etag,
+        )
+        self.jobs.get.return_value = self._make_execution(
+            execution_id="repeated-unknown-exec",
+            status="Unknown",
+            start_time=self.fixed_now,
+            task_id=str(bound.task_id),
+        )
+
+        observations: list[TaskRecord] = []
+        for minute in range(11):
+            observations.append(
+                await orchestrator.get_status(
+                    self.owner_scope,
+                    str(bound.task_id),
+                )
+            )
+            if minute < 10:
+                self.clock.advance(60)
+
+        self.assertEqual(observations[-1].lifecycle_state, LifecycleState.FAILED)
+        self.assertEqual(
+            observations[-1].error_code,
+            "ACA_EXECUTION_STATE_UNRESOLVED",
+        )
+        for observation in observations[:-1]:
+            self.assertEqual(observation.lifecycle_state, LifecycleState.RUNNING)
+            self.assertEqual(observation.updated_at, self.fixed_now)
+            self.assertEqual(observation.etag, bound.etag)
+        self.assertEqual(observations[-1].etag, "3")
+
+    async def test_other_unresolved_statuses_without_start_timestamp_share_budget_anchor(self) -> None:
+        for aca_state, expected_error in (
+            ("Degraded", "ACA_EXECUTION_STATE_UNRESOLVED"),
+            ("Succeeded", "RESULT_REFERENCE_MISSING"),
+        ):
+            with self.subTest(aca_state=aca_state):
+                clock = ManualClock(self.fixed_now)
+                jobs = FakeJobs()
+                store = InMemoryControlStore()
+                orchestrator = Orchestrator(
+                    store,
+                    jobs,
+                    self.policy,
+                    clock,
+                    sleep=self.sleep,
+                )
+                created = await store.create_or_get(
+                    TaskRecord.new(
+                        owner_scope=self.owner_scope,
+                        job_type="import",
+                        idempotency_key_hash=f"repeated-{aca_state}-hash",
+                        request_fingerprint=f"repeated-{aca_state}-fingerprint",
+                        input_ref="https://input.example.invalid/input.json",
+                        callback_alias="callback",
+                    )
+                )
+                bound = await store.replace(
+                    created.model_copy(
+                        update={
+                            "lifecycle_state": LifecycleState.RUNNING,
+                            "aca_execution_id": f"repeated-{aca_state}-exec",
+                            "start_attempted_at": None,
+                            "updated_at": self.fixed_now,
+                        }
+                    ),
+                    created.etag,
+                )
+                jobs.get.return_value = self._make_execution(
+                    execution_id=f"repeated-{aca_state}-exec",
+                    status=aca_state,
+                    start_time=self.fixed_now,
+                    task_id=str(bound.task_id),
+                )
+
+                observations: list[TaskRecord] = []
+                for minute in range(11):
+                    observations.append(
+                        await orchestrator.get_status(
+                            self.owner_scope,
+                            str(bound.task_id),
+                        )
+                    )
+                    if minute < 10:
+                        clock.advance(60)
+
+                self.assertEqual(
+                    observations[-1].lifecycle_state,
+                    LifecycleState.FAILED,
+                )
+                self.assertEqual(observations[-1].error_code, expected_error)
+                for observation in observations[:-1]:
+                    self.assertEqual(
+                        observation.lifecycle_state,
+                        LifecycleState.RUNNING,
+                    )
+                    self.assertEqual(observation.updated_at, self.fixed_now)
+                    self.assertEqual(observation.etag, bound.etag)
+                self.assertEqual(observations[-1].etag, "3")
+
     def test_bind_execution_passes_reconciliation_exhaustion_to_state_mapper(self) -> None:
         source = inspect.getsource(Orchestrator._bind_execution)
 
@@ -954,6 +1076,231 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final.aca_execution_id, "exec-race")
         self.assertIsNotNone(final.cancellation_requested_at)
         self.jobs.stop.assert_awaited_once_with(self.policy.job("import"), "exec-race")
+
+    async def test_late_start_after_terminal_cancellation_is_adopted_and_stopped(self) -> None:
+        store = InMemoryControlStore()
+        orchestrator = self._orchestrator(store)
+        start_entered = asyncio.Event()
+        release_start = asyncio.Event()
+
+        async def start_after_terminal(
+            _job_policy: object,
+            _owner_scope: str,
+            task_id: str,
+        ) -> AcaExecution:
+            start_entered.set()
+            await release_start.wait()
+            return self._make_execution(
+                execution_id="exec-terminal-orphan",
+                status="Running",
+                start_time=self.fixed_now,
+                task_id=task_id,
+            )
+
+        self.jobs.start.side_effect = start_after_terminal
+        self.jobs.list.return_value = []
+        start_task = asyncio.create_task(
+            orchestrator.start(self.request, self.owner_scope),
+            name="late-terminal-start",
+        )
+
+        try:
+            await asyncio.wait_for(start_entered.wait(), timeout=1)
+            [starting] = await store.list_reconcilable()
+            cancel_ack = await orchestrator.cancel(
+                self.owner_scope,
+                str(starting.task_id),
+            )
+            self.assertEqual(cancel_ack.lifecycle_state, LifecycleState.STARTING)
+            self.assertIsNone(cancel_ack.aca_execution_id)
+
+            self.clock.advance(31)
+            terminal = await orchestrator.reconcile(
+                self.owner_scope,
+                str(starting.task_id),
+            )
+            self.assertEqual(terminal.lifecycle_state, LifecycleState.CANCELLED)
+            self.assertIsNone(terminal.aca_execution_id)
+            self.jobs.stop.assert_not_awaited()
+
+            preserved = (
+                terminal.lifecycle_state,
+                terminal.error_code,
+                terminal.result_url,
+                terminal.worker_claimed_at,
+                terminal.worker_claim_token,
+                terminal.worker_claim_expires_at,
+                terminal.cancellation_requested_at,
+                terminal.completed_at,
+            )
+            release_start.set()
+            final = await asyncio.wait_for(start_task, timeout=1)
+        finally:
+            release_start.set()
+            if not start_task.done():
+                await asyncio.wait_for(start_task, timeout=1)
+
+        self.assertEqual(final.aca_execution_id, "exec-terminal-orphan")
+        self.assertEqual(
+            (
+                final.lifecycle_state,
+                final.error_code,
+                final.result_url,
+                final.worker_claimed_at,
+                final.worker_claim_token,
+                final.worker_claim_expires_at,
+                final.cancellation_requested_at,
+                final.completed_at,
+            ),
+            preserved,
+        )
+        self.jobs.stop.assert_awaited_once_with(
+            self.policy.job("import"),
+            "exec-terminal-orphan",
+        )
+
+    async def test_late_orphans_adopt_all_terminal_states_but_known_completion_is_not_stopped(
+        self,
+    ) -> None:
+        for terminal_state in (
+            LifecycleState.SUCCEEDED,
+            LifecycleState.FAILED,
+            LifecycleState.CANCELLED,
+        ):
+            with self.subTest(terminal_state=terminal_state):
+                store = InMemoryControlStore()
+                jobs = FakeJobs()
+                orchestrator = Orchestrator(
+                    store,
+                    jobs,
+                    self.policy,
+                    self.clock,
+                    sleep=self.sleep,
+                )
+                current = await store.create_or_get(
+                    TaskRecord.new(
+                        owner_scope=self.owner_scope,
+                        job_type="import",
+                        idempotency_key_hash=f"terminal-{terminal_state.value}",
+                        request_fingerprint=f"terminal-{terminal_state.value}",
+                        input_ref="https://input.example.invalid/input.json",
+                        callback_alias="callback",
+                    )
+                )
+                if terminal_state is LifecycleState.SUCCEEDED:
+                    current = await store.replace(
+                        current.model_copy(
+                            update={"lifecycle_state": LifecycleState.RUNNING}
+                        ),
+                        current.etag,
+                    )
+                    terminal = await store.replace(
+                        current.model_copy(
+                            update={
+                                "lifecycle_state": terminal_state,
+                                "result_url": self.policy.validate_result(
+                                    "https://result.example.invalid/result.json"
+                                ),
+                                "completed_at": self.fixed_now,
+                            }
+                        ),
+                        current.etag,
+                    )
+                else:
+                    terminal = await store.replace(
+                        current.model_copy(
+                            update={
+                                "lifecycle_state": terminal_state,
+                                "error_code": (
+                                    "TERMINAL_FAILURE"
+                                    if terminal_state is LifecycleState.FAILED
+                                    else None
+                                ),
+                                "completed_at": self.fixed_now,
+                            }
+                        ),
+                        current.etag,
+                    )
+                execution_id = f"late-{terminal_state.value}"
+                preserved = terminal.model_dump(
+                    exclude={"aca_execution_id", "etag"}
+                )
+
+                adopted = await orchestrator._bind_execution(
+                    terminal,
+                    self._make_execution(
+                        execution_id=execution_id,
+                        status="Running",
+                        start_time=self.fixed_now,
+                        task_id=str(terminal.task_id),
+                    ),
+                    self.policy.job("import"),
+                )
+
+                self.assertEqual(adopted.aca_execution_id, execution_id)
+                self.assertEqual(
+                    adopted.model_dump(exclude={"aca_execution_id", "etag"}),
+                    preserved,
+                )
+                jobs.stop.assert_awaited_once_with(
+                    self.policy.job("import"),
+                    execution_id,
+                )
+
+        store = InMemoryControlStore()
+        jobs = FakeJobs()
+        orchestrator = Orchestrator(
+            store,
+            jobs,
+            self.policy,
+            self.clock,
+            sleep=self.sleep,
+        )
+        current = await store.create_or_get(
+            TaskRecord.new(
+                owner_scope=self.owner_scope,
+                job_type="import",
+                idempotency_key_hash="known-completion",
+                request_fingerprint="known-completion",
+                input_ref="https://input.example.invalid/input.json",
+                callback_alias="callback",
+            )
+        )
+        running = await store.replace(
+            current.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.RUNNING,
+                    "aca_execution_id": "exec-authoritative",
+                }
+            ),
+            current.etag,
+        )
+        succeeded = await store.replace(
+            running.model_copy(
+                update={
+                    "lifecycle_state": LifecycleState.SUCCEEDED,
+                    "result_url": self.policy.validate_result(
+                        "https://result.example.invalid/result.json"
+                    ),
+                    "completed_at": self.fixed_now,
+                }
+            ),
+            running.etag,
+        )
+
+        polled = await orchestrator._bind_execution(
+            succeeded,
+            self._make_execution(
+                execution_id="exec-authoritative",
+                status="Succeeded",
+                start_time=self.fixed_now,
+                task_id=str(succeeded.task_id),
+            ),
+            self.policy.job("import"),
+        )
+
+        self.assertEqual(polled, succeeded)
+        jobs.stop.assert_not_awaited()
 
     async def test_cancelled_starting_unbound_is_preserved_during_grace_without_restart(self) -> None:
         store = InMemoryControlStore()

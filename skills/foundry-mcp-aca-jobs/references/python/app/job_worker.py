@@ -100,6 +100,10 @@ TERMINAL_STATES = {
 }
 
 
+class _WorkerClaimLost(RuntimeError):
+    """Signals that a newer worker claim owns the task."""
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -290,10 +294,19 @@ class JobWorker:
                             str(claimed.task_id),
                         )
                 except PublicError as error:
-                    await self._persist_failure(claimed, error.code)
+                    try:
+                        await self._persist_failure(claimed, error.code)
+                    except _WorkerClaimLost:
+                        self._record_claim_lost(claimed)
                     return 0
                 except Exception:
-                    await self._persist_failure(claimed, "WORKER_EXECUTION_FAILED")
+                    try:
+                        await self._persist_failure(
+                            claimed,
+                            "WORKER_EXECUTION_FAILED",
+                        )
+                    except _WorkerClaimLost:
+                        self._record_claim_lost(claimed)
                     return 0
 
                 try:
@@ -303,7 +316,11 @@ class JobWorker:
                     with self._telemetry.operation("worker.output", self._telemetry_attributes(claimed, "worker.output")):
                         result_url = await self._output.get(result_path)
 
-            succeeded = await self._persist_succeeded(claimed, result_url)
+            try:
+                succeeded = await self._persist_succeeded(claimed, result_url)
+            except _WorkerClaimLost:
+                self._record_claim_lost(claimed)
+                return 0
             await self._deliver_callback_if_ready(succeeded.owner_scope, str(succeeded.task_id))
             return 0
 
@@ -392,6 +409,14 @@ class JobWorker:
                 task_id,
                 telemetry_error.__class__.__name__,
             )
+
+    def _record_claim_lost(self, task: TaskRecord) -> None:
+        self._telemetry.record(
+            "worker.claim_lost",
+            self._telemetry_attributes(task, "worker.claim_lost"),
+            outcome="conflict",
+            error_code="WORKER_CLAIM_LOST",
+        )
 
     async def _stop_heartbeat(
         self,
@@ -483,8 +508,15 @@ class JobWorker:
 
     async def _persist_failure(self, task: TaskRecord, error_code: str) -> TaskRecord:
         now = self._clock()
+        claim_token = task.worker_claim_token
 
         def mutate(current: TaskRecord) -> TaskRecord:
+            if (
+                claim_token is None
+                or current.worker_claim_token is None
+                or current.worker_claim_token != claim_token
+            ):
+                raise _WorkerClaimLost
             if current.lifecycle_state in TERMINAL_STATES:
                 return current
             return current.model_copy(
@@ -506,8 +538,15 @@ class JobWorker:
 
     async def _persist_succeeded(self, task: TaskRecord, result_url: str) -> TaskRecord:
         now = self._clock()
+        claim_token = task.worker_claim_token
 
         def mutate(current: TaskRecord) -> TaskRecord:
+            if (
+                claim_token is None
+                or current.worker_claim_token is None
+                or current.worker_claim_token != claim_token
+            ):
+                raise _WorkerClaimLost
             if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
                 return current
             return current.model_copy(

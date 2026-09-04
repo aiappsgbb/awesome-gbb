@@ -378,6 +378,61 @@ class FoundryMcpAcaJobsStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConcurrencyError):
             await store.replace(callback_update, "9")
 
+    async def test_cosmos_replace_preserves_future_fields_without_resurrecting_cleared_known_fields(self) -> None:
+        class StoringContainer(_ContainerProxy):
+            def __init__(self, document: dict[str, object]) -> None:
+                super().__init__()
+                self.document = document
+                self.replace_body: dict[str, object] | None = None
+                self.read_item.return_value = document
+                del self.replace_item
+
+            async def replace_item(
+                self,
+                *,
+                item: str,
+                body: dict[str, object],
+                etag: str,
+                match_condition: object,
+            ) -> dict[str, object]:
+                self.replace_body = dict(body)
+                self.document = {**body, "_etag": "10"}
+                return self.document
+
+        current = self.task.model_copy(
+            update={
+                "lifecycle_state": LifecycleState.RUNNING,
+                "error_code": "STALE_KNOWN_ERROR",
+                "etag": "9",
+            }
+        )
+        raw = self._cosmos_document(current, etag="9")
+        raw["futureSchemaField"] = {"nested": ["preserve", 2]}
+        raw["_futureServiceField"] = "do-not-round-trip"
+        container = StoringContainer(raw)
+        store = CosmosControlStore(container)
+        replacement = current.model_copy(
+            update={
+                "error_code": None,
+                "callback_error_code": None,
+            }
+        )
+
+        replaced = await store.replace(replacement, "9")
+
+        self.assertIsNotNone(container.replace_body)
+        for body in (container.replace_body, container.document):
+            self.assertIn("futureSchemaField", body)
+            self.assertEqual(body["futureSchemaField"], {"nested": ["preserve", 2]})
+            self.assertNotIn("_futureServiceField", body)
+            self.assertNotIn("_rid", body)
+            self.assertNotIn("errorCode", body)
+            self.assertNotIn("callbackErrorCode", body)
+            self.assertEqual(body["id"], str(current.task_id))
+        self.assertEqual(replaced.etag, "10")
+        self.assertIsNone(replaced.error_code)
+        self.assertEqual(container.read_item.await_count, 1)
+
     async def test_cosmos_replace_exact_status_translation_and_unavailable_fallbacks(self) -> None:
         container = _ContainerProxy()
         store = CosmosControlStore(container)

@@ -297,9 +297,16 @@ class Orchestrator:
 
     async def _bind_execution(self, task: TaskRecord, execution: AcaExecution, job_policy: Any) -> TaskRecord:
         now = self._clock()
+        adopted_terminal_execution = False
 
         def mutate(current: TaskRecord) -> TaskRecord:
+            nonlocal adopted_terminal_execution
             if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
+                if current.aca_execution_id is None:
+                    adopted_terminal_execution = True
+                    return current.model_copy(
+                        update={"aca_execution_id": execution.execution_id}
+                    )
                 return current
             if current.aca_execution_id not in {None, execution.execution_id}:
                 return current
@@ -356,9 +363,23 @@ class Orchestrator:
                         "updated_at": now,
                     }
                 )
+            if (
+                unresolved
+                and not reconciliation_exhausted
+                and mapped.model_copy(update={"updated_at": current.updated_at})
+                == current
+            ):
+                return current
             return mapped
 
         persisted = await self._apply_with_retry(task.owner_scope, str(task.task_id), mutate)
+        if (
+            adopted_terminal_execution
+            and persisted.lifecycle_state
+            in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}
+            and persisted.aca_execution_id == execution.execution_id
+        ):
+            await self._best_effort_stop(job_policy, execution.execution_id)
         if (
             persisted.cancellation_requested_at is not None
             and persisted.lifecycle_state

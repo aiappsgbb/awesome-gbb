@@ -2098,11 +2098,26 @@ Expected: PR body contains the run and job links.
 
 Task20 status note (2026-09-03): local live validation passed ARM positive/negative assertions, shared immutable digest, exact entrypoints, distinct UAMIs, exact RBAC actions, protocol handshakes, and real Prompt+Hosted MCP calls. Tenant-enforced private Cosmos/storage networking blocked durable task persistence/job start, so completed task/idempotency/cancellation/callback markers remain pending. Private endpoint completion is infeasible without modifying or replacing the non-VNet-integrated shared ACA environment. Cleanup was best effort; a standing-resource lock prevented removing residual role assignments/empty containers. Evidence remains in session state and was not committed.
 
+## Focused re-review hardening (2026-09-04)
+
+- [x] PATCH-bump `foundry-mcp-aca-jobs` from 1.4.1 to 1.4.2.
+- [x] Adopt and stop a late `jobs.start` execution after terminal cancellation
+  without mutating terminal lifecycle, result, error, cancellation, or claim
+  fields; do not stop an already-known authoritative terminal execution.
+- [x] Preserve the first `updatedAt` fallback anchor and ETag across identical
+  unresolved polls when `startAttemptedAt` is absent, so `Unknown`, `Degraded`,
+  and `Succeeded` without a result exhaust the ten-minute budget.
+- [x] Preserve non-system future Cosmos fields across normal ETag replacement
+  while canonical known fields remain authoritative and cleared fields stay
+  cleared.
+- [x] Reject stale worker success and failure persistence after an exact-token
+  claim takeover, return zero with safe telemetry, and suppress callbacks.
+
 ---
 
 ## Final acceptance checklist
 
-- [x] `foundry-mcp-aca-jobs` exists at version 1.4.1 with valid fixed-shape frontmatter.
+- [x] `foundry-mcp-aca-jobs` exists at version 1.4.2 with valid fixed-shape frontmatter.
 - [x] MCP Tasks uses `AcaTasksExtension`; Docket never executes business work.
 - [x] Tasks-aware and unaware clients share one orchestrator and durable record.
 - [x] Cosmos record includes every approved field and all writes are ETag guarded.

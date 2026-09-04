@@ -332,6 +332,33 @@ class _HeartbeatFaultStore(_RecordingStore):
         return result
 
 
+class _CoordinatedTerminalStore(_RecordingStore):
+    def __init__(self, worker_task_name: str) -> None:
+        super().__init__()
+        self.worker_task_name = worker_task_name
+        self.terminal_replace_entered = asyncio.Event()
+        self.release_terminal_replace = asyncio.Event()
+        self._blocked = False
+
+    async def replace(self, task: TaskRecord, etag: str | None) -> TaskRecord:
+        current_task = asyncio.current_task()
+        if (
+            not self._blocked
+            and current_task is not None
+            and current_task.get_name() == self.worker_task_name
+            and task.lifecycle_state
+            in {
+                LifecycleState.SUCCEEDED,
+                LifecycleState.FAILED,
+                LifecycleState.CANCELLED,
+            }
+        ):
+            self._blocked = True
+            self.terminal_replace_entered.set()
+            await self.release_terminal_replace.wait()
+        return await super().replace(task, etag)
+
+
 class _FakeBlobClient:
     def __init__(self, url: str, *, exists: bool = True) -> None:
         self.url = url
@@ -494,6 +521,27 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def _seed_task(self, store: Any, task: TaskRecord | None = None) -> TaskRecord:
         task = task or self.task
         return await store.create_or_get(task)
+
+    async def _take_over_worker_claim(
+        self,
+        store: _RecordingStore,
+    ) -> tuple[str, TaskRecord]:
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertIsNotNone(current.worker_claim_token)
+        claiming_token = current.worker_claim_token
+        replacement = await store.replace(
+            current.model_copy(
+                update={
+                    "worker_claimed_at": self.fixed_now + timedelta(seconds=1),
+                    "worker_claim_token": "claim-takeover",
+                    "worker_claim_expires_at": self.fixed_now
+                    + timedelta(minutes=10),
+                    "updated_at": self.fixed_now + timedelta(seconds=1),
+                }
+            ),
+            current.etag,
+        )
+        return claiming_token, replacement
 
     @staticmethod
     def _active_heartbeat_tasks(task_id: str) -> list[asyncio.Task[Any]]:
@@ -1315,6 +1363,128 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler.calls, [])
         self.assertEqual(callback_sender.calls, [])
         self.assertEqual(output.write_calls, [])
+
+    async def test_stale_worker_success_cannot_clobber_claim_takeover(self) -> None:
+        store = _CoordinatedTerminalStore("stale-success")
+        worker, _, handler, callback_sender, output = await self._build_worker(
+            store=store
+        )
+        await self._seed_task(store)
+        task_id = str(self.task.task_id)
+        run_task = asyncio.create_task(
+            worker.run("scope-a", task_id),
+            name="stale-success",
+        )
+
+        with patch.object(
+            worker._telemetry,
+            "record",
+            wraps=worker._telemetry.record,
+        ) as record:
+            try:
+                await asyncio.wait_for(
+                    store.terminal_replace_entered.wait(),
+                    timeout=1,
+                )
+                claiming_token, replacement = await self._take_over_worker_claim(
+                    store
+                )
+                store.release_terminal_replace.set()
+                self.assertEqual(await asyncio.wait_for(run_task, timeout=2), 0)
+            finally:
+                store.release_terminal_replace.set()
+                if not run_task.done():
+                    await asyncio.wait_for(run_task, timeout=2)
+
+        current = await store.get("scope-a", task_id)
+        self.assertEqual(current, replacement)
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.RUNNING)
+        self.assertEqual(current.worker_claim_token, "claim-takeover")
+        self.assertIsNone(current.result_url)
+        self.assertEqual(len(handler.calls), 1)
+        self.assertEqual(len(output.write_calls), 1)
+        self.assertEqual(callback_sender.calls, [])
+        claim_lost_calls = [
+            call
+            for call in record.call_args_list
+            if call.args and call.args[0] == "worker.claim_lost"
+        ]
+        self.assertEqual(len(claim_lost_calls), 1)
+        self.assertNotIn(claiming_token, repr(claim_lost_calls[0]))
+        self.assertNotIn("claim-takeover", repr(claim_lost_calls[0]))
+
+    async def test_stale_worker_failure_cannot_clobber_claim_takeover(self) -> None:
+        store = _CoordinatedTerminalStore("stale-failure")
+        worker, _, handler, callback_sender, output = await self._build_worker(
+            store=store,
+            handler=_RecordingHandler(exc=RuntimeError("handler failed")),
+        )
+        await self._seed_task(store)
+        task_id = str(self.task.task_id)
+        run_task = asyncio.create_task(
+            worker.run("scope-a", task_id),
+            name="stale-failure",
+        )
+
+        try:
+            await asyncio.wait_for(
+                store.terminal_replace_entered.wait(),
+                timeout=1,
+            )
+            _, replacement = await self._take_over_worker_claim(store)
+            store.release_terminal_replace.set()
+            self.assertEqual(await asyncio.wait_for(run_task, timeout=2), 0)
+        finally:
+            store.release_terminal_replace.set()
+            if not run_task.done():
+                await asyncio.wait_for(run_task, timeout=2)
+
+        current = await store.get("scope-a", task_id)
+        self.assertEqual(current, replacement)
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.RUNNING)
+        self.assertEqual(current.worker_claim_token, "claim-takeover")
+        self.assertIsNone(current.error_code)
+        self.assertEqual(len(handler.calls), 1)
+        self.assertEqual(output.write_calls, [])
+        self.assertEqual(callback_sender.calls, [])
+
+    async def test_stale_existing_output_worker_suppresses_callback_after_claim_takeover(
+        self,
+    ) -> None:
+        store = _CoordinatedTerminalStore("stale-callback")
+        worker, _, handler, callback_sender, output = await self._build_worker(
+            store=store
+        )
+        await self._seed_task(store)
+        task_id = str(self.task.task_id)
+        result_path = self._task_path(task_id)
+        output.urls[result_path] = f"https://results.example.com/{result_path}"
+        run_task = asyncio.create_task(
+            worker.run("scope-a", task_id),
+            name="stale-callback",
+        )
+
+        try:
+            await asyncio.wait_for(
+                store.terminal_replace_entered.wait(),
+                timeout=1,
+            )
+            _, replacement = await self._take_over_worker_claim(store)
+            store.release_terminal_replace.set()
+            self.assertEqual(await asyncio.wait_for(run_task, timeout=2), 0)
+        finally:
+            store.release_terminal_replace.set()
+            if not run_task.done():
+                await asyncio.wait_for(run_task, timeout=2)
+
+        current = await store.get("scope-a", task_id)
+        self.assertEqual(current, replacement)
+        self.assertEqual(current.lifecycle_state, self.LifecycleState.RUNNING)
+        self.assertEqual(current.worker_claim_token, "claim-takeover")
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(output.write_calls, [])
+        self.assertEqual(output.get_calls, [result_path])
+        self.assertEqual(callback_sender.calls, [])
 
     async def test_success_persistence_survives_concurrent_cancellation_intent_and_delivers_callback(self) -> None:
         handler_started = asyncio.Event()

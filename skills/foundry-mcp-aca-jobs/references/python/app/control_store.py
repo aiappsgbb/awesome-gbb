@@ -269,13 +269,27 @@ class CosmosControlStore:
 
     async def replace(self, task: TaskRecord, etag: str | None) -> TaskRecord:
         validated = _validate_full_task(task)
-        current = await self._read_existing(validated.owner_scope, str(validated.task_id))
+        current_document = await self._read_existing_document(
+            validated.owner_scope,
+            str(validated.task_id),
+        )
+        current = _record_from_document(current_document)
         if etag is None or current.etag != etag:
             raise ConcurrencyError("task etag no longer matches")
         if validated.lifecycle_state not in _ALLOWED_TRANSITIONS[current.lifecycle_state]:
             raise InvalidTransition(f"{current.lifecycle_state.value} -> {validated.lifecycle_state.value} is not allowed")
 
-        body = _task_document(validated)
+        body = {
+            key: deepcopy(value)
+            for key, value in current_document.items()
+            if (
+                isinstance(key, str)
+                and key != "id"
+                and not key.startswith("_")
+                and key not in _TASK_RECORD_DOCUMENT_KEYS
+            )
+        }
+        body.update(_task_document(validated))
         try:
             updated = await self._container.replace_item(
                 item=str(validated.task_id),
@@ -303,7 +317,11 @@ class CosmosControlStore:
         documents = await _consume_query_items(items)
         return [_copy_task(_record_from_document(document)) for document in documents]
 
-    async def _read_existing(self, owner_scope: str, task_id: str) -> TaskRecord:
+    async def _read_existing_document(
+        self,
+        owner_scope: str,
+        task_id: str,
+    ) -> dict[str, Any]:
         try:
             item = await self._container.read_item(item=task_id, partition_key=owner_scope)
         except Exception as exc:
@@ -312,4 +330,9 @@ class CosmosControlStore:
                     raise _safe_control_store_unavailable() from exc
                 raise _safe_not_found() from exc
             raise _safe_control_store_unavailable() from exc
-        return _record_from_document(item)
+        return dict(item)
+
+    async def _read_existing(self, owner_scope: str, task_id: str) -> TaskRecord:
+        return _record_from_document(
+            await self._read_existing_document(owner_scope, task_id)
+        )

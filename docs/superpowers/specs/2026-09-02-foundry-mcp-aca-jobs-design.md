@@ -195,7 +195,7 @@ single sources of truth, not duplicate snippets in `SKILL.md`.
 
 | File | Responsibility |
 |---|---|
-| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.1`. |
+| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.2`. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py` | Canonical FastMCP server assembly and HTTP entrypoint. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py` | Small MCP Tasks `ServerExtension` adapter when the pinned FastMCP Tasks extension cannot bind directly to external ACA execution state. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py` | Shared start, get, cancel, idempotency, status translation, and reconciliation service used by Tasks and fallback tools. |
@@ -400,8 +400,11 @@ Large output never enters this record. `resultUrl` points to output owned and
 secured by the Job's data plane.
 
 Cosmos documents are filtered to known `TaskRecord` names and aliases before
-validation. Unknown future fields are ignored for rolling compatibility;
-malformed known fields fail closed as `CONTROL_STORE_UNAVAILABLE`.
+validation. Unknown future fields are ignored by `TaskRecord` but preserved
+across ETag replacement when they are non-system fields. Replacement excludes
+`id` and unknown underscore-prefixed service metadata, then overlays canonical
+known fields so clearing a known field cannot resurrect its stale raw value.
+Malformed known fields fail closed as `CONTROL_STORE_UNAVAILABLE`.
 
 ---
 
@@ -446,7 +449,10 @@ The distinct unresolved-reconciliation budget is anchored at
 timestamp. It applies only to a bound `Degraded`/`Unknown` execution or
 `Succeeded` execution without a result. Start-reconciliation exhaustion never
 applies to bound tasks. Exhaustion clears worker claim fields only when it
-persists the resulting terminal failure.
+persists the resulting terminal failure. Without `startAttemptedAt`, the first
+transition into unresolved `Running` may set `updatedAt`; later identical
+unresolved observations are no-op reads that preserve both that anchor and the
+Cosmos ETag until the budget is exhausted.
 
 ### 9.2 MCP Tasks mapping
 
@@ -527,6 +533,12 @@ For a `Starting` record whose start outcome is uncertain:
    start to `Failed` with `START_RECONCILIATION_EXHAUSTED`. A bound execution
    remains `Running` when an ARM list is temporarily empty.
 
+If `jobs.start` returns after cancellation reconciliation has already persisted
+a terminal record, bind its execution ID only when the terminal record has none,
+without changing any other terminal field, then best-effort stop that exact late
+orphan. An already-known terminal execution observed during ordinary polling is
+authoritative and is never stopped by binding.
+
 No reconciliation path creates a new MCP `taskId` or accepts a caller-provided
 execution identifier.
 
@@ -538,7 +550,10 @@ The ACA Job owns business output and callback delivery.
 
 1. The worker writes large output to job-owned storage.
 2. It persists the credential-free `resultUrl` and terminal control state using
-   the current Cosmos `_etag`.
+   the current Cosmos `_etag` only while the current exact non-null
+   `workerClaimToken` still matches its claim. A stale worker that observes a
+   takeover records safe claim-lost telemetry, leaves authoritative state
+   untouched, and suppresses callback delivery.
 3. It resolves `callbackAlias` through static, allowlisted configuration.
 4. It posts a minimal callback with bounded exponential backoff and jitter.
 
@@ -701,7 +716,8 @@ Tests use mocks/fakes for Azure and callback boundaries and cover:
 - uncertain-start reconciliation with zero, one, and multiple execution
   matches;
 - bounded unresolved-state reconciliation from `startAttemptedAt` (falling back
-  to `updatedAt`) and protection by a renewed active worker lease;
+  to a stable, non-churning `updatedAt`) and protection by a renewed active
+  worker lease;
 - exact-token, ETag-guarded worker heartbeats, transient and unexpected
   heartbeat-error recovery without data loss, off-loop synchronous handlers,
   and heartbeat cleanup on completion, failure, cancellation, takeover, or a
@@ -711,6 +727,12 @@ Tests use mocks/fakes for Azure and callback boundaries and cover:
 - ARM start, list/read, and stop success, transient, denied, not-found, and
   terminal error translation;
 - cancellation races where work succeeds before stop completes; and
+- terminal late-start adoption and exact orphan stop without terminal lifecycle
+  mutation;
+- forward-compatible Cosmos replacement that preserves unknown application
+  fields without reviving cleared known fields;
+- stale worker success/failure rejection after exact-token takeover, including
+  callback suppression; and
 - shared-image policy validation that rejects tags or different digests.
 
 ### 15.2 In-process MCP tests

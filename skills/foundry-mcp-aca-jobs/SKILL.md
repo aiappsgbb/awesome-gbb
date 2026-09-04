@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -174,6 +174,11 @@ Uncertain starts are reconciled deterministically:
 - A cancellation request that races with start is retained during binding. Once
   that execution ID is durable, issue a cooperative best-effort stop without
   changing the returned nonterminal task state.
+- If start returns only after reconciliation has already made the record
+  terminal, ETag-adopt the late execution ID only when no execution is recorded,
+  preserve every lifecycle, error, result, cancellation, and worker-claim field,
+  then best-effort stop that exact orphan. Ordinary polling of an already-known
+  terminal execution must not stop it.
 - If the start never becomes observable, the task stays `Starting` until the
   reconciliation budget expires.
 - After three attempts or five minutes, only an unbound uncertain start fails
@@ -187,7 +192,9 @@ anchored at the existing durable `startAttemptedAt`, falling back to
 `Running` inside that budget. A later `Processing` observation never downgrades
 an already-`Running` task to `Starting`. Never terminalize while
 an active worker lease for the exact claim token has `workerClaimExpiresAt` in
-the future. Once the budget has elapsed
+the future. When `startAttemptedAt` is absent, only the first unresolved
+transition may advance `updatedAt`; identical unresolved polls are true no-ops
+that preserve the budget anchor and ETag. Once the budget has elapsed
 and no lease is active, fail with `ACA_EXECUTION_STATE_UNRESOLVED` or
 `RESULT_REFERENCE_MISSING`; clear worker claim fields only with that terminal
 failure.
@@ -200,11 +207,18 @@ store failures are best-effort: record only the task ID and stable error code or
 exception class, retry on the next interval, and let the lease expire naturally
 during a persistent outage. A heartbeat failure must never replace a successful
 handler result or expose exception payloads, URLs, or secrets.
+Before persisting worker success or failure, the ETag mutator must still observe
+the claiming worker's exact non-null `workerClaimToken`. If a replacement worker
+has taken over, the stale worker exits successfully after safe claim-lost
+telemetry; it must not mutate authoritative state or send a callback.
 
 The store itself uses optimistic concurrency (`_etag`) and rejects stale
 claims. Cosmos documents are filtered to known `TaskRecord` names and aliases:
 unknown future fields are ignored, while malformed known fields and Cosmos
-failures map to `CONTROL_STORE_UNAVAILABLE`.
+failures map to `CONTROL_STORE_UNAVAILABLE`. ETag replacement preserves
+non-system unknown fields from the raw point read, excludes `id` and
+underscore-prefixed service metadata, then overlays the canonical known record
+so cleared known fields cannot be resurrected.
 
 ## Callback contract
 
