@@ -301,6 +301,7 @@ class Orchestrator:
 
         def mutate(current: TaskRecord) -> TaskRecord:
             nonlocal adopted_terminal_execution
+            adopted_terminal_execution = False
             if current.lifecycle_state in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}:
                 if current.aca_execution_id is None:
                     adopted_terminal_execution = True
@@ -374,10 +375,12 @@ class Orchestrator:
 
         persisted = await self._apply_with_retry(task.owner_scope, str(task.task_id), mutate)
         if (
-            adopted_terminal_execution
-            and persisted.lifecycle_state
+            persisted.lifecycle_state
             in {LifecycleState.SUCCEEDED, LifecycleState.FAILED, LifecycleState.CANCELLED}
-            and persisted.aca_execution_id == execution.execution_id
+            and (
+                adopted_terminal_execution
+                or persisted.aca_execution_id != execution.execution_id
+            )
         ):
             await self._best_effort_stop(job_policy, execution.execution_id)
         if (

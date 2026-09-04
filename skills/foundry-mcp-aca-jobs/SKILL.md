@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.4.2"
+  version: "1.4.3"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -177,8 +177,10 @@ Uncertain starts are reconciled deterministically:
 - If start returns only after reconciliation has already made the record
   terminal, ETag-adopt the late execution ID only when no execution is recorded,
   preserve every lifecycle, error, result, cancellation, and worker-claim field,
-  then best-effort stop that exact orphan. Ordinary polling of an already-known
-  terminal execution must not stop it.
+  then best-effort stop that exact orphan. If another execution ID is already
+  recorded, preserve it and every terminal field without an ETag write, and
+  best-effort stop the different late execution. Ordinary polling of the
+  already-known execution ID is a pure no-op and must not stop it.
 - If the start never becomes observable, the task stays `Starting` until the
   reconciliation budget expires.
 - After three attempts or five minutes, only an unbound uncertain start fails

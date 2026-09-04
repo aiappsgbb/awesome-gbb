@@ -2100,10 +2100,13 @@ Task20 status note (2026-09-03): local live validation passed ARM positive/negat
 
 ## Focused re-review hardening (2026-09-04)
 
-- [x] PATCH-bump `foundry-mcp-aca-jobs` from 1.4.1 to 1.4.2.
+- [x] PATCH-bump `foundry-mcp-aca-jobs` from 1.4.1 through 1.4.3.
 - [x] Adopt and stop a late `jobs.start` execution after terminal cancellation
   without mutating terminal lifecycle, result, error, cancellation, or claim
   fields; do not stop an already-known authoritative terminal execution.
+- [x] Cover the synchronized terminal bind matrix: matching IDs are no-ops,
+  unbound records ETag-adopt and stop the returned execution, and conflicting
+  records preserve the first audit ID while stopping the second execution.
 - [x] Preserve the first `updatedAt` fallback anchor and ETag across identical
   unresolved polls when `startAttemptedAt` is absent, so `Unknown`, `Degraded`,
   and `Succeeded` without a result exhaust the ten-minute budget.
@@ -2117,7 +2120,7 @@ Task20 status note (2026-09-03): local live validation passed ARM positive/negat
 
 ## Final acceptance checklist
 
-- [x] `foundry-mcp-aca-jobs` exists at version 1.4.2 with valid fixed-shape frontmatter.
+- [x] `foundry-mcp-aca-jobs` exists at version 1.4.3 with valid fixed-shape frontmatter.
 - [x] MCP Tasks uses `AcaTasksExtension`; Docket never executes business work.
 - [x] Tasks-aware and unaware clients share one orchestrator and durable record.
 - [x] Cosmos record includes every approved field and all writes are ETag guarded.

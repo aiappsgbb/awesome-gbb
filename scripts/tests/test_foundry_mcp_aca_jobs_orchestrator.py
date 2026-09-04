@@ -1302,6 +1302,98 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(polled, succeeded)
         jobs.stop.assert_not_awaited()
 
+    async def test_late_start_terminal_execution_id_matrix(self) -> None:
+        for label, persisted_execution_id, expected_execution_id, expected_stops in (
+            ("same", "exec-second", "exec-second", 0),
+            ("unbound", None, "exec-second", 1),
+            ("different", "exec-first", "exec-first", 1),
+        ):
+            with self.subTest(label=label):
+                store = InMemoryControlStore()
+                jobs = FakeJobs()
+                orchestrator = Orchestrator(
+                    store,
+                    jobs,
+                    self.policy,
+                    self.clock,
+                    sleep=self.sleep,
+                )
+                start_entered = asyncio.Event()
+                release_start = asyncio.Event()
+
+                async def start_after_terminal(
+                    _job_policy: object,
+                    _owner_scope: str,
+                    task_id: str,
+                ) -> AcaExecution:
+                    start_entered.set()
+                    await release_start.wait()
+                    return self._make_execution(
+                        execution_id="exec-second",
+                        status="Running",
+                        start_time=self.fixed_now,
+                        task_id=task_id,
+                    )
+
+                jobs.start.side_effect = start_after_terminal
+                start_task = asyncio.create_task(
+                    orchestrator.start(
+                        self.request.model_copy(
+                            update={"idempotency_key": f"late-matrix-{label}"}
+                        ),
+                        self.owner_scope,
+                    ),
+                    name=f"late-terminal-{label}",
+                )
+
+                try:
+                    await asyncio.wait_for(start_entered.wait(), timeout=1)
+                    [starting] = await store.list_reconcilable()
+                    terminal = await store.replace(
+                        starting.model_copy(
+                            update={
+                                "lifecycle_state": LifecycleState.CANCELLED,
+                                "aca_execution_id": persisted_execution_id,
+                                "result_url": self.policy.validate_result(
+                                    "https://result.example.invalid/terminal.json"
+                                ),
+                                "error_code": "TERMINAL_AUDIT_ERROR",
+                                "worker_claimed_at": self.fixed_now,
+                                "worker_claim_token": "terminal-claim",
+                                "worker_claim_expires_at": self.fixed_now
+                                + timedelta(minutes=5),
+                                "cancellation_requested_at": self.fixed_now,
+                                "completed_at": self.fixed_now,
+                            }
+                        ),
+                        starting.etag,
+                    )
+                    preserved = terminal.model_dump(
+                        exclude={"aca_execution_id", "etag"}
+                    )
+                    release_start.set()
+                    final = await asyncio.wait_for(start_task, timeout=1)
+                finally:
+                    release_start.set()
+                    if not start_task.done():
+                        await asyncio.wait_for(start_task, timeout=1)
+
+                self.assertEqual(final.aca_execution_id, expected_execution_id)
+                self.assertEqual(
+                    final.model_dump(exclude={"aca_execution_id", "etag"}),
+                    preserved,
+                )
+                self.assertEqual(
+                    final.etag,
+                    str(int(terminal.etag or "0") + (persisted_execution_id is None)),
+                )
+                self.assertEqual(jobs.stop.await_count, expected_stops)
+                if expected_stops:
+                    jobs.stop.assert_awaited_once_with(
+                        self.policy.job("import"),
+                        "exec-second",
+                    )
+
     async def test_cancelled_starting_unbound_is_preserved_during_grace_without_restart(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)

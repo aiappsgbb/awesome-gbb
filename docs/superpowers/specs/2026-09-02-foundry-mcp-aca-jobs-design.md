@@ -195,7 +195,7 @@ single sources of truth, not duplicate snippets in `SKILL.md`.
 
 | File | Responsibility |
 |---|---|
-| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.2`. |
+| `skills/foundry-mcp-aca-jobs/SKILL.md` | Consumer contract, decision guidance, deployment flow, protocol behavior, security rules, failure modes, and cross-references; version `1.4.3`. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/mcp_server.py` | Canonical FastMCP server assembly and HTTP entrypoint. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/aca_tasks_extension.py` | Small MCP Tasks `ServerExtension` adapter when the pinned FastMCP Tasks extension cannot bind directly to external ACA execution state. |
 | `skills/foundry-mcp-aca-jobs/references/python/app/orchestrator.py` | Shared start, get, cancel, idempotency, status translation, and reconciliation service used by Tasks and fallback tools. |
@@ -536,8 +536,10 @@ For a `Starting` record whose start outcome is uncertain:
 If `jobs.start` returns after cancellation reconciliation has already persisted
 a terminal record, bind its execution ID only when the terminal record has none,
 without changing any other terminal field, then best-effort stop that exact late
-orphan. An already-known terminal execution observed during ordinary polling is
-authoritative and is never stopped by binding.
+orphan. If the terminal record already names a different execution, retain that
+authoritative audit ID and all terminal fields without an ETag write, then
+best-effort stop the different returned execution. A returned ID that already
+matches the terminal record is a pure no-op and is never stopped by binding.
 
 No reconciliation path creates a new MCP `taskId` or accepts a caller-provided
 execution identifier.
@@ -727,8 +729,8 @@ Tests use mocks/fakes for Azure and callback boundaries and cover:
 - ARM start, list/read, and stop success, transient, denied, not-found, and
   terminal error translation;
 - cancellation races where work succeeds before stop completes; and
-- terminal late-start adoption and exact orphan stop without terminal lifecycle
-  mutation;
+- terminal late-start handling for unbound, matching, and conflicting execution
+  IDs, including exact orphan stop without terminal lifecycle mutation;
 - forward-compatible Cosmos replacement that preserves unknown application
   fields without reviving cleared known fields;
 - stale worker success/failure rejection after exact-token takeover, including
