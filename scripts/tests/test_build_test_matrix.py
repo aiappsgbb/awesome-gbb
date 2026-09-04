@@ -196,6 +196,7 @@ class TestUnitWorkflowContract(unittest.TestCase):
                 "azure-cosmos[aio]~=4.16.4",
                 "azure-storage-blob[aio]~=12.30.1",
                 "azure-keyvault-secrets~=4.11.2",
+                "azure-monitor-query~=2.0.0",
                 "fastmcp~=4.0.1",
                 "fastmcp-tasks~=4.0.1",
                 "mcp~=2.1.1",
