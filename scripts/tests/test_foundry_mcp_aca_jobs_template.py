@@ -3590,10 +3590,9 @@ param callbackConfig = {{
                     self.test_built_image_runs_both_entrypoint_help_commands()
 
                 os.environ["ALLOW_NETWORK_DOCKER_SKIP"] = "1"
-                os.environ.pop("ALLOW_NETWORK_DOCKER_SKIP", None)
                 with self.assertRaisesRegex(
-                    AssertionError,
-                    r"docker build exceeded 300 seconds",
+                    unittest.SkipTest,
+                    r"docker network transport unavailable after 300 seconds: docker build timed out",
                 ):
                     self.test_built_image_runs_both_entrypoint_help_commands()
             finally:
