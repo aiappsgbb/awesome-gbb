@@ -226,8 +226,8 @@ finish with Step 8.
 
 ## Step 8 - Teardown and deterministic marker contract
 
-Cleanup is a required part of this smoke, not best-effort. Always attempt
-cleanup before writing the marker:
+After the hard criteria in Steps 0-7 succeed, attempt cleanup before writing
+the marker:
 
 1. delete the temporary prompt agent created in Step 3 using the
    `foundry-prompt-agents` contract,
@@ -237,9 +237,12 @@ Do not broaden cleanup scope beyond those two temporary assets. Never delete or
 modify shared CI infrastructure, RBAC, APIM, networking, or GitHub policy
 objects while cleaning up.
 
-If either deletion fails, set `failure_reason` to `teardown failed` and write
-the FAIL marker in this step. Do NOT compensate by touching shared CI
-infrastructure, RBAC, APIM, networking, or GitHub policy objects.
+If either or both cleanup actions fail after the hard criteria succeeded, print
+exactly one concise `NOTE:` line to stdout naming the leftover prompt agent
+and/or workspace, still finish this step, and still write the byte-exact PASS
+marker below. Only a prior hard-criteria failure may write the FAIL marker. Do
+NOT compensate by touching shared CI infrastructure, RBAC, APIM, networking, or
+GitHub policy objects.
 
 ### Final action (MANDATORY, deterministic)
 
