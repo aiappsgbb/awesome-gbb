@@ -25,6 +25,10 @@ EVAL_FILES = (".agentops/results/eval-exit-code", ".agentops/results/latest/resu
 DOCTOR_FILES = (".agentops/agent/doctor-exit-code", ".agentops/agent/doctor-started-at",
                 ".agentops/agent/doctor-finished-at", ".agentops/agent/history.jsonl",
                 ".agentops/release/latest/evidence.json")
+ARTIFACT_LABELS = dict(zip(EVAL_FILES + DOCTOR_FILES, (
+    "eval_exit", "results", "dataset", "doctor_exit", "doctor_started",
+    "doctor_finished", "history", "evidence",
+)))
 FIXTURE = "skills/foundry-agentops/test-fixture/consumer_prompt.md"
 LIMIT = 4 * 1024 * 1024
 LEGACY_DIRECTORY = Path("/tmp")
@@ -125,6 +129,32 @@ def parse(raw):
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=reject)
 
 
+class DiagnosticFailure(Exception):
+    """Only code-defined reasons/labels may cross the public boundary."""
+
+    def __init__(self, reason, artifact=None):
+        super().__init__(reason)
+        self.diagnostic = {"reason": reason}
+        if artifact is not None:
+            self.diagnostic["artifact"] = artifact
+
+
+def read_artifact(path, private, artifact):
+    try:
+        return read(path, private)
+    except FileNotFoundError:
+        raise DiagnosticFailure("absent", artifact) from None
+    except (OSError, ValueError):
+        raise DiagnosticFailure("unsafe_or_unreadable", artifact) from None
+
+
+def parse_artifact(raw, artifact):
+    try:
+        return parse(raw)
+    except (ValueError, TypeError, RecursionError):
+        raise DiagnosticFailure("malformed", artifact) from None
+
+
 def initialize(root, public):
     mkdir(root)
     for name in ("azure", "azd", "attempts", "workspaces"):
@@ -145,11 +175,17 @@ def prepare(root, attempt):
 
 def workspace_path(root, attempt):
     # A pointer is only a UUID, never a supplied absolute or relative path.
-    pointer = read(attempt_dir(root, attempt) / "workspace-pointer", root).decode()
-    require(re.fullmatch(r"[0-9a-f]{32}\n", pointer))
-    path = root / "workspaces" / pointer.strip()
-    with directory(path, root):
-        return path
+    pointer = read_artifact(attempt_dir(root, attempt) / "workspace-pointer", root, "workspace_pointer")
+    if not re.fullmatch(rb"[0-9a-f]{32}\n", pointer):
+        raise DiagnosticFailure("malformed", "workspace_pointer")
+    path = root / "workspaces" / pointer.decode().strip()
+    try:
+        with directory(path, root):
+            return path
+    except FileNotFoundError:
+        raise DiagnosticFailure("absent", "workspace") from None
+    except (OSError, ValueError):
+        raise DiagnosticFailure("unsafe_or_unreadable", "workspace") from None
 
 
 def checker_block(fixture, label):
@@ -172,8 +208,18 @@ def run_checker(root, attempt, workspace, block, identity, label):
     return result.returncode
 
 
-def sanitized_projection(result, evidence):
-    # Called only after BOTH original fixture checkers accepted these files.
+def eval_projection(result):
+    # Called only after the original eval checker accepted these bytes.
+    return {
+        "metrics": {key: result["aggregate_metrics"][key] for key in METRICS},
+        "quality": {key: result["summary"][native] for key, native in (
+            ("passed", "overall_passed"), ("thresholds_passed", "thresholds_passed"),
+            ("thresholds_total", "thresholds_total"))},
+    }
+
+
+def doctor_projection(evidence):
+    # Called only after the original Doctor checker accepted these bytes.
     by_name = {item["name"]: item["status"] for item in evidence["checks"]}
     diagnostics = evidence.get("monitoring", {}).get("diagnostics", {})
     aggregates = (evidence.get("monitoring", {}).get("status") == "ok"
@@ -182,10 +228,6 @@ def sanitized_projection(result, evidence):
                   and all(diagnostics.get(key) == "ok" for key in
                           ("status", "safety_status", "token_status", "rate_limit_status")))
     return {
-        "metrics": {key: result["aggregate_metrics"][key] for key in METRICS},
-        "quality": {key: result["summary"][native] for key, native in (
-            ("passed", "overall_passed"), ("thresholds_passed", "thresholds_passed"),
-            ("thresholds_total", "thresholds_total"))},
         "doctor": {
             "readiness": evidence["status"],
             "severity_counts": {key: evidence["doctor"]["counts"][key]
@@ -203,6 +245,93 @@ def sanitized_projection(result, evidence):
     }
 
 
+def report_workspace(root, target, workspace, summary):
+    # This owned marker is independent of native evidence/identity acceptance.
+    try:
+        if read(workspace / "prompt-agent-cleanup", root) == b"verified\n":
+            summary["prompt_agent_cleanup"] = "verified"
+    except (OSError, ValueError):
+        pass
+
+    # Exit observations are not evidence acceptance, quality, or readiness.
+    native_raw = {}
+    for label, paths in (("eval", EVAL_FILES), ("doctor", DOCTOR_FILES)):
+        try:
+            raw = read_artifact(workspace / paths[0], root, ARTIFACT_LABELS[paths[0]])
+            if raw.strip() not in (b"0", b"1", b"2"):
+                raise DiagnosticFailure("malformed", ARTIFACT_LABELS[paths[0]])
+            summary["native_exit_codes"][label] = int(raw.strip())
+            native_raw[label] = raw
+        except DiagnosticFailure as failure:
+            summary["diagnostics"][label] = failure.diagnostic
+
+    try:
+        identity = parse_artifact(read_artifact(workspace / "agent-identity.json", root, "identity"),
+                                  "identity")
+        if not (isinstance(identity, dict) and set(identity) == {"name", "version"}
+                and all(isinstance(value, str) and value.strip() and len(value) <= 256
+                        for value in identity.values())):
+            raise DiagnosticFailure("malformed", "identity")
+    except DiagnosticFailure as failure:
+        summary["diagnostics"]["identity"] = failure.diagnostic
+        return
+
+    try:
+        if read_artifact(workspace / ".agentops/analyze-exit-code", root, "analyze_exit").strip() != b"0":
+            raise DiagnosticFailure("contract_rejected", "analyze_exit")
+        analyze_raw = read_artifact(workspace / ".agentops/analyze.json", root, "analyze")
+        analyze = parse_artifact(analyze_raw, "analyze")
+        if not (isinstance(analyze, dict) and type(analyze.get("version")) is int and analyze["version"] == 1):
+            raise DiagnosticFailure("contract_rejected", "analyze")
+        summary["execution_checks"]["analyze"] = "verified"
+        summary["sha256"]["analyze"] = hashlib.sha256(analyze_raw).hexdigest()
+    except DiagnosticFailure as failure:
+        summary["diagnostics"]["analyze"] = failure.diagnostic
+
+    try:
+        fixture = (absolute(os.environ["GITHUB_WORKSPACE"]) / FIXTURE).read_text()
+    except (OSError, ValueError, KeyError):
+        summary["diagnostics"]["fixture"] = {"reason": "checker_unavailable"}
+        return
+
+    for label, paths, accepted in (("eval", EVAL_FILES, {0}), ("doctor", DOCTOR_FILES, {0, 2})):
+        if label not in native_raw:
+            continue
+        try:
+            raw = {paths[0]: native_raw[label]}
+            for path in paths[1:]:
+                data = read_artifact(workspace / path, root, ARTIFACT_LABELS[path])
+                raw[path] = data
+                if path.endswith((".json", ".jsonl")):
+                    for line in data.splitlines() if path.endswith(".jsonl") else [data]:
+                        if line.strip() or path.endswith(".json"):
+                            parse_artifact(line, ARTIFACT_LABELS[path])
+            try:
+                block = checker_block(fixture, "EVAL RESULT" if label == "eval" else "DOCTOR EVIDENCE")
+                code = run_checker(root, target, workspace, block, identity, label)
+            except (OSError, ValueError, SyntaxError, subprocess.SubprocessError):
+                raise DiagnosticFailure("checker_unavailable") from None
+            summary["checker_exit_codes"][label] = code if code in (0, 1, 2) else None
+            if code not in accepted:
+                raise DiagnosticFailure("checker_rejected")
+            # Do not publish a projection of different bytes than the checkers read.
+            for path, data in raw.items():
+                if read_artifact(workspace / path, root, ARTIFACT_LABELS[path]) != data:
+                    raise DiagnosticFailure("changed_after_check", ARTIFACT_LABELS[path])
+            if label == "eval":
+                projection = eval_projection(parse(raw[EVAL_FILES[1]]))
+                hashes = (("results", raw[EVAL_FILES[1]]),)
+            else:
+                projection = doctor_projection(parse(raw[DOCTOR_FILES[-1]]))
+                hashes = (("evidence", raw[DOCTOR_FILES[-1]]), ("history", raw[DOCTOR_FILES[-2]]))
+            summary.update(projection)
+            summary["execution_checks"][label] = "verified"
+            for name, data in (*hashes, ("fixture", fixture.encode())):
+                summary["sha256"][name] = hashlib.sha256(data).hexdigest()
+        except DiagnosticFailure as failure:
+            summary["diagnostics"][label] = failure.diagnostic
+
+
 def report(root, public, attempt, copilot_status):
     require(re.fullmatch(r"[0-9]{1,3}", copilot_status) and int(copilot_status) <= 255)
     target = attempt_dir(root, attempt)
@@ -212,67 +341,26 @@ def report(root, public, attempt, copilot_status):
         "native_exit_codes": {"eval": None, "doctor": None},
         "copilot_exit_code": int(copilot_status), "marker": "failed", "delivery": "failed",
         "prompt_agent_cleanup": "unverified", "response_purge": "unverified",
-        "sha256": {},
+        "sha256": {}, "diagnostics": {},
     }
     try:
-        summary["marker"] = "passed" if read(target / "marker", root) == b"SMOKE_RESULT=PASS\n" else "failed"
-    except (OSError, ValueError):
-        pass
+        marker = read_artifact(target / "marker", root, "marker")
+        if marker != b"SMOKE_RESULT=PASS\n":
+            failed = any(line == b"SMOKE_RESULT=FAIL" or line.startswith(b"SMOKE_RESULT=FAIL ")
+                         for line in marker.splitlines())
+            raise DiagnosticFailure("explicit_fail" if failed else "invalid_marker", "marker")
+        summary["marker"] = "passed"
+    except DiagnosticFailure as failure:
+        summary["diagnostics"]["marker"] = failure.diagnostic
     try:
         workspace = workspace_path(root, attempt)
-        identity = parse(read(workspace / "agent-identity.json", root))
-        require(set(identity) == {"name", "version"})
-        require(all(isinstance(identity[key], str) and identity[key].strip()
-                    and len(identity[key]) <= 256 for key in identity))
-        fixture = (absolute(os.environ["GITHUB_WORKSPACE"]) / FIXTURE).read_text()
-        require(read(workspace / ".agentops/analyze-exit-code", root).strip() == b"0")
-        analyze_raw = read(workspace / ".agentops/analyze.json", root)
-        analyze = parse(analyze_raw)
-        require(type(analyze["version"]) is int and analyze["version"] == 1)
-        summary["execution_checks"]["analyze"] = "verified"
-        snapshots = {}
-        for label, paths, accepted in (("eval", EVAL_FILES, {0}), ("doctor", DOCTOR_FILES, {0, 2})):
-            try:
-                raw = {path: read(workspace / path, root) for path in paths}
-                for path, data in raw.items():
-                    if path.endswith((".json", ".jsonl")):
-                        for line in data.splitlines() if path.endswith(".jsonl") else [data]:
-                            if line.strip():
-                                parse(line)
-                native_code = raw[paths[0]].decode().strip()
-                require(native_code in ("0", "1", "2"))
-                summary["native_exit_codes"][label] = int(native_code)
-                block = checker_block(fixture, "EVAL RESULT" if label == "eval" else "DOCTOR EVIDENCE")
-                code = run_checker(root, target, workspace, block, identity, label)
-                summary["checker_exit_codes"][label] = code if code in (0, 1, 2) else None
-                require(code in accepted)
-                # Do not publish a projection of different bytes than the checkers read.
-                require(all(read(workspace / path, root) == data for path, data in raw.items()))
-                summary["execution_checks"][label] = "verified"
-                snapshots.update(raw)
-            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-                continue
-        if all(value == "verified" for value in summary["execution_checks"].values()):
-            result = parse(snapshots[EVAL_FILES[1]])
-            evidence = parse(snapshots[DOCTOR_FILES[-1]])
-            summary.update(sanitized_projection(result, evidence))
-            for name, raw in (("results", snapshots[EVAL_FILES[1]]),
-                              ("evidence", snapshots[DOCTOR_FILES[-1]]),
-                              ("history", snapshots[DOCTOR_FILES[-2]]),
-                              ("analyze", analyze_raw), ("fixture", fixture.encode())):
-                summary["sha256"][name] = hashlib.sha256(raw).hexdigest()
-            if summary["marker"] == "passed" and copilot_status == "0":
-                summary["delivery"] = "passed"
-        # Cleanup claims never imply service response deletion. Absence of a
-        # creation identity is not evidence that no agent was created.
-        try:
-            cleanup = read(workspace / "prompt-agent-cleanup", root)
-            if cleanup == b"verified\n":
-                summary["prompt_agent_cleanup"] = "verified"
-        except (OSError, ValueError):
-            pass
-    except (OSError, ValueError, KeyError, TypeError, RecursionError):
-        pass
+    except DiagnosticFailure as failure:
+        summary["diagnostics"]["workspace"] = failure.diagnostic
+    else:
+        report_workspace(root, target, workspace, summary)
+    if (all(value == "verified" for value in summary["execution_checks"].values())
+            and summary["marker"] == "passed" and copilot_status == "0"):
+        summary["delivery"] = "passed"
     write(public / f"{attempt}.json", public,
           (json.dumps(summary, sort_keys=True, allow_nan=False) + "\n").encode())
     return summary["delivery"] == "passed"

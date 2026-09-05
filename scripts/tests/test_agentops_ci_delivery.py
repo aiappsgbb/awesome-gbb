@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -267,6 +268,340 @@ class DeliveryTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(summary["execution_checks"]["doctor"], "failed")
         self.assertEqual(summary["native_exit_codes"]["doctor"], 1)
+
+    def test_missing_doctor_retains_independently_verified_eval(self):
+        self.seed(failed_quality=True)
+        (self.workspace / ".agentops/agent/doctor-exit-code").unlink()
+        self.write(self.attempt / "marker", "SMOKE_RESULT=FAIL " + CANARY + "\n")
+        completed, summary = self.report()
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(summary["delivery"], "failed")
+        self.assertEqual(summary["quality"],
+                         {"passed": False, "thresholds_passed": 4, "thresholds_total": 5})
+        self.assertEqual(summary["metrics"]["similarity"], 2.0)
+        self.assertEqual(summary["sha256"]["results"],
+                         hashlib.sha256(self.results.read_bytes()).hexdigest())
+        self.assertEqual(summary["checker_exit_codes"], {"eval": 0, "doctor": None})
+        self.assertEqual(summary["native_exit_codes"], {"eval": 2, "doctor": None})
+        self.assertEqual(summary["diagnostics"]["doctor"],
+                         {"artifact": "doctor_exit", "reason": "absent"})
+        self.assertNotIn("doctor", summary)
+        self.assertNotIn("coverage", summary)
+        self.assertNotIn("evidence", summary["sha256"])
+        self.assertNotIn("history", summary["sha256"])
+        self.assertEqual(summary["prompt_agent_cleanup"], "unverified")
+        self.assertEqual(summary["response_purge"], "unverified")
+        self.assertNotEqual(self.cli("retry-allowed").returncode, 0)
+
+    @contextlib.contextmanager
+    def seeded_case(self, **kwargs):
+        self.seed(**kwargs)
+        try:
+            yield
+        finally:
+            shutil.rmtree(self.private)
+            shutil.rmtree(self.public)
+
+    def test_native_exit_is_retained_before_later_artifact_failure(self):
+        for stage, artifact, path in (
+            ("eval", "results", ".agentops/results/latest/results.json"),
+            ("eval", "dataset", ".agentops/data/smoke.jsonl"),
+            ("doctor", "doctor_started", ".agentops/agent/doctor-started-at"),
+            ("doctor", "doctor_finished", ".agentops/agent/doctor-finished-at"),
+            ("doctor", "history", ".agentops/agent/history.jsonl"),
+            ("doctor", "evidence", ".agentops/release/latest/evidence.json"),
+        ):
+            with self.subTest(artifact=artifact), self.seeded_case(failed_quality=True, critical=1):
+                (self.workspace / path).unlink()
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(summary["native_exit_codes"], {"eval": 2, "doctor": 2})
+                self.assertIsNone(summary["checker_exit_codes"][stage])
+                self.assertEqual(summary["execution_checks"][stage], "failed")
+                self.assertEqual(summary["diagnostics"][stage],
+                                 {"artifact": artifact, "reason": "absent"})
+                self.assertNotIn(artifact, summary["sha256"])
+                other = "doctor" if stage == "eval" else "eval"
+                self.assertEqual(summary["execution_checks"][other], "verified")
+
+    def test_doctor_artifact_failures_have_bounded_provenance(self):
+        cases = {
+            "absent": "absent", "permissions": "unsafe_or_unreadable",
+            "hardlink": "unsafe_or_unreadable", "symlink": "unsafe_or_unreadable",
+            "json": "malformed", "duplicate": "malformed", "nonfinite": "malformed",
+            "shape": "checker_rejected",
+        }
+        for case, reason in cases.items():
+            with self.subTest(case=case), self.seeded_case(failed_quality=True):
+                if case == "absent":
+                    self.evidence.unlink()
+                elif case == "permissions":
+                    self.evidence.chmod(0o644)
+                elif case == "hardlink":
+                    os.link(self.evidence, self.workspace / "extra-link")
+                elif case == "symlink":
+                    self.evidence.unlink()
+                    self.evidence.symlink_to(self.results)
+                else:
+                    self.write(self.evidence, {
+                        "json": CANARY, "duplicate": '{"version":1,"version":1}',
+                        "nonfinite": '{"version":NaN}', "shape": '{"version":1}',
+                    }[case])
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                expected = {"reason": reason}
+                if case != "shape":
+                    expected["artifact"] = "evidence"
+                self.assertEqual(summary["diagnostics"]["doctor"], expected)
+                self.assertEqual(summary["native_exit_codes"]["doctor"], 0)
+                self.assertEqual(summary["checker_exit_codes"]["doctor"],
+                                 1 if case == "shape" else None)
+                self.assertEqual(summary["quality"]["thresholds_passed"], 4)
+                self.assertNotIn("doctor", summary)
+                self.assertNotIn("coverage", summary)
+                self.assertNotIn("evidence", summary["sha256"])
+
+    def test_malformed_native_exit_never_becomes_accepted_evidence(self):
+        for value in (CANARY, "3", "-1", ""):
+            with self.subTest(value=value), self.seeded_case():
+                self.write(self.workspace / ".agentops/results/eval-exit-code", value)
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertIsNone(summary["native_exit_codes"]["eval"])
+                self.assertIsNone(summary["checker_exit_codes"]["eval"])
+                self.assertEqual(summary["diagnostics"]["eval"],
+                                 {"artifact": "eval_exit", "reason": "malformed"})
+                self.assertNotIn("metrics", summary)
+                self.assertNotIn("quality", summary)
+                self.assertNotIn("results", summary["sha256"])
+                self.assertIn("doctor", summary)
+
+    def test_rejected_eval_cannot_publish_scores_but_preserves_doctor(self):
+        for field in ("error", "score"):
+            with self.subTest(field=field), self.seeded_case(critical=1):
+                result = json.loads(self.results.read_text())
+                if field == "error":
+                    result["rows"][0]["error"] = CANARY
+                else:
+                    result["aggregate_metrics"]["similarity"] = CANARY
+                self.write(self.results, json.dumps(result))
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(summary["diagnostics"]["eval"], {"reason": "checker_rejected"})
+                self.assertEqual(summary["checker_exit_codes"]["eval"], 1)
+                self.assertEqual(summary["doctor"]["readiness"], "blocked")
+                self.assertEqual(summary["coverage"]["fresh_ingestion"], "unverified")
+                self.assertEqual(summary["sha256"]["evidence"],
+                                 hashlib.sha256(self.evidence.read_bytes()).hexdigest())
+                self.assertIn("history", summary["sha256"])
+                self.assertNotIn("metrics", summary)
+                self.assertNotIn("quality", summary)
+                self.assertNotIn("results", summary["sha256"])
+
+    def test_analyze_failure_does_not_hide_other_stages_or_cleanup(self):
+        for case in ("absent", "malformed", "nonzero"):
+            with self.subTest(case=case), self.seeded_case(failed_quality=True, critical=1):
+                if case == "absent":
+                    (self.workspace / ".agentops/analyze.json").unlink()
+                elif case == "malformed":
+                    self.write(self.workspace / ".agentops/analyze.json", CANARY)
+                else:
+                    self.write(self.workspace / ".agentops/analyze-exit-code", "1\n")
+                self.write(self.workspace / "prompt-agent-cleanup", "verified\n")
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(summary["execution_checks"],
+                                 {"analyze": "failed", "eval": "verified", "doctor": "verified"})
+                self.assertEqual(summary["quality"]["thresholds_passed"], 4)
+                self.assertEqual(summary["doctor"]["readiness"], "blocked")
+                self.assertNotIn("analyze", summary["sha256"])
+                self.assertEqual(summary["prompt_agent_cleanup"], "verified")
+                self.assertEqual(summary["response_purge"], "unverified")
+                self.assertNotEqual(self.cli("retry-allowed").returncode, 0)
+
+    def test_identity_failure_blocks_validation_not_exit_observation_or_cleanup(self):
+        for case in ("absent", "malformed", "permissions"):
+            with self.subTest(case=case), self.seeded_case(failed_quality=True):
+                identity = self.workspace / "agent-identity.json"
+                if case == "absent":
+                    identity.unlink()
+                elif case == "malformed":
+                    self.write(identity, CANARY)
+                else:
+                    identity.chmod(0o644)
+                self.write(self.workspace / "prompt-agent-cleanup", "verified\n")
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(summary["native_exit_codes"], {"eval": 2, "doctor": 0})
+                self.assertEqual(summary["checker_exit_codes"], {"eval": None, "doctor": None})
+                self.assertEqual(set(summary["execution_checks"].values()), {"failed"})
+                self.assertEqual(summary["sha256"], {})
+                self.assertNotIn("metrics", summary)
+                self.assertNotIn("doctor", summary)
+                self.assertNotIn("coverage", summary)
+                self.assertFalse((self.attempt / "eval-check.log").exists())
+                self.assertFalse((self.attempt / "doctor-check.log").exists())
+                self.assertEqual(summary["diagnostics"]["identity"], {
+                    "artifact": "identity",
+                    "reason": "unsafe_or_unreadable" if case == "permissions" else case,
+                })
+                self.assertEqual(summary["prompt_agent_cleanup"], "verified")
+
+    def test_cleanup_requires_the_exact_private_owned_marker_even_on_failure(self):
+        for case in ("absent", "permissions", "hardlink", "symlink", "invalid", "foreign"):
+            with self.subTest(case=case), self.seeded_case():
+                (self.workspace / "agent-identity.json").unlink()
+                cleanup = self.workspace / "prompt-agent-cleanup"
+                if case != "absent":
+                    self.write(cleanup, "verified\n")
+                if case == "permissions":
+                    cleanup.chmod(0o644)
+                elif case == "hardlink":
+                    os.link(cleanup, self.workspace / "cleanup-link")
+                elif case == "symlink":
+                    cleanup.rename(self.workspace / "other-cleanup")
+                    cleanup.symlink_to(self.workspace / "other-cleanup")
+                elif case == "invalid":
+                    self.write(cleanup, "not_created\n")
+                if case == "foreign":
+                    original = self.reporter.os.fstat
+
+                    def foreign_owner(fd):
+                        info = original(fd)
+                        if info.st_ino == cleanup.stat().st_ino:
+                            return SimpleNamespace(st_mode=info.st_mode, st_uid=os.getuid() + 1)
+                        return info
+
+                    with patch.dict(os.environ, self.env, clear=True), \
+                            patch.object(self.reporter.os, "fstat", side_effect=foreign_owner):
+                        self.assertFalse(self.reporter.report(self.private, self.public, "primary", "0"))
+                    summary = json.loads((self.public / "primary.json").read_text())
+                else:
+                    _, summary = self.report()
+                self.assertEqual(summary["prompt_agent_cleanup"], "unverified")
+                self.assertEqual(summary["response_purge"], "unverified")
+
+    def test_marker_failures_are_distinct_without_publishing_marker_text(self):
+        for case, value, reason in (
+            ("absent", None, "absent"),
+            ("fail", "SMOKE_RESULT=FAIL " + CANARY + "\n", "explicit_fail"),
+            ("mixed", "SMOKE_RESULT=FAIL\nSMOKE_RESULT=PASS\n", "explicit_fail"),
+            ("invalid", "SMOKE_RESULT=PASS\n" + CANARY, "invalid_marker"),
+            ("permissions", "SMOKE_RESULT=PASS\n", "unsafe_or_unreadable"),
+        ):
+            with self.subTest(case=case), self.seeded_case(failed_quality=True):
+                marker = self.attempt / "marker"
+                if value is None:
+                    marker.unlink()
+                else:
+                    self.write(marker, value)
+                if case == "permissions":
+                    marker.chmod(0o644)
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(summary["marker"], "failed")
+                self.assertEqual(summary["diagnostics"]["marker"],
+                                 {"artifact": "marker", "reason": reason})
+                self.assertEqual(summary["quality"]["thresholds_passed"], 4)
+                self.assertIn("results", summary["sha256"])
+                self.assertNotEqual(self.cli("retry-allowed").returncode, 0)
+
+    def test_unknown_doctor_enums_cannot_leak_with_eval_missing(self):
+        for field in ("official_eval", "check", "readiness"):
+            with self.subTest(field=field), self.seeded_case():
+                self.results.unlink()
+                evidence = json.loads(self.evidence.read_text())
+                if field == "official_eval":
+                    evidence["official_eval"]["status"] = CANARY
+                elif field == "check":
+                    evidence["checks"][0]["status"] = CANARY
+                else:
+                    evidence["status"] = CANARY
+                self.write(self.evidence, json.dumps(evidence))
+                completed, summary = self.report()
+                self.assertEqual(completed.returncode, 1)
+                self.assertEqual(summary["diagnostics"]["doctor"], {"reason": "checker_rejected"})
+                self.assertNotIn("doctor", summary)
+                self.assertNotIn("coverage", summary)
+                self.assertNotIn("metrics", summary)
+                self.assertNotIn("results", summary["sha256"])
+                self.assertNotIn("evidence", summary["sha256"])
+
+    def test_unreadable_artifact_does_not_leak_exception_or_skip_cleanup(self):
+        self.seed(failed_quality=True)
+        self.write(self.workspace / "prompt-agent-cleanup", "verified\n")
+        original = self.reporter.read
+
+        def unreadable(path, private):
+            if path == self.evidence:
+                raise PermissionError(CANARY + str(path))
+            return original(path, private)
+
+        with patch.dict(os.environ, self.env, clear=True), \
+                patch.object(self.reporter, "read", side_effect=unreadable):
+            self.assertFalse(self.reporter.report(self.private, self.public, "primary", "0"))
+        raw = (self.public / "primary.json").read_text()
+        self.assertNotIn(CANARY, raw)
+        self.assertNotIn(str(self.workspace), raw)
+        summary = json.loads(raw)
+        self.assertEqual(summary["diagnostics"]["doctor"],
+                         {"reason": "unsafe_or_unreadable", "artifact": "evidence"})
+        self.assertEqual(summary["native_exit_codes"]["doctor"], 0)
+        self.assertEqual(summary["quality"]["thresholds_passed"], 4)
+        self.assertEqual(summary["prompt_agent_cleanup"], "verified")
+        self.assertNotIn("evidence", summary["sha256"])
+
+    def test_checker_unavailable_or_changed_input_preserves_only_other_stage(self):
+        for case in ("unavailable", "changed"):
+            with self.subTest(case=case), self.seeded_case(critical=1):
+                original = self.reporter.run_checker
+
+                def checker(root, target, workspace, block, identity, label):
+                    if label == "eval" and case == "unavailable":
+                        raise subprocess.TimeoutExpired(CANARY, 60, output=CANARY)
+                    code = original(root, target, workspace, block, identity, label)
+                    if label == "eval":
+                        self.write(self.results, CANARY)
+                    return code
+
+                with patch.dict(os.environ, self.env, clear=True), \
+                        patch.object(self.reporter, "run_checker", side_effect=checker):
+                    self.assertFalse(self.reporter.report(self.private, self.public, "primary", "0"))
+                raw = (self.public / "primary.json").read_text()
+                self.assertNotIn(CANARY, raw)
+                summary = json.loads(raw)
+                self.assertEqual(summary["diagnostics"]["eval"],
+                                 {"reason": "checker_unavailable"} if case == "unavailable" else
+                                 {"reason": "changed_after_check", "artifact": "results"})
+                self.assertEqual(summary["checker_exit_codes"]["eval"],
+                                 None if case == "unavailable" else 0)
+                self.assertEqual(summary["execution_checks"]["eval"], "failed")
+                self.assertNotIn("metrics", summary)
+                self.assertNotIn("quality", summary)
+                self.assertNotIn("results", summary["sha256"])
+                self.assertEqual(summary["doctor"]["readiness"], "blocked")
+                self.assertIn("evidence", summary["sha256"])
+
+    def test_accepted_projection_has_only_fixed_public_fields(self):
+        self.seed()
+        evidence = json.loads(self.evidence.read_text())
+        evidence["checks"].append({"name": CANARY, "status": "ready"})
+        evidence["monitoring"]["status"] = CANARY
+        self.write(self.evidence, json.dumps(evidence))
+        completed, summary = self.report()
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(set(summary), {
+            "execution_checks", "checker_exit_codes", "native_exit_codes",
+            "copilot_exit_code", "marker", "delivery", "prompt_agent_cleanup",
+            "response_purge", "sha256", "diagnostics", "metrics", "quality", "doctor", "coverage",
+        })
+        self.assertEqual(set(summary["doctor"]), {"readiness", "severity_counts"})
+        self.assertEqual(set(summary["coverage"]), {
+            "component_aggregates", "fresh_ingestion", "multi_turn", "rubrics",
+            "official_eval", "observability", "governance", "landing_zone",
+        })
+        self.assertEqual(summary["coverage"]["component_aggregates"], "unverified")
+        self.assertEqual(summary["diagnostics"], {})
 
     def test_actual_workflow_private_capture_and_gate_with_inert_copilot(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())
