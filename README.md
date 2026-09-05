@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-36-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-37-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -71,11 +71,11 @@ These are **developer-oriented skills** — they help you build, deploy, and shi
 
 ## Supported Coding Runtimes
 
-Skills are agnostic Markdown contracts — they load in any runtime that understands the `SKILL.md` shape. The catalog is verified against the runtimes below.
+Skills are agnostic Markdown contracts — they load in any runtime that understands the `SKILL.md` shape. The runtime capabilities below are not a live-validation claim for unreleased entries; see the [AgentOps validation status](docs/maintenance/foundry-agentops-validation.md).
 
 | Runtime | Shell + package installs | Long-running processes | Best for |
 |---|---|---|---|
-| **GitHub Copilot CLI** (`gh copilot`) | ✅ Full | ✅ | **Primary target**. Every skill works end-to-end. |
+| **GitHub Copilot CLI** (`gh copilot`) | ✅ Full | ✅ | **Primary target**. Supports end-to-end execution; validation is per skill. |
 | **GitHub Copilot App** ([`github/app`](https://github.com/github/app)) | ✅ Full | ✅ | **Desktop GUI built on the CLI** — inherits skills, MCP servers, plugins, hooks. Best for users who prefer a click-installer (DMG/EXE/AppImage) over `npm install -g`. Public preview. |
 | **GitHub Copilot Coding Agent** (cloud) | ✅ Full | ✅ | All skills, hands-off cloud runs. |
 | **Cursor** | ✅ Full | ✅ | All skills (load via project `.cursorrules` shim). |
@@ -109,6 +109,17 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 
 ## Skills Catalog
 
+> [!IMPORTANT]
+> **Draft candidate eligible for PR validation — proposed catalog 4.31.0, unreleased.**
+> The new `foundry-agentops` skill 1.0.0 is not merged, released, or production-ready.
+> It is not publicly installable through the default install while unmerged.
+> Completed **corrected-source manual execution PASS**;
+> **quality FAIL (4/5 thresholds)**; **Doctor readiness BLOCKED**.
+> **release PENDING**. CI results and candidate SHA will be recorded in the PR.
+> See the [sanitized validation record](docs/maintenance/foundry-agentops-validation.md)
+> for manual evidence as of 2026-09-05, before PR CI, and its limits.
+> The published plugin does not include this unmerged addition.
+
 ### 🏗️ Foundry Building Blocks
 
 Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP servers, evals, RAG, vision/speech, and observability.
@@ -124,6 +135,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |
 | [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | Expose durable MCP tools backed by pre-provisioned ACA Jobs — SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, managed-identity callbacks, and one immutable image with separate server/worker entrypoints. |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate hosted agents — two-phase invoke+score, 6 built-in evaluators, enriched-dataset shape (`tool_calls` + `tool_outputs`), continuous loop |
+| [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.0.0** (draft candidate). Review Doctor diagnostics, release evidence, regression baselines, and workflow ownership; composes with specialist skills without replacing Citadel or Threadlight. |
 | [**foundry-iq**](skills/foundry-iq/) | Enterprise RAG with Foundry IQ — Azure AI Search Knowledge Bases, agentic retrieval, multi-hop reasoning, citation-backed responses, **hosted-agent runtime identity callout** + **7-item bootstrap hardening checklist** (no-`az rest`-uploads, fail-fast, key sanitization, 32k-byte chunking, RBAC propagation wait, post-upload count verify, idempotent recovery) |
 | [**foundry-doc-vision-speech**](skills/foundry-doc-vision-speech/) | Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) into a hosted agent — MCP and native Toolbox patterns + RBAC matrix |
 | [**foundry-observability**](skills/foundry-observability/) | End-to-end App Insights + Log Analytics + OpenTelemetry across hosted agents, MCP servers, ACA jobs, bot, workspace — **closes the silent-telemetry gap** where `azd up` returns 0 but AppIn stays empty |
@@ -197,13 +209,13 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install all 36 skills in one command via plugin.** The catalog ships as a single [Copilot CLI plugin](plugin.json):
+> **Install the catalog in one command via plugin.** The proposed catalog contains 37 skills in a single [Copilot CLI plugin](plugin.json); the draft AgentOps addition is not yet published:
 >
 > ```bash
 > # Register the marketplace once:
 > copilot plugin marketplace add aiappsgbb/awesome-gbb
 >
-> # Install all skills:
+> # Install the published release (not the draft addition):
 > copilot plugin install awesome-gbb@awesome-gbb
 > ```
 >
@@ -240,6 +252,32 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 
 > [!TIP]
 > **Recommended global install for sellers + SEs:** `foundry-hosted-agents`, `foundry-observability`, `azure-tenant-isolation` (from awesome-gbb) plus the full [threadlight-skills](https://github.com/aiappsgbb/threadlight-skills) plugin. For Zava skills, see [zava-constellation](https://github.com/aiappsgbb/zava-constellation). Other skills can stay at project scope.
+
+### Per-agent AgentOps adoption
+
+Use [`foundry-agentops`](skills/foundry-agentops/SKILL.md) (skill 1.0.0,
+draft candidate) for the complete adoption and release-evidence workflow for **one
+already deployed agent**, using exactly `agentops-accelerator==0.14.0`.
+Select its agent root and approved deployment context, review evaluation results
+and Doctor evidence, decide whether to accept a regression baseline, and hand off
+missing prerequisites. Standalone workflow generation requires separate approval;
+Threadlight mode supplies prerequisites only, never a competing pipeline.
+
+AgentOps **does not replace Citadel or Threadlight**:
+[`citadel-spoke-onboarding`](skills/citadel-spoke-onboarding/SKILL.md) retains
+gateway/access-contract ownership, and
+[Threadlight](https://github.com/aiappsgbb/threadlight-skills) retains pipeline
+ownership and final readiness scoring. Deep evaluators/datasets remain with
+[`foundry-evals`](skills/foundry-evals/SKILL.md), OTel/App Insights wiring with
+[`foundry-observability`](skills/foundry-observability/SKILL.md), and runtime
+policy enforcement with [`foundry-agt`](skills/foundry-agt/SKILL.md).
+Aggregated evidence is not production-ready certification. The
+[sanitized manual results](docs/maintenance/foundry-agentops-validation.md) distinguish
+the completed corrected-source execution from its **quality FAIL (4/5 thresholds)**
+and **Doctor readiness BLOCKED** outcome. The prior 5/5 cycle remains historical,
+not the corrected result. Neither manual CLI-user cycle validates the unchanged
+CI/SP path, full matrix, or release readiness. There is no released downstream pin;
+the candidate SHA and CI evidence belong in the PR, not a self-referential source pin.
 
 ---
 
@@ -320,7 +358,7 @@ flowchart LR
 README.md                 # This file — catalog index + install instructions
 DEMOS.md                  # Demo guide for Foundry walkthroughs
 AGENTS.md                 # Contributor & sub-agent safety guide
-plugin.json               # Single plugin manifest (all 36 skills via "skills/")
+plugin.json               # Single plugin manifest (37 skills in the proposed catalog via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)

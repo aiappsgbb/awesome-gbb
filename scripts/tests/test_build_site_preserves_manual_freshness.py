@@ -21,9 +21,16 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
     def test_preserves_manual_skill_freshness_runbook(self) -> None:
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as td:
             out_dir = Path(td)
-            hand_authored = out_dir / "maintenance" / "manual-skill-freshness.md"
-            hand_authored.parent.mkdir(parents=True, exist_ok=True)
-            hand_authored.write_text("manual runbook\n", encoding="utf-8")
+            hand_authored = {
+                "maintenance/manual-skill-freshness.md": "manual runbook\n",
+                "maintenance/foundry-agentops-validation.md": "existing validation record\n",
+                "audit/review.md": "hand-authored review\n",
+                "superpowers/plan.md": "hand-authored plan\n",
+            }
+            for relative_path, content in hand_authored.items():
+                path = out_dir / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
 
             subprocess.run(
                 [sys.executable, str(SCRIPT), "--out", str(out_dir)],
@@ -31,8 +38,36 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
                 check=True,
             )
 
-            self.assertTrue(hand_authored.exists())
-            self.assertEqual(hand_authored.read_text(encoding="utf-8"), "manual runbook\n")
+            for relative_path, content in hand_authored.items():
+                with self.subTest(path=relative_path):
+                    self.assertEqual(
+                        (out_dir / relative_path).read_text(encoding="utf-8"), content
+                    )
+
+    def test_fresh_build_copies_only_published_validation_record_and_validates_links(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as td:
+            out_dir = Path(td) / "site"
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--out", str(out_dir), "--validate"],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("0 broken root-relative links", result.stdout)
+            record = Path("maintenance/foundry-agentops-validation.md")
+            self.assertEqual(
+                (out_dir / record).read_bytes(),
+                (REPO_ROOT / "docs" / record).read_bytes(),
+            )
+            self.assertEqual(
+                {path.relative_to(out_dir) for path in (out_dir / "maintenance").rglob("*")
+                 if path.is_file()},
+                {record},
+            )
+            for directory in ("audit", "superpowers"):
+                self.assertFalse((out_dir / directory).exists())
 
     def test_engineering_and_homepage_freshness_sections_stay_truthful(self) -> None:
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as td:

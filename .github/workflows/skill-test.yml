@@ -216,6 +216,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Isolate AgentOps credential sources
+        if: matrix.skill == 'foundry-agentops'
+        # Set before azure/login so native CLI-first and SDK default chains
+        # use only the runner-authorized identity, including child/retry steps.
+        run: |
+          set -euo pipefail
+          umask 077
+          ROOT="$GITHUB_WORKSPACE/.artifacts/agentops-ci-identity-${{ github.run_id }}-${{ github.run_attempt }}"
+          mkdir -p "$ROOT"
+          mkdir "$ROOT/azure" "$ROOT/azd"
+          {
+            echo "AZURE_CONFIG_DIR=$ROOT/azure"
+            echo "AZD_CONFIG_DIR=$ROOT/azd"
+            echo "AZURE_TOKEN_CREDENTIALS=AzureCliCredential"
+          } >> "$GITHUB_ENV"
+
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}

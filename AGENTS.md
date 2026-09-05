@@ -3015,14 +3015,25 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Current coverage (36 skills, 32 with upstream pins):**
+**Draft-inclusive source inventory (37 skills, 33 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (CI can refresh autonomously) | 28 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
+| Auto-tier (CI can refresh autonomously) | 29 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| Copilot-CLI fixtures | 22 skills | T3 in CI (`copilot-cli-matrix`, see `.github/skill-deps.yml`) |
+| Copilot-CLI fixtures | 23 skills | Registered for T3 (`copilot-cli-matrix`, see `.github/skill-deps.yml`); registration is not a passing run |
+
+The `foundry-agentops` entry is an unreleased draft candidate eligible for PR validation,
+not merged, released, or production-ready. Completed
+**corrected-source manual execution PASS**; **quality FAIL (4/5 thresholds)**;
+**Doctor readiness BLOCKED**; **release PENDING**.
+CI results and candidate SHA will be recorded in the PR.
+The [sanitized validation record](docs/maintenance/foundry-agentops-validation.md)
+binds the corrected manual CLI-user cycle as of 2026-09-05, before PR CI, to its
+fixture, preserves the prior 5/5 cycle as distinct history, and separates both
+from CI/SP/full-matrix evidence recorded in the PR. These inventory counts do not
+certify readiness or waive any live-testing or publication gate.
 
 The `--include-azure` flag on `run-pin-validation.py` unlocks only
 auto-tier credentialed pins with `validation.runnable: false`; issue-only
@@ -3053,11 +3064,14 @@ Consequences:
 
 ### 12.5 Catalog at a glance
 
+Source counts include the unreleased AgentOps draft candidate; see the
+[validation status](docs/maintenance/foundry-agentops-validation.md).
+
 | Metric | Value |
 |--------|-------|
-| Total skills | 36 |
-| Skills with upstream pins | 32 |
-| Auto-tier (CI can refresh autonomously) | 28 |
+| Total skills | 37 |
+| Skills with upstream pins | 33 |
+| Auto-tier (CI can refresh autonomously) | 29 |
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |

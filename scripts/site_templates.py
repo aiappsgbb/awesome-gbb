@@ -603,6 +603,17 @@ def _skill_categories(skill_name: str, categories: dict[str, list[str]]) -> list
     return [cat for cat, members in categories.items() if skill_name in members]
 
 
+def _draft_notice(draft: dict[str, str] | None) -> str:
+    if not draft:
+        return ''
+    return (
+        '<aside class="see-also" aria-label="Unreleased validation status">'
+        f'<p>{_esc(draft["summary"])} '
+        f'<a href="{SITE_BASE}/{_esc(draft["record"])}">Sanitized validation record</a>.'
+        '</p></aside>'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Home
 # ---------------------------------------------------------------------------
@@ -690,13 +701,17 @@ def render_home(
     but no longer surface on the home page.
     """
     _ = categories  # unused on home — preserved for API stability
+    draft = next((s['draft'] for s in skills if s.get('draft')), None)
+    browse_description = (
+        f'Browse {len(skills)} source entries, including unreleased additions.'
+        if draft else f'Install the plugin to get all {len(skills)} skills, or pick individual ones.'
+    )
 
     cards = [
         _browse_card(
             f'{SITE_BASE}/skills/', _ICON_SKILLS, 'Skills',
             'Self-contained Copilot skills for Azure AI, Microsoft Foundry, '
-            'governance, and cross-cutting helpers. Install the plugin to get '
-            f'all {len(skills)} skills, or pick individual ones.',
+            'governance, and cross-cutting helpers. ' + browse_description,
             count=len(skills),
         ),
         _browse_card(
@@ -720,11 +735,15 @@ def render_home(
         for r in ('Copilot CLI', 'Copilot Desktop', 'VS Code agent mode', 'Claude Code')
     )
 
+    install_heading = 'Install the published catalog' if draft else 'Get started in one command'
+    install_description = (
+        'These commands install the published release, not the unreleased draft additions.'
+        if draft else 'Add the marketplace, install the plugin — all skills, zero auth gymnastics.'
+    )
     install_cta = (
         '<section class="install-cta" aria-labelledby="install-h">'
-        '<h2 id="install-h">Get started in one command</h2>'
-        '<p class="lede">Add the marketplace, install the plugin — '
-        'all skills, zero auth gymnastics.</p>'
+        f'<h2 id="install-h">{install_heading}</h2>'
+        f'<p class="lede">{install_description}</p>'
         '<pre><code>'
         'copilot plugin marketplace add aiappsgbb/awesome-gbb\n'
         'copilot plugin install awesome-gbb@awesome-gbb'
@@ -740,7 +759,7 @@ def render_home(
         '<section class="stats-stripe" aria-label="Catalog at a glance">'
         f'<div class="stat"><span class="stat-num">{len(skills)}</span>'
         '<span class="stat-label">skills</span>'
-        '<span class="stat-foot">production-tested</span></div>'
+        '<span class="stat-foot">reusable building blocks</span></div>'
         f'<div class="stat"><span class="stat-num">{industry_count}</span>'
         '<span class="stat-label">industries</span>'
         '<span class="stat-foot">FSI · MFG · Retail · Telco · Airline</span></div>'
@@ -766,14 +785,15 @@ def render_home(
         '<p class="eyebrow"><span class="dot"></span>Microsoft AI Apps GBB · Copilot skill catalog</p>'
         '<h1><strong>awesome-gbb</strong></h1>'
         '<p class="lede">Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, '
-        'Microsoft Foundry, and governance. Production-tested. Versioned. '
+        'Microsoft Foundry, and governance. Reusable. Versioned. '
         'Installable individually or as one-command plugin bundles.</p>'
         '<div class="runtimes-row" aria-label="Supported runtimes">'
         '<span class="runtimes-label">Runs in</span>'
         + runtime_pills +
         '</div>'
         '</section>'
-        '<section aria-labelledby="browse-h">'
+        + _draft_notice(draft)
+        + '<section aria-labelledby="browse-h">'
         '<h2 id="browse-h" class="sr-only">Browse</h2>'
         '<div class="browse-grid">'
         + ''.join(cards)
@@ -1123,6 +1143,7 @@ def render_skills_index(
     categories: dict[str, list[str]],
 ) -> str:
     """Render the flat searchable skill list with category chip filter."""
+    draft = next((s['draft'] for s in skills if s.get('draft')), None)
     chips = [
         f'<button type="button" class="chip active" data-cat="">All '
         f'<span class="chip-count">{len(skills)}</span></button>'
@@ -1151,9 +1172,10 @@ def render_skills_index(
         )
     body = (
         '<h1>Skills</h1>'
-        f'<p>{len(skills)} production-tested Microsoft AI Apps GBB Copilot skills. '
+        f'<p>{len(skills)} reusable Microsoft AI Apps GBB Copilot skills. '
         'Click a category to filter, or type to search by name or description.</p>'
-        '<div class="chip-bar" role="tablist" aria-label="Filter by category">'
+        + _draft_notice(draft)
+        + '<div class="chip-bar" role="tablist" aria-label="Filter by category">'
         + ''.join(chips)
         + '</div>'
         '<div class="filter-bar">'
@@ -1179,12 +1201,13 @@ def render_skill_detail(
 ) -> str:
     """Render a single skill's detail page."""
     name = skill['name']
+    draft = skill.get('draft')
     cats = _skill_categories(name, categories)
     cat_badges = ' '.join(f'<span class="badge cat">{_esc(c)}</span>' for c in cats)
 
     freshness_html = ''
     last_validated = skill.get('last_validated')
-    if last_validated:
+    if last_validated and not draft:
         from datetime import date, datetime
         try:
             if isinstance(last_validated, str):
@@ -1208,11 +1231,22 @@ def render_skill_detail(
             for p in plugins_containing
         )
         bundled_html = (
-            '<h2>Bundled in</h2>'
-            f'<ul class="bundled-list">{items}</ul>'
+            ('<h2>Proposed bundle</h2>' if draft else '<h2>Bundled in</h2>')
+            + f'<ul class="bundled-list">{items}</ul>'
         )
 
     description = skill.get('description', '').strip()
+    install_html = (
+        '<h2>Draft candidate source</h2>'
+        f'<p><code>skills/{_esc(name)}/SKILL.md</code> in the draft candidate. '
+        'No released downstream pin is available; the candidate SHA will be recorded in the PR.</p>'
+        if draft else
+        '<h2>Install</h2>'
+        f'<pre><code>gh skill install aiappsgbb/awesome-gbb {_esc(name)}</code></pre>'
+        '<p>'
+        f'<a class="cta" href="{GITHUB_BASE}/blob/main/skills/{_esc(name)}/SKILL.md">'
+        'Open SKILL.md on GitHub →</a></p>'
+    )
 
     body = (
         '<div class="detail-head">'
@@ -1224,12 +1258,8 @@ def render_skill_detail(
         '</div>'
         '<div class="detail-body">'
         f'<p>{_esc(description)}</p>'
-        '<h2>Install</h2>'
-        f'<pre><code>gh skill install aiappsgbb/awesome-gbb {_esc(name)}</code></pre>'
-        '<p>'
-        f'<a class="cta" href="{GITHUB_BASE}/blob/main/skills/{_esc(name)}/SKILL.md">'
-        'Open SKILL.md on GitHub →</a>'
-        '</p>'
+        + _draft_notice(draft)
+        + install_html
         + bundled_html
         + freshness_html
         + '</div>'
@@ -1245,22 +1275,33 @@ def render_plugins_index(plugins: list[dict[str, Any]]) -> str:
     """Render the 3-card plugins overview."""
     cards = ['<div class="grid">']
     for p in plugins:
+        draft = p.get('draft')
+        install_html = (
+            _draft_notice(draft) if draft else
+            f'<pre><code>copilot plugin install {_esc(p["name"])}@awesome-gbb</code></pre>'
+        )
         cards.append(
             '<div class="card">'
             f'<h3><a href="{SITE_BASE}/plugins/{_esc(p["name"])}/">{_esc(p["name"])}</a></h3>'
             f'<p>{_esc(_first_sentence(p.get("description", ""), max_chars=240))}</p>'
-            f'<pre><code>copilot plugin install {_esc(p["name"])}@awesome-gbb</code></pre>'
-            f'<div class="meta"><span class="badge">{len(p.get("skills", []))} skills</span>'
+            + install_html
+            + f'<div class="meta"><span class="badge">{len(p.get("skills", []))} skills</span>'
             f' <span class="badge ver">v{_esc(p.get("version", "1.0.0"))}</span></div>'
             '</div>'
         )
     cards.append('</div>')
-    body = (
-        '<h1>Plugins</h1>'
+    introduction = (
+        '<p>Source catalog overview, including proposed versions. '
+        'The published marketplace does not include unreleased additions.</p>'
+        if any(p.get('draft') for p in plugins) else
         '<p>One Copilot CLI plugin that installs the entire catalog '
         'in one command. Skills also remain installable individually '
         'via <code>gh skill install</code>.</p>'
-        '<h2>Register the marketplace</h2>'
+    )
+    body = (
+        '<h1>Plugins</h1>'
+        + introduction
+        + '<h2>Register the published marketplace</h2>'
         '<pre><code>copilot plugin marketplace add aiappsgbb/awesome-gbb</code></pre>'
         + ''.join(cards)
     )
@@ -1305,6 +1346,18 @@ def render_plugin_detail(
         groups.extend(cards)
 
     description = plugin.get('description', '').strip()
+    draft = plugin.get('draft')
+    install_html = (
+        _draft_notice(draft)
+        + '<h2>Draft candidate manifest</h2><p><code>plugin.json</code> at the repository root.</p>'
+        if draft else
+        '<h2>Install</h2>'
+        '<pre><code>copilot plugin marketplace add aiappsgbb/awesome-gbb\n'
+        f'copilot plugin install {_esc(name)}@awesome-gbb</code></pre>'
+        '<p>'
+        f'<a class="cta" href="{GITHUB_BASE}/blob/main/plugins/{_esc(name)}/plugin.json">'
+        'Open plugin.json on GitHub →</a></p>'
+    )
 
     body = (
         '<div class="detail-head">'
@@ -1316,14 +1369,8 @@ def render_plugin_detail(
         '</div>'
         '<div class="detail-body">'
         f'<p>{_esc(description)}</p>'
-        '<h2>Install</h2>'
-        '<pre><code>copilot plugin marketplace add aiappsgbb/awesome-gbb\n'
-        f'copilot plugin install {_esc(name)}@awesome-gbb</code></pre>'
-        '<p>'
-        f'<a class="cta" href="{GITHUB_BASE}/blob/main/plugins/{_esc(name)}/plugin.json">'
-        'Open plugin.json on GitHub →</a>'
-        '</p>'
-        '</div>'
+        + install_html
+        + '</div>'
         + ''.join(groups)
     )
     return body
@@ -1346,6 +1393,11 @@ def render_llms_txt(
     lines.append('')
     lines.append('> Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.')
     lines.append('')
+    draft = next((s['draft'] for s in skills if s.get('draft')), None)
+    if draft:
+        lines.append(draft['summary'])
+        lines.append(f'[Sanitized validation record]({SITE_BASE}/{draft["record"]})')
+        lines.append('')
     lines.append('## Skills')
     lines.append('')
     for cat_name, members in categories.items():
@@ -1357,12 +1409,17 @@ def render_llms_txt(
                 continue
             blurb = _first_sentence(s.get('description', ''))
             url = f'{GITHUB_BASE}/blob/main/skills/{member}/SKILL.md'
+            if s.get('draft'):
+                url = f'{SITE_BASE}/skills/{member}/'
+                blurb = 'Unreleased draft candidate. ' + blurb
             lines.append(f'- [{member}]({url}): {blurb}')
         lines.append('')
     lines.append('## Plugins')
     lines.append('')
     for p in plugins:
         url = f'{GITHUB_BASE}/blob/main/plugins/{p["name"]}/plugin.json'
+        if p.get('draft'):
+            url = f'{SITE_BASE}/plugins/{p["name"]}/'
         blurb = _first_sentence(p.get('description', ''), max_chars=240)
         lines.append(f'- [{p["name"]}]({url}): {blurb}')
     lines.append('')
