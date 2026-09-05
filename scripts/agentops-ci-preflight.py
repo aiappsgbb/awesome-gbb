@@ -125,6 +125,12 @@ def exact(actual, expected, code):
     require(type(actual) is type(expected) and actual == expected, code)
 
 
+def same_arm_id(actual, expected, code):
+    """Compare the whole ID against validated approval, allowing only ASCII case."""
+    require(type(actual) is str and type(expected) is str and
+            actual.isascii() and expected.isascii() and actual.lower() == expected.lower(), code)
+
+
 def text(value, code):
     require(isinstance(value, str) and bool(value.strip()), code)
     return value
@@ -410,7 +416,7 @@ def validate_context(record, environ):
     endpoint = required_env(environ, "FOUNDRY_PROJECT_ENDPOINT")
     require(endpoint in foundry["allowed_project_endpoints"], "PROJECT_BINDING")
     project_id = foundry["account_resource_id"] + "/projects/" + endpoint.rsplit("/", 1)[1]
-    exact(required_env(environ, "AZURE_AI_PROJECT_ID"), project_id, "PROJECT_BINDING")
+    same_arm_id(required_env(environ, "AZURE_AI_PROJECT_ID"), project_id, "PROJECT_BINDING")
     for key in ("agent_model_deployment", "eval_judge_deployment", "doctor_judge_deployment"):
         exact(required_env(environ, "FOUNDRY_MODEL_DEPLOYMENT"), foundry[key], "MODEL_BINDING")
     exact(required_env(environ, "LAW_WORKSPACE_ID"), telemetry["workspace_customer_id"], "WORKSPACE_BINDING")
@@ -492,7 +498,7 @@ def validate_metadata(record, routing, read_json):
 
     def resource(resource_id, api):
         result = read(["az", "resource", "show", "--ids", resource_id, "--api-version", api, "-o", "json"])
-        exact(field(result, "id"), resource_id, "RESOURCE_BINDING")
+        same_arm_id(field(result, "id"), resource_id, "RESOURCE_BINDING")
         return result
 
     identity, telemetry = record["identity"], record["telemetry"]
@@ -510,9 +516,10 @@ def validate_metadata(record, routing, read_json):
     for keys, expected in (
         (("location",), telemetry["location"]),
         (("properties", "AppId"), telemetry["application_id"]),
-        (("properties", "WorkspaceResourceId"), telemetry["workspace_resource_id"]),
     ):
         exact(field(component, *keys), expected, "COMPONENT_BINDING")
+    same_arm_id(field(component, "properties", "WorkspaceResourceId"),
+                telemetry["workspace_resource_id"], "COMPONENT_BINDING")
     component_routing = parse_connection(field(component, "properties", "ConnectionString"))
     validate_routing(component_routing, telemetry)
     actual_key = text(field(component, "properties", "InstrumentationKey"), "CONNECTION_STRING")

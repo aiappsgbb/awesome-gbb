@@ -249,6 +249,146 @@ class PreflightTests(unittest.TestCase):
         self.account["user"]["name"] = fake_id("changed-client")
         self.assert_denied(self.run_gate(write=False))
 
+    def test_uami_readback_accepts_service_resourcegroups_casing(self):
+        approved = self.record["identity"]["resource_id"]
+        self.metadata[approved]["id"] = approved.replace("/resourceGroups/", "/resourcegroups/")
+        raw = self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"]
+        self.assertEqual(self.run_gate(), (0, "AGENTOPS_CI_PREFLIGHT=PASS\n", ""))
+        self.assertEqual(self.path.read_bytes(), raw.encode("utf-8"))
+        self.assertEqual(self.calls[1][4], approved)
+
+    def arm_id_boundaries(self):
+        component = self.metadata[self.record["telemetry"]["component_resource_id"]]
+        return [
+            (resource_id, metadata, "id", "RESOURCE_BINDING")
+            for resource_id, metadata in self.metadata.items()
+        ] + [
+            ("linked-workspace", component["properties"], "WorkspaceResourceId", "COMPONENT_BINDING"),
+            ("selected-project", self.env, "AZURE_AI_PROJECT_ID", "PROJECT_BINDING"),
+        ]
+
+    def test_arm_id_casing_preserves_approval_bytes_and_exact_read_requests(self):
+        raw = self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"]
+        original = copy.deepcopy(self.record)
+        for boundary, target, key, _ in self.arm_id_boundaries():
+            approved = target[key]
+            for variant in (approved.lower(), approved.upper(), approved.swapcase()):
+                with self.subTest(boundary=boundary, variant=variant):
+                    target[key] = variant
+                    self.calls.clear()
+                    try:
+                        self.assertEqual(self.run_gate(), (0, "AGENTOPS_CI_PREFLIGHT=PASS\n", ""))
+                        self.assertEqual(self.path.read_bytes(), raw.encode("utf-8"))
+                        with patch.dict(self.env):
+                            del self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"]
+                            self.assertEqual(self.run_gate(write=False),
+                                             (0, "AGENTOPS_CI_PREFLIGHT=PASS\n", ""))
+                        self.assertEqual(self.path.read_bytes(), raw.encode("utf-8"))
+                        self.assertEqual(self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"], raw)
+                        self.assertEqual(self.record, original)
+                        self.assertEqual(target[key], variant)
+                        self.assertEqual(len(self.calls), 32)
+                        requests = [argv[4] for argv in self.calls if argv[1:3] == ["resource", "show"]]
+                        self.assertEqual(requests, list(self.metadata) * 2)
+                    finally:
+                        target[key] = approved
+                        self.path.unlink(missing_ok=True)
+
+    def test_arm_ids_reject_every_non_case_difference_at_all_boundaries(self):
+        for boundary, target, key, code in self.arm_id_boundaries():
+            approved = target[key]
+            parts = approved.split("/")
+            variants = [
+                "/tenants/" + fake_id("other-tenant") + approved,
+                approved.replace(fake_id("subscription"), fake_id("other-subscription")),
+                approved.replace("/resourceGroups/example-ci/", "/resourceGroups/other-ci/"),
+                approved.replace("/providers/" + parts[6], "/providers/Microsoft.Other"),
+                approved.replace("/" + parts[7] + "/", "/otherType/"),
+                approved.replace("/" + parts[8], "/other-resource"),
+                approved + "-other", approved + "/other-child", approved + "/",
+                approved.replace("/providers/", "//providers/"),
+                approved + "?api-version=2023-01-31", approved + "#fragment",
+                " " + approved, approved + " ", approved + "\n",
+                approved.replace("/subscriptions/", "/%73ubscriptions/"),
+                approved.replace("/providers/", "%2Fproviders/"),
+                approved.replace("/subscriptions/", "/\u017fubscriptions/"),
+                approved.replace("/providers/", "/prov\u0130ders/"),
+                approved.replace("/providers/", "/prov\u0131ders/"),
+                approved.replace("example", "\u0435xample"),
+                approved.replace("example", "\uff45xample"),
+                approved.replace("/providers/", "\uff0fproviders/"),
+                None, True, 1, [], {}, approved.encode("ascii"),
+            ]
+            if "workspace" in approved:
+                variants.append(approved.replace("workspace", "wor\u212aspace"))
+            if "/tables/" in approved:
+                variants.append(approved.rsplit("/", 1)[0] + "/OtherTable")
+            if "/projects/" in approved:
+                variants.append(approved.rsplit("/", 1)[0] + "/other-approved-project")
+            for variant in variants:
+                with self.subTest(boundary=boundary, variant=variant):
+                    target[key] = variant
+                    expected_code = "MISSING_ENV" if target is self.env and not isinstance(variant, str) else code
+                    try:
+                        self.assertEqual(self.run_gate(),
+                                         (1, f"AGENTOPS_CI_PREFLIGHT=FAIL {expected_code}\n", ""))
+                        self.assertFalse(self.path.exists())
+                    finally:
+                        target[key] = approved
+
+    def test_non_arm_identifiers_and_routing_values_remain_case_sensitive(self):
+        identity, telemetry = self.record["identity"], self.record["telemetry"]
+        uami = self.metadata[identity["resource_id"]]["properties"]
+        component = self.metadata[telemetry["component_resource_id"]]
+        workspace = self.metadata[telemetry["workspace_resource_id"]]
+        cases = [
+            (self.env, key, "IDENTITY_BINDING")
+            for key in ("AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_CLIENT_ID")
+        ] + [
+            (self.env, "FOUNDRY_PROJECT_ENDPOINT", "PROJECT_BINDING"),
+            (self.env, "FOUNDRY_MODEL_DEPLOYMENT", "MODEL_BINDING"),
+            (self.env, "LAW_WORKSPACE_ID", "WORKSPACE_BINDING"),
+            (self.env, "AZURE_TOKEN_CREDENTIALS", "CREDENTIAL_ROUTE"),
+            (self.account, "id", "CLI_IDENTITY"), (self.account, "tenantId", "CLI_IDENTITY"),
+            (self.account["user"], "name", "CLI_IDENTITY"),
+            (self.account["user"], "type", "CLI_IDENTITY"),
+            (component, "location", "COMPONENT_BINDING"),
+            (component["properties"], "AppId", "COMPONENT_BINDING"),
+            (component["properties"], "InstrumentationKey", "ROUTING_KEY"),
+            (workspace, "location", "WORKSPACE_BINDING"),
+            (workspace["properties"], "customerId", "WORKSPACE_BINDING"),
+        ] + [
+            (uami, key, "UAMI_BINDING") for key in ("tenantId", "clientId", "principalId")
+        ] + [
+            (metadata, "name", "TABLE_BINDING")
+            for resource_id, metadata in self.metadata.items() if "/tables/" in resource_id
+        ]
+        for target, key, code in cases:
+            with self.subTest(key=key, code=code):
+                original = target[key]
+                target[key] = original.swapcase()
+                try:
+                    self.assertEqual(self.run_gate(), (1, f"AGENTOPS_CI_PREFLIGHT=FAIL {code}\n", ""))
+                    self.assertFalse(self.path.exists())
+                finally:
+                    target[key] = original
+        for target, key in [
+            (self.env, "APPLICATIONINSIGHTS_CONNECTION_STRING"),
+            (component["properties"], "ConnectionString"),
+        ]:
+            original = target[key]
+            for field in original.split(";"):
+                name, value = field.split("=", 1)
+                with self.subTest(connection=key, field=name):
+                    target[key] = original.replace(value, value.swapcase())
+                    code = "ROUTING_KEY" if name == "InstrumentationKey" else "TELEMETRY_BINDING"
+                    try:
+                        self.assertEqual(self.run_gate(),
+                                         (1, f"AGENTOPS_CI_PREFLIGHT=FAIL {code}\n", ""))
+                        self.assertFalse(self.path.exists())
+                    finally:
+                        target[key] = original
+
     def test_every_schema_field_required_and_no_unknown_keys(self):
         original = copy.deepcopy(self.record)
         for group, values in original.items():
