@@ -18,12 +18,14 @@ runs the assertions.
 from __future__ import annotations
 
 import json
+import importlib.util
 import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -108,6 +110,73 @@ def _write_deps(repo: Path, mapping: dict[str, list[str]]) -> None:
         else:
             lines.append("    depends_on: []")
     (repo / ".github" / "skill-deps.yml").write_text("\n".join(lines) + "\n")
+
+
+class TestAgentOpsHelperChanges(unittest.TestCase):
+    """Exercise the real selection pipeline, isolating only Git diff retrieval."""
+
+    HELPERS = ("scripts/agentops-ci-preflight.py", "scripts/agentops-ci-report.py")
+
+    def setUp(self) -> None:
+        spec = importlib.util.spec_from_file_location("matrix_helper_changes", SCRIPT)
+        self.matrix = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.matrix)
+        scratch = ROOT / ".artifacts"
+        scratch.mkdir(exist_ok=True)
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-helper-", dir=scratch)
+        self.addCleanup(workspace.cleanup)
+        self.repo = Path(workspace.name)
+        for name in ("foundry-agentops", "alpha", "beta"):
+            _write_fixture(self.repo, name)
+        _write_quarantine(self.repo)
+        _write_deps(self.repo, {"foundry-agentops": [], "alpha": [], "beta": []})
+
+    def build(self, files: list[str], repo: Path | None = None) -> dict[str, list[str]]:
+        with patch.object(self.matrix, "_diff_filenames", return_value=files):
+            return self.matrix.build(repo or self.repo, changed_only=True, base_ref="baseline")
+
+    def test_actual_catalog_preflight_only_selects_agentops(self) -> None:
+        self.assertEqual(self.build([self.HELPERS[0]], ROOT), {"skill": ["foundry-agentops"]})
+
+    def test_actual_catalog_reporter_only_selects_agentops(self) -> None:
+        self.assertEqual(self.build([self.HELPERS[1]], ROOT), {"skill": ["foundry-agentops"]})
+
+    def test_helpers_use_normal_dependency_fanout_not_full_matrix(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": [], "alpha": ["foundry-agentops"], "beta": []})
+        for helper in self.HELPERS:
+            with self.subTest(helper=helper):
+                self.assertEqual(self.build([helper]), {"skill": ["alpha", "foundry-agentops"]})
+
+    def test_both_helpers_deduplicate_and_preserve_other_touched_skills(self) -> None:
+        self.assertEqual(
+            self.build([*self.HELPERS, "skills/beta/SKILL.md"]),
+            {"skill": ["beta", "foundry-agentops"]},
+        )
+
+    def test_helper_mapping_retains_quarantine_and_missing_fixture_filter(self) -> None:
+        _write_quarantine(self.repo, ["foundry-agentops"])
+        self.assertEqual(self.build(list(self.HELPERS)), {"skill": []})
+        _write_quarantine(self.repo)
+        (self.repo / "skills/foundry-agentops/test-fixture/consumer_prompt.md").unlink()
+        self.assertEqual(self.build(list(self.HELPERS)), {"skill": []})
+
+    def test_only_exact_helper_paths_map_to_agentops(self) -> None:
+        self.assertEqual(
+            self.build(["scripts/agentops-ci-report.py.bak",
+                        "scripts/nested/agentops-ci-preflight.py",
+                        "scripts/another-helper.py"]),
+            {"skill": []},
+        )
+
+    def test_shared_workflow_change_still_forces_full_matrix(self) -> None:
+        self.assertEqual(
+            self.build([self.HELPERS[0], ".github/workflows/skill-test.yml"]),
+            {"skill": ["alpha", "beta", "foundry-agentops"]},
+        )
+
+    def test_other_skill_changes_keep_existing_dependency_expansion(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": [], "alpha": [], "beta": ["alpha"]})
+        self.assertEqual(self.build(["skills/alpha/SKILL.md"]), {"skill": ["alpha", "beta"]})
 
 
 class TestFullMatrix(unittest.TestCase):

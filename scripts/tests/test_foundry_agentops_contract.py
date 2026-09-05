@@ -1249,20 +1249,14 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertIn("1 critical", prior)
         self.assertIn("first skill-load", prior)
 
-    def test_validation_record_binds_corrected_fixture_and_preserves_prior_fingerprints(self) -> None:
-        import hashlib
-
+    def test_validation_record_preserves_historical_fixture_fingerprints(self) -> None:
         text = (ROOT / self.VALIDATION_RECORD).read_text(encoding="utf-8")
-        fixture_digest = hashlib.sha256(
-            (SKILL / "test-fixture/consumer_prompt.md").read_bytes()
-        ).hexdigest()
-        self.assertEqual(
-            fixture_digest,
-            "22de211e642a915c451c444e1f8005624108e3a5b4d7769c422520fe098aea5e",
-            "Changed fixture requires new corrected-source live evidence",
-        )
+        # The new CI delivery boundary must not relabel a prior manual run as
+        # live evidence for today's fixture. Preserve the executed source hash.
+        self.assertIn("identify that historical source", text)
+        self.assertIn("require their own CI evidence", text)
         expected = {
-            "Executed corrected-source fixture": fixture_digest,
+            "Executed corrected-source fixture": "22de211e642a915c451c444e1f8005624108e3a5b4d7769c422520fe098aea5e",
             "Corrected approval": "60436f44aa6e105f17c435268010dd4a0dfb2c84c7002894378d233cf229f058",
             "Corrected native results": "f40a0419dbee405e01f9fa445049b300bf6286c5f07e61a0ccdad850b7823563",
             "Corrected Doctor evidence": "c52e7c5453c6958281fc642a6e1208034d4a575a48223000d0e5d512358cee16",

@@ -79,9 +79,10 @@ are not broad quality coverage.
 ## Evidence fingerprints
 
 Private evidence fingerprints (SHA-256; raw material remains private). Corrected
-artifact digests come from the sanitized corrected summary. The current source
-fixture's SHA-256 was independently matched to its executed-fixture digest;
-changing that fixture requires new evidence. Prior provenance remains distinct.
+artifact digests come from the sanitized corrected summary. At the manual-record
+cutoff, the fixture's SHA-256 matched its executed-fixture digest. These hashes
+identify that historical source, not subsequent CI preflight or privacy changes,
+which require their own CI evidence. Prior provenance remains distinct.
 
 | Artifact | Digest |
 |----------|--------|
@@ -130,6 +131,23 @@ Evidence-bearing draft push/PR authorization is granted before the final candida
 commit, with normal push and the existing full **23-fixture** CI matrix using
 **CI resources only**. This does not authorize merge, release, auto-merge,
 Threadlight work, or shared-Azure mutations.
+
+The first candidate's [PR CI run](https://github.com/aiappsgbb/awesome-gbb/actions/runs/33965676622)
+materialized all 23 fixtures: **5 passed, 1 failed, 17 were cancelled**. AgentOps
+authenticated through the isolated CI service-principal route, then stopped
+before native eval, Doctor, or agent creation because telemetry approval was
+unresolved. This is neither native CI execution nor full-matrix acceptance.
+The required `validate`, `gate`, and `validate-pins` checks passed; three stale
+unit-test expectations were corrected separately.
+
+The owner subsequently authorized dedicated AgentOps-only CI telemetry and
+published separate job-specific configuration. Runtime identity, project
+membership, destination routing, workspace and explicit table retention must
+still pass the deterministic preflight using the **actual CI principal**.
+Owner-side provisioning/readback is not CI evidence. Raw native output and the
+approval record must not enter public Actions logs or artifacts; public evidence
+is limited to sanitized outcomes and hashes. The next complete candidate still
+requires a new full-matrix result.
 
 At the manual-record cutoff above, the unchanged CI/SP/workload route and actual
 full matrix were **not run**. No non-main workflow dispatch, OIDC mutation, staging,

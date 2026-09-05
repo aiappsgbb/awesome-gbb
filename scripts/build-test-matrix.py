@@ -13,7 +13,7 @@ Sorted alphabetically for deterministic GHA matrix expansion.
 
 --changed-only --base-ref <sha>
   Restricts the matrix to skills affected by `git diff $base_ref..HEAD`,
-  with two refinements:
+  with these refinements:
 
   - Force-full-matrix paths (any one of them touched → emit the full set):
         .github/workflows/skill-test.yml
@@ -51,6 +51,11 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     (categories, keywords, name), matrix-logic drift, or dep-graph
     rename is re-validated within ≤7 days even when the PR fan-out
     skipped it.
+
+  - AgentOps-only CI helpers (`scripts/agentops-ci-preflight.py` and
+    `scripts/agentops-ci-report.py`) map to `foundry-agentops`, not the
+    full matrix. Normal dependency expansion and fixture/quarantine
+    filtering still apply.
 
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
@@ -95,6 +100,11 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     "scripts/resolve-foundry-project.py",
 })
 
+SKILL_HELPER_PATHS: dict[str, str] = {
+    "scripts/agentops-ci-preflight.py": "foundry-agentops",
+    "scripts/agentops-ci-report.py": "foundry-agentops",
+}
+
 
 def _full_fixtured_skills(repo_root: Path) -> list[str]:
     """Return alphabetically-sorted list of skills with a fixture and
@@ -128,9 +138,11 @@ def _diff_filenames(repo_root: Path, base_ref: str) -> list[str]:
 
 
 def _changed_skills_from_diff(changed_files: list[str]) -> set[str]:
-    """Extract `<name>` from any path matching `skills/<name>/...`."""
+    """Map skill-folder changes and exact skill-owned helper paths to skills."""
     out: set[str] = set()
     for path in changed_files:
+        if path in SKILL_HELPER_PATHS:
+            out.add(SKILL_HELPER_PATHS[path])
         parts = path.split("/")
         if len(parts) >= 2 and parts[0] == "skills":
             out.add(parts[1])

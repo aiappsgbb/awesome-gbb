@@ -188,6 +188,59 @@ or package fork. This skill must not implement a parallel invocation engine.
 
 ## Manual equivalent and outer executor diagnosis
 
+### Dedicated CI delivery boundary
+
+For the explicitly owner-authorized CI run, the workflow's deterministic
+`agentops-ci-preflight.py` validates the private approval, actual CI principal,
+selected project/model membership and dedicated telemetry routing/retention
+before paid Copilot or native execution, and rechecks before each attempt.
+This replaces the old prohibition on membership assertions **only for that
+owner's deterministic gate**; fixtures must not invent additional checks or
+repair an identity. A manual `cached-user` run still leaves `AZURE_CLIENT_ID`
+unset and does not certify the real CI service-principal route.
+
+The approval JSON secret exists only in the preflight step. Paid processes
+receive a mode-0600 private path pointer, not an approval inventory in logs or
+`GITHUB_ENV`. Empty dedicated connection-string/LAW secrets fail closed, never
+fall back to shared secrets. The approved dedicated component is the explicit
+export destination and the component-scoped Doctor source. The native
+`log_analytics_workspace_id` option stays unset even when the workflow exports
+the LAW customer ID for validation; all four sources and the 1-day aggregates
+remain required. Reconcile inherited environment, dotenv and discovery before
+eval and Doctor. Do not discover a substitute project, judge or component.
+
+The effective CI policy validates all twelve approved tables' analytical and
+total retention plus LAW retention at 30 days and
+`immediatePurgeDataOn30Days=true`. Legacy App Insights 90-day metadata is not
+the authority. A 0.1-GB daily cap is neither an ingestion nor cost guarantee.
+Inherited RBAC readers remain; this is not exclusive CI access. The 30-day
+Monitor policy does not promise exact physical purge or individual Responses
+deletion: native response-ID loss and absence of `store=false` remain limitations.
+
+Public Actions logs/artifacts are not the private operator archive. CI captures
+all Copilot stdout/stderr privately and publishes only a strict host-generated
+allowlist: execution checks, native exit codes, the five known metric values,
+threshold counts/quality, Doctor severity/readiness, known coverage enums and
+artifact SHA256. No prompts/responses, findings prose, identities, resource
+inventory, arbitrary native fields, approval, credentials or raw exceptions.
+Fresh ingestion and multi-turn/rubric coverage remain unverified. The host
+reuses the exact fixture assertion blocks, not a second scoring/Doctor engine;
+the byte-exact marker alone is insufficient. Primary and retry summaries are
+separate. Once a private workspace exists, automated replay is conservatively
+blocked so a completed negative cycle cannot be overwritten by a green retry.
+
+CI workspaces/identity pointers are private runner context, not native schemas.
+The fixture deletes only its own prompt agent and leaves local evidence for
+host checks. An unconditional finalizer removes only this run/attempt's owned
+private root (approval, caches, workspaces, transcripts); it never follows a
+symlink or uses an arbitrary pointer as a cleanup target. Sanitized summaries
+remain outside that root. Forced cancellation or runner loss can skip the
+finalizer; ephemeral runner disposal is a backstop, not verified cleanup.
+Earlier ephemeral deletion does not extend the manual archive's 7-day maximum
+or its originally approved deletion deadline. Model/shared resources remain.
+
+### Separately authorized manual reproduction
+
 This is the same fixture contract, not a new wrapper or a second test product:
 
 1. The owner separately prepares a **new private** CLI config containing only

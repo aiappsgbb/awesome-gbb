@@ -16,8 +16,9 @@ with the FAIL marker in Step 8 using the literal one-line reason
 **CRITICAL - never invoke `copilot` recursively from a Bash tool.** You ARE the
 running Copilot CLI process. Do NOT run `copilot -p ...`, `copilot --version`,
 `npm install -g @github/copilot`, or any other `copilot ...` command. The
-workflow already captures your output through its outer `tee`; execute the
-smoke steps directly.
+workflow captures AgentOps stdout/stderr in a private mode-0600 transcript,
+not a public `tee`; execute the smoke steps directly. Public Actions logs and
+artifacts are NOT the owner's private operator archive.
 
 **Hard scope guardrails.** Do NOT generate any Threadlight manifest or files.
 Do NOT modify APIM, Citadel, RBAC, networking, branch protection, GitHub
@@ -76,8 +77,19 @@ No login, account switching, global account inspection, cache copying or RBAC
 changes are allowed. No intentional azd operation is authorized by this fixture;
 if one is required, STOP and hand off to its existing owner separately.
 
-**CI runner context is authoritative**: preserve show-don't-assert; do not add
-cache availability, subscription equality or membership assertions in CI.
+**CI runner context is authoritative**: the workflow owner's deterministic
+`scripts/agentops-ci-preflight.py` gate is now the explicitly authorized strict
+membership/identity/telemetry check, before any paid Copilot/native call. It
+rechecks the private mode-0600 `AGENTOPS_CI_APPROVAL_FILE` before each attempt.
+This is not permission for the fixture to invent additional cache availability,
+subscription equality, principal discovery or membership assertions. The prior
+show-don't-assert rule still forbids those invented checks; it does not bypass
+this newly approved workflow gate.
+In GitHub Actions, require the record pointer and select **`ci-cli`**, never
+`cached-user` or a guessed owner. Recheck that record with
+`python3 "$GITHUB_WORKSPACE/scripts/agentops-ci-preflight.py" --approval-file "$AGENTOPS_CI_APPROVAL_FILE"`.
+Do not print/read it through a view tool, dump its JSON, copy it into another
+artifact, or request the approval secret (which is absent from the paid process).
 For a separately authorized manual run, perform any read-only membership check
 only in its approved isolated cache per SKILL.md, never in a global cache.
 The parent workflow must establish isolation before its authentication step;
@@ -168,6 +180,15 @@ Follow the gate in
 `skills/foundry-agentops/references/day2-runbook.md#pre-execution-telemetry-approval`.
 Require an existing owner approval record identifying the actual tenant-local
 telemetry destination, payload capture, access and retention for this run.
+For CI this is the workflow-validated private record, not a new approval to
+negotiate or infer. Read approved field values only in memory with Python, using
+the preflight helper's no-follow `read_file` and `validate_paths`; never render
+the inventory or connection string in tool input/output. The workflow selects
+the dedicated secrets by NAME: an empty dedicated value must fail, never fall
+back to shared telemetry. The record's `foundry` section supplies approved agent,
+eval-judge and Doctor-judge deployments and account; its `telemetry` section
+supplies the approved component ARM ID. Select the already validated
+`FOUNDRY_PROJECT_ENDPOINT`; do not select a different allowed endpoint.
 Reconcile it with the effective environment, selected workspace dotenv and
 Foundry-attached App Insights before invoking eval or Doctor; recheck after
 workspace setup. Include explicit exporter settings and possible auto-discovery/
@@ -199,6 +220,13 @@ component-scoped aggregates cover requests/errors/duration, safety hits, tokens
 and 429s. They have no per-agent/run filter; historical 24h aggregates are
 **not fresh per-agent ingestion**. All four sources must remain enabled.
 If that shared read scope or finding/judge/export scope is unacceptable, STOP.
+For the dedicated CI route, the preflight already performs these exact-ID
+metadata reads for the approved component and linked LAW. That dedicated
+component is both the explicit exporter and Doctor source; do not substitute a
+shared project-attached component through inherited discovery. Do NOT set
+`log_analytics_workspace_id` in Doctor config, even though `LAW_WORKSPACE_ID`
+is present for preflight: the native workspace option takes precedence and
+broadens query scope.
 
 **Separate retention surfaces.** An approved **7-day local raw retention** cap
 is an operator deletion obligation, not service configuration. Observed service
@@ -228,6 +256,18 @@ Suggested names:
 
 - workspace: `<owner-private-root>/foundry-agentops-<uuid>`
 - prompt agent: `ci-smoke-agentops-pa-<uuid>`
+
+**CI-only private runner context (not a native schema):** use
+`$AGENTOPS_CI_ROOT/workspaces/<UUID>` with a fresh 32-lowercase-hex UUID and
+`umask 077`. Persist ONLY that UUID plus one newline in
+`$AGENTOPS_CI_ROOT/attempts/$AGENTOPS_CI_ATTEMPT/workspace-pointer` (0600),
+using exclusive creation. All containing directories must be owned 0700;
+no symlinks/hardlinks in the pointer, identity or native evidence paths.
+Never use `/tmp` compatibility output paths in CI. Set pip's local cache under
+this workspace rather than a shared cache. Keep raw outputs here; do not upload
+or copy them to public paths. A workspace allocation conservatively prevents
+automatic replay, even if orchestration subsequently fails.
+Manual runs retain the separately owner-approved private workspace convention.
 
 Inside that workspace:
 
@@ -291,6 +331,11 @@ Requirements:
   Recommended instructions: `Reply with exactly PASS and nothing else.`
 - Capture the resolved agent name and version returned by Foundry and persist
   them for later steps.
+- In CI, the creation helper must exclusively write `agent-identity.json` (0600)
+  in the workspace directly from that Step 3 Foundry return object:
+  `{"name": <returned name>, "version": <returned version>}`. Do not populate it
+  from native results, the requested name, or a later model guess. This private
+  runner identity record is not an addition to the native AgentOps schema.
 - Use the parent-approved credential route from Step 0 without substitution.
   The direct SDK DefaultAzureCredential must inherit the same selector and
   isolated config paths as eval/Doctor, not an unrestricted developer chain.
@@ -369,6 +414,83 @@ with the parent so they cannot substitute another credential/endpoint for the
 selected route. Stop on conflicting/unapproved settings; do not silently
 rewrite owner configuration, discover a different judge, or change evaluators.
 
+**CI scope reconciliation, before BOTH Step 6 and Step 7:** the workflow exports
+the native project/judge aliases and explicit exporter from its validated values.
+Do not change them. Read the approval in memory and fill Step 4's source fields
+from `telemetry.component_resource_id`, `identity.subscription_id`, and the
+resource-group/account segments of `foundry.account_resource_id`; use the
+independent Step 3 identity for `foundry_control.agent_ids`.
+Do not use `agentops init` in CI; author only the minimal two YAML files above,
+so no generated dotenv/discovery overrides are needed.
+
+Execute the following complete block in the workspace using its venv Python
+(which has the native YAML dependency), before each of the two native commands.
+It performs the already approved read-only preflight again, then compares
+effective environment/config; it is not a new native execution engine.
+Persist it privately if needed and run it afresh in each Bash call. Never run
+with optimization or continue after a nonzero exit.
+
+```python
+# BEGIN AGENTOPS CI SCOPE CHECK
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import yaml
+
+try:
+    if not __debug__:
+        raise ValueError("assertions required")
+    repository = Path(os.environ["GITHUB_WORKSPACE"])
+    spec = importlib.util.spec_from_file_location("ci_preflight", repository / "scripts/agentops-ci-preflight.py")
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    approval = gate.absolute_path(os.environ["AGENTOPS_CI_APPROVAL_FILE"])
+    assert gate.main(["--approval-file", str(approval)]) == 0
+    root = gate.validate_paths(approval, os.environ, False)
+    record = gate.parse_json(gate.read_file(approval, root))
+    workspace = Path.cwd()
+    assert workspace.parent == root / "workspaces"
+    assert len(workspace.name) == 32 and all(c in "0123456789abcdef" for c in workspace.name)
+    # No dotenv or azd environment may override the inherited explicit route.
+    for parent in (workspace, *workspace.parents):
+        assert not (parent / ".env").exists() and not (parent / ".env").is_symlink()
+    assert not (workspace / ".agentops/.env").exists()
+    assert not (workspace / ".agentops/.env").is_symlink()
+    assert not (workspace / ".azure").exists()
+    identity = json.loads(gate.read_file(workspace / "agent-identity.json", root))
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    assert os.environ["AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"] == endpoint
+    assert os.environ["AZURE_OPENAI_DEPLOYMENT"] == record["foundry"]["eval_judge_deployment"]
+    assert os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"] == record["foundry"]["doctor_judge_deployment"]
+    assert os.environ["AGENTOPS_APPLICATIONINSIGHTS_CONNECTION_STRING"] == os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"]
+    for key in ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "OPENAI_API_KEY",
+                "OPENAI_BASE_URL", "AZURE_AI_API_KEY", "AZURE_CLIENT_SECRET",
+                "AZURE_CLIENT_CERTIFICATE_PATH", "AZURE_FEDERATED_TOKEN_FILE"):
+        assert not os.environ.get(key)
+    config = yaml.safe_load(gate.read_file(workspace / "agentops.yaml", root))
+    assert config == {"version": 1, "project_endpoint": endpoint,
+                      "agent": identity["name"] + ":" + identity["version"],
+                      "dataset": ".agentops/data/smoke.jsonl"}
+    account = record["foundry"]["account_resource_id"].split("/")
+    doctor = yaml.safe_load(gate.read_file(workspace / ".agentops/agent.yaml", root))
+    assert doctor == {
+        "version": 1, "lookback_days": 1,
+        "sources": {
+            "results_history": {"enabled": True},
+            "azure_monitor": {"enabled": True, "app_insights_resource_id": record["telemetry"]["component_resource_id"]},
+            "foundry_control": {"enabled": True, "project_endpoint": endpoint, "agent_ids": [identity["name"]]},
+            "azure_resources": {"enabled": True, "subscription_id": record["identity"]["subscription_id"],
+                                "resource_group": account[4], "cognitive_services_account": account[8]},
+        },
+    }
+except Exception:
+    raise SystemExit("AGENTOPS_CI_SCOPE=FAIL") from None
+print("AGENTOPS_CI_SCOPE=PASS")
+# END AGENTOPS CI SCOPE CHECK
+```
+
 ---
 
 ## Step 5 - Run `$AGENTOPS_BIN eval analyze --format json`
@@ -385,7 +507,11 @@ Requirements:
 - the JSON payload must parse cleanly,
 - `version == 1` must hold.
 
-Persist the JSON output for the run log or later inspection if helpful. If the
+In CI, persist the exact JSON stdout at `.agentops/analyze.json` (0600), with
+stderr in a separate private log and the command's original numeric status in
+`.agentops/analyze-exit-code` (0600). Return that original status from the Bash
+call; do not mask a failure with a subsequent successful file write.
+In manual runs, persist the JSON output for later inspection if helpful. If the
 analyze command errors, the JSON is invalid, or `version != 1`, finish with
 Step 8 using the literal one-line reason `eval analyze contract failed`.
 
@@ -728,7 +854,18 @@ quality pass or readiness approval.
 ## Step 8 - Teardown and deterministic marker contract
 
 On success **or failure**, attempt cleanup of only assets actually created by
-this run before writing the marker. Preserve failure/evidence bytes first in the
+this run before writing the marker. **In CI leave the CI workspace intact**
+for the host's read-only validation and sanitized summary. Delete only the
+fixture-owned prompt agent/version; after confirmed SDK deletion, write
+`verified\n` to the workspace's mode-0600 `prompt-agent-cleanup` file.
+If deletion is not confirmed leave it absent: the host reports `unverified`,
+never assumes `not_created` merely because the returned identity was lost.
+The unconditional workflow finalizer removes the owned runner root after host
+validation, including approval, isolated caches, workspaces and transcripts.
+No raw public upload is permitted. Forced cancellation/runner loss can prevent
+that finalizer; ephemeral runner disposal is the backstop, not proven cleanup.
+
+**Manual route:** preserve failure/evidence bytes first in the
 owner's restricted archive with the approved 7-day local raw retention/deletion
 deadline and responsible owner; deleting a workspace is not evidence retention:
 
@@ -759,7 +896,25 @@ GitHub policy objects.
 
 ### Final action (MANDATORY, deterministic)
 
-Write exactly one marker file as your FINAL Bash action:
+Write exactly one marker file as your FINAL Bash action. For CI use the provided
+`$AGENTOPS_CI_MARKER` path (0600 under this attempt's private directory), NOT the
+manual compatibility path below. Never print the marker or native evidence.
+
+CI execution success:
+
+```bash
+umask 077
+printf 'SMOKE_RESULT=PASS\n' > "$AGENTOPS_CI_MARKER"
+```
+
+CI execution/evidence failure:
+
+```bash
+umask 077
+printf 'SMOKE_RESULT=FAIL\n' > "$AGENTOPS_CI_MARKER"
+```
+
+Manual route only:
 
 On execution success (Step 6 and Step 7 assertions pass, independently of eval
 quality or Doctor readiness):
@@ -776,5 +931,10 @@ printf 'SMOKE_RESULT=FAIL %s\n' 'literal one-line reason here' > /tmp/foundry-ag
 
 Substitute the actual literal one-line reason directly into that final command.
 
-The marker-file write is the single source of truth. Do not print the literal
-marker token anywhere else in your reply.
+The byte-exact marker is necessary, not sufficient in CI: after checking tracked
+checkout integrity, the host re-executes the exact Step 6/7 assertion blocks with
+the separately persisted Step 3 identity, using original native artifacts.
+Malformed/missing evidence cannot pass via a marker or agent-written summary.
+Eval quality and Doctor exit 2 remain separate negative outcomes; an orchestration
+failure after a completed cycle retains that evidence, never replays for green.
+Do not print the literal marker token anywhere else in your reply.
