@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import hashlib
 import hmac
 import json
 import math
@@ -98,6 +99,25 @@ POLICY = {
         "azure_monitor_retention_is_not_an_exact_physical_purge_deadline": True,
     },
 }
+V2_STORAGE_POLICY = {
+    "public_artifacts": (
+        "Sanitized summaries and source/artifact hashes; additionally, only the "
+        "redacted Doctor log encrypted to the bound age recipient in a publicly "
+        "downloadable artifact retained for 1 day; never plaintext native logs, "
+        "approval record, connection strings or credentials"
+    ),
+    "raw_artifact_access": (
+        "Plaintext native artifacts remain private to the runner/operator; only "
+        "the redacted Doctor log may leave the runner as age ciphertext for the "
+        "bound operator recipient"
+    ),
+}
+DIAGNOSTIC_KEYS = {
+    "enabled", "mode", "label", "recipient", "fingerprint",
+    "retention_days", "head_sha", "run_attempt",
+}
+AGE_X25519_RECIPIENT = re.compile(r"age1[023456789acdefghjklmnpqrstuvwxyz]{58}")
+LOWER_HEX_SHA = re.compile(r"[0-9a-f]{40}")
 VARIABLE_FIELDS = {
     "authorization": {"basis", "repository", "pull_request", "head_branch", "expires_at", "purpose"},
     "identity": {"tenant_id", "subscription_id", "client_id", "principal_id", "resource_id"},
@@ -210,14 +230,42 @@ def string_set(value, expected, code):
 
 
 def validate_record(record, now):
-    require(isinstance(record, dict) and set(record) == {"schema_version", *POLICY}, "SCHEMA")
-    exact(record["schema_version"], 1, "SCHEMA")
+    require(isinstance(record, dict) and "schema_version" in record, "SCHEMA")
+    version = record["schema_version"]
+    require(type(version) is int and version in (1, 2), "SCHEMA")
+    expected_top_level = {"schema_version", *POLICY}
+    if version == 2:
+        expected_top_level.add("diagnostic")
+    require(set(record) == expected_top_level, "SCHEMA")
     for group, policies in POLICY.items():
         values = record[group]
         require(isinstance(values, dict) and
                 set(values) == set(policies) | VARIABLE_FIELDS[group], "SCHEMA")
         for key, expected in policies.items():
+            if version == 2 and group == "storage_and_cleanup" and key in V2_STORAGE_POLICY:
+                expected = V2_STORAGE_POLICY[key]
             exact(values[key], expected, "POLICY")
+    if version == 2:
+        diagnostic = record["diagnostic"]
+        require(isinstance(diagnostic, dict) and set(diagnostic) == DIAGNOSTIC_KEYS, "SCHEMA")
+        for key, expected in (
+            ("enabled", True),
+            ("mode", "doctor-encrypted"),
+            ("label", "agentops-diagnostic"),
+            ("retention_days", 1),
+            ("run_attempt", 1),
+        ):
+            exact(diagnostic[key], expected, "POLICY")
+        recipient = diagnostic["recipient"]
+        require(type(recipient) is str and AGE_X25519_RECIPIENT.fullmatch(recipient) is not None,
+                "SCHEMA")
+        fingerprint = diagnostic["fingerprint"]
+        require(type(fingerprint) is str and
+                re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint) is not None, "SCHEMA")
+        expected_fingerprint = "sha256:" + hashlib.sha256(recipient.encode("ascii")).hexdigest()
+        require(hmac.compare_digest(fingerprint, expected_fingerprint), "POLICY")
+        require(type(diagnostic["head_sha"]) is str and
+                LOWER_HEX_SHA.fullmatch(diagnostic["head_sha"]) is not None, "SCHEMA")
     auth, identity, foundry, telemetry, storage = (
         record["authorization"], record["identity"], record["foundry"],
         record["telemetry"], record["storage_and_cleanup"],
@@ -394,7 +442,8 @@ def write_private(path, private_root, raw):
             raise
 
 
-def validate_context(record, environ):
+def validate_github_context(record, environ):
+    """Validate repository and pull-request membership from the event payload."""
     auth = record["authorization"]
     exact(required_env(environ, "GITHUB_REPOSITORY"), auth["repository"], "CI_CONTEXT")
     exact(required_env(environ, "GITHUB_EVENT_NAME"), "pull_request", "CI_CONTEXT")
@@ -408,6 +457,26 @@ def validate_context(record, environ):
         (("pull_request", "head", "ref"), auth["head_branch"]),
     ):
         exact(field(event, *keys), expected, "CI_CONTEXT")
+    if record["schema_version"] == 2:
+        exact(event.get("action") if isinstance(event, dict) else None,
+              "synchronize", "CI_CONTEXT")
+        diagnostic = record["diagnostic"]
+        event_head_sha = field(event, "pull_request", "head", "sha")
+        require(type(event_head_sha) is str and
+                LOWER_HEX_SHA.fullmatch(event_head_sha) is not None, "CI_CONTEXT")
+        exact(event_head_sha, diagnostic["head_sha"], "CI_CONTEXT")
+        exact(environ.get("GITHUB_RUN_ATTEMPT"), "1", "CI_CONTEXT")
+        labels = field(event, "pull_request", "labels")
+        require(isinstance(labels, list) and all(
+            isinstance(label, dict) and isinstance(label.get("name"), str)
+            for label in labels
+        ), "CI_CONTEXT")
+        require(any(label["name"] == diagnostic["label"] for label in labels), "CI_CONTEXT")
+    return event
+
+
+def validate_context(record, environ):
+    validate_github_context(record, environ)
     identity, foundry, telemetry = record["identity"], record["foundry"], record["telemetry"]
     for env, key in (("AZURE_TENANT_ID", "tenant_id"), ("AZURE_SUBSCRIPTION_ID", "subscription_id"),
                      ("AZURE_CLIENT_ID", "client_id")):

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
 import shlex
 import subprocess
 import sys
@@ -31,6 +32,14 @@ import yaml
 
 SCRIPT = Path(__file__).resolve().parents[1] / "build-test-matrix.py"
 ROOT = Path(__file__).resolve().parents[2]
+PREFLIGHT_TEST = Path(__file__).with_name("test_agentops_ci_preflight.py")
+
+
+def _load_preflight_fixture_module():
+    spec = importlib.util.spec_from_file_location("agentops_preflight_fixtures", PREFLIGHT_TEST)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(repo_root: Path) -> list[str]:
@@ -59,6 +68,16 @@ def _run_changed_only(repo_root: Path, base_ref: str) -> list[str]:
     payload = json.loads(out)
     assert isinstance(payload, dict) and "skill" in payload, payload
     return payload["skill"]
+
+
+def _run_diagnostic_mode(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--agentops-diagnostic-mode"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -115,7 +134,12 @@ def _write_deps(repo: Path, mapping: dict[str, list[str]]) -> None:
 class TestAgentOpsHelperChanges(unittest.TestCase):
     """Exercise the real selection pipeline, isolating only Git diff retrieval."""
 
-    HELPERS = ("scripts/agentops-ci-preflight.py", "scripts/agentops-ci-report.py")
+    HELPERS = (
+        "scripts/agentops-ci-preflight.py",
+        "scripts/agentops-ci-report.py",
+        "scripts/agentops-ci-diagnostic.py",
+        "scripts/setup-agentops-age.sh",
+    )
 
     def setUp(self) -> None:
         spec = importlib.util.spec_from_file_location("matrix_helper_changes", SCRIPT)
@@ -177,6 +201,122 @@ class TestAgentOpsHelperChanges(unittest.TestCase):
     def test_other_skill_changes_keep_existing_dependency_expansion(self) -> None:
         _write_deps(self.repo, {"foundry-agentops": [], "alpha": [], "beta": ["alpha"]})
         self.assertEqual(self.build(["skills/alpha/SKILL.md"]), {"skill": ["alpha", "beta"]})
+
+
+class TestAgentOpsDiagnosticMode(unittest.TestCase):
+    def setUp(self) -> None:
+        fixtures = _load_preflight_fixture_module()
+        self.record = fixtures.diagnostic_approval_record()
+        auth = self.record["authorization"]
+        self.event = {
+            "action": "synchronize",
+            "number": auth["pull_request"],
+            "repository": {"full_name": auth["repository"]},
+            "pull_request": {
+                "number": auth["pull_request"],
+                "head": {
+                    "ref": auth["head_branch"],
+                    "sha": self.record["diagnostic"]["head_sha"],
+                    "repo": {"full_name": auth["repository"]},
+                },
+                "base": {"repo": {"full_name": auth["repository"]}},
+                "labels": [{"name": "agentops-diagnostic"}],
+            },
+        }
+        scratch = ROOT / ".artifacts"
+        scratch.mkdir(exist_ok=True)
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-diagnostic-", dir=scratch)
+        self.addCleanup(workspace.cleanup)
+        self.event_path = Path(workspace.name) / "event.json"
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        self.env = {
+            "PATH": os.environ["PATH"],
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_EVENT_PATH": str(self.event_path),
+            "GITHUB_REPOSITORY": auth["repository"],
+            "GITHUB_RUN_ATTEMPT": "1",
+            "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON": json.dumps(self.record),
+        }
+
+    def test_labeled_authorized_v2_prints_true(self) -> None:
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
+
+    def test_labeled_v2_requires_synchronize_action(self) -> None:
+        original = dict(self.event)
+        for action in (None, "opened", "reopened", "closed", "labeled", "edited"):
+            with self.subTest(action=action):
+                event = dict(original)
+                if action is None:
+                    event.pop("action")
+                else:
+                    event["action"] = action
+                self.event_path.write_text(json.dumps(event), encoding="utf-8")
+                result = _run_diagnostic_mode(self.env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, "CI_CONTEXT\n")
+
+    def test_non_pr_and_unlabeled_pr_print_false_without_reading_secret(self) -> None:
+        toxic = "TOXIC_APPROVAL_MUST_NOT_BE_READ"
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = toxic
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+        self.env["GITHUB_EVENT_NAME"] = "pull_request"
+        self.event["pull_request"]["labels"] = [{"name": "other"}]
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+    def test_labeled_invalid_context_and_approval_fail_closed_without_toxic_output(self) -> None:
+        toxic = "TOXIC_VALUE_MUST_NOT_ESCAPE"
+        cases = [
+            ("malformed-approval", toxic),
+            ("v1", json.dumps(_load_preflight_fixture_module().approval_record())),
+            ("wrong-head", json.dumps({
+                **self.record,
+                "diagnostic": {**self.record["diagnostic"], "head_sha": "c" * 40},
+            })),
+        ]
+        for name, approval in cases:
+            with self.subTest(name=name):
+                self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = approval
+                result = _run_diagnostic_mode(self.env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertRegex(result.stderr, r"\A[A-Z_]+\n\Z")
+                self.assertNotIn(toxic, result.stdout + result.stderr)
+
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = json.dumps(self.record)
+        self.event["repository"]["full_name"] = toxic
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        result = _run_diagnostic_mode(self.env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertRegex(result.stderr, r"\A[A-Z_]+\n\Z")
+        self.assertNotIn(toxic, result.stdout + result.stderr)
+
+    def test_diagnostic_mode_rejects_combining_matrix_arguments(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--agentops-diagnostic-mode",
+                "--changed-only",
+                "--base-ref",
+                "base",
+            ],
+            cwd=ROOT,
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertRegex(result.stderr, r"\A[A-Z_]+\n\Z")
 
 
 class TestFullMatrix(unittest.TestCase):

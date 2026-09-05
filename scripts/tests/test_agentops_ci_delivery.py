@@ -641,6 +641,9 @@ sys.exit({exit_code})
                 shell = f"""
 set -euo pipefail
 python3() {{
+  if [ "$1" = "-I" ]; then
+    shift
+  fi
   if [ "$1" = "scripts/agentops-ci-preflight.py" ]; then
     return {preflight_status}
   fi
@@ -659,6 +662,7 @@ PROMPT="{FIXTURE}"
                            GITHUB_STEP_SUMMARY=str(self.scratch / "summary"),
                            GITHUB_OUTPUT=str(self.scratch / "step-output"),
                            GITHUB_ENV=str(self.scratch / "step-env"),
+                           AGENTOPS_CI_DIAGNOSTIC_MODE="",
                            FOUNDRY_PROJECT_ENDPOINT="https://example.invalid/api/projects/example",
                            FOUNDRY_MODEL_DEPLOYMENT="example-model",
                            APPLICATIONINSIGHTS_CONNECTION_STRING=CANARY)

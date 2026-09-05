@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import copy
 from datetime import datetime, timezone
+import hashlib
 import importlib.util
 import io
 import json
@@ -21,6 +22,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "agentops-ci-preflight.py"
 NOW = datetime(2030, 1, 1, tzinfo=timezone.utc)
+DIAGNOSTIC_RECIPIENT = "age1" + ("q" * 58)
+DIAGNOSTIC_HEAD_SHA = "a" * 40
 
 
 def fake_id(label):
@@ -110,6 +113,35 @@ def approval_record():
     }
 
 
+def diagnostic_approval_record():
+    record = approval_record()
+    record["schema_version"] = 2
+    record["diagnostic"] = {
+        "enabled": True,
+        "mode": "doctor-encrypted",
+        "label": "agentops-diagnostic",
+        "recipient": DIAGNOSTIC_RECIPIENT,
+        "fingerprint": "sha256:" + hashlib.sha256(
+            DIAGNOSTIC_RECIPIENT.encode("ascii")
+        ).hexdigest(),
+        "retention_days": 1,
+        "head_sha": DIAGNOSTIC_HEAD_SHA,
+        "run_attempt": 1,
+    }
+    record["storage_and_cleanup"]["public_artifacts"] = (
+        "Sanitized summaries and source/artifact hashes; additionally, only the "
+        "redacted Doctor log encrypted to the bound age recipient in a publicly "
+        "downloadable artifact retained for 1 day; never plaintext native logs, "
+        "approval record, connection strings or credentials"
+    )
+    record["storage_and_cleanup"]["raw_artifact_access"] = (
+        "Plaintext native artifacts remain private to the runner/operator; only "
+        "the redacted Doctor log may leave the runner as age ciphertext for the "
+        "bound operator recipient"
+    )
+    return record
+
+
 def connection_string(record, key=None):
     telemetry = record["telemetry"]
     return ";".join([
@@ -148,8 +180,13 @@ class PreflightTests(unittest.TestCase):
             "number": auth["pull_request"], "repository": {"full_name": auth["repository"]},
             "pull_request": {
                 "number": auth["pull_request"],
-                "head": {"ref": auth["head_branch"], "repo": {"full_name": auth["repository"]}},
+                "head": {
+                    "ref": auth["head_branch"],
+                    "sha": "b" * 40,
+                    "repo": {"full_name": auth["repository"]},
+                },
                 "base": {"repo": {"full_name": auth["repository"]}},
+                "labels": [],
             },
         }
         self.event_path = self.root / "event.json"
@@ -461,11 +498,137 @@ class PreflightTests(unittest.TestCase):
                 self.record[group][key] = value
                 self.sync_record()
                 self.assert_denied()
-        for version in [2, True, "1", None]:
+        for version in [3, True, "1", None]:
             self.record = approval_record()
             self.record["schema_version"] = version
             self.sync_record()
             self.assert_denied()
+
+    def test_v2_exact_diagnostic_shape_hash_types_and_storage_policy(self):
+        self.record = diagnostic_approval_record()
+        self.event["action"] = "synchronize"
+        self.event["pull_request"]["head"]["sha"] = DIAGNOSTIC_HEAD_SHA
+        self.event["pull_request"]["labels"] = [{"name": "agentops-diagnostic"}]
+        self.event_path.write_text(json.dumps(self.event))
+        self.env["GITHUB_RUN_ATTEMPT"] = "1"
+        self.private = self.root / "agentops-ci-123456-1"
+        self.private.mkdir(mode=0o700)
+        self.azure = self.private / "azure"
+        self.azd = self.private / "azd"
+        self.azure.mkdir(mode=0o700)
+        self.azd.mkdir(mode=0o700)
+        self.path = self.private / "owner-approval.json"
+        self.env["AZURE_CONFIG_DIR"] = str(self.azure)
+        self.env["AZD_CONFIG_DIR"] = str(self.azd)
+        self.sync_record()
+        self.assertEqual(self.run_gate(), (0, "AGENTOPS_CI_PREFLIGHT=PASS\n", ""))
+
+        original = diagnostic_approval_record()
+        cases = [
+            ("missing-diagnostic", lambda r: r.pop("diagnostic")),
+            ("missing", lambda r: r["diagnostic"].pop("label")),
+            ("extra", lambda r: r["diagnostic"].update({"extra": True})),
+            ("enabled-int", lambda r: r["diagnostic"].update({"enabled": 1})),
+            ("mode", lambda r: r["diagnostic"].update({"mode": "doctor-plaintext"})),
+            ("label", lambda r: r["diagnostic"].update({"label": "other"})),
+            ("recipient-uppercase", lambda r: r["diagnostic"].update(
+                {"recipient": r["diagnostic"]["recipient"].upper()})),
+            ("recipient-shape", lambda r: r["diagnostic"].update({"recipient": "age1invalid"})),
+            ("recipient-charset", lambda r: r["diagnostic"].update(
+                {"recipient": "age1" + ("b" * 58)})),
+            ("fingerprint", lambda r: r["diagnostic"].update(
+                {"fingerprint": "sha256:" + ("0" * 64)})),
+            ("fingerprint-newline", lambda r: r["diagnostic"].update({
+                "fingerprint": "sha256:" + hashlib.sha256(
+                    (r["diagnostic"]["recipient"] + "\n").encode("ascii")
+                ).hexdigest()
+            })),
+            ("retention-bool", lambda r: r["diagnostic"].update({"retention_days": True})),
+            ("head-sha", lambda r: r["diagnostic"].update({"head_sha": "A" * 40})),
+            ("attempt-bool", lambda r: r["diagnostic"].update({"run_attempt": True})),
+            ("v1-diagnostic", lambda r: r.update({"schema_version": 1})),
+            ("v2-v1-public-policy", lambda r: r["storage_and_cleanup"].update(
+                {"public_artifacts": approval_record()["storage_and_cleanup"]["public_artifacts"]})),
+            ("v2-v1-raw-policy", lambda r: r["storage_and_cleanup"].update(
+                {"raw_artifact_access": approval_record()["storage_and_cleanup"]["raw_artifact_access"]})),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                self.path.unlink(missing_ok=True)
+                self.record = copy.deepcopy(original)
+                mutate(self.record)
+                self.sync_record()
+                self.assert_denied()
+
+        self.record = approval_record()
+        self.record["diagnostic"] = copy.deepcopy(original["diagnostic"])
+        self.sync_record()
+        self.assert_denied()
+
+    def test_v2_github_context_binds_label_head_attempt_and_nonfork_membership(self):
+        self.record = diagnostic_approval_record()
+        self.event["action"] = "synchronize"
+        self.event["pull_request"]["head"]["sha"] = DIAGNOSTIC_HEAD_SHA
+        self.event["pull_request"]["labels"] = [
+            {"name": "unrelated"},
+            {"name": "agentops-diagnostic"},
+        ]
+        self.event_path.write_text(json.dumps(self.event))
+        self.env["GITHUB_RUN_ATTEMPT"] = "1"
+        self.env["GITHUB_SHA"] = "d" * 40
+        self.gate.validate_record(self.record, NOW)
+        self.gate.validate_github_context(self.record, self.env)
+
+        original_event = copy.deepcopy(self.event)
+        cases = [
+            ("missing-label", lambda e: e["pull_request"].update({"labels": []})),
+            ("wrong-label-case", lambda e: e["pull_request"].update(
+                {"labels": [{"name": "AgentOps-Diagnostic"}]})),
+            ("wrong-head", lambda e: e["pull_request"]["head"].update({"sha": "c" * 40})),
+            ("malformed-head", lambda e: e["pull_request"]["head"].update({"sha": "not-a-sha"})),
+            ("fork", lambda e: e["pull_request"]["head"]["repo"].update(
+                {"full_name": "fork/awesome-gbb"})),
+            ("wrong-repository", lambda e: e["repository"].update(
+                {"full_name": "other/awesome-gbb"})),
+            ("wrong-pull-request", lambda e: e.update({"number": 99})),
+            ("wrong-branch", lambda e: e["pull_request"]["head"].update({"ref": "other"})),
+            ("missing-action", lambda e: e.pop("action")),
+            ("opened-action", lambda e: e.update({"action": "opened"})),
+            ("reopened-action", lambda e: e.update({"action": "reopened"})),
+            ("closed-action", lambda e: e.update({"action": "closed"})),
+            ("labeled-action", lambda e: e.update({"action": "labeled"})),
+            ("other-action", lambda e: e.update({"action": "edited"})),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                event = copy.deepcopy(original_event)
+                mutate(event)
+                self.event_path.write_text(json.dumps(event))
+                with self.assertRaisesRegex(self.gate.PreflightError, r"^CI_CONTEXT$"):
+                    self.gate.validate_github_context(self.record, self.env)
+        self.event_path.write_text(json.dumps(original_event))
+        for attempt in ("2", "01", 1):
+            with self.subTest(attempt=attempt):
+                self.env["GITHUB_RUN_ATTEMPT"] = attempt
+                with self.assertRaisesRegex(self.gate.PreflightError, r"^CI_CONTEXT$"):
+                    self.gate.validate_github_context(self.record, self.env)
+        self.env["GITHUB_RUN_ATTEMPT"] = "1"
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        with self.assertRaisesRegex(self.gate.PreflightError, r"^CI_CONTEXT$"):
+            self.gate.validate_github_context(self.record, self.env)
+
+        expired = diagnostic_approval_record()
+        expired["authorization"]["expires_at"] = "2030-01-01T00:00:00Z"
+        with self.assertRaisesRegex(self.gate.PreflightError, r"^EXPIRED$"):
+            self.gate.validate_record(expired, NOW)
+
+    def test_v1_github_context_keeps_original_membership_semantics(self):
+        self.env["GITHUB_RUN_ATTEMPT"] = "9"
+        self.event["pull_request"]["head"]["sha"] = "not-used-by-v1"
+        self.event["pull_request"]["labels"] = []
+        self.event_path.write_text(json.dumps(self.event))
+        self.gate.validate_record(self.record, NOW)
+        self.gate.validate_github_context(self.record, self.env)
 
     def test_each_environment_binding_is_mandatory_and_exact(self):
         original = self.env.copy()

@@ -52,10 +52,9 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     rename is re-validated within ≤7 days even when the PR fan-out
     skipped it.
 
-  - AgentOps-only CI helpers (`scripts/agentops-ci-preflight.py` and
-    `scripts/agentops-ci-report.py`) map to `foundry-agentops`, not the
-    full matrix. Normal dependency expansion and fixture/quarantine
-    filtering still apply.
+  - AgentOps-only CI helpers map to `foundry-agentops`, not the full
+    matrix. Normal dependency expansion and fixture/quarantine filtering
+    still apply.
 
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
@@ -71,8 +70,12 @@ Sorted alphabetically for deterministic GHA matrix expansion.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import importlib.util
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -103,7 +106,10 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
 SKILL_HELPER_PATHS: dict[str, str] = {
     "scripts/agentops-ci-preflight.py": "foundry-agentops",
     "scripts/agentops-ci-report.py": "foundry-agentops",
+    "scripts/agentops-ci-diagnostic.py": "foundry-agentops",
+    "scripts/setup-agentops-age.sh": "foundry-agentops",
 }
+DIAGNOSTIC_LABEL = "agentops-diagnostic"
 
 
 def _full_fixtured_skills(repo_root: Path) -> list[str]:
@@ -210,7 +216,59 @@ def build(
     return {"skill": final}
 
 
-def main() -> int:
+def _load_agentops_preflight():
+    """Load the sibling preflight by its fixed repository path."""
+    path = Path(__file__).resolve().with_name("agentops-ci-preflight.py")
+    spec = importlib.util.spec_from_file_location("agentops_ci_preflight", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("preflight import unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _diagnostic_mode(environ: dict[str, str]) -> int:
+    gate = None
+    try:
+        gate = _load_agentops_preflight()
+        if environ.get("GITHUB_EVENT_NAME") != "pull_request":
+            print("false")
+            return 0
+        event_path = gate.absolute_path(gate.required_env(environ, "GITHUB_EVENT_PATH"))
+        event = gate.parse_json(gate.read_file(event_path))
+        labels = gate.field(event, "pull_request", "labels")
+        gate.require(isinstance(labels, list) and all(
+            isinstance(label, dict) and isinstance(label.get("name"), str)
+            for label in labels
+        ), "CI_CONTEXT")
+        if not any(label["name"] == DIAGNOSTIC_LABEL for label in labels):
+            print("false")
+            return 0
+        record = gate.parse_json(
+            gate.required_env(environ, "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON")
+        )
+        gate.validate_record(record, datetime.now(timezone.utc))
+        gate.exact(record["schema_version"], 2, "SCHEMA")
+        gate.validate_github_context(record, environ)
+    except Exception as exc:
+        code = "INTERNAL_ERROR"
+        if gate is not None and isinstance(exc, gate.PreflightError):
+            candidate = exc.args[0] if len(exc.args) == 1 else None
+            if isinstance(candidate, str) and candidate in gate.ERROR_CODES:
+                code = candidate
+        print(code, file=sys.stderr)
+        return 1
+    print("true")
+    return 0
+
+
+def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None) -> int:
+    raw_args = sys.argv[1:] if argv is None else argv
+    if "--agentops-diagnostic-mode" in raw_args:
+        if raw_args != ["--agentops-diagnostic-mode"]:
+            print("ARGUMENTS", file=sys.stderr)
+            return 1
+        return _diagnostic_mode(dict(os.environ if environ is None else environ))
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument(
@@ -223,7 +281,7 @@ def main() -> int:
         default=None,
         help="Required when --changed-only is set. The git ref to diff against HEAD.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(raw_args)
     if args.changed_only and not args.base_ref:
         parser.error("--changed-only requires --base-ref")
     print(

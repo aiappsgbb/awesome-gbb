@@ -19,6 +19,9 @@ running Copilot CLI process. Do NOT run `copilot -p ...`, `copilot --version`,
 workflow captures AgentOps stdout/stderr in a private mode-0600 transcript,
 not a public `tee`; execute the smoke steps directly. Public Actions logs and
 artifacts are NOT the owner's private operator archive.
+Do not start background or detached processes, servers, daemons, watchers,
+`nohup`, or a new session/process group. Every fixture subprocess must remain
+in the paid Copilot process group and finish before the fixture returns.
 
 **Hard scope guardrails.** Do NOT generate any Threadlight manifest or files.
 Do NOT modify APIM, Citadel, RBAC, networking, branch protection, GitHub
@@ -87,7 +90,7 @@ show-don't-assert rule still forbids those invented checks; it does not bypass
 this newly approved workflow gate.
 In GitHub Actions, require the record pointer and select **`ci-cli`**, never
 `cached-user` or a guessed owner. Recheck that record with
-`python3 "$GITHUB_WORKSPACE/scripts/agentops-ci-preflight.py" --approval-file "$AGENTOPS_CI_APPROVAL_FILE"`.
+`python3 -I "$GITHUB_WORKSPACE/scripts/agentops-ci-preflight.py" --approval-file "$AGENTOPS_CI_APPROVAL_FILE"`.
 Do not print/read it through a view tool, dump its JSON, copy it into another
 artifact, or request the approval secret (which is absent from the paid process).
 For a separately authorized manual run, perform any read-only membership check
@@ -108,7 +111,7 @@ distinguish the principal type. All routes require tenant/subscription, project
 endpoint and stable isolated config paths. The unchanged CI service-principal
 path is **not tested by a manual cached-user run**.
 
-Execute this whole Python block with `python3 - "<route>"` and the block on
+Execute this whole Python block with `python3 -I - "<route>"` and the block on
 stdin (a quoted heredoc). Do not use optimization. It checks presence/selection
 only; the owner verifies the isolated cache, token-file access, actual principal
 and approved scopes before launch. No tokens or credential values are printed.
@@ -425,6 +428,8 @@ so no generated dotenv/discovery overrides are needed.
 
 Execute the following complete block in the workspace using its venv Python
 (which has the native YAML dependency), before each of the two native commands.
+Invoke that interpreter with `-I -` and the block on stdin so workspace or
+untracked repository modules cannot shadow its trusted imports.
 It performs the already approved read-only preflight again, then compares
 effective environment/config; it is not a new native execution engine.
 Persist it privately if needed and run it afresh in each Bash call. Never run
@@ -688,7 +693,7 @@ deterministic FAIL marker rather than continuing to Doctor or declaring success.
 
 ---
 
-## Step 7 - Run `$AGENTOPS_BIN doctor --evidence-pack`
+## Step 7 - Run Doctor once
 
 Before invoking Doctor, recheck the pre-execution telemetry approval, including
 finding/exception capture, approved read-source scope and LLM-assist data flow.
@@ -697,10 +702,18 @@ any unresolved destination/capture/retention. From the same isolated workspace,
 reload the absolute binary in this call and keep Doctor's stdout/stderr private:
 
 ```bash
+# BEGIN AGENTOPS DOCTOR CAPTURE
 umask 077
 mkdir -p .agentops/agent
 date -u '+%Y-%m-%dT%H:%M:%SZ' > .agentops/agent/doctor-started-at
-if "$AGENTOPS_BIN" doctor --evidence-pack \
+doctor_argv=(doctor --evidence-pack)
+if [ "${AGENTOPS_CI_DIAGNOSTIC_MODE:-}" = "doctor-encrypted" ]; then
+  doctor_argv=(--verbose "${doctor_argv[@]}")
+elif [ -n "${AGENTOPS_CI_DIAGNOSTIC_MODE:-}" ]; then
+  printf '1\n' > .agentops/agent/doctor-exit-code
+  exit 1
+fi
+if "$AGENTOPS_BIN" "${doctor_argv[@]}" \
     > .agentops/agent/doctor-command.log 2>&1; then
   doctor_status=0
 else
@@ -709,11 +722,16 @@ fi
 printf '%s\n' "$doctor_status" > .agentops/agent/doctor-exit-code
 date -u '+%Y-%m-%dT%H:%M:%SZ' > .agentops/agent/doctor-finished-at
 exit "$doctor_status"
+# END AGENTOPS DOCTOR CAPTURE
 ```
 
 Read the numeric exit code and artifacts locally in the next call. Never dump
 the log/finding payload into the transcript; report only sanitized status/gaps.
-This capture protects local logs, not network exports.
+This capture protects local logs, not network exports. In approved diagnostic
+mode, the fixture deliberately leaves the raw private Doctor log in place even
+when Doctor exits 1. The host—not the paid process—redacts and encrypts that
+single fixed file after provenance and reporter checks; the fixture never
+uploads or encrypts it.
 
 Requirements:
 

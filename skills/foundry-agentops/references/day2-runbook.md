@@ -209,6 +209,48 @@ the LAW customer ID for validation; all four sources and the 1-day aggregates
 remain required. Reconcile inherited environment, dotenv and discovery before
 eval and Doctor. Do not discover a substitute project, judge or component.
 
+An encrypted Doctor diagnostic is a separate, owner-authorized **single-cycle**
+mode, not full 23-fixture acceptance. The normal PR event must already carry the
+coordinator-applied `agentops-diagnostic` label; applying the label alone does
+not trigger a paid run. Before selecting only `foundry-agentops`, the host
+requires the canonical **strict v2** approval bytes and revalidates repository,
+PR, head branch, exact **head SHA**, unexpired authorization, and **attempt 1**.
+Default change-gated PR selection and full main/scheduled selection are
+unchanged when that gate is false.
+
+The Linux host installs standard `age` 1.3.2 from the pinned official
+**Linux x86_64** archive, verifies its fixed archive SHA-256 before extracting
+only `age` and `age-keygen`, and passes the verified `age` binary digest to the
+sealed-memfd helper. No operator private key is present on the runner. After
+the primary reporter and checkout provenance guard complete, the host reads
+only the fixed raw Doctor log, redacts known values, encrypts in memory to the
+approved recipient, and permits upload of only `doctor-log.age` and
+`diagnostic.json`. The raw Doctor log and owner approval are never uploaded.
+The helper installer and export runtime are Linux-only, but their standard age
+v1 X25519 ciphertext is portable and can be decrypted locally on macOS with
+the operator private key. That private key never enters the runner, decrypted
+plaintext is never public, and the existing private-artifact purge remains
+unchanged.
+
+Retention surfaces remain distinct: approved service-side **30-day telemetry**
+is unchanged, the public encrypted diagnostic has **1-day ciphertext**
+retention, and the owner record's existing private raw-artifact purge deadline
+is unchanged. Diagnostic mode never automatically retries AgentOps and never
+turns native exit 1 into success. A captured technical negative path can be
+useful evidence while remaining a failed execution; an unknown exception is
+encrypted for owner review without being promoted to a root-cause claim.
+
+Diagnostic mode launches paid Copilot in one host-tracked Linux `setsid`
+process group. On normal completion, error, or shell trap, the host sends TERM
+and then a bounded KILL only to that exact group before the checkout-after
+guard, report, or export can run. The fixture forbids background or detached
+processes. This is pragmatic CI lifecycle supervision, **not a sandbox**:
+approved fixture commands still run with the **same CI identity** by design,
+the filesystem is not immutable, and a deliberately malicious process that
+escapes its group or has root privileges is outside this trust boundary. A
+full same-UID host compromise is likewise outside scope; this change grants no
+additional secret access.
+
 The effective CI policy validates all twelve approved tables' analytical and
 total retention plus LAW retention at 30 days and
 `immediatePurgeDataOn30Days=true`. Legacy App Insights 90-day metadata is not
@@ -260,7 +302,7 @@ This is the same fixture contract, not a new wrapper or a second test product:
    authoritative context and show-don't-assert contract; this manual check is
    not added to CI.
 3. From the selected root read the fixture and linked skills directly. Execute
-   the **whole Step 0 Python assertion block** with `python3 - "<route>"` and
+   the **whole Step 0 Python assertion block** with `python3 -I - "<route>"` and
    that block on stdin using a quoted heredoc. Use only one of `cached-user`,
    `ci-cli`, `environment`, `workload` from the parent's approval. This check
    never authenticates. Complete telemetry/retention discovery and approval
