@@ -243,6 +243,37 @@ class TestAgentOpsDiagnosticMode(unittest.TestCase):
         result = _run_diagnostic_mode(self.env)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
 
+    def test_labeled_pretty_json_transport_is_rejected_before_matrix_output(self) -> None:
+        record = json.loads(json.dumps(self.record))
+        canary = "SECRET_CANARY_MUST_NOT_ESCAPE"
+        record["authorization"]["head_branch"] = canary
+        self.event["pull_request"]["head"]["ref"] = canary
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        pretty = json.dumps(record, indent=2)
+        compact = json.dumps(record, separators=(",", ":"))
+        matrix = '{"skill":["foundry-agentops"]}'
+
+        registered = [pretty.strip(), *(line.strip() for line in pretty.splitlines())]
+        self.assertTrue(any(value and value in matrix for value in registered))
+        self.assertFalse(any(value and value in matrix for value in (compact.strip(),)))
+
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = pretty
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertEqual(result.stderr, "INVALID_JSON\n")
+        self.assertNotIn(matrix, result.stdout + result.stderr)
+        self.assertNotIn(canary, result.stdout + result.stderr)
+
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = compact
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
+
+    def test_labeled_compact_json_transport_allows_surrounding_whitespace(self) -> None:
+        compact = json.dumps(self.record, separators=(",", ":"))
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = f" \t{compact}\n"
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
+
     def test_labeled_v2_requires_synchronize_action(self) -> None:
         original = dict(self.event)
         for action in (None, "opened", "reopened", "closed", "labeled", "edited"):
@@ -270,6 +301,28 @@ class TestAgentOpsDiagnosticMode(unittest.TestCase):
         self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
         result = _run_diagnostic_mode(self.env)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+    def test_non_pr_and_unlabeled_pr_do_not_require_approval(self) -> None:
+        del self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"]
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+        self.env["GITHUB_EVENT_NAME"] = "pull_request"
+        self.event["pull_request"]["labels"] = []
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+    def test_non_pr_rejects_multiline_transport_without_validating_approval(self) -> None:
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = '{\n  "expired": true\n}'
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            1,
+            "",
+            "INVALID_JSON\n",
+        ))
 
     def test_labeled_invalid_context_and_approval_fail_closed_without_toxic_output(self) -> None:
         toxic = "TOXIC_VALUE_MUST_NOT_ESCAPE"

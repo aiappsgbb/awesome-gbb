@@ -68,6 +68,76 @@ class AgentOpsTask3WorkflowTests(unittest.TestCase):
         self.assertIn("python3 -I scripts/build-test-matrix.py --repo-root .", script)
         self.assertLess(script.index("--agentops-diagnostic-mode"), script.index("--changed-only"))
 
+    def test_final_result_guard_executes_the_matrix_consumer_contract(self) -> None:
+        guard = self.workflow["jobs"]["smoke-result"]
+        self.assertEqual(guard["needs"], ["build-matrix", "copilot-cli-matrix"])
+        self.assertEqual(guard["if"], "always()")
+        step = guard["steps"][0]
+        self.assertEqual(step["env"]["MATRIX_JSON"], "${{ needs.build-matrix.outputs.matrix }}")
+        self.assertEqual(
+            step["env"]["CONSUMER_RESULT"],
+            "${{ needs.copilot-cli-matrix.result }}",
+        )
+        script = step["run"]
+        cases = (
+            ("missing", "", "skipped", 1, "SMOKE_GUARD=FAIL MATRIX_MISSING\n"),
+            (
+                "malformed",
+                "{SECRET_CANARY_MUST_NOT_ESCAPE",
+                "skipped",
+                1,
+                "SMOKE_GUARD=FAIL MATRIX_INVALID\n",
+            ),
+            ("empty", '{"skill":[]}', "skipped", 0, "SMOKE_GUARD=PASS EMPTY_MATRIX\n"),
+            (
+                "expected-consumer-skipped",
+                '{"skill":["foundry-agentops"]}',
+                "skipped",
+                1,
+                "SMOKE_GUARD=FAIL CONSUMER_SKIPPED\n",
+            ),
+            (
+                "consumer-failed",
+                '{"skill":["foundry-agentops"]}',
+                "failure",
+                1,
+                "SMOKE_GUARD=FAIL CONSUMER_FAILURE\n",
+            ),
+            (
+                "consumer-cancelled",
+                '{"skill":["foundry-agentops"]}',
+                "cancelled",
+                1,
+                "SMOKE_GUARD=FAIL CONSUMER_CANCELLED\n",
+            ),
+            (
+                "consumer-succeeded",
+                '{"skill":["foundry-agentops"]}',
+                "success",
+                0,
+                "SMOKE_GUARD=PASS CONSUMER_SUCCESS\n",
+            ),
+        )
+        for name, matrix, consumer, returncode, output in cases:
+            with self.subTest(name=name):
+                env = {
+                    "PATH": os.environ["PATH"],
+                    "MATRIX_JSON": matrix,
+                    "CONSUMER_RESULT": consumer,
+                    "SECRET_CANARY": "SECRET_CANARY_MUST_NOT_ESCAPE",
+                }
+                result = subprocess.run(
+                    ["bash", "-c", script],
+                    cwd=ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, returncode, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, output)
+                self.assertEqual(result.stderr, "")
+                self.assertNotIn(env["SECRET_CANARY"], result.stdout + result.stderr)
+
     def test_age_installed_for_units_and_only_diagnostic_runtime(self) -> None:
         unit = next(
             step for step in self.unit_steps
@@ -358,6 +428,10 @@ class AgentOpsTask3WorkflowTests(unittest.TestCase):
             "not a sandbox",
             "same CI identity",
             "background or detached processes",
+            "single-line compact JSON",
+            "embedded CR/LF",
+            "missing or malformed matrix",
+            "valid empty matrix",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, runbook)

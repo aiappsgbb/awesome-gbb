@@ -149,6 +149,16 @@ approval record must not enter public Actions logs or artifacts; public evidence
 is limited to sanitized outcomes and hashes. The next complete candidate still
 requires a new full-matrix result.
 
+The next [diagnostic run](https://github.com/aiappsgbb/awesome-gbb/actions/runs/33999754223)
+resolved `{"skill":["foundry-agentops"]}` and diagnostic mode `true`, but GitHub
+Actions runner 2.337.0 suppressed the whole matrix job output because the
+pretty-printed approval secret registered standalone brace lines for masking.
+The consumer matrix was therefore skipped and the workflow incorrectly ended
+green. No paid consumer, Doctor, cipher, native AgentOps execution, or diagnostic
+artifact ran. Offline reproduction confirmed that semantically identical compact
+single-line JSON avoids the collision while preserving whole-secret masking.
+This is transport-failure evidence only, not AgentOps validation.
+
 At the manual-record cutoff above, the unchanged CI/SP/workload route and actual
 full matrix were **not run**. No non-main workflow dispatch, OIDC mutation, staging,
 commit, push, PR, merge, release, main checkout, or Threadlight work was performed

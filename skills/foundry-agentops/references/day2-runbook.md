@@ -215,8 +215,24 @@ coordinator-applied `agentops-diagnostic` label; applying the label alone does
 not trigger a paid run. Before selecting only `foundry-agentops`, the host
 requires the canonical **strict v2** approval bytes and revalidates repository,
 PR, head branch, exact **head SHA**, unexpired authorization, and **attempt 1**.
-Default change-gated PR selection and full main/scheduled selection are
-unchanged when that gate is false.
+Store and inject that GitHub secret as **single-line compact JSON**. Leading or
+trailing whitespace, including one trailing newline, is trimmed; embedded CR/LF
+characters (pretty-printed JSON) are rejected with the finite `INVALID_JSON`
+error before the workflow emits a matrix. This transport-only check applies
+whenever the secret is supplied to the matrix-build job, including ordinary
+default-selection paths; those paths still neither require an approval nor
+validate its schema, expiry, or authorization semantics. The JSON schema and
+v1/v2 semantics are unchanged. This transport constraint prevents GitHub
+Actions from registering standalone pretty-JSON brace lines as masked secret
+fragments and then suppressing the unrelated matrix job output. Do not bypass
+secret masking or encode the approval into another transport.
+
+The final workflow result guard independently requires a present, valid matrix.
+A non-empty matrix passes only when its consumer job succeeds; a missing or
+malformed matrix, or a skipped/failed/cancelled expected consumer, fails the
+workflow. A valid empty matrix plus a skipped consumer remains the legitimate
+no-tests case. Default change-gated PR selection and full main/scheduled
+selection are unchanged when the diagnostic gate is false.
 
 The Linux host installs standard `age` 1.3.2 from the pinned official
 **Linux x86_64** archive, verifies its fixed archive SHA-256 before extracting

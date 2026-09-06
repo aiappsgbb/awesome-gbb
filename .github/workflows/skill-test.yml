@@ -1173,3 +1173,52 @@ jobs:
           path: ${{ runner.temp }}/agentops-ci-public-${{ github.run_id }}-${{ github.run_attempt }}/retry.json
           if-no-files-found: error
           retention-days: 7
+
+  # A suppressed build output must not turn an expected consumer run into a
+  # successful workflow. Empty matrices remain a legitimate no-test result.
+  smoke-result:
+    needs: [build-matrix, copilot-cli-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce matrix consumer result
+        env:
+          MATRIX_JSON: ${{ needs.build-matrix.outputs.matrix }}
+          CONSUMER_RESULT: ${{ needs.copilot-cli-matrix.result }}
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+
+          raw = os.environ.get("MATRIX_JSON", "")
+          consumer = os.environ.get("CONSUMER_RESULT", "")
+
+          def finish(ok, code):
+              print(f"SMOKE_GUARD={'PASS' if ok else 'FAIL'} {code}")
+              raise SystemExit(0 if ok else 1)
+
+          if not raw.strip():
+              finish(False, "MATRIX_MISSING")
+          try:
+              matrix = json.loads(raw)
+          except (TypeError, ValueError):
+              finish(False, "MATRIX_INVALID")
+          if (
+              not isinstance(matrix, dict)
+              or set(matrix) != {"skill"}
+              or not isinstance(matrix["skill"], list)
+              or any(not isinstance(skill, str) or not skill for skill in matrix["skill"])
+          ):
+              finish(False, "MATRIX_INVALID")
+
+          if not matrix["skill"]:
+              if consumer == "skipped":
+                  finish(True, "EMPTY_MATRIX")
+              finish(False, f"CONSUMER_{consumer.upper()}" if consumer else "CONSUMER_INVALID")
+
+          if consumer == "success":
+              finish(True, "CONSUMER_SUCCESS")
+          if consumer in {"skipped", "failure", "cancelled"}:
+              finish(False, f"CONSUMER_{consumer.upper()}")
+          finish(False, "CONSUMER_INVALID")
+          PY

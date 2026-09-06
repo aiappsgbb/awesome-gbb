@@ -231,6 +231,12 @@ def _diagnostic_mode(environ: dict[str, str]) -> int:
     gate = None
     try:
         gate = _load_agentops_preflight()
+        approval_json = environ.get("AGENTOPS_CI_TELEMETRY_APPROVAL_JSON", "").strip()
+        if approval_json:
+            gate.require(
+                "\n" not in approval_json and "\r" not in approval_json,
+                "INVALID_JSON",
+            )
         if environ.get("GITHUB_EVENT_NAME") != "pull_request":
             print("false")
             return 0
@@ -244,9 +250,10 @@ def _diagnostic_mode(environ: dict[str, str]) -> int:
         if not any(label["name"] == DIAGNOSTIC_LABEL for label in labels):
             print("false")
             return 0
-        record = gate.parse_json(
-            gate.required_env(environ, "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON")
-        )
+        approval_json = gate.required_env(
+            environ, "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"
+        ).strip()
+        record = gate.parse_json(approval_json)
         gate.validate_record(record, datetime.now(timezone.utc))
         gate.exact(record["schema_version"], 2, "SCHEMA")
         gate.validate_github_context(record, environ)
