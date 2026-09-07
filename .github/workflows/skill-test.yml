@@ -22,6 +22,8 @@ on:
       - ".github/ci-shared-preamble.md"
       - "scripts/build-test-matrix.py"
       - "scripts/resolve-foundry-project.py"
+      - "scripts/agentops-ci-*.py"
+      - "scripts/setup-agentops-age.sh"
       - "plugin.json"
       - ".github/plugin/**"
   push:
@@ -56,6 +58,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install pinned age for AgentOps unit tests
+        run: |
+          set -euo pipefail
+          scripts/setup-agentops-age.sh "$RUNNER_TEMP/agentops-age" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/agentops-age" >> "$GITHUB_PATH"
 
       - name: Install deps
         # Probe tests and the nine foundry-mcp-aca-jobs modules import
@@ -114,6 +122,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
+      # Explicitly diagnostic-only; this is not full 23-fixture acceptance.
+      agentops_diagnostic: ${{ steps.build.outputs.agentops_diagnostic }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,22 +135,31 @@ jobs:
           python-version: "3.11"
       - run: pip install pyyaml
       - id: build
+        env:
+          # Host-only gate input. It is never forwarded to the paid process.
+          AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
         # PRs: emit only skills with touched files (plus forward fanout
         # via .github/skill-deps.yml). Infra-file changes (plugin.json,
         # marketplace.json, build-test-matrix.py, skill-test.yml,
         # quarantine.yml, skill-deps.yml) force the full matrix.
         # push:main, schedule:, workflow_dispatch: always full matrix.
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            MATRIX=$(python scripts/build-test-matrix.py \
+          set -euo pipefail
+          DIAGNOSTIC=$(python3 -I scripts/build-test-matrix.py --agentops-diagnostic-mode)
+          if [ "$DIAGNOSTIC" = "true" ]; then
+            MATRIX='{"skill":["foundry-agentops"]}'
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            MATRIX=$(python3 -I scripts/build-test-matrix.py \
               --repo-root . \
               --changed-only \
               --base-ref "${{ github.event.pull_request.base.sha }}")
           else
-            MATRIX=$(python scripts/build-test-matrix.py --repo-root .)
+            MATRIX=$(python3 -I scripts/build-test-matrix.py --repo-root .)
           fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "agentops_diagnostic=$DIAGNOSTIC" >> "$GITHUB_OUTPUT"
           echo "Resolved matrix: $MATRIX"
+          echo "AgentOps diagnostic-only selection: $DIAGNOSTIC (not full 23-fixture acceptance)"
 
   # ── Job 4: Copilot-CLI consumer matrix (the real validation gate) ──
   # Spawns ONE runner per discovered skill. Each runner installs the
@@ -215,6 +234,30 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+
+      - name: Isolate AgentOps credential sources
+        if: matrix.skill == 'foundry-agentops'
+        # Set before azure/login so native CLI-first and SDK default chains
+        # use only the runner-authorized identity, including child/retry steps.
+        run: |
+          set -euo pipefail
+          umask 077
+          ROOT="$RUNNER_TEMP/agentops-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          # Safe mkdir/no-follow checks, fresh private root and empty sibling caches.
+          python3 -I scripts/agentops-ci-report.py init
+          {
+            echo "AGENTOPS_CI_ROOT=$ROOT"
+            echo "AGENTOPS_CI_APPROVAL_FILE=$ROOT/owner-approval.json"
+            echo "AZURE_CONFIG_DIR=$ROOT/azure"
+            echo "AZD_CONFIG_DIR=$ROOT/azd"
+            echo "AZURE_TOKEN_CREDENTIALS=AzureCliCredential"
+          } >> "$GITHUB_ENV"
+
+      - name: Install pinned age for AgentOps diagnostic
+        if: matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true'
+        run: |
+          set -euo pipefail
+          scripts/setup-agentops-age.sh "$AGENTOPS_CI_ROOT/tools" >> "$GITHUB_ENV"
 
       - uses: azure/login@v2
         with:
@@ -310,6 +353,32 @@ jobs:
           echo "::add-mask::$project_id"
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
+      - name: Validate dedicated AgentOps CI authorization
+        id: agentops-preflight
+        if: matrix.skill == 'foundry-agentops'
+        env:
+          AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          LAW_WORKSPACE_ID: ${{ secrets.AGENTOPS_CI_LAW_WORKSPACE_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
+          FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I scripts/agentops-ci-preflight.py --write-approval "$AGENTOPS_CI_APPROVAL_FILE"
+
+      - name: Validate encrypted AgentOps diagnostic transport
+        if: matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true'
+        env:
+          AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/agentops-ci-diagnostic.py check
+
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
         # Pattern 21 (AGENTS.md § 9.7): suppress this step's exit code
@@ -359,8 +428,9 @@ jobs:
           # poll telemetry (e.g. foundry-observability). LAW_WORKSPACE_ID
           # is the GUID, not the ARM resource ID, so fixtures can run
           # `az monitor log-analytics query -w "$LAW_WORKSPACE_ID" …`.
-          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
-          LAW_WORKSPACE_ID: ${{ secrets.LAW_WORKSPACE_ID }}
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets[matrix.skill == 'foundry-agentops' && 'AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING' || 'APPLICATIONINSIGHTS_CONNECTION_STRING'] }}
+          LAW_WORKSPACE_ID: ${{ secrets[matrix.skill == 'foundry-agentops' && 'AGENTOPS_CI_LAW_WORKSPACE_ID' || 'LAW_WORKSPACE_ID'] }}
+          AGENTOPS_CI_DIAGNOSTIC_MODE: ${{ needs.build-matrix.outputs.agentops_diagnostic == 'true' && 'doctor-encrypted' || '' }}
         run: |
           set -euo pipefail
           SKILL="${{ matrix.skill }}"
@@ -457,6 +527,120 @@ jobs:
             fi
           }
           # END tracked-checkout guard
+          # BEGIN AgentOps private attempt
+          if [ "$SKILL" = "foundry-agentops" ]; then
+            umask 077
+            # BEGIN AgentOps diagnostic process supervision
+            agentops_terminate_copilot_group() {
+              local pgid="${AGENTOPS_COPILOT_PGID:-}"
+              local attempt
+              if [[ ! "$pgid" =~ ^[1-9][0-9]*$ ]] \
+                 || [ "$pgid" -le 1 ] \
+                 || [ "$pgid" != "${AGENTOPS_COPILOT_PID:-}" ]; then
+                return 1
+              fi
+              if ! kill -0 -- "-$pgid" 2>/dev/null; then
+                return 0
+              fi
+              kill -TERM -- "-$pgid" 2>/dev/null || true
+              for attempt in {1..20}; do
+                if ! kill -0 -- "-$pgid" 2>/dev/null; then
+                  return 0
+                fi
+                sleep 0.1
+              done
+              kill -KILL -- "-$pgid" 2>/dev/null || true
+              for attempt in {1..20}; do
+                if ! kill -0 -- "-$pgid" 2>/dev/null; then
+                  return 0
+                fi
+                sleep 0.1
+              done
+              return 1
+            }
+            agentops_copilot_group_trap() {
+              local status="$1"
+              trap - EXIT INT TERM
+              if ! agentops_terminate_copilot_group; then
+                echo "AGENTOPS_CI_DELIVERY=FAIL PROCESS_GROUP"
+                exit 125
+              fi
+              exit "$status"
+            }
+            run_agentops_copilot_group() {
+              local transcript="$1"
+              shift
+              AGENTOPS_COPILOT_PID=""
+              AGENTOPS_COPILOT_PGID=""
+              AGENTOPS_GROUP_TERMINATION_FAILED=0
+              setsid "$@" > "$transcript" 2>&1 &
+              AGENTOPS_COPILOT_PID=$!
+              # On the non-interactive Linux runner, setsid execs the command
+              # in-place. Its PID is therefore the new session and process-group ID.
+              AGENTOPS_COPILOT_PGID=$AGENTOPS_COPILOT_PID
+              trap 'agentops_copilot_group_trap $?' EXIT
+              trap 'agentops_copilot_group_trap 130' INT
+              trap 'agentops_copilot_group_trap 143' TERM
+              set +e
+              wait "$AGENTOPS_COPILOT_PID"
+              local status=$?
+              if ! agentops_terminate_copilot_group; then
+                AGENTOPS_GROUP_TERMINATION_FAILED=1
+                trap - EXIT INT TERM
+                echo "AGENTOPS_CI_DELIVERY=FAIL PROCESS_GROUP"
+                return 125
+              fi
+              trap - EXIT INT TERM
+              return "$status"
+            }
+            # END AgentOps diagnostic process supervision
+            python3 -I scripts/agentops-ci-report.py prepare primary
+            export AGENTOPS_CI_ATTEMPT=primary
+            TRANSCRIPT="$AGENTOPS_CI_ROOT/attempts/primary/transcript.log"
+            export AGENTOPS_CI_MARKER="$AGENTOPS_CI_ROOT/attempts/primary/marker"
+            PREAMBLE=".github/ci-shared-preamble.md"
+            if ! assert_tracked_checkout_clean "before Copilot" > "$AGENTOPS_CI_ROOT/attempts/primary/checkout-before.log" 2>&1; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL CHECKOUT_BEFORE"; exit 1
+            fi
+            python3 -I scripts/agentops-ci-preflight.py --approval-file "$AGENTOPS_CI_APPROVAL_FILE"
+            if [ "${AZURE_OPENAI_DEPLOYMENT-$FOUNDRY_MODEL_DEPLOYMENT}" != "$FOUNDRY_MODEL_DEPLOYMENT" ] \
+               || [ "${AZURE_AI_MODEL_DEPLOYMENT_NAME-$FOUNDRY_MODEL_DEPLOYMENT}" != "$FOUNDRY_MODEL_DEPLOYMENT" ]; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL JUDGE_BINDING"; exit 1
+            fi
+            export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
+            export AZURE_OPENAI_DEPLOYMENT="$FOUNDRY_MODEL_DEPLOYMENT"
+            export AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
+            export AGENTOPS_APPLICATIONINSIGHTS_CONNECTION_STRING="$APPLICATIONINSIGHTS_CONNECTION_STRING"
+            set +e
+            if [ "$AGENTOPS_CI_DIAGNOSTIC_MODE" = "doctor-encrypted" ]; then
+              run_agentops_copilot_group "$TRANSCRIPT" \
+                env -u AGENTOPS_CI_TELEMETRY_APPROVAL_JSON -u GITHUB_STEP_SUMMARY -u GITHUB_OUTPUT -u GITHUB_ENV \
+                copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
+                  --allow-all-tools --disable-builtin-mcps -C "$GITHUB_WORKSPACE"
+            else
+              env -u AGENTOPS_CI_TELEMETRY_APPROVAL_JSON -u GITHUB_STEP_SUMMARY -u GITHUB_OUTPUT -u GITHUB_ENV \
+                copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
+                  --allow-all-tools --disable-builtin-mcps -C "$GITHUB_WORKSPACE" \
+                  > "$TRANSCRIPT" 2>&1
+            fi
+            COPILOT_STATUS=$?
+            set -e
+            if [ "${AGENTOPS_GROUP_TERMINATION_FAILED:-0}" -ne 0 ]; then
+              exit 1
+            fi
+            if ! assert_tracked_checkout_clean "after Copilot" > "$AGENTOPS_CI_ROOT/attempts/primary/checkout-after.log" 2>&1; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL CHECKOUT_AFTER"; exit 1
+            fi
+            set +e
+            python3 -I scripts/agentops-ci-report.py report primary "$COPILOT_STATUS"
+            REPORT_STATUS=$?
+            set -e
+            if [ "$REPORT_STATUS" -le 1 ]; then
+              echo "agentops_summary=verified" >> "$GITHUB_OUTPUT"
+            fi
+            exit "$REPORT_STATUS"
+          fi
+          # END AgentOps private attempt
           # Pattern 12 (AGENTS.md § 9.7): the fixture writes its result
           # marker to MARKER via a deterministic Bash-tool printf. The
           # transcript grep is a legacy fallback only — see eval block
@@ -548,6 +732,7 @@ jobs:
           exit 1
 
       - name: Retry once on classified-transient failure
+        id: agentops-retry
         # Pattern 21 (AGENTS.md § 9.7): use `steps.run.outcome` (the pre-
         # continue-on-error state) instead of `failure()` (which the
         # continue-on-error on the previous step voids). `outcome` is
@@ -557,7 +742,7 @@ jobs:
         # succeeded, `outcome == 'success'` so retry skips — correct.
         # Only `failure` triggers retry — same gate as before, just
         # spelled in continue-on-error-compatible terms.
-        if: steps.run.outcome == 'failure'
+        if: steps.run.outcome == 'failure' && (matrix.skill != 'foundry-agentops' || needs.build-matrix.outputs.agentops_diagnostic != 'true')
         env:
           COPILOT_PROVIDER_TYPE: azure
           COPILOT_PROVIDER_BASE_URL: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
@@ -584,8 +769,9 @@ jobs:
           FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
           # Phase 4 — mirror the initial-run env block per Pattern 11
           # (byte-identical auth/observability contract on retry).
-          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING }}
-          LAW_WORKSPACE_ID: ${{ secrets.LAW_WORKSPACE_ID }}
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets[matrix.skill == 'foundry-agentops' && 'AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING' || 'APPLICATIONINSIGHTS_CONNECTION_STRING'] }}
+          LAW_WORKSPACE_ID: ${{ secrets[matrix.skill == 'foundry-agentops' && 'AGENTOPS_CI_LAW_WORKSPACE_ID' || 'LAW_WORKSPACE_ID'] }}
+          AGENTOPS_CI_DIAGNOSTIC_MODE: ${{ needs.build-matrix.outputs.agentops_diagnostic == 'true' && 'doctor-encrypted' || '' }}
         run: |
           set -euo pipefail
           SKILL="${{ matrix.skill }}"
@@ -680,6 +866,56 @@ jobs:
             fi
           }
           # END tracked-checkout guard
+          # BEGIN AgentOps private attempt
+          if [ "$SKILL" = "foundry-agentops" ]; then
+            umask 077
+            if ! assert_tracked_checkout_clean "before retry classification" > "$AGENTOPS_CI_ROOT/retry-checkout.log" 2>&1; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL CHECKOUT_BEFORE"; exit 1
+            fi
+            python3 -I scripts/agentops-ci-report.py retry-allowed
+            TRANSCRIPT="$AGENTOPS_CI_ROOT/attempts/primary/transcript.log"
+            if ! grep -qE "429|503|throttl|capacity|EOF during azd deploy|revision .* not found|ManagedEnvironmentNotFound|ResourceNotFound.*Microsoft\.App|CAPIError|Too Many Requests|Failed to get response from the AI model|transient API error|transient_bad_request|cannot assist with that request|I cannot assist with" "$TRANSCRIPT"; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL NO_RETRY"; exit 1
+            fi
+            COOLDOWN=$((90 + RANDOM % 90))
+            sleep "${COOLDOWN}"
+            python3 -I scripts/agentops-ci-report.py prepare retry
+            export AGENTOPS_CI_ATTEMPT=retry
+            TRANSCRIPT="$AGENTOPS_CI_ROOT/attempts/retry/transcript.log"
+            export AGENTOPS_CI_MARKER="$AGENTOPS_CI_ROOT/attempts/retry/marker"
+            PREAMBLE=".github/ci-shared-preamble.md"
+            if ! assert_tracked_checkout_clean "before Copilot" > "$AGENTOPS_CI_ROOT/attempts/retry/checkout-before.log" 2>&1; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL CHECKOUT_BEFORE"; exit 1
+            fi
+            python3 -I scripts/agentops-ci-preflight.py --approval-file "$AGENTOPS_CI_APPROVAL_FILE"
+            if [ "${AZURE_OPENAI_DEPLOYMENT-$FOUNDRY_MODEL_DEPLOYMENT}" != "$FOUNDRY_MODEL_DEPLOYMENT" ] \
+               || [ "${AZURE_AI_MODEL_DEPLOYMENT_NAME-$FOUNDRY_MODEL_DEPLOYMENT}" != "$FOUNDRY_MODEL_DEPLOYMENT" ]; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL JUDGE_BINDING"; exit 1
+            fi
+            export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
+            export AZURE_OPENAI_DEPLOYMENT="$FOUNDRY_MODEL_DEPLOYMENT"
+            export AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
+            export AGENTOPS_APPLICATIONINSIGHTS_CONNECTION_STRING="$APPLICATIONINSIGHTS_CONNECTION_STRING"
+            set +e
+            env -u AGENTOPS_CI_TELEMETRY_APPROVAL_JSON -u GITHUB_STEP_SUMMARY -u GITHUB_OUTPUT -u GITHUB_ENV \
+              copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
+                --allow-all-tools --disable-builtin-mcps -C "$GITHUB_WORKSPACE" \
+                > "$TRANSCRIPT" 2>&1
+            COPILOT_STATUS=$?
+            set -e
+            if ! assert_tracked_checkout_clean "after Copilot" > "$AGENTOPS_CI_ROOT/attempts/retry/checkout-after.log" 2>&1; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL CHECKOUT_AFTER"; exit 1
+            fi
+            set +e
+            python3 -I scripts/agentops-ci-report.py report retry "$COPILOT_STATUS"
+            REPORT_STATUS=$?
+            set -e
+            if [ "$REPORT_STATUS" -le 1 ]; then
+              echo "agentops_summary=verified" >> "$GITHUB_OUTPUT"
+            fi
+            exit "$REPORT_STATUS"
+          fi
+          # END AgentOps private attempt
           # Fail closed if the primary attempt mutated tracked files. Do not
           # retry against a contract that the previous agent rewrote.
           assert_tracked_checkout_clean "before retry classification"
@@ -808,6 +1044,10 @@ jobs:
           SKILL="${{ matrix.skill }}"
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
           RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
+          if [ "$SKILL" = "foundry-agentops" ]; then
+            TRANSCRIPT="$RUNNER_TEMP/agentops-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/attempts/primary/transcript.log"
+            RETRY_TRANSCRIPT="$RUNNER_TEMP/agentops-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/attempts/retry/transcript.log"
+          fi
           if [ ! -f "$TRANSCRIPT" ]; then
             echo "::error::No transcript file — cannot audit skill usage"
             exit 1
@@ -828,12 +1068,15 @@ jobs:
              || { [ -f "$RETRY_TRANSCRIPT" ] && grep -qE "$EVID" "$RETRY_TRANSCRIPT"; }; then
             echo "✅ Skill-usage evidence found in transcript"
           else
+            if [ "$SKILL" = "foundry-agentops" ]; then
+              echo "AGENTOPS_CI_DELIVERY=FAIL AUDIT"; exit 1
+            fi
             echo "::error::No evidence in transcript that agent loaded the '${SKILL}' skill — agent may have freelanced from training data, OR the transcript was clobbered by a recursive 'copilot' invocation in a Bash tool (AGENTS.md § 9.7 Pattern 27). Review transcript: $TRANSCRIPT"
             exit 1
           fi
 
       - name: Upload transcript and evidence (forensics)
-        if: always()
+        if: always() && matrix.skill != 'foundry-agentops'
         uses: actions/upload-artifact@v4
         with:
           name: transcript-${{ matrix.skill }}
@@ -848,3 +1091,134 @@ jobs:
             /tmp/${{ matrix.skill }}-smoke-result
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Export encrypted AgentOps diagnostic
+        id: agentops-diagnostic-export
+        if: always() && matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true' && steps.run.outputs.agentops_summary == 'verified'
+        env:
+          AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
+          APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          AGENTOPS_APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING: ${{ secrets.AGENTOPS_CI_APPLICATIONINSIGHTS_CONNECTION_STRING }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing host OIDC request token}"
+          : "${COPILOT_PROVIDER_BEARER_TOKEN:?missing host provider token}"
+          trusted_git() {
+            env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+              GIT_NO_REPLACE_OBJECTS=1 git "$@"
+          }
+          for source in \
+            scripts/agentops-ci-diagnostic.py \
+            scripts/agentops-ci-preflight.py \
+            scripts/agentops-ci-report.py; do
+            if [ ! -f "$GITHUB_WORKSPACE/$source" ] \
+               || [ -L "$GITHUB_WORKSPACE/$source" ] \
+               || ! trusted_git --no-pager -C "$GITHUB_WORKSPACE" \
+                    show "$GITHUB_SHA:$source" 2>/dev/null \
+                    | cmp -s - "$GITHUB_WORKSPACE/$source"; then
+              echo "AGENTOPS_CI_DIAGNOSTIC=FAIL CHECKOUT_EXPORT"
+              exit 1
+            fi
+          done
+          python3 -I scripts/agentops-ci-diagnostic.py export
+          echo "diagnostic_ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload encrypted AgentOps diagnostic
+        if: always() && matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true' && steps.agentops-diagnostic-export.outputs.diagnostic_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundry-agentops-diagnostic-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/agentops-ci-public-${{ github.run_id }}-${{ github.run_attempt }}/doctor-log.age
+            ${{ runner.temp }}/agentops-ci-public-${{ github.run_id }}-${{ github.run_attempt }}/diagnostic.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Enforce AgentOps diagnostic execution outcome
+        if: always() && matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true'
+        run: |
+          if [ "${{ steps.run.outcome }}" != "success" ]; then
+            echo "AGENTOPS_CI_DIAGNOSTIC=FAIL NATIVE_EXECUTION"
+            exit 1
+          fi
+
+      - name: Remove private AgentOps runner files
+        if: always() && matrix.skill == 'foundry-agentops'
+        # The ephemeral runner is the hard-cancellation backstop. This finalizer
+        # cannot guarantee execution after forced runner loss/cancellation.
+        run: |
+          set -euo pipefail
+          # Load the committed cleanup implementation, not a possibly mutated
+          # working file. It computes its root from runner context, never pointers.
+          env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+            GIT_NO_REPLACE_OBJECTS=1 git --no-pager -C "$GITHUB_WORKSPACE" \
+            show "$GITHUB_SHA:scripts/agentops-ci-report.py" | python3 -I - cleanup
+
+      - name: Upload sanitized AgentOps primary summary
+        if: always() && matrix.skill == 'foundry-agentops' && steps.run.outputs.agentops_summary == 'verified'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitized-foundry-agentops-primary
+          path: ${{ runner.temp }}/agentops-ci-public-${{ github.run_id }}-${{ github.run_attempt }}/primary.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload sanitized AgentOps retry summary
+        if: always() && matrix.skill == 'foundry-agentops' && steps.agentops-retry.outputs.agentops_summary == 'verified'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitized-foundry-agentops-retry
+          path: ${{ runner.temp }}/agentops-ci-public-${{ github.run_id }}-${{ github.run_attempt }}/retry.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # A suppressed build output must not turn an expected consumer run into a
+  # successful workflow. Empty matrices remain a legitimate no-test result.
+  smoke-result:
+    needs: [build-matrix, copilot-cli-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce matrix consumer result
+        env:
+          MATRIX_JSON: ${{ needs.build-matrix.outputs.matrix }}
+          CONSUMER_RESULT: ${{ needs.copilot-cli-matrix.result }}
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+
+          raw = os.environ.get("MATRIX_JSON", "")
+          consumer = os.environ.get("CONSUMER_RESULT", "")
+
+          def finish(ok, code):
+              print(f"SMOKE_GUARD={'PASS' if ok else 'FAIL'} {code}")
+              raise SystemExit(0 if ok else 1)
+
+          if not raw.strip():
+              finish(False, "MATRIX_MISSING")
+          try:
+              matrix = json.loads(raw)
+          except (TypeError, ValueError):
+              finish(False, "MATRIX_INVALID")
+          if (
+              not isinstance(matrix, dict)
+              or set(matrix) != {"skill"}
+              or not isinstance(matrix["skill"], list)
+              or any(not isinstance(skill, str) or not skill for skill in matrix["skill"])
+          ):
+              finish(False, "MATRIX_INVALID")
+
+          if not matrix["skill"]:
+              if consumer == "skipped":
+                  finish(True, "EMPTY_MATRIX")
+              finish(False, f"CONSUMER_{consumer.upper()}" if consumer else "CONSUMER_INVALID")
+
+          if consumer == "success":
+              finish(True, "CONSUMER_SUCCESS")
+          if consumer in {"skipped", "failure", "cancelled"}:
+              finish(False, f"CONSUMER_{consumer.upper()}")
+          finish(False, "CONSUMER_INVALID")
+          PY

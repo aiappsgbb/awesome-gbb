@@ -5,15 +5,15 @@
     "url": "https://github.com/aiappsgbb"
   },
   "metadata": {
-    "description": "Microsoft AI Apps GBB skills catalog for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App, VS Code agent mode, Claude Code). One plugin installs all 36 skills, including foundry-mcp-aca-jobs.",
-    "version": "4.30.0"
+    "description": "Proposed / unreleased Microsoft AI Apps GBB skills catalog for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App, VS Code agent mode, Claude Code). Source inventory: 37 skills, including foundry-mcp-aca-jobs and the unpublished foundry-agentops addition for per-agent adoption and release evidence.",
+    "version": "4.31.0"
   },
   "homepage": "https://github.com/aiappsgbb/awesome-gbb",
   "plugins": [
     {
       "name": "awesome-gbb",
-      "version": "4.30.0",
-      "description": "36 reusable GBB skills: Azure infra (azd, Bicep, ACA, ACA Jobs), Foundry agents (prompt agents, hosted agents, routines, RAG, MCP, evals, observability, network runbook), governance (Citadel, AGT), cost analysis, tenant isolation, and enterprise automation. Threadlight pipeline moved to threadlight-skills. Zava skills moved to zava-constellation.",
+      "version": "4.31.0",
+      "description": "Proposed / unreleased catalog of 37 reusable GBB skills, including the unpublished AgentOps addition: Azure infra (azd, Bicep, ACA, ACA Jobs), Foundry agents (prompt agents, hosted agents, routines, RAG, MCP, evals, observability, AgentOps adoption and release evidence, network runbook), governance (Citadel, AGT), cost analysis, tenant isolation, and enterprise automation. Threadlight pipeline moved to threadlight-skills. Zava skills moved to zava-constellation.",
       "source": ".",
       "category": "azure",
       "keywords": [
@@ -22,6 +22,11 @@
         "foundry",
         "copilot",
         "agents",
+        "agentops",
+        "agent-operations",
+        "release-evidence",
+        "doctor",
+        "regression-baseline",
         "rag",
         "mcp",
         "azd",

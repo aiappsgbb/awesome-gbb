@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.3"
+  version: "1.2.4"
 ---
 
 # Foundry Observability
@@ -26,6 +26,11 @@ metadata:
 End-to-end telemetry across every component of a Threadlight pilot:
 Foundry hosted agent, MCP servers on ACA, ACA jobs (cron triggers),
 bot service, workspace UI. **Default discipline**, not optional.
+
+For the complete per-agent adoption and release-evidence workflow, see
+[`foundry-agentops`](../foundry-agentops/SKILL.md). This skill remains
+authoritative for OpenTelemetry and App Insights wiring; AgentOps aggregates
+evidence and never replaces instrumentation or verification of the telemetry path.
 
 > **Downstream FinOps consumer.** [`foundry-cost-monitoring`](../foundry-cost-monitoring/SKILL.md)
 > joins the `gen_ai.usage.*` spans this skill emits with the Azure

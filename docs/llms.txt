@@ -2,6 +2,9 @@
 
 > Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.
 
+Unreleased: foundry-agentops 1.0.0 / proposed catalog 4.31.0. Draft candidate eligible for PR validation; not merged, released, or production-ready. Manual evidence as of 2026-09-05, before PR CI: Completed corrected-source manual execution PASS; quality FAIL (4/5 thresholds); Doctor readiness BLOCKED; release PENDING. Prior 5/5 manual cycle is historical, not the corrected result. CI results and candidate SHA will be recorded in the PR. The draft addition is not publicly installable through the default install while unmerged.
+[Sanitized validation record](/awesome-gbb/maintenance/foundry-agentops-validation.md)
+
 ## Skills
 
 ### 🏗️ Foundry Building Blocks
@@ -13,6 +16,7 @@
 - [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.
 - [foundry-mcp-aca-jobs](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca-jobs/SKILL.md): Build job-backed MCP servers for Foundry when the control plane must stay responsive and execution belongs in ACA Jobs.
 - [foundry-evals](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-evals/SKILL.md): Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry built-in evaluators.
+- [foundry-agentops](/awesome-gbb/skills/foundry-agentops/): Unreleased draft candidate. Use when adopting native Azure AgentOps for one existing agent.
 - [foundry-iq](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-iq/SKILL.md): Build enterprise RAG with Foundry IQ and Azure AI Search Knowledge Bases using agentic retrieval, multi-hop reasoning, query planning, and citation-backed responses.
 - [foundry-doc-vision-speech](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-doc-vision-speech/SKILL.md): Add vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) capabilities to a Foundry hosted agent.
 - [foundry-observability](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-observability/SKILL.md): End-to-end observability for Azure AI pilots — App Insights + Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers, ACA jobs, bot service, workspace UIs.
@@ -57,4 +61,4 @@
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugins/awesome-gbb/plugin.json): Microsoft AI Apps GBB skills catalog — 36 reusable building blocks for Copilot-assisted engagements.
+- [awesome-gbb](/awesome-gbb/plugins/awesome-gbb/): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 37 reusable building blocks for Copilot-assisted engagements, including the unpublished AgentOps addition.

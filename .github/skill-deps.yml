@@ -69,6 +69,16 @@ skills:
     depends_on:
       - foundry-prompt-agents
 
+  # foundry-agentops fixture onboards a temporary prompt agent via
+  # foundry-prompt-agents, then runs AgentOps analyze/eval/evidence flows
+  # that rely on the eval, observability, and Foundry direct-model contracts.
+  foundry-agentops:
+    depends_on:
+      - foundry-prompt-agents
+      - foundry-evals
+      - foundry-observability
+      - foundry-agt
+
   # foundry-routines fixture creates a prompt agent (Step 1b) and binds
   # a routine action to it (Step 1c) — so any PA-side change (SDK pin
   # bump, agent-identity contract drift, version-resolution semantics)

@@ -14,13 +14,18 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # Foundry Agent Evaluations
 
 Evaluate Foundry hosted agents using the **two-phase invoke+score** pattern with
 Foundry's built-in evaluators.
+
+For the complete per-agent adoption and release-evidence workflow, see
+[`foundry-agentops`](../foundry-agentops/SKILL.md). This skill remains
+authoritative for deep evaluator configuration and dataset design; AgentOps
+aggregates evidence and never replaces that evaluation contract.
 
 ## When to Use
 
