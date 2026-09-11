@@ -5,6 +5,7 @@ Entra is the authorization server; this process is only a resource server.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -63,7 +64,12 @@ class EntraVerifier(TokenVerifier):
         )
 
 
-def build_server(policy: EntraPolicy, base_url: str, key_resolver=None) -> FastMCP:
+def build_server(
+    policy: EntraPolicy, base_url: str, key_resolver=None, *,
+    expose_identity_proof: bool = False,
+) -> FastMCP:
+    if type(expose_identity_proof) is not bool:
+        raise ValueError("expose_identity_proof must be an explicit boolean")
     url = urlsplit(base_url)
     local = url.scheme == "http" and url.hostname in ("localhost", "127.0.0.1", "::1")
     if (
@@ -95,8 +101,31 @@ def build_server(policy: EntraPolicy, base_url: str, key_resolver=None) -> FastM
     @server.tool()
     def who_am_i() -> dict:
         """Return a safe receipt for the authenticated user; never a token."""
-        receipt = policy.receipt(current_principal())
+        principal = current_principal()
+        receipt = policy.receipt(principal)
         record("who_am_i", receipt)
+        if expose_identity_proof:
+            access = get_access_token()
+            if access is None:
+                raise InsufficientPermission("authenticated_delegated_context_required")
+            token_sha256 = hashlib.sha256(access.token.encode()).hexdigest()
+            receipt["verified_token"] = {
+                "source": "validated_inbound_bearer",
+                "issuer": policy.issuer,
+                "audience": policy.audience,
+                "tenant_id": principal.tenant,
+                "user_object_id": principal.object_id,
+                "client_application_id": principal.client_id,
+                "scopes": sorted(principal.scopes),
+                "expires_at": principal.expires_at,
+                "token_sha256": token_sha256,
+            }
+            # Correlate the received bearer without logging its identity claims.
+            audit.info(json.dumps({
+                "event": "delegated_token_proof",
+                "correlation_id": receipt["correlation_id"],
+                "token_sha256": token_sha256,
+            }))
         return receipt
 
     @server.tool()
@@ -122,7 +151,12 @@ def main() -> None:
         os.environ.get("MCP_PERMISSION", "demo.read"), secrets.token_bytes(32),
         subject_labels=json.loads(os.environ.get("MCP_SUBJECT_LABELS_JSON", "{}")),
     )
-    server = build_server(policy, os.environ["MCP_BASE_URL"])
+    proof = os.environ.get("MCP_IDENTITY_PROOF_ENABLED", "false")
+    if proof not in ("false", "true"):
+        raise ValueError("MCP_IDENTITY_PROOF_ENABLED must be true or false")
+    server = build_server(
+        policy, os.environ["MCP_BASE_URL"], expose_identity_proof=proof == "true",
+    )
     server.run(
         transport="streamable-http", host="0.0.0.0",
         port=int(os.environ.get("PORT", "8080")), stateless_http=True,

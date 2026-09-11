@@ -11,7 +11,7 @@ description: >
   runtime deployment (use foundry-hosted-agents), durable MCP tasks or jobs
   (use foundry-mcp-aca-jobs), web frontend sign-in, or general network provisioning.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Foundry MCP delegated authentication
@@ -105,7 +105,7 @@ version to avoid stale metadata.
 
 `who_am_i()` and `list_my_demo_items()` take no identity arguments. Each call
 uses its authenticated request context. Receipts never contain JWTs, raw
-subject/tenant IDs, emails or secrets. Pseudonyms use a random process-local
+subject/tenant IDs, emails or secrets by default. Pseudonyms use a random process-local
 HMAC key; they change on restart. The demo uses one replica. Cross-restart
 identity reconciliation is not a feature of this mock.
 
@@ -117,6 +117,18 @@ prompt nor a tool argument controls it. IDs and names never appear in receipts.
 Unconfigured subjects return `unmapped`, which must not count as proof of an
 expected user. Labels do not grant permission or replace the normal JWT/scope
 checks. Keep actual mappings in private deployment configuration, not this repo.
+
+For an explicit operator-approved identity proof, set
+`MCP_IDENTITY_PROOF_ENABLED=true` on the MCP server (default `false`).
+`who_am_i` then also returns `verified_token`: the authenticated caller's
+actual tenant/object/client IDs, issuer, audience, scopes, expiry and SHA-256
+digest of the inbound bearer. No identity field comes from tool arguments or
+the label mapping. Only the digest and correlation ID enter the proof audit;
+raw IDs remain in the authenticated response/private evidence, never normal
+logs. Never return or store the bearer itself. Compare `oid`/`tid` with an
+independently verified caller identity and match the receipt to server audit.
+The user's Foundry token and their MCP token have different audiences; prove
+the same **user**, not byte-identical tokens. This does not query Graph.
 
 ## Connection setup
 

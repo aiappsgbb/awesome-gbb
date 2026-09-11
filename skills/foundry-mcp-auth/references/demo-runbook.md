@@ -95,6 +95,16 @@ Both must return the same approved user label and dataset. Hosted transport
 may prefix tool names with the source label; do not hardcode a different
 separator into the model prompt.
 
+To prove token identity rather than presentation labels, explicitly enable
+`MCP_IDENTITY_PROOF_ENABLED=true` on the owned MCP and call `who_am_i`.
+Inspect `verified_token` in the **actual tool output**, not assistant prose.
+Compare its user object ID and tenant with an independently validated caller
+identity, and verify custom audience, delegated scope and expiry. Correlate
+the receipt and token digest with the server's `delegated_token_proof` event.
+This opt-in discloses the caller's own identity claims in the response; keep
+them private. Default-off receipts remain pseudonymous. Do not capture raw
+tokens or infer identity from `user-a`. No Graph or extra permission is needed.
+
 Do not rebuild just to repeat the demo. Record actual ACR runs when a rebuild
 is necessary: a CLI image-override option is not proof no build occurred.
 Refresh Toolbox/agent versions when schemas change, and preserve the canonical

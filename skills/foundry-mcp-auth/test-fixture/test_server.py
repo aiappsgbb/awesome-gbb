@@ -1,6 +1,7 @@
 """Local HTTP/MCP tests with locally signed tokens, NOT delegated Azure E2E."""
 
 import asyncio
+import hashlib
 from functools import wraps
 import json
 import time
@@ -127,6 +128,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         token = self.token()
         with self.assertLogs("mcp.auth", level="INFO") as logs:
             receipt = await self.call("who_am_i", token)
+        self.assertNotIn("verified_token", receipt)
         for secret in (token, TENANT, USER_A):
             self.assertNotIn(secret, json.dumps(receipt) + str(logs.output))
         response = await self.rpc("tools/call", token, {
@@ -140,6 +142,45 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_does_not_disclose_identity(self):
         response = await self.client.get("/health")
         self.assertEqual(response.json(), {"status": "ok"})
+
+    async def test_opt_in_proof_uses_the_actual_validated_bearer(self):
+        self.server = build_server(
+            self.policy, "https://mcp.example.com", lambda _: self.key.public_key(),
+            expose_identity_proof=True,
+        )
+        self.app = self.server.http_app(path="/mcp", stateless_http=True, json_response=True)
+        await self._check_identity_proof()
+
+    @with_server
+    async def _check_identity_proof(self):
+        tokens = {user: self.token(user) for user in (USER_A, USER_B)}
+        with self.assertLogs("mcp.auth", level="INFO") as logs:
+            receipts = await asyncio.gather(*(
+                self.call("who_am_i", tokens[user]) for user in (USER_A, USER_B)
+            ))
+        for user, receipt in zip((USER_A, USER_B), receipts):
+            proof = receipt["verified_token"]
+            self.assertEqual(proof["user_object_id"], user)
+            self.assertEqual(proof["tenant_id"], TENANT)
+            self.assertEqual(proof["client_application_id"], CLIENT)
+            self.assertEqual(proof["audience"], API)
+            self.assertEqual(proof["issuer"], self.policy.issuer)
+            self.assertEqual(proof["scopes"], ["demo.read"])
+            self.assertEqual(proof["source"], "validated_inbound_bearer")
+            self.assertEqual(proof["token_sha256"], hashlib.sha256(tokens[user].encode()).hexdigest())
+            self.assertIn(receipt["correlation_id"], str(logs.output))
+            self.assertIn(proof["token_sha256"], str(logs.output))
+            for private_value in (tokens[user], user, TENANT, CLIENT):
+                self.assertNotIn(private_value, str(logs.output))
+            self.assertNotIn(tokens[user], json.dumps(receipt))
+        for token, status in (
+            (None, 401), (self.token(aud="https://ai.azure.com"), 401),
+            (self.token(exp=1), 401), (self.token(scp=""), 403),
+            (self.token(idtyp="app"), 403),
+        ):
+            response = await self.rpc("tools/call", token, {"name": "who_am_i", "arguments": {}})
+            self.assertEqual(response.status_code, status)
+            self.assertNotIn("verified_token", response.text)
 
 
 if __name__ == "__main__":

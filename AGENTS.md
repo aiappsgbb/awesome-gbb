@@ -3092,7 +3092,7 @@ Source counts include the unreleased AgentOps and delegated-auth candidates; see
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
 | Unit tests | 1073 |
-| Additional delegated-auth candidate tests | 39 local tests; live delegated evidence recorded separately |
+| Additional delegated-auth candidate tests | 40 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

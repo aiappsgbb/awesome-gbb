@@ -3,7 +3,7 @@
 ## 4.32.0 — Proposed / Unreleased
 
 **Draft checkpoint, not a release.** Adds
-[`foundry-mcp-auth`](skills/foundry-mcp-auth/SKILL.md) **1.0.0 candidate** for
+[`foundry-mcp-auth`](skills/foundry-mcp-auth/SKILL.md) **1.1.0 candidate** for
 custom delegated OAuth, strict MCP resource-server policy and canonical
 Prompt/Toolbox/Hosted composition. Detailed results and open acceptance gates
 are maintained in the [validation notes](docs/maintenance/foundry-mcp-auth-validation.md),
@@ -20,6 +20,9 @@ not in reusable skill instructions. No four-path, multi-user or release approval
   delegated-auth ownership and compatibility clarifications.
 - Preserve the existing jobs implementation and separate dependency cohorts.
   Local checks and manual live evidence do not waive pending CI or human gates.
+- Opt-in inbound-token proof returns the authenticated caller's actual
+  validated identity claims; default receipts remain pseudonymous. Raw tokens
+  are never returned or logged. Fresh live proof is recorded in the notes.
 - Scope PR Azure tests to changed skills and declared dependencies when only
   independent local test jobs change. Shared execution changes and ambiguous
   workflow comparisons retain full coverage; main/scheduled canaries and

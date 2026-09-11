@@ -1,6 +1,6 @@
 # Foundry MCP auth validation notes
 
-**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.0.0 /
+**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.1.0 /
 catalog 4.32.0. Not a four-path or multi-user release certification.
 This record is not approval to deploy or publish. No real environment identifiers,
 tokens, consent links, secrets or user data are stored here.
@@ -14,6 +14,10 @@ Moving this history out of the skill does not change the tested code or
 convert any unproven acceptance row into PASS.
 
 ## Source and evidence binding
+
+The original 1.0.0 checkpoint binding below remains historical. The 1.1.0
+opt-in token-proof revision changes only the server implementation; its
+fresh source binding and live result are recorded in the next section.
 
 The manual run's source manifest was recorded on **2026-09-11 at 08:59:40 UTC**
 while the source was uncommitted, on base
@@ -39,6 +43,41 @@ Exact resource/agent versions, image digests, response IDs and receipt-to-audit
 correlations remain in private evidence. These source hashes bind canonical
 code, not the entire final image or an assertion that every negative test ran
 live. No raw transcripts or private configuration are published.
+
+## Fresh inbound bearer proof - 1.1.0
+
+On **2026-09-11 at 12:11 UTC**, a new user-authenticated API run verified the
+actual bearer received by the MCP, without using a subject label as identity
+evidence. One new MCP image was built/deployed through `azd`; the existing
+app's opt-in `MCP_IDENTITY_PROOF_ENABLED=true` setting was enabled without
+changing OAuth connections, permissions, other infrastructure or Hosted code.
+The operator deployment configuration retains that explicit setting.
+
+The deployed server source SHA-256 is
+`63f81351ec898d11c1d1b09175fee07e0bd2aee2d8ac61232db6a58218ebf94b`.
+Exact image digest/revision, real IDs, response IDs and token fingerprints
+remain in private evidence, not this document.
+
+| Independent check | Fresh result |
+|---|---|
+| Expected caller | Existing isolated CLI user; independently verified the Foundry access token's RS256 signature with Entra JWKS, permitted issuer/audience, lifetime and delegated scope. No Graph call or model input supplied the expected identity. |
+| MCP inbound bearer | Existing strict signature/issuer/custom-audience/lifetime/scope validation unchanged. `who_am_i.verified_token` reads the request's authenticated principal and hashes that request's actual bearer. |
+| Identity match | Actual `oid` and `tid` received by MCP equal the independently validated user's object/tenant IDs on all three paths. |
+| OAuth boundary | Custom API audience, `demo.read`, expected OAuth client `azp`, unexpired token. The Foundry token and MCP token have different digests and audiences, as required; this proves the same user, not byte-for-byte replay of a Microsoft-audience token. |
+| Tool and server evidence | Prompt/direct, Prompt/Toolbox and Hosted/Toolbox each returned actual tool output; all three receipt correlations and token digests matched `delegated_token_proof` server audit events. |
+| Privacy/auth regressions | Nine HTTP/MCP tests passed: default-off privacy, opt-in claims from two locally signed users' actual tokens, and anonymous/invalid/app-only rejection. Full candidate local suite: 40 tests. Synthetic test tokens remain distinct from this live Entra proof. |
+
+The ARM update response initially showed stale configuration; a fresh read
+confirmed the setting. The driver waited for the new revision to be ready,
+without issuing a duplicate configuration write. No raw JWT, consent URL or
+real identity claim was added to normal server logs. Opt-in real IDs are
+returned only to the authenticated caller and retained only in private evidence.
+
+**Scope:** fresh API execution as the real user, not yet Playground
+follow-through, second-user Entra isolation or native Hosted/direct success.
+Synthetic business items remain explicitly synthetic; they are not used to
+prove token propagation. No Graph, additional grants or downstream OBO
+exchange were introduced.
 
 ## Limited live evidence
 
