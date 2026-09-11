@@ -120,6 +120,12 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 > for manual evidence as of 2026-09-05, before PR CI, and its limits.
 > The published plugin does not include this unmerged addition.
 
+> **Unreleased addition, proposed catalog 4.32.0:** `foundry-mcp-auth` has live
+> single-user delegated evidence for Prompt/direct-MCP, Prompt/Toolbox and
+> Hosted/Toolbox. Hosted/direct, multi-user isolation and lifecycle cases are not certified.
+> Deployment/Entra/connection writes require separate approval. See its
+> [acceptance status](docs/maintenance/foundry-mcp-auth-validation.md).
+
 ### 🏗️ Foundry Building Blocks
 
 Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP servers, evals, RAG, vision/speech, and observability.
@@ -133,6 +139,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |
+| [**foundry-mcp-auth**](skills/foundry-mcp-auth/) | **Unreleased candidate:** custom Entra OAuth recipe, strict resource-server policy and safe user receipts. **Live single-user PASS** for Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox over private networking. Hosted/direct, multi-user isolation and full consent/revocation lifecycle remain unproven. |
 | [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | Expose durable MCP tools backed by pre-provisioned ACA Jobs — SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, managed-identity callbacks, and one immutable image with separate server/worker entrypoints. |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate hosted agents — two-phase invoke+score, 6 built-in evaluators, enriched-dataset shape (`tool_calls` + `tool_outputs`), continuous loop |
 | [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.0.0** (draft candidate). Review Doctor diagnostics, release evidence, regression baselines, and workflow ownership; its owner-authorized encrypted Doctor diagnostic is not full-matrix acceptance and never uploads raw output or an operator private key. |

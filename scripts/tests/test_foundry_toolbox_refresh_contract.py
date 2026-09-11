@@ -667,22 +667,17 @@ class FoundryToolboxValidationDateContractTests(unittest.TestCase):
             "must equal 2026-08-04",
         )
 
-    def test_skill_metadata_version_matches_post_merge_correction(self) -> None:
+    def test_skill_metadata_version_includes_auth_boundary_correction(self) -> None:
         """Guard: a version/history revert must not be able to go green.
 
-        Pins `metadata.version` to the exact SemVer the post-merge correction
-        (cleanup-from-finally + dangling-remediation-text + date-alignment
-        fixes) shipped under, so reverting `SKILL.md` to a pre-correction
-        version string fails here even if it happens to keep the corrected
-        body content intact.
+        The auth-boundary PATCH follows 2.1.1. Preserve the earlier cleanup,
+        identifier and validation-date assertions as independent guards.
         """
         skill_meta = _frontmatter(SKILL.read_text(encoding="utf-8"))["metadata"]
         self.assertEqual(
             str(skill_meta["version"]),
-            "2.1.1",
-            "SKILL.md metadata.version must be '2.1.1' -- the PATCH bump that "
-            "shipped the post-merge correction. A version/history revert must "
-            "not be able to go green.",
+            "2.1.2",
+            "The delegated-auth boundary correction must retain its PATCH version.",
         )
 
 
@@ -1523,13 +1518,12 @@ class FoundryToolboxCatalogHistoryIdentifierTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.text = SKILL.read_text(encoding="utf-8")
 
-    def test_version_stays_at_the_unmerged_corrective_release(self) -> None:
+    def test_version_advances_for_the_auth_boundary_correction(self) -> None:
         version = str(_frontmatter(self.text)["metadata"]["version"])
         self.assertEqual(
             version,
-            "2.1.1",
-            "this corrective release is still unmerged -- metadata.version must "
-            "stay at 2.1.1 and must not bump further",
+            "2.1.2",
+            "Auth boundary guidance follows the retained 2.1.1 correction.",
         )
 
     def test_catalog_history_2_1_1_entry_mentions_identifier_fix(self) -> None:

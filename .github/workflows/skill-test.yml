@@ -73,6 +73,7 @@ jobs:
         run: >-
           pip install --quiet
           pyyaml
+          "PyJWT[crypto]~=2.10.1"
           azure-identity
           azure-mgmt-authorization
           azure-mgmt-monitor
@@ -93,6 +94,35 @@ jobs:
 
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+  # No Azure credentials: three incompatible local SDK cohorts remain isolated.
+  delegated-auth-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run delegated auth local contracts
+        env:
+          PYTHONPATH: skills/foundry-mcp-auth
+        run: |
+          set -euo pipefail
+          skill=skills/foundry-mcp-auth
+          python -m venv "$RUNNER_TEMP/auth-server"
+          "$RUNNER_TEMP/auth-server/bin/pip" install --quiet "$skill/templates"
+          "$RUNNER_TEMP/auth-server/bin/python" -m unittest scripts.tests.test_foundry_mcp_auth_policy scripts.tests.test_foundry_mcp_auth_contract
+          "$RUNNER_TEMP/auth-server/bin/python" -m unittest discover -s "$skill/test-fixture" -p test_server.py
+          python -m venv "$RUNNER_TEMP/auth-management"
+          "$RUNNER_TEMP/auth-management/bin/pip" install --quiet "$skill/templates/management"
+          "$RUNNER_TEMP/auth-management/bin/python" -m unittest discover -s "$skill/test-fixture" -p test_management.py
+          python -m venv "$RUNNER_TEMP/auth-hosted"
+          "$RUNNER_TEMP/auth-hosted/bin/pip" install --quiet "$skill/templates/hosted"
+          "$RUNNER_TEMP/auth-hosted/bin/python" -m unittest discover -s "$skill/test-fixture" -p test_hosted.py
+          "$RUNNER_TEMP/auth-server/bin/pip" check
+          "$RUNNER_TEMP/auth-management/bin/pip" check
+          "$RUNNER_TEMP/auth-hosted/bin/pip" check
 
   # ── Job 2: Catalog lint (validate-skills + build-plugins) ──────────
   catalog-lint:

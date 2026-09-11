@@ -14,7 +14,7 @@ description: >
   foundry-mcp-aca-jobs), local MCP development (use mcp-config.json directly),
   general Azure deploy.
 metadata:
-  version: "1.2.5"
+  version: "1.2.6"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP. If the MCP server should hand work to an ACA Job, use [foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md) instead.
 
@@ -556,6 +556,13 @@ When the real system becomes available:
 
 ## Securing your MCP server
 
+For a delegated-only custom Entra API, use the separate
+[foundry-mcp-auth candidate](../foundry-mcp-auth/SKILL.md). Its strict scope
+policy and safe receipts do not change this skill's app-only defaults.
+Issuer/audience validation alone is authentication, not per-user business
+authorization. The candidate records the live-proven delegated paths and
+keeps remaining multi-user and lifecycle gates explicit.
+
 > **The perimeter is yours to build.** A public survey found only **8.5% of
 > reachable MCP servers require OAuth** — the rest are unauthenticated remote
 > tool-execution endpoints, i.e. open RCE. A remote MCP server with no identity
@@ -615,7 +622,8 @@ az containerapp auth update -n <app> -g <rg> \
 ```
 
 > **⚠️ Audience-scoped only.** These two commands validate audience + issuer —
-> enough for delegated / interactive callers. The **app-only server-to-server**
+> an authentication check, not delegated scope or data authorization. Enforce
+> the user's required `scp` permissions separately. The **app-only server-to-server**
 > model (this skill's primary consumer) needs two more adjustments: see the
 > callout below, or use the Bicep reference, which encodes both.
 
@@ -683,15 +691,14 @@ use — reject-by-default beats sanitizing.
 
 Easy Auth is an **identity** perimeter, not a **network** one. For regulated
 workloads add, in order: private endpoints + VNET injection, then an APIM front
-door running `validate-jwt` + `rate-limit-by-key`. That topology (and why
-Foundry hosted agents still require external ingress) is
+door running `validate-jwt` + `rate-limit-by-key`. The runtime-specific topology is
 [`foundry-vnet-deploy`](../foundry-vnet-deploy/SKILL.md) — out of scope here.
 
-**External ingress is not "unauthenticated."** Foundry hosted agents run in
-Foundry's infrastructure, so the MCP needs `--ingress external` (see Gotchas).
-With Layer 1 in front, every external call still needs a valid token — external
-ingress + Easy Auth is the standard safe posture. Reach for VNET isolation only
-when a compliance boundary demands it.
+**External ingress is not "unauthenticated."** The non-VNet default here uses
+external ingress with Layer 1 authentication. Do not generalize that default
+into a requirement for public access: app-level external ingress within an
+internal ACA environment can serve private VNet callers. Prove each Foundry
+runtime's actual route and DNS before using a private topology.
 
 ### Layer 5 — Audit and monitoring
 

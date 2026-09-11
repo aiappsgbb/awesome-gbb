@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {"value": "${AZURE_ENV_NAME}"},
+    "resourceGroupName": {"value": "${AZURE_RESOURCE_GROUP}"},
+    "acaEnvironmentName": {"value": "${ACA_ENVIRONMENT_NAME}"},
+    "acrName": {"value": "${AZURE_CONTAINER_REGISTRY_NAME}"},
+    "identityName": {"value": "${MCP_IDENTITY_NAME}"},
+    "mcpTenantId": {"value": "${MCP_TENANT_ID}"},
+    "mcpApiClientId": {"value": "${MCP_API_CLIENT_ID}"}
+  }
+}

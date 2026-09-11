@@ -49,7 +49,7 @@ CATEGORIES: dict[str, list[str]] = {
     '🏗️ Foundry Building Blocks': [
         'foundry-prompt-agents', 'foundry-hosted-agents', 'foundry-teams-bot',
         'ghcp-hosted-agents',
-        'foundry-mcp-aca', 'foundry-mcp-aca-jobs', 'foundry-evals',
+        'foundry-mcp-aca', 'foundry-mcp-aca-jobs', 'foundry-mcp-auth', 'foundry-evals',
         'foundry-agentops', 'foundry-iq',
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
@@ -82,6 +82,16 @@ CATEGORIES: dict[str, list[str]] = {
 
 # Catalog status is separate from the runtime SKILL.md contract.
 DRAFT_SKILLS = {
+    'foundry-mcp-auth': {
+        'record': 'maintenance/foundry-mcp-auth-validation.md',
+        'summary': (
+            'Unreleased candidate with live single-user delegated PASS for Prompt/direct MCP, Prompt/Toolbox and Hosted/Toolbox. '
+            'Actual tool receipts match private MCP server audit; this is not four-path certification. '
+            'All four Prompt/Hosted and direct/Toolbox paths remain final acceptance criteria. '
+            'Late consent, revocation and two real users are not certified. '
+            'Deployment, Entra and connection writes require separate Gate B approval.'
+        ),
+    },
     'foundry-agentops': {
         'record': 'maintenance/foundry-agentops-validation.md',
         'summary': (
@@ -98,7 +108,10 @@ DRAFT_SKILLS = {
 }
 
 # Only these sanitized records are published to fresh outputs; never copy docs/ wholesale.
-PUBLISHED_DOCS = ('maintenance/foundry-agentops-validation.md',)
+PUBLISHED_DOCS = (
+    'maintenance/foundry-agentops-validation.md',
+    'maintenance/foundry-mcp-auth-validation.md',
+)
 
 
 def _parse_frontmatter(text: str) -> dict[str, Any] | None:

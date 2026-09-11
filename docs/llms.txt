@@ -15,6 +15,7 @@ Unreleased: foundry-agentops 1.0.0 / proposed catalog 4.31.0. Draft candidate el
 - [ghcp-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-hosted-agents/SKILL.md): Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK authentication and Invocations protocol.
 - [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.
 - [foundry-mcp-aca-jobs](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca-jobs/SKILL.md): Build job-backed MCP servers for Foundry when the control plane must stay responsive and execution belongs in ACA Jobs.
+- [foundry-mcp-auth](/awesome-gbb/skills/foundry-mcp-auth/): Unreleased draft candidate. Use when a custom Foundry MCP server needs delegated user authentication, OAuth identity passthrough, audience-correct access tokens, per-user scope authorization, or connection-consent troubleshooting.
 - [foundry-evals](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-evals/SKILL.md): Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry built-in evaluators.
 - [foundry-agentops](/awesome-gbb/skills/foundry-agentops/): Unreleased draft candidate. Use when adopting native Azure AgentOps for one existing agent.
 - [foundry-iq](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-iq/SKILL.md): Build enterprise RAG with Foundry IQ and Azure AI Search Knowledge Bases using agentic retrieval, multi-hop reasoning, query planning, and citation-backed responses.
@@ -61,4 +62,4 @@ Unreleased: foundry-agentops 1.0.0 / proposed catalog 4.31.0. Draft candidate el
 
 ## Plugins
 
-- [awesome-gbb](/awesome-gbb/plugins/awesome-gbb/): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 37 reusable building blocks for Copilot-assisted engagements, including the unpublished AgentOps addition.
+- [awesome-gbb](/awesome-gbb/plugins/awesome-gbb/): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 38 reusable building blocks for Copilot-assisted engagements, including the unpublished AgentOps and delegated MCP auth candidates.

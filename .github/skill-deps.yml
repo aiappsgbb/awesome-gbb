@@ -43,6 +43,14 @@ skills:
     depends_on: []
   foundry-toolbox:
     depends_on: []
+  # Local-only delegated auth candidate. Its unattended fixture proves only
+  # approved network/anonymous-auth boundaries, never interactive user OAuth.
+  foundry-mcp-auth:
+    depends_on:
+      - azd-patterns
+      - foundry-toolbox
+      - foundry-hosted-agents
+      - foundry-prompt-agents
   # ghcp-hosted-agents — alternative GHCP-SDK + Invocations protocol
   # hosted-agent path, now on the same GA unified azure.yaml deploy
   # shape (single-file services graph, azd ai agent init/deploy,

@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.9"
+  version: "1.1.10"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -150,6 +150,11 @@ agent = project.agents.create_version(
 | SharePoint | via connections | Search SharePoint content |
 
 ### Custom tools (MCP, OpenAPI)
+
+For per-user custom OAuth, use the connection-backed builders in the
+[foundry-mcp-auth candidate](../foundry-mcp-auth/SKILL.md). It owns delegated
+scope enforcement and consent setup; the plain MCP example below is not a
+delegation proof. The candidate's live Playground acceptance is still pending.
 
 ```python
 from azure.ai.projects.models import MCPTool
