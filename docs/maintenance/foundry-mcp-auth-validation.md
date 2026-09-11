@@ -151,3 +151,31 @@ than inventing a public fallback or declaring delegated success. Its future
 PASS would prove only PRM/reachability/anonymous rejection, not interactive
 OAuth. The credential-free local job covers three isolated dependency sets.
 No required checks or live-testing policy are waived by draft status.
+
+## Hosted/direct triage at the checkpoint
+
+**Unresolved, not classified as impossible.** Bounded public issue/release
+research identified a known defect in the pinned hosting package, but did not
+establish it as the cause of this live direct-MCP failure.
+
+| Evidence | What it establishes | What it does not establish |
+|---|---|---|
+| [microsoft/agent-framework#7658](https://github.com/microsoft/agent-framework/issues/7658) and [microsoft/agent-framework#7725](https://github.com/microsoft/agent-framework/issues/7725), both closed | Reports using hosting `1.0.0b260730` describe mid-run `oauth_consent_request` content being dropped, yielding completed/empty output. | Those reproductions observed the nested consent content; the direct-MCP demo's logs do not show its nested response items. |
+| [Pinned hosting output converter](https://github.com/microsoft/agent-framework/blob/python-1.13.0/python/packages/foundry_hosting/agent_framework_foundry_hosting/_responses.py#L1966-L2083) | The release source associated with the pin has no OAuth-consent output branch. | Release-source inspection alone is not a byte-for-byte reproduction inside the deployed container. |
+| [Later output converter](https://github.com/microsoft/agent-framework/blob/python-1.17.0/python/packages/foundry_hosting/agent_framework_foundry_hosting/_responses.py#L1375-L1403) | A newer implementation emits OAuth consent output explicitly. | It does not prove that upgrading fixes the direct route's outer-user identity propagation. |
+| [Azure/azure-sdk-for-python#46696](https://github.com/Azure/azure-sdk-for-python/issues/46696), open when checked | Closely matching native `FoundryChatClient.get_mcp_tool()` architecture fails when Hosted while working locally with a user credential; the reporter confirms the Toolbox path works. | Its reported symptom is an explicit ARA OBO BadRequest, not this demo's nested HTTP 200 and empty outer output. |
+
+No exact public issue matching the entire observed direct-path signature was
+found. A swallowed consent request is a plausible explanation **only if**
+the nested response contained consent content. Successful Prompt and Hosted
+Toolbox controls with the same user/connection/server narrow the investigation
+without proving that premise.
+
+The next product-group evidence should include the exact pinned versions and
+image digest, request timestamp/correlation, inbound context-presence flags,
+nested response/SSE **item types/status/errors**, host dispatch warnings, and
+the successful controls. Exclude tokens, consent URLs and private inventory
+from public reports. Ask which caller-context contract is supported for
+Hosted/direct and whether the nested service returned consent content.
+No new ticket, speculative adapter or dependency upgrade is part of this
+checkpoint.
