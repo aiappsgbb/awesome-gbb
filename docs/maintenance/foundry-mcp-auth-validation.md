@@ -1,6 +1,6 @@
 # Foundry MCP auth validation notes
 
-**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.1.1 /
+**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.2.0 /
 catalog 4.32.0. Not a four-path or multi-user release certification.
 This record is not approval to deploy or publish. No real environment identifiers,
 tokens, consent links, secrets or user data are stored here.
@@ -12,6 +12,43 @@ and repeatable operations in
 [demo-runbook.md](../../skills/foundry-mcp-auth/references/demo-runbook.md).
 Moving this history out of the skill does not change the tested code or
 convert any unproven acceptance row into PASS.
+
+## Optional username claims - 1.2.0
+
+The resource server now preserves optional string `upn`,
+`preferred_username` and `name` values from the same signature-validated
+MCP bearer. They are disclosed only in the operator-enabled identity view,
+under their original claim names. They never determine authorization and do
+not enter default receipts, principal representations or normal server logs.
+
+Fresh checks on all three paths found an actual `preferred_username` and
+`name`, **but no literal `upn` claim**. The values remain private. No Graph
+lookup, optional-claims registration change, grant or fabricated UPN was used.
+All three actual tool receipts matched the MCP audit; one server build added
+the optional fields without altering the token-validation requirements.
+
+The initial model answers incorrectly described `preferred_username` as UPN,
+despite the correct tool JSON. That run is recorded as **transport PASS /
+presentation FAIL**, not an unqualified success. Shared instructions were
+tightened to preserve the distinction. Current Prompt/direct version 5 and
+Prompt/Toolbox default version 6 correctly describe the missing `upn` while
+continuing those earlier answers. Hosted default version 5 answered correctly
+in a fresh ordinary-question check at **2026-09-11 13:26 UTC**, with matching
+tool/audit evidence; **one older Hosted continuation still mislabeled it**.
+That continuation remains a presentation gap. Fresh-versus-continuation
+results alone do not establish whether history handling or runtime affinity
+caused it; no blanket cache diagnosis or universal wording guarantee is made.
+
+The prompt was simply “Qual è il mio UPN?”, with service-default tool
+selection. Focused local coverage is 42 tests, including actual optional
+claim names, absent-UPN handling, immutable principal data and default-off
+privacy. Exact image/version/final-answer evidence stays private.
+
+| Changed source under `references/python/` | SHA-256 |
+|---|---|
+| `authorization.py` | `fbb0d7c16d061f28f39c17791aa3ade532cc3b58e4ff1ebb22d3773a9d3c9b2d` |
+| `delegated_server.py` | `d96fb203c508543d3fd2e20aaaefa6caf675b64e7aa9bcbcd2dc230188425f4b` |
+| `agent_instructions.py` | `8ba65b3dd3e226e12c9c735240d1dff1824ce81552f067156c7180f2b5fcf6ce` |
 
 ## User-visible identity acceptance - 1.1.1
 

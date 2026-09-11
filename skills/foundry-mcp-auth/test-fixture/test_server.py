@@ -125,11 +125,11 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
 
     @with_server
     async def test_receipt_is_sanitized_and_argument_cannot_select_another_user(self):
-        token = self.token()
+        token = self.token(upn="alice@example.test", preferred_username="alias@example.test", name="Example User")
         with self.assertLogs("mcp.auth", level="INFO") as logs:
             receipt = await self.call("who_am_i", token)
         self.assertNotIn("verified_token", receipt)
-        for secret in (token, TENANT, USER_A):
+        for secret in (token, TENANT, USER_A, "alice@example.test", "alias@example.test", "Example User"):
             self.assertNotIn(secret, json.dumps(receipt) + str(logs.output))
         response = await self.rpc("tools/call", token, {
             "name": "who_am_i", "arguments": {"user_id": USER_B},
@@ -153,7 +153,8 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
 
     @with_server
     async def _check_identity_proof(self):
-        tokens = {user: self.token(user) for user in (USER_A, USER_B)}
+        display = {USER_A: {"upn": "alice@example.test"}, USER_B: {"preferred_username": "bob@example.test"}}
+        tokens = {user: self.token(user, **display[user]) for user in (USER_A, USER_B)}
         with self.assertLogs("mcp.auth", level="INFO") as logs:
             receipts = await asyncio.gather(*(
                 self.call("who_am_i", tokens[user]) for user in (USER_A, USER_B)
@@ -170,6 +171,11 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(misleading, proof)
             self.assertNotIn("user-a", json.dumps(proof))
             self.assertNotIn("user-b", json.dumps(proof))
+            for key, value in display[user].items():
+                self.assertEqual(proof[key], value)
+                self.assertNotIn(value, str(logs.output))
+            if user == USER_B:
+                self.assertNotIn("upn", proof)
             self.assertEqual(proof["source"], "validated_inbound_bearer")
             self.assertEqual(proof["token_sha256"], hashlib.sha256(tokens[user].encode()).hexdigest())
             self.assertIn(receipt["correlation_id"], str(logs.output))

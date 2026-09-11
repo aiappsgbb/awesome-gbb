@@ -22,7 +22,9 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(direct.instructions, INSTRUCTIONS)
         self.assertEqual(toolbox.instructions, INSTRUCTIONS)
         for required in ("freshly in the current turn", "oid, tid, aud, scp and azp",
-                         "correlation_id", "only when the user explicitly asks", "not exposed"):
+                         "correlation_id", "only when the user explicitly asks", "not exposed",
+                         "only if that exact claim is returned", "MCP token has no upn claim",
+                         "NEVER call it UPN"):
             self.assertIn(required, INSTRUCTIONS)
 
     def test_toolbox_bridge_is_first_party_only_and_never_embeds_a_bearer(self):

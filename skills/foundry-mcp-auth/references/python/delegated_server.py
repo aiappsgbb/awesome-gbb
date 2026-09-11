@@ -121,6 +121,7 @@ def build_server(
                 "correlation_id": receipt["correlation_id"],
                 "token_sha256": token_sha256,
             }
+            proof.update(principal.display_claims)
             # Correlate the received bearer without logging its identity claims.
             audit.info(json.dumps({
                 "event": "delegated_token_proof",

@@ -32,6 +32,9 @@ class Principal:
     scopes: frozenset[str]
     delegated: bool
     expires_at: int
+    display_claims: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({}), repr=False, compare=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -106,10 +109,18 @@ class EntraPolicy:
         if not isinstance(scope, str):
             raise InvalidAccessToken("invalid_access_token")
         scopes = frozenset(scope.split())
+        display_claims = {}
+        for name in ("upn", "preferred_username", "name"):
+            value = claims.get(name)
+            if value is not None and not isinstance(value, str):
+                raise InvalidAccessToken("invalid_access_token")
+            if value:
+                display_claims[name] = value
         return Principal(
             tenant=self.tenant_id, object_id=claims["oid"], client_id=claims["azp"],
             scopes=scopes, delegated=bool(scopes) and claims.get("idtyp") in (None, "user"),
             expires_at=claims["exp"],
+            display_claims=MappingProxyType(display_claims),
         )
 
     def authorize(self, principal: Principal) -> None:

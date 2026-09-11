@@ -11,7 +11,7 @@ description: >
   runtime deployment (use foundry-hosted-agents), durable MCP tasks or jobs
   (use foundry-mcp-aca-jobs), web frontend sign-in, or general network provisioning.
 metadata:
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # Foundry MCP delegated authentication
@@ -131,6 +131,11 @@ logs. Never return or store the bearer itself. Compare `oid`/`tid` with an
 independently verified caller identity and match the receipt to server audit.
 The user's Foundry token and their MCP token have different audiences; prove
 the same **user**, not byte-identical tokens. This does not query Graph.
+The same verified bearer may include `upn`, `preferred_username` or `name`.
+The opt-in view returns those optional string claims under their original
+names only when present. Never infer UPN from `oid`, relabel
+`preferred_username` as UPN, or use either mutable display value for
+authorization. Default receipts and normal logs do not expose these values.
 
 ## Connection setup
 

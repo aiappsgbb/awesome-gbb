@@ -156,6 +156,24 @@ class DelegatedPolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.module.EntraPolicy(TENANT, API, "demo.read", b"x" * 32, subject_labels=labels)
 
+    def test_optional_display_claims_preserve_verified_names_without_identity_inference(self):
+        values = {"upn": "alice@example.test", "preferred_username": "alias@example.test", "name": "Example User"}
+        principal, _ = self.authenticate({**self.claims, **values})
+        self.assertEqual(dict(principal.display_claims), values)
+        for value in values.values():
+            self.assertNotIn(value, repr(principal))
+            self.assertNotIn(value, json.dumps(self.policy.receipt(principal)))
+        with self.assertRaises(TypeError):
+            principal.display_claims["upn"] = "changed@example.test"
+        preferred, _ = self.authenticate({**self.claims, "preferred_username": "alias@example.test"})
+        self.assertNotIn("upn", preferred.display_claims)
+        absent, _ = self.authenticate()
+        self.assertEqual(dict(absent.display_claims), {})
+        for field in values:
+            with self.subTest(field=field):
+                with self.assertRaises(self.module.InvalidAccessToken):
+                    self.authenticate({**self.claims, field: {"untrusted": "value"}})
+
 
 if __name__ == "__main__":
     unittest.main()

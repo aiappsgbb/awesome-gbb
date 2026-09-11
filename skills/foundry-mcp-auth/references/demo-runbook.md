@@ -105,6 +105,11 @@ the receipt and token digest with the server's `delegated_token_proof` event.
 This opt-in discloses the caller's own identity claims in the response; keep
 them private. Default-off receipts remain pseudonymous. Do not capture raw
 tokens or infer identity from `user-a`. No Graph or extra permission is needed.
+Optional `upn`, `preferred_username` and `name` come only from that validated
+MCP token. If `upn` is absent, report its absence; a returned
+`preferred_username` is not proof of an actual `upn` claim. Neither is an
+authorization key. Never query Graph or change app claims configuration just
+to manufacture a value for the proof.
 Also verify those exact claims and correlation appear in the final answer
 to an ordinary identity question and a follow-up. A correct tool result with
 a misleading assistant summary is a failed presentation check. Verify current
