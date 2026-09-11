@@ -3,7 +3,7 @@
 ## 4.32.0 — Proposed / Unreleased
 
 **Draft checkpoint, not a release.** Adds
-[`foundry-mcp-auth`](skills/foundry-mcp-auth/SKILL.md) **1.2.0 candidate** for
+[`foundry-mcp-auth`](skills/foundry-mcp-auth/SKILL.md) **1.3.0 candidate** for
 custom delegated OAuth, strict MCP resource-server policy and canonical
 Prompt/Toolbox/Hosted composition. Detailed results and open acceptance gates
 are maintained in the [validation notes](docs/maintenance/foundry-mcp-auth-validation.md),
@@ -29,6 +29,11 @@ not in reusable skill instructions. No four-path, multi-user or release approval
 - The opt-in view also preserves actual optional `upn`, `preferred_username`
   and `name` claims from the verified bearer; no UPN inference, Graph lookup
   or default-mode identity disclosure.
+- Consolidate local installation/dependency and version/default-operation
+  guidance. Add an explicit service-default tool-selection option without
+  changing existing invocation behavior. Source-reviewed Fabric, OneDrive
+  and SharePoint profiles remain preparation only: no licensed-service tests,
+  downstream OBO runtime or automatic resource grants.
 - Scope PR Azure tests to changed skills and declared dependencies when only
   independent local test jobs change. Shared execution changes and ambiguous
   workflow comparisons retain full coverage; main/scheduled canaries and

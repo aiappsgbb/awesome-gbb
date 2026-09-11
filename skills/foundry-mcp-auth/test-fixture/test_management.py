@@ -56,6 +56,24 @@ class ManagementTests(unittest.TestCase):
                 options = client.responses.create.call_args.kwargs
                 self.assertEqual("extra_body" in options, kind == "prompt")
 
+    def test_normal_question_mode_preserves_service_default_tool_selection(self):
+        from references.python.invoke_agent import invoke_agent
+        for require_tool in (True, False):
+            client = MagicMock()
+            client.__enter__.return_value = client
+            client.responses.create.return_value = SimpleNamespace(status="completed", output=[object()])
+            project = SimpleNamespace(get_openai_client=Mock(return_value=client))
+            invoke_agent(project, "demo", "prompt", "Who am I?",
+                         http_client_factory=object, require_tool=require_tool)
+            options = client.responses.create.call_args.kwargs
+            if require_tool:
+                self.assertEqual(options["tool_choice"], "required")
+            else:
+                self.assertNotIn("tool_choice", options)
+        with self.assertRaises(ValueError):
+            invoke_agent(project, "demo", "prompt", "Who am I?",
+                         http_client_factory=object, require_tool="false")
+
     def test_failed_responses_never_become_successful_empty_results(self):
         from references.python.invoke_agent import invoke_agent
         client = MagicMock(); client.__enter__.return_value = client

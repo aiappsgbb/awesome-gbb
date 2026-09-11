@@ -89,6 +89,26 @@ reauthorization. Existing access tokens may remain valid until their expiry.
 The pinned Hosted wrapper's late-consent gap is **not solved** by these
 instructions; keep the corresponding Playground case blocked until proven.
 
+## Downstream resource readiness
+
+The supplied OAuth builder is for **this custom API's inbound token**. It is
+not a generic Fabric/Graph/Agent 365 connection generator. Choose the exact
+route in [Microsoft resource profiles](microsoft-resource-profiles.md) before
+selecting any downstream audience, permission or native connection type.
+Inbound `demo.read`, a successful `who_am_i`, and a signed display claim
+confer no downstream content rights.
+
+A custom MCP acting as API A needs its own confidential-client identity
+and a supported user OBO exchange to call API B. Do not replay token A, use
+the upstream OAuth broker's credential blindly, or treat an app-only
+credential as a delegated fallback. This implementation does not perform OBO.
+
+Any future token cache must use maintained-library facilities with isolation
+by tenant, user, client, resource/scopes and applicable claims context.
+Reauthorization, claims challenges, denied consent and revoked/expired
+credentials must surface through a supported client interaction. Documenting
+that requirement is not evidence that a Foundry/Toolbox route handles it.
+
 ## Failure evidence
 
 Do not mint another client secret simply to retry an unexplained error.

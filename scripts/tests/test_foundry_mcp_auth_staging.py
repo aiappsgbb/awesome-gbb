@@ -32,6 +32,20 @@ class HostedStagingTests(unittest.TestCase):
                 (destination / "app/references/python/agent_instructions.py").read_bytes(),
                 (SKILL / "references/python/agent_instructions.py").read_bytes(),
             )
+            self.assertEqual(
+                {str(p.relative_to(destination)) for p in destination.rglob("*") if p.is_file()},
+                {
+                    "azure.yaml",
+                    "app/references/python/hosted_agent.py",
+                    "app/references/python/agent_instructions.py",
+                    "app/templates/hosted/Dockerfile",
+                    "app/templates/hosted/pyproject.toml",
+                },
+            )
+            self.assertIn(
+                'CMD ["python", "-m", "references.python.hosted_agent"]',
+                (destination / "app/templates/hosted/Dockerfile").read_text(),
+            )
             with self.assertRaises(FileExistsError):
                 module.stage_hosted(destination)
 

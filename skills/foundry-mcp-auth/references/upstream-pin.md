@@ -71,6 +71,11 @@ docs_to_revalidate:
   - https://learn.microsoft.com/agent-framework/integrations/by-component/tools/foundry-toolbox
   - https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks
   - https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow
+  - https://learn.microsoft.com/azure/foundry/agents/how-to/tools/fabric-iq
+  - https://learn.microsoft.com/graph/permissions-selected-overview
+  - https://learn.microsoft.com/entra/identity-platform/claims-challenge
+  - https://learn.microsoft.com/office365/servicedescriptions/microsoft-agent-365/microsoft-agent-365
+  - https://learn.microsoft.com/microsoft-agent-365/admin/sharepoint-integration
 known_issues:
   - id: KI-001
     description: Hosting requires MCP <2; the resource-server adapter targets FastMCP 2.14. Keep the independent jobs cohort unchanged.
@@ -122,6 +127,9 @@ access or OAuth grants. See the
 [validation notes](../../../docs/maintenance/foundry-mcp-auth-validation.md)
 for live results, source binding and remaining gates. Machine-readable
 validation dates and issue states above are freshness metadata, not release approval.
+The Microsoft-resource links also track documentation-only readiness
+profiles. Their presence does not make the import script a licensed-service
+test or add a downstream token-exchange implementation.
 
 The inspected newer release (core 1.17 / hosting 1.0.0b260903 / Projects 2.6)
 does not close all four user-context/consent paths. The runtime intentionally

@@ -9,16 +9,20 @@ def invoke_agent(
     project, agent_name: str, kind: str, user_input: str, *,
     http_client_factory, previous_response_id: str | None = None,
     agent_version: str | None = None,
+    require_tool: bool = True,
 ):
     if kind not in ("prompt", "hosted") or not agent_name.strip() or not user_input.strip():
         raise ValueError("Explicit prompt/hosted kind, agent name and input are required")
     if agent_version is not None and (kind != "prompt" or not agent_version.isdigit()):
         raise ValueError("Explicit versions here apply only to Prompt agent references")
+    if type(require_tool) is not bool:
+        raise ValueError("require_tool must be an explicit boolean")
     options = {
         "input": user_input,
-        "tool_choice": "required",
         "max_output_tokens": 1000,
     }
+    if require_tool:
+        options["tool_choice"] = "required"
     if kind == "prompt":
         options["extra_body"] = {"agent_reference": {"type": "agent_reference", "name": agent_name}}
         if agent_version is not None:

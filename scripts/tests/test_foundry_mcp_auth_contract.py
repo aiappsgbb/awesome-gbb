@@ -32,6 +32,7 @@ class AuthRecipeContractTests(unittest.TestCase):
             "references/connection-contract.md",
             "references/yaml/connection.yaml",
             "references/upstream-pin.md",
+            "references/microsoft-resource-profiles.md",
             "templates/azure.yaml", "templates/infra/main.bicep",
             "templates/Dockerfile", "templates/pyproject.toml",
             "test-fixture/consumer_prompt.md", "test-fixture/playground.md",
@@ -83,6 +84,35 @@ class AuthRecipeContractTests(unittest.TestCase):
         manifest = (SKILL / "templates/azure.yaml").read_text()
         self.assertIn("language: docker", manifest)
         self.assertIn("remoteBuild: true", manifest)
+
+    def test_future_profiles_preserve_resource_and_permission_boundaries(self):
+        profiles = (SKILL / "references/microsoft-resource-profiles.md").read_text()
+        for required in (
+            "PREPARED / NOT TESTED",
+            "OBO is not implemented here",
+            "https://analysis.windows.net/powerbi/api/DataAgent.Execute.All",
+            "https://api.fabric.microsoft.com/.default",
+            "McpServers.OneDriveSharepoint.All",
+            "https://graph.microsoft.com/v1.0",
+            "Files.SelectedOperations.Selected", "Sites.Selected",
+            "Consent alone grants zero resource", "Public access only",
+            "opaque/encrypted", "API A's **own confidential-client credentials**",
+            "Do not enable `cp1`", "work/school",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, profiles)
+        self.assertIn("references/microsoft-resource-profiles.md", (SKILL / "SKILL.md").read_text())
+        self.assertIn("microsoft-resource-profiles.md", (SKILL / "references/connection-contract.md").read_text())
+
+    def test_licensed_future_routes_have_one_explicit_acceptance_status(self):
+        notes = (ROOT / "docs/maintenance/foundry-mcp-auth-validation.md").read_text()
+        matrix = notes.split("## Final acceptance remains unchanged", 1)[1].split("\n## ", 1)[0]
+        for route in ("Fabric IQ", "Native SharePoint/OneDrive MCP", "Custom MCP -> Graph"):
+            row = next(line for line in matrix.splitlines() if line.startswith(f"| {route}"))
+            self.assertIn("NOT TESTED", row)
+        self.assertIn("Hosted -> direct custom MCP", matrix)
+        self.assertIn("Two independent Entra users", matrix)
+        self.assertIn("Literal Entra OBO", matrix)
 
 
 if __name__ == "__main__":

@@ -12,9 +12,12 @@ shared user credential, frontend, jobs or Graph data.
    create/read separately from runtime. Register the exact portal-provided
    redirect URI on the separate OAuth client. Never replace unrelated redirects.
 3. Sign into Foundry Playground as user A, open the Prompt direct-MCP agent,
-   ask `Call who_am_i, then list_my_demo_items`. Initially deny consent: no data
+   ask an ordinary identity question such as "Who am I?". Initially deny consent: no data
    may be returned. Repeat, consent explicitly and resume. Match the tool
    receipt to server-side evidence; agent prose is not identity evidence.
+   With identity diagnostics explicitly enabled, compare actual `oid`/`tid`
+   with an independently validated caller and verify the final answer renders
+   returned claims, not a synthetic label. Ask for demo items separately.
 4. Repeat through the Hosted Toolbox agent using Responses 2.0.0 and the pinned
    Toolbox version. Prove the server receives a delegated token for its API,
    not the runtime/developer principal. Do not reveal opaque call IDs or tokens.
@@ -39,6 +42,10 @@ shared user credential, frontend, jobs or Graph data.
    candidate SHA. One real user proves only the initial demonstration. Two
    independent users are required for the isolation gate. Unavailable users
    or unsupported paths are BLOCKED, not skipped-to-PASS.
+   Check the actual selected/default versions and continue an existing
+   conversation as well as starting one. Do not force tool choice in the
+   ordinary-question acceptance check. Preserve optional claim names:
+   `preferred_username` is not proof that an `upn` claim was received.
 
 Literal OBO is a separate optional Gate-B delta: tiny API B with a distinct
 audience, MSAL exchange in API A, both audiences and user continuity proven.

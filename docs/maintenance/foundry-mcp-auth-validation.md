@@ -1,6 +1,6 @@
 # Foundry MCP auth validation notes
 
-**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.2.0 /
+**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.3.0 /
 catalog 4.32.0. Not a four-path or multi-user release certification.
 This record is not approval to deploy or publish. No real environment identifiers,
 tokens, consent links, secrets or user data are stored here.
@@ -12,6 +12,41 @@ and repeatable operations in
 [demo-runbook.md](../../skills/foundry-mcp-auth/references/demo-runbook.md).
 Moving this history out of the skill does not change the tested code or
 convert any unproven acceptance row into PASS.
+
+## Reusable-core and future-profile consolidation - 1.3.0
+
+The local 1.1.0, 1.1.1 and 1.2.0 corrections are preserved together: actual
+inbound bearer proof, flat user-visible claims, shared Prompt/Hosted
+instructions and exact optional display-claim names. The operational runbook
+now makes full-checkout dependencies, staged Hosted inputs, version/default
+readback, explicit route ownership and ordinary-question acceptance explicit.
+
+`invoke_agent(require_tool=False)` now exposes the service-default request
+shape needed for ordinary-question checks; existing calls still default to
+the original forced-tool behavior. This new wrapper option is verified
+locally for request-shape parity. The earlier live unforced requests remain
+their own evidence, **not** a byte-identical live run of this new wrapper.
+Failed/empty-output rejection is unchanged.
+
+The [Microsoft resource profiles](../../skills/foundry-mcp-auth/references/microsoft-resource-profiles.md)
+are source-reviewed preparation only. Fabric audiences differ by item/route;
+semantic-model scope selection remains an explicit publisher-contract gate.
+Native Agent365Tools permissions differ from Graph Selected permissions,
+which require resource assignment as well as consent. True downstream OBO,
+claims challenges and tenant/user/resource cache isolation are readiness
+requirements, not invented runtime adapters. The validation tenant lacks the
+required licensed targets: no service was enabled or tested during this work.
+
+No deployment, agent invocation, licensed-resource read, credential operation
+or grant occurred during this consolidation. Prior private evidence and
+retained-resource configuration remain unchanged. Future and current
+acceptance states are recorded together in the single matrix below.
+Local consolidation checks passed: **45 candidate tests** in the three SDK
+cohorts, **25 related catalog/site tests**, all three dependency checks and
+the exact pin script's three import markers. T0 validated 38 skills, 34 pins
+and 203 references; the generated site has 47 HTML files and no broken
+root-relative links. These are local/import checks, not new Azure or
+licensed-service evidence.
 
 ## Optional username claims - 1.2.0
 
@@ -378,6 +413,12 @@ private rather than being relabeled as generic public test output.
 | App-only / insufficient-scope and invalid-token matrix | Local signed-token checks passed; standalone live app-only probe was blocked by operator network reachability, not a verified 403 |
 | Private runtime paths and consent/Entra egress | Exercised by the three passing delegated API paths; other endpoint combinations remain unproven |
 | Literal Entra OBO A->B exchange | NOT IMPLEMENTED; separate optional approved delta |
+| User-visible actual claims | API final-answer checks passed on the three supported paths; user accepted visible claims. This does not certify the complete multi-path Playground protocol or all old conversations. |
+| Optional UPN/username rendering | Actual preferred_username/name exposed; literal upn absent in observed MCP tokens. Prompt continuations and fresh Hosted wording passed; one older Hosted continuation remains a presentation gap. |
+| Actual local Copilot install/load/use | NOT TESTED; clean-package layout/local imports are separate evidence |
+| Fabric IQ: data agent / ontology / semantic model | NOT TESTED; source-reviewed profiles only, no licensed target. Semantic-model exact audience/scopes remain a pre-provisioning gate. |
+| Native SharePoint/OneDrive MCP | NOT TESTED; endpoint and feature/plan eligibility require an enabled licensed tenant |
+| Custom MCP -> Graph selected resources | NOT TESTED; downstream OBO not implemented, resource grants and licensed content unavailable in the validation target |
 
 The live stage was explicitly authorized, including the later project-host
 remediation and permanent environment retention. This public record does not

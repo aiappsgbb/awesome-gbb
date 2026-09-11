@@ -5,6 +5,22 @@ using the sequence below. Current evidence and unresolved acceptance gates
 belong in the [validation notes](../../../docs/maintenance/foundry-mcp-auth-validation.md).
 This is native OAuth passthrough, not a literal Entra OBO A-to-B implementation.
 
+## Local package and dependencies
+
+Use a full writable checkout of `awesome-gbb` for the commands in SKILL.md.
+Installing the complete local plugin follows the
+[catalog instructions](../../../AGENTS.md#6--the-user-scope-mirror); do not
+silently replace an operator's existing marketplace registration or runtime
+mirror. A standalone copy of this skill omits the sibling Bicep library,
+repository tests and maintenance notes. Resolve the catalog root explicitly
+instead of assuming the current application directory is the catalog.
+
+Keep the server, management and Hosted venvs separate. Package resolution
+normally downloads dependencies; offline installation needs a wheel set for
+each selected Python version/platform. A clean extracted tree and import tests
+are not the same as a real Copilot install/load/use check. No installation or
+licensed-service access is implied by reading this runbook.
+
 ## What to retain
 
 Keep the Foundry project/model, internal MCP service, private DNS/routing,
@@ -80,11 +96,47 @@ health before demonstrations; do not claim perpetual OAuth credentials.
    grant alone does not prove Foundry completed the callback. If a one-time
    link ends in `Code ... not found`, obtain a fresh request; do not automate
    approval or keep refreshing the failed page.
-10. **Assert tool-level evidence:** both tools must execute. Check
-    `response.status`, actual tool outputs, `subject_label`, `auth_kind`,
-    audience, scopes and item ownership. Match each receipt correlation to
-    server audit. Assistant text alone, HTTP 200 alone, health, discovery and
-    a consent response are not E2E success.
+10. **Assert the requested operation:** for identity, compare actual
+    `who_am_i` claims with an independently validated caller and server audit,
+    then check the final answer. Default pseudonymous receipts prove no raw
+    identity match by label alone. For a separate synthetic-items request,
+    verify the server-selected ownership and receipt. HTTP 200, assistant
+    prose, health, discovery and consent alone are not E2E success.
+
+## Updating existing agents and checking defaults
+
+For a Prompt agent, read its current definition/version and connection
+without credentials first. Build the chosen direct or Toolbox definition
+with the canonical builders and create a version under the approved existing
+name using `project.agents.create_version`. Keep its model, connection target
+and direct-versus-Toolbox route explicit. `create_bindings` is initial setup:
+it also creates a Toolbox version, so do not rerun it as an implicit instruction
+update or cleanup operation.
+
+Hosted instructions are container inputs. Stage the canonical entrypoint,
+shared instructions and Dockerfile; redeploy the same approved service with
+`azd deploy`. A Prompt instruction update does not update the Hosted image.
+Do not reconstruct the Toolbox wrapper or silently switch a direct path to it.
+
+After either operation, inspect `project.agents.get_version(name, version)`
+and `project.agents.get(name)`: verify status, definition, `versions.latest`
+and `agent_endpoint.version_selector.version_selection_rules`. A latest
+version is not proof that a fixed-version endpoint routes to it. Use the
+[runtime owner's lifecycle contract](../../foundry-hosted-agents/SKILL.md)
+for an approved route change, then read back the result; do not invent SDK
+update fields. Preserve the old version as an explicit rollback target.
+
+If one Prompt name hosts direct and Toolbox variants, only one is its current
+default. Record both versions and which route the default selects. Validate
+the default **without** an explicit version override; validate the other path
+with its exact version. Check the Playground's actual selected version too.
+
+Use ordinary identity questions with `require_tool=False`, followed by a
+continuation. Confirm fresh tool/audit correlations and exact displayed
+claims. A browser pinned to an old version or an older conversation can
+behave differently; record the observed binding/result instead of claiming
+that all existing conversations were upgraded. Do not overwrite a user's
+conversation or manipulate their consent to obtain a passing result.
 
 ## Before a demonstration
 
