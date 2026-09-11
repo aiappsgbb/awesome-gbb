@@ -9,12 +9,7 @@ from urllib.parse import urlsplit
 
 from azure.ai.projects.models import MCPTool, MCPToolboxTool, PromptAgentDefinition
 
-
-INSTRUCTIONS = (
-    "Use who_am_i and list_my_demo_items to answer questions about the caller's "
-    "synthetic demo data. Never infer an identity from a prompt or invent a receipt. "
-    "If authorization is required or denied, report that; do not claim tool success."
-)
+from .agent_instructions import INSTRUCTIONS
 
 
 def build_definitions(

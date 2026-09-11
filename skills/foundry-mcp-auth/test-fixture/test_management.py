@@ -11,6 +11,20 @@ from references.python.configure_foundry import build_definitions, create_bindin
 
 
 class ManagementTests(unittest.TestCase):
+    def test_identity_rendering_contract_is_shared_and_requires_a_fresh_tool_call(self):
+        from references.python.agent_instructions import INSTRUCTIONS
+        from references.python.configure_foundry import build_prompt_toolbox_definition
+        direct, _ = build_definitions("model", "https://mcp.example.com/mcp", "connection")
+        toolbox = build_prompt_toolbox_definition(
+            "model", "https://example.services.ai.azure.com/api/projects/demo/toolboxes/tools/versions/2/mcp?api-version=v1",
+            "bridge",
+        )
+        self.assertEqual(direct.instructions, INSTRUCTIONS)
+        self.assertEqual(toolbox.instructions, INSTRUCTIONS)
+        for required in ("freshly in the current turn", "oid, tid, aud, scp and azp",
+                         "correlation_id", "only when the user explicitly asks", "not exposed"):
+            self.assertIn(required, INSTRUCTIONS)
+
     def test_toolbox_bridge_is_first_party_only_and_never_embeds_a_bearer(self):
         from references.python.provision_connection import build_toolbox_bridge_properties
         from references.python.configure_foundry import build_prompt_toolbox_definition

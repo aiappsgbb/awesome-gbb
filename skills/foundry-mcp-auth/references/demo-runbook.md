@@ -90,20 +90,25 @@ health before demonstrations; do not claim perpetual OAuth credentials.
 
 Verify the MCP/agent versions and configuration, credential validity, private
 operator route, and the actual user's consent. A quick run asks both agents:
-**“Call who_am_i and list_my_demo_items; show the safe server receipts.”**
-Both must return the same approved user label and dataset. Hosted transport
+**“Chi sono? Mostrami i claim della mia identità ricevuti dal server MCP.”**
+With the identity view enabled, both must show the actual user's claims,
+not a synthetic label. Ask for synthetic demo items separately. Hosted transport
 may prefix tool names with the source label; do not hardcode a different
 separator into the model prompt.
 
 To prove token identity rather than presentation labels, explicitly enable
 `MCP_IDENTITY_PROOF_ENABLED=true` on the owned MCP and call `who_am_i`.
-Inspect `verified_token` in the **actual tool output**, not assistant prose.
+Inspect the flat `oid`, `tid`, `aud`, `scp` and `azp` in the **actual tool output**.
 Compare its user object ID and tenant with an independently validated caller
 identity, and verify custom audience, delegated scope and expiry. Correlate
 the receipt and token digest with the server's `delegated_token_proof` event.
 This opt-in discloses the caller's own identity claims in the response; keep
 them private. Default-off receipts remain pseudonymous. Do not capture raw
 tokens or infer identity from `user-a`. No Graph or extra permission is needed.
+Also verify those exact claims and correlation appear in the final answer
+to an ordinary identity question and a follow-up. A correct tool result with
+a misleading assistant summary is a failed presentation check. Verify current
+agent defaults; do not validate only a hidden explicit version.
 
 Do not rebuild just to repeat the demo. Record actual ACR runs when a rebuild
 is necessary: a CLI image-override option is not proof no build occurred.

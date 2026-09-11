@@ -12,6 +12,8 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import FoundryToolbox, ResponsesHostServer
 from azure.identity.aio import ManagedIdentityCredential
 
+from .agent_instructions import INSTRUCTIONS
+
 
 async def main():
     # This credential authenticates only to Foundry, NEVER directly to the custom MCP.
@@ -24,10 +26,7 @@ async def main():
                 credential=credential,
             ),
             tools=[toolbox],
-            instructions=(
-                "Use who_am_i and list_my_demo_items for the caller's synthetic data. "
-                "Never invent receipts or treat an authorization error as an empty dataset."
-            ),
+            instructions=INSTRUCTIONS,
             default_options={"store": False},
         )
         await ResponsesHostServer(agent).run_async()

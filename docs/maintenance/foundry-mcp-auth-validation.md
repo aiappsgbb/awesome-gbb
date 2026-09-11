@@ -1,6 +1,6 @@
 # Foundry MCP auth validation notes
 
-**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.1.0 /
+**UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.1.1 /
 catalog 4.32.0. Not a four-path or multi-user release certification.
 This record is not approval to deploy or publish. No real environment identifiers,
 tokens, consent links, secrets or user data are stored here.
@@ -12,6 +12,60 @@ and repeatable operations in
 [demo-runbook.md](../../skills/foundry-mcp-auth/references/demo-runbook.md).
 Moving this history out of the skill does not change the tested code or
 convert any unproven acceptance row into PASS.
+
+## User-visible identity acceptance - 1.1.1
+
+The earlier 1.1.0 transport proof was real, but its presentation was wrong:
+the actual `verified_token` claims were nested below a top-level
+`subject_label=user-a` and hashed identity. All three ordinary-language
+baseline responses reproduced that conflict, often leading with the label
+as the caller's identity. Live instructions also emphasized safe receipts
+and synthetic items. This was a verified output/instruction problem, not
+missing OAuth, a missing diagnostic setting or a presumed cache failure.
+
+The opt-in `who_am_i` output now contains only actual claim names
+`oid`, `tid`, `aud`, `scp`, `azp`, `iss`, `exp` plus provenance/correlation
+and token digest; no synthetic identity block or nested `verified_token`.
+Default-off receipts remain private. A dependency-free canonical instructions
+module is shared by Prompt and Hosted: freshly call the identity tool on each
+identity question, render actual returned claims, and do not fetch synthetic
+items unless requested. The Hosted staging/Docker inputs include that module.
+
+At **2026-09-11 13:05 UTC**, the corrected deployment passed **six final-answer
+checks**, not just nested-tool checks. Each of the three paths continued its
+baseline response history containing the old label, first asking
+“Chi sono? Mostrami i claim della mia identità ricevuti dal server MCP.”
+and then “Chi sono?”. The API used normal service-default tool selection,
+not a test-forced `tool_choice=required`.
+
+| Check | Result |
+|---|---|
+| Final displayed claims | All six answers contain the independently verified user's exact `oid`/`tid`, expected `aud`/`scp`/`azp` and the current tool correlation. |
+| Misleading identity | No final answer or opt-in identity result contains `user-a`, `subject_label` or a hashed identity block. |
+| Freshness | Each identity turn produced a new actual tool receipt, including the short follow-up and continuation from old histories. |
+| Server evidence | All six receipt correlations and bearer digests matched server `delegated_token_proof` audit events. |
+| Unwanted data tools | No identity turn invoked `list_my_demo_items`. |
+| Current bindings | Prompt/direct version 3; Prompt/Toolbox version 4; Hosted/Toolbox version 4. Both retained agent names resolve 100% through `@latest` to active version 4; direct/Toolbox semantics were not substituted. |
+| Focused local regressions | 41 tests: 16 policy/contract/staging, 9 HTTP/MCP, 14 management, 2 Hosted. Shared instructions, staged imports, actual flat fields and default-off privacy checked. |
+
+Current source SHA-256 bindings:
+
+| File under `references/python/` | SHA-256 |
+|---|---|
+| `delegated_server.py` | `42f0f4150bc44012eabb8f32f016f7b4af72de3233018d26c1e989007cf97fc5` |
+| `agent_instructions.py` | `976360690e2f63d58a0f910ae0e976d1765289b5fc747e1a0d70a6af164107e6` |
+| `configure_foundry.py` | `382d10603c638c8ae946212b4358827954928cd76de812a01aa6abdc412d2337` |
+| `hosted_agent.py` | `27283280fa4014a18d9cbf0aff58352677b42af8864e3215d5e42da1ef510d90` |
+| `stage_hosted.py` | `dc74bc7766535d0e8cb24fa14c06063b277ea20be69e299a79b13a2fc6585eb7` |
+
+Two necessary image builds updated only the retained MCP and Hosted app;
+Prompt versions retained their original connections/tool bindings. No Graph
+calls, extra grants, new resources or automatic consent were introduced.
+Before/after final answers, real identifiers, exact image digests and default
+routing readbacks stay in private evidence. This proves the final Responses
+answer via API, including old-history continuation; it does not claim that
+every browser's explicitly pinned old version was changed or that native
+Hosted/direct and two-real-user/lifecycle acceptance have passed.
 
 ## Source and evidence binding
 

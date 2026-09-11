@@ -16,6 +16,7 @@ def stage_hosted(destination: Path) -> Path:
     copies = {
         "templates/hosted/azure.yaml": "azure.yaml",
         "references/python/hosted_agent.py": "app/references/python/hosted_agent.py",
+        "references/python/agent_instructions.py": "app/references/python/agent_instructions.py",
         "templates/hosted/Dockerfile": "app/templates/hosted/Dockerfile",
         "templates/hosted/pyproject.toml": "app/templates/hosted/pyproject.toml",
     }

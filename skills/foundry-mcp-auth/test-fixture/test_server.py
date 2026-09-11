@@ -159,13 +159,17 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 self.call("who_am_i", tokens[user]) for user in (USER_A, USER_B)
             ))
         for user, receipt in zip((USER_A, USER_B), receipts):
-            proof = receipt["verified_token"]
-            self.assertEqual(proof["user_object_id"], user)
-            self.assertEqual(proof["tenant_id"], TENANT)
-            self.assertEqual(proof["client_application_id"], CLIENT)
-            self.assertEqual(proof["audience"], API)
-            self.assertEqual(proof["issuer"], self.policy.issuer)
-            self.assertEqual(proof["scopes"], ["demo.read"])
+            proof = receipt
+            self.assertEqual(proof["oid"], user)
+            self.assertEqual(proof["tid"], TENANT)
+            self.assertEqual(proof["azp"], CLIENT)
+            self.assertEqual(proof["aud"], API)
+            self.assertEqual(proof["iss"], self.policy.issuer)
+            self.assertEqual(proof["scp"], "demo.read")
+            for misleading in ("subject", "subject_label", "tenant", "verified_token"):
+                self.assertNotIn(misleading, proof)
+            self.assertNotIn("user-a", json.dumps(proof))
+            self.assertNotIn("user-b", json.dumps(proof))
             self.assertEqual(proof["source"], "validated_inbound_bearer")
             self.assertEqual(proof["token_sha256"], hashlib.sha256(tokens[user].encode()).hexdigest())
             self.assertIn(receipt["correlation_id"], str(logs.output))

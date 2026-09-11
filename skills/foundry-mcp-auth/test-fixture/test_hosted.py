@@ -32,7 +32,9 @@ class HostedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["https://ai.azure.com/.default"] * 2)
 
     async def test_runtime_import_and_dependency_boundary(self):
+        from references.python.agent_instructions import INSTRUCTIONS
         self.assertTrue(callable(hosted_agent.main))
+        self.assertEqual(hosted_agent.INSTRUCTIONS, INSTRUCTIONS)
         self.assertTrue(importlib.metadata.version("azure-ai-projects").startswith("2.3."))
         self.assertEqual(importlib.metadata.version("agent-framework-foundry-hosting"), "1.0.0b260730")
         self.assertTrue(importlib.metadata.version("mcp").startswith("1.29."))

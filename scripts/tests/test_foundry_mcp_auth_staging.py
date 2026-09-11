@@ -28,6 +28,10 @@ class HostedStagingTests(unittest.TestCase):
                 (destination / "app/templates/hosted/Dockerfile").read_bytes(),
                 (SKILL / "templates/hosted/Dockerfile").read_bytes(),
             )
+            self.assertEqual(
+                (destination / "app/references/python/agent_instructions.py").read_bytes(),
+                (SKILL / "references/python/agent_instructions.py").read_bytes(),
+            )
             with self.assertRaises(FileExistsError):
                 module.stage_hosted(destination)
 

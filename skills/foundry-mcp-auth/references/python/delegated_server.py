@@ -109,15 +109,16 @@ def build_server(
             if access is None:
                 raise InsufficientPermission("authenticated_delegated_context_required")
             token_sha256 = hashlib.sha256(access.token.encode()).hexdigest()
-            receipt["verified_token"] = {
+            proof = {
                 "source": "validated_inbound_bearer",
-                "issuer": policy.issuer,
-                "audience": policy.audience,
-                "tenant_id": principal.tenant,
-                "user_object_id": principal.object_id,
-                "client_application_id": principal.client_id,
-                "scopes": sorted(principal.scopes),
-                "expires_at": principal.expires_at,
+                "iss": policy.issuer,
+                "aud": policy.audience,
+                "tid": principal.tenant,
+                "oid": principal.object_id,
+                "azp": principal.client_id,
+                "scp": " ".join(sorted(principal.scopes)),
+                "exp": principal.expires_at,
+                "correlation_id": receipt["correlation_id"],
                 "token_sha256": token_sha256,
             }
             # Correlate the received bearer without logging its identity claims.
@@ -126,6 +127,7 @@ def build_server(
                 "correlation_id": receipt["correlation_id"],
                 "token_sha256": token_sha256,
             }))
+            return proof
         return receipt
 
     @server.tool()

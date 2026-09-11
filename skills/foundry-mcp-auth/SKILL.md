@@ -11,7 +11,7 @@ description: >
   runtime deployment (use foundry-hosted-agents), durable MCP tasks or jobs
   (use foundry-mcp-aca-jobs), web frontend sign-in, or general network provisioning.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Foundry MCP delegated authentication
@@ -73,6 +73,7 @@ Copy/import these implementations rather than repeating their bodies:
 | [provision_connection.py](references/python/provision_connection.py) | Connection setup: live-proven GA ARM builder and opt-in create/update with safe readback. |
 | [configure_foundry.py](references/python/configure_foundry.py) | Agent integration: pure SDK builders and explicit Gate-B-only create function. |
 | [invoke_agent.py](references/python/invoke_agent.py) | Agent integration: distinct Prompt/Hosted endpoints, consent continuation and failure-status handling. |
+| [agent_instructions.py](references/python/agent_instructions.py) | Agent integration: shared fresh identity-tool calls and faithful rendering of actual claims, separate from synthetic items. |
 | [hosted_agent.py](references/python/hosted_agent.py) | Agent integration: minimal composition using the upstream Toolbox/Responses wrappers. |
 | [stage_hosted.py](references/python/stage_hosted.py) | Local recipe: stage canonical build inputs inside a standalone Hosted project, never through `..` service paths. |
 | [templates/](templates/) | Local recipe: separate server, management and hosted dependency environments; brownfield `azd` composition. |
@@ -120,10 +121,11 @@ checks. Keep actual mappings in private deployment configuration, not this repo.
 
 For an explicit operator-approved identity proof, set
 `MCP_IDENTITY_PROOF_ENABLED=true` on the MCP server (default `false`).
-`who_am_i` then also returns `verified_token`: the authenticated caller's
-actual tenant/object/client IDs, issuer, audience, scopes, expiry and SHA-256
-digest of the inbound bearer. No identity field comes from tool arguments or
-the label mapping. Only the digest and correlation ID enter the proof audit;
+`who_am_i` then returns a claims-only object with `oid`, `tid`, `aud`, `scp`,
+`azp`, `iss`, `exp`, correlation ID and SHA-256 digest of the inbound bearer.
+It does not mix actual claims with a synthetic label or hashed identity.
+No identity field comes from tool arguments or the label mapping.
+Only the digest and correlation ID enter the proof audit;
 raw IDs remain in the authenticated response/private evidence, never normal
 logs. Never return or store the bearer itself. Compare `oid`/`tid` with an
 independently verified caller identity and match the receipt to server audit.
@@ -154,6 +156,13 @@ per portal login.
 auto-approves OAuth or admin consent. Denial must not become empty data.
 
 ## Agent integration
+
+Both Prompt and Hosted use the canonical shared instructions: identity
+questions trigger a fresh `who_am_i` call, and actual claims are rendered in
+the final answer when the operator enabled their disclosure. Synthetic items
+are queried only when explicitly requested. Test ordinary identity questions
+and follow-ups with the service's normal tool choice; checking nested tool
+data alone does not prove the user-visible answer is correct.
 
 For Prompt/Toolbox, use `build_toolbox_bridge_properties` with the **first-party
 Foundry project endpoint** and versioned Toolbox, then
@@ -244,7 +253,7 @@ python3 skills/foundry-mcp-auth/references/python/stage_hosted.py .scratch/deleg
 Run Hosted `azd` commands from that new directory. The extension rejects
 parent-directory service paths even when ordinary Container Apps accepts
 them. Staging copies only the canonical Dockerfile, dependency manifest and
-entrypoint; no credentials or caches. Consult the validation notes for the
+entrypoint and shared instructions; no credentials or caches. Consult the validation notes for the
 recorded deployment tool versions.
 
 For manual local serving, set `MCP_TENANT_ID`, `MCP_API_CLIENT_ID` and
