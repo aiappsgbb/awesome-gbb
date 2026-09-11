@@ -55,17 +55,31 @@ class AuthRecipeContractTests(unittest.TestCase):
         for phrase in ("NOT delegated E2E", "Gate B", "SMOKE_RESULT=FAIL", "never invoke `copilot` recursively"):
             self.assertIn(phrase, text)
 
-    def test_live_status_preserves_history_and_limits_scope_of_success(self):
+    def test_validation_notes_own_history_and_skill_preserves_release_limits(self):
         text = (SKILL / "SKILL.md").read_text()
+        notes = ROOT / "docs/maintenance/foundry-mcp-auth-validation.md"
+        self.assertTrue(notes.is_file())
+        record = notes.read_text()
+        self.assertIn("../../docs/maintenance/foundry-mcp-auth-validation.md", text)
+        self.assertIn("UNRELEASED CANDIDATE - 3 OF 4 PATHS VERIFIED", text)
+        self.assertIn("Hosted/direct is NOT DEMONSTRATED", text)
+        self.assertIn("not four-path compatibility", text)
         for phrase in (
-            "THREE LIVE DELEGATED PATHS VERIFIED",
             "ConnectorNamespaceCustomConnectorDirectInvokeRequiresApiDefinitionV3",
-            "2026-05-01",
             "2026-05-15-preview",
-            "registered ARM API is not a proven fix",
-            "not four-path compatibility",
+            "2026-09-11",
+            "microsoft/agent-framework#7658",
         ):
-            self.assertIn(phrase, text)
+            self.assertIn(phrase, record)
+            self.assertNotIn(phrase, text)
+        for relative in (
+            "references/demo-runbook.md", "references/connection-contract.md",
+            "test-fixture/playground.md",
+        ):
+            procedure = (SKILL / relative).read_text()
+            self.assertIn("../../../docs/maintenance/foundry-mcp-auth-validation.md", procedure)
+            self.assertNotIn("2026-09-11", procedure)
+        self.assertIn("2026-05-01", text, "Keep the reusable GA API contract in the skill")
         manifest = (SKILL / "templates/azure.yaml").read_text()
         self.assertIn("language: docker", manifest)
         self.assertIn("remoteBuild: true", manifest)

@@ -26,10 +26,11 @@ shared user credential, frontend, jobs or Graph data.
 6. Exercise valid access-token renewal, revoked/expired refresh credentials,
    reauthorization and denial after revocation. Respect token lifetime; revocation
    is not necessarily instantaneous. Record any unsupported late-consent case.
-7. Exercise Prompt -> Toolbox -> MCP using the live-proven native first-party
-   bridge (not the static-token sample). Hosted -> direct MCP remains
-   NOT DEMONSTRATED after a native probe returned completed/empty output;
-   do not substitute the working Toolbox path and label it direct.
+7. Exercise Prompt -> Toolbox -> MCP using the native first-party bridge
+   (not the static-token sample). Exercise Hosted -> direct MCP independently;
+   do not substitute the Toolbox path and label it direct. Consult the
+   [validation notes](../../../docs/maintenance/foundry-mcp-auth-validation.md)
+   before running any currently unresolved path.
 8. Attempt anonymous/app-only/insufficient-scope access using properly issued
    test credentials through supported flows, never copied portal tokens. No
    app-only principal may masquerade as the user. Invalid-signature/issuer/

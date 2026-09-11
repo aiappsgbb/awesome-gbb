@@ -23,10 +23,10 @@ class AzdPatternsFixtureAuditTests(unittest.TestCase):
         self.assertIn(audit, fixture)
         self.assertLess(fixture.index(audit), fixture.index("## Environment available"))
 
-    def test_fixture_asset_change_bumps_patch_version(self) -> None:
+    def test_skill_version_includes_private_network_modules(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         frontmatter = yaml.safe_load(skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "1.5.2")
+        self.assertEqual(frontmatter["metadata"]["version"], "1.6.0")
 
 
 if __name__ == "__main__":

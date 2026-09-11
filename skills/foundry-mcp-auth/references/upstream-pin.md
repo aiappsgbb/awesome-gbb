@@ -5,7 +5,7 @@ automation_tier: auto
 upstream:
   type: pypi
   notes: |
-    Unreleased candidate with three single-user live delegated paths verified.
+    Unreleased delegated-auth candidate; detailed evidence is in the validation notes.
     Resource-server, management and Hosted environments
     are separate. Import validation never certifies real delegated OAuth.
     Connection definitions target azure.ai.connections 1.0.0-beta.6 (azd >=1.27.1).
@@ -78,12 +78,12 @@ known_issues:
     status: open
     workaround_location: SKILL.md Local recipe
   - id: KI-002
-    description: Hosted direct native-MCP probe returned completed/empty output; its delegated caller path and late Toolbox consent/revocation remain unproven. Prompt Toolbox native bridge passed separately.
+    description: Native Hosted/direct caller propagation and late Toolbox consent/revocation are not certified by this pinned cohort.
     upstream_url: https://learn.microsoft.com/agent-framework/integrations/by-component/tools/foundry-toolbox
     status: open
     workaround_location: SKILL.md Released support and remaining acceptance
   - id: KI-003
-    description: Historical native OAuth creation rejection; the same GA request succeeded on 2026-09-11 in the tested account without namespace changes.
+    description: Custom OAuth creation can fail when the generated connector definition does not meet DirectInvoke OpenAPI 3 requirements; recovery evidence is recorded separately.
     upstream_url: https://learn.microsoft.com/azure/foundry/agents/how-to/mcp-authentication
     status: closed_upstream_fixed
     workaround_location: SKILL.md Connection setup
@@ -118,9 +118,10 @@ known_issues_count: 2
 
 The manifests are independently resolved. Local policy/HTTP tests use locally
 generated signing keys; the pin script itself uses no Entra tokens, resource
-access or OAuth grants. Separate live evidence on 2026-09-11 proves
-Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox for one actual consenting user. See the
-acceptance record; other paths and lifecycle gates remain outstanding.
+access or OAuth grants. See the
+[validation notes](../../../docs/maintenance/foundry-mcp-auth-validation.md)
+for live results, source binding and remaining gates. Machine-readable
+validation dates and issue states above are freshness metadata, not release approval.
 
 The inspected newer release (core 1.17 / hosting 1.0.0b260903 / Projects 2.6)
 does not close all four user-context/consent paths. The runtime intentionally

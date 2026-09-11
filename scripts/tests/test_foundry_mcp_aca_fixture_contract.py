@@ -919,8 +919,8 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
     # --- Issue #7: PATCH version ---
 
     def test_skill_version_is_patch(self) -> None:
-        """SKILL.md version must be 1.2.5 (PATCH)."""
-        self.assertIn('version: "1.2.5"', self.skill)
+        """Delegated-auth clarification keeps the existing 1.2 contract."""
+        self.assertIn('version: "1.2.6"', self.skill)
 
     # --- Pin validation contracts ---
 

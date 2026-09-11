@@ -1,10 +1,9 @@
 # Reproduce and operate the delegated MCP demo
 
-Three live-verified paths: **Prompt -> custom MCP**, **Hosted -> Toolbox ->
-custom MCP**, and **Prompt -> Toolbox -> custom MCP**, one real consenting Entra user. Hosted/direct, a second
-user, full token expiry/revocation and Playground follow-through remain
-separate acceptance gates. This is native OAuth passthrough, not a literal
-Entra OBO A-to-B implementation.
+Operate the Prompt/direct, Prompt/Toolbox and Hosted/Toolbox compositions
+using the sequence below. Current evidence and unresolved acceptance gates
+belong in the [validation notes](../../../docs/maintenance/foundry-mcp-auth-validation.md).
+This is native OAuth passthrough, not a literal Entra OBO A-to-B implementation.
 
 ## What to retain
 
@@ -36,10 +35,9 @@ health before demonstrations; do not claim perpetual OAuth credentials.
    resolution from the actual operator/runtime routes, not just a laptop.
    The demo uses one MCP replica. A public authenticated ACR, if required by
    the project's generation, is a separate build-plane boundary, not public MCP.
-3. **Check the project network contract:** the live environment had account
-   network injection but no project capability host. The Basic project host
-   (no BYO stores) was added with approval, and private tool calls succeeded
-   after propagation. Use the canonical project-host module only if needed
+3. **Check the project network contract:** inspect account network injection
+   and the project capability host. Use the canonical Basic project-host
+   module (no BYO stores) only if needed
    and approved; preserve existing hosts/stores. Bound readiness checks rather
    than treating the first immediate DNS failure as permanent.
 4. **Build the MCP:** use the canonical server files and Dockerfile with
@@ -88,18 +86,6 @@ health before demonstrations; do not claim perpetual OAuth credentials.
     server audit. Assistant text alone, HTTP 200 alone, health, discovery and
     a consent response are not E2E success.
 
-## Corrections verified during the live run
-
-| Symptom | Correction / evidence |
-|---|---|
-| DirectInvoke/OpenAPI3 rejected connection creation | Historical service failure on three ARM versions; same GA request succeeded the next day, without namespace changes. |
-| Private MCP name not resolved | Added approved Basic project capability host; after propagation a credential-free control reached MCP/401 and delegated calls succeeded. No public fallback. |
-| Hosted rejected on project Responses endpoint | Use `get_openai_client(agent_name=...)`. |
-| Hosted `session_not_ready`, permission denied in session home | Follow canonical Hosted Docker identity; fixed UID 65532 was incompatible with the mounted session store. ACA server stays non-root. |
-| `Invalid MCP _meta key name: '_fastmcp'` | Disable FastMCP-specific metadata, create a fresh Toolbox version and bind Hosted to it. Live discovery and then Hosted execution passed. |
-| Hosted service path contains `..` | Stage the canonical inputs inside a standalone azd project; do not modify the global workspace or duplicate source implementations. |
-| Newly created credential not immediately accepted | Use bounded propagation handling; no permission escalation and no repeated secret rotation without a prepared path. |
-
 ## Before a demonstration
 
 Verify the MCP/agent versions and configuration, credential validity, private
@@ -120,7 +106,6 @@ never fabricate a second user or replace them with an application identity.
 Test denial, late consent, revocation and expiry separately without disrupting
 the retained working demo or falsely classifying a missing user as PASS.
 
-The separately deployed native Hosted/direct feasibility probe returned
-completed/empty output rather than validated tool results in the tested
-dependency stack. Keep it out of the working demo path; do not silently route
-it through Toolbox and report that as direct-MCP success.
+Keep experimental native Hosted/direct out of the validated demo path until
+its acceptance gates pass; do not silently route it through Toolbox and report
+that as direct-MCP success.

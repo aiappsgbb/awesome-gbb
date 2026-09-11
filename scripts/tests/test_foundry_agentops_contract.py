@@ -1010,7 +1010,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertEqual(entry["name"], plugin["name"])
         self.assertEqual(entry["version"], plugin["version"])
         self.assertEqual(marketplace["metadata"]["version"], plugin["version"])
-        self.assertEqual(plugin["version"], "4.31.0")
+        self.assertEqual(plugin["version"], "4.32.0")
         self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.0.0")
 
     def test_manifest_counts_match_discovered_skills(self) -> None:
@@ -1301,14 +1301,17 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertNotRegex(text, pattern)
 
-    def test_unreleased_metadata_is_scoped_to_agentops_and_proposed_plugin(self) -> None:
+    def test_unreleased_metadata_is_scoped_to_candidates_and_proposed_plugin(self) -> None:
         site = runpy.run_path(str(ROOT / "scripts/build-site.py"))
         skills = site["load_skills"](ROOT)
         drafts = [s for s in skills if s.get("draft")]
-        self.assertEqual([s["name"] for s in drafts], [SKILL.name])
-        self.assertEqual(drafts[0]["draft"]["record"], self.VALIDATION_RECORD.removeprefix("docs/"))
+        self.assertEqual({s["name"] for s in drafts}, {SKILL.name, "foundry-mcp-auth"})
+        agentops = next(s for s in drafts if s["name"] == SKILL.name)
+        auth = next(s for s in drafts if s["name"] == "foundry-mcp-auth")
+        self.assertEqual(agentops["draft"]["record"], self.VALIDATION_RECORD.removeprefix("docs/"))
+        self.assertEqual(auth["draft"]["record"], "maintenance/foundry-mcp-auth-validation.md")
         plugin = site["load_plugins"](ROOT)[0]
-        self.assertEqual(plugin["draft"], drafts[0]["draft"])
+        self.assertEqual(plugin["draft"], agentops["draft"])
         self.assert_partial_validation_status(plugin["draft"]["summary"])
         self.assert_draft_candidate_status(plugin["draft"]["summary"])
 

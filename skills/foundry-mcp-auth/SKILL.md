@@ -16,12 +16,11 @@ metadata:
 
 # Foundry MCP delegated authentication
 
-**UNRELEASED CANDIDATE - THREE LIVE DELEGATED PATHS VERIFIED.** The initial
-cycle was LOCAL ONLY. On 2026-09-11, **Prompt -> direct MCP** and
-**Hosted -> Toolbox**, and **Prompt -> Toolbox -> MCP** executed the read-only tools over private networking
-as the real consenting user, with server-side `demo.read` and identity receipts.
-This is not four-path compatibility, multi-user isolation certification, or a
-literal OBO exchange. All four paths below remain final acceptance criteria.
+**UNRELEASED CANDIDATE - 3 OF 4 PATHS VERIFIED for one real user.**
+Hosted/direct is NOT DEMONSTRATED; this is not four-path compatibility,
+multi-user certification or a literal OBO exchange. See the
+[validation notes](../../docs/maintenance/foundry-mcp-auth-validation.md) for
+evidence, dependency cohorts, issue triage and remaining acceptance gates.
 Do not publish, deploy, register apps, write connections, or grant consent
 without **Gate B**, the operator's separate cloud-change approval.
 
@@ -44,17 +43,17 @@ to the custom MCP.
 
 ## Released support and remaining acceptance
 
-| Required path | Current contract | Remaining status |
-|---|---|---|
-| Prompt -> direct MCP | `MCPTool.project_connection_id` references custom OAuth; Foundry emits consent output. | LIVE PASS for one user via API on 2026-09-11; Playground UX still NOT DEMONSTRATED. |
-| Hosted -> Toolbox -> MCP | Upstream `FoundryToolbox` carries platform auth and request context; inner `MCPToolboxTool` references OAuth. | LIVE PASS for one user via API on 2026-09-11; late consent/revocation and second-user isolation NOT DEMONSTRATED. |
-| Prompt -> Toolbox -> MCP | Native `UserEntraToken` connection targets first-party Toolbox; its inner MCP connection stays custom OAuth2. | LIVE PASS for one user; no static bearer or custom token broker. |
-| Hosted -> direct MCP | Native `FoundryChatClient.get_mcp_tool(project_connection_id=...)` was deployed separately, without custom caller headers. | NOT DEMONSTRATED: returned completed/empty output with no tool evidence in the tested stack. The working Hosted/Toolbox agent is preserved separately. |
+| Path | Integration contract |
+|---|---|
+| Prompt -> direct MCP | `MCPTool.project_connection_id` references custom OAuth; Foundry emits consent output. |
+| Hosted -> Toolbox -> MCP | Upstream `FoundryToolbox` carries platform auth and request context; inner `MCPToolboxTool` references OAuth. |
+| Prompt -> Toolbox -> MCP | Native `UserEntraToken` connection targets first-party Toolbox; its inner MCP connection stays custom OAuth2. |
+| Hosted -> direct MCP | Experimental native `FoundryChatClient.get_mcp_tool(project_connection_id=...)`; not a validated substitute for the Hosted/Toolbox recipe. |
 
 The pinned hosting release converts Toolbox consent during initialization,
-not arbitrary late `CONSENT_REQUIRED` tool errors. Newer hosting
-`1.0.0b260903` adds OAuth Content output, but does not establish conversion of
-late Toolbox exceptions. No speculative adapter is shipped. A user's initial
+not arbitrary late `CONSENT_REQUIRED` tool errors. An output-converter upgrade
+alone does not prove caller-context propagation or late exception handling.
+No speculative adapter is shipped. A user's initial
 consent after another user initialized the shared host, expiry, and revocation
 must remain explicit gates, not silently successful retries.
 
@@ -78,7 +77,7 @@ Copy/import these implementations rather than repeating their bodies:
 | [stage_hosted.py](references/python/stage_hosted.py) | Local recipe: stage canonical build inputs inside a standalone Hosted project, never through `..` service paths. |
 | [templates/](templates/) | Local recipe: separate server, management and hosted dependency environments; brownfield `azd` composition. |
 | [playground.md](test-fixture/playground.md) | Live acceptance: operator-driven Playground protocol, including all unresolved cases. |
-| [demo-runbook.md](references/demo-runbook.md) | Reproducing and operating the retained two-path demo without resource expiry or automatic cleanup. |
+| [demo-runbook.md](references/demo-runbook.md) | Reproducing and operating the retained demo without resource expiry or automatic cleanup. |
 
 ## Resource-server authorization
 
@@ -98,12 +97,11 @@ PRM; `offline_access` is not a business permission required in the access token.
 The MCP is a resource server only: no token broker, OAuth proxy, DCR or callback
 service. Entra clients must be pre-registered.
 
-Keep `include_fastmcp_meta=False`: the Hosted Toolbox consumer rejected the
-private `_fastmcp` metadata key. This disables only vendor-specific metadata,
+Keep `include_fastmcp_meta=False`: the pinned Hosted Toolbox consumer does not
+accept the private `_fastmcp` metadata key. This disables only vendor-specific metadata,
 not authentication or authorization. After changing an already-published tool
 schema, create a fresh Toolbox version and bind the Hosted agent to that
-version; stale metadata persisted in the initial Hosted composition until this
-version refresh.
+version to avoid stale metadata.
 
 `who_am_i()` and `list_my_demo_items()` take no identity arguments. Each call
 uses its authenticated request context. Receipts never contain JWTs, raw
@@ -122,26 +120,14 @@ checks. Keep actual mappings in private deployment configuration, not this repo.
 
 ## Connection setup
 
-**Historical creation blocker, resolved in this environment on 2026-09-11:**
-with connection CLI `1.0.0-beta.6` and ARM
-`2025-04-01-preview`, the native custom OAuth PUT returned
-`ConnectorNamespaceCustomConnectorDirectInvokeRequiresApiDefinitionV3` (HTTP
-400): ConnectorGateway's DirectInvoke mode requires a version 3.0 API
-definition. The same owned connection also failed through the standard ARM
-SDK using GA `2026-05-01` and preview `2026-05-15-preview`, with the same
-service error. This is a connection-creation failure, not a consent, JWT or
-private-MCP handshake result. The inspected CLI/schema exposes no documented
-per-connection API-definition switch. Do not change a shared namespace to
-ProxyInvoke, expose the MCP publicly, or invent metadata knobs. A newer
-registered ARM API is not a proven fix merely because it exists. Repeating the
-same GA `2026-05-01` request on September 11 succeeded without a namespace
-change. This is evidence of recovery in the tested account, not a universal
-rollout announcement. Use the live-proven
-[GA ARM helper](references/python/provision_connection.py); CLI-only recovery
-was not separately replayed after the platform fix.
-Do not keep replaying an unchanged failure or rotate credentials as if that
-corrected a generated API definition. Escalate with sanitized request shape,
-versions, service codes and correlation IDs when supported paths agree.
+Use the [GA ARM helper](references/python/provision_connection.py) with API
+`2026-05-01`. Classify connection-creation/schema errors separately from
+consent, JWT and private-MCP failures. A generated connector-definition error
+is not fixed by rotating credentials or inventing connection metadata knobs.
+Do not change shared namespace modes or expose the MCP publicly to bypass it.
+Stop unchanged deterministic retries and collect sanitized request shape,
+versions, service codes and correlation IDs; see the validation notes for
+the historical service error and its evidence boundary.
 
 Follow [the connection contract](references/connection-contract.md) before
 executing any cloud command. Use custom OAuth with a dedicated resource API
@@ -163,8 +149,8 @@ Foundry project endpoint** and versioned Toolbox, then
 `UserEntraToken` audience is `https://ai.azure.com`, which is used only at the
 Microsoft Toolbox boundary. The existing inner custom MCP OAuth connection
 still requests the custom API audience/scope. Never point this first-party
-bridge directly at the custom MCP. This native composition passed live;
-the older static-bearer SDK example is not the canonical delegated recipe.
+bridge directly at the custom MCP. A static-bearer SDK example is not the
+canonical delegated recipe.
 
 The pure builder returns a Prompt definition and an inner Toolbox MCP tool,
 both referencing the same connection ID. It never puts `authorization` or
@@ -193,8 +179,8 @@ continuation. Use `agent_version` to select the Prompt direct or Toolbox
 version; Hosted uses its deployed endpoint routing.
 
 Use the canonical Hosted Dockerfile's default container identity. A fixed
-`USER 65532` could not create `/home/session/.sessions` on the platform mount
-and caused `session_not_ready`. The independent ACA server keeps its
+`USER 65532` is incompatible with the writable `/home/session/.sessions`
+platform mount. The independent ACA server keeps its
 non-root identity. Do not replace session storage with an auth bypass.
 
 Ownership remains: `foundry-toolbox` owns the upstream consumer and Toolbox
@@ -227,7 +213,8 @@ required by the Foundry provider despite satisfying its declared lower bound.
 The inspected newer cohort has the same SDK upper-bound issue; upgrading
 everything is not a fix. Keep jobs' FastMCP 4 / MCP 2 environment unchanged.
 
-Run local tests with no Azure credentials or endpoints:
+Run local tests with no Azure credentials or endpoints. These checks are
+**LOCAL ONLY**, not proof of platform delegation:
 
 ```bash
 .scratch/mcp-auth-server/bin/python -m unittest scripts.tests.test_foundry_mcp_auth_policy scripts.tests.test_foundry_mcp_auth_contract
@@ -245,8 +232,8 @@ python3 skills/foundry-mcp-auth/references/python/stage_hosted.py .scratch/deleg
 Run Hosted `azd` commands from that new directory. The extension rejects
 parent-directory service paths even when ordinary Container Apps accepts
 them. Staging copies only the canonical Dockerfile, dependency manifest and
-entrypoint; no credentials or caches. The live run used azd 1.33.0 with
-`azure.ai.agents` 1.0.0-beta.14.
+entrypoint; no credentials or caches. Consult the validation notes for the
+recorded deployment tool versions.
 
 For manual local serving, set `MCP_TENANT_ID`, `MCP_API_CLIENT_ID` and
 `MCP_BASE_URL` (HTTPS origin; loopback HTTP only for local work), then run
@@ -283,17 +270,13 @@ not the authenticated server: do not expose/advertise the app or create its
 connection until `azd deploy` has replaced it and auth probes pass.
 Use a short unique azd environment name (at most 20 characters).
 
-In the live setup, account network injection and account capability host alone
-did not initially yield working private tool calls. The approved addition of
-the Basic **project** capability host (no BYO datastore connections), followed
-by propagation, preceded successful private Prompt and Toolbox calls. See
-`azd-patterns`' `foundry-project-capability-host.bicep`. Check actual project
-state and obtain approval for this project-wide change; do not blindly
-recreate existing hosts. The first immediate retry still failed DNS; the
-subsequent no-credential control reached the MCP and was correctly rejected
-with 401, then the delegated request succeeded. Use a bounded readiness
-window and classify that wrapped downstream 401 as successful network
-reachability, never as delegated success.
+Check both account network injection and the **project** capability-host
+configuration. Where Basic hosting is appropriate, use `azd-patterns`'
+`foundry-project-capability-host.bicep` without BYO datastore connections.
+Inventory actual project state and obtain approval for this project-wide
+change; do not blindly recreate existing hosts. Allow a bounded propagation
+window, and verify the actual runtime route. A wrapped downstream MCP 401
+can prove network reachability, never delegated success.
 
 For a retained demo, no default cleanup schedule, shutdown date or resource
 `expiresAt` tag is part of this recipe. Client credentials and OAuth tokens

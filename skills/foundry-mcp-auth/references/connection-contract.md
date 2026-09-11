@@ -1,8 +1,7 @@
 # Custom OAuth connection contract
 
-Candidate; initial validation was LOCAL ONLY. GA connection creation and
-single-user delegated Prompt/direct and Hosted/Toolbox execution passed live
-on 2026-09-11. Other acceptance rows remain separate, as recorded in SKILL.md.
+Candidate; evidence and remaining acceptance gates are recorded only in the
+[validation notes](../../../docs/maintenance/foundry-mcp-auth-validation.md).
 **Every action that writes Azure/Entra requires Gate B.**
 The tested server accepts Entra v2 tokens for its own API, not Microsoft tokens.
 
@@ -36,7 +35,7 @@ The tested server accepts Entra v2 tokens for its own API, not Microsoft tokens.
    ownership/client configuration and the same target/auth type.
    The YAML remains the schema reference for the alternative
    `azure.ai.connections` **1.0.0-beta.6** `azd ai connection deploy` path;
-   that CLI path was not independently replayed after recovery.
+   do not infer equivalent live validation for that alternative.
 6. Read the connection without credentials and inspect its configured
    `OAuth2` type, target and scopes. Obtain the **exact redirect URI from the
    Foundry portal's custom OAuth configuration** and register it on the OAuth
@@ -46,9 +45,8 @@ The tested server accepts Entra v2 tokens for its own API, not Microsoft tokens.
    canonical SDK builders. Keep target and `server_url` equal: Foundry may
    prefer the connection target if they differ.
 
-The live GA readback returned `properties.redirectUrl`, and that exact value
-was registered successfully. Because it is not guaranteed by the published
-schema, the helper returns `None` when absent: obtain it from the portal
+GA readback may provide `properties.redirectUrl`. Because it is not guaranteed
+by the published schema, the helper returns `None` when absent: obtain it from the portal
 instead of inventing a URL. The pinned CLI create response returns name/project/
 state, not a callback. Never confuse the redirect URI with a per-user consent link.
 
@@ -78,11 +76,9 @@ or MCP `CONSENT_REQUIRED` URL to the user. They inspect and complete or decline
 consent themselves. Resume the supported Responses flow with the prior
 response ID. Tool approval (`mcp_approval_request`) is a separate step.
 
-An initial browser completion returned `Code ... not found` even though Entra
-had stored the user's permission grant. A newly issued Hosted consent link
-completed successfully; subsequent delegated calls then worked. Do not claim
-an Entra grant alone proves Foundry token storage, or keep reopening the same
-one-time link. Obtain a fresh consent request when needed and let the user
+An Entra permission grant alone does not prove Foundry token storage. If a
+one-time callback reports `Code ... not found`, do not keep reopening the
+same link. Obtain a fresh consent request when needed and let the user
 complete it; never automate approval.
 
 Reuse credentials only within the platform's per-user/project/connection

@@ -1,9 +1,44 @@
-# Foundry MCP auth candidate acceptance
+# Foundry MCP auth validation notes
 
 **UNRELEASED - THREE LIVE DELEGATED PATHS VERIFIED.** Proposed skill 1.0.0 /
 catalog 4.32.0. Not a four-path or multi-user release certification.
 This record is not approval to deploy or publish. No real environment identifiers,
 tokens, consent links, secrets or user data are stored here.
+
+This is the single detailed test/triage record. Reusable instructions remain
+in [SKILL.md](../../skills/foundry-mcp-auth/SKILL.md), connection setup in
+[connection-contract.md](../../skills/foundry-mcp-auth/references/connection-contract.md),
+and repeatable operations in
+[demo-runbook.md](../../skills/foundry-mcp-auth/references/demo-runbook.md).
+Moving this history out of the skill does not change the tested code or
+convert any unproven acceptance row into PASS.
+
+## Source and evidence binding
+
+The manual run's source manifest was recorded on **2026-09-11 at 08:59:40 UTC**
+while the source was uncommitted, on base
+`2db28d1f52bf288f2d0fd40b7c8beb913ceeee09`. The seven canonical Python modules
+below were subsequently verified byte-for-byte against that manifest and
+checkpoint commit **`a6c8cb8bacf17e2d6ad266aba292312a7e495424`**. They also
+match the follow-up triage snapshot **`50085721ed3c5c8add8fb61d6d705ca28b48b40c`**.
+Documentation-only consolidation does not constitute another live run.
+
+Paths below are relative to `skills/foundry-mcp-auth/references/python/`.
+
+| Canonical file | SHA-256 recorded with live evidence |
+|---|---|
+| `authorization.py` | `c42f0908cfccd8761eb58020856b61ea1699b18287df53eb184b7d7e32ce5093` |
+| `configure_foundry.py` | `c347b7beca103a8c615dfc4d66cb72477b5bc97c19d2189b73c8dc3197d76a85` |
+| `delegated_server.py` | `6557b220cd94a4f7c2686316a371676a48ebf03a329979e8fa7d5d7e7279fcc3` |
+| `hosted_agent.py` | `c6aab10bbc5196ab88c0f98dc1b2082e00caa199025f6378606aa91323a40410` |
+| `invoke_agent.py` | `2cd4d94ade5b33c401ea8f52e5f3e66171eb26806628ab5156f44bc8483c2adf` |
+| `provision_connection.py` | `7c9aff8f0d10edcd227b72eb740708fa0c55e413a9cfe19192575c4c72e89345` |
+| `stage_hosted.py` | `ec54dbcf842fe87ff0aa8c64d82ae142f78a1ebdade327c751212a41162c2321` |
+
+Exact resource/agent versions, image digests, response IDs and receipt-to-audit
+correlations remain in private evidence. These source hashes bind canonical
+code, not the entire final image or an assertion that every negative test ran
+live. No raw transcripts or private configuration are published.
 
 ## Limited live evidence
 
@@ -44,6 +79,30 @@ The separately deployed native Hosted/direct variant returned HTTP success
 with completed/empty output and no tool receipts: it does not pass E2E.
 Its logs confirm the call was made; no conclusion of universal platform
 non-support is drawn from this particular pinned stack.
+
+The final consolidated evidence contains **six actual tool receipts** across
+the three paths, all matched to server `tool_allowed` audit events. Expected
+safe fields were `subject_label=user-a`, `auth_kind=delegated`, `demo.read`,
+custom-audience match and server-selected item ownership. This is real Entra
+user-token evidence, not the locally signed tokens used by unit tests.
+
+### Observed failures and corrections
+
+| Phase / symptom | Correction and observation | Evidence limit |
+|---|---|---|
+| Initial consent callback: `Code ... not found` despite an Entra permission grant | A fresh Hosted consent request was completed manually; subsequent delegated calls worked. | Grant presence alone did not prove Foundry credential storage. Denial/revocation is not certified. |
+| Runtime could not resolve private MCP while operator DNS worked | Added the approved Basic project capability host after baseline/what-if; immediate retry still failed, later no-auth control reached MCP/401, then delegated calls passed. | Propagation and before/after behavior were observed; missing host alone was not isolated as a universal root cause. |
+| Hosted rejected at project Responses endpoint | Canonical helper uses `get_openai_client(agent_name=...)`; Prompt retains project `agent_reference`. | A completed/empty response is still not PASS. |
+| Hosted `session_not_ready`, permission denied under `/home/session/.sessions` | Removed fixed UID 65532 from Hosted Dockerfile; retained the independent ACA server's non-root identity. | Applies to the tested Hosted session mount, not general permission relaxation. |
+| `Invalid MCP _meta key name: '_fastmcp'` | Set `include_fastmcp_meta=False`; published fresh Toolbox version and Hosted binding after clean discovery. | Disabled vendor metadata only, never auth. |
+| Hosted azd service path contained `..` | Staged canonical inputs inside a standalone deployment root. | No duplicated implementation or global workspace modification. |
+| Shared OpenAI/httpx transport closed after first call | `http_client_factory` now supplies a fresh transport per invocation/consent continuation. | Real local two-turn transport regression plus subsequent live use on all three successful paths. |
+| Standalone app-only negative probe could not reach MCP after the operator tunnel closed | Recorded NOT DEMONSTRATED; no cloud remediation in this notes-only phase. | No live 403 claim; local signed app-only token rejection is a separate test. |
+
+The recorded deployment toolchain used **azd 1.33.0** with
+**`azure.ai.agents` 1.0.0-beta.14**. Actual registry inventory showed seven
+build runs; an image-override option was not treated as proof of no remote
+build. No build was started by this documentation consolidation.
 
 ### September 10: historical platform failure
 
@@ -106,10 +165,73 @@ client was closed after one turn. The helper now takes a fresh transport
 factory, with a real OpenAI/httpx two-turn continuation regression and a
 completed/empty-output guard.
 
-The server uses FastMCP 2.14 / MCP 1.29 / PyJWT 2.10. Management uses Projects
-SDK 2.6 separately. Hosted uses core 1.16, OpenAI provider 1.14, Foundry provider
-1.10.4, hosting 1.0.0b260730 and Projects 2.3; its import constraints are not
-overridden. No package changes are imposed on existing jobs.
+### Isolated environment cohorts
+
+Local environments were inspected on 2026-09-11: macOS, Python **3.14.5**.
+CI uses Ubuntu/Python **3.12** and must be reported independently. These are
+resolved local versions, not a claim of a captured container `pip freeze`.
+Bounded installation constraints remain in the three canonical manifests.
+
+| Environment | Resolved packages relevant to the contract |
+|---|---|
+| Resource server | FastMCP 2.14.7; MCP 1.29.1; PyJWT 2.10.1; httpx 0.28.1 |
+| Management | azure-ai-projects 2.6.0; azure-identity 1.25.3; azure-mgmt-resource 23.1.1; httpx 0.28.1; PySocks 1.7.1 |
+| Hosted | agent-framework-core 1.16.0; agent-framework-openai 1.14.1; agent-framework-foundry 1.10.4; agent-framework-foundry-hosting 1.0.0b260730; azure-ai-projects 2.3.0; azure-identity 1.25.3; MCP 1.29.1 |
+| Hosted server adapters | azure-ai-agentserver-core 2.0.0b7; azure-ai-agentserver-responses 1.0.0b8; azure-ai-agentserver-invocations 1.0.0b6 |
+
+The Foundry provider requires Projects `<2.4`; management 2.6 therefore has
+its own environment. OpenAI provider 1.10 satisfied a declared lower bound
+but lacked `_feature_usage`; provider 1.14 resolved that import. Do not
+override the dependency bounds or combine the independent jobs MCP 2 cohort
+with this Hosted MCP 1 cohort.
+
+### Repeatable local commands
+
+From repository root, the following use equivalent new local venv paths;
+the recorded runs used pre-existing private venvs with the same manifests.
+No Azure identity, endpoint, account lookup or grant is needed.
+
+```bash
+python3 -m venv .scratch/mcp-auth-server
+.scratch/mcp-auth-server/bin/pip install ./skills/foundry-mcp-auth/templates
+python3 -m venv .scratch/mcp-auth-management
+.scratch/mcp-auth-management/bin/pip install ./skills/foundry-mcp-auth/templates/management
+python3 -m venv .scratch/mcp-auth-hosted
+.scratch/mcp-auth-hosted/bin/pip install ./skills/foundry-mcp-auth/templates/hosted
+
+.scratch/mcp-auth-server/bin/python -m unittest \
+  scripts.tests.test_foundry_mcp_auth_policy \
+  scripts.tests.test_foundry_mcp_auth_contract \
+  scripts.tests.test_foundry_mcp_auth_staging
+PYTHONPATH=skills/foundry-mcp-auth .scratch/mcp-auth-server/bin/python \
+  -m unittest discover -s skills/foundry-mcp-auth/test-fixture -p test_server.py
+PYTHONPATH=skills/foundry-mcp-auth .scratch/mcp-auth-management/bin/python \
+  -m unittest discover -s skills/foundry-mcp-auth/test-fixture -p test_management.py
+PYTHONPATH=skills/foundry-mcp-auth .scratch/mcp-auth-hosted/bin/python \
+  -m unittest discover -s skills/foundry-mcp-auth/test-fixture -p test_hosted.py
+.scratch/mcp-auth-server/bin/pip check
+.scratch/mcp-auth-management/bin/pip check
+.scratch/mcp-auth-hosted/bin/pip check
+```
+
+Catalog-wide unit discovery additionally needs the dependencies and local
+tooling declared in `.github/workflows/skill-test.yml`'s `unit-tests` job.
+Do not install those into the Hosted venv:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+python3 scripts/validate-skills.py
+python3 scripts/build-plugins.py --check
+python3 scripts/build-site.py --out docs/ --validate
+git diff --check
+```
+
+The separate pin runner executes `references/upstream-pin.md`'s exact
+`validation.script` in isolated temporary directories and asserts its three
+`expected_output` import markers. None of those markers certifies Entra
+delegation. Live invocation follows the canonical runbook and helper against
+operator-approved configuration; private driver commands/identifiers remain
+private rather than being relabeled as generic public test output.
 
 ## Final acceptance remains unchanged
 
@@ -122,6 +244,8 @@ overridden. No package changes are imposed on existing jobs.
 | First user consent | User completed fresh consent successfully; denial and Playground follow-through NOT DEMONSTRATED |
 | Late consent / revoked or expired refresh credentials on a shared host | NOT DEMONSTRATED; known host conversion limitation |
 | Two independent Entra users, concurrent calls | NOT DEMONSTRATED; synthetic local isolation is a separate result |
+| Anonymous MCP rejection | LIVE 401 observed; also covered locally |
+| App-only / insufficient-scope and invalid-token matrix | Local signed-token checks passed; standalone live app-only probe was blocked by operator network reachability, not a verified 403 |
 | Private runtime paths and consent/Entra egress | Exercised by the three passing delegated API paths; other endpoint combinations remain unproven |
 | Literal Entra OBO A->B exchange | NOT IMPLEMENTED; separate optional approved delta |
 
@@ -152,6 +276,43 @@ PASS would prove only PRM/reachability/anonymous rejection, not interactive
 OAuth. The credential-free local job covers three isolated dependency sets.
 No required checks or live-testing policy are waived by draft status.
 
+### Checkpoint review and catalog CI regression
+
+The independent review of immutable snapshot `50085721` found the catalog/unit
+regression described below; it did not identify another functional auth/helper
+blocker. That is bounded review evidence, not completion of the deferred live
+cases.
+
+[Unit job 103225903885](https://github.com/aiappsgbb/awesome-gbb/actions/runs/34587797481/job/103225903885)
+ran **1064 tests, 11 failures, 3 skips** on the earlier checkpoint. Failures
+were catalog-coupled: stale exact skill/plugin versions and totals, README's
+old count and interrupted ACA/jobs row adjacency, missing proposed 4.32 notes,
+and an assertion allowing only one draft candidate. Reconciliation retains
+exact version/count checks, jobs adjacency, explicit candidate scope and all
+behavioral gates. History assertions now inspect this file rather than force
+run-specific diary text into SKILL.md.
+
+The first local affected-module run during reconciliation ran **179 tests**
+and exposed two failures: the next inventory assertion still advertised 1046
+instead of 1064 tests, and the unchanged jobs Docker build hit a dependency
+download `tls handshake eof`. The latter is local package-network evidence,
+not an auth regression; no test skip or network-error allow-list was added.
+Final local rerun: **1064 tests in 88.639 seconds; 1031 passed, 32 skipped,
+one failed**. All catalog assertions that failed in the earlier CI job now
+pass. The sole remaining failure is the unchanged jobs Docker test downloading
+`authlib==1.7.2` with `tls handshake eof`; the complete suite is therefore
+**not green locally**. The runner's existing environment-dependent skips
+remain unchanged, not converted into passes or newly added by this PR.
+
+The three auth cohorts separately passed **39 tests** (16 policy/contract/
+staging, 8 HTTP/MCP, 13 management, 2 Hosted), with all three `pip check`
+commands reporting no broken requirements. T0 validated 38 skills, 34 pins
+and 201 references; plugin structure and generated-site checks passed
+(47 HTML files, zero broken root-relative links). Seven published source
+hashes were checked against the current canonical modules. Fresh PR CI remains
+separate; an earlier CI failure is not retroactively overwritten by these
+local results.
+
 ## Hosted/direct triage at the checkpoint
 
 **Unresolved, not classified as impossible.** Bounded public issue/release
@@ -179,3 +340,25 @@ from public reports. Ask which caller-context contract is supported for
 Hosted/direct and whether the nested service returned consent content.
 No new ticket, speculative adapter or dependency upgrade is part of this
 checkpoint.
+
+### Final bounded check of the persisted direct-path evidence
+
+The original private log and exact probe entrypoint were re-read without
+redeployment. The probe registers native
+`FoundryChatClient.get_mcp_tool(project_connection_id=...)` with the two
+allowed tools, `ManagedIdentityCredential` for its platform client and
+`ResponsesHostServer`; it adds no custom user/header transport. Logs show
+incoming user/call-context presence, successful MI acquisition, nested
+Responses HTTP 200 and outer `completed` with `output_count=0`. They do
+**not** expose nested output/SSE items or a consent-content dispatch warning.
+An Azure Monitor connection-string warning is also present; this is not
+evidence that it caused the empty response.
+
+**Classification: insufficient evidence to establish the root cause.**
+The consent-drop defect is a compatible hypothesis, not a confirmed match;
+the ARA OBO issue remains related but symptomatically different. Inbound
+context flags do not establish delegated context on the nested request.
+No fresh cloud invocation, build, version upgrade or consent was performed
+in this final check. The outstanding discriminator is still the sanitized
+nested item/status/error and dispatch trace described above. Do not label
+the path globally unsupported or attribute the failure solely to its version.
