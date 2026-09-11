@@ -1,0 +1,367 @@
+---
+name: foundry-mcp-auth
+description: >
+  Use when a custom Foundry MCP server needs delegated user authentication,
+  OAuth identity passthrough, audience-correct access tokens, per-user scope
+  authorization, or connection-consent troubleshooting. USE FOR: custom Entra
+  OAuth MCP, Prompt Agent MCP connection, Hosted FoundryToolbox caller context,
+  oauth_consent_request, CONSENT_REQUIRED, delegated versus app-only identity,
+  MCP protected resource metadata, OAuth versus literal Entra OBO.
+  Fabric/OneDrive/SharePoint authentication readiness, not connector implementation.
+  DO NOT USE FOR: generic Toolbox management (use foundry-toolbox), hosted
+  runtime deployment (use foundry-hosted-agents), durable MCP tasks or jobs
+  (use foundry-mcp-aca-jobs), web frontend sign-in, or general network provisioning.
+metadata:
+  version: "1.3.0"
+---
+
+# Foundry MCP delegated authentication
+
+**UNRELEASED CANDIDATE - 3 OF 4 PATHS VERIFIED for one real user.**
+Hosted/direct is NOT DEMONSTRATED; this is not four-path compatibility,
+multi-user certification or a literal OBO exchange. See the
+[validation notes](../../docs/maintenance/foundry-mcp-auth-validation.md) for
+evidence, dependency cohorts, issue triage and remaining acceptance gates.
+Cloud changes require **Gate B**, the operator's explicit approval.
+User/admin consent always remains a human action; approval to configure
+resources does not authorize automated consent.
+
+## Identity boundaries
+
+| Boundary | Identity and credential |
+|---|---|
+| User -> Foundry | Existing tenant-isolated Azure CLI user credential for backend tests, or user sign-in to Playground; same tenant as the project. Neither implies MCP consent. |
+| Hosted agent -> Toolbox | Agent runtime credential, with audience `https://ai.azure.com`; upstream wrapper forwards the trusted request-scoped `x-agent-foundry-call-id`. |
+| Foundry/Toolbox -> custom MCP | Credentials from the user's custom OAuth connection, minted for the MCP API's own audience and delegated permission. |
+| MCP -> another API, if separately required | Explicit Entra OBO exchange for the second audience, not replay of the inbound access token. Not implemented in this candidate. |
+
+OAuth identity passthrough is **not proof of Entra OBO**. It is native
+connection-managed authorization/refresh. `UserEntraToken` is a different
+mechanism for supported services, not a universal custom-server substitute.
+Never send Microsoft-audience tokens to a custom MCP, copy a personal token
+into an agent definition, or fall back to managed identity when user context
+is missing. Do not decode, fabricate, persist, or send the platform call ID
+to the custom MCP.
+
+## Released support and remaining acceptance
+
+| Path | Integration contract |
+|---|---|
+| Prompt -> direct MCP | `MCPTool.project_connection_id` references custom OAuth; Foundry emits consent output. |
+| Hosted -> Toolbox -> MCP | Upstream `FoundryToolbox` carries platform auth and request context; inner `MCPToolboxTool` references OAuth. |
+| Prompt -> Toolbox -> MCP | Native `UserEntraToken` connection targets first-party Toolbox; its inner MCP connection stays custom OAuth2. |
+| Hosted -> direct MCP | Experimental native `FoundryChatClient.get_mcp_tool(project_connection_id=...)`; not a validated substitute for the Hosted/Toolbox recipe. |
+
+The pinned hosting release converts Toolbox consent during initialization,
+not arbitrary late `CONSENT_REQUIRED` tool errors. An output-converter upgrade
+alone does not prove caller-context propagation or late exception handling.
+No speculative adapter is shipped. A user's initial
+consent after another user initialized the shared host, expiry, and revocation
+must remain explicit gates, not silently successful retries.
+
+Use two independent users for final isolation acceptance. Local signed-token
+concurrency tests are not a substitute for two actual Entra users.
+
+For future Microsoft resources, use
+[Microsoft resource profiles](references/microsoft-resource-profiles.md).
+They are source-reviewed readiness contracts, **NOT TESTED connectors**.
+The custom-MCP identity proof grants no Graph, SharePoint, OneDrive or Fabric
+access. Select the native service route or an explicitly designed downstream
+OBO boundary; never reuse the first-party AI bridge for an arbitrary resource.
+
+## Canonical artifacts
+
+Copy/import these implementations rather than repeating their bodies:
+
+| File | Owned contract |
+|---|---|
+| [authorization.py](references/python/authorization.py) | Resource-server authorization: signature, issuer, audience, lifetime, delegated scope, pseudonymous receipts and synthetic ownership. |
+| [delegated_server.py](references/python/delegated_server.py) | Resource-server authorization: HTTP MCP, PRM, request-local identity and deny logging. |
+| [connection.yaml](references/yaml/connection.yaml) | Connection setup: secret-free definition using environment references, not secret command-line arguments. |
+| [connection-contract.md](references/connection-contract.md) | Connection setup: resource/client separation, scopes, callback, create/read and consent lifecycle. |
+| [provision_connection.py](references/python/provision_connection.py) | Connection setup: live-proven GA ARM builder and opt-in create/update with safe readback. |
+| [configure_foundry.py](references/python/configure_foundry.py) | Agent integration: pure SDK builders and explicit Gate-B-only create function. |
+| [invoke_agent.py](references/python/invoke_agent.py) | Agent integration: distinct Prompt/Hosted endpoints, consent continuation and failure-status handling. |
+| [agent_instructions.py](references/python/agent_instructions.py) | Agent integration: shared fresh identity-tool calls and faithful rendering of actual claims, separate from synthetic items. |
+| [hosted_agent.py](references/python/hosted_agent.py) | Agent integration: minimal composition using the upstream Toolbox/Responses wrappers. |
+| [stage_hosted.py](references/python/stage_hosted.py) | Local recipe: stage canonical build inputs inside a standalone Hosted project, never through `..` service paths. |
+| [templates/](templates/) | Local recipe: separate server, management and hosted dependency environments; brownfield `azd` composition. |
+| [playground.md](test-fixture/playground.md) | Live acceptance: operator-driven Playground protocol, including all unresolved cases. |
+| [demo-runbook.md](references/demo-runbook.md) | Reproducing and operating the retained demo without resource expiry or automatic cleanup. |
+| [microsoft-resource-profiles.md](references/microsoft-resource-profiles.md) | Microsoft resource readiness: route-specific audiences, permissions, consent, licenses, network and future acceptance requirements; no connector runtime. |
+
+## Resource-server authorization
+
+Use a tenant-specific Entra v2 issuer/JWKS and the API application ID as JWT
+audience. Pin RS256; require expiry, issued-at and identity claims; validate
+not-before when present. Read signed `scp`, not `scope`, `roles`, a model
+argument or a claimed user header. `azp` identifies the OAuth client, not
+the user. Invalid credentials return 401; a valid app-only or insufficiently
+scoped token returns 403. JWKS transport failures surface as errors, never
+as successful or anonymous tool calls.
+
+Three identifiers are deliberately different: MCP resource URL
+`https://<host>/mcp`, JWT audience `<api-application-id>`, and OAuth requested
+scope `api://<api-application-id>/demo.read`. The JWT permission is `demo.read`.
+The verifier maps that validated permission to the full scope advertised by
+PRM; `offline_access` is not a business permission required in the access token.
+The MCP is a resource server only: no token broker, OAuth proxy, DCR or callback
+service. Entra clients must be pre-registered.
+
+Keep `include_fastmcp_meta=False`: the pinned Hosted Toolbox consumer does not
+accept the private `_fastmcp` metadata key. This disables only vendor-specific metadata,
+not authentication or authorization. After changing an already-published tool
+schema, create a fresh Toolbox version and bind the Hosted agent to that
+version to avoid stale metadata.
+
+`who_am_i()` and `list_my_demo_items()` take no identity arguments. Each call
+uses its authenticated request context. Receipts never contain JWTs, raw
+subject/tenant IDs, emails or secrets by default. Pseudonyms use a random process-local
+HMAC key; they change on restart. The demo uses one replica. Cross-restart
+identity reconciliation is not a feature of this mock.
+
+For redacted live identity evidence, the operator may configure
+`MCP_SUBJECT_LABELS_JSON`: a map from explicitly approved Entra object IDs to
+distinct generic labels such as `user-a` and `user-b`. The server adds
+`subject_label` only by looking up the **signature-validated** `oid`; neither a
+prompt nor a tool argument controls it. Default receipts expose no raw IDs or names.
+Unconfigured subjects return `unmapped`, which must not count as proof of an
+expected user. Labels do not grant permission or replace the normal JWT/scope
+checks. Keep actual mappings in private deployment configuration, not this repo.
+
+For an explicit operator-approved identity proof, set
+`MCP_IDENTITY_PROOF_ENABLED=true` on the MCP server (default `false`).
+`who_am_i` then returns a claims-only object with `oid`, `tid`, `aud`, `scp`,
+`azp`, `iss`, `exp`, correlation ID and SHA-256 digest of the inbound bearer.
+It does not mix actual claims with a synthetic label or hashed identity.
+No identity field comes from tool arguments or the label mapping.
+Only the digest and correlation ID enter the proof audit;
+raw IDs remain in the authenticated response/private evidence, never normal
+logs. Never return or store the bearer itself. Compare `oid`/`tid` with an
+independently verified caller identity and match the receipt to server audit.
+The user's Foundry token and their MCP token have different audiences; prove
+the same **user**, not byte-identical tokens. This does not query Graph.
+The same verified bearer may include `upn`, `preferred_username` or `name`.
+The opt-in view returns those optional string claims under their original
+names only when present. Never infer UPN from `oid`, relabel
+`preferred_username` as UPN, or use either mutable display value for
+authorization. Default receipts and normal logs do not expose these values.
+
+## Connection setup
+
+Use the [GA ARM helper](references/python/provision_connection.py) with API
+`2026-05-01`. Classify connection-creation/schema errors separately from
+consent, JWT and private-MCP failures. A generated connector-definition error
+is not fixed by rotating credentials or inventing connection metadata knobs.
+Do not change shared namespace modes or expose the MCP publicly to bypass it.
+Stop unchanged deterministic retries and collect sanitized request shape,
+versions, service codes and correlation IDs; see the validation notes for
+the historical service error and its evidence boundary.
+
+Follow [the connection contract](references/connection-contract.md) before
+executing any cloud command. Use custom OAuth with a dedicated resource API
+and a separate OAuth client, minimal delegated permissions and exact platform
+redirect URI. Preserve other redirect URIs if editing an existing registration.
+The connection belongs to a Foundry project; reuse it across agents only
+where supported. Consent is per user, project and connection, not globally
+per portal login.
+
+`oauth_consent_request` / MCP `CONSENT_REQUIRED` is distinct from
+`mcp_approval_request`. Read-only tool approval may be `never`; this **never**
+auto-approves OAuth or admin consent. Denial must not become empty data.
+
+## Agent integration
+
+Both Prompt and Hosted use the canonical shared instructions: identity
+questions trigger a fresh `who_am_i` call, and actual claims are rendered in
+the final answer when the operator enabled their disclosure. Synthetic items
+are queried only when explicitly requested. Test ordinary identity questions
+and follow-ups with the service's normal tool choice; checking nested tool
+data alone does not prove the user-visible answer is correct.
+
+For Prompt/Toolbox, use `build_toolbox_bridge_properties` with the **first-party
+Foundry project endpoint** and versioned Toolbox, then
+`build_prompt_toolbox_definition` with that bridge connection ID. Its
+`UserEntraToken` audience is `https://ai.azure.com`, which is used only at the
+Microsoft Toolbox boundary. The existing inner custom MCP OAuth connection
+still requests the custom API audience/scope. Never point this first-party
+bridge directly at the custom MCP. A static-bearer SDK example is not the
+canonical delegated recipe.
+
+The pure builder returns a Prompt definition and an inner Toolbox MCP tool,
+both referencing the same connection ID. It never puts `authorization` or
+user headers into the tool configuration. `create_bindings` is a **cloud
+write**, not a local test: only call it after Gate B and verify the connection
+auth type separately. It reads without credentials and rejects target mismatch.
+
+For Hosted, deploy the Responses 2.0.0 runtime and set a versioned
+`TOOLBOX_ENDPOINT`. Use `FoundryToolbox` itself; do not copy its private auth
+transport. The runtime credential grants platform access only, while the
+platform resolves the downstream user using the trusted call context.
+Constructing the wrapper locally or supplying a fabricated header is not
+proof of that platform chain.
+
+Invoke a Prompt Agent through project Responses with `agent_reference`.
+Invoke Hosted through `project.get_openai_client(agent_name=hosted_name)`:
+the project-level `agent_reference` route is rejected for Hosted. Pass the
+normal user credential and, where needed, a supported private proxy transport;
+never copy portal tokens or add invented caller headers. The API can return
+HTTP success with `response.status == "failed"`: inspect `response.error` and
+tool outputs, not just the HTTP status or assistant prose.
+The canonical helper takes an `http_client_factory`, not a shared HTTP
+client: the OpenAI client owns and closes its transport after each call.
+The factory supplies a new private transport for subsequent turns/consent
+continuation. Use `agent_version` to select the Prompt direct or Toolbox
+version; Hosted uses its deployed endpoint routing.
+For ordinary-question acceptance, pass `require_tool=False` so the helper
+leaves tool selection to the service. The default `True` is a forced-tool
+smoke, not proof that an ordinary question chooses the tool. Check the
+current/default version and final answer as well as the actual tool output.
+Use the runbook's update/readback procedure rather than assuming that creating
+a version changes every endpoint or existing conversation.
+
+Use the canonical Hosted Dockerfile's default container identity. A fixed
+`USER 65532` is incompatible with the writable `/home/session/.sessions`
+platform mount. The independent ACA server keeps its
+non-root identity. Do not replace session storage with an auth bypass.
+
+Ownership remains: `foundry-toolbox` owns the upstream consumer and Toolbox
+management; `foundry-hosted-agents` owns runtime hosting; `foundry-prompt-agents`
+owns Prompt lifecycle; `foundry-mcp-aca` / `azd-patterns` own ACA and shared IaC.
+This recipe owns only their delegated-auth composition.
+
+## Local recipe
+
+These commands run from a **full, writable catalog checkout**, not from the
+consumer project's unrelated repository root or a copied skill folder.
+Shared `azd-patterns` modules, `scripts/tests` and validation notes are catalog
+dependencies. Local plugin loading does not install Python dependencies;
+air-gapped use requires pre-staged wheels for each Python/platform cohort.
+Real Entra/Foundry calls still require their approved network paths.
+
+From the repository root, choose distinct paths for the three venvs. Install
+each dependency set separately; never add the management SDK to Hosted:
+
+```bash
+python3 -m venv .scratch/mcp-auth-server
+.scratch/mcp-auth-server/bin/pip install ./skills/foundry-mcp-auth/templates
+python3 -m venv .scratch/mcp-auth-management
+.scratch/mcp-auth-management/bin/pip install ./skills/foundry-mcp-auth/templates/management
+python3 -m venv .scratch/mcp-auth-hosted
+.scratch/mcp-auth-hosted/bin/pip install ./skills/foundry-mcp-auth/templates/hosted
+```
+
+Server: FastMCP 2.14 / MCP 1.29 / PyJWT 2.10. Management: Projects SDK 2.6.
+The server azd template uses `language: docker` and native `docker.remoteBuild`
+so the approved registry builds the image without a local Docker daemon.
+Image builds are cloud operations and still require Gate B.
+Hosted uses core 1.16 / OpenAI provider 1.14 with the catalog's hosting
+`1.0.0b260730`, Foundry provider 1.10.4 and Projects SDK 2.3, respecting its
+`<2.4` requirement. OpenAI provider 1.10 lacks the `_feature_usage` import
+required by the Foundry provider despite satisfying its declared lower bound.
+Honor the provider's SDK upper bound and validate each isolated cohort before
+changing pins; an all-package upgrade is not a compatibility strategy.
+Keep jobs' FastMCP 4 / MCP 2 environment unchanged.
+
+Run local tests with no Azure credentials or endpoints. These checks are
+**LOCAL ONLY**, not proof of platform delegation:
+
+```bash
+.scratch/mcp-auth-server/bin/python -m unittest scripts.tests.test_foundry_mcp_auth_policy scripts.tests.test_foundry_mcp_auth_contract
+PYTHONPATH=skills/foundry-mcp-auth .scratch/mcp-auth-server/bin/python -m unittest discover -s skills/foundry-mcp-auth/test-fixture -p 'test_server.py'
+PYTHONPATH=skills/foundry-mcp-auth .scratch/mcp-auth-management/bin/python -m unittest discover -s skills/foundry-mcp-auth/test-fixture -p 'test_management.py'
+PYTHONPATH=skills/foundry-mcp-auth .scratch/mcp-auth-hosted/bin/python -m unittest discover -s skills/foundry-mcp-auth/test-fixture -p 'test_hosted.py'
+```
+
+Create the deployable Hosted project with the canonical staging helper:
+
+```bash
+python3 skills/foundry-mcp-auth/references/python/stage_hosted.py .scratch/delegated-hosted
+```
+
+Run Hosted `azd` commands from that new directory. The extension rejects
+parent-directory service paths even when ordinary Container Apps accepts
+them. Staging copies only the canonical Dockerfile, dependency manifest and
+entrypoint and shared instructions; no credentials or caches. Consult the
+validation notes for the recorded deployment tool versions.
+
+For manual local serving, set `MCP_TENANT_ID`, `MCP_API_CLIENT_ID` and
+`MCP_BASE_URL` (HTTPS origin; loopback HTTP only for local work), then run
+`python -m references.python.delegated_server` from this skill directory.
+Production serving uses real Entra JWTs; test signing keys exist only in tests.
+There is no auth-disable flag.
+
+## Gate B and private deployment
+
+Before **every** Azure shell/subprocess export both isolated CLI config dirs
+from the operator's tenant index; explicitly select the approved subscription,
+not its index default. Assert tenant/subscription immediately before writes
+using `azure-tenant-isolation`. Never force login when the isolated session
+works. No environment IDs belong in this public recipe.
+
+Gate B must approve the resource allow-list, Entra/RBAC changes, credentials,
+cost and cleanup. Check real runtime routes and DNS before deploying:
+Prompt/Toolbox/Hosted -> MCP, browser -> Playground/consent, and permitted
+Entra token/JWKS egress. No hidden public fallback. APIM is optional, not a
+portal integration prerequisite.
+
+The server template uses an **existing internal VNet-connected ACA
+environment**, registry and pull identity in the approved resource group.
+It reuses `azd-patterns/references/bicep/aca-app.bicep`; pre-grant AcrPull
+and verify registry reachability. It does not create a VNet or patch the hub.
+App-level external ingress on an internal ACA environment permits VNet
+callers; it does not alone determine internet exposure.
+
+After Gate B, run the server `azd up` from `templates/` and the Hosted
+brownfield workflow from the directory created by `stage_hosted.py`, following
+the existing hosted skill's environment contract. Keep the server template
+under the skill so shared Bicep modules resolve. The placeholder image is
+not the authenticated server: do not expose/advertise the app or create its
+connection until `azd deploy` has replaced it and auth probes pass.
+Use a short unique azd environment name (at most 20 characters).
+
+Check both account network injection and the **project** capability-host
+configuration. Where Basic hosting is appropriate, use `azd-patterns`'
+`foundry-project-capability-host.bicep` without BYO datastore connections.
+Inventory actual project state and obtain approval for this project-wide
+change; do not blindly recreate existing hosts. Allow a bounded propagation
+window, and verify the actual runtime route. A wrapped downstream MCP 401
+can prove network reachability, never delegated success.
+
+For a retained demo, no default cleanup schedule, shutdown date or resource
+`expiresAt` tag is part of this recipe. Client credentials and OAuth tokens
+still have technical lifetimes: use an operator-approved, tenant-accepted
+long-lived client credential, managed rotation, and platform token refresh.
+Do not equate retaining infrastructure with a non-expiring OAuth token.
+Keep exact resource IDs, image digests, versions, consent status and safe
+identity evidence in a private runbook, separate from public skill docs.
+
+## Live acceptance and publication
+
+The [unattended fixture](test-fixture/consumer_prompt.md) is deliberately
+separate from the [interactive protocol](test-fixture/playground.md).
+A workload identity passing a fixture is not delegated E2E. Missing prerequisites
+or unsupported paths are explicit failures/blocks, never skipped-to-PASS.
+No personal refresh tokens, copied portal tokens, browser storage scraping,
+automatic browser consent, Graph data or extra web application.
+
+Before release: complete all four original paths, first and later consent,
+denial, refresh/revocation, two-user concurrency and private reachability.
+Record sanitized evidence against the exact candidate SHA. Do not call this
+candidate production-ready merely because local tests or pin imports pass.
+Literal OBO additionally requires an explicitly approved audience-distinct
+mock API and a real A->B exchange. Wave 2 web sign-in remains separate:
+authorization code/PKCE, audience-correct backend tokens, supported MSAL OBO,
+session/consent handling; never reuse tokens obtained from the portal.
+The single [status matrix](../../docs/maintenance/foundry-mcp-auth-validation.md#final-acceptance-remains-unchanged)
+also records future licensed resources as NOT TESTED. Documentation does not
+enable those routes or satisfy their licensing, consent or resource grants.
+
+## Sources
+
+- [MCP authentication](https://learn.microsoft.com/azure/foundry/agents/how-to/mcp-authentication)
+- [Toolbox identity boundaries](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-authentication)
+- [FoundryToolbox integration](https://learn.microsoft.com/agent-framework/integrations/by-component/tools/foundry-toolbox)
+- [Private networking](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks)
+- [Entra OBO](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow)
+- [Pinned source and known limitations](references/upstream-pin.md)

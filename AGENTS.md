@@ -2221,9 +2221,18 @@ workflow path computes `git diff $base_ref..HEAD`, maps changed
 files to changed skills, applies **forward fanout** from
 [`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
 and B `depends_on` A, run B too), and forces a full matrix on
-**input-contract changes** (`.github/workflows/skill-test.yml`,
-`.github/quarantine.yml`, `.github/ci-shared-preamble.md`). The
+**input-contract changes** (shared execution in `.github/workflows/skill-test.yml`,
+`.github/quarantine.yml`, `.github/ci-shared-preamble.md`,
+`scripts/resolve-foundry-project.py`). The
 `push: main` and `schedule:` paths always run the full matrix.
+
+Workflow changes are compared structurally at the base SHA and `HEAD`.
+Changes only to independent `unit-tests`, `catalog-lint` or
+`delegated-auth-local` jobs retain normal skill/dependency selection. Global
+configuration, shared matrix jobs, unknown jobs, local-job removal, credential
+or output declarations, or matrix dependencies on local jobs still force full.
+Missing/unparseable/duplicate-key workflow YAML also forces full with a warning.
+This exemption never skips the local jobs or changes required status checks.
 
 **What's deliberately NOT in the force-full list:**
 
@@ -3015,14 +3024,21 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Draft-inclusive source inventory (37 skills, 33 with upstream pins):**
+**Draft-inclusive source inventory (38 skills, 34 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (CI can refresh autonomously) | 29 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
+| Auto-tier (CI can refresh autonomously) | 30 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| Copilot-CLI fixtures | 23 skills | Registered for T3 (`copilot-cli-matrix`, see `.github/skill-deps.yml`); registration is not a passing run |
+| Copilot-CLI fixtures | 24 skills | Registered for T3 (`copilot-cli-matrix`, see `.github/skill-deps.yml`); registration is not a passing run |
+
+The additional `foundry-mcp-auth` entry is an unreleased candidate with live
+single-user delegated PASS for Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox over private
+networking. Its unattended fixture is not that delegated E2E evidence. The
+Hosted/direct path, late consent/revocation, two-user isolation and
+Playground follow-through remain release gates; see its
+[acceptance record](docs/maintenance/foundry-mcp-auth-validation.md).
 
 The `foundry-agentops` entry is an unreleased draft candidate eligible for PR validation,
 not merged, released, or production-ready. Completed
@@ -3064,18 +3080,19 @@ Consequences:
 
 ### 12.5 Catalog at a glance
 
-Source counts include the unreleased AgentOps draft candidate; see the
+Source counts include the unreleased AgentOps and delegated-auth candidates; see the
 [validation status](docs/maintenance/foundry-agentops-validation.md).
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 37 |
-| Skills with upstream pins | 33 |
-| Auto-tier (CI can refresh autonomously) | 29 |
+| Total skills | 38 |
+| Skills with upstream pins | 34 |
+| Auto-tier (CI can refresh autonomously) | 30 |
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
-| Unit tests | 1046 |
+| Unit tests | 1076 |
+| Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

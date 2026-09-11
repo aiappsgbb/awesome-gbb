@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.5.2"
+  version: "1.6.0"
 ---
 
 # AZD Tips & Patterns
@@ -735,6 +735,38 @@ the bug is array/object-typed values only.
 ---
 
 ## Composable Bicep Module Library
+
+### Private network composition
+
+Use [private-dns-vnet-link.bicep](references/bicep/private-dns-vnet-link.bicep)
+for an additive resolution link between an existing Private DNS zone and VNet.
+The module declares only the child link, disables registration and does not
+enable public DNS fallback. It does not recreate the shared zone or VNet.
+Invoke it at the zone's resource-group scope. Before deployment, verify the
+link name is new or explicitly owned, inspect what-if, and record the exact
+created ID for targeted cleanup. A successful link is not proof of private
+runtime connectivity: verify DNS and requests from their real source.
+
+For an approved internal ACA composition, use the remaining narrow modules:
+[aca-subnet.bicep](references/bicep/aca-subnet.bicep) adds a delegated subnet
+with an existing NAT gateway; [aca-environment.bicep](references/bicep/aca-environment.bicep)
+creates only an internal Consumption environment and its diagnostic setting;
+[aca-private-dns.bicep](references/bicep/aca-private-dns.bicep) maps its default
+domain to the ILB; [uami.bicep](references/bicep/uami.bicep) creates a workload
+identity; [acr-pull.bicep](references/bicep/acr-pull.bicep) grants only AcrPull
+at an existing legacy-permissions registry. Do not use that role module with
+ABAC-enabled registries. Confirm existing grants before creating new ones.
+Compose identity -> pull grant -> application dependencies explicitly.
+No module changes shared routes, NSGs, policy exemptions or Foundry hosts.
+Record the automatically managed environment resource group for cleanup;
+do not remove its locks or unrelated infrastructure.
+
+The Basic private-network template also explicitly creates a project
+capability host: [foundry-project-capability-host.bicep](references/bicep/foundry-project-capability-host.bicep).
+Use this no-BYO-connections shape only after approving the project-wide
+infrastructure change and checking the project's existing hosts. It is not
+a proven remedy for every private MCP DNS failure and must not recreate an
+account host or silently migrate existing backing stores.
 
 `threadlight-deploy` Phase 6 (Module Composer) reads SPEC § 11c and includes
 exactly the right Bicep modules. This section catalogs the modules and what

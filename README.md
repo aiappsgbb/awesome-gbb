@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-37-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-38-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -120,6 +120,12 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 > for manual evidence as of 2026-09-05, before PR CI, and its limits.
 > The published plugin does not include this unmerged addition.
 
+> **Unreleased addition, proposed catalog 4.32.0:** `foundry-mcp-auth` has live
+> single-user delegated evidence for Prompt/direct-MCP, Prompt/Toolbox and
+> Hosted/Toolbox. Hosted/direct, multi-user isolation and lifecycle cases are not certified.
+> Deployment/Entra/connection writes require separate approval. See its
+> [acceptance status](docs/maintenance/foundry-mcp-auth-validation.md).
+
 ### 🏗️ Foundry Building Blocks
 
 Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP servers, evals, RAG, vision/speech, and observability.
@@ -134,6 +140,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
 | [**foundry-mcp-aca**](skills/foundry-mcp-aca/) | Deploy custom MCP servers as ACA / Azure Functions — Cosmos MCPToolKit, Playwright MCP, mock MCP, **validate-or-reject** evidence enforcement |
 | [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | Expose durable MCP tools backed by pre-provisioned ACA Jobs — SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, managed-identity callbacks, and one immutable image with separate server/worker entrypoints. |
+| [**foundry-mcp-auth**](skills/foundry-mcp-auth/) | **Unreleased candidate:** custom Entra OAuth recipe, strict resource-server policy and safe user receipts. Three of four paths verified for one user; see [validation notes](docs/maintenance/foundry-mcp-auth-validation.md) for evidence and remaining gates. |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate hosted agents — two-phase invoke+score, 6 built-in evaluators, enriched-dataset shape (`tool_calls` + `tool_outputs`), continuous loop |
 | [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.0.0** (draft candidate). Review Doctor diagnostics, release evidence, regression baselines, and workflow ownership; its owner-authorized encrypted Doctor diagnostic is not full-matrix acceptance and never uploads raw output or an operator private key. |
 | [**foundry-iq**](skills/foundry-iq/) | Enterprise RAG with Foundry IQ — Azure AI Search Knowledge Bases, agentic retrieval, multi-hop reasoning, citation-backed responses, **hosted-agent runtime identity callout** + **7-item bootstrap hardening checklist** (no-`az rest`-uploads, fail-fast, key sanitization, 32k-byte chunking, RBAC propagation wait, post-upload count verify, idempotent recovery) |
@@ -209,7 +216,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 37 skills in a single [Copilot CLI plugin](plugin.json); the draft AgentOps addition is not yet published:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 38 skills in a single [Copilot CLI plugin](plugin.json); the draft AgentOps addition is not yet published, nor is the delegated-auth candidate:
 >
 > ```bash
 > # Register the marketplace once:
@@ -358,7 +365,7 @@ flowchart LR
 README.md                 # This file — catalog index + install instructions
 DEMOS.md                  # Demo guide for Foundry walkthroughs
 AGENTS.md                 # Contributor & sub-agent safety guide
-plugin.json               # Single plugin manifest (37 skills in the proposed catalog via "skills/")
+plugin.json               # Single plugin manifest (38 skills in the proposed catalog via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)

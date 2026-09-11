@@ -1,0 +1,13 @@
+name: delegated-mcp
+services:
+  mcp:
+    project: ..
+    host: containerapp
+    language: docker
+    docker:
+      path: templates/Dockerfile
+      context: .
+      remoteBuild: true
+infra:
+  provider: bicep
+  path: infra

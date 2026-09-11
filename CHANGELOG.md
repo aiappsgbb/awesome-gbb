@@ -1,5 +1,44 @@
 # Changelog
 
+## 4.32.0 — Proposed / Unreleased
+
+**Draft checkpoint, not a release.** Adds
+[`foundry-mcp-auth`](skills/foundry-mcp-auth/SKILL.md) **1.3.0 candidate** for
+custom delegated OAuth, strict MCP resource-server policy and canonical
+Prompt/Toolbox/Hosted composition. Detailed results and open acceptance gates
+are maintained in the [validation notes](docs/maintenance/foundry-mcp-auth-validation.md),
+not in reusable skill instructions. No four-path, multi-user or release approval.
+
+- Proposed plugin/marketplace MINOR **4.31.0 → 4.32.0**:
+  **38 skills**, **34 upstream pins**, **30 auto-tier pins**, **24 registered fixtures**.
+- [`azd-patterns`](skills/azd-patterns/SKILL.md) MINOR **1.5.2 → 1.6.0**:
+  additive private-network, identity and Basic project-host modules.
+- [`foundry-toolbox`](skills/foundry-toolbox/SKILL.md) PATCH **2.1.1 → 2.1.2**,
+  [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md) PATCH **2.1.3 → 2.1.4**,
+  [`foundry-prompt-agents`](skills/foundry-prompt-agents/SKILL.md) PATCH **1.1.9 → 1.1.10**,
+  and [`foundry-mcp-aca`](skills/foundry-mcp-aca/SKILL.md) PATCH **1.2.5 → 1.2.6**:
+  delegated-auth ownership and compatibility clarifications.
+- Preserve the existing jobs implementation and separate dependency cohorts.
+  Local checks and manual live evidence do not waive pending CI or human gates.
+- Opt-in inbound-token proof returns the authenticated caller's actual
+  validated identity claims; default receipts remain pseudonymous. Raw tokens
+  are never returned or logged. Fresh live proof is recorded in the notes.
+- Identity view returns actual claims at the top level without synthetic
+  identity labels. Shared Prompt/Hosted instructions render those claims
+  after a fresh identity-tool call, including normal-language follow-ups.
+- The opt-in view also preserves actual optional `upn`, `preferred_username`
+  and `name` claims from the verified bearer; no UPN inference, Graph lookup
+  or default-mode identity disclosure.
+- Consolidate local installation/dependency and version/default-operation
+  guidance. Add an explicit service-default tool-selection option without
+  changing existing invocation behavior. Source-reviewed Fabric, OneDrive
+  and SharePoint profiles remain preparation only: no licensed-service tests,
+  downstream OBO runtime or automatic resource grants.
+- Scope PR Azure tests to changed skills and declared dependencies when only
+  independent local test jobs change. Shared execution changes and ambiguous
+  workflow comparisons retain full coverage; main/scheduled canaries and
+  required checks are unchanged.
+
 ## 4.31.0 — Proposed / Unreleased
 
 **Draft candidate eligible for PR validation.** These notes describe proposed

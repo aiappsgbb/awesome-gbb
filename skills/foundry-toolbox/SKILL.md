@@ -18,7 +18,7 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.1.1"
+  version: "2.1.2"
   validated: 2026-08-04
 ---
 
@@ -207,14 +207,22 @@ the toolbox's `default_version`.
 
 ## Auth & RBAC
 
-Grant **Azure AI User** on the Foundry project to each identity that
-applies:
+Use **Foundry User** (formerly **Azure AI User**) for developer/Toolbox runtime
+access where a role assignment is required. For end users consuming an agent
+with OAuth passthrough, prefer **Foundry Agent Consumer** where the surface
+supports it; Playground authoring/editing requires Foundry User.
 
 | Identity | Required for | Why |
 |---|---|---|
 | **Developer** | Always | Create / update / promote / delete toolbox versions |
 | **Agent identity (UAMI / agent MI)** | Hosted agents calling tools | Agent calls `tools/call` at runtime |
-| **End user** | OAuth-based MCP or `UserEntraToken` connections | OBO flow proxies the user's Entra token |
+| **End user** | OAuth-based MCP or supported `UserEntraToken` connections | Per-user credentials for the downstream audience; native OAuth is not by itself proof of an Entra OBO exchange |
+
+For custom delegated MCP authentication, use the
+[foundry-mcp-auth candidate](../foundry-mcp-auth/SKILL.md). It distinguishes
+platform identity from downstream user identity. Single-user live execution
+passed for Hosted/Toolbox and the native Prompt/Toolbox bridge; remaining
+Playground, multi-user and lifecycle acceptance gaps are documented separately.
 
 > **Hosted MAF / GHCP agent identity:** the calling identity at runtime
 > is `instance_identity.principal_id`, not the project / account MIs. See
@@ -727,6 +735,13 @@ explained](https://techcommunity.microsoft.com/blog/microsoftmechanicsblog/token
 
 ### Prompt Agent bridge
 
+> **Not a delegated-user recipe.** The static-token bridge below does not prove
+> the Playground user's identity reaches a nested OAuth MCP. Do not copy a
+> personal token into it to claim passthrough. The live-verified native
+> first-party `UserEntraToken` bridge in
+> [foundry-mcp-auth](../foundry-mcp-auth/SKILL.md) is the delegated recipe;
+> its inner custom MCP connection remains OAuth2 with the MCP's own audience.
+
 Prompt Agents do not yet accept a Toolbox resource directly. For Prompt Agent
 scenarios that need Tool Search, expose the versioned Toolbox endpoint as an
 `MCPTool` and pass one short-lived `https://ai.azure.com/.default` token. This is a
@@ -795,20 +810,15 @@ Reference `github-oauth-conn` from the matching `MCPToolboxTool`.
 
 ### OAuth — custom app registration (BYO)
 
-```yaml
-- kind: connection
-  name: mcp-oauth-custom-conn
-  category: RemoteTool
-  authType: OAuth2
-  target: https://your-mcp-server.example.com
-  authorizationUrl: https://auth.example.com/authorize
-  tokenUrl: https://auth.example.com/token
-  refreshUrl: https://auth.example.com/token
-  scopes: []
-  credentials:
-    clientID: "{{ oauth_client_id }}"
-    clientSecret: "{{ oauth_client_secret }}"
-```
+Use the single
+[connection definition](../foundry-mcp-auth/references/yaml/connection.yaml)
+and [setup contract](../foundry-mcp-auth/references/connection-contract.md).
+The pinned connection CLI uses `credentials.clientId`, an array of custom API
+scopes plus `offline_access`, and credential environment references.
+It must not receive a Microsoft-audience token for the custom endpoint.
+Callback registration, denial and refresh are part of setup, not consequences
+of signing into the portal. The candidate now has single-user live evidence;
+it does not certify every caller, endpoint or consent lifecycle.
 
 ### Agent identity (Entra)
 
@@ -830,6 +840,9 @@ to the agent identity first or `tools/list` returns 0:
 > the full mapping and a working PUT body.
 
 ### User Entra token (1P OBO)
+
+This is distinct from custom OAuth. Use it only for a service that explicitly
+supports this mechanism; it is not a universal custom-server or OBO substitute.
 
 For MCP servers that need the calling user's identity (mail, calendar,
 files):
@@ -1114,7 +1127,7 @@ SPEC § 7c).
 | `tools/list` returns fewer tools than expected | `allowed_tools` filter has wrong / misspelled names (case-sensitive) | Remove filter, list all, set exact names from response |
 | `400 Multiple tools without identifiers` | More than one unnamed tool in the version (any types) | Leave at most one tool unnamed; give the rest a unique `name` (or `server_label` for MCP) |
 | `CONSENT_REQUIRED` (`-32006`) | First-time OAuth flow | Open URL from `error.message`, complete consent, retry |
-| `401` on MCP calls | Expired token or wrong scope | Use `https://ai.azure.com/.default`; refresh token |
+| `401` on MCP calls | Expired token or wrong audience | Distinguish the boundary: `https://ai.azure.com/.default` is for Toolbox, not the custom MCP API; validate that API's audience and connection scopes |
 | Tool name not found | MCP names are prefixed with `server_label` | Use `{server_label}.{tool_name}` (or `_` for Copilot SDK) |
 
 ---
@@ -1136,6 +1149,9 @@ SPEC § 7c).
 
 ## Catalog history
 
+- `2.1.2` - distinguish native OAuth from literal Entra OBO; link the local
+  delegated-auth candidate's canonical connection setup and qualify the static
+  Prompt bridge and audience-specific troubleshooting. No app-only behavior change.
 - `2.1.1` - post-merge correction: fixture Toolbox delete now runs from a
   `finally` block so a raised assert/get/verification failure still triggers
   best-effort cleanup instead of leaking the CI toolbox; cleanup failures stay

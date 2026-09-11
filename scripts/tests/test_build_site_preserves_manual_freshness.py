@@ -44,7 +44,7 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
                         (out_dir / relative_path).read_text(encoding="utf-8"), content
                     )
 
-    def test_fresh_build_copies_only_published_validation_record_and_validates_links(self) -> None:
+    def test_fresh_build_copies_only_published_validation_records_and_validates_links(self) -> None:
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as td:
             out_dir = Path(td) / "site"
             result = subprocess.run(
@@ -56,15 +56,19 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("0 broken root-relative links", result.stdout)
-            record = Path("maintenance/foundry-agentops-validation.md")
-            self.assertEqual(
-                (out_dir / record).read_bytes(),
-                (REPO_ROOT / "docs" / record).read_bytes(),
-            )
+            records = {
+                Path("maintenance/foundry-agentops-validation.md"),
+                Path("maintenance/foundry-mcp-auth-validation.md"),
+            }
+            for record in records:
+                self.assertEqual(
+                    (out_dir / record).read_bytes(),
+                    (REPO_ROOT / "docs" / record).read_bytes(),
+                )
             self.assertEqual(
                 {path.relative_to(out_dir) for path in (out_dir / "maintenance").rglob("*")
                  if path.is_file()},
-                {record},
+                records,
             )
             for directory in ("audit", "superpowers"):
                 self.assertFalse((out_dir / directory).exists())

@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.1.3"
+  version: "2.1.4"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -832,6 +832,11 @@ process repo should ship `tests/probe_mcp_output.py` for this.
 > via `header_provider`. Captured from recent PoC retrospectives.
 
 ### MCP with per-call AAD bearer (`header_provider`)
+
+> These credential-based patterns do not establish the Playground user's
+> delegated identity. The [foundry-mcp-auth candidate](../foundry-mcp-auth/SKILL.md)
+> owns the OAuth composition through the upstream Toolbox wrapper, including
+> its unresolved late-consent and direct-MCP caller-context limits.
 
 > **⚠️ Bootstrap caveat (CRITICAL — read first).** `header_provider=`
 > only covers `call_tool()` requests, NOT the MCP bootstrap exchange

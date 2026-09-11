@@ -490,7 +490,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         prompt_fm, _ = self._frontmatter_and_body(
             ROOT / "skills" / "foundry-prompt-agents" / "SKILL.md"
         )
-        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.9")
+        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.10")
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
@@ -536,8 +536,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         marketplace = json.loads((ROOT / ".github" / "plugin" / "marketplace.json").read_text(encoding="utf-8"))
 
         self.assertIn("foundry-mcp-aca-jobs", readme)
-        self.assertIn("The proposed catalog contains 37 skills", readme)
-        self.assertIn("skills-37-blue", readme)
+        self.assertIn("The proposed catalog contains 38 skills", readme)
+        self.assertIn("skills-38-blue", readme)
         self.assertIn("proposed catalog 4.31.0, unreleased", readme)
         self.assertIn("the draft AgentOps addition is not yet published", readme)
         self.assertIn(
@@ -554,11 +554,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs:", skill_deps)
         self.assertIn("- foundry-mcp-aca", skill_deps)
         self.assertIn("foundry-mcp-aca-jobs", producer)
-        self.assertIn("1.2.5", producer)
+        self.assertIn("1.2.6", producer)
         self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
-        self.assertEqual(plugin["version"], "4.31.0")
-        self.assertEqual(marketplace["metadata"]["version"], "4.31.0")
-        self.assertEqual(marketplace["plugins"][0]["version"], "4.31.0")
+        self.assertEqual(plugin["version"], "4.32.0")
+        self.assertEqual(marketplace["metadata"]["version"], "4.32.0")
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.32.0")
         self.assertIn("foundry-mcp-aca-jobs", marketplace["metadata"]["description"])
 
     def test_catalog_readme_has_one_approved_adjacent_row(self) -> None:
@@ -645,7 +645,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 len(skill_paths) - len(pin_paths),
                 len(fixture_paths),
             ),
-            (37, 33, 29, 4, 4, 23),
+            (38, 34, 30, 4, 4, 24),
         )
         self.assertEqual(
             (
@@ -655,12 +655,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             ("issue_only", True),
             "foundry-agt remains human-only even though its validation is runnable",
         )
-        self.assertEqual(plugin["version"], "4.31.0")
-        self.assertIn("37 reusable building blocks", plugin["description"])
-        self.assertEqual(marketplace["metadata"]["version"], "4.31.0")
-        self.assertIn("Source inventory: 37 skills", marketplace["metadata"]["description"])
-        self.assertEqual(marketplace["plugins"][0]["version"], "4.31.0")
-        self.assertIn("37 reusable GBB skills", marketplace["plugins"][0]["description"])
+        self.assertEqual(plugin["version"], "4.32.0")
+        self.assertIn("38 reusable building blocks", plugin["description"])
+        self.assertEqual(marketplace["metadata"]["version"], "4.32.0")
+        self.assertIn("Source inventory: 38 skills", marketplace["metadata"]["description"])
+        self.assertEqual(marketplace["plugins"][0]["version"], "4.32.0")
+        self.assertIn("38 reusable GBB skills", marketplace["plugins"][0]["description"])
         for description in (
             plugin["description"],
             marketplace["metadata"]["description"],
@@ -671,16 +671,16 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 self.assertIn("unpublished", description)
 
         for expected in (
-            "**Draft-inclusive source inventory (37 skills, 33 with upstream pins):**",
-            "| Auto-tier (CI can refresh autonomously) | 29 pins |",
+            "**Draft-inclusive source inventory (38 skills, 34 with upstream pins):**",
+            "| Auto-tier (CI can refresh autonomously) | 30 pins |",
             "| Issue-only (human / complex deploy) | 4 pins |",
             "| Internal IP (no pin) | 4 skills |",
-            "| Copilot-CLI fixtures | 23 skills | Registered for T3",
+            "| Copilot-CLI fixtures | 24 skills | Registered for T3",
             "registration is not a passing run",
-            "Source counts include the unreleased AgentOps draft candidate",
-            "| Total skills | 37 |",
-            "| Skills with upstream pins | 33 |",
-            "| Auto-tier (CI can refresh autonomously) | 29 |",
+            "Source counts include the unreleased AgentOps and delegated-auth candidates",
+            "| Total skills | 38 |",
+            "| Skills with upstream pins | 34 |",
+            "| Auto-tier (CI can refresh autonomously) | 30 |",
             "| Issue-only (human / complex deploy) | 4 |",
             "| Internal IP (no upstream) | 4 |",
         ):
