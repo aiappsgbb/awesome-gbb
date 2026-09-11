@@ -2221,9 +2221,18 @@ workflow path computes `git diff $base_ref..HEAD`, maps changed
 files to changed skills, applies **forward fanout** from
 [`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
 and B `depends_on` A, run B too), and forces a full matrix on
-**input-contract changes** (`.github/workflows/skill-test.yml`,
-`.github/quarantine.yml`, `.github/ci-shared-preamble.md`). The
+**input-contract changes** (shared execution in `.github/workflows/skill-test.yml`,
+`.github/quarantine.yml`, `.github/ci-shared-preamble.md`,
+`scripts/resolve-foundry-project.py`). The
 `push: main` and `schedule:` paths always run the full matrix.
+
+Workflow changes are compared structurally at the base SHA and `HEAD`.
+Changes only to independent `unit-tests`, `catalog-lint` or
+`delegated-auth-local` jobs retain normal skill/dependency selection. Global
+configuration, shared matrix jobs, unknown jobs, local-job removal, credential
+or output declarations, or matrix dependencies on local jobs still force full.
+Missing/unparseable/duplicate-key workflow YAML also forces full with a warning.
+This exemption never skips the local jobs or changes required status checks.
 
 **What's deliberately NOT in the force-full list:**
 
@@ -3082,7 +3091,7 @@ Source counts include the unreleased AgentOps and delegated-auth candidates; see
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
-| Unit tests | 1064 |
+| Unit tests | 1073 |
 | Additional delegated-auth candidate tests | 39 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

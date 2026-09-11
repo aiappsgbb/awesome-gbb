@@ -313,6 +313,25 @@ hashes were checked against the current canonical modules. Fresh PR CI remains
 separate; an earlier CI failure is not retroactively overwritten by these
 local results.
 
+### Targeted PR matrix selection
+
+The earlier workflow-path rule started all **24** Azure fixture legs even
+though the workflow edits only added independent local auth tests and a
+unit-test dependency. The shared Azure job/global configuration was unchanged.
+The three outstanding overbroad runs for this PR were cancelled to stop
+further fixture work; this does not imply deletion of resources already
+created by a started fixture.
+
+The selector now compares base/HEAD workflow structure, retaining full
+coverage for shared/global changes, unknown jobs or ambiguous input.
+Independent named local test-job edits retain normal skill/dependency fanout.
+This PR selects **11 legs** for **six directly changed skills**, not 24.
+The **44 matrix regression tests passed**, including changed runner/auth/
+retry/global settings still forcing full and local-only changes selecting no
+Azure legs. Required checks, local tests and main/scheduled full canaries
+remain unchanged. Cancelled old runs are historical; new-head CI evidence
+must be reported separately.
+
 ## Hosted/direct triage at the checkpoint
 
 **Unresolved, not classified as impossible.** Bounded public issue/release

@@ -20,6 +20,10 @@ not in reusable skill instructions. No four-path, multi-user or release approval
   delegated-auth ownership and compatibility clarifications.
 - Preserve the existing jobs implementation and separate dependency cohorts.
   Local checks and manual live evidence do not waive pending CI or human gates.
+- Scope PR Azure tests to changed skills and declared dependencies when only
+  independent local test jobs change. Shared execution changes and ambiguous
+  workflow comparisons retain full coverage; main/scheduled canaries and
+  required checks are unchanged.
 
 ## 4.31.0 — Proposed / Unreleased
 

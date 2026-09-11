@@ -169,9 +169,10 @@ jobs:
           # Host-only gate input. It is never forwarded to the paid process.
           AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
         # PRs: emit only skills with touched files (plus forward fanout
-        # via .github/skill-deps.yml). Infra-file changes (plugin.json,
-        # marketplace.json, build-test-matrix.py, skill-test.yml,
-        # quarantine.yml, skill-deps.yml) force the full matrix.
+        # via .github/skill-deps.yml). Shared workflow configuration,
+        # quarantine, preamble or project-resolver changes force full.
+        # Independent local-test job edits retain skill-level selection;
+        # manifests, site output and matrix logic do not force full.
         # push:main, schedule:, workflow_dispatch: always full matrix.
         run: |
           set -euo pipefail

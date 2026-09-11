@@ -18,6 +18,7 @@ runs the assertions.
 from __future__ import annotations
 
 import json
+import copy
 import importlib.util
 import os
 import shlex
@@ -481,6 +482,132 @@ class TestUnitWorkflowContract(unittest.TestCase):
             return names
 
         self.assertEqual(failed_test_names(suite), [])
+
+
+class TestWorkflowChangeScope(unittest.TestCase):
+    def setUp(self) -> None:
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-workflow-")
+        self.addCleanup(workspace.cleanup)
+        self.repo = Path(workspace.name)
+        for name in ("alpha", "beta", "gamma"):
+            _write_fixture(self.repo, name)
+        _write_quarantine(self.repo)
+        _write_deps(self.repo, {"alpha": [], "beta": ["alpha"], "gamma": []})
+        self.path = self.repo / ".github/workflows/skill-test.yml"
+        self.path.parent.mkdir(parents=True)
+        self.workflow = {
+            "on": {"pull_request": None, "push": {"branches": ["main"]}},
+            "permissions": {"contents": "read"},
+            "jobs": {
+                "unit-tests": {
+                    "runs-on": "ubuntu-latest",
+                    "steps": [{"run": "python -m unittest discover"}],
+                },
+                "catalog-lint": {"steps": [{"run": "python validate.py"}]},
+                "build-matrix": {"steps": [{"run": "python matrix.py"}]},
+                "copilot-cli-matrix": {
+                    "needs": "build-matrix",
+                    "runs-on": "ubuntu-latest",
+                    "permissions": {"id-token": "write"},
+                    "env": {"PROJECT": "shared"},
+                    "steps": [{"run": "run-fixture"}],
+                },
+            },
+        }
+        self.path.write_text(yaml.safe_dump(self.workflow))
+        _init_repo(self.repo)
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "workflow baseline")
+        self.base = _git(self.repo, "rev-parse", "HEAD")
+
+    def select(self, workflow: dict, *, changed_skill: bool = False) -> list[str]:
+        self.path.write_text(yaml.safe_dump(workflow))
+        if changed_skill:
+            (self.repo / "skills/alpha/SKILL.md").write_text("changed")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "--allow-empty", "-q", "-m", "workflow change")
+        return _run_changed_only(self.repo, self.base)
+
+    def test_local_test_changes_preserve_skill_dependency_fanout(self) -> None:
+        self.workflow["jobs"]["unit-tests"]["steps"].append({"run": "pip install PyJWT"})
+        self.workflow["jobs"]["delegated-auth-local"] = {
+            "runs-on": "ubuntu-latest", "steps": [{"run": "run-local-auth-tests"}],
+        }
+        self.assertEqual(self.select(self.workflow, changed_skill=True), ["alpha", "beta"])
+
+    def test_local_only_change_needs_no_azure_matrix(self) -> None:
+        self.workflow["jobs"]["catalog-lint"]["steps"].append({"run": "check-links"})
+        self.assertEqual(self.select(self.workflow), [])
+        self.assertEqual(_run(self.repo), ["alpha", "beta", "gamma"],
+                         "Push/main and scheduled full canaries must remain full")
+
+    def test_shared_job_changes_still_force_full(self) -> None:
+        for job in ("build-matrix", "copilot-cli-matrix"):
+            for field, value in (
+                ("runs-on", "ubuntu-24.04"),
+                ("env", {"PROJECT": "different"}),
+                ("permissions", {"id-token": "read"}),
+                ("timeout-minutes", 60),
+                ("steps", [{"run": "different-retry-or-auth"}]),
+            ):
+                with self.subTest(job=job, field=field):
+                    workflow = copy.deepcopy(self.workflow)
+                    workflow["jobs"][job][field] = value
+                    self.assertEqual(self.select(workflow), ["alpha", "beta", "gamma"])
+
+    def test_global_changes_still_force_full(self) -> None:
+        for field, value in (
+            ("permissions", {"contents": "write"}),
+            ("env", {"PROJECT": "different"}),
+            ("defaults", {"run": {"shell": "sh"}}),
+            ("on", {"workflow_dispatch": None}),
+            ("concurrency", "shared"),
+        ):
+            with self.subTest(field=field):
+                workflow = copy.deepcopy(self.workflow)
+                workflow[field] = value
+                self.assertEqual(self.select(workflow), ["alpha", "beta", "gamma"])
+
+    def test_unknown_or_removed_shared_jobs_force_full(self) -> None:
+        added = copy.deepcopy(self.workflow)
+        added["jobs"]["new-shared-job"] = {"steps": [{"run": "new"}]}
+        self.assertEqual(self.select(added), ["alpha", "beta", "gamma"])
+        removed = copy.deepcopy(self.workflow)
+        del removed["jobs"]["copilot-cli-matrix"]
+        self.assertEqual(self.select(removed), ["alpha", "beta", "gamma"])
+        removed = copy.deepcopy(self.workflow)
+        del removed["jobs"]["unit-tests"]
+        self.assertEqual(self.select(removed), ["alpha", "beta", "gamma"])
+
+    def test_dependent_local_job_is_not_exempt(self) -> None:
+        self.workflow["jobs"]["copilot-cli-matrix"]["needs"] = ["build-matrix", "unit-tests"]
+        self.select(self.workflow)
+        base = _git(self.repo, "rev-parse", "HEAD")
+        self.workflow["jobs"]["unit-tests"]["steps"].append({"run": "changed"})
+        self.select(self.workflow)
+        self.assertEqual(_run_changed_only(self.repo, base), ["alpha", "beta", "gamma"])
+
+    def test_local_job_with_shared_outputs_or_credentials_is_not_exempt(self) -> None:
+        for key in ("outputs", "secrets", "permissions", "environment", "uses"):
+            with self.subTest(key=key):
+                workflow = copy.deepcopy(self.workflow)
+                workflow["jobs"]["unit-tests"][key] = "requires-shared-review"
+                self.assertEqual(self.select(workflow), ["alpha", "beta", "gamma"])
+
+    def test_unreadable_or_ambiguous_workflow_forces_full(self) -> None:
+        for text in ("jobs: [broken", "jobs: []", "jobs: {}\njobs: {}"):
+            with self.subTest(text=text):
+                self.path.write_text(text)
+                _git(self.repo, "add", "-A")
+                _git(self.repo, "commit", "-q", "-m", "invalid workflow")
+                self.assertEqual(_run_changed_only(self.repo, self.base),
+                                 ["alpha", "beta", "gamma"])
+
+    def test_comment_only_change_does_not_force_full(self) -> None:
+        self.path.write_text(self.path.read_text() + "\n# Clarify the local test scope\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "workflow comment")
+        self.assertEqual(_run_changed_only(self.repo, self.base), [])
 
 
 class TestChangedOnly(unittest.TestCase):

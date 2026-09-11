@@ -16,15 +16,19 @@ Sorted alphabetically for deterministic GHA matrix expansion.
   with these refinements:
 
   - Force-full-matrix paths (any one of them touched → emit the full set):
-        .github/workflows/skill-test.yml
         .github/quarantine.yml
         .github/ci-shared-preamble.md
         scripts/resolve-foundry-project.py
-    These files change the per-leg input contract (workflow timeouts,
-    env vars, retry logic, runner image; shared preamble prepended to
+    These files change the per-leg input contract (shared preamble prepended to
     every fixture; quarantine list; Foundry project selection) — any
     change to them MUST re-validate every fixtured skill against real
     Azure resources.
+
+    `.github/workflows/skill-test.yml` is compared structurally at base and
+    HEAD. Only independent, named local-test jobs may change without full
+    fanout. Shared/global configuration, unknown jobs, credentials, outputs,
+    dependencies on local jobs, missing versions or ambiguous YAML still
+    force full. Comment-only edits do not change execution.
 
     `plugin.json`, `.github/plugin/marketplace.json`,
     `scripts/build-test-matrix.py`, and `.github/skill-deps.yml` are
@@ -92,8 +96,10 @@ import yaml
 # fanout). All non-listed structural drift is caught by the
 # unconditional push:main full-matrix canary within ≤7 days.
 # See module docstring for full rationale.
+WORKFLOW_PATH = ".github/workflows/skill-test.yml"
+LOCAL_TEST_JOBS = frozenset({"unit-tests", "catalog-lint", "delegated-auth-local"})
+
 FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
-    ".github/workflows/skill-test.yml",
     ".github/quarantine.yml",
     # SHARED CI HARDENING preamble (post-2026-06-09 incident): every
     # fixture run prepends this file's content, so editing it changes
@@ -141,6 +147,72 @@ def _diff_filenames(repo_root: Path, base_ref: str) -> list[str]:
         text=True,
     )
     return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+class _WorkflowLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise ValueError("duplicate workflow key")
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
+
+
+def _read_workflow(repo_root: Path, ref: str) -> dict:
+    text = subprocess.check_output(
+        ["git", "-C", str(repo_root), "show", f"{ref}:{WORKFLOW_PATH}"],
+        text=True, stderr=subprocess.PIPE,
+    )
+    workflow = yaml.load(text, Loader=_WorkflowLoader)
+    if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
+        raise ValueError("workflow/jobs must be mappings")
+    jobs = workflow["jobs"]
+    if not {"build-matrix", "copilot-cli-matrix"} <= jobs.keys():
+        raise ValueError("shared matrix jobs missing")
+    if any(not isinstance(name, str) or not isinstance(job, dict) for name, job in jobs.items()):
+        raise ValueError("invalid workflow job")
+    return workflow
+
+
+def _shared_workflow_changed(repo_root: Path, base_ref: str) -> bool:
+    try:
+        before = _read_workflow(repo_root, base_ref)
+        after = _read_workflow(repo_root, "HEAD")
+        if before == after:
+            return False
+        before_jobs, after_jobs = before.pop("jobs"), after.pop("jobs")
+        if before != after:
+            return True
+        before_shared = {k: v for k, v in before_jobs.items() if k not in LOCAL_TEST_JOBS}
+        after_shared = {k: v for k, v in after_jobs.items() if k not in LOCAL_TEST_JOBS}
+        if before_shared != after_shared:
+            return True
+        if (before_jobs.keys() & LOCAL_TEST_JOBS) - after_jobs.keys():
+            return True
+        for jobs in (before_jobs, after_jobs):
+            for name, job in jobs.items():
+                if name in LOCAL_TEST_JOBS:
+                    if {"outputs", "permissions", "secrets", "environment", "uses"} & job.keys():
+                        return True
+                    continue
+                needs = job.get("needs", [])
+                if isinstance(needs, str):
+                    needs = [needs]
+                if not isinstance(needs, list) or any(
+                    not isinstance(dep, str) or "${{" in dep or dep in LOCAL_TEST_JOBS
+                    for dep in needs
+                ):
+                    return True
+        return False
+    except (OSError, subprocess.CalledProcessError, yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
+        print(
+            f"::warning::Cannot establish local-only workflow change ({type(exc).__name__}); "
+            "using full Azure matrix.",
+            file=sys.stderr,
+        )
+        return True
 
 
 def _changed_skills_from_diff(changed_files: list[str]) -> set[str]:
@@ -204,6 +276,8 @@ def build(
 
     # Force full matrix on any infra/gating-file change.
     if any(f in FORCE_FULL_MATRIX_PATHS for f in changed_files):
+        return {"skill": all_fixtured}
+    if WORKFLOW_PATH in changed_files and _shared_workflow_changed(repo_root, base_ref):
         return {"skill": all_fixtured}
 
     changed_skills = _changed_skills_from_diff(changed_files)
