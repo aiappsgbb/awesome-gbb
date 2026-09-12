@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -29,7 +29,7 @@ Guide the user step by step to deploy **Azure AI Foundry with Agent in a private
 
 > **Optional scenario hint.** When the user invokes the skill, they may pass a one-line scenario hint such as `"new VNet in swedencentral"` or `"existing VNet with existing DNS zones"`. Use it to pre-fill defaults during the interview wherever it applies.
 
-> **Day-2 lifecycle companion.** This skill covers greenfield create only. For **Day-2 capability host lifecycle** (idempotent re-create, delete, soft-delete + purge of the parent account, `Subnet already in use` redeploy guard, soft-delete recovery) see [`foundry-caphost-lifecycle`](../foundry-caphost-lifecycle/SKILL.md). You will need it any time you tear down and redeploy a Foundry caphost into the same VNet/subnet.
+> **Day-2 lifecycle companion.** The full workflow is for greenfield setup. For an existing private project missing only its Basic host, reuse only the canonical project-host module after read-only verification and explicit authorization; never replay the full deployment to repair one missing prerequisite. Follow the [hosted deployment preflight](../foundry-hosted-agents/references/deployment-preflight.md). For other **Day-2 capability host lifecycle** operations (idempotent re-create, delete, soft-delete + purge, recovery), see [`foundry-caphost-lifecycle`](../foundry-caphost-lifecycle/SKILL.md). Those destructive operations are not default troubleshooting.
 
 ## 2. Architecture being deployed
 
@@ -145,6 +145,16 @@ peering, APIM DNS link):
 | Account capability host | yes (`accountCapHost`) | project caphost only (`projectCapHost` = `caphostproj`) |
 | Role assignments | 6 (project-MI over BYO) + optional developer/telemetry | telemetry (LAW Reader + Azure AI User) + optional developer + ACR AcrPull |
 | Deploy time | 45-90 min | 30-60 min (no BYO wiring) |
+
+**Basic is platform-managed backing storage, not absence of a project host.**
+Read back the project host's `capabilityHostKind: Agents` and
+`provisioningState: Succeeded` before registering a hosted version, including
+when using raw SDK or brownfield `azd deploy`. If the inventory is empty, only
+the explicitly authorized
+[`add-project-capability-host.bicep`](templates/basic-vnet/modules-network-secured/add-project-capability-host.bicep)
+module is needed against the existing account/project. Do not add the Standard
+account host to Basic. Existing BYO connections mean stop and resolve mode,
+not overwrite them with Basic defaults.
 
 > Steps 7 (BYO existing resources) and 8 (6-zone DNS map) apply to
 > **standard-agent only**. On **basic-vnet**, skip Step 7 entirely; in Step 8
@@ -621,11 +631,14 @@ checks and present the results to the user as a status table.
 >   when `enableContainerRegistry=true` (adds the ACR PE). Not 4.
 > - **DNS VNet links:** 3 app zones + `azurecr.io` (if ACR) + 4 monitor zones.
 > - **Capability host:** project caphost only (`caphostproj`); there is **no**
->   account capability host to verify (skip the account-caphost PUT check).
+>   customer-created account capability host to require (skip that prerequisite;
+>   still inspect existing account defaults without mutating them).
 > - **Project connections:** expect **appinsights** only (no CosmosDb /
 >   CognitiveSearch / AzureStorageAccount).
 > - **Role assignments:** project-MI **Log Analytics Reader** (LAW) + **Azure AI
->   User** (account); **ACR AcrPull** (if ACR); **no** Storage/Cosmos/Search roles.
+>   User** (account); ACR **AcrPull** for legacy registry mode or
+>   **Container Registry Repository Reader** for ABAC mode (verify repository
+>   conditions; do not change registry mode); **no** Storage/Cosmos/Search roles.
 > - Skip Steps 11.9 (BYO public-access) and 11.10 (BYO roles) — no BYO resources.
 
 ### 11.1 — AI Services Account
@@ -663,25 +676,36 @@ Verify: `provisioningState` = `Succeeded`, `identity.type` = `SystemAssigned`, `
 
 ### 11.4 — Capability Hosts
 
-**Account Capability Host** — use PUT to verify (GET does not always work with this resource):
-```powershell
-# If it returns "Conflict" with "provisioning state: Succeeded" → OK
-az rest --method PUT \
-  --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/capabilityHosts/{capHostName}?api-version=2025-04-01-preview" \
-  --body "@caphost-body.json" --headers "Content-Type=application/json"
-```
-
-**Project Capability Host**:
+**Account Capability Host** — required for `standard-agent`, not `basic-vnet`.
+Verification is read-only. A read failure is inconclusive, never permission to PUT:
 ```powershell
 az rest --method GET \
-  --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/projects/{projectName}/capabilityHosts/caphost?api-version=2025-04-01-preview" \
-  --query "{name:name, state:properties.provisioningState, kind:properties.capabilityHostKind, vectorStore:properties.vectorStoreConnections, storage:properties.storageConnections, threadStorage:properties.threadStorageConnections}" -o json
+  --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/capabilityHosts?api-version=2025-06-01"
+```
+
+**Project Capability Host** — both modes. List first; use the actual returned
+host name (`projectCapHost`, not a hardcoded `caphost`) for an exact GET:
+```powershell
+az rest --method GET \
+  --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/projects/{projectName}/capabilityHosts?api-version=2025-06-01"
+```
+
+For each returned host, use its full ARM ID from the inventory for the exact
+readback (account host only when present, project host in both private modes):
+
+```powershell
+az rest --method GET \
+  --url "https://management.azure.com{returnedHostId}?api-version=2025-06-01"
 ```
 
 Verify:
 - `provisioningState` = `Succeeded`
 - `capabilityHostKind` = `Agents`
-- The 3 connections (vectorStore, storage, threadStorage) point to the correct resources
+- Standard: connection names match the approved existing BYO configuration.
+- Basic: no BYO connection arrays; platform-managed stores.
+- Empty inventory blocks registration. Failed/incompatible hosts are preserved.
+  Follow the [shared preflight](../foundry-hosted-agents/references/deployment-preflight.md);
+  account success alone does not pass this check.
 
 ### 11.5 — Project Connections
 

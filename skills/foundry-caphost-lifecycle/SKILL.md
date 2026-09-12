@@ -17,7 +17,7 @@ description: >
   spoke onboarding (use citadel-spoke-onboarding), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
 ---
 
 # Foundry Capability Host Lifecycle — Day-2 Operations
@@ -92,11 +92,21 @@ operational reality of Day-2.
 
 Read these once. They drive every Day-2 decision below.
 
+**Choose scope and setup mode first.** The explicit account-then-project
+prerequisite below describes the Standard/BYO lifecycle, not a requirement to
+add an account host to the canonical Basic private template. Basic creates
+only an `Agents` **project** host with platform-managed stores. Public
+platform-managed azd setup is a third route, not authority to skip a private
+project host. Use the [shared hosted deployment preflight](../foundry-hosted-agents/references/deployment-preflight.md)
+before registration. Missing Basic setup permits only a separately authorized
+invocation of the existing Basic project-host module. Incompatible/failed/BYO
+hosts require a decision, not automatic deletion or recreation.
+
 | Constraint | Rule | Source |
 |---|---|---|
 | **One caphost per scope** | Each account, each project: only one active capability host. Second host with different name → 409 Conflict. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **No updates** | There is no PATCH support. Configuration changes require DELETE + recreate. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
-| **Account caphost prerequisite** | You cannot create a project capability host unless an account-level one already exists. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
+| **Account caphost prerequisite** | Standard/BYO explicit host lifecycle: verify the account host before the project host. Do not apply this as a customer-created account-host requirement to `basic-vnet`, whose canonical module creates only the project host. | [MS Learn § Constraints](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts), [Basic/Standard distinction](../foundry-vnet-deploy/SKILL.md#step-0-choose-the-template-decision-guide) |
 | **Idempotency: same-name + same-config** | Learn documents 200; the GA schema permits 200/201 and live replay can return 201. Verify the same resource identity and `Succeeded` state. | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **Idempotency: same-name + different config** | Returns 400 Bad Request. No silent in-place modification. | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
 | **Idempotency: different name at occupied scope** | Returns 409 Conflict (one-per-scope). | [MS Learn § Idempotent behavior](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts) |
@@ -128,21 +138,28 @@ az rest --method get \
 
 Expected shapes:
 
-- `value: []` — no account caphost exists. You cannot create a project caphost
-  until one does (§ 4 prerequisite). Go to § 6 to create one.
+- `value: []` — no explicit account caphost exists. Standard/BYO is blocked
+  pending an authorized setup decision. Basic does not require creating one;
+  inspect its **project** inventory independently.
 - `value: [{name: "default", state: "Succeeded", kind: "Agents"}]` — healthy.
   Safe to operate on the project caphost.
 - `value: [{state: "Creating"}]` — operation in flight. Do NOT issue another PUT;
   poll the operation result (§ 5.3) until terminal.
-- `value: [{state: "Failed"}]` — broken. DELETE it (§ 7), then recreate.
+- `value: [{state: "Failed"}]` — blocked. Preserve it and collect its exact GET/error.
+  DELETE/recreate (§ 7) needs separate explicit authorization, never a preflight repair.
 
 ### 5.2 List project-level capability hosts
 
 ```bash
 az rest --method get \
   --url "https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCT}/projects/${PROJ}/capabilityHosts?api-version=2025-06-01" \
-  --query "value[].{name:name, state:properties.provisioningState, thread:properties.threadStorageConnections, vector:properties.vectorStoreConnections, storage:properties.storageConnections, ai:properties.aiServicesConnections}"
+  --query "value[].{name:name, state:properties.provisioningState, kind:properties.capabilityHostKind, thread:properties.threadStorageConnections, vector:properties.vectorStoreConnections, storage:properties.storageConnections, ai:properties.aiServicesConnections}"
 ```
+
+Before hosted registration, read the returned project host by its actual name
+and require `Agents` / `Succeeded`. An account `Succeeded` response is not this
+check. For Basic, expect empty/absent BYO arrays; for Standard, compare exact
+approved connection names. An unsuccessful GET is not an empty inventory.
 
 ### 5.3 Poll an in-flight operation
 
@@ -197,6 +214,11 @@ PUT https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/provi
   }
 }
 ```
+
+This is the **Standard/BYO** shape, not the Basic project-host body. Basic uses
+only `capabilityHostKind: Agents`; reuse the
+[canonical module](../foundry-vnet-deploy/templates/basic-vnet/modules-network-secured/add-project-capability-host.bicep),
+never copy Standard arrays into it or overwrite an existing BYO host.
 
 The four `*Connections` arrays are **connection names** that already exist on the
 project (or are inherited from account-level), per MS Learn § "Project capability

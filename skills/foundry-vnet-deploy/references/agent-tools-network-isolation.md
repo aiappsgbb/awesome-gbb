@@ -87,11 +87,18 @@ Beyond tools, these **Foundry features** don't yet fully support isolation:
 
 These four constraints break deployments if missed:
 
-1. **Hosted agents need a *public* Azure Container Registry.** A private-endpoint
-   ACR (public access disabled) is **not yet supported** with a private Foundry
-   setup — the ACR must keep **public network access enabled**. Hosted agents
-   still deploy onto a VNet-injected private Foundry; you do **not** need to
-   redeploy Foundry to enable them.
+1. **Private ACR support depends on project creation date.** Per
+   [Deploy a hosted agent](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent),
+   checked **2026-09-12**, projects created **after June 25, 2026** support a
+   private-endpoint registry with public access disabled; older projects require
+   a publicly reachable registry endpoint for platform image pulls. Inspect the
+   **project** `systemData.createdAt`, not account age. The source does not
+   disambiguate projects created on June 25: boundary/unknown dates require
+   confirmation, not a guess. Preserve private networking; do not automatically
+   expose ACR or recreate the project. Verify project-MI pull access appropriate
+   to registry RBAC/ABAC mode, `azureADAuthenticationAsArmPolicy: enabled`, and the
+   actual private pull path using the
+   [shared preflight](../../foundry-hosted-agents/references/deployment-preflight.md).
 2. **You cannot change outbound networking after the fact.** You can't swap the
    delegated subnet, and you can't add VNet injection to an existing
    non-injected Foundry. **Adding or changing outbound networking requires a
