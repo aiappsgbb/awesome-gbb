@@ -71,19 +71,22 @@ def wait_for_active(
     max_attempts: int = 60,
     sleep_seconds: float = 10.0,
 ) -> None:
-    """Poll until status == 'active' (typically 2-5 minutes).
+    """Require two consecutive direct GETs with status == 'active'.
 
-    Raises on 'failed' or timeout. Idempotent on 'active'.
+    Raises on error, 'failed' or timeout. This is a provisioning metadata gate,
+    not proof of native session readiness, invocation or requested tool results.
     """
+    consecutive_active = 0
     for attempt in range(max_attempts):
         time.sleep(sleep_seconds)
         v = project.agents.get_version(agent_name=agent_name, agent_version=agent_version)
         status = v["status"]
         print(f"  v{agent_version} status={status} (attempt {attempt + 1})")
-        if status == "active":
-            return
-        if status == "failed":
+        if status == "failed" or v.get("error"):
             raise RuntimeError(f"Version provisioning failed: {dict(v)}")
+        consecutive_active = consecutive_active + 1 if status == "active" else 0
+        if consecutive_active >= 2:
+            return
     raise RuntimeError(
         f"Timed out waiting for v{agent_version} to reach 'active' "
         f"({max_attempts} * {sleep_seconds}s = {int(max_attempts * sleep_seconds)}s)"
@@ -141,6 +144,7 @@ def create_new_version(
     """
     v = project.agents.create_version(
         agent_name=agent_name,
+        metadata={"enableVnextExperience": "true"},
         definition=HostedAgentDefinition(
             kind="hosted",
             cpu=cpu,
