@@ -97,6 +97,15 @@ and executable), VNet deploy **1.2.1 PATCH**, capability-host lifecycle
 
 ## Remaining verification before publication
 
+The subsequently authorized PR publication review found two further local
+consistency gaps: an out-of-order GET history could conceal a newer failed
+read, and a passing path probe could mask a contradictory matching probe.
+Both were reproduced RED and corrected. The gate now validates timestamps
+across the complete observation history and requires one unambiguous current
+receipt per purpose/target/route. This adds no Azure calls or receipt-authenticity
+claim. The targeted local suite now contains 65 tests; normal PR CI evidence is
+recorded in the PR, separately from the original 64-test local checkpoint.
+
 Run the existing hosted Copilot-CLI fixture on its supported public route and
 separately verify private Basic and Standard paths with explicit authorization.
 Exercise real project-MI private image pull, actual hosted session home,

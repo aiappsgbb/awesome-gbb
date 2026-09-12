@@ -263,6 +263,16 @@ class HostedPreflightTests(unittest.TestCase):
                     probe["target"] = "https://wrong.internal/mcp"
                 self.blocked(data, "PATH_UNVERIFIED")
 
+    def test_conflicting_or_duplicate_path_receipts_fail_closed(self):
+        for index in range(len(evidence()["probes"])):
+            for result in ("fail", "pass"):
+                with self.subTest(index=index, result=result):
+                    data = evidence()
+                    duplicate = copy.deepcopy(data["probes"][index])
+                    duplicate["result"] = result
+                    data["probes"].append(duplicate)
+                    self.blocked(data, "PATH_UNVERIFIED")
+
     def test_runtime_rejects_wrong_image_uid_home_protocol_or_cohort(self):
         for field, value in (
             ("image", IMAGE + "bad"), ("platform", "linux/arm64"), ("container_user", "65532"),
@@ -346,7 +356,10 @@ class HostedPreflightTests(unittest.TestCase):
         }
         result = helper.check_execution(deployment, now=NOW)
         self.assertEqual(result["status"], "BUSINESS_PROOF_RECORDED", result)
-        for change in ("list", "failed", "single", "stale", "image", "receipt", "empty", "home", "age", "mutable"):
+        for change in (
+            "list", "failed", "single", "stale", "image", "receipt", "empty", "home", "age", "mutable",
+            "out-of-order", "duplicate-time", "malformed-history", "invalid-time",
+        ):
             with self.subTest(change=change):
                 data = copy.deepcopy(deployment)
                 if change == "list":
@@ -369,9 +382,21 @@ class HostedPreflightTests(unittest.TestCase):
                     data["image"] = "registry.azurecr.io/agent:latest"
                     for item in [*data["observations"], data["endpoint"], data["invocation"], data["hosted_runtime"]]:
                         item["image"] = data["image"]
+                elif change in ("out-of-order", "duplicate-time"):
+                    data["observations"].insert(0, {
+                        **observation, "status": "failed",
+                        "observed_at": "2026-09-12T20:00:00Z" if change == "out-of-order" else observation["observed_at"],
+                    })
+                elif change == "malformed-history":
+                    data["observations"].insert(0, None)
+                elif change == "invalid-time":
+                    data["observations"].insert(0, {**observation, "observed_at": "not-a-timestamp"})
                 else:
                     data["business"] = {}
                 self.assertEqual(helper.check_execution(data, now=NOW)["status"], "BLOCKED")
+        older_failure = {**observation, "status": "failed", "observed_at": "2026-09-12T19:58:00Z"}
+        deployment["observations"].insert(0, older_failure)
+        self.assertEqual(helper.check_execution(deployment, now=NOW)["status"], "BUSINESS_PROOF_RECORDED")
 
     def test_rollout_emits_required_native_creation_metadata(self):
         source = (SKILL / "references/python/version_rollout.py").read_text()

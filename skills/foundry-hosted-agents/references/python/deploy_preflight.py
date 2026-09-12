@@ -251,12 +251,13 @@ def check_setup(data: object, *, now: datetime | None = None) -> dict:
             *(("runtime-tool", tool, target["runtime_route"]) for tool in tools),
         ]
         for purpose, destination, route in required_probes:
-            require(any(receipt(p) and p.get("purpose") == purpose and p.get("target") == destination
-                        and p.get("route") == route
-                        and p.get("network_reachable" if purpose == "registry-network" else "authenticated") is True
-                        and p.get("tls_verified") is True for p in probes),
+            matching = [p for p in probes if isinstance(p, dict) and p.get("purpose") == purpose
+                        and p.get("target") == destination and p.get("route") == route]
+            require(len(matching) == 1 and receipt(matching[0])
+                    and matching[0].get("network_reachable" if purpose == "registry-network" else "authenticated") is True
+                    and matching[0].get("tls_verified") is True,
                     "PATH_UNVERIFIED", destination,
-                    f"Collect {purpose} DNS/TLS and applicable authentication evidence from {route}; laptop/health alone is insufficient. Unavailable path stays blocked.")
+                    f"Collect one unambiguous current {purpose} DNS/TLS and applicable authentication receipt from {route}; conflicting/duplicate evidence and unavailable paths stay blocked.")
         runtime = obj(data.get("runtime"))
         require(receipt(runtime) and runtime.get("image") == image
                 and runtime.get("platform") == "linux/amd64" and runtime.get("container_user") == ""
@@ -309,6 +310,19 @@ def check_execution(data: object, *, now: datetime | None = None) -> dict:
         observations = data.get("observations")
         require(isinstance(observations, list) and len(observations) >= 2,
                 "VERSION_GET", "version", "Collect two consecutive direct version GETs; LIST is inventory only.")
+        previous_time = None
+        for observation in observations:
+            require(isinstance(observation, dict), "VERSION_GET", str(binding["version"]),
+                    "Retain well-formed chronological observations; malformed history cannot establish the latest state.")
+            try:
+                observed_time = timestamp(observation.get("observed_at"))
+            except (ValueError, TypeError, OverflowError):
+                raise GateError("VERSION_GET", str(binding["version"]),
+                                "Every observation needs a timezone-aware timestamp; unknown history cannot be skipped.")
+            require(previous_time is None or previous_time < observed_time,
+                    "VERSION_GET", str(binding["version"]),
+                    "Supply strictly chronological distinct observations; out-of-order history may conceal a newer failure.")
+            previous_time = observed_time
         selected = observations[-2:]
         for observation in selected:
             require(isinstance(observation, dict) and observation.get("source") == "direct-version-get"
@@ -317,8 +331,6 @@ def check_execution(data: object, *, now: datetime | None = None) -> dict:
                     and fresh(observation.get("observed_at"), now),
                     "VERSION_GET", str(binding["version"]),
                     "Preserve the direct GET state/error and all artifacts. Failed/unknown beats LIST active; bound waiting, never recreate automatically.")
-        require(timestamp(selected[0]["observed_at"]) < timestamp(selected[1]["observed_at"]),
-                "VERSION_GET", str(binding["version"]), "Use distinct ordered observations, not a duplicated snapshot.")
         for key in ("endpoint", "invocation"):
             value = obj(data.get(key))
             require(receipt(value) and all(value.get(k) == v for k, v in binding.items()),

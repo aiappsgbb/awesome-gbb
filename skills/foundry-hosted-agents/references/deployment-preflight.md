@@ -77,6 +77,10 @@ their native camelCase; gate-specific observation records use snake_case.
 A **receipt** is `{"result": "pass", "evidence": "<private-observation-reference>"}`
 plus the fields in its row. The reference must identify actual retained output,
 not a planned test. No boolean/receipt here is a cryptographic attestation.
+Supply exactly one current receipt per required purpose/target/route. Duplicate
+or contradictory matching probes block; resolve the conflict through a new
+observation and retain superseded attempts separately, not as competing current
+receipts.
 Runtime-path model/tool probes must cover DNS, TLS and the expected authenticated
 surface from the injected network, not only an operator proxy. If using an approved
 equivalent probe location before registration, document its equivalence and
@@ -148,6 +152,10 @@ fresh within 30 minutes), expected `version`, immutable `image`, actual hosted
 three binding fields, `source: direct-version-get`, `status`, `observed_at`, and
 the actual `error` when present. The last two must be distinct, fresh, active
 direct GETs without errors.
+The entire supplied history must have valid, strictly increasing timestamps;
+an out-of-order entry could otherwise hide a newer failed GET. Older failures
+may precede later recovery, but must never be moved ahead of older active reads
+to make the final two entries pass.
 
 `endpoint` and `invocation` are receipts with the same three binding fields.
 Invocation also requires `response_id`, `session_id`. `business` is a receipt
