@@ -105,6 +105,10 @@ across the complete observation history and requires one unambiguous current
 receipt per purpose/target/route. This adds no Azure calls or receipt-authenticity
 claim. The targeted local suite now contains 65 tests; normal PR CI evidence is
 recorded in the PR, separately from the original 64-test local checkpoint.
+The initial normal PR unit job also detected two coupled inventory assertions:
+the pre-existing hosted-version test still expected 2.1.4, and the documented
+catalog test total excluded the new preflight cases. These assertions/counts
+are updated without changing their enforcement or running unrelated Azure probes.
 
 Run the existing hosted Copilot-CLI fixture on its supported public route and
 separately verify private Basic and Standard paths with explicit authorization.
