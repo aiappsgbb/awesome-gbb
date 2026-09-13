@@ -746,8 +746,10 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
             )
             continue
 
+        pinned_specifier = pinned.strip()
+        pinned_release = re.sub(r"^(?:~=|==)\s*", "", pinned_specifier)
         latest = (data.get("info") or {}).get("version")
-        if not latest or latest == pinned:
+        if not latest or latest == pinned_release:
             continue
 
         old_v = parse_semver(pinned)
@@ -766,11 +768,16 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
         if not is_major and not is_critical_pkg:
             continue
 
+        install_specifier = (
+            pinned_specifier
+            if pinned_specifier.startswith(("~=", "=="))
+            else f"~={pinned_specifier}"
+        )
         body = "\n".join(
             [
                 f"## 🔄 Refresh `{pin.skill}` — PyPI package `{name}` drift",
                 "",
-                f"- **Pinned**: `{name}~={pinned}` (cap window covers patch upgrades)",
+                f"- **Pinned**: `{name}{install_specifier}`",
                 f"- **Latest**: `{name}=={latest}`",
                 f"- **Changelog**: {pkg.get('upstream_changelog', '(none)')}",
                 "",
