@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased — upstream workflow integration
+
+Keep the existing awesome-gbb skill names and entry points; integrate verified
+official workflow changes rather than replacing the catalog.
+
+- [`foundry-routines`](skills/foundry-routines/SKILL.md) MINOR **1.0.6 → 1.1.0**:
+  SDK/azd lifecycle, declarative routines, supported event prerequisites and
+  live-observed update/readback boundaries.
+- [`foundry-skill-catalog`](skills/foundry-skill-catalog/SKILL.md) MAJOR
+  **1.2.0 → 2.0.0**: native versions/default promotion, selected pinned
+  consumption and build-only bundles without a MAF dependency. The entry-point
+  name and adapter constructor remain, but the API/dependency and file-copy
+  migration is explicit; stale selected-output directories fail before writes.
+- [`foundry-evals`](skills/foundry-evals/SKILL.md) MINOR **1.3.2 → 1.4.0**:
+  supported agent-target evaluation, explicit captured-response fallback,
+  numeric per-item results and corrected citation URL checks.
+- [`foundry-toolbox`](skills/foundry-toolbox/SKILL.md) MINOR **2.1.2 → 2.2.0**:
+  direct/nested consent handling, Streamable HTTP approval discovery and exact
+  proxy tool names, retaining GA Toolbox and stable Tool Search.
+- [`foundry-vnet-deploy`](skills/foundry-vnet-deploy/SKILL.md) MINOR
+  **1.2.0 → 1.3.0**: ownership-aware intake and read-only network inventory;
+  vendored templates/Citadel interfaces remain unchanged.
+- Unit CI installs the evaluation transport clients. Pin validation preserves
+  explicit tenant-cache and judge selectors without inheriting unrelated secrets.
+
+Sanitized manual evidence and its limits are recorded with each changed skill.
+Execution on standing CI resources is not a GitHub Actions run or a blanket
+release/quality certification. External event delivery, full OAuth lifecycle,
+private-network runtime inference and the documented routine response-readback
+limitation remain explicitly separate from the proven paths.
+
 ## 4.32.0 — Proposed / Unreleased
 
 **Draft checkpoint, not a release.** Adds

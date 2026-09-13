@@ -4,9 +4,14 @@ You are a developer on a customer team. You just installed the `awesome-gbb`
 Copilot CLI plugin and you want to prove that the `foundry-evals`
 skill works end-to-end against your CI Foundry project.
 
-Do whatever the skill tells you to do. Do NOT improvise from training-data
-knowledge of the Azure SDK — read the skill's `SKILL.md` first, and follow
-its documented contract.
+This is an execution smoke, not a catalog inspection. Read the skill's path
+selection and Day-1 recipe; execute the canonical helper rather than rewriting
+it. Do not change the repository or shared Azure resources/RBAC.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.**
+You ARE the running Copilot CLI process. Do not launch another `copilot`,
+install CLI tooling, or write to the workflow's transcript. Execute the
+steps directly; the workflow already captures the output.
 
 ---
 
@@ -31,26 +36,41 @@ marker (Step 2) with reason `auth context missing: <var-name>` and stop.
 
 ## Step 1 — The goal
 
-Using the `foundry-evals` skill, score one real assistant response with one
-Foundry built-in evaluator and prove a numeric score came back.
+Prove both documented Responses evaluation paths with **one disposable prompt
+agent and two invocations total**. Install the pin's bounded runtime set:
+`azure-ai-projects~=2.6.0`, `azure-identity~=1.25.3`, `openai~=3.8.0`.
+Do not upgrade unrelated tools. The pre-granted caller/project identity roles
+are prerequisites; do not re-grant them or repair shared infrastructure.
 
-The skill documents a two-phase invoke + score pattern: first invoke an
-agent to capture a response, then run an evaluator over that response.
-Create a minimal prompt agent for the invoke phase — per the
-`foundry-prompt-agents` skill (declared as a cross-skill dependency in
-`.github/skill-deps.yml`) — give it a single-sentence instruction like
-"Answer the user's question in one short sentence", send it one trivial
-prompt (e.g. `What is the capital of France?`), and capture the
-assistant's reply.
+Create a minimal prompt agent per `foundry-prompt-agents` (the existing
+cross-skill dependency), with instructions "Answer in one short factual
+sentence. Do not call tools." and the existing CI model below.
 
-Then use `foundry-evals` to score that prompt + response pair with ONE
-built-in evaluator. Pick the cheapest single-turn evaluator the skill
-documents (e.g. `coherence`, `relevance`, `intent_resolution`, or
-`task_adherence`) — do NOT run the full suite. Verify the evaluator
-returned a numeric score (any number is fine; this smoke is not asserting
-quality, only that the eval pipeline returned a result).
+Put `skills/foundry-evals/references/python` on `sys.path`, then import the
+**real** `smoke_score` and `invoke_and_capture` from `eval_runner`. Never copy
+their bodies into the fixture script:
 
-Then delete the prompt agent.
+1. Call `smoke_score("What is the capital of France?", agent_name=agent.name,
+   agent_version=agent.version, project_client=project, judge_model="gpt-5.4-mini",
+   artifact_path=<private-agent-target-artifact>)`.
+2. Separately call `invoke_and_capture` for the same query and agent, passing
+   `project_client=project`. Pass that actual non-empty text to
+   `smoke_score(query, captured_response, project_client=project,
+   judge_model="gpt-5.4-mini", artifact_path=<private-invoke-score-artifact>)`.
+3. Require both calls to return a finite numeric `coherence` metric and both
+   artifacts to contain one scored output item, a successful terminal status,
+   and `cleanup: deleted`. Agent-target evidence must contain the generated
+   `datasource_item["sample.output_text"]`, not just a submitted query.
+4. In a `finally` block, delete only the disposable agent this run created.
+   Record cleanup even after a scoring failure.
+
+The helper polls at most 300 seconds and deletes only its own disposable evals.
+This smoke checks execution, **not** a universal quality threshold. Do not call
+`decide()` to pretend an execution smoke certifies task or tool quality.
+If agent-target is unavailable, preserve its exact error and FAIL this fixture;
+a working fallback is useful evidence but not proof that both paths passed.
+Do not add an automatic service fallback or replace generated output with
+synthetic answers.
 
 Foundry project endpoint: `$FOUNDRY_PROJECT_ENDPOINT`
 Model deployment available in that project: `gpt-5.4-mini` (use this for
@@ -64,9 +84,10 @@ code. Also read `foundry-prompt-agents` `SKILL.md` for the agent
 create / invoke / delete contract. If the skills' instructions conflict
 with anything you remember from training data, the skills win.
 
-Give every Azure resource you create a CI-safe name that includes a short
-UUID suffix (Pattern 15.3) so parallel runs don't collide. Suggested pattern:
-`ci-smoke-evals-$(uuidgen | cut -c1-8)`.
+Give the disposable agent a `ci-refresh-eval-<short-UUID>` name.
+The canonical helper names each eval/run with the same prefix and its own UUID.
+Keep raw response/evaluator artifacts private; output only aggregate scores,
+status and cleanup. Do not print full per-item payloads to the CI transcript.
 
 ---
 
@@ -76,8 +97,8 @@ Your FINAL action — after cleanup — is to invoke the Bash tool to write the
 marker file. The file's literal byte content is what CI grades; your
 assistant-text reply is NOT graded.
 
-On success (all of: agent created, response captured, evaluator returned a
-numeric score, agent deleted):
+On success (both canonical evaluation paths scored real output, their evals
+deleted, and the disposable agent deleted):
 
 ```bash
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-evals-smoke-result

@@ -57,11 +57,15 @@ AZURE_ENV_MAP = {
 }
 # Additional env vars forwarded to every pin script when present (OIDC, etc.)
 AZURE_EXTRA_ENV = (
+    "AZURE_CONFIG_DIR",
+    "AZD_CONFIG_DIR",
+    "AZURE_TOKEN_CREDENTIALS",
     "AZURE_CLIENT_ID",
     "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID",
     "AZURE_AI_ENDPOINT",
     "ACR_LOGIN_SERVER",
+    "JUDGE_MODEL_DEPLOYMENT",
 )
 
 # Minimal set of env vars inherited by pin scripts (security: no full env leak)

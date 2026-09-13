@@ -69,7 +69,9 @@ jobs:
         # Probe tests and the nine foundry-mcp-aca-jobs modules import
         # their bounded runtime SDKs during unittest discovery. Those
         # imports must resolve before patch.object or local test shims can
-        # isolate Azure calls. See AGENTS.md § 10.3.
+        # isolate Azure calls. Evaluation transport tests also use the real
+        # bounded Projects/OpenAI clients with a mock HTTP transport.
+        # See AGENTS.md § 10.3.
         run: >-
           pip install --quiet
           pyyaml
@@ -83,6 +85,8 @@ jobs:
           "azure-mgmt-resource~=23.1.0"
           "pydantic~=2.13.5"
           "httpx~=0.28.1"
+          "azure-ai-projects~=2.6.0"
+          "openai~=3.8.0"
           "azure-mgmt-appcontainers~=5.0.0"
           "azure-cosmos[aio]~=4.16.4"
           "azure-storage-blob[aio]~=12.30.1"

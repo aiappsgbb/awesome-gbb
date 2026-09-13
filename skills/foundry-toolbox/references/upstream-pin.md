@@ -135,6 +135,28 @@ before `azd ai toolbox create --from-file`.
 
 Run the `validation.script` front-matter block. Expected output contains both `ok ...` lines.
 
+### Additional upstream-alignment evidence — 2026-09-13
+
+Manual acceptance used disposable Toolbox versions in the existing CI project,
+an isolated Azure CLI user identity, `azure-ai-projects` 2.4.0 and MCP 1.29.x.
+No standing connection, role assignment or shared resource was modified.
+
+| Scenario | Observed result |
+|---|---|
+| GA Toolbox version with Microsoft Learn MCP | Authenticated initialize and tools/list succeeded without a preview feature header |
+| Remote tool names | Three tools discovered with the `learn___` prefix, not a dotted label |
+| Canonical `fetch_approval_map` sample | Initialized MCP discovery returned all three `always` approval policies using the Streamable HTTP client |
+| Stable `ToolSearchToolboxTool` | Discovery exposed exactly `tool_search` and `call_tool` |
+| MCP source with missing downstream authentication | Service returned an actual JSON-RPC `-32006` source error |
+| Canonical `toolbox_consent.py` on that live error | Raised `ToolboxConsentError`; did not misclassify it as consent or return an empty successful list |
+| Disposable resources | Toolbox and all its versions deleted |
+
+Direct and nested **positive** consent envelopes are covered by local parser
+regressions using the official documented shapes. This run did not complete a
+new OAuth grant, test revocation, or certify multi-user consent. The prior
+hosting-stack validation date remains separate from this narrower protocol
+acceptance; retain the existing GA/prerelease boundaries.
+
 ## Known issues
 
 ### KI-001 - preview Toolbox feature header
