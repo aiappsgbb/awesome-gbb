@@ -153,6 +153,52 @@ class DetectPkgDriftTest(unittest.TestCase):
         signals = self._run("agent-framework", "1.8.0", "1.8.0")
         self.assertEqual(signals, [], "version in sync must emit nothing")
 
+    def test_in_sync_prefixed_release_emits_nothing(self) -> None:
+        for pinned, latest in (
+            ("~=1.25.3", "1.25.3"),
+            ("==1.25.3", "1.25.3"),
+            ("==1.0.0b260903", "1.0.0b260903"),
+            ("~=1.25", "1.25"),
+            (" ~= 1.25.3 ", "1.25.3"),
+        ):
+            with self.subTest(pinned=pinned):
+                self.assertEqual(self._run("azure-identity", pinned, latest), [])
+
+    def test_prefixed_release_still_reports_real_critical_drift(self) -> None:
+        for pinned, latest in (
+            ("~=1.25.3", "1.25.4"),
+            ("~=1.25.3", "1.26.0"),
+            ("~=1.25.3", "2.0.0"),
+            ("==1.0.0b260730", "1.0.0b260903"),
+            ("==1.0.0b260903", "1.0.0"),
+        ):
+            with self.subTest(pinned=pinned, latest=latest):
+                signals = self._run("azure-identity", pinned, latest)
+                self.assertEqual(len(signals), 1)
+                self.assertIn(f"— `azure-identity` {pinned} → {latest}", signals[0].title)
+
+    def test_report_does_not_duplicate_existing_pin_operator(self) -> None:
+        for pinned, expected in (
+            ("1.25.3", "azure-identity~=1.25.3"),
+            ("~=1.25.3", "azure-identity~=1.25.3"),
+            ("==1.25.3", "azure-identity==1.25.3"),
+        ):
+            with self.subTest(pinned=pinned):
+                signal = self._run("azure-identity", pinned, "1.26.0")[0]
+                self.assertIn(f"- **Pinned**: `{expected}`", signal.body)
+                self.assertNotIn("~=~=", signal.body)
+                self.assertNotIn("~===", signal.body)
+
+    def test_nonfixed_specifiers_do_not_suppress_critical_drift(self) -> None:
+        for pinned in (
+            ">=1.25.3",
+            "==1.25.*",
+            "~=1.25.3,!=1.25.4",
+            "===1.25.3",
+        ):
+            with self.subTest(pinned=pinned):
+                self.assertEqual(len(self._run("azure-identity", pinned, "1.25.3")), 1)
+
 
 class DetectPkgDriftHoldTest(unittest.TestCase):
     """KI-backed package hold (#241 follow-up / fastmcp<3.0.0 regression).

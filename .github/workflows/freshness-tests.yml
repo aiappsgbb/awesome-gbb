@@ -1,0 +1,35 @@
+name: Freshness regression tests
+
+on:
+  pull_request:
+    paths:
+      - "scripts/check-freshness.py"
+      - "scripts/tests/test_check_freshness_*.py"
+      - "scripts/tests/test_freshness_workflow.py"
+      - "scripts/tests/test_build_site_preserves_manual_freshness.py"
+      - "scripts/build-site.py"
+      - "docs/maintenance/manual-skill-freshness.md"
+      - ".github/workflows/freshness-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  freshness-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install offline test dependencies
+        run: pip install --quiet pyyaml requests
+      - name: Run freshness regressions without issue writes
+        run: >-
+          python -m unittest
+          scripts.tests.test_check_freshness_pkg_drift
+          scripts.tests.test_check_freshness_issue_mode
+          scripts.tests.test_build_site_preserves_manual_freshness
+          scripts.tests.test_freshness_workflow
+          -v
