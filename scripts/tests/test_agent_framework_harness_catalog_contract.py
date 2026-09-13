@@ -34,7 +34,7 @@ class AgentFrameworkHarnessCatalogContractTests(unittest.TestCase):
 
     def test_adjacent_skills_route_to_harness_ownership(self) -> None:
         expected_versions = {
-            "foundry-hosted-agents": "2.2.0",
+            "foundry-hosted-agents": "2.2.1",
         }
         for skill, expected_version in expected_versions.items():
             with self.subTest(skill=skill):

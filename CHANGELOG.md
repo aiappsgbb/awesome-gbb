@@ -48,7 +48,9 @@ wiring, an offline construction smoke, and a registered live Foundry fixture.
 - Preserve the unpublished AgentOps and delegated MCP auth candidate status and
   every existing ACA Jobs, MCP auth, and AgentOps catalog entry.
 - Keep deployment, identity, RBAC, rollout, and lifecycle in
-  [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md);
+  [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md)
+  **2.2.1**, whose reciprocal ownership routing now points runtime
+  composition to `agent-framework-harness`;
   deterministic governance remains in
   [`foundry-agt`](skills/foundry-agt/SKILL.md).
 
