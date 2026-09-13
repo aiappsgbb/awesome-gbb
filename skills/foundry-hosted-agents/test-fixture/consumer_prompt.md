@@ -129,6 +129,16 @@ supported way to verify this in the fixture.
 
 ## Step 2 - deploy the canonical container agent
 
+Before the deployment script, classify the existing project's network/setup
+mode using [the shared preflight](../references/deployment-preflight.md).
+This fixture's normal route is public/platform-managed azd; it does not certify
+Basic/Standard private setup. If the selected project is private/injected,
+require fresh operator-provided preflight evidence and run the canonical
+`references/python/deploy_preflight.py` gate before registration. Missing evidence
+is a precise FAIL, not permission to create capability hosts, expose ACR, or
+repurpose this fixture as a private deployment test. Never fabricate path/pull
+receipts to pass the gate. Preserve the existing CI resources.
+
 Use a Bash heredoc to write the following script to
 `/tmp/foundry-hosted-agents-ga-smoke.sh`, then run it once:
 
@@ -313,18 +323,20 @@ endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 with DefaultAzureCredential() as credential, AIProjectClient(
     endpoint=endpoint, credential=credential
 ) as project:
-    # Bounded readiness retry - GA provisioning is typically < 1 minute,
-    # but cold starts vary. Do NOT poll forever.
+    # Two direct GET observations; version LIST is inventory, not readiness.
+    # This metadata gate still needs the actual invocation below.
     version = None
+    consecutive_active = 0
     for attempt in range(18):
         version = project.agents.get_version(agent_name=agent_name, agent_version="1")
-        if version["status"] == "active":
-            break
-        if version["status"] == "failed":
+        if version["status"] == "failed" or version.get("error"):
             raise RuntimeError(f"agent version failed to provision: {dict(version)}")
+        consecutive_active = consecutive_active + 1 if version["status"] == "active" else 0
+        if consecutive_active >= 2:
+            break
         time.sleep(10)
-    assert version is not None and version["status"] == "active", (
-        f"agent version never reached active: {dict(version) if version else None}"
+    assert version is not None and consecutive_active >= 2, (
+        f"agent version never reached two consecutive active GETs: {dict(version) if version else None}"
     )
     protocol_versions = version["definition"]["protocol_versions"]
     assert any(

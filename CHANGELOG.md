@@ -20,7 +20,7 @@ official workflow changes rather than replacing the catalog.
   direct/nested consent handling, Streamable HTTP approval discovery and exact
   proxy tool names, retaining GA Toolbox and stable Tool Search.
 - [`foundry-vnet-deploy`](skills/foundry-vnet-deploy/SKILL.md) MINOR
-  **1.2.0 → 1.3.0**: ownership-aware intake and read-only network inventory;
+  **1.2.1 → 1.3.0**: ownership-aware intake and read-only network inventory;
   vendored templates/Citadel interfaces remain unchanged.
 - Unit CI installs the evaluation transport clients. Pin validation preserves
   explicit tenant-cache and judge selectors without inheriting unrelated secrets.

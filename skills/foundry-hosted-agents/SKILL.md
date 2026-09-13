@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.1.4"
+  version: "2.2.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -57,6 +57,43 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
   ([§ azure.yaml](#azureyaml-unified-hosted-agent-configuration))
 
 > **Choosing a model?** See [`references/model-selection.md`](references/model-selection.md) for the model / region / capacity / data-residency decision before you `azd provision`.
+
+## Deployment preflight
+
+**Platform-managed compute does not mean that private project setup is optional.**
+Before hosted registration, select the account/project/network mode and follow
+the single [deployment preflight and evidence contract](references/deployment-preflight.md).
+Run its read-only `references/python/deploy_preflight.py` gate on fresh,
+operator-collected observations. It performs no Azure calls or repairs.
+
+| Selected route | Capability-host prerequisite before registration |
+|---|---|
+| Public, platform-managed azd setup | Let the selected template/platform own setup; do not add manual capability hosts from legacy instructions. Raw/legacy public provisioning needs its own explicit contract review. |
+| Private Basic, including raw SDK or brownfield azd | Read the **project** capability-host inventory and exact host GET. Require `Agents` / `Succeeded`, no BYO stores. The canonical Basic template has a project host only; no customer-created account host is required by that template. |
+| Private Standard/BYO | Verify the account host/subnet and project host with the selected existing BYO connection names. Preserve hosts, connections and stores. |
+
+For a missing Basic project host, stop and request explicit authorization to use
+only the [existing project-host module](../foundry-vnet-deploy/templates/basic-vnet/modules-network-secured/add-project-capability-host.bicep).
+An unreadable inventory is not absence. A failed, incompatible or BYO host is
+not permission to recreate it; use
+[`foundry-caphost-lifecycle`](../foundry-caphost-lifecycle/SKILL.md) to inspect.
+`azd deploy` against a pre-existing project does not certify these prerequisites.
+
+The gate also checks project/model scope, actual operator/runtime-path evidence,
+mode-appropriate project-MI ACR pull access/policy, immutable image and the selected
+runtime cohort. Preserve the default container identity and verify writable
+`/home/session/.sessions`; a fixed UID can break the native mounted session home.
+Keep management and runtime environments separate. Do not change pins merely
+because another working deployment uses a different tested cohort.
+
+**Registration, readiness, invocation and business proof are separate.** LIST
+versions is inventory, not readiness: require two consecutive **direct version
+GET** observations, then exact endpoint routing, authenticated invocation and the
+real requested tool result with independent audit. Account `Succeeded`, image
+build, LIST `active`, health, or a noop are insufficient. Lost create ACK means
+reconcile existing versions against the frozen definition before any retry.
+Retain old versions and signed bindings; changed image/version/identity requires
+a new exact observation and association. A prompt agent is not an automatic substitute.
 
 ---
 
@@ -496,6 +533,7 @@ LangGraph state-graph requirements).
 | [`references/docker/Dockerfile`](references/docker/Dockerfile) | § Dependencies (pyproject.toml) → Dockerfile |
 | [`references/yaml/azure.yaml`](references/yaml/azure.yaml) | § azure.yaml (unified hosted-agent configuration) — the single source of truth for hosted-agent config, replacing the old `agent.yaml` + `agent.manifest.yaml` two-file contract |
 | [`references/python/version_rollout.py`](references/python/version_rollout.py) | § Version rollout patterns (blue-green / canary / rollback) |
+| [`references/python/deploy_preflight.py`](references/python/deploy_preflight.py) | § Deployment preflight |
 
 > **⚠️ Deprecation: `ChatAgent` is gone in MAF 1.6.0**
 >
@@ -1680,6 +1718,13 @@ against a real project, using the stable `azure-ai-projects` 2.3.0
 surface. Import it from your tooling; do NOT redefine inline (per
 AGENTS.md § 7 SSOT rule).
 
+This routing example is not the deployment preflight or a business acceptance
+test. Complete the [shared prerequisite and evidence contract](references/deployment-preflight.md)
+for the selected mode first. `wait_for_active` requires two consecutive direct
+GETs but cannot certify a native session or tool result. Do not rerun a create
+after losing its ACK: reconcile frozen inputs first, and retain every version,
+image, identity and signed association.
+
 ### Blue-green example (atomic 0 -> 100 % cutover)
 
 ```python
@@ -1917,7 +1962,8 @@ deployment update --capacity <N>` — no agent redeploy needed.
 | `Experience not available for this subscription` | Region doesn't support hosted agents | Try a region from the current [§ Region Availability](#region-availability) list |
 | Eval items have empty responses | Concurrent eval requests overwhelm cold-start container | Use sequential eval with warm-up request first (see `run_evals()` in evals.py) |
 | Agent skips evidence-gathering tools and emits hollow packets | gpt-5.4-mini tool-call discipline degrades on long instruction chains (10+ steps); model calls commit-tool before evidence is ready | Two complementary fixes: (1) switch `MODEL_DEPLOYMENT_NAME` to `gpt-5.4` (full); (2) make commit-tools refuse hollow inputs server-side via the validate-or-reject pattern in `foundry-mcp-aca`. Recent strict-smoke runs showed low reproducibility with mini + permissive MCP and high reproducibility with gpt-5.4 + validate-or-reject. |
-| `Managed environment provisioning timed out` | CapabilityHost was manually created/deleted | Do NOT create CapabilityHosts — platform manages infrastructure automatically |
+| `Managed environment provisioning timed out` / `ProvisioningError` | Generic failure; missing private project setup is one possible prerequisite failure, not a proven universal cause | Follow [Deployment preflight](#deployment-preflight): private Basic requires a project `Agents` / `Succeeded` host; Standard also requires its account/BYO contract. Never blanket-create/delete hosts. Preserve direct version GET errors and stop after bounded observation; platform-managed compute alone does not prove project setup. |
+| Private ACR image pull fails | Project generation, project-MI permissions, registry policy or private reachability may be incompatible | [Learn checked 2026-09-12](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent): projects created **after June 25, 2026** support private registries. Verify `systemData.createdAt`, registry permission mode and `azureADAuthenticationAsArmPolicy`, then actual pull path. Older/unknown/boundary date requires review, never automatic public exposure. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING is reserved` (HTTP 400 `invalid_request_error` at `create_version`) | Set in `azure.yaml` `environmentVariables` OR `HostedAgentDefinition.environment_variables` (e.g. as escape-hatch when platform auto-injection silently failed) | Remove it. Cannot be escape-hatched. You MUST guard `configure_azure_monitor()` defensively in `container.py` instead — use `_init_telemetry()` from `foundry-observability` (gap O-011). Observed in hosted-agent validation |
 | Agent traces not appearing in AppInsights | Agent identities lack `Monitoring Metrics Publisher` (GUID `3913510d-...`) OR AppInsights connection missing on account. **IMPORTANT:** GUID `f526a384-...` is "Azure Event Hubs Data Owner" — a completely wrong role despite being mislabeled in some references. When `DisableLocalAuth: false`, RBAC is not required — ikey auth works | Assign `Monitoring Metrics Publisher` RBAC to both identity principal IDs. Create `AppInsights` connection on the **account** (not project): category `AppInsights`, target = ARM resource ID, metadata `ApiType: Azure`. |
 | **Hosted agent returns `server_error`/`model:""` on every smoke; AppIn 0 rows; `azd ai agent show` reports active** | `container.py` calls raw `configure_azure_monitor()` as the first line of `main()` with no try/except. When the platform fails to auto-inject `APPLICATIONINSIGHTS_CONNECTION_STRING` (e.g. AppIn account-level connection persisted with `credentials: null`), the SDK raises `ValueError`. Container crashes before `ResponsesHostServer` binds. Foundry runtime sees no agent. **The agent itself is fine — telemetry init is what killed it.** | Wrap telemetry init in `_init_telemetry()` (no-ops on missing env / SDK ImportError / any SDK exception). Never call `configure_azure_monitor()` raw at module/main scope. See `foundry-observability` gap row O-011 |
@@ -2052,7 +2098,7 @@ azd env set WEATHER_AGENT_ID "$AGENT_NAME"
 | `extra_body={"agent_reference": ...}` | `get_openai_client(agent_name=...)` |
 | Shared project MI | Dedicated agent Entra identity |
 | Manual `start`/`stop` | Automatic compute lifecycle |
-| `ENABLE_CAPABILITY_HOST=true` | `ENABLE_CAPABILITY_HOST=false` — NO CapabilityHost creation |
+| `ENABLE_CAPABILITY_HOST=true` | Historical public/platform-managed template flag only: `ENABLE_CAPABILITY_HOST=false` is NOT an instruction to omit a private Basic **project** host or overwrite a Standard/BYO host. See [Deployment preflight](#deployment-preflight). |
 | `project_client.agents.list()` at startup | `TL_SUB_AGENTS` env var (avoids blocking readiness) |
 | `azure.ai.projects` (sync) in container | `azure.ai.projects.aio` (ASYNC) — sync silently fails |
 
