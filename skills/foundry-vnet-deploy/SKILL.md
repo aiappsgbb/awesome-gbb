@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -167,9 +167,22 @@ not overwrite them with Basic defaults.
 
 Before starting, verify:
 
-1. Run `az account show` to confirm the user is logged in to Azure CLI.
-2. If NOT logged in, indicate that they must run `az login` first.
-3. Show the current subscription and ask whether it is correct.
+1. Apply `azure-tenant-isolation` before the first Azure command in each shell:
+   both isolated CLI config directories and the approved tenant/subscription
+   must be explicit. Never log in or switch the global default as a diagnostic.
+2. Run `az account show` in that isolated context; confirm the intended target
+   with the user. If authentication is missing, use the tenant-isolation workflow.
+3. Establish the network model and execution location before selecting parameters.
+   The two vendored templates cover **BYO VNet**, not **Managed VNet**. If Managed
+   VNet is requested, stop for a separately approved design rather than treating
+   its outbound rules as interchangeable with these templates.
+4. Ask who owns the VNet, private DNS zones, NSGs/routes and reverse peering,
+   including their resource groups/subscriptions. Reusing resources does not
+   authorize editing them. Collect existing IaC and identify additive changes;
+   keep the vendored templates and their Citadel interfaces intact.
+5. Record where each caller runs (agent runtime, SDK client, browser/Playground)
+   and how it reaches private DNS and TCP 443. A management-plane check from
+   outside the VNet cannot establish those runtime paths.
 
 ### Step 2: Subscription and Resource Group
 
@@ -513,6 +526,44 @@ param apimDnsZoneResourceId = '{apimDnsZoneResourceId}'
 param apimDnsZoneLinkName = '{apimDnsZoneLinkName}'  // default 'foundry-spoke-link'
 ```
 
+### Step 9a: Read-only network inventory
+
+For an **existing** Foundry account and existing agent subnet, run the canonical
+helper before proposing reuse, after a failed deployment, and again during
+Step 11. For greenfield resources not yet created, record this check as pending
+until they exist; do not create resources just to make the probe run.
+
+| Canonical reference | Purpose |
+|---|---|
+| [`references/python/network_inventory.py`](references/python/network_inventory.py) | Tenant-checked, read-only account posture, account-side PE approvals and agent-subnet delegation/SAL inventory. |
+
+After tenant isolation, use the approved resource names (the VNet can be in a
+different resource group **within the selected subscription**):
+
+```bash
+python3 "$SKILL_DIR/references/python/network_inventory.py" \
+  --resource-group "$RG" --account "$ACCOUNT" \
+  --vnet-resource-group "$VNET_RG" --vnet "$VNET" --subnet "$AGENT_SUBNET"
+```
+
+Set `SKILL_DIR` to this skill's absolute directory. The helper requires Python 3
+and an already authenticated Azure CLI; it installs nothing. It returns **0**
+when these limited control-plane checks have no blockers, **1** for observed
+private-posture blockers, or **2** when inspection is unavailable (auth, missing
+resource, permissions, timeout or unexpected response). A failed read is not an
+empty successful inventory. All reads use the approved subscription explicitly
+after verifying CLI tenant/subscription; no login, role grant or network mutation
+is performed. The report omits resource IDs and credentials.
+
+`runtime_connectivity: NOT_TESTED` is intentional even on exit 0. Account-side
+PE approval does not prove the PE is on the intended route, DNS is linked, or
+agent/tool authentication works. The inventory does not prove that the account
+is bound to the supplied subnet. A SAL can be normal for an existing deployment;
+its presence **or absence** does not authorize subnet reuse or purge. Review
+ownership, the chosen template and the existing capability hosts separately.
+Cross-subscription DNS, peerings and BYO datastore roles still require the
+specific checks in Steps 8, 11 and 12D; this helper does not certify them.
+
 ### Step 10: Confirm and deploy
 
 1. Show a **complete summary** of the configuration to the user, including:
@@ -570,42 +621,21 @@ follow these steps to retry without duplicating resources:
 1. **Reuse the SAME timestamp** (`$deployTimestamp`) as the original attempt. This is
    the most important thing to avoid duplication.
 
-2. **Check whether the Account Capability Host was created internally** despite the timeout.
-   Azure sometimes completes the operation after ARM reports a timeout:
-   ```powershell
-   # Try to create again — if it returns "Conflict" with provisioningState: Succeeded,
-   # it means it already exists and works correctly
-   az rest --method PUT \
-     --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/capabilityHosts/{capHostName}?api-version=2025-04-01-preview" \
-     --body "@caphost-body.json" \
-     --headers "Content-Type=application/json"
-   ```
-   
-   If the error is `Conflict` with `provisioning state: Succeeded` → the caphost **already exists**.
-   In that case, create the **Project Capability Host** directly via the REST API:
-   ```powershell
-   # Get the project's connection names
-   az rest --method GET \
-     --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/projects/{projectName}/connections?api-version=2025-04-01-preview" \
-     --query "value[].{name:name, category:properties.category}" -o table
+2. **Inspect before any retry.** Read the deployment operations from Step 10,
+   run `network_inventory.py` from Step 9a for resources that exist, and use the
+   capability-host **GET** checks in Step 11.4 for the selected template.
+   Azure can complete an operation after a client timeout. Do not use PUT as
+   an existence probe, infer success from a 409, or launch another write while
+   provisioning is still in progress. A 403 or unavailable inventory is not
+   evidence that a resource is absent.
 
-   # Create the project caphost with the connections
-   # Body: {"properties":{"capabilityHostKind":"Agents","vectorStoreConnections":["searchConn"],"storageConnections":["storageConn"],"threadStorageConnections":["cosmosConn"]}}
-   az rest --method PUT \
-     --url "https://management.azure.com/subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{accountName}/projects/{projectName}/capabilityHosts/caphost?api-version=2025-04-01-preview" \
-     --body "@project-caphost-body.json" \
-     --headers "Content-Type=application/json"
-   ```
-
-3. **If duplicate resources were created** (because of retrying without fixing the timestamp),
-   identify and delete them:
-   ```powershell
-   # List resources — look for names with a suffix different from the original
-   az resource list --resource-group {rg} --query "[].name" -o tsv
-   
-   # Delete duplicates (those that do NOT have the original suffix)
-   az resource delete --ids {duplicate_resource_id}
-   ```
+3. **Review the failure and get approval for the proposed recovery.** Preserve
+   the original timestamp, parameter file and resource identities. If the subnet
+   is still associated with an earlier deployment, stop and use
+   `foundry-caphost-lifecycle` to review ownership and teardown implications.
+   Do not automatically purge the account, change VNet names, remove a SAL or
+   delete resources by suffix: they may belong to an existing workload.
+   A genuinely new VNet or teardown is a new approved plan, not an implicit retry.
 
 4. **Re-run the full deployment** with the original timestamp:
    ```
@@ -617,14 +647,21 @@ follow these steps to retry without duplicating resources:
      --name "foundry-vnet-retry-{deployTimestamp}"
    ```
 
-5. If the Account Capability Host keeps failing with a timeout after 2 attempts,
-   use the direct REST API path (step 2 of this block) to create the capability
-   hosts manually and then run the remaining role assignments via Bicep or CLI.
+5. If the same deterministic error recurs after two approved attempts, stop
+   unchanged retries. Report the failed resource type, provisioning state and
+   error code, and hand off capability-host repair to `foundry-caphost-lifecycle`.
+   Do not bypass the template with manual writes to shared hosts or role grants.
 
 ### Step 11: Post-deployment verification
 
 After the deployment (successful or after completing the retry steps), run ALL these
 checks and present the results to the user as a status table.
+
+Repeat Step 9a against the deployed account/subnet. Label this result
+**control-plane only**. Keep runtime DNS, TCP 443 and authenticated agent/tool
+checks from the actual caller network separate. If that network is unavailable,
+report **NOT_TESTED**, not a successful private deployment; never enable public
+access or loosen network policy to make a validation pass.
 
 > **basic-vnet verification differences.** On `templates/basic-vnet`:
 > - **Private Endpoints:** expect **2** (AI Services + Monitor PLS) or **3**
@@ -1089,13 +1126,18 @@ After successful verification, remind the user:
 6. The Bicep files live under the **`templates/` subfolder of this skill**, one directory per template: `templates/standard-agent/` (BYO Search/Storage/Cosmos — template 15) and `templates/basic-vnet/` (platform-managed storage — template 11). Step 0 selects which one; set `TEMPLATE_DIR` to that directory and use it (`main.bicep`, `main.bicepparam`, `modules-network-secured/`) as the deployment working directory — copy them out to a workspace folder first if you want to keep the originals pristine.
 7. If the user passed a one-line scenario hint when invoking the skill (see the **Goal** section), use it to pre-fill values whenever possible.
 8. **Always generate and store a fixed `deploymentTimestamp`** before the first deployment. Pass it as `--parameters deploymentTimestamp={timestamp}` on every attempt (including retries). This guarantees that `uniqueSuffix` is identical and resources are not duplicated.
-9. **On retries**, first verify whether the Account Capability Host completed internally (via REST API PUT → look for "Conflict" error with "Succeeded"). If it already exists, create the Project Capability Host directly via the REST API and then re-run the full deployment with the same timestamp to complete the role assignments.
+9. **On retries**, inspect deployment operations, the read-only network inventory
+   and the selected template's capability-host GET state first. Follow Step 10b:
+   no PUT probes, no automatic purge/deletion, and no retry while provisioning
+   is still in progress. Keep the same timestamp unless a new plan is approved.
 10. **Citadel hub integration is opt-in via Step 8d.** When the spoke will be onboarded as a Citadel hub spoke, complete Step 12D (hub team creates the reverse peering, all three pre-flight checks pass) **before** running `citadel-spoke-onboarding`. Otherwise the injected APIM Foundry connection's first call will time out — either no route to the hub, or no DNS resolution for `{apim}.azure-api.net`.
 
 ---
 
 ## 5. References
 
+- **Manual inventory acceptance (2026-09-13):** the canonical helper was run against existing CI account/subnet resources, including an account and VNet in separate resource groups. It reported public access, no approved PEs and the existing SAL without changing resources; private-posture blockers returned exit 1. A nonexistent account returned exit 2, not an empty success. The approved-PE/no-blocker branch is unit-tested only. This evidence covers the added read-only diagnostics, not a new deployment, recovery, private DNS/TCP or inference E2E; `runtime_connectivity` remains `NOT_TESTED`. Vendored templates were not changed.
+- **Networking workflow integration** — the [official private-network workflow](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/a55fe6da7e24cbcf4331aafb903e4a070a35e972/plugins/azure-skills/skills/microsoft-foundry/resource/private-network/private-network.md) informs the ownership/caller-path intake and separation of control-plane checks from runtime testing. It does not replace our vendored templates or authorize automatic VNet replacement. For the read-only subnet inspection surface, see [Microsoft Learn — diagnose blocking subnet resources](https://learn.microsoft.com/troubleshoot/azure/virtual-network/virtual-network-troubleshoot-cannot-delete-modify-subnet#diagnose-blocking-resources).
 - **Foundry Samples** — [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) — Bicep template set under `templates/` derives from this Foundry samples reference.
 - **Agent networking deep-dive** — hosted vs prompt agent traffic paths, the ~1-IP-per-10-pods allocation model, subnet sizing against the **50-session platform cap** (per subscription/region), hosted-vs-prompt revision IP behavior, and subnet-exhaustion signals: [`references/agent-networking.md`](references/agent-networking.md).
 - **Agent tools behind the VNet** — the tool-by-tool reachability matrix (through-subnet / through-PE / backbone / public / unsupported), isolation feature limits, the **public-ACR-for-hosted-agents** and **can't-change-the-delegated-subnet** gotchas, the firewall FQDN allowlist, and troubleshooting: [`references/agent-tools-network-isolation.md`](references/agent-tools-network-isolation.md).

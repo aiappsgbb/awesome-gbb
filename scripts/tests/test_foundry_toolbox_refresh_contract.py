@@ -674,10 +674,10 @@ class FoundryToolboxValidationDateContractTests(unittest.TestCase):
         identifier and validation-date assertions as independent guards.
         """
         skill_meta = _frontmatter(SKILL.read_text(encoding="utf-8"))["metadata"]
-        self.assertEqual(
-            str(skill_meta["version"]),
-            "2.1.2",
-            "The delegated-auth boundary correction must retain its PATCH version.",
+        self.assertGreaterEqual(
+            tuple(int(part) for part in str(skill_meta["version"]).split(".")),
+            (2, 1, 2),
+            "Later additive versions must retain the delegated-auth boundary correction.",
         )
 
 
@@ -1520,9 +1520,9 @@ class FoundryToolboxCatalogHistoryIdentifierTests(unittest.TestCase):
 
     def test_version_advances_for_the_auth_boundary_correction(self) -> None:
         version = str(_frontmatter(self.text)["metadata"]["version"])
-        self.assertEqual(
-            version,
-            "2.1.2",
+        self.assertGreaterEqual(
+            tuple(int(part) for part in version.split(".")),
+            (2, 1, 2),
             "Auth boundary guidance follows the retained 2.1.1 correction.",
         )
 

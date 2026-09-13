@@ -1,38 +1,39 @@
-"""FoundrySkillsSource — verified-working SkillsSource for the
-Foundry Skills REST API.
+"""Canonical version-aware Foundry Skills consumer.
 
-Drop this file into your hosted agent's source tree and wire it into
-`SkillsProvider(source=FoundrySkillsSource(...))`. See
-`skills/foundry-skill-catalog/SKILL.md` § "Pattern B" for the full wiring.
+Source of truth for `../SKILL.md § Pattern B — Runtime fetch via `FoundrySkillsSource` (recommended for shared catalogs)`.
 
-Verified against:
-- azure-ai-projects 2.1.0
-- agent-framework  1.3.0
-- azure-identity   1.26.0b2
-
-JSON-mode skills (`has_blob: false`) are write-only at the API level — their
-`instructions` body is never returned by GET / list / download. This source
-returns a placeholder InlineSkill for them so the agent at least sees the
-skill exists; recommend re-importing those skills as ZIP-mode for full
-runtime use.
+The original two-argument constructor and async get_skills interface remain.
+Native catalogs resolve default_version once, then download that immutable
+version. Optional skill_versions selects only named skills and pins versions.
+Only explicitly legacy has_blob metadata enables the old download/placeholder
+behavior; provider failures never trigger a downgrade.
+Copy skill_packages.py beside this adapter.
 """
 
 from __future__ import annotations
 
 import asyncio
-import io
-import zipfile
+import inspect
+from collections.abc import Mapping
 
+import agent_framework
 from agent_framework import InlineSkill, Skill, SkillsSource
 from azure.ai.projects import AIProjectClient
+
+from skill_packages import SkillPackage, download_catalog, skill_archive, validate_selection
 
 
 class FoundrySkillsSource(SkillsSource):
     """Pull skills from a Foundry project's Skills REST API."""
 
-    def __init__(self, project_endpoint: str, credential) -> None:
+    def __init__(
+        self, project_endpoint: str, credential, *,
+        skill_versions: Mapping[str, str | None] | None = None,
+    ) -> None:
+        validate_selection(skill_versions)
         self._endpoint = project_endpoint
         self._credential = credential
+        self._skill_versions = None if skill_versions is None else dict(skill_versions)
 
     async def get_skills(self) -> list[Skill]:
         return await asyncio.to_thread(self._collect)
@@ -44,41 +45,26 @@ class FoundrySkillsSource(SkillsSource):
             credential=self._credential,
             allow_preview=True,
         ) as project:
-            for summary in project.beta.skills.list():
-                if summary.has_blob:
-                    out.append(self._from_zip(project, summary))
+            for package in download_catalog(project, self._skill_versions):
+                if package.content is not None:
+                    raw, _ = skill_archive(package.content)
+                    instructions = self._strip_frontmatter(raw)
                 else:
-                    out.append(self._from_json_placeholder(summary))
+                    instructions = package.description or (
+                        f"[Foundry legacy JSON-mode skill '{package.name}' — body not retrievable. "
+                        "Republish through the native versioned API.]"
+                    )
+                out.append(self._inline_skill(package.name, package.description, instructions))
         return out
 
-    def _from_zip(self, project, summary) -> InlineSkill:
-        zip_bytes = b"".join(project.beta.skills.download(summary.name))
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            md_name = next(
-                (n for n in z.namelist() if n.lower().endswith("skill.md")),
-                None,
+    @staticmethod
+    def _inline_skill(name: str, description: str, instructions: str) -> InlineSkill:
+        if "frontmatter" in inspect.signature(InlineSkill).parameters:
+            return InlineSkill(
+                frontmatter=agent_framework.SkillFrontmatter(name=name, description=description),
+                instructions=instructions,
             )
-            if md_name is None:
-                raise RuntimeError(
-                    f"Skill '{summary.name}' downloaded ZIP has no SKILL.md"
-                )
-            raw = z.read(md_name).decode("utf-8")
-        return InlineSkill(
-            name=summary.name,
-            description=summary.description or "",
-            instructions=self._strip_frontmatter(raw),
-        )
-
-    def _from_json_placeholder(self, summary) -> InlineSkill:
-        return InlineSkill(
-            name=summary.name,
-            description=summary.description or "",
-            instructions=(
-                summary.description
-                or f"[Foundry JSON-mode skill '{summary.name}' — body not "
-                f"retrievable from the API. Re-import as a ZIP to fix.]"
-            ),
-        )
+        return InlineSkill(name=name, description=description, instructions=instructions)
 
     @staticmethod
     def _strip_frontmatter(raw: str) -> str:

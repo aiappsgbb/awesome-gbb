@@ -1,5 +1,6 @@
-"""sync_skills.py — azd predeploy hook that bundles Foundry skills into the
-agent image at build time (Pattern A from foundry-skill-catalog).
+"""Canonical version-aware azd predeploy skill bundler.
+
+Source of truth for `../SKILL.md § Pattern A — Build-time bundle (the GHCP-SDK approach)`.
 
 Run this from azure.yaml:
 
@@ -12,66 +13,91 @@ Run this from azure.yaml:
           shell: sh
           run: uv run python scripts/sync_skills.py
 
-Skips JSON-mode skills (their body is not retrievable from the API — see
-the foundry-skill-catalog skill for the documented write-only trap).
+Copy skill_packages.py alongside this file; MAF is not required. Native inline and ZIP
+versions both have downloadable content. Only explicitly legacy has_blob=False
+skills are skipped, with a warning. Errors never become successful fallbacks.
 
 Required env:
 - FOUNDRY_PROJECT_ENDPOINT (e.g. https://<account>.services.ai.azure.com/api/projects/<project>)
 - AZURE_CONFIG_DIR set per-tenant (see azure-tenant-isolation)
+
+Optional env:
+- FOUNDRY_SKILL_VERSIONS: JSON object mapping selected names to numeric version
+  strings or null (follow default). Omitted loads all; {} requires an empty
+  skill target. Explicit selection rejects unselected directories before writes.
+- FOUNDRY_SKILLS_TARGET: dedicated output directory; defaults to src/skills.
 """
 
 from __future__ import annotations
 
-import io
+import json
 import os
+import shutil
 import sys
-import zipfile
 from pathlib import Path
 
-from azure.identity import DefaultAzureCredential
-from azure.ai.projects import AIProjectClient
+from skill_packages import download_catalog, skill_archive, validate_selection
+
+
+def selection_from_env(raw: str | None):
+    if raw is None:
+        return None
+    selection = json.loads(raw)
+    if not isinstance(selection, dict):
+        raise ValueError("FOUNDRY_SKILL_VERSIONS must be a JSON object")
+    validate_selection(selection)
+    return selection
+
+
+def bundle_skills(project, target: Path, skill_versions=None) -> dict[str, int]:
+    validate_selection(skill_versions)
+    if skill_versions is not None and target.exists():
+        unexpected = [
+            entry.name for entry in target.iterdir()
+            if entry.name == "SKILL.md"
+            or ((entry.is_dir() or entry.is_symlink()) and entry.name not in skill_versions)
+        ]
+        if unexpected:
+            raise ValueError("Explicit selection has unselected entries; use a clean target directory")
+    packages = download_catalog(project, skill_versions)
+    prepared = []
+    skipped = 0
+    for package in packages:
+        validate_selection({package.name: None})
+        if package.content is None:
+            if (target / package.name).exists():
+                raise ValueError("Legacy skip would retain stale instructions; use a clean target directory")
+            skipped += 1
+            continue
+        _, files = skill_archive(package.content)
+        destination = target / package.name
+        if destination.is_symlink():
+            raise ValueError("Refusing to replace a symlinked skill directory")
+        prepared.append((destination, files))
+    for destination, files in prepared:
+        if destination.exists():
+            shutil.rmtree(destination)
+        for relative, content in files.items():
+            path = destination / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+    return {"bundled": len(prepared), "skipped_legacy": skipped}
 
 
 def main() -> int:
-    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    target = Path(__file__).resolve().parent.parent / "src" / "skills"
-    target.mkdir(parents=True, exist_ok=True)
+    from azure.identity import DefaultAzureCredential
+    from azure.ai.projects import AIProjectClient
 
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    default_target = Path(__file__).resolve().parent.parent / "src" / "skills"
+    target = Path(os.environ.get("FOUNDRY_SKILLS_TARGET", default_target))
+    selection = selection_from_env(os.environ.get("FOUNDRY_SKILL_VERSIONS"))
     with (
         DefaultAzureCredential() as cred,
         AIProjectClient(endpoint=endpoint, credential=cred, allow_preview=True) as project,
     ):
-        skills = list(project.beta.skills.list())
-        if not skills:
-            print(f"[sync_skills] no skills published in {endpoint}; nothing to bundle.")
-            return 0
-
-        zipped = 0
-        skipped_json = 0
-        for s in skills:
-            if not s.has_blob:
-                print(
-                    f"[sync_skills] skip JSON-mode skill {s.name!r} "
-                    f"(body unretrievable; re-import as ZIP)"
-                )
-                skipped_json += 1
-                continue
-            zip_bytes = b"".join(project.beta.skills.download(s.name))
-            skill_dir = target / s.name
-            skill_dir.mkdir(parents=True, exist_ok=True)
-            # Wipe any prior contents so deletions in Foundry are reflected
-            for p in skill_dir.rglob("*"):
-                if p.is_file():
-                    p.unlink()
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-                z.extractall(skill_dir)
-            print(f"[sync_skills] unpacked {s.name!r} → {skill_dir}")
-            zipped += 1
-
-        print(
-            f"[sync_skills] done: {zipped} bundled, {skipped_json} skipped, "
-            f"target={target}"
-        )
+        result = bundle_skills(project, target, selection)
+    print(f"[sync_skills] bundled={result['bundled']} skipped_legacy={result['skipped_legacy']}")
     return 0
 
 

@@ -43,9 +43,9 @@ import re
 from typing import Any
 
 # Default pattern for Microsoft Learn URLs. Swap for your domain:
-#   GitHub Copilot CLI corpus  → r"\[([^\]]+)\]\(https://docs\.github\.com/[^\)]+\)"
-#   Internal Confluence corpus → r"\[([^\]]+)\]\(https://wiki\.example\.com/[^\)]+\)"
-LEARN_URL_PATTERN = re.compile(r"\[([^\]]+)\]\(https://learn\.microsoft\.com/[^\)]+\)")
+#   GitHub Copilot CLI corpus  → r"\[[^\]]+\]\((https://docs\.github\.com/[^\)]+)\)"
+#   Internal Confluence corpus → r"\[[^\]]+\]\((https://wiki\.example\.com/[^\)]+)\)"
+LEARN_URL_PATTERN = re.compile(r"\[[^\]]+\]\((https://learn\.microsoft\.com/[^\)]+)\)")
 
 
 def grade_citation_present(item: dict[str, Any]) -> dict[str, Any]:

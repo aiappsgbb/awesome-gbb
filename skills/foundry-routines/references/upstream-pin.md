@@ -9,8 +9,8 @@ upstream:
     Routines are a PREVIEW feature exposed under the `client.beta.routines`
     surface in azure-ai-projects 2.2.0+. The SDK proxy auto-injects the
     `Foundry-Features: Routines=V1Preview` REST header on every call.
-    Regional preview: East US, East US 2, West US, West US 2, West Central
-    US, North Central US, Sweden Central, Japan East.
+    The SDK lifecycle pin is independent of the additive azd workflow.
+    Check the current service documentation for regional availability.
 
 packages:
   - name: azure-ai-projects
@@ -18,9 +18,9 @@ packages:
     version: "2.4.0"
     upstream_changelog: https://pypi.org/project/azure-ai-projects/#history
     notes: |
-      First version that ships the routines surface (client.beta.routines)
-      with the _OperationMethodHeaderProxy that auto-sets the
-      Foundry-Features header. Earlier 2.1.x versions do NOT have
+      Current validated routines package. The routines surface first
+      appeared in 2.2.0 with the _OperationMethodHeaderProxy that
+      auto-sets the Foundry-Features header. Earlier 2.1.x versions do NOT have
       client.beta.routines and raise AttributeError.
   - name: azure-identity
     source: pypi
@@ -43,34 +43,31 @@ docs_to_revalidate:
 
 known_issues:
   - id: KI-001
-    title: "azd ai routine create --trigger schedule inline form not supported in preview"
+    title: "Routine CLI aliases differ from manifest wire types"
     description: |
-      The azd extension's `--trigger schedule --cron …` inline-flag form
-      is timer-only in preview. Schedule (recurring) routines MUST be
-      created from a YAML manifest via `azd ai routine create --file
-      routine.yaml` OR via the Python SDK (preferred per Pattern 16 —
-      the preview CLI flag surface drifts between releases).
+      Use --trigger recurring for flag-only creation, but type: schedule
+      and cron_expression in a manifest. Stored action.input requires
+      a manifest because create has no --input flag. The existing SDK
+      path remains available. CLI acceptance is separate from this pin.
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § 8 limitation 7.
   - id: KI-002
-    title: "azd ai routine does not list run history"
+    title: "Routine history uses the nested run list command"
     description: |
-      The preview azd extension exposes `routine list` and routine CRUD
-      but NOT a `routine list-runs` (or equivalent). Use the Python SDK
-      (`client.beta.routines.list_runs(routine_name=...)`), the REST API,
-      or the Foundry portal to inspect run history.
+      azd ai routine run list exposes history, with --top, --filter and
+      --output json. routine list lists definitions, not runs. SDK
+      client.beta.routines.list_runs, REST and portal remain alternatives.
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § 6 and § 8 limitation 8.
   - id: KI-003
-    title: "Regional preview — eight regions only"
+    title: "Regional availability and feature enablement must be checked"
     description: |
-      Routines are not available in every Foundry region. The 8 preview
-      regions are: East US, East US 2, West US, West US 2, West Central US,
-      North Central US, Sweden Central, Japan East. Project creation in
-      any other region will not expose the routines surface even after
-      installing azure-ai-projects 2.2.0.
+      The historical eight-region list is not the current allowlist.
+      Check the current service documentation and feature enablement for
+      the target project. The September 2026 how-to excludes UK West,
+      Switzerland West, Japan West, UAE North and Norway East.
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § 2 and § 8 limitation 4.
@@ -85,6 +82,18 @@ known_issues:
     upstream_url: null
     status: documented
     notes: Documented in SKILL.md § 2 prereq 2 and § 8 limitation 6.
+  - id: KI-005
+    title: "Trigger definition updates can be immutable on the deployed service"
+    description: |
+      Live acceptance with routines extension 1.0.0-beta.6 observed two
+      boundaries: --cron updates require a default trigger, and changing
+      a named trigger's cron_expression through --file returned UserError
+      Routine trigger cannot be changed after creation. A description-only
+      update must preserve the complete trigger definition. Do not assume
+      that create_or_update or --force bypasses service immutability.
+    upstream_url: null
+    status: documented
+    notes: See azd-routines.md imperative lifecycle and the acceptance evidence.
 
 validation:
   requires:
@@ -129,7 +138,7 @@ validation:
 
 last_validated: 2026-08-17
 validated_by: copilot-bot
-known_issues_count: 4
+known_issues_count: 5
 ---
 
 # Upstream pin — `foundry-routines` skill
@@ -202,8 +211,9 @@ pinned `azure-ai-projects` version. It proves:
 > in the `copilot-cli-matrix` job of `.github/workflows/skill-test.yml`
 > against the project at `<ci-foundry-project>`. That fixture proves the
 > end-to-end create → dispatch → list → cleanup cycle works against a
-> real Foundry deployment. This pin script is the import-surface gate
-> for weekly drift detection.
+> real Foundry deployment. It covers the SDK lifecycle only, not the
+> new CLI/declarative/event paths in `azd-routines.md`. This pin script
+> is the import-surface gate for weekly drift detection.
 
 ---
 
@@ -218,60 +228,53 @@ pinned `azure-ai-projects` version. It proves:
 
 Captured at `last_validated: 2026-08-17` by `copilot-bot`.
 
+Additional, separately scoped **manual** acceptance on 2026-09-13 verified the
+current SDK lifecycle and the azd imperative/declarative paths; see
+[`azd-routines.md`](azd-routines.md#evidence-and-acceptance-boundary) for the
+operation-by-operation results and live-discovered update constraints. This
+does not relabel the historical CI run or certify connector event delivery
+and creator-identity opt-in.
+
 ---
 
 ## 5. Known issues at this pin
 
-### KI-001 — `azd ai routine create --trigger schedule` inline form not supported
+### KI-001 — Routine CLI aliases differ from manifest wire types
 
-**Upstream tracker:** none (preview-CLI gap, documented in
+**Upstream tracker:** none (CLI vocabulary, documented in
 `learn.microsoft.com/azure/foundry/agents/how-to/use-routines`)
 **Status:** documented
 
-The azd extension's inline-flag form (`--trigger schedule --cron …`) is
-**timer-only** in preview. Recurring schedule routines MUST be created
-from a YAML manifest:
+The inline CLI alias is `--trigger recurring`, while the manifest uses
+`type: schedule` and `cron_expression`. Stored `action.input` requires
+a manifest; `create` does not accept an `--input` flag. See
+[`azd-routines.md`](azd-routines.md) for the targeted commands. The Python
+SDK `client.beta.routines.create_or_update(...)` remains supported by the
+existing consumer contract; neither preview surface is described as GA.
 
-```bash
-azd extension install azure.ai.routines
-azd ai routine create --file routine.yaml
-```
-
-**Workaround (preferred):** use the Python SDK
-`client.beta.routines.create_or_update(...)` — see SKILL.md § 3. Per
-catalog Pattern 16, preview-CLI flag surfaces drift between releases;
-the SDK is the GA-stable contract.
-
-### KI-002 — `azd ai routine` does not list run history
+### KI-002 — Routine history uses the nested run list command
 
 **Upstream tracker:** none
 **Status:** documented
 
-The preview azd extension does not surface `list_runs`. To inspect run
-history use:
+`azd ai routine list` lists definitions, not runs. To inspect run history use:
 
+- CLI: `azd ai routine run list` with `--top`, `--filter`, `--output json`
+  and the explicit project endpoint shown in `azd-routines.md`
 - Python SDK: `client.beta.routines.list_runs(routine_name=...)`
 - REST: `GET {endpoint}/routines/{name}/runs` with
   `Foundry-Features: Routines=V1Preview` header
 - Foundry portal: routine detail page run table
 
-### KI-003 — Regional preview (8 regions only)
+### KI-003 — Regional availability and feature enablement
 
 **Upstream tracker:** none (regional rollout in progress)
 **Status:** documented
 
-Available regions as of the pin date:
-
-- East US, East US 2
-- West US, West US 2
-- West Central US, North Central US
-- Sweden Central
-- Japan East
-
-Provisioning a Foundry project in any other region will not expose the
-routines surface even with a routines-capable SDK installed. The CI
-infrastructure for this catalog (`<ci-foundry-project>` in Sweden Central)
-qualifies; verify your project's region before relying on routines.
+The pin's historical region list must not be used as a current allowlist.
+The September 2026 how-to excludes UK West, Switzerland West, Japan West,
+UAE North and Norway East. Verify current documentation and feature
+enablement on the target project before relying on routines.
 
 ### KI-004 — Prompt-only agents without configured agent identity are rejected
 
@@ -284,6 +287,17 @@ prompt-only agent without a configured agent identity. Use:
 - A prompt-agent version published via `project.agents.create_version(...)`
   (see `foundry-prompt-agents` § 3) — these have an agent identity by default.
 - A hosted agent deployed via `azd up` (see `foundry-hosted-agents`).
+
+### KI-005 — Trigger definition updates may be immutable
+
+Observed live on 2026-09-13 with `azd` 1.27.0 and routines extension
+`1.0.0-beta.6`: inline `--cron` could not address a non-`default` trigger.
+Updating that named trigger through a manifest reached the service, which
+rejected a changed cron expression with
+`Routine trigger cannot be changed after creation`. The old definition
+remained intact. A description-only manifest update with the original trigger
+succeeded. See [`azd-routines.md`](azd-routines.md) for the safe replacement
+boundary; CLI flag availability is not proof that the service accepts an update.
 
 ---
 

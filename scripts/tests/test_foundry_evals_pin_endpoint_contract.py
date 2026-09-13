@@ -308,6 +308,40 @@ class FoundryEvalsPinEndpointContractTests(unittest.TestCase):
         self.assertIn(PROJECT_ENV, required)
         self.assertNotIn(ACCOUNT_ENV, required)
 
+    def test_pin_resolves_canonical_source_from_runner_working_directory(self) -> None:
+        prefix, separator, _ = self.script.partition("EXPECTED_SHA=")
+        self.assertTrue(separator, "Missing boundary before pin network operations")
+        with tempfile.TemporaryDirectory(prefix="eval-pin-cwd-", dir=ROOT) as cwd:
+            env = os.environ.copy()
+            env.pop("WORKDIR", None)
+            env[self.rpv.PIN_VALIDATION_REPO_ROOT_ENV] = str(ROOT)
+            env[PROJECT_ENV] = "https://example.test/api/projects/unit"
+            completed = subprocess.run(
+                ["bash", "-c", prefix + """
+test -f "$ROOT_DIR/skills/foundry-evals/references/python/eval_runner.py"
+printf '%s\\n' "$ROOT_DIR" "$WORKDIR"
+"""],
+                cwd=cwd, env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            source_root, workdir = completed.stdout.strip().splitlines()
+            self.assertEqual(pathlib.Path(source_root).resolve(), ROOT.resolve())
+            self.assertTrue(pathlib.Path(workdir).resolve().is_relative_to(pathlib.Path(cwd).resolve()))
+
+    def test_pin_source_root_falls_back_to_manual_repo_cwd(self) -> None:
+        prefix, separator, _ = self.script.partition("EXPECTED_SHA=")
+        self.assertTrue(separator)
+        env = os.environ.copy()
+        env.pop(self.rpv.PIN_VALIDATION_REPO_ROOT_ENV, None)
+        env.pop("WORKDIR", None)
+        env[PROJECT_ENV] = "https://example.test/api/projects/unit"
+        completed = subprocess.run(
+            ["bash", "-c", prefix + '\nprintf "%s\\n" "$ROOT_DIR"'],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(pathlib.Path(completed.stdout.strip()).resolve(), ROOT.resolve())
+
     def test_evals_pin_never_mentions_account_endpoint(self) -> None:
         """Prose mirror + notes must not point refreshers at the wrong secret."""
         self.assertNotIn(ACCOUNT_ENV, EVALS_PIN.read_text(encoding="utf-8"))
