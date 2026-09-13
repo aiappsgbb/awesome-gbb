@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import httpx
-from openai import OpenAI
+from openai import APIStatusError, OpenAI
 import yaml
 
 
@@ -231,6 +233,131 @@ class EvalRunnerTests(unittest.TestCase):
         text = (REFERENCES.parents[1] / "SKILL.md").read_text()
         self.assertFalse("target type does **NOT** correctly route" in text,
                          "The universal agent-target ban is obsolete.")
+
+
+class EvalBudgetTests(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.delays = {}
+        self.requests = []
+        self.pages = 0
+        self.paginate = False
+        self.fail_stage = None
+
+        def handle(request):
+            if request.method == "DELETE":
+                stage = "cleanup"
+            elif request.url.path.endswith("/output_items"):
+                self.pages += 1
+                stage = f"page-{self.pages}"
+            elif request.method == "POST":
+                stage = "definition" if request.url.path.endswith("/evals") else "run"
+            else:
+                stage = "retrieve"
+            self.requests.append((stage, dict(request.extensions["timeout"]), request.url))
+            self.now += self.delays.get(stage, 0)
+            if self.fail_stage == stage:
+                return httpx.Response(503, json={"error": {"message": "unavailable"}})
+            if stage == "definition":
+                return httpx.Response(200, json={"id": "eval-budget", "object": "eval"})
+            if stage == "cleanup":
+                return httpx.Response(200, json={"id": "eval-budget", "deleted": True})
+            if stage.startswith("page-"):
+                return httpx.Response(200, json={
+                    "object": "list",
+                    "data": [{
+                        "id": "item-one", "object": "eval.run.output_item",
+                        "datasource_item": {"query": "Capital?", "response": "Paris."},
+                        "results": [{"name": "coherence", "score": 5.0}],
+                    }] if stage == "page-1" else [],
+                    "has_more": self.paginate and stage == "page-1",
+                })
+            return httpx.Response(200, json={
+                "id": "run-budget", "object": "eval.run", "status": "completed",
+            })
+
+        # Deliberately retain the SDK's default retries and request timeout.
+        self.client = OpenAI(
+            api_key="unit-test-only", base_url="https://unit.test/v1",
+            http_client=httpx.Client(transport=httpx.MockTransport(handle)),
+        )
+        self.addCleanup(self.client.close)
+        self.project = SimpleNamespace(get_openai_client=lambda: self.client)
+        clock = patch.object(runner.time, "monotonic", side_effect=lambda: self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def score(self, **kwargs):
+        return runner.smoke_score(
+            "Capital?", "Paris.", project_client=self.project, judge_model="judge",
+            timeout_seconds=kwargs.pop("timeout_seconds", 300), **kwargs,
+        )
+
+    def test_completed_retrieve_after_601_seconds_cannot_pass_300_second_budget(self):
+        self.delays["retrieve"] = 601
+        with self.assertRaisesRegex(TimeoutError, "timed out"):
+            self.score()
+        self.assertEqual([stage for stage, _, _ in self.requests],
+                         ["definition", "run", "retrieve", "cleanup"])
+
+    def test_definition_and_run_creation_are_inside_the_same_budget(self):
+        for stage in ("definition", "run"):
+            with self.subTest(stage=stage):
+                self.now = 0
+                self.pages = 0
+                self.requests.clear()
+                self.delays = {stage: 301}
+                with self.assertRaisesRegex(TimeoutError, "timed out"):
+                    self.score()
+                self.assertEqual(self.requests[-1][0], "cleanup")
+                self.assertFalse(any(s == "retrieve" for s, _, _ in self.requests))
+
+    def test_first_and_subsequent_output_pages_cannot_return_late_scores(self):
+        self.paginate = True
+        for stage in ("page-1", "page-2"):
+            with self.subTest(stage=stage):
+                self.now = 0
+                self.pages = 0
+                self.requests.clear()
+                self.delays = {stage: 301}
+                with self.assertRaisesRegex(TimeoutError, "timed out"):
+                    self.score()
+
+    def test_every_page_uses_remaining_budget_and_cleanup_has_separate_budget(self):
+        self.paginate = True
+        self.delays = dict.fromkeys(["definition", "run", "retrieve", "page-1", "page-2"], 1)
+        self.assertEqual(self.score(timeout_seconds=10), {"coherence": 5.0})
+        evaluation_calls = [(stage, timeouts, url) for stage, timeouts, url in self.requests
+                            if stage != "cleanup"]
+        self.assertEqual([s for s, _, _ in evaluation_calls],
+                         ["definition", "run", "retrieve", "page-1", "page-2"])
+        for (_, timeouts, _), remaining in zip(evaluation_calls, [10, 9, 8, 7, 6]):
+            self.assertTrue(all(0 < value <= remaining for value in timeouts.values()), timeouts)
+        self.assertEqual(evaluation_calls[-1][2].params["after"], "item-one")
+        cleanup_timeouts = self.requests[-1][1]
+        self.assertTrue(all(0 < value <= 30 for value in cleanup_timeouts.values()))
+
+    def test_sdk_retries_are_disabled_for_evaluation_requests(self):
+        self.fail_stage = "retrieve"
+        with patch("openai._base_client.time.sleep"):
+            with self.assertRaises(APIStatusError):
+                self.score()
+        self.assertEqual(sum(stage == "retrieve" for stage, _, _ in self.requests), 1)
+
+    def test_cleanup_does_not_retry_or_change_the_score_interface(self):
+        self.fail_stage = "cleanup"
+        with patch("openai._base_client.time.sleep"), patch("sys.stderr", io.StringIO()):
+            self.assertEqual(self.score(), {"coherence": 5.0})
+        self.assertEqual(sum(stage == "cleanup" for stage, _, _ in self.requests), 1)
+
+    def test_late_cleanup_is_recorded_as_unverified_not_deleted(self):
+        self.delays["cleanup"] = 31
+        with tempfile.TemporaryDirectory(prefix="eval-budget-", dir=ROOT) as directory:
+            artifact = Path(directory) / "evidence.json"
+            with patch("sys.stderr", io.StringIO()):
+                self.assertEqual(self.score(artifact_path=artifact), {"coherence": 5.0})
+            report = json.loads(artifact.read_text())
+        self.assertEqual(report["cleanup"], "unverified: TimeoutError")
 
 
 if __name__ == "__main__":

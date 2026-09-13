@@ -119,6 +119,12 @@ The static pin smoke proves a real numeric evaluation result and disposable
 eval cleanup, not agent invocation, quality acceptance or all hosted protocols.
 `last_run_summary` and its EVAL-201 artifact contract are unchanged.
 
+The 1.4.1 runner applies one acceptance deadline to eval/run creation, polling
+and each output page. Per-request HTTP timeouts use the remaining budget and
+SDK retries are disabled; results arriving after the deadline are rejected.
+Cleanup has a separate 30-second request/acceptance budget. These per-I/O
+timeouts and post-call checks do not provide hard wall-clock cancellation.
+
 ## 2. Verification checklist (executable mirror)
 
 CI runs this credentialed pin only via `--include-azure`. Standard pin

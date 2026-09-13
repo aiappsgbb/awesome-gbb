@@ -13,12 +13,15 @@ official workflow changes rather than replacing the catalog.
   consumption and build-only bundles without a MAF dependency. The entry-point
   name and adapter constructor remain, but the API/dependency and file-copy
   migration is explicit; stale selected-output directories fail before writes.
-- [`foundry-evals`](skills/foundry-evals/SKILL.md) MINOR **1.3.2 → 1.4.0**:
+- [`foundry-evals`](skills/foundry-evals/SKILL.md) MINOR **1.3.2 → 1.4.1**:
   supported agent-target evaluation, explicit captured-response fallback,
-  numeric per-item results and corrected citation URL checks.
+  numeric per-item results and corrected citation URL checks. Review fixes
+  share the timeout budget across HTTP calls/pages, reject late results and
+  bound cleanup separately.
 - [`foundry-toolbox`](skills/foundry-toolbox/SKILL.md) MINOR **2.1.2 → 2.2.0**:
   direct/nested consent handling, Streamable HTTP approval discovery and exact
-  proxy tool names, retaining GA Toolbox and stable Tool Search.
+  proxy tool names through Copilot SDK registration/dispatch, retaining GA
+  Toolbox and stable Tool Search.
 - [`foundry-vnet-deploy`](skills/foundry-vnet-deploy/SKILL.md) MINOR
   **1.2.1 → 1.3.0**: ownership-aware intake and read-only network inventory;
   vendored templates/Citadel interfaces remain unchanged.

@@ -14,7 +14,7 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # Foundry Agent Evaluations
@@ -1055,8 +1055,17 @@ gate, business acceptance test, or production certification.
    ```
 
 4. The helper uses the project's **OpenAI sub-client**, sends query-only
-   agent-target input, polls for at most 300 seconds, downloads the scored item,
-   and preserves zero scores. A missing/non-finite score or failed/unfinished run
+   agent-target input, and shares a default **300-second acceptance budget**
+   across eval/run creation, polling and every result page. Each request uses
+   the remaining budget as its HTTP per-I/O timeout, with SDK retries disabled.
+   It checks the deadline after blocking calls and before accepting scores.
+   Cleanup gets a separate 30-second request/acceptance budget, without retries;
+   late/failed cleanup is reported as unverified. These are **not hard wall-clock
+   cancellation guarantees**: HTTP timeouts apply per I/O phase, and token
+   acquisition or a transport may overrun before returning. An outer process
+   supervisor is needed for a strict wall-clock kill. Explicit invocation in
+   invoke-score mode occurs before this scoring budget.
+   The helper preserves zero scores. A missing/non-finite score or failed/unfinished run
    is an execution failure. Coherence uses a **1–5 scale**; `3` is an illustrative
    threshold, not universal policy. Exit 0/1 reflects that chosen threshold.
 5. When the target surface requires explicit invocation, use

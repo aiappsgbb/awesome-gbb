@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
+import asyncio
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,6 +130,35 @@ class ToolboxConsentTests(unittest.TestCase):
         self.assertIn("await session.list_tools()", section)
         self.assertNotIn("resp.json()", section)
         self.assertNotIn("httpx.AsyncClient", section)
+
+    def test_copilot_bridge_preserves_discovered_tool_names_round_trip(self) -> None:
+        section = SKILL.read_text(encoding="utf-8").split(
+            "### Pattern D — GitHub Copilot SDK (bridge)", 1
+        )[1].split("\n---", 1)[0]
+        block = re.search(r"```python\n(.*?)```", section, re.DOTALL).group(1)
+        tree = ast.parse(block)
+        statements = [
+            node for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "tool_handler"
+            or isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "copilot_tools" for target in node.targets)
+        ]
+        called = []
+
+        async def call_tool(name, arguments):
+            called.append((name, arguments))
+            return "ok"
+
+        names = ["learn___microsoft_docs_search", "azure_ai_search"]
+        namespace = {
+            "bridge": SimpleNamespace(call_tool=call_tool),
+            "mcp_tools": [{"name": name} for name in names],
+        }
+        exec(compile(ast.Module(body=statements, type_ignores=[]), str(SKILL), "exec"), namespace)
+        self.assertEqual([tool["name"] for tool in namespace["copilot_tools"]], names)
+        for name in names:
+            asyncio.run(namespace["tool_handler"](name, {"query": "test"}))
+        self.assertEqual([name for name, _ in called], names)
 
 
 if __name__ == "__main__":

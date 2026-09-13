@@ -22,6 +22,9 @@ from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
 
+CLEANUP_TIMEOUT_SECONDS = 30.0
+
+
 def invoke_and_capture(prompt: str, agent_name: str, *, project_client) -> str:
     """Invoke the selected agent via its Responses endpoint; reject empty output."""
     client = project_client.get_openai_client(agent_name=agent_name)
@@ -49,6 +52,10 @@ def smoke_score(
     Without agent_name, response must contain the actual captured agent text.
     With agent_name, only the query is submitted; the service invokes the agent.
     There is deliberately no automatic fallback on service/auth/schema failures.
+    timeout_seconds is a shared acceptance budget for eval creation, polling and
+    result pages. Each request gets the remaining per-I/O timeout with no retries;
+    late returns are rejected. This is not hard wall-clock cancellation.
+    Cleanup has a separate 30-second request/acceptance budget.
     """
     if not prompt.strip():
         raise ValueError("A non-empty query is required")
@@ -57,6 +64,14 @@ def smoke_score(
     judge_model = judge_model or os.environ.get("JUDGE_MODEL_DEPLOYMENT")
     if not judge_model:
         raise ValueError("Set JUDGE_MODEL_DEPLOYMENT to an existing chat deployment")
+    deadline = time.monotonic() + timeout_seconds
+
+    def remaining_budget() -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Evaluation timed out before results could be accepted")
+        return remaining
+
     credential = None
     owns_project = project_client is None
     if owns_project:
@@ -66,7 +81,7 @@ def smoke_score(
             or os.environ["AZURE_AI_PROJECT_ENDPOINT"],
             credential=credential,
         )
-    client = project_client.get_openai_client()
+    client = project_client.get_openai_client().with_options(max_retries=0)
     eval_id = None
     run_id = None
     report = {"mode": "agent-target" if agent_name else "invoke-score"}
@@ -77,6 +92,7 @@ def smoke_score(
             fields["response"] = {"type": "string"}
             row["response"] = response
         definition = client.evals.create(
+            timeout=remaining_budget(),
             name=name or f"ci-refresh-eval-{uuid.uuid4().hex[:8]}",
             data_source_config={
                 "type": "custom",
@@ -98,6 +114,7 @@ def smoke_score(
         )
         eval_id = definition.id
         report["eval_id"] = eval_id
+        remaining_budget()
         source = {
             "type": "jsonl",
             "source": {"type": "file_content", "content": [{"item": row}]},
@@ -119,26 +136,36 @@ def smoke_score(
             })
         run = client.evals.runs.create(
             eval_id=eval_id, name=f"ci-refresh-eval-run-{uuid.uuid4().hex[:8]}",
-            data_source=source,
+            data_source=source, timeout=remaining_budget(),
         )
         run_id = run.id
         report["run_id"] = run_id
-        deadline = time.monotonic() + timeout_seconds
-        while time.monotonic() < deadline:
-            run = client.evals.runs.retrieve(eval_id=eval_id, run_id=run_id)
+        remaining_budget()
+        while True:
+            run = client.evals.runs.retrieve(
+                eval_id=eval_id, run_id=run_id, timeout=remaining_budget(),
+            )
+            remaining_budget()
             report["status"] = run.status
             if run.status in {"completed", "succeeded"}:
                 break
             if run.status in {"failed", "error", "canceled", "cancelled"}:
                 report["error"] = str(getattr(run, "error", None))
                 raise RuntimeError(f"Evaluation run {run.status}: {report['error']}")
-            time.sleep(min(poll_seconds, max(0, deadline - time.monotonic())))
-        else:
-            raise TimeoutError("Evaluation timed out before a successful terminal state")
-        items = [
-            item.model_dump()
-            for item in client.evals.runs.output_items.list(eval_id=eval_id, run_id=run_id)
-        ]
+            time.sleep(min(poll_seconds, remaining_budget()))
+        items = []
+        cursor = {}
+        while True:
+            page = client.evals.runs.output_items.list(
+                eval_id=eval_id, run_id=run_id, timeout=remaining_budget(), **cursor,
+            )
+            remaining_budget()
+            items.extend(item.model_dump() for item in page.data)
+            if not page.has_next_page():
+                break
+            # Explicit requests avoid auto-pagination reusing the first page's timeout.
+            cursor = {"after": page.data[-1].id}
+        remaining_budget()
         report["output_items"] = items
         if len(items) != 1:
             raise RuntimeError(f"Expected one scored output item, got {len(items)}")
@@ -158,12 +185,16 @@ def smoke_score(
             raise RuntimeError("Evaluation output has no unambiguous numeric coherence score")
         if not math.isfinite(scores[0]):
             raise RuntimeError("Evaluation output score is not finite")
+        remaining_budget()
         report["metrics"] = {"coherence": float(scores[0])}
         return report["metrics"]
     finally:
         if eval_id:
             try:
-                client.evals.delete(eval_id)
+                cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+                client.evals.delete(eval_id, timeout=CLEANUP_TIMEOUT_SECONDS)
+                if time.monotonic() >= cleanup_deadline:
+                    raise TimeoutError("Cleanup returned after its separate budget")
                 report["cleanup"] = "deleted"
             except Exception as exc:
                 report["cleanup"] = f"unverified: {type(exc).__name__}"

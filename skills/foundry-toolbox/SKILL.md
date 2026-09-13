@@ -474,8 +474,9 @@ tools = await toolbox.get_tools()
 
 ### Pattern D — GitHub Copilot SDK (bridge)
 
-The Copilot SDK rejects tool names containing dots, so you need a small
-bridge that replaces `.` with `_` on the way out and back on the way in:
+Toolbox discovery returns SDK-compatible names such as
+`learn___microsoft_docs_search` and `azure_ai_search`. Register and dispatch
+those names verbatim through the application's existing bridge:
 
 ```python
 bridge = McpBridge(endpoint=TOOLBOX_ENDPOINT, token=_get_toolbox_token())
@@ -484,7 +485,7 @@ mcp_tools = await bridge.list_tools()
 
 copilot_tools = [
     {
-        "name": t["name"].replace(".", "_"),
+        "name": t["name"],
         "description": t.get("description", ""),
         "parameters": t.get("inputSchema", {}),
     }
@@ -492,8 +493,7 @@ copilot_tools = [
 ]
 
 async def tool_handler(name: str, arguments: dict) -> str:
-    # Restore the first underscore back to a dot for MCP routing
-    return await bridge.call_tool(name.replace("_", ".", 1), arguments)
+    return await bridge.call_tool(name, arguments)
 
 agent = Agent(
     tools=copilot_tools,
@@ -502,10 +502,10 @@ agent = Agent(
 )
 ```
 
-`replace("_", ".", 1)` handles the standard `{server_label}.{tool_name}`
-shape — only the first underscore is converted back. Tools with
-underscores in the trailing component (e.g. `github.list_repos`) survive
-the round-trip.
+Never reverse underscores into dots: underscores are part of the original
+name, including the Toolbox's triple-underscore separator. If a different
+server supplies names the SDK rejects, use an explicit, collision-checked
+alias-to-original map in that adapter; do not infer names with replacements.
 
 ---
 
@@ -1164,7 +1164,7 @@ SPEC § 7c).
 | `400 Multiple tools without identifiers` | More than one unnamed tool in the version (any types) | Leave at most one tool unnamed; give the rest a unique `name` (or `server_label` for MCP) |
 | `CONSENT_REQUIRED` inside `-32006` | OAuth grant needed by a tool source | Decode direct/nested consent with the canonical parser, show the URL to the intended user, await consent, then retry |
 | `401` on MCP calls | Expired token or wrong audience | Distinguish the boundary: `https://ai.azure.com/.default` is for Toolbox, not the custom MCP API; validate that API's audience and connection scopes |
-| Tool name not found | MCP names are prefixed with `server_label` | Use `{server_label}.{tool_name}` (or `_` for Copilot SDK) |
+| Tool name not found | Adapter changed the discovered name or omitted the source prefix | Preserve the exact discovered `{server_label}___{tool_name}` through registration and dispatch, including the Copilot SDK bridge |
 
 ---
 
@@ -1188,7 +1188,8 @@ SPEC § 7c).
 - `2.2.0` - integrate direct/nested OAuth consent decoding for BYO clients,
   preserve non-consent failures, correct proxy tool names and approval-map
   transport, and clarify runtime approval enforcement while retaining GA
-  Toolbox and stable Tool Search contracts.
+  Toolbox and stable Tool Search contracts. Preserve discovered names through
+  the Copilot SDK bridge instead of reversing underscores into dots.
 - `2.1.2` - distinguish native OAuth from literal Entra OBO; link the local
   delegated-auth candidate's canonical connection setup and qualify the static
   Prompt bridge and audience-specific troubleshooting. No app-only behavior change.

@@ -64,7 +64,14 @@ their bodies into the fixture script:
 4. In a `finally` block, delete only the disposable agent this run created.
    Record cleanup even after a scoring failure.
 
-The helper polls at most 300 seconds and deletes only its own disposable evals.
+The helper shares a default 300-second acceptance budget across eval/run creation,
+polling and each result page. Every request gets the remaining per-I/O timeout
+and zero SDK retries; late completion or score responses must fail, not pass.
+Cleanup of its own eval has a separate 30-second budget with no retries.
+This is not hard wall-clock cancellation: a blocked I/O/auth operation can
+overrun before control returns, at which point the deadline check rejects it.
+Do not describe the entire fixture or its separate agent invocation as a
+300-second wall-clock guarantee.
 This smoke checks execution, **not** a universal quality threshold. Do not call
 `decide()` to pretend an execution smoke certifies task or tool quality.
 If agent-target is unavailable, preserve its exact error and FAIL this fixture;

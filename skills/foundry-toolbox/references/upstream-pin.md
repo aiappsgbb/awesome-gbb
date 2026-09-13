@@ -146,6 +146,7 @@ No standing connection, role assignment or shared resource was modified.
 | GA Toolbox version with Microsoft Learn MCP | Authenticated initialize and tools/list succeeded without a preview feature header |
 | Remote tool names | Three tools discovered with the `learn___` prefix, not a dotted label |
 | Canonical `fetch_approval_map` sample | Initialized MCP discovery returned all three `always` approval policies using the Streamable HTTP client |
+| Copilot bridge registration/dispatch fragment | The documented handler preserved `learn___microsoft_docs_search` through discovery and a real `tools/call`; non-error content returned and cleanup readback was 404 |
 | Stable `ToolSearchToolboxTool` | Discovery exposed exactly `tool_search` and `call_tool` |
 | MCP source with missing downstream authentication | Service returned an actual JSON-RPC `-32006` source error |
 | Canonical `toolbox_consent.py` on that live error | Raised `ToolboxConsentError`; did not misclassify it as consent or return an empty successful list |
