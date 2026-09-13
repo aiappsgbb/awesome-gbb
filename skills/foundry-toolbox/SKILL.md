@@ -18,7 +18,7 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.1.1"
+  version: "2.2.0"
   validated: 2026-08-04
 ---
 
@@ -207,14 +207,22 @@ the toolbox's `default_version`.
 
 ## Auth & RBAC
 
-Grant **Azure AI User** on the Foundry project to each identity that
-applies:
+Use **Foundry User** (formerly **Azure AI User**) for developer/Toolbox runtime
+access where a role assignment is required. For end users consuming an agent
+with OAuth passthrough, prefer **Foundry Agent Consumer** where the surface
+supports it; Playground authoring/editing requires Foundry User.
 
 | Identity | Required for | Why |
 |---|---|---|
 | **Developer** | Always | Create / update / promote / delete toolbox versions |
 | **Agent identity (UAMI / agent MI)** | Hosted agents calling tools | Agent calls `tools/call` at runtime |
-| **End user** | OAuth-based MCP or `UserEntraToken` connections | OBO flow proxies the user's Entra token |
+| **End user** | OAuth-based MCP or supported `UserEntraToken` connections | Per-user credentials for the downstream audience; native OAuth is not by itself proof of an Entra OBO exchange |
+
+For custom delegated MCP authentication, use the
+[foundry-mcp-auth candidate](../foundry-mcp-auth/SKILL.md). It distinguishes
+platform identity from downstream user identity. Single-user live execution
+passed for Hosted/Toolbox and the native Prompt/Toolbox bridge; remaining
+Playground, multi-user and lifecycle acceptance gaps are documented separately.
 
 > **Hosted MAF / GHCP agent identity:** the calling identity at runtime
 > is `instance_identity.principal_id`, not the project / account MIs. See
@@ -466,8 +474,9 @@ tools = await toolbox.get_tools()
 
 ### Pattern D — GitHub Copilot SDK (bridge)
 
-The Copilot SDK rejects tool names containing dots, so you need a small
-bridge that replaces `.` with `_` on the way out and back on the way in:
+Toolbox discovery returns SDK-compatible names such as
+`learn___microsoft_docs_search` and `azure_ai_search`. Register and dispatch
+those names verbatim through the application's existing bridge:
 
 ```python
 bridge = McpBridge(endpoint=TOOLBOX_ENDPOINT, token=_get_toolbox_token())
@@ -476,7 +485,7 @@ mcp_tools = await bridge.list_tools()
 
 copilot_tools = [
     {
-        "name": t["name"].replace(".", "_"),
+        "name": t["name"],
         "description": t.get("description", ""),
         "parameters": t.get("inputSchema", {}),
     }
@@ -484,8 +493,7 @@ copilot_tools = [
 ]
 
 async def tool_handler(name: str, arguments: dict) -> str:
-    # Restore the first underscore back to a dot for MCP routing
-    return await bridge.call_tool(name.replace("_", ".", 1), arguments)
+    return await bridge.call_tool(name, arguments)
 
 agent = Agent(
     tools=copilot_tools,
@@ -494,10 +502,10 @@ agent = Agent(
 )
 ```
 
-`replace("_", ".", 1)` handles the standard `{server_label}.{tool_name}`
-shape — only the first underscore is converted back. Tools with
-underscores in the trailing component (e.g. `github.list_repos`) survive
-the round-trip.
+Never reverse underscores into dots: underscores are part of the original
+name, including the Toolbox's triple-underscore separator. If a different
+server supplies names the SDK rejects, use an explicit, collision-checked
+alias-to-original map in that adapter; do not infer names with replacements.
 
 ---
 
@@ -552,7 +560,8 @@ What to check:
 - Each tool has `name`, `description`, `inputSchema`
 - `inputSchema.properties` is present (some MCP servers omit this, which
   breaks OpenAI tool-calling)
-- MCP tool names follow `{server_label}.{tool_name}` shape
+- MCP-sourced tool names follow `{server_label}___{tool_name}` (three
+  underscores); call the exact name returned by discovery, not a dotted alias
 - `_meta.tool_configuration.require_approval` reflects what you set
 
 ---
@@ -727,6 +736,13 @@ explained](https://techcommunity.microsoft.com/blog/microsoftmechanicsblog/token
 
 ### Prompt Agent bridge
 
+> **Not a delegated-user recipe.** The static-token bridge below does not prove
+> the Playground user's identity reaches a nested OAuth MCP. Do not copy a
+> personal token into it to claim passthrough. The live-verified native
+> first-party `UserEntraToken` bridge in
+> [foundry-mcp-auth](../foundry-mcp-auth/SKILL.md) is the delegated recipe;
+> its inner custom MCP connection remains OAuth2 with the MCP's own audience.
+
 Prompt Agents do not yet accept a Toolbox resource directly. For Prompt Agent
 scenarios that need Tool Search, expose the versioned Toolbox endpoint as an
 `MCPTool` and pass one short-lived `https://ai.azure.com/.default` token. This is a
@@ -795,20 +811,15 @@ Reference `github-oauth-conn` from the matching `MCPToolboxTool`.
 
 ### OAuth — custom app registration (BYO)
 
-```yaml
-- kind: connection
-  name: mcp-oauth-custom-conn
-  category: RemoteTool
-  authType: OAuth2
-  target: https://your-mcp-server.example.com
-  authorizationUrl: https://auth.example.com/authorize
-  tokenUrl: https://auth.example.com/token
-  refreshUrl: https://auth.example.com/token
-  scopes: []
-  credentials:
-    clientID: "{{ oauth_client_id }}"
-    clientSecret: "{{ oauth_client_secret }}"
-```
+Use the single
+[connection definition](../foundry-mcp-auth/references/yaml/connection.yaml)
+and [setup contract](../foundry-mcp-auth/references/connection-contract.md).
+The pinned connection CLI uses `credentials.clientId`, an array of custom API
+scopes plus `offline_access`, and credential environment references.
+It must not receive a Microsoft-audience token for the custom endpoint.
+Callback registration, denial and refresh are part of setup, not consequences
+of signing into the portal. The candidate now has single-user live evidence;
+it does not certify every caller, endpoint or consent lifecycle.
 
 ### Agent identity (Entra)
 
@@ -831,6 +842,9 @@ to the agent identity first or `tools/list` returns 0:
 
 ### User Entra token (1P OBO)
 
+This is distinct from custom OAuth. Use it only for a service that explicitly
+supports this mechanism; it is not a universal custom-server or OBO substitute.
+
 For MCP servers that need the calling user's identity (mail, calendar,
 files):
 
@@ -843,11 +857,33 @@ files):
   target: https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools
 ```
 
-> **First-time consent.** OAuth-based MCPs return `CONSENT_REQUIRED`
-> (code `-32006`) on first call with a consent URL in `error.message`.
-> Surface this to the user, have them open the URL in a browser,
-> complete the OAuth flow, then retry. Subsequent calls succeed
-> silently.
+> **First-time consent.** Consent can be required during `initialize`,
+> `tools/list` or `tools/call`, not only on the first tool execution. A
+> Toolbox aggregate failure uses outer JSON-RPC code `-32006`; the outer
+> `error.message` contains a human-readable prefix followed by JSON.
+> The actionable `CONSENT_REQUIRED` code and consent URL are in the
+> nested `errors[].error`, not necessarily in the outer message itself.
+
+**MUST:** For a custom/BYO client, use
+[`extract_consent_requests`](references/python/toolbox_consent.py) to decode
+the JSON-RPC error object. It also accepts the documented direct
+`User consent is required. Please visit: ...` form. Do not JSON-decode the
+entire prefixed aggregate message or interpret every `-32006` as consent.
+Malformed envelopes and non-consent source failures raise
+`ToolboxConsentError`; a mixed-source failure must not become an empty
+successful tool list.
+
+Show each consent URL only to the intended user, identify the connection,
+and pause the affected operation. Do not automatically follow the URL,
+complete consent for another user, or log the opaque URL/query. After the
+user explicitly completes OAuth, retry the original failed operation.
+Revocation, a new user or a new connection can require consent again.
+The parser does not implement token exchange or certify a complete OAuth
+lifecycle; the platform and the connection retain that responsibility.
+
+This integrates the [official Toolbox consumer error contract](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/a55fe6da7e24cbcf4331aafb903e4a070a35e972/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md#handling-consent_required)
+without replacing the GA SDK, stable Tool Search or the canonical
+`FoundryToolbox` wrapper with preview-era equivalents.
 
 ### ARM REST equivalents for connection resources
 
@@ -1051,27 +1087,40 @@ responsibility — the MCP endpoint does NOT block `tools/call`** based on
 this flag.
 
 ```python
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+
 async def fetch_approval_map(endpoint, headers):
-    async with httpx.AsyncClient(headers=headers, timeout=30.0) as hc:
-        resp = await hc.post(
-            endpoint,
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-        )
-        resp.raise_for_status()
-    return {
-        t["name"]: t["_meta"]["tool_configuration"]["require_approval"]
-        for t in resp.json().get("result", {}).get("tools", [])
-        if t.get("_meta", {}).get("tool_configuration", {}).get("require_approval")
-    }
+    async with streamablehttp_client(endpoint, headers=headers) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.list_tools()
+    approval_map = {}
+    for toolbox_tool in result.tools:
+        metadata = toolbox_tool.model_dump(by_alias=True).get("_meta") or {}
+        if not isinstance(metadata, dict):
+            raise ValueError("Malformed tool metadata; cannot determine approval")
+        configuration = metadata.get("tool_configuration", {})
+        if not isinstance(configuration, dict):
+            raise ValueError("Malformed tool configuration; cannot determine approval")
+        if "require_approval" in configuration:
+            approval_map[toolbox_tool.name] = configuration["require_approval"]
+    return approval_map
 ```
 
-In MAF / LangGraph, query at startup, build the approval map, then either:
+Use the MCP transport, not a plain JSON POST: discovery may use Streamable
+HTTP/SSE and requires initialization. RPC/consent errors must surface rather
+than becoming an empty approval map. The map is discovery metadata, not an
+authorization decision or proof that a missing entry is safe to execute.
 
-- inject a system-prompt constraint listing the tools that require user
-  confirmation, OR
-- use a tool-execution interceptor that pauses for human approval (see
-  [`threadlight-hitl-patterns`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns)
-  for the Adaptive Card 1.5 wrapper)
+In MAF / LangGraph, query the selected Toolbox version, build the approval
+map, and enforce it in a tool-execution interceptor that pauses before the
+tool body runs. A system-prompt reminder is not an approval control.
+Bind approval to the requested tool and arguments, and refresh the map when
+the Toolbox version changes. See
+[`threadlight-hitl-patterns`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns)
+for the Adaptive Card 1.5 wrapper.
 
 ---
 
@@ -1113,9 +1162,9 @@ SPEC § 7c).
 | `tools/list` returns 0 tools (built-in) | Toolbox not provisioned yet, or tool unsupported in region | Wait 10s and retry; check region compatibility table |
 | `tools/list` returns fewer tools than expected | `allowed_tools` filter has wrong / misspelled names (case-sensitive) | Remove filter, list all, set exact names from response |
 | `400 Multiple tools without identifiers` | More than one unnamed tool in the version (any types) | Leave at most one tool unnamed; give the rest a unique `name` (or `server_label` for MCP) |
-| `CONSENT_REQUIRED` (`-32006`) | First-time OAuth flow | Open URL from `error.message`, complete consent, retry |
-| `401` on MCP calls | Expired token or wrong scope | Use `https://ai.azure.com/.default`; refresh token |
-| Tool name not found | MCP names are prefixed with `server_label` | Use `{server_label}.{tool_name}` (or `_` for Copilot SDK) |
+| `CONSENT_REQUIRED` inside `-32006` | OAuth grant needed by a tool source | Decode direct/nested consent with the canonical parser, show the URL to the intended user, await consent, then retry |
+| `401` on MCP calls | Expired token or wrong audience | Distinguish the boundary: `https://ai.azure.com/.default` is for Toolbox, not the custom MCP API; validate that API's audience and connection scopes |
+| Tool name not found | Adapter changed the discovered name or omitted the source prefix | Preserve the exact discovered `{server_label}___{tool_name}` through registration and dispatch, including the Copilot SDK bridge |
 
 ---
 
@@ -1136,6 +1185,14 @@ SPEC § 7c).
 
 ## Catalog history
 
+- `2.2.0` - integrate direct/nested OAuth consent decoding for BYO clients,
+  preserve non-consent failures, correct proxy tool names and approval-map
+  transport, and clarify runtime approval enforcement while retaining GA
+  Toolbox and stable Tool Search contracts. Preserve discovered names through
+  the Copilot SDK bridge instead of reversing underscores into dots.
+- `2.1.2` - distinguish native OAuth from literal Entra OBO; link the local
+  delegated-auth candidate's canonical connection setup and qualify the static
+  Prompt bridge and audience-specific troubleshooting. No app-only behavior change.
 - `2.1.1` - post-merge correction: fixture Toolbox delete now runs from a
   `finally` block so a raised assert/get/verification failure still triggers
   best-effort cleanup instead of leaking the CI toolbox; cleanup failures stay

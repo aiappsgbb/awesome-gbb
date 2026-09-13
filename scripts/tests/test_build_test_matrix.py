@@ -18,13 +18,29 @@ runs the assertions.
 from __future__ import annotations
 
 import json
+import copy
+import importlib.util
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import yaml
 
 SCRIPT = Path(__file__).resolve().parents[1] / "build-test-matrix.py"
+ROOT = Path(__file__).resolve().parents[2]
+PREFLIGHT_TEST = Path(__file__).with_name("test_agentops_ci_preflight.py")
+
+
+def _load_preflight_fixture_module():
+    spec = importlib.util.spec_from_file_location("agentops_preflight_fixtures", PREFLIGHT_TEST)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(repo_root: Path) -> list[str]:
@@ -53,6 +69,16 @@ def _run_changed_only(repo_root: Path, base_ref: str) -> list[str]:
     payload = json.loads(out)
     assert isinstance(payload, dict) and "skill" in payload, payload
     return payload["skill"]
+
+
+def _run_diagnostic_mode(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--agentops-diagnostic-mode"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -106,6 +132,247 @@ def _write_deps(repo: Path, mapping: dict[str, list[str]]) -> None:
     (repo / ".github" / "skill-deps.yml").write_text("\n".join(lines) + "\n")
 
 
+class TestAgentOpsHelperChanges(unittest.TestCase):
+    """Exercise the real selection pipeline, isolating only Git diff retrieval."""
+
+    HELPERS = (
+        "scripts/agentops-ci-preflight.py",
+        "scripts/agentops-ci-report.py",
+        "scripts/agentops-ci-diagnostic.py",
+        "scripts/setup-agentops-age.sh",
+    )
+
+    def setUp(self) -> None:
+        spec = importlib.util.spec_from_file_location("matrix_helper_changes", SCRIPT)
+        self.matrix = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.matrix)
+        scratch = ROOT / ".artifacts"
+        scratch.mkdir(exist_ok=True)
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-helper-", dir=scratch)
+        self.addCleanup(workspace.cleanup)
+        self.repo = Path(workspace.name)
+        for name in ("foundry-agentops", "alpha", "beta"):
+            _write_fixture(self.repo, name)
+        _write_quarantine(self.repo)
+        _write_deps(self.repo, {"foundry-agentops": [], "alpha": [], "beta": []})
+
+    def build(self, files: list[str], repo: Path | None = None) -> dict[str, list[str]]:
+        with patch.object(self.matrix, "_diff_filenames", return_value=files):
+            return self.matrix.build(repo or self.repo, changed_only=True, base_ref="baseline")
+
+    def test_actual_catalog_preflight_only_selects_agentops(self) -> None:
+        self.assertEqual(self.build([self.HELPERS[0]], ROOT), {"skill": ["foundry-agentops"]})
+
+    def test_actual_catalog_reporter_only_selects_agentops(self) -> None:
+        self.assertEqual(self.build([self.HELPERS[1]], ROOT), {"skill": ["foundry-agentops"]})
+
+    def test_helpers_use_normal_dependency_fanout_not_full_matrix(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": [], "alpha": ["foundry-agentops"], "beta": []})
+        for helper in self.HELPERS:
+            with self.subTest(helper=helper):
+                self.assertEqual(self.build([helper]), {"skill": ["alpha", "foundry-agentops"]})
+
+    def test_both_helpers_deduplicate_and_preserve_other_touched_skills(self) -> None:
+        self.assertEqual(
+            self.build([*self.HELPERS, "skills/beta/SKILL.md"]),
+            {"skill": ["beta", "foundry-agentops"]},
+        )
+
+    def test_helper_mapping_retains_quarantine_and_missing_fixture_filter(self) -> None:
+        _write_quarantine(self.repo, ["foundry-agentops"])
+        self.assertEqual(self.build(list(self.HELPERS)), {"skill": []})
+        _write_quarantine(self.repo)
+        (self.repo / "skills/foundry-agentops/test-fixture/consumer_prompt.md").unlink()
+        self.assertEqual(self.build(list(self.HELPERS)), {"skill": []})
+
+    def test_only_exact_helper_paths_map_to_agentops(self) -> None:
+        self.assertEqual(
+            self.build(["scripts/agentops-ci-report.py.bak",
+                        "scripts/nested/agentops-ci-preflight.py",
+                        "scripts/another-helper.py"]),
+            {"skill": []},
+        )
+
+    def test_shared_workflow_change_still_forces_full_matrix(self) -> None:
+        self.assertEqual(
+            self.build([self.HELPERS[0], ".github/workflows/skill-test.yml"]),
+            {"skill": ["alpha", "beta", "foundry-agentops"]},
+        )
+
+    def test_other_skill_changes_keep_existing_dependency_expansion(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": [], "alpha": [], "beta": ["alpha"]})
+        self.assertEqual(self.build(["skills/alpha/SKILL.md"]), {"skill": ["alpha", "beta"]})
+
+
+class TestAgentOpsDiagnosticMode(unittest.TestCase):
+    def setUp(self) -> None:
+        fixtures = _load_preflight_fixture_module()
+        self.record = fixtures.diagnostic_approval_record()
+        auth = self.record["authorization"]
+        self.event = {
+            "action": "synchronize",
+            "number": auth["pull_request"],
+            "repository": {"full_name": auth["repository"]},
+            "pull_request": {
+                "number": auth["pull_request"],
+                "head": {
+                    "ref": auth["head_branch"],
+                    "sha": self.record["diagnostic"]["head_sha"],
+                    "repo": {"full_name": auth["repository"]},
+                },
+                "base": {"repo": {"full_name": auth["repository"]}},
+                "labels": [{"name": "agentops-diagnostic"}],
+            },
+        }
+        scratch = ROOT / ".artifacts"
+        scratch.mkdir(exist_ok=True)
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-diagnostic-", dir=scratch)
+        self.addCleanup(workspace.cleanup)
+        self.event_path = Path(workspace.name) / "event.json"
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        self.env = {
+            "PATH": os.environ["PATH"],
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_EVENT_PATH": str(self.event_path),
+            "GITHUB_REPOSITORY": auth["repository"],
+            "GITHUB_RUN_ATTEMPT": "1",
+            "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON": json.dumps(self.record),
+        }
+
+    def test_labeled_authorized_v2_prints_true(self) -> None:
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
+
+    def test_labeled_pretty_json_transport_is_rejected_before_matrix_output(self) -> None:
+        record = json.loads(json.dumps(self.record))
+        canary = "SECRET_CANARY_MUST_NOT_ESCAPE"
+        record["authorization"]["head_branch"] = canary
+        self.event["pull_request"]["head"]["ref"] = canary
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        pretty = json.dumps(record, indent=2)
+        compact = json.dumps(record, separators=(",", ":"))
+        matrix = '{"skill":["foundry-agentops"]}'
+
+        registered = [pretty.strip(), *(line.strip() for line in pretty.splitlines())]
+        self.assertTrue(any(value and value in matrix for value in registered))
+        self.assertFalse(any(value and value in matrix for value in (compact.strip(),)))
+
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = pretty
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertEqual(result.stderr, "INVALID_JSON\n")
+        self.assertNotIn(matrix, result.stdout + result.stderr)
+        self.assertNotIn(canary, result.stdout + result.stderr)
+
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = compact
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
+
+    def test_labeled_compact_json_transport_allows_surrounding_whitespace(self) -> None:
+        compact = json.dumps(self.record, separators=(",", ":"))
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = f" \t{compact}\n"
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "true\n", ""))
+
+    def test_labeled_v2_requires_synchronize_action(self) -> None:
+        original = dict(self.event)
+        for action in (None, "opened", "reopened", "closed", "labeled", "edited"):
+            with self.subTest(action=action):
+                event = dict(original)
+                if action is None:
+                    event.pop("action")
+                else:
+                    event["action"] = action
+                self.event_path.write_text(json.dumps(event), encoding="utf-8")
+                result = _run_diagnostic_mode(self.env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, "CI_CONTEXT\n")
+
+    def test_non_pr_and_unlabeled_pr_print_false_without_reading_secret(self) -> None:
+        toxic = "TOXIC_APPROVAL_MUST_NOT_BE_READ"
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = toxic
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+        self.env["GITHUB_EVENT_NAME"] = "pull_request"
+        self.event["pull_request"]["labels"] = [{"name": "other"}]
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+    def test_non_pr_and_unlabeled_pr_do_not_require_approval(self) -> None:
+        del self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"]
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+        self.env["GITHUB_EVENT_NAME"] = "pull_request"
+        self.event["pull_request"]["labels"] = []
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "false\n", ""))
+
+    def test_non_pr_rejects_multiline_transport_without_validating_approval(self) -> None:
+        self.env["GITHUB_EVENT_NAME"] = "push"
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = '{\n  "expired": true\n}'
+        result = _run_diagnostic_mode(self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            1,
+            "",
+            "INVALID_JSON\n",
+        ))
+
+    def test_labeled_invalid_context_and_approval_fail_closed_without_toxic_output(self) -> None:
+        toxic = "TOXIC_VALUE_MUST_NOT_ESCAPE"
+        cases = [
+            ("malformed-approval", toxic),
+            ("v1", json.dumps(_load_preflight_fixture_module().approval_record())),
+            ("wrong-head", json.dumps({
+                **self.record,
+                "diagnostic": {**self.record["diagnostic"], "head_sha": "c" * 40},
+            })),
+        ]
+        for name, approval in cases:
+            with self.subTest(name=name):
+                self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = approval
+                result = _run_diagnostic_mode(self.env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertRegex(result.stderr, r"\A[A-Z_]+\n\Z")
+                self.assertNotIn(toxic, result.stdout + result.stderr)
+
+        self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"] = json.dumps(self.record)
+        self.event["repository"]["full_name"] = toxic
+        self.event_path.write_text(json.dumps(self.event), encoding="utf-8")
+        result = _run_diagnostic_mode(self.env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertRegex(result.stderr, r"\A[A-Z_]+\n\Z")
+        self.assertNotIn(toxic, result.stdout + result.stderr)
+
+    def test_diagnostic_mode_rejects_combining_matrix_arguments(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--agentops-diagnostic-mode",
+                "--changed-only",
+                "--base-ref",
+                "base",
+            ],
+            cwd=ROOT,
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertRegex(result.stderr, r"\A[A-Z_]+\n\Z")
+
+
 class TestFullMatrix(unittest.TestCase):
     """Behaviour without `--changed-only`: emit every fixtured,
     non-quarantined skill in sorted order."""
@@ -140,6 +407,207 @@ class TestFullMatrix(unittest.TestCase):
                 _write_fixture(repo, name)
             _write_quarantine(repo)
             self.assertEqual(_run(repo), ["alpha", "mu", "zeta"])
+
+    def test_foundry_mcp_aca_jobs_has_approved_dependency_fanout(self) -> None:
+        deps = yaml.safe_load(
+            (ROOT / ".github" / "skill-deps.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            deps["skills"]["foundry-mcp-aca-jobs"]["depends_on"],
+            [
+                "azd-patterns",
+                "foundry-hosted-agents",
+                "foundry-mcp-aca",
+                "foundry-prompt-agents",
+            ],
+        )
+
+
+class TestUnitWorkflowContract(unittest.TestCase):
+    def test_unit_job_budget_covers_template_docker_and_bicep_tests(self) -> None:
+        workflow_text = (
+            ROOT / ".github" / "workflows" / "skill-test.yml"
+        ).read_text(encoding="utf-8")
+        workflow = yaml.safe_load(workflow_text)
+
+        self.assertEqual(workflow["jobs"]["unit-tests"]["timeout-minutes"], 15)
+        self.assertIn(
+            "69-test foundry-mcp-aca-jobs template suite",
+            workflow_text,
+        )
+        self.assertIn("Docker build/run and Bicep compilation", workflow_text)
+
+    def test_unit_install_contains_bounded_mcp_aca_jobs_dependencies(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "skill-test.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        install = next(
+            step
+            for step in workflow["jobs"]["unit-tests"]["steps"]
+            if step.get("name") == "Install deps"
+        )
+        installed = set(shlex.split(install["run"]))
+
+        self.assertIn("--quiet", installed)
+        self.assertTrue(
+            {
+                "pydantic~=2.13.5",
+                "httpx~=0.28.1",
+                "azure-mgmt-appcontainers~=5.0.0",
+                "azure-cosmos[aio]~=4.16.4",
+                "azure-storage-blob[aio]~=12.30.1",
+                "azure-keyvault-secrets~=4.11.2",
+                "azure-monitor-query~=2.0.0",
+                "fastmcp~=4.0.1",
+                "fastmcp-tasks~=4.0.1",
+                "mcp~=2.1.1",
+            }.issubset(installed)
+        )
+
+    def test_clean_unittest_discovery_has_no_failed_test_modules(self) -> None:
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "scripts" / "tests"),
+            pattern="test_*.py",
+        )
+
+        def failed_test_names(candidate: unittest.TestSuite) -> list[str]:
+            names: list[str] = []
+            for item in candidate:
+                if isinstance(item, unittest.TestSuite):
+                    names.extend(failed_test_names(item))
+                elif item.__class__.__name__ == "_FailedTest":
+                    names.append(str(item))
+            return names
+
+        self.assertEqual(failed_test_names(suite), [])
+
+
+class TestWorkflowChangeScope(unittest.TestCase):
+    def setUp(self) -> None:
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-workflow-")
+        self.addCleanup(workspace.cleanup)
+        self.repo = Path(workspace.name)
+        for name in ("alpha", "beta", "gamma"):
+            _write_fixture(self.repo, name)
+        _write_quarantine(self.repo)
+        _write_deps(self.repo, {"alpha": [], "beta": ["alpha"], "gamma": []})
+        self.path = self.repo / ".github/workflows/skill-test.yml"
+        self.path.parent.mkdir(parents=True)
+        self.workflow = {
+            "on": {"pull_request": None, "push": {"branches": ["main"]}},
+            "permissions": {"contents": "read"},
+            "jobs": {
+                "unit-tests": {
+                    "runs-on": "ubuntu-latest",
+                    "steps": [{"run": "python -m unittest discover"}],
+                },
+                "catalog-lint": {"steps": [{"run": "python validate.py"}]},
+                "build-matrix": {"steps": [{"run": "python matrix.py"}]},
+                "copilot-cli-matrix": {
+                    "needs": "build-matrix",
+                    "runs-on": "ubuntu-latest",
+                    "permissions": {"id-token": "write"},
+                    "env": {"PROJECT": "shared"},
+                    "steps": [{"run": "run-fixture"}],
+                },
+            },
+        }
+        self.path.write_text(yaml.safe_dump(self.workflow))
+        _init_repo(self.repo)
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "workflow baseline")
+        self.base = _git(self.repo, "rev-parse", "HEAD")
+
+    def select(self, workflow: dict, *, changed_skill: bool = False) -> list[str]:
+        self.path.write_text(yaml.safe_dump(workflow))
+        if changed_skill:
+            (self.repo / "skills/alpha/SKILL.md").write_text("changed")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "--allow-empty", "-q", "-m", "workflow change")
+        return _run_changed_only(self.repo, self.base)
+
+    def test_local_test_changes_preserve_skill_dependency_fanout(self) -> None:
+        self.workflow["jobs"]["unit-tests"]["steps"].append({"run": "pip install PyJWT"})
+        self.workflow["jobs"]["delegated-auth-local"] = {
+            "runs-on": "ubuntu-latest", "steps": [{"run": "run-local-auth-tests"}],
+        }
+        self.assertEqual(self.select(self.workflow, changed_skill=True), ["alpha", "beta"])
+
+    def test_local_only_change_needs_no_azure_matrix(self) -> None:
+        self.workflow["jobs"]["catalog-lint"]["steps"].append({"run": "check-links"})
+        self.assertEqual(self.select(self.workflow), [])
+        self.assertEqual(_run(self.repo), ["alpha", "beta", "gamma"],
+                         "Push/main and scheduled full canaries must remain full")
+
+    def test_shared_job_changes_still_force_full(self) -> None:
+        for job in ("build-matrix", "copilot-cli-matrix"):
+            for field, value in (
+                ("runs-on", "ubuntu-24.04"),
+                ("env", {"PROJECT": "different"}),
+                ("permissions", {"id-token": "read"}),
+                ("timeout-minutes", 60),
+                ("steps", [{"run": "different-retry-or-auth"}]),
+            ):
+                with self.subTest(job=job, field=field):
+                    workflow = copy.deepcopy(self.workflow)
+                    workflow["jobs"][job][field] = value
+                    self.assertEqual(self.select(workflow), ["alpha", "beta", "gamma"])
+
+    def test_global_changes_still_force_full(self) -> None:
+        for field, value in (
+            ("permissions", {"contents": "write"}),
+            ("env", {"PROJECT": "different"}),
+            ("defaults", {"run": {"shell": "sh"}}),
+            ("on", {"workflow_dispatch": None}),
+            ("concurrency", "shared"),
+        ):
+            with self.subTest(field=field):
+                workflow = copy.deepcopy(self.workflow)
+                workflow[field] = value
+                self.assertEqual(self.select(workflow), ["alpha", "beta", "gamma"])
+
+    def test_unknown_or_removed_shared_jobs_force_full(self) -> None:
+        added = copy.deepcopy(self.workflow)
+        added["jobs"]["new-shared-job"] = {"steps": [{"run": "new"}]}
+        self.assertEqual(self.select(added), ["alpha", "beta", "gamma"])
+        removed = copy.deepcopy(self.workflow)
+        del removed["jobs"]["copilot-cli-matrix"]
+        self.assertEqual(self.select(removed), ["alpha", "beta", "gamma"])
+        removed = copy.deepcopy(self.workflow)
+        del removed["jobs"]["unit-tests"]
+        self.assertEqual(self.select(removed), ["alpha", "beta", "gamma"])
+
+    def test_dependent_local_job_is_not_exempt(self) -> None:
+        self.workflow["jobs"]["copilot-cli-matrix"]["needs"] = ["build-matrix", "unit-tests"]
+        self.select(self.workflow)
+        base = _git(self.repo, "rev-parse", "HEAD")
+        self.workflow["jobs"]["unit-tests"]["steps"].append({"run": "changed"})
+        self.select(self.workflow)
+        self.assertEqual(_run_changed_only(self.repo, base), ["alpha", "beta", "gamma"])
+
+    def test_local_job_with_shared_outputs_or_credentials_is_not_exempt(self) -> None:
+        for key in ("outputs", "secrets", "permissions", "environment", "uses"):
+            with self.subTest(key=key):
+                workflow = copy.deepcopy(self.workflow)
+                workflow["jobs"]["unit-tests"][key] = "requires-shared-review"
+                self.assertEqual(self.select(workflow), ["alpha", "beta", "gamma"])
+
+    def test_unreadable_or_ambiguous_workflow_forces_full(self) -> None:
+        for text in ("jobs: [broken", "jobs: []", "jobs: {}\njobs: {}"):
+            with self.subTest(text=text):
+                self.path.write_text(text)
+                _git(self.repo, "add", "-A")
+                _git(self.repo, "commit", "-q", "-m", "invalid workflow")
+                self.assertEqual(_run_changed_only(self.repo, self.base),
+                                 ["alpha", "beta", "gamma"])
+
+    def test_comment_only_change_does_not_force_full(self) -> None:
+        self.path.write_text(self.path.read_text() + "\n# Clarify the local test scope\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "workflow comment")
+        self.assertEqual(_run_changed_only(self.repo, self.base), [])
 
 
 class TestChangedOnly(unittest.TestCase):
@@ -180,6 +648,40 @@ class TestChangedOnly(unittest.TestCase):
             _git(repo, "add", "-A")
             _git(repo, "commit", "-q", "-m", "edit alpha")
             self.assertEqual(_run_changed_only(repo, base), ["alpha", "beta"])
+
+    def test_foundry_mcp_aca_jobs_fans_out_from_all_approved_dependencies(self) -> None:
+        scratch = ROOT / ".scratch"
+        scratch.mkdir(exist_ok=True)
+        dependencies = [
+            "azd-patterns",
+            "foundry-hosted-agents",
+            "foundry-mcp-aca",
+            "foundry-prompt-agents",
+        ]
+        with tempfile.TemporaryDirectory(prefix="matrix-fanout-", dir=scratch) as td:
+            repo = Path(td)
+            for name in [*dependencies, "foundry-mcp-aca-jobs"]:
+                _write_fixture(repo, name)
+            _write_quarantine(repo)
+            _write_deps(
+                repo,
+                {
+                    **{name: [] for name in dependencies},
+                    "foundry-mcp-aca-jobs": dependencies,
+                },
+            )
+            _init_repo(repo)
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "baseline")
+            base = _git(repo, "rev-parse", "HEAD")
+            for name in dependencies:
+                (repo / "skills" / name / "SKILL.md").write_text("changed\n")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "edit approved dependencies")
+            self.assertEqual(
+                _run_changed_only(repo, base),
+                sorted([*dependencies, "foundry-mcp-aca-jobs"]),
+            )
 
     def test_changed_only_force_full_on_infra_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:

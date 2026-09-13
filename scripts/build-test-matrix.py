@@ -13,18 +13,22 @@ Sorted alphabetically for deterministic GHA matrix expansion.
 
 --changed-only --base-ref <sha>
   Restricts the matrix to skills affected by `git diff $base_ref..HEAD`,
-  with two refinements:
+  with these refinements:
 
   - Force-full-matrix paths (any one of them touched → emit the full set):
-        .github/workflows/skill-test.yml
         .github/quarantine.yml
         .github/ci-shared-preamble.md
         scripts/resolve-foundry-project.py
-    These files change the per-leg input contract (workflow timeouts,
-    env vars, retry logic, runner image; shared preamble prepended to
+    These files change the per-leg input contract (shared preamble prepended to
     every fixture; quarantine list; Foundry project selection) — any
     change to them MUST re-validate every fixtured skill against real
     Azure resources.
+
+    `.github/workflows/skill-test.yml` is compared structurally at base and
+    HEAD. Only independent, named local-test jobs may change without full
+    fanout. Shared/global configuration, unknown jobs, credentials, outputs,
+    dependencies on local jobs, missing versions or ambiguous YAML still
+    force full. Comment-only edits do not change execution.
 
     `plugin.json`, `.github/plugin/marketplace.json`,
     `scripts/build-test-matrix.py`, and `.github/skill-deps.yml` are
@@ -52,6 +56,10 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     rename is re-validated within ≤7 days even when the PR fan-out
     skipped it.
 
+  - AgentOps-only CI helpers map to `foundry-agentops`, not the full
+    matrix. Normal dependency expansion and fixture/quarantine filtering
+    still apply.
+
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
     Single-hop only (cycles are ruled out by validate-skills.py).
@@ -66,8 +74,12 @@ Sorted alphabetically for deterministic GHA matrix expansion.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import importlib.util
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -84,8 +96,10 @@ import yaml
 # fanout). All non-listed structural drift is caught by the
 # unconditional push:main full-matrix canary within ≤7 days.
 # See module docstring for full rationale.
+WORKFLOW_PATH = ".github/workflows/skill-test.yml"
+LOCAL_TEST_JOBS = frozenset({"unit-tests", "catalog-lint", "delegated-auth-local"})
+
 FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
-    ".github/workflows/skill-test.yml",
     ".github/quarantine.yml",
     # SHARED CI HARDENING preamble (post-2026-06-09 incident): every
     # fixture run prepends this file's content, so editing it changes
@@ -94,6 +108,14 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     # Every Azure fixture consumes the project context selected here.
     "scripts/resolve-foundry-project.py",
 })
+
+SKILL_HELPER_PATHS: dict[str, str] = {
+    "scripts/agentops-ci-preflight.py": "foundry-agentops",
+    "scripts/agentops-ci-report.py": "foundry-agentops",
+    "scripts/agentops-ci-diagnostic.py": "foundry-agentops",
+    "scripts/setup-agentops-age.sh": "foundry-agentops",
+}
+DIAGNOSTIC_LABEL = "agentops-diagnostic"
 
 
 def _full_fixtured_skills(repo_root: Path) -> list[str]:
@@ -127,10 +149,78 @@ def _diff_filenames(repo_root: Path, base_ref: str) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+class _WorkflowLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise ValueError("duplicate workflow key")
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
+
+
+def _read_workflow(repo_root: Path, ref: str) -> dict:
+    text = subprocess.check_output(
+        ["git", "-C", str(repo_root), "show", f"{ref}:{WORKFLOW_PATH}"],
+        text=True, stderr=subprocess.PIPE,
+    )
+    workflow = yaml.load(text, Loader=_WorkflowLoader)
+    if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
+        raise ValueError("workflow/jobs must be mappings")
+    jobs = workflow["jobs"]
+    if not {"build-matrix", "copilot-cli-matrix"} <= jobs.keys():
+        raise ValueError("shared matrix jobs missing")
+    if any(not isinstance(name, str) or not isinstance(job, dict) for name, job in jobs.items()):
+        raise ValueError("invalid workflow job")
+    return workflow
+
+
+def _shared_workflow_changed(repo_root: Path, base_ref: str) -> bool:
+    try:
+        before = _read_workflow(repo_root, base_ref)
+        after = _read_workflow(repo_root, "HEAD")
+        if before == after:
+            return False
+        before_jobs, after_jobs = before.pop("jobs"), after.pop("jobs")
+        if before != after:
+            return True
+        before_shared = {k: v for k, v in before_jobs.items() if k not in LOCAL_TEST_JOBS}
+        after_shared = {k: v for k, v in after_jobs.items() if k not in LOCAL_TEST_JOBS}
+        if before_shared != after_shared:
+            return True
+        if (before_jobs.keys() & LOCAL_TEST_JOBS) - after_jobs.keys():
+            return True
+        for jobs in (before_jobs, after_jobs):
+            for name, job in jobs.items():
+                if name in LOCAL_TEST_JOBS:
+                    if {"outputs", "permissions", "secrets", "environment", "uses"} & job.keys():
+                        return True
+                    continue
+                needs = job.get("needs", [])
+                if isinstance(needs, str):
+                    needs = [needs]
+                if not isinstance(needs, list) or any(
+                    not isinstance(dep, str) or "${{" in dep or dep in LOCAL_TEST_JOBS
+                    for dep in needs
+                ):
+                    return True
+        return False
+    except (OSError, subprocess.CalledProcessError, yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
+        print(
+            f"::warning::Cannot establish local-only workflow change ({type(exc).__name__}); "
+            "using full Azure matrix.",
+            file=sys.stderr,
+        )
+        return True
+
+
 def _changed_skills_from_diff(changed_files: list[str]) -> set[str]:
-    """Extract `<name>` from any path matching `skills/<name>/...`."""
+    """Map skill-folder changes and exact skill-owned helper paths to skills."""
     out: set[str] = set()
     for path in changed_files:
+        if path in SKILL_HELPER_PATHS:
+            out.add(SKILL_HELPER_PATHS[path])
         parts = path.split("/")
         if len(parts) >= 2 and parts[0] == "skills":
             out.add(parts[1])
@@ -187,6 +277,8 @@ def build(
     # Force full matrix on any infra/gating-file change.
     if any(f in FORCE_FULL_MATRIX_PATHS for f in changed_files):
         return {"skill": all_fixtured}
+    if WORKFLOW_PATH in changed_files and _shared_workflow_changed(repo_root, base_ref):
+        return {"skill": all_fixtured}
 
     changed_skills = _changed_skills_from_diff(changed_files)
     deps_map = _load_dep_map(repo_root)
@@ -198,7 +290,66 @@ def build(
     return {"skill": final}
 
 
-def main() -> int:
+def _load_agentops_preflight():
+    """Load the sibling preflight by its fixed repository path."""
+    path = Path(__file__).resolve().with_name("agentops-ci-preflight.py")
+    spec = importlib.util.spec_from_file_location("agentops_ci_preflight", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("preflight import unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _diagnostic_mode(environ: dict[str, str]) -> int:
+    gate = None
+    try:
+        gate = _load_agentops_preflight()
+        approval_json = environ.get("AGENTOPS_CI_TELEMETRY_APPROVAL_JSON", "").strip()
+        if approval_json:
+            gate.require(
+                "\n" not in approval_json and "\r" not in approval_json,
+                "INVALID_JSON",
+            )
+        if environ.get("GITHUB_EVENT_NAME") != "pull_request":
+            print("false")
+            return 0
+        event_path = gate.absolute_path(gate.required_env(environ, "GITHUB_EVENT_PATH"))
+        event = gate.parse_json(gate.read_file(event_path))
+        labels = gate.field(event, "pull_request", "labels")
+        gate.require(isinstance(labels, list) and all(
+            isinstance(label, dict) and isinstance(label.get("name"), str)
+            for label in labels
+        ), "CI_CONTEXT")
+        if not any(label["name"] == DIAGNOSTIC_LABEL for label in labels):
+            print("false")
+            return 0
+        approval_json = gate.required_env(
+            environ, "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"
+        ).strip()
+        record = gate.parse_json(approval_json)
+        gate.validate_record(record, datetime.now(timezone.utc))
+        gate.exact(record["schema_version"], 2, "SCHEMA")
+        gate.validate_github_context(record, environ)
+    except Exception as exc:
+        code = "INTERNAL_ERROR"
+        if gate is not None and isinstance(exc, gate.PreflightError):
+            candidate = exc.args[0] if len(exc.args) == 1 else None
+            if isinstance(candidate, str) and candidate in gate.ERROR_CODES:
+                code = candidate
+        print(code, file=sys.stderr)
+        return 1
+    print("true")
+    return 0
+
+
+def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None) -> int:
+    raw_args = sys.argv[1:] if argv is None else argv
+    if "--agentops-diagnostic-mode" in raw_args:
+        if raw_args != ["--agentops-diagnostic-mode"]:
+            print("ARGUMENTS", file=sys.stderr)
+            return 1
+        return _diagnostic_mode(dict(os.environ if environ is None else environ))
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument(
@@ -211,7 +362,7 @@ def main() -> int:
         default=None,
         help="Required when --changed-only is set. The git ref to diff against HEAD.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(raw_args)
     if args.changed_only and not args.base_ref:
         parser.error("--changed-only requires --base-ref")
     print(

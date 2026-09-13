@@ -50,7 +50,8 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-prompt-agents', 'foundry-hosted-agents', 'agent-framework-harness',
         'foundry-teams-bot',
         'ghcp-hosted-agents',
-        'foundry-mcp-aca', 'foundry-evals', 'foundry-iq',
+        'foundry-mcp-aca', 'foundry-mcp-aca-jobs', 'foundry-mcp-auth', 'foundry-evals',
+        'foundry-agentops', 'foundry-iq',
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
         'foundry-caphost-lifecycle',
@@ -79,6 +80,39 @@ CATEGORIES: dict[str, list[str]] = {
         'ip-catalog',
     ],
 }
+
+# Catalog status is separate from the runtime SKILL.md contract.
+DRAFT_SKILLS = {
+    'foundry-mcp-auth': {
+        'record': 'maintenance/foundry-mcp-auth-validation.md',
+        'summary': (
+            'Unreleased candidate with live single-user delegated PASS for Prompt/direct MCP, Prompt/Toolbox and Hosted/Toolbox. '
+            'Actual tool receipts match private MCP server audit; this is not four-path certification. '
+            'All four Prompt/Hosted and direct/Toolbox paths remain final acceptance criteria. '
+            'Late consent, revocation and two real users are not certified. '
+            'Deployment, Entra and connection writes require separate Gate B approval.'
+        ),
+    },
+    'foundry-agentops': {
+        'record': 'maintenance/foundry-agentops-validation.md',
+        'summary': (
+            'Unreleased: foundry-agentops 1.0.0 / proposed catalog 4.31.0. '
+            'Draft candidate eligible for PR validation; not merged, released, or production-ready. '
+            'Manual evidence as of 2026-09-05, before PR CI: '
+            'Completed corrected-source manual execution PASS; quality FAIL (4/5 thresholds); '
+            'Doctor readiness BLOCKED; release PENDING. '
+            'Prior 5/5 manual cycle is historical, not the corrected result. '
+            'CI results and candidate SHA will be recorded in the PR. '
+            'The draft addition is not publicly installable through the default install while unmerged.'
+        ),
+    },
+}
+
+# Only these sanitized records are published to fresh outputs; never copy docs/ wholesale.
+PUBLISHED_DOCS = (
+    'maintenance/foundry-agentops-validation.md',
+    'maintenance/foundry-mcp-auth-validation.md',
+)
 
 
 def _parse_frontmatter(text: str) -> dict[str, Any] | None:
@@ -120,6 +154,7 @@ def load_skills(repo_root: pathlib.Path) -> list[dict[str, Any]]:
             'description': description,
             'version': version,
             'last_validated': last_validated,
+            'draft': DRAFT_SKILLS.get(name),
         })
     return skills
 
@@ -131,12 +166,14 @@ def load_plugins(repo_root: pathlib.Path) -> list[dict[str, Any]]:
     if manifest.exists():
         data = json.loads(manifest.read_text(encoding='utf-8'))
         # Single plugin auto-discovers all skills via "skills": "skills/"
-        all_skills = [s['name'] for s in load_skills(repo_root)]
+        skills = load_skills(repo_root)
+        all_skills = [s['name'] for s in skills]
         plugins.append({
             'name': data['name'],
             'description': data.get('description', ''),
             'version': str(data.get('version', '1.0.0')),
             'skills': all_skills,
+            'draft': next((s['draft'] for s in skills if s.get('draft')), None),
         })
     return plugins
 
@@ -269,6 +306,12 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
             else:
                 entry.unlink()
     out_dir.mkdir(parents=True, exist_ok=True)
+    for relative_path in PUBLISHED_DOCS:
+        destination = out_dir / relative_path
+        # Preserve hand-authored output, including when building in the source docs/.
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO_ROOT / 'docs' / relative_path, destination)
     (out_dir / '.gitkeep').touch()
     # .nojekyll disables GitHub Pages' Jekyll layer entirely. WITHOUT this,
     # Pages silently drops every file whose name starts with `_` (Jekyll's

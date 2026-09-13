@@ -110,6 +110,24 @@ wrong:
 | `superseded` | A newer upstream change, issue, or PR has made the older work obsolete | Close or comment with a link to the replacement issue/PR and stop spending time on the stale path |
 | `blocked` | The work is still current but cannot proceed yet because of credentials, Azure state, CI, or fixture dependencies | Record the blocker, owner, and unblock condition directly on the issue before pausing it |
 
+Prefer a bare release such as `1.25.3` in `packages[].version`. The detector
+also accepts existing `~=1.25.3` and `==1.25.3` entries when comparing the
+pinned release with PyPI: an identical release is not drift. This is **not**
+range satisfaction; a newer critical SDK patch still requires review even
+when a compatible-release install would already accept it. Prerelease
+suffixes remain significant, and compound/range/wildcard specifications are
+not treated as identical fixed releases.
+
+For an older issue reporting only `~=1.25.3` to `1.25.3`, confirm there are
+no other signals before closing it as a false positive. In a consolidated
+issue, an independent upstream lookup failure or real version change remains
+open even after the same-version noise is removed.
+
+The separate `freshness-tests.yml` PR workflow runs these detector,
+issue-lifecycle and runbook-preservation regressions without Azure credentials
+or issue writes. It does not change the scheduled detector or required branch
+checks.
+
 ## 8) Azure evidence reminder
 
 Any refresh that touches Azure paths still needs live evidence before close or

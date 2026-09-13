@@ -1,0 +1,437 @@
+---
+name: foundry-mcp-aca-jobs
+description: >
+  Build job-backed MCP servers for Foundry when the control plane must stay
+  responsive and execution belongs in ACA Jobs. USE FOR: MCP Tasks, SEP-2663,
+  ACA Jobs, durable result claims, callbacks, external job orchestration, and
+  shared-image worker handoff. DO NOT USE FOR: producer-side MCP hosting (use
+  foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
+  logic that should run directly in the MCP server or Docket container.
+metadata:
+  version: "1.4.3"
+---
+
+> **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
+> The MCP server owns protocol and state; the ACA Job owns execution.
+
+# Foundry MCP ACA Jobs
+
+Copy verbatim from the canonical files below. Do **not** duplicate code bodies
+inline here.
+
+| Canonical file | Contract |
+|---|---|
+| [references/python/app/__init__.py](references/python/app/__init__.py) | Package exports and canonical imports |
+| [references/python/app/aca_jobs.py](references/python/app/aca_jobs.py) | ACA job adapter and control-plane client |
+| [references/python/app/aca_tasks_extension.py](references/python/app/aca_tasks_extension.py) | Tasks extension adapter boundary |
+| [references/python/app/callbacks.py](references/python/app/callbacks.py) | Callback transport and payload writer |
+| [references/python/app/control_store.py](references/python/app/control_store.py) | Durable control-store contract |
+| [references/python/app/job_worker.py](references/python/app/job_worker.py) | ACA Job worker entrypoint |
+| [references/python/app/mcp_server.py](references/python/app/mcp_server.py) | FastMCP server assembly |
+| [references/python/app/models.py](references/python/app/models.py) | Control-record models and lifecycle mapping |
+| [references/python/app/orchestrator.py](references/python/app/orchestrator.py) | Start, reconcile, and cancel orchestration |
+| [references/python/app/telemetry.py](references/python/app/telemetry.py) | Safe telemetry wiring |
+| [templates/Dockerfile](templates/Dockerfile) | Shared runtime image |
+| [templates/pyproject.toml](templates/pyproject.toml) | Runtime dependency lock contract |
+| [templates/uv.lock](templates/uv.lock) | Hash-verified runtime dependency resolution |
+| [templates/azure.yaml](templates/azure.yaml) | `azd` service wiring and postdeploy flow |
+| [templates/bicepconfig.json](templates/bicepconfig.json) | Enables the Bicep assertion feature used by the deployment contract |
+| [templates/infra/main.bicep](templates/infra/main.bicep) | Composition root; requires the sibling catalog checkout layout described in [Deploy with azd](#deploy-with-azd) |
+| [templates/infra/main.parameters.json](templates/infra/main.parameters.json) | Complete `azd` parameter contract |
+| [templates/infra/app.bicep](templates/infra/app.bicep) | MCP app module |
+| [templates/infra/cosmos.bicep](templates/infra/cosmos.bicep) | Durable control-store module |
+| [templates/infra/identity-rbac.bicep](templates/infra/identity-rbac.bicep) | Least-privilege identity/RBAC module |
+| [templates/infra/identity-rbac/assignments.bicep](templates/infra/identity-rbac/assignments.bicep) | App and worker data-plane role assignments |
+| [templates/infra/identity-rbac/job-operator.bicep](templates/infra/identity-rbac/job-operator.bicep) | Scoped ACA Job operator role |
+| [templates/infra/identity-rbac/uami.bicep](templates/infra/identity-rbac/uami.bicep) | User-assigned managed identity module |
+| [templates/infra/scripts/pyproject.toml](templates/infra/scripts/pyproject.toml) | Postdeploy helper dependency contract |
+| [templates/infra/scripts/uv.lock](templates/infra/scripts/uv.lock) | Hash-verified postdeploy helper resolution |
+| [templates/infra/scripts/converge_image.py](templates/infra/scripts/converge_image.py) | Digest convergence helper |
+| [templates/infra/scripts/verify_deployment.py](templates/infra/scripts/verify_deployment.py) | Deployment verification helper |
+| [../azd-patterns/references/bicep/aca-job.bicep](../azd-patterns/references/bicep/aca-job.bicep) | Canonical ACA Job module |
+
+## When to use this skill
+
+- A request can run longer than a normal tool call and needs durable progress.
+- The client may or may not advertise MCP Tasks, so the server needs a
+  compatibility path.
+- You want the control plane to stay responsive while the job does the work.
+- The result should be stored externally and surfaced as a stable URL, not
+  streamed inline as a large payload.
+- The worker must run in a separate ACA Job, not inside the MCP server process.
+
+Use [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md) for producer-side MCP
+hosting. Use [azd-patterns](../azd-patterns/SKILL.md) for the canonical ACA
+Job module and digest-convergence pattern.
+
+## Architecture and shared-image contract
+
+This skill uses one immutable image and two runtime roles:
+
+1. the **FastMCP control plane** serves the API, Tasks adapter, callbacks, and
+   lifecycle reconciliation;
+2. the **ACA Job worker** runs the business handler and writes the result; and
+3. both roles are built from the same image digest, but launched with different
+   commands and different user-assigned managed identities.
+
+| Role | Entry point | Identity | Responsibility |
+|---|---|---|---|
+| MCP app | `python -m app.mcp_server` | app UAMI | protocol, policy, callbacks, durable task state |
+| ACA Job | `python -m app.job_worker` | job UAMI | execution, output persistence, callback delivery |
+
+The image is built once from `templates/Dockerfile`, then converged in
+postdeploy so the app and job both point to the same digest. Never let the app
+and job drift onto separate images, commands, or identities.
+
+## Protocol contract
+
+The server supports two contract paths:
+
+- the **standards-first MCP Tasks path** for clients that advertise the Tasks
+  extension; and
+- the **compatibility tools** path for clients that do not.
+
+Both paths share the same control record, callback, and durable-result contract.
+Do not model this skill as Service Bus, queues, topics, subscriptions, or any
+event-dispatch fanout pattern.
+
+### Standards-first MCP Tasks path
+
+Prefer the public MCP Tasks result-claim path whenever the client supports it.
+`AcaTasksExtension` binds the `io.modelcontextprotocol/tasks` extension to the
+durable control record, worker claim, and callback flow.
+
+KI-001 releases only when the first-class server result-claim API is public:
+validation must import `TasksExtension` from `fastmcp_tasks`, `inspect` its
+`lifespan` source, confirm `docket_lifespan` is present there, and confirm the
+`AcaTasksExtension` source/lifespan does not contain that Docket path.
+
+### Compatibility tools
+
+For clients without MCP Tasks, expose the explicit tools:
+
+- `start_aca_job(jobType, idempotencyKey, inputRef, callbackAlias)`
+- `get_aca_job_status(taskId)`
+- `cancel_aca_job(taskId)`
+
+These tools are a compatibility path, not a second workflow model. They still
+write the same control record and still persist results through the same worker.
+Their public response shapes are closed:
+
+- `start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, and `pollAfterMs` (`2000`).
+- `get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, and `updatedAt`.
+- `cancel_aca_job` returns exactly `taskId`, `status`, and `cancellationRequested` (`true`).
+
+`status` is the public lifecycle value (`Accepted`, `Starting`, `Running`,
+`Succeeded`, `Failed`, or `Cancelled`). Never return the internal `TaskRecord`
+or expose owner scopes, hashes, worker tokens, ETags, or internal timestamps.
+
+## Control record and lifecycle
+
+The control record is the source of truth. It carries `taskId`, `ownerScope`,
+`jobType`, `idempotencyKeyHash`, `requestFingerprint`, `inputRef`,
+`callbackAlias`, `lifecycleState`, `acaExecutionId`, `resultUrl`, `errorCode`,
+`callbackDeliveryState`, `callbackErrorCode`, `cancellationRequestedAt`,
+`startAttemptedAt`, `startAttemptCount`, `workerClaimedAt`, `workerClaimToken`,
+`workerClaimExpiresAt`, `createdAt`, `updatedAt`, `completedAt`, and `_etag`.
+
+| Control record state | MCP `status` | Public result |
+|---|---|---|
+| `Accepted` / `Starting` / `Running` | `working` | poll again |
+| `Succeeded` + `resultUrl` present | `completed` | `isError: false`, `structuredContent.status = Succeeded` |
+| `Failed` + business error | `completed` | `isError: true`, `content` carries the stable error code |
+| `Failed` + `RESULT_REFERENCE_MISSING` | `completed` | `isError: true`, `content` carries `RESULT_REFERENCE_MISSING` |
+| `Cancelled` | `cancelled` | no result payload |
+
+`RESULT_REFERENCE_MISSING` is an internal failed terminal state. It is never a
+protocol-level `failed` response; the MCP projection stays `completed` with
+`isError: true`.
+
+## Idempotency and uncertain-start reconciliation
+
+The start flow is:
+
+1. derive a deterministic `taskId` from the owner scope, job type, and
+   idempotency-key hash;
+2. persist the new record with a request fingerprint;
+3. claim the record with an ETag; and
+4. start the ACA Job with the exact job policy digest and command contract.
+
+If the same `taskId` arrives again with the same request fingerprint, return
+the existing record. If the fingerprint changes, the store raises
+`IDEMPOTENCY_KEY_REUSED`.
+
+Uncertain starts are reconciled deterministically:
+
+- `Accepted`/`Starting` tasks are re-checked until the ACA execution appears.
+- A persisted `acaExecutionId` is the authoritative bound execution. Re-fetch
+  the ETag-protected record before choosing a candidate, never overwrite a
+  worker-bound execution, bind before stopping duplicates, and stop only
+  discovered non-authoritative executions.
+- If no execution is bound and multiple executions match, select a candidate by
+  status priority, start time, and execution ID, persist it with an ETag, then
+  best-effort stop the losers.
+- A cancellation request that races with start is retained during binding. Once
+  that execution ID is durable, issue a cooperative best-effort stop without
+  changing the returned nonterminal task state.
+- If start returns only after reconciliation has already made the record
+  terminal, ETag-adopt the late execution ID only when no execution is recorded,
+  preserve every lifecycle, error, result, cancellation, and worker-claim field,
+  then best-effort stop that exact orphan. If another execution ID is already
+  recorded, preserve it and every terminal field without an ETag write, and
+  best-effort stop the different late execution. Ordinary polling of the
+  already-known execution ID is a pure no-op and must not stop it.
+- If the start never becomes observable, the task stays `Starting` until the
+  reconciliation budget expires.
+- After three attempts or five minutes, only an unbound uncertain start fails
+  with `START_RECONCILIATION_EXHAUSTED`; a bound or worker-claimed execution
+  remains authoritative even when an ARM list is temporarily empty.
+
+Terminal reconciliation uses a distinct ten-minute unresolved-reconciliation budget
+anchored at the existing durable `startAttemptedAt`, falling back to
+`updatedAt` for records without a start timestamp. A bound execution reported as
+`Degraded`/`Unknown`, or `Succeeded` without a durable `resultUrl`, stays
+`Running` inside that budget. A later `Processing` observation never downgrades
+an already-`Running` task to `Starting`. Never terminalize while
+an active worker lease for the exact claim token has `workerClaimExpiresAt` in
+the future. When `startAttemptedAt` is absent, only the first unresolved
+transition may advance `updatedAt`; identical unresolved polls are true no-ops
+that preserve the budget anchor and ETag. Once the budget has elapsed
+and no lease is active, fail with `ACA_EXECUTION_STATE_UNRESOLVED` or
+`RESULT_REFERENCE_MISSING`; clear worker claim fields only with that terminal
+failure.
+
+While the business handler runs, the worker renews `workerClaimExpiresAt` under
+the current ETag and exact claim token at an interval below the lease. It stops
+the heartbeat before success or failure persistence. Synchronous handlers run
+off the event loop, and any awaitable they return is still awaited. Heartbeat
+store failures are best-effort: record only the task ID and stable error code or
+exception class, retry on the next interval, and let the lease expire naturally
+during a persistent outage. A heartbeat failure must never replace a successful
+handler result or expose exception payloads, URLs, or secrets.
+Before persisting worker success or failure, the ETag mutator must still observe
+the claiming worker's exact non-null `workerClaimToken`. If a replacement worker
+has taken over, the stale worker exits successfully after safe claim-lost
+telemetry; it must not mutate authoritative state or send a callback.
+
+The store itself uses optimistic concurrency (`_etag`) and rejects stale
+claims. Cosmos documents are filtered to known `TaskRecord` names and aliases:
+unknown future fields are ignored, while malformed known fields and Cosmos
+failures map to `CONTROL_STORE_UNAVAILABLE`. ETag replacement preserves
+non-system unknown fields from the raw point read, excludes `id` and
+underscore-prefixed service metadata, then overlays the canonical known record
+so cleared known fields cannot be resurrected.
+
+## Callback contract
+
+Callbacks are minimal and fixed:
+
+```json
+{"taskId":"...","acaExecutionId":"...","status":"Succeeded","resultUrl":"https://..."}
+```
+
+The callback payload never carries the business result body. The worker writes
+the result to blob storage first, then sends only the URL.
+
+Callback auth modes are explicit:
+
+- `managed_identity` sends a bearer token for the configured audience.
+- `key_vault` sends `X-Callback-Key` using the named secret.
+
+The callback route only trusts the configured callback principal. If an
+existing callback blob already exists with different bytes, the server raises
+`CALLBACK_PAYLOAD_CONFLICT`; identical payloads are idempotent. Delivery
+retries are bounded and may end in `CALLBACK_DELIVERY_EXHAUSTED` or
+`CALLBACK_DELIVERY_REJECTED`.
+
+## Security and least-privilege RBAC
+
+Trust the ACA Easy Auth header path only when `MCP_ACA_JOBS_AUTH_MODE` is
+exactly `aca-easy-auth`.
+
+Allowlists are policy-driven, not caller-driven:
+
+- `jobType`
+- `callbackAlias`
+- `inputHosts`
+- `resultHosts`
+- optional `allowed_owner_scopes`
+
+The app and job use separate UAMIs, even though they share the same image
+digest. That separation is intentional: one identity reads and updates the
+control plane; the other executes the job and writes output.
+
+Easy Auth caller allowlisting supports two mutually exclusive modes:
+
+- client ID mode sets only
+  `defaultAuthorizationPolicy.allowedApplications`;
+- principal object ID mode sets only
+  `defaultAuthorizationPolicy.allowedPrincipals.identities`.
+
+Choose exactly one nonempty list. With the `2025-01-01` authConfig API, setting
+both lists applies both checks with logical AND; it does not broaden access.
+Use principal object ID mode for hosted agent instance identities. Client ID
+mode remains available for app-only callers whose token identifies an
+allowlisted client application.
+
+Do not accept caller-supplied image references, commands, environment
+overrides, ARM IDs, secrets, large result bodies, callback URLs, or event
+dispatch hooks.
+
+## Deploy with azd
+
+The deployment contract is `azd` only. Copy the canonical files verbatim; do
+not fork the template shapes here.
+
+`skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` requires the sibling
+catalog checkout layout: `skills/foundry-mcp-aca-jobs` and
+`skills/azd-patterns` must coexist under the same catalog root because the
+composition root imports
+`skills/azd-patterns/references/bicep/aca-job.bicep`. Copy or scaffold the
+template with this exact layout; do not duplicate or rewrite the shared Bicep:
+
+```text
+<workdir>/
+└── skills/
+    ├── foundry-mcp-aca-jobs/
+    │   └── templates/
+    │       ├── bicepconfig.json
+    │       └── infra/main.bicep
+    └── azd-patterns/
+        └── references/bicep/aca-job.bicep
+```
+
+```bash
+WORKDIR="<workdir>"
+mkdir -p "$WORKDIR/skills/foundry-mcp-aca-jobs" \
+  "$WORKDIR/skills/azd-patterns/references/bicep"
+cp -R skills/foundry-mcp-aca-jobs/templates "$WORKDIR/skills/foundry-mcp-aca-jobs/"
+cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patterns/references/bicep/"
+```
+
+- `templates/azure.yaml`
+- `templates/bicepconfig.json`
+- `templates/uv.lock`
+- `templates/infra/main.bicep`
+- `templates/infra/main.parameters.json`
+- `templates/infra/app.bicep`
+- `templates/infra/cosmos.bicep`
+- `templates/infra/identity-rbac.bicep`
+- `templates/infra/identity-rbac/assignments.bicep`
+- `templates/infra/identity-rbac/job-operator.bicep`
+- `templates/infra/identity-rbac/uami.bicep`
+- `templates/infra/scripts/pyproject.toml`
+- `templates/infra/scripts/uv.lock`
+- `templates/infra/scripts/converge_image.py`
+- `templates/infra/scripts/verify_deployment.py`
+- `templates/pyproject.toml`
+- `templates/Dockerfile`
+- `../azd-patterns/references/bicep/aca-job.bicep`
+
+Use `azd up` or `azd deploy` to run the converged postdeploy flow. Do not hand
+roll `az` deploy sequences or reimplement the digest convergence logic here.
+Post-deploy hosted-agent callers use principal object ID mode and are
+allowlisted by the instance identity object ID in
+`defaultAuthorizationPolicy.allowedPrincipals.identities`.
+
+For a brownfield platform, keep `resourceGroupName` as the child resource group
+that receives the app, Job, and UAMIs, and set `platformResourceGroupName` to
+the resource group containing the existing ACR, Container Apps environment,
+storage account, and optional Cosmos account. The template scopes those
+existing resources explicitly across resource groups while preserving the
+single-resource-group default. The named output and callback blob containers
+are created in the existing storage account; they are not pre-existing
+containers.
+
+The subscription-scope composition root creates `resourceGroupName` itself and
+applies `resourceGroupTags` only when the object is nonempty. The empty default
+omits the ARM `tags` value so an existing resource group's tags are preserved.
+Do not pre-create that resource group. Its exact azd outputs include `MCP_APP_NAME`,
+`ACA_JOB_NAME`, `MCP_ACA_JOBS_STORAGE_ACCOUNT_URL`,
+`MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME`, `MCP_ACA_JOBS_COSMOS_ENDPOINT`,
+`MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME`, and
+`MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT`; the last value is the lowercase
+string `true` or `false`. Postdeploy consumes these outputs directly, including
+the Cosmos module endpoint created by an ordinary greenfield `azd up`.
+
+## Operate and observe
+
+Runtime behavior is bounded and observable:
+
+- `MCP_ACA_JOBS_RECONCILE_INTERVAL_SECONDS`
+- `MCP_ACA_JOBS_LEASE_MINUTES`
+- `MCP_ACA_JOBS_POLICY_JSON`
+- `CONTAINER_APP_JOB_EXECUTION_NAME`
+
+Telemetry only emits safe fields:
+
+`task.id`, `job.type`, `task.state`, `aca.execution.id`, `operation`,
+`outcome`, `error.code`, and `azure.request.id`.
+
+The worker persists output before callback delivery, so a callback outage does
+not erase the result. The server's `/health` route stays light; operational
+visibility comes from task status, result URLs, and telemetry.
+
+## Stable errors
+
+These codes are user-visible and must stay stable within the `1.x` contract:
+
+| Family | Stable codes |
+|---|---|
+| `TASK_*` | `TASK_NOT_FOUND`, `TASK_FORBIDDEN` |
+| `INVALID_*` | `INVALID_JOB_TYPE`, `INVALID_CALLBACK_ALIAS`, `INVALID_INPUT_REFERENCE`, `INVALID_RESULT_REFERENCE` |
+| `IDEMPOTENCY_*` | `IDEMPOTENCY_KEY_REUSED` |
+| `ARM_*` | `ARM_STATUS_UNAVAILABLE`, `ARM_START_REJECTED`, `ARM_STOP_REJECTED` |
+| `START_*` | `START_RECONCILIATION_EXHAUSTED` |
+| `ACA_EXECUTION_*` | `ACA_EXECUTION_FAILED`, `ACA_EXECUTION_STOPPED`, `ACA_EXECUTION_STATE_UNRESOLVED` |
+| `RESULT_*` | `RESULT_REFERENCE_MISSING` |
+| `CALLBACK_*` | `CALLBACK_DELIVERY_REJECTED`, `CALLBACK_DELIVERY_EXHAUSTED`, `CALLBACK_PAYLOAD_CONFLICT` |
+| `CONTROL_STORE_*` | `CONTROL_STORE_UNAVAILABLE` |
+| `DEPLOYMENT_*` | `DEPLOYMENT_CONTRACT_MISMATCH` |
+| `WORKER_*` | `WORKER_EXECUTION_FAILED` |
+
+`RESULT_REFERENCE_MISSING` stays in the failed terminal family, but the MCP
+projection is still `completed` with `isError: true`.
+
+## Test the implementation
+
+The implementation is pinned to contract tests, not prose:
+
+- `scripts/tests/test_foundry_mcp_aca_jobs_template.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_protocol.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_azure.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_callbacks.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_store.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_orchestrator.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_worker.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_models.py`
+- `scripts/tests/test_foundry_mcp_aca_jobs_telemetry.py`
+
+Pin validation must print exactly:
+
+- `ok fastmcp external tasks adapter`
+- `ok aca jobs sdk surface`
+- `ok azure ai projects prompt mcp authorization surface`
+- `ok foundry-mcp-aca-jobs imports`
+
+## Non-goals
+
+- general MCP hosting or producer-side server deployment
+- running business logic directly in the MCP server process
+- Docket-based execution or any other alternate job runtime
+- Service Bus, queues, topics, subscriptions, or event-dispatch orchestration
+- caller-supplied image digests, commands, environment overrides, secrets, or
+  callback URLs
+- large inline result payloads or opaque callback bodies
+- hand-rolled provisioning that bypasses `azd`
+- sharing one UAMI between the app and the job
+
+## Related skills
+
+| Skill | When to use it |
+|---|---|
+| [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md) | producer-side MCP server hosting |
+| [azd-patterns](../azd-patterns/SKILL.md) | canonical ACA Job Bicep and digest convergence |
+| [foundry-prompt-agents](../foundry-prompt-agents/SKILL.md) | prompt-agent fallback when tool work needs durable job-backed execution or callbacks |
+| [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) | hosted agents that consume MCP tools |
+| [foundry-observability](../foundry-observability/SKILL.md) | telemetry and log/trace wiring |

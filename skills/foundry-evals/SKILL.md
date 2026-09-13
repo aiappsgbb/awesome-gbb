@@ -1,8 +1,8 @@
 ---
 name: foundry-evals
 description: >
-  Evaluate Foundry hosted agents using the two-phase invoke+score pattern and Foundry
-  built-in evaluators. Covers sequential invocation, cold-start handling, dataset
+  Evaluate Foundry agents with agent-target runs or an explicit invoke+score fallback.
+  Covers sequential invocation, cold-start handling, dataset
   creation, evaluator configuration, RBAC for eval judges, result interpretation,
   and cross-refs to community evaluator frameworks (foundry-assert) and eval-driven
   prompt optimization loops (foundry-agent-optimizer). USE FOR: evaluate agent
@@ -14,13 +14,18 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.3.1"
+  version: "1.4.1"
 ---
 
 # Foundry Agent Evaluations
 
-Evaluate Foundry hosted agents using the **two-phase invoke+score** pattern with
-Foundry's built-in evaluators.
+Evaluate Foundry agents using the supported **agent-target** evaluation surface,
+or an explicit **invoke+score** fallback with captured responses.
+
+For the complete per-agent adoption and release-evidence workflow, see
+[`foundry-agentops`](../foundry-agentops/SKILL.md). This skill remains
+authoritative for deep evaluator configuration and dataset design; AgentOps
+aggregates evidence and never replaces that evaluation contract.
 
 ## When to Use
 
@@ -31,17 +36,36 @@ Foundry's built-in evaluators.
 
 ## Why Two Phases?
 
-The Foundry SDK's `azure_ai_agent` target type does **NOT** correctly route to hosted
-agent endpoints — it sends requests to the project endpoint instead of the agent's
-dedicated endpoint. You must invoke the agent yourself, then score the results separately.
+Two phases are a fallback, not a universal requirement. Current
+[cloud evaluation guidance](https://learn.microsoft.com/azure/foundry/observability/how-to/cloud-evaluation-targets)
+supports `azure_ai_target_completions` with an `azure_ai_agent` target for prompt
+and hosted agents. Select the path from the actual endpoint/protocol:
+
+| Surface | Path |
+|---|---|
+| Supported prompt or hosted Responses agent | Agent-target run: query-only input, explicit agent name/version, `{{sample.output_text}}` for string evaluators or `{{sample.output_items}}` for interaction-aware evaluators. |
+| Hosted Invocations agent | Use the documented freeform `input_messages` matching its real request contract; do not send a Responses template. The smoke helper below intentionally covers Responses only. |
+| Existing captured responses, custom transport, or a confirmed unsupported target surface | Invoke explicitly, retain the real response/tool transcript, then score `{{item.response}}` as described in Phases 1 and 2 below. |
+
+Start with one approved synthetic query. A created run is not success: poll to a
+successful terminal state, download per-item `output_items`, and require actual
+scores and usable responses. An auth, schema, model, or quota failure is **not**
+permission to silently switch paths. Record the failure; use invoke+score only
+when the surface requires it or the owner approves that fallback.
+
+> **Canonical executable:** [references/python/eval_runner.py](references/python/eval_runner.py)
+> implements a one-item agent-target or explicit invoke+score coherence smoke
+> using `AIProjectClient.get_openai_client().evals`. See the
+> [Day-1 recipe](#day-1-smoke-test-recipe-hosted-agent--mcp-tool-pilots).
+> It does not replace full suites, custom graders or the EVAL-201 adapter.
 
 ```
 Phase 1: Invoke agent → collect responses
 Phase 2: Score responses → Foundry evaluators
 ```
 
-**Critical requirement:** MUST complete both phases sequentially. Skipping either phase will
-result in incomplete evaluations.
+**When using the fallback:** complete both phases sequentially; never score an
+invented response or treat a run ID as the agent's response.
 
 ---
 
@@ -350,8 +374,9 @@ Foundry evals have two concepts:
 # Use a NON-agent-bound client for evals
 client = project.get_openai_client()  # NOT agent_name=...
 
-# Judge model — MUST be gpt-5.4-mini (see quirks below)
-JUDGE_MODEL = "gpt-5.4-mini"
+# Use an existing, approved chat-capable judge deployment.
+import os
+JUDGE_MODEL = os.environ["JUDGE_MODEL_DEPLOYMENT"]
 EVAL_NAME = "my-agent-eval"
 
 # Check if definition already exists
@@ -820,64 +845,28 @@ This is critical for `builtin.tool_selection` and `builtin.tool_output_utilizati
 
 ## Reading the run results
 
-> **Trap.** `run.result_counts` and `output_items[*].results[*].passed`
-> are unreliable in the current preview ` they consistently return
-> `passed=0 / failed=0 / errored=0 / total=N` and `passed=None` even
-> on runs that actually scored fine. The real verdicts live one level
-> deeper.
+Poll `client.evals.runs.retrieve(...)` to a successful terminal state, then
+download **all pages** from `client.evals.runs.output_items.list(...)`.
+Convert SDK objects with `model_dump()` before dictionary access. Current
+built-in coherence results expose `score`, `passed`, `reason`, and `status`
+directly in each item's `results[]`; these fields were present in both live
+paths verified for the 1.4.0 helper. Do not assume all previews always return
+zero counts or null verdicts.
 
-The actual scores live in `output_items[*].results[*].sample.output[0]`
-under the `content` field, as a JSON-encoded string (or `<S2>n</S2>`
-markers for `coherence`). Extract them yourself:
+For agent-target runs the captured answer is in
+`datasource_item["sample.output_text"]`; for pre-captured JSONL it is in
+`datasource_item["response"]`. A run-level completed status alone is
+insufficient: inspect item/sample errors and require real output plus the
+expected finite numeric metric. Preserve **zero** scores — never use
+`score or label or verdict`, which discards a valid zero.
 
-```python
-import json, re
-
-def extract_score(result, evaluator_name: str):
-    """Pull the real score from a Foundry eval result row."""
-    out = (result.get("sample") or {}).get("output") or []
-    if not out:
-        return None
-    content = out[0].get("content") or ""
-    # Coherence emits `<S2>n</S2>` markers
-    if "coherence" in evaluator_name:
-        m = re.search(r"<S2>(\d)</S2>", content)
-        return int(m.group(1)) if m else None
-    # All other evaluators emit JSON
-    try:
-        verdict = json.loads(content)
-        # Score field name varies: "score", "label", "verdict", "passed"
-        return verdict.get("score") or verdict.get("label") or verdict.get("verdict")
-    except json.JSONDecodeError:
-        return None
-
-# Aggregate per evaluator across all rows
-run = client.evals.runs.retrieve(eval_id=eval_def.id, run_id=run.id)
-items = client.evals.runs.output_items.list(
-    eval_id=eval_def.id, run_id=run.id,
-)
-
-per_evaluator = {}
-for item in items:
-    for result in item.get("results", []):
-        ev = result.get("name") or result.get("evaluator")
-        score = extract_score(result, ev)
-        per_evaluator.setdefault(ev, []).append(score)
-
-for ev, scores in per_evaluator.items():
-    ok = [s for s in scores if s is not None]
-    print(f"{ev}: {len(ok)}/{len(scores)} scored ` values: {ok}")
-```
-
-> **Why both layers exist.** The `result_counts` API is for binary
-> pass/fail evaluators that haven't been GA'd yet. The built-in judges
-> (intent_resolution, task_adherence, etc.) are scoring evaluators ` they
-> emit a 1-5 score, a label like `FLAG/FAIL`, or a `<S2>n</S2>` block
-> in `content`. The pass/fail summary is therefore always 0/0/0/N.
-> Use the extractor above for any production reporting.
-
-Keep a reusable `eval/compile_scores.py` helper that does this end-to-end
-(per-case per-evaluator matrix) in your process repo.
+> **MUST:** Use the canonical score/poll/output checks in
+> [`references/python/eval_runner.py`](references/python/eval_runner.py) for the
+> Day-1 coherence smoke. For full suites, follow the current
+> [results contract](https://learn.microsoft.com/azure/foundry/observability/how-to/cloud-evaluation-results)
+> for each evaluator. Custom evaluator multi-entry results and legacy
+> judge-text payloads need explicit interpretation; do not silently coerce
+> missing metrics to pass or apply a 0–1 threshold to a 1–5 score.
 
 ## Programmatic last-run introspection
 
@@ -937,7 +926,7 @@ Consumed by threadlight EVAL-201 when `kind: sibling-skill` (issue #247).
 | `tool_output_utilization` FAILs every case despite grounded answers | Dataset only ships `query` + `response` ` evaluator can't see the actual tool output, so it flags tool-derived facts as fabricated. Add `tool_calls` + `tool_outputs` arrays to each JSONL row (see "Enriched dataset shape" below) | Capture the agent's tool transcript during Phase 1 invoke and pass it through to Phase 2 |
 | Low `intent_resolution` | Agent misunderstands domain terms | Add domain vocabulary to instructions |
 | All scores 0 | Empty responses | Concurrent eval requests; switch to sequential |
-| `task_adherence` 0% specifically | Using wrong judge model (gpt-5.4 instead of gpt-5.4-mini) | **Must use gpt-5.4-mini as judge** — gpt-5.4 penalizes tool claims it can't verify |
+| `task_adherence` 0% specifically | Judge lacks the actual interaction/tool context or rubric | Inspect mappings and full tool transcript; compare approved compatible judges without choosing one merely to inflate scores |
 | `tool_selection` + `tool_output_utilization` both 0% | Missing `tool_definitions` in JSONL | Every JSONL item must include `tool_definitions` array |
 | Eval run fails | RBAC missing on judge model | Assign `Cognitive Services OpenAI User` AND `Cognitive Services User` to the project MI (Pattern 23 — graders run as the project SAMI, not the caller) |
 | Inconsistent scores | Low TPM causing rate limits | Increase to ≥300K TPM |
@@ -957,15 +946,16 @@ scenarios, 6 evaluators each) during the threadlight pilot run. The
 findings below are the durable, evaluator-side conclusions — there is no
 public companion analysis to link to.
 
-### 1. Judge Model: MUST be gpt-5.4-mini
+<a id="1-judge-model-must-be-gpt-54-mini"></a>
 
-**Always** set `initialization_parameters.deployment_name` to `gpt-5.4-mini`.
+### 1. Judge Model: select an approved deployment
 
-Using `gpt-5.4` as judge causes `task_adherence` to drop to 0% — it penalizes
-responses that claim tool usage because it can't verify the tool calls from
-response-only data. `gpt-5.4-mini` is more forgiving and produces accurate scores.
-
-All other evaluators (coherence, intent, completion) are stable across both judge models.
+The earlier
+benchmark used `gpt-5.4-mini`, but that deployment name is not required by the
+API. Select an existing chat-capable judge supported by the evaluator and
+record its deployment/version. Response-only data can hide tool evidence from
+any judge. Correct mappings/rubrics first; a more forgiving model is not proof
+of a more accurate evaluation.
 
 ### 2. Tool Name Prefix Mismatch (MAF vs GHCP)
 
@@ -1043,51 +1033,60 @@ Re-run evals after each agent version update to ensure quality doesn't regress.
 
 ## Day-1 Smoke Test Recipe (hosted-agent + MCP-tool pilots)
 
-Before running continuous evals or merging to production, validate your hosted agent with a
-representative test case using this recipe:
+Before broader evaluation, prove that the selected invocation/evaluation path
+returns a real score. This one-item **coherence** smoke is not a tool-selection
+gate, business acceptance test, or production certification.
 
-**Step 1: Pick 1 representative prompt from demo scenarios**
+1. Confirm the project endpoint, agent name/version, protocol, existing chat
+   judge deployment, and approval to store synthetic input/output in Foundry.
+   Use `azure-tenant-isolation` before Azure calls; do not log in, change
+   subscriptions, or grant roles to make a failed test pass.
+2. Use the bounded SDK versions in the [pin](references/upstream-pin.md).
+   Set `FOUNDRY_PROJECT_ENDPOINT` and `JUDGE_MODEL_DEPLOYMENT`. The legacy
+   `AZURE_AI_PROJECT_ENDPOINT` alias remains accepted by the helper.
+3. Run the canonical helper, not a locally rewritten evaluator:
 
-Use your agent's demo scenarios (e.g., from `spec.md` § Demo Scenarios) to select ONE query
-that exercises the core tool loop (not trivial warmup, not edge cases yet).
+   ```bash
+   python skills/foundry-evals/references/python/eval_runner.py \
+     "<representative-synthetic-query>" \
+     --agent-name "<agent-name>" --agent-version "<version>" \
+     --mode agent-target --threshold 3 \
+     --artifact "./evals/private-smoke.json"
+   ```
 
-**Step 2: Invoke and capture**
+4. The helper uses the project's **OpenAI sub-client**, sends query-only
+   agent-target input, and shares a default **300-second acceptance budget**
+   across eval/run creation, polling and every result page. Each request uses
+   the remaining budget as its HTTP per-I/O timeout, with SDK retries disabled.
+   It checks the deadline after blocking calls and before accepting scores.
+   Cleanup gets a separate 30-second request/acceptance budget, without retries;
+   late/failed cleanup is reported as unverified. These are **not hard wall-clock
+   cancellation guarantees**: HTTP timeouts apply per I/O phase, and token
+   acquisition or a transport may overrun before returning. An outer process
+   supervisor is needed for a strict wall-clock kill. Explicit invocation in
+   invoke-score mode occurs before this scoring budget.
+   The helper preserves zero scores. A missing/non-finite score or failed/unfinished run
+   is an execution failure. Coherence uses a **1–5 scale**; `3` is an illustrative
+   threshold, not universal policy. Exit 0/1 reflects that chosen threshold.
+5. When the target surface requires explicit invocation, use
+   `--mode invoke-score` instead (without `--agent-version`): the agent-bound
+   Responses endpoint selects its active version. The helper scores the actual
+   captured non-empty response. For custom SSE/Invocations transports, capture
+   using the agent's documented transport, then call `smoke_score(query,
+   captured_response, project_client=project, judge_model=...)` directly.
+   Do not invent a `function_eval` API or report a pinned version on this path.
 
-```bash
-# Invoke with a single query and capture the run_id
-run_id=$(azd ai agent invoke --new-conversation "<your-representative-prompt>" | grep -oP 'run_id: \K\S+')
-echo "Run ID: $run_id"
-```
+> **MUST:** [`references/python/eval_runner.py`](references/python/eval_runner.py)
+> is the single source of truth. Its smoke creates a UUID-named disposable eval,
+> attempts deletion of **only that eval**, and reports cleanup failures separately.
+> It never deletes the existing target agent. The optional artifact retains the
+> run IDs and raw per-item evidence: keep it private. Normal long-lived evaluation
+> definitions/runs in Phase 2 remain reusable; this cleanup is smoke-only.
 
-**Step 3: Score with built-in `tool_selection` evaluator**
-
-> **MUST:** Use [`references/python/eval_runner.py`](references/python/eval_runner.py) as the canonical runner. Do NOT redefine inline — the validator enforces single-source-of-truth. The file wraps Steps 2-4 (`invoke_and_capture` → `smoke_score` → `decide`) and exits 0 / 1 on the `tool_selection >= 0.7` gate.
-
-```bash
-# References the canonical runner — run from your pilot repo root
-python skills/foundry-evals/references/python/eval_runner.py "<your-representative-prompt>"
-```
-
-The runner reads the prompt from `argv`, invokes `azd ai agent invoke --new-conversation`, then creates a 1-item Foundry eval with `builtin.tool_selection` and prints the score.
-
-**Step 4: Interpret and decide**
-
-- If `tool_selection` score ≥ 0.7 → proceed to full eval suite
-- If `tool_selection` score < 0.7 → agent is picking wrong tools; debug before merging
-
-**Step 5: Fallback to function_eval if agent has custom post-processing**
-
-If your agent has non-standard response post-processing or custom event streams (not standard Foundry
-responses API), use the explicit `function_eval` path (see § Custom Graders below) instead of
-invocations-protocol. The smoke test is the same; only the eval execution path changes.
-
-**Decision Tree:**
-
-```
-┌─ Does agent emit standard Foundry responses API events?
-│  ├─ YES → Use invocations-protocol (above recipe)
-│  └─ NO  → Use function_eval (custom grader path)
-```
+Follow a successful execution smoke with the full tool-aware suite and reviewed
+thresholds. Keep `tool_definitions`, actual tool calls/outputs and SPEC-derived
+cases where required. `last_run_summary()` and its EVAL-201 manifest contract are
+unchanged; the helper's private artifact is **not** an EVAL-201 manifest.
 
 ---
 

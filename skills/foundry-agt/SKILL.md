@@ -17,7 +17,7 @@ description: >
   Safety), eval scoring (use foundry-evals), telemetry pipeline wiring
   (use foundry-observability).
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
 ---
 
 # foundry-agt — Microsoft Agent Governance Toolkit, in-process (Path A)
@@ -53,6 +53,11 @@ not just asserted from upstream documentation.
 ---
 
 ## Scope & ownership
+
+For the complete per-agent adoption and release-evidence workflow, see
+[`foundry-agentops`](../foundry-agentops/SKILL.md). This skill remains
+authoritative for AGT policy authoring and in-process runtime governance;
+AgentOps aggregates evidence and never replaces those enforcement controls.
 
 | Concern | Owner | Notes |
 |---|---|---|

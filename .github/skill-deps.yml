@@ -46,6 +46,14 @@ skills:
     depends_on: []
   foundry-toolbox:
     depends_on: []
+  # Local-only delegated auth candidate. Its unattended fixture proves only
+  # approved network/anonymous-auth boundaries, never interactive user OAuth.
+  foundry-mcp-auth:
+    depends_on:
+      - azd-patterns
+      - foundry-toolbox
+      - foundry-hosted-agents
+      - foundry-prompt-agents
   # ghcp-hosted-agents — alternative GHCP-SDK + Invocations protocol
   # hosted-agent path, now on the same GA unified azure.yaml deploy
   # shape (single-file services graph, azd ai agent init/deploy,
@@ -72,6 +80,16 @@ skills:
     depends_on:
       - foundry-prompt-agents
 
+  # foundry-agentops fixture onboards a temporary prompt agent via
+  # foundry-prompt-agents, then runs AgentOps analyze/eval/evidence flows
+  # that rely on the eval, observability, and Foundry direct-model contracts.
+  foundry-agentops:
+    depends_on:
+      - foundry-prompt-agents
+      - foundry-evals
+      - foundry-observability
+      - foundry-agt
+
   # foundry-routines fixture creates a prompt agent (Step 1b) and binds
   # a routine action to it (Step 1c) — so any PA-side change (SDK pin
   # bump, agent-identity contract drift, version-resolution semantics)
@@ -94,6 +112,13 @@ skills:
   foundry-mcp-aca:
     depends_on:
       - foundry-hosted-agents
+
+  foundry-mcp-aca-jobs:
+    depends_on:
+      - azd-patterns
+      - foundry-hosted-agents
+      - foundry-mcp-aca
+      - foundry-prompt-agents
 
   # foundry-network-runbook — operational runbook for network-layer
   # failures after a Foundry VNet deploy. Cross-references specific

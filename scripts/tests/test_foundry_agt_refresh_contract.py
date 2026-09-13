@@ -105,7 +105,7 @@ def _stub_v4_ns() -> SimpleNamespace:
 class FoundryAgtRefreshContractTests(unittest.TestCase):
     def test_skill_is_major_and_path_a_only(self) -> None:
         meta, body = frontmatter(SKILL / "SKILL.md")
-        self.assertEqual(meta["metadata"]["version"], "2.0.0")
+        self.assertEqual(meta["metadata"]["version"], "2.0.1")
 
         description = meta["description"].lower()
         for forbidden in ("aca sidecar", "citadel adapter", "26.67", "0.00%"):

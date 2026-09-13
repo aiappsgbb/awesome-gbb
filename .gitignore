@@ -43,3 +43,4 @@ skills/*.zip
 # repo here (default WORKDIR=$ROOT_DIR/.upstream-pin-work/<skill>) to
 # diff/build against the pinned SHA. Transient — never commit the clone.
 .upstream-pin-work/
+.upstream-pin-smoke/

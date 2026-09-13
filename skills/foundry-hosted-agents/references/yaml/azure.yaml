@@ -11,6 +11,10 @@
 # provisioning a new one — the common shape when a project + ACR
 # already exist and you're only shipping an agent into them.
 #
+# Before registration, follow ../deployment-preflight.md and run the read-only
+# evidence gate. Existing project/ACR pointers do not prove private project-host
+# setup, image-pull reachability, or hosted readiness.
+#
 # IMPORTANT: this YAML is necessary but not sufficient for direct-copy
 # brownfield deployment. If you copy these files and run `azd deploy`
 # without first running `azd ai agent init`, the active azd environment

@@ -1,0 +1,16 @@
+# Canonical OAuth definition for azure.ai.connections 1.0.0-beta.6.
+# Source of truth for `../../SKILL.md § Connection setup`.
+# Deployment replaces an existing definition with this name: Gate B only.
+name: delegated-demo-mcp
+category: RemoteTool
+authType: OAuth2
+target: ${MCP_ENDPOINT}
+authorizationUrl: https://login.microsoftonline.com/${MCP_TENANT_ID}/oauth2/v2.0/authorize
+tokenUrl: https://login.microsoftonline.com/${MCP_TENANT_ID}/oauth2/v2.0/token
+refreshUrl: https://login.microsoftonline.com/${MCP_TENANT_ID}/oauth2/v2.0/token
+scopes:
+  - api://${MCP_API_CLIENT_ID}/demo.read
+  - offline_access
+credentials:
+  clientId: ${MCP_OAUTH_CLIENT_ID}
+  clientSecret: ${MCP_OAUTH_CLIENT_SECRET}

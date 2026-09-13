@@ -866,6 +866,9 @@ stays useful without leaking inventory.
 **RBAC on `<ci-uami-name>`:**
 - Contributor on `<ci-resource-group>`
 - AcrPush on `<ci-container-registry>`
+- Storage Blob Data Contributor on `<ci-storage-account>` for the
+  `foundry-mcp-aca-jobs` fixture's standing input/output storage. This is a
+  pre-provisioned prerequisite; fixtures must not re-grant it during a run.
 - Cognitive Services OpenAI User on `<ci-foundry-account>`
 - Foundry User on `<ci-foundry-account>`
 - Role Based Access Control Administrator on `<ci-foundry-account>`,
@@ -2218,9 +2221,18 @@ workflow path computes `git diff $base_ref..HEAD`, maps changed
 files to changed skills, applies **forward fanout** from
 [`.github/skill-deps.yml`](.github/skill-deps.yml) (if A changed
 and B `depends_on` A, run B too), and forces a full matrix on
-**input-contract changes** (`.github/workflows/skill-test.yml`,
-`.github/quarantine.yml`, `.github/ci-shared-preamble.md`). The
+**input-contract changes** (shared execution in `.github/workflows/skill-test.yml`,
+`.github/quarantine.yml`, `.github/ci-shared-preamble.md`,
+`scripts/resolve-foundry-project.py`). The
 `push: main` and `schedule:` paths always run the full matrix.
+
+Workflow changes are compared structurally at the base SHA and `HEAD`.
+Changes only to independent `unit-tests`, `catalog-lint` or
+`delegated-auth-local` jobs retain normal skill/dependency selection. Global
+configuration, shared matrix jobs, unknown jobs, local-job removal, credential
+or output declarations, or matrix dependencies on local jobs still force full.
+Missing/unparseable/duplicate-key workflow YAML also forces full with a warning.
+This exemption never skips the local jobs or changes required status checks.
 
 **What's deliberately NOT in the force-full list:**
 
@@ -2374,14 +2386,16 @@ part of what they asked for?" YES → hard. NO → best-effort.
 
 **Janitor contract.** The `<ci-resource-group>` resource group
 is the catch-all for orphaned fixture resources under Pattern
-25. A periodic cron (manual today; automation deferred) prunes:
+25. The manual janitor process (automation deferred) prunes:
 
 - ACR repositories matching `ci-smoke-*` older than 7 days
 - Foundry agent versions matching `ci-smoke-*` older than 7 days
 - ACA Container Apps matching `ci-smoke-*` older than 7 days
 - Role assignments scoped to deleted principals
+- Cosmos native SQL role assignments (`az cosmosdb sql role assignment`);
+  these are not ordinary ARM RBAC and can survive deleted principals
 
-The janitor's existence is what lets fixtures soft-PASS without
+The manual janitor process is what lets fixtures soft-PASS without
 unbounded resource leak. Do NOT use Pattern 25 in production
 deployments — the janitor lives only in CI infrastructure.
 
@@ -3010,20 +3024,38 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Current coverage (36 skills, 32 with upstream pins):**
+**Draft-inclusive source inventory (39 skills, 35 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
-| Auto-tier (`runnable: true`) | 25 pins | T0 + T1 + T2 in CI |
-| Auto-tier (`runnable: false`, CI-validated) | 3 pins | T0 in CI; T1–T3 via `--include-azure` on PR/schedule |
-| Issue-only (complex multi-resource deploy) | 4 pins | T0 in CI; manual validation only |
+| Auto-tier (CI can refresh autonomously) | 31 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
+| Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| Copilot-CLI fixtures | 22 skills | T3 in CI (`copilot-cli-matrix`, see `.github/skill-deps.yml`) |
+| Copilot-CLI fixtures | 25 skills | Registered for T3 (`copilot-cli-matrix`, see `.github/skill-deps.yml`); registration is not a passing run |
 
-The `--include-azure` flag on `run-pin-validation.py` unlocks
-issue-only pins when the runner has Azure credentials. The infra is
-provisioned (§ 9.7); individual pin scripts are being upgraded from
-pip+import to actual Azure API calls incrementally.
+The additional `foundry-mcp-auth` entry is an unreleased candidate with live
+single-user delegated PASS for Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox over private
+networking. Its unattended fixture is not that delegated E2E evidence. The
+Hosted/direct path, late consent/revocation, two-user isolation and
+Playground follow-through remain release gates; see its
+[acceptance record](docs/maintenance/foundry-mcp-auth-validation.md).
+
+The `foundry-agentops` entry is an unreleased draft candidate eligible for PR validation,
+not merged, released, or production-ready. Completed
+**corrected-source manual execution PASS**; **quality FAIL (4/5 thresholds)**;
+**Doctor readiness BLOCKED**; **release PENDING**.
+CI results and candidate SHA will be recorded in the PR.
+The [sanitized validation record](docs/maintenance/foundry-agentops-validation.md)
+binds the corrected manual CLI-user cycle as of 2026-09-05, before PR CI, to its
+fixture, preserves the prior 5/5 cycle as distinct history, and separates both
+from CI/SP/full-matrix evidence recorded in the PR. These inventory counts do not
+certify readiness or waive any live-testing or publication gate.
+
+The `--include-azure` flag on `run-pin-validation.py` unlocks only
+auto-tier credentialed pins with `validation.runnable: false`; issue-only
+pins remain human-only in every mode. The infra is provisioned (§ 9.7);
+individual pin scripts are being upgraded from pip+import to actual Azure
+API calls incrementally.
 
 ### 12.4 The repo IS the product
 
@@ -3048,15 +3080,19 @@ Consequences:
 
 ### 12.5 Catalog at a glance
 
+Source counts include the unreleased AgentOps and delegated-auth candidates; see the
+[validation status](docs/maintenance/foundry-agentops-validation.md).
+
 | Metric | Value |
 |--------|-------|
-| Total skills | 36 |
-| Skills with upstream pins | 32 |
-| Auto-tier (CI can refresh autonomously) | 28 |
+| Total skills | 39 |
+| Skills with upstream pins | 35 |
+| Auto-tier (CI can refresh autonomously) | 31 |
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 7 (6 gates + 1 delivery un-blocker) |
-| Unit tests | 578 |
+| Unit tests | 1226 |
+| Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

@@ -1,39 +1,43 @@
 ---
 name: foundry-routines
 description: >
-  Schedule and dispatch Foundry agent invocations via Routines —
-  declarative automation rules that fire on cron (schedule trigger)
-  or at a specific time (timer trigger). Wraps azure-ai-projects
-  2.2.0+ `client.beta.routines` (create_or_update, dispatch,
-  enable/disable, list/get/list_runs, delete), both action types
-  (`invoke_agent_responses_api`, `invoke_agent_invocations_api`),
-  YAML routine manifests, the `Foundry-Features: Routines=V1Preview`
-  REST header, and regional preview availability.
+  Schedule and dispatch Foundry agent invocations via Routines: cron,
+  timer, GitHub issue and supported custom events. Covers the
+  azure-ai-projects 2.4.x `client.beta.routines` lifecycle, azd run
+  history and declarative azure.yaml, Responses/Invocations actions,
+  preview headers and dispatch identity boundaries.
   USE FOR: routines, scheduled agent, timer trigger, recurring
   trigger, cron schedule, agent automation, run history,
   dispatch_async, Foundry-Features header, RoutineDispatchPayload,
-  azd ai routine. DO NOT USE FOR: multi-step orchestration or
+  azd ai routine, GitHub issue trigger, Teams message trigger.
+  DO NOT USE FOR: multi-step orchestration or
   multi-agent coordination (use workflows), branching/approval logic
   (use workflows), in-cluster cron outside Foundry (use Azure
   Functions / Logic Apps), agent runtime (use foundry-prompt-agents
   or foundry-hosted-agents).
 metadata:
-  version: "1.0.6"
+  version: "1.1.0"
 ---
 
 # Microsoft Foundry Routines — Reference Guide
 
 A **routine** is a named automation rule that fires an existing
-Foundry agent on a schedule (cron) or at a specific moment (timer).
+Foundry agent on a schedule (cron), at a specific moment (timer), or
+when a supported external event arrives.
 The Foundry service queues the invocation, runs the agent, and
 stores a run record you can inspect later. Routines remove the need
 to host your own scheduler (Functions, Logic Apps, cron jobs)
 around an agent that already lives in Foundry.
 
-> **Status: preview (regional).** Send the
+> **Status: preview.** Send the
 > `Foundry-Features: Routines=V1Preview` header on every REST call
-> (the SDK adds it automatically). Available in a subset of regions
-> — see § 2.
+> (the SDK adds it automatically). Availability and identity constraints
+> are service-version dependent — see § 2 and § 7.
+
+The SDK examples remain the existing consumer path. For imperative CLI
+and source-controlled deployment, use the
+[azd routines workflow](references/azd-routines.md). It distinguishes CLI
+aliases from API fields and preserves the existing SDK/REST alternatives.
 
 ---
 
@@ -43,10 +47,10 @@ A routine has exactly one **trigger** and one **action**.
 
 | Concept | Values |
 |---|---|
-| **Trigger** | `schedule` (cron, ≥ 5 min interval) or `timer` (one-shot at a future timestamp / duration) |
+| **Trigger** | `schedule` (cron, ≥ 5 min interval), `timer` (one-shot), `github_issue`, or `custom` with a supported provider |
 | **Action** | `invoke_agent_responses_api` (call agent via Responses API) or `invoke_agent_invocations_api` (call via Invocations API) |
 | **Lifecycle** | Created enabled or disabled, then `enable` / `disable` / `delete` |
-| **Run history** | Every fire is recorded — query via SDK, REST, or portal |
+| **Run history** | Query via SDK, REST, portal, or `azd ai routine run list` |
 
 ### When to reach for routines
 
@@ -56,28 +60,26 @@ A routine has exactly one **trigger** and one **action**.
 | Run a Foundry agent once at a fixed future timestamp | ✅ Yes — timer trigger |
 | Test an agent on-demand without waiting for its schedule | ✅ Yes — `dispatch()` manual dispatch |
 | Multi-step workflow (call agent A, branch on result, call agent B) | ❌ No — use Foundry workflows |
-| Event-driven trigger (HTTP webhook, queue message, file upload) | ❌ No — use Azure Functions / Event Grid / Logic Apps and call the agent from there |
+| React to an opened/closed GitHub issue | ✅ Yes — `github_issue` with an authorized connector connection |
+| React to a Teams channel message | ✅ Yes — `custom` with the supported `teams` provider |
+| Arbitrary HTTP webhook, queue message, or file upload | ❌ Not a generic event receiver — use Functions / Event Grid / Logic Apps unless a supported routine provider covers that event |
 | Sub-minute precision schedule | ❌ No — 5-minute minimum interval |
 
 **Routines complement, not replace,** `foundry-prompt-agents` and
 `foundry-hosted-agents` — those skills create the agent; this
-skill schedules its invocation.
+skill automates its invocation.
 
 ---
 
 ## 2 · Prerequisites
 
-1. **Microsoft Foundry project** in one of the routines-preview
-   regions (verified against the routines concept doc — see § 10):
-
-   - East US
-   - East US 2
-   - West US
-   - West US 2
-   - West Central US
-   - North Central US
-   - Sweden Central
-   - Japan East
+1. **Microsoft Foundry project with routines enabled.** Check the
+   [current availability](https://learn.microsoft.com/azure/foundry/agents/how-to/use-routines#prerequisites)
+   for the target project; the historical eight-region preview list is
+   not a current allowlist. The September 2026 documentation excludes
+   UK West, Switzerland West, Japan West, UAE North and Norway East.
+   Routines inherit the project's private networking configuration but
+   do not support customer-managed key encryption.
 
 2. **Existing agent with a configured agent identity.** A prompt
    agent created via `project.agents.create_version(...)` (see
@@ -108,6 +110,15 @@ skill schedules its invocation.
    or `az account get-access-token --resource https://ai.azure.com`
    for raw REST. Routines are data-plane operations under the
    project endpoint.
+
+6. **Isolated CLI context** per `azure-tenant-isolation` before SDK,
+   `az`, or `azd` work. Set both tenant-specific config directories and
+   verify the intended tenant/subscription before mutations. An explicit
+   project endpoint does not replace the tenant guard.
+
+7. **Event connections** require separate authorization and connector
+   consent. A manual dispatch does not prove that an external event
+   source can deliver a trigger; see the [event prerequisites](references/azd-routines.md#event-triggers).
 
 ---
 
@@ -149,6 +160,7 @@ routine = client.beta.routines.create_or_update(
     action={
         "type": "invoke_agent_responses_api",
         "agent_name": "my-summary-agent",  # required, ≤ 256 chars
+        "input": "Summarize the activity since the previous run.",
         # "conversation_id": "...",        # optional
     },
 )
@@ -159,9 +171,9 @@ print(f"Routine: {routine.name}, enabled={routine.enabled}")
 
 Fires exactly once. The `at` field accepts three shapes:
 
-- ISO 8601 timestamp with explicit UTC offset: `"2026-09-01T09:00:00Z"`
+- ISO 8601 timestamp with explicit UTC offset: `"2030-09-01T09:00:00Z"`
 - Local timestamp paired with `time_zone`:
-  `"at": "2026-09-01T09:00:00", "time_zone": "America/Los_Angeles"`
+  `"at": "2030-09-01T09:00:00", "time_zone": "America/Los_Angeles"`
 - A positive duration from now: `"30m"`, `"2h"` (introduced in
   `azure-ai-projects` 2.2.0)
 
@@ -173,12 +185,13 @@ routine = client.beta.routines.create_or_update(
     triggers={
         "release-day": {
             "type": "timer",
-            "at": "2026-09-01T09:00:00Z",  # required
+            "at": "2030-09-01T09:00:00Z",  # replace with a future timestamp
         }
     },
     action={
         "type": "invoke_agent_responses_api",
         "agent_name": "release-bot",
+        "input": "Produce the release summary.",
     },
 )
 ```
@@ -195,8 +208,8 @@ exposed:
 
 ### YAML manifest equivalent
 
-For consumers who prefer YAML / `azd ai routine` (preview-CLI
-unstable — see § 8):
+For consumers who prefer YAML / `azd ai routine`, manifest fields use
+the API wire names, not CLI aliases or flags:
 
 ```yaml
 # routine.yaml
@@ -206,12 +219,18 @@ enabled: true
 triggers:
   weekday-morning:
     type: schedule
-    cron: "0 7 * * 1-5"
+    cron_expression: "0 7 * * 1-5"
     time_zone: UTC
 action:
   type: invoke_agent_responses_api
   agent_name: my-summary-agent
+  input: Summarize the activity since the previous run.
 ```
+
+Create it with a positional routine name and an explicit project endpoint;
+see [CLI setup and creation](references/azd-routines.md#imperative-lifecycle).
+The manifest's `action.input` is persisted. A manual dispatch override
+does not update that stored input.
 
 ---
 
@@ -247,6 +266,9 @@ in run history (§ 6). `action_correlation_id` is the
 downstream-service correlation handle (e.g. the Responses API
 response ID).
 
+An enqueue acknowledgment is not agent completion. Inspect the correlated
+run before reporting that the agent succeeded.
+
 > **REST equivalent:** `POST {endpoint}/routines/{name}:dispatch_async`
 > with the same payload, plus the `Foundry-Features: Routines=V1Preview`
 > header. The endpoint suffix is `:dispatch_async` (note the colon),
@@ -275,9 +297,13 @@ for r in client.beta.routines.list():
 client.beta.routines.delete("daily-summary")
 ```
 
-To **update** a routine's trigger or action, reissue
-`create_or_update` with the same name — the operation replaces the
-stored definition. Omitted fields reset to defaults.
+To update supported fields, read the current definition and preserve fields
+you are not changing. Do not assume `create_or_update` permits replacing a
+trigger: the live service can reject changes to the **trigger definition**
+even when its type is unchanged. Use a description-only update for a harmless
+round-trip check. A schedule change needs an explicitly coordinated replacement
+when the service rejects in-place updates; see the
+[azd update boundary](references/azd-routines.md#imperative-lifecycle).
 
 ---
 
@@ -308,15 +334,26 @@ Useful `RoutineRun` fields:
 | `trigger_type` | `schedule` or `timer` |
 | `started_at` / `ended_at` | UTC timestamps |
 | `dispatch_id` | Matches the `dispatch_id` from a manual `dispatch()` call |
-| `response_id` | Downstream Responses API response ID — open in the portal to see the full agent response |
+| `response_id` | Correlation handle for the downstream response; it does not guarantee that the current caller can retrieve its body |
 | `error_type` / `error_message` | Populated when `phase == "failed"` |
 
-### Portal & REST alternatives
+### CLI, portal & REST alternatives
 
+- CLI: `azd ai routine run list <name>` supports `--top`, `--filter`
+  and `--output json`; use the explicit endpoint form in the
+  [azd reference](references/azd-routines.md#imperative-lifecycle).
 - The Foundry portal exposes a run table on each routine's detail
   page with the same fields, plus links to the full agent response.
 - REST: `GET {endpoint}/routines/{name}/runs` with the
   `Foundry-Features: Routines=V1Preview` header.
+
+**Completion and response readback are different checks.** In manual
+acceptance, the run reached `phase=completed`, `status=Finished`, with no
+error fields, but retrieving its `response_id` returned 404 through both
+project and agent OpenAI clients. Do not report model-output assertions as
+passed from the run record alone. The cause of that readback boundary was
+not established; preserve the run/dispatch correlation for investigation
+rather than inferring a permission fix or silently changing identities.
 
 ---
 
@@ -325,17 +362,22 @@ Useful `RoutineRun` fields:
 | Identity | Role required | Why |
 |---|---|---|
 | **Caller** authoring the routine | Foundry User (or higher) on the project scope | Authors `routines/*` operations |
-| **Project managed identity** (server-side) | `Cognitive Services OpenAI User` on the AI Services account scope | The agent invocation runs server-side as the project MI; if the agent calls a model deployment it needs this role |
+| **Agent identity** (default dispatch) | Permissions required by the agent's model and tools | Current routines default to the agent identity, not the authoring caller |
+| **Connector connection identity** | Access and consent for the watched repository or Teams channel | Authenticates event delivery independently of agent dispatch |
 
-> **Pattern 23 (catalog convention).** When a routine fires, the
-> downstream agent invocation is executed by Foundry's server-side
-> worker, which authenticates as the **project managed identity**
-> — not as the caller who created the routine. If your agent calls
-> a chat / embedding deployment, the project MI must have
-> `Cognitive Services OpenAI User` (and `Cognitive Services User`
-> for embedding paths) on the AI Services **account** scope. The
-> CI infrastructure for this catalog has these grants pre-applied;
-> in customer engagements add them explicitly.
+Do not infer the executing principal from the identity that authored the
+routine. Identify the actual agent runtime principal before diagnosing or
+granting downstream RBAC. The project MI grants used by the existing CI
+fixture are fixture preconditions, not a universal identity model.
+
+The current service also documents **creator identity** as an explicit
+REST create-time opt-in for delegated tools. It means the routine creator,
+not the agent creator, a later editor or an arbitrary dispatch user.
+Changing that setting requires recreation; an update does not change it.
+The current SDK/azd models use the default agent identity. See
+[dispatch identity](https://learn.microsoft.com/azure/foundry/agents/how-to/use-routines#choose-a-dispatch-identity)
+before adopting the REST opt-in; it is not covered by this skill's SDK
+lifecycle fixture.
 
 ### Governance notes
 
@@ -350,37 +392,29 @@ Useful `RoutineRun` fields:
 
 ---
 
-## 8 · Preview limitations (as of `azure-ai-projects` 2.2.0)
+## 8 · Preview limitations (source alignment: September 2026)
 
 1. **One trigger and one action per routine.** Multi-trigger or
    multi-action shapes are rejected by the service.
-2. **Only `schedule` and `timer` triggers** are supported. No event,
-   webhook, or queue triggers — those belong upstream of routines.
+2. **Supported event providers only.** `github_issue` and the
+   `custom` Teams provider add event-driven automation; they do not
+   make routines a generic webhook or queue receiver.
 3. **Only `invoke_agent_responses_api` and `invoke_agent_invocations_api`
    actions** are supported. No HTTP-call or "run-a-function" actions.
-4. **Regional preview** — provision your project in one of the
-   regions listed in § 2.
+4. **Check availability and encryption requirements** per § 2.
 5. **5-minute minimum interval** between schedule fires. Cron
    expressions tighter than that are rejected.
 6. **Agent identity required.** Prompt-only agents without a
    configured agent identity are rejected when bound to a routine
    action. The agent must be a project-scoped agent (prompt-agent
    version published, or hosted agent deployed).
-7. **`azd ai routine create --trigger schedule` inline form is NOT
-   supported in preview.** Create schedule routines from a YAML
-   manifest:
-
-   ```bash
-   azd extension install azure.ai.routines
-   azd ai routine create --file routine.yaml
-   ```
-
-   The inline `--trigger schedule --cron …` form is timer-only in
-   the preview extension. Per Pattern 16 (catalog convention),
-   prefer the Python SDK for scheduled routines — the preview-CLI
-   flag surface drifts between releases.
-8. **`azd ai routine` cannot list run history** in preview. Use the
-   portal, the REST API, or the SDK (`list_runs`).
+7. **CLI aliases differ from wire types.** Inline scheduled creation
+   uses `--trigger recurring`; manifests use `type: schedule` and
+   `cron_expression`. `create` has no `--input` flag; stored input
+   belongs in a manifest. Check the installed extension's help rather
+   than inventing an unsupported flag.
+8. **Run history is available in azd** through `azd ai routine run list`,
+   as well as SDK `list_runs`, REST and the portal.
 9. **Input override is bounded.** The `payload.input` field in
    `dispatch()` caps at 32,768 characters.
 10. **`agent_name` is bounded.** ≤ 256 characters on both action
@@ -409,6 +443,7 @@ Useful `RoutineRun` fields:
 
 - [Routines concept doc — Microsoft Learn](https://learn.microsoft.com/azure/foundry/agents/concepts/routines)
 - [Automate agents with routines (how-to)](https://learn.microsoft.com/azure/foundry/agents/how-to/use-routines)
+- [azd lifecycle, event prerequisites and declarative deployment](references/azd-routines.md)
 - [`azure-ai-projects` on PyPI](https://pypi.org/project/azure-ai-projects/)
 - Sibling skills:
   - `foundry-prompt-agents` — author the agent a routine will invoke

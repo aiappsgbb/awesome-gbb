@@ -102,6 +102,20 @@ class FoundryPromptAgentsAgtRoutingContractTests(unittest.TestCase):
             ),
         )
 
+    def test_mcp_servers_document_job_backed_fallback_guidance(self) -> None:
+        _, body = _frontmatter_and_body()
+
+        self.assertIn("[foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md)", body)
+        self.assertIn("| Durable tool execution or callback fallback | `foundry-mcp-aca-jobs` |", body)
+        self.assertRegex(
+            body,
+            re.compile(
+                r"durable result claims.{0,180}external callbacks.{0,180}fall back to.{0,180}"
+                r"foundry-mcp-aca-jobs",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+
     def test_generated_docs_show_the_current_version_everywhere(self) -> None:
         metadata, _ = _frontmatter_and_body()
         expected = f"v{metadata['metadata']['version']}"
