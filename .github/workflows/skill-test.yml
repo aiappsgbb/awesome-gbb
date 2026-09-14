@@ -330,7 +330,7 @@ jobs:
         run: |
           set -euo pipefail
           unset PYTHONPATH PYTHONHOME
-          python3 -m venv .scratch/agent-framework-harness-venv
+          python3 -m venv --clear --copies .scratch/agent-framework-harness-venv
           .scratch/agent-framework-harness-venv/bin/python -m pip install --quiet \
             --requirement skills/agent-framework-harness/test-fixture/requirements.txt
           .scratch/agent-framework-harness-venv/bin/python skills/agent-framework-harness/test-fixture/live_smoke.py --check-runtime

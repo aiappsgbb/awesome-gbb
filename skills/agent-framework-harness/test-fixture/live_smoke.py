@@ -67,7 +67,13 @@ def validate_versions(values: object) -> dict[str, str]:
 
 
 def validate_runtime() -> dict[str, str]:
-    if Path(sys.prefix).resolve() != VENV_PATH.resolve():
+    executable = Path(sys.executable)
+    if (
+        Path(sys.prefix).resolve() != VENV_PATH.resolve()
+        or executable.is_symlink()
+        or not executable.is_file()
+        or not executable.resolve().is_relative_to(VENV_PATH.resolve())
+    ):
         raise SmokeFailure("RUNTIME_PREFIX")
     if os.environ.get("PYTHONPATH") or os.environ.get("PYTHONHOME"):
         raise SmokeFailure("RUNTIME_ENV")

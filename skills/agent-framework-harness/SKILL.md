@@ -110,6 +110,8 @@ The workflow also provisions the pinned interpreter under the approved
 workspace's `.scratch/` directory. The fixture executes only
 `test-fixture/live_smoke.py`, which rejects a substituted interpreter or
 dependency cohort and writes the marker only after its live assertions.
+The virtual environment uses copied executables, not symlinks to a tool-cache
+path outside the approved workspace; path verification remains enabled.
 The host verifies its sanitized receipt before accepting the marker; a bare
 agent-written PASS is insufficient.
 

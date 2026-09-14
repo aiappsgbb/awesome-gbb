@@ -296,7 +296,7 @@ class HarnessCiAuthTests(unittest.TestCase):
         self.assertEqual(setup["if"], runtime["if"])
         self.assertEqual(setup["with"]["python-version"], "3.12")
         self.assertLess(steps.index(setup), steps.index(runtime))
-        self.assertIn("python3 -m venv .scratch/agent-framework-harness-venv", runtime["run"])
+        self.assertIn("python3 -m venv --clear --copies .scratch/agent-framework-harness-venv", runtime["run"])
         self.assertIn(SMOKE_COMMAND + " --check-runtime", runtime["run"])
         self.assertNotIn("/tmp/", runtime["run"])
         self.assertTrue(REQUIREMENTS.is_file())
@@ -324,23 +324,43 @@ class HarnessCiAuthTests(unittest.TestCase):
         }
         namespace["version"] = versions.__getitem__
         error = namespace["SmokeFailure"]
-        with patch.dict(os.environ, {}, clear=True), patch.object(sys, "prefix", str(namespace["VENV_PATH"])):
-            self.assertEqual(namespace["validate_runtime"](), versions)
-            for invalid in ("1.19.0", "1.25.2", "1.25.3b1", "1.26.0"):
-                versions["azure-identity"] = invalid
-                with self.subTest(version=invalid), self.assertRaises(error):
-                    namespace["validate_runtime"]()
-            versions["azure-identity"] = "1.25.4"
-            self.assertEqual(namespace["validate_runtime"](), versions)
-            with patch.dict(os.environ, {"PYTHONPATH": "/tmp/alternate"}):
-                with self.assertRaises(error):
-                    namespace["validate_runtime"]()
-            with patch.object(sys, "prefix", "/system-python"):
-                with self.assertRaises(error):
-                    namespace["validate_runtime"]()
-            with patch.object(Path, "read_text", return_value=""):
-                with self.assertRaises(error):
-                    namespace["validate_runtime"]()
+        with tempfile.TemporaryDirectory() as directory:
+            venv = Path(directory) / "venv"
+            executable = venv / "bin/python"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("owned runtime")
+            external = Path(directory) / "external-python"
+            external.write_text("outside runtime")
+            link = venv / "bin/linked-python"
+            link.symlink_to(external)
+            namespace["VENV_PATH"] = venv
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(sys, "prefix", str(venv)),
+                patch.object(sys, "executable", str(executable)),
+            ):
+                self.assertEqual(namespace["validate_runtime"](), versions)
+                for invalid in ("1.19.0", "1.25.2", "1.25.3b1", "1.26.0"):
+                    versions["azure-identity"] = invalid
+                    with self.subTest(version=invalid), self.assertRaises(error):
+                        namespace["validate_runtime"]()
+                versions["azure-identity"] = "1.25.4"
+                self.assertEqual(namespace["validate_runtime"](), versions)
+                with patch.dict(os.environ, {"PYTHONPATH": "/tmp/alternate"}):
+                    with self.assertRaises(error):
+                        namespace["validate_runtime"]()
+                with patch.object(sys, "prefix", "/system-python"):
+                    with self.assertRaises(error):
+                        namespace["validate_runtime"]()
+                for wrong_executable in (external, link):
+                    with self.subTest(executable=wrong_executable.name), patch.object(
+                        sys, "executable", str(wrong_executable)
+                    ):
+                        with self.assertRaises(error):
+                            namespace["validate_runtime"]()
+                with patch.object(Path, "read_text", return_value=""):
+                    with self.assertRaises(error):
+                        namespace["validate_runtime"]()
 
     def test_context_requires_private_runner_profile_not_ambient_cache(self):
         namespace = self.smoke_namespace()
