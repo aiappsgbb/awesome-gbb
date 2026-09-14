@@ -87,6 +87,7 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
                 (out_dir / "engineering" / "index.html").read_text(encoding="utf-8")
             )
             home = html.unescape((out_dir / "index.html").read_text(encoding="utf-8"))
+            skill_count = sum(1 for _ in (REPO_ROOT / "skills").glob("*/SKILL.md"))
             legacy_engineering = (
                 "The detector runs twice weekly on Monday and Thursday 07:00 UTC. "
                 "Execution mode comes from FRESHNESS_EXECUTION_MODE: manual is the "
@@ -116,6 +117,7 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
             self.assertIn("in copilot mode", engineering)
             self.assertIn("issue_only stays human-owned", engineering)
             self.assertIn("closed end-to-end in copilot mode", engineering)
+            self.assertIn(f"Browse {skill_count} source entries", home)
             self.assert_unambiguous_freshness_routing(engineering)
 
             with self.assertRaises(AssertionError):

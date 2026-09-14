@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-38-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-39-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -135,6 +135,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-prompt-agents**](skills/foundry-prompt-agents/) | Create declarative Foundry agents — model + instructions + tools, no containers, no custom code. `PromptAgentDefinition`, tool wiring (web search, code interpreter, file search, MCP, OpenAPI), versioning, structured inputs, agent applications |
 | [**foundry-voice-live**](skills/foundry-voice-live/) | Build real-time voice agents with Azure Voice Live (GA 2026-04-10) through a four-rung migration from Azure OpenAI Realtime to the native Voice Live SDK. Covers semantic VAD, echo cancellation, Neural HD voices, Foundry agent routing, benchmark patterns, and the FastRTC 0.0.34 plus Gradio 5.50 compatibility boundary |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | GA container-deploy hosted agents via unified `azure.yaml` + `azd` — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, implicit-access identity model (no default role grant), MCP wiring, **`SkillsProvider` progressive skill loading** vs. legacy concat, stable `update_details` blue-green/canary rollout, troubleshooting |
+| [agent-framework-harness](skills/agent-framework-harness/) | Build MAF `create_harness_agent` runtimes with accurate defaults, compaction, plan/execute modes, recovery, bounded loops, and Hosted Agents adapter wiring |
 | [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
 | [**foundry-routines**](skills/foundry-routines/) | Automate existing agents through SDK or azd routines — schedules, timers, supported event prerequisites, run history and declarative deployment. Preserves the SDK path and documents live-observed trigger-update restrictions, explicit project targeting and safe cleanup. |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
@@ -217,7 +218,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 38 skills in a single [Copilot CLI plugin](plugin.json); the draft AgentOps addition is not yet published, nor is the delegated-auth candidate:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 39 skills in a single [Copilot CLI plugin](plugin.json); the draft AgentOps addition is not yet published, nor is the delegated-auth candidate:
 >
 > ```bash
 > # Register the marketplace once:
@@ -366,7 +367,7 @@ flowchart LR
 README.md                 # This file — catalog index + install instructions
 DEMOS.md                  # Demo guide for Foundry walkthroughs
 AGENTS.md                 # Contributor & sub-agent safety guide
-plugin.json               # Single plugin manifest (38 skills in the proposed catalog via "skills/")
+plugin.json               # Single plugin manifest (39 skills in the proposed catalog via "skills/")
 skills/
   <skill-name>/
     SKILL.md              # Skill definition (frontmatter + instructions)

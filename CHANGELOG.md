@@ -34,6 +34,32 @@ release/quality certification. External event delivery, full OAuth lifecycle,
 private-network runtime inference and the documented routine response-readback
 limitation remain explicitly separate from the proven paths.
 
+## 4.33.0 — Proposed / Unreleased
+
+Adds [`agent-framework-harness`](skills/agent-framework-harness/SKILL.md)
+**1.0.3** as the runtime-level contract for Microsoft Agent Framework
+`create_harness_agent`, including verified defaults and provider ordering,
+compaction, bounded plan/execute composition, session recovery, hosted adapter
+wiring, an offline construction smoke, and a registered live Foundry fixture.
+
+- Proposed plugin/marketplace MINOR **4.32.0 → 4.33.0**:
+  **39 skills**, **35 upstream pins**, **31 auto-tier pins**, and
+  **25 registered fixtures**.
+- Preserve the unpublished AgentOps and delegated MCP auth candidate status and
+  every existing ACA Jobs, MCP auth, and AgentOps catalog entry.
+- Use a runner-owned Azure CLI login in the Harness CI fixture rather than
+  asking the Copilot process to exchange GitHub identity tokens.
+- Provision the pinned smoke interpreter inside the approved workspace;
+  execute one canonical probe and verify its receipt before accepting PASS.
+- Execute only the Harness smoke directly in its runner-controlled CI step
+  under the maintainer-approved exception; no agent-authored result is authoritative.
+- Keep deployment, identity, RBAC, rollout, and lifecycle in
+  [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md)
+  **2.2.1**, whose reciprocal ownership routing now points runtime
+  composition to `agent-framework-harness`;
+  deterministic governance remains in
+  [`foundry-agt`](skills/foundry-agt/SKILL.md).
+
 ## 4.32.0 — Proposed / Unreleased
 
 **Draft checkpoint, not a release.** Adds
