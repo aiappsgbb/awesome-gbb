@@ -270,6 +270,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate native smoke standing prerequisites
+        id: native-preflight
+        if: matrix.skill == 'foundry-mcp-auth' || matrix.skill == 'foundry-mcp-aca-jobs'
+        # Offline, fail-closed before credentials/tools/paid execution. A valid
+        # shape is not network, RBAC or delegated-consent evidence.
+        env:
+          NATIVE_SMOKE_SKILL: ${{ matrix.skill }}
+          MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED }}
+          MCP_AUTH_SMOKE_ENDPOINT: ${{ secrets.MCP_AUTH_SMOKE_ENDPOINT }}
+          MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
+          MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/native-ci-preflight.py "$NATIVE_SMOKE_SKILL"
+
       - name: Isolate AgentOps credential sources
         if: matrix.skill == 'foundry-agentops'
         # Set before azure/login so native CLI-first and SDK default chains
@@ -450,6 +466,9 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
+          # Owner-supplied reachability inputs, never inferred from the Jobs app.
+          MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED || '' }}
+          MCP_AUTH_SMOKE_ENDPOINT: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ENDPOINT || '' }}
           # Required only for the foundry-mcp-aca-jobs fixture; other matrix
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
@@ -794,6 +813,9 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
+          # Owner-supplied reachability inputs, never inferred from the Jobs app.
+          MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED || '' }}
+          MCP_AUTH_SMOKE_ENDPOINT: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ENDPOINT || '' }}
           # Required only for the foundry-mcp-aca-jobs fixture; other matrix
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
