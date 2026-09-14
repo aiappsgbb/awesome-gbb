@@ -181,7 +181,9 @@ def execute(project: AIProjectClient, data: dict, name: str, number: str,
         result = model_result(response)
         record("model-completed", {"response_id": result["id"], "session_id": result["session_id"]})
         record("response-readback-start", {"response_id": result["id"]})
-        readback = client.responses.retrieve(result["id"])
+        readback = client.responses.retrieve(
+            result["id"], extra_headers={"x-agent-session-id": result["session_id"]},
+        )
         record("session-readback-start", {"session_id": result["session_id"]})
         session = project.agents.get_session(agent_name=name, session_id=result["session_id"])
         proof = verify_model_readback(response, readback, session, agent_name=name, agent_version=number)

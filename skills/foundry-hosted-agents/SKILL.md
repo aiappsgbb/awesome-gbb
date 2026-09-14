@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.3.0"
+  version: "2.3.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide

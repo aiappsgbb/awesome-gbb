@@ -378,7 +378,9 @@ with DefaultAzureCredential() as credential, AIProjectClient(
         stream=False,
     )
     result = model_result(response)
-    readback = openai_client.responses.retrieve(result["id"])
+    readback = openai_client.responses.retrieve(
+        result["id"], extra_headers={"x-agent-session-id": result["session_id"]},
+    )
     session = project.agents.get_session(agent_name=agent_name, session_id=result["session_id"])
     proof = verify_model_readback(
         response, readback, session, agent_name=agent_name, agent_version="1",

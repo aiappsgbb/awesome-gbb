@@ -263,7 +263,7 @@ class NativeExecutionTests(unittest.TestCase):
         data["registry"]["properties"]["adminUserEnabled"] = False
         return data
 
-    def run_native(self, *, denied=False, mutate=None):
+    def run_native(self, *, denied=False, mutate=None, require_affinity=False):
         helper = importlib.import_module("hosted_smoke")
         data = self.setup()
         native = {
@@ -282,11 +282,13 @@ class NativeExecutionTests(unittest.TestCase):
         calls = []
 
         def handle(request):
-            calls.append((request.method, request.url.path))
+            calls.append((request.method, request.url.path, request.headers.get("x-agent-session-id")))
             if denied:
                 return httpx.Response(403, json={"error": {"code": "Forbidden", "message": "Denied"}})
             body = response_body()
             if request.method == "GET":
+                if require_affinity and request.headers.get("x-agent-session-id") != body["agent_session_id"]:
+                    return httpx.Response(404, json={"error": {"code": "NotFound", "message": "Session affinity required"}})
                 body["output"][0]["phase"] = None
             return httpx.Response(200, json=body)
 
@@ -310,10 +312,20 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertEqual(result["business_execution"], "NOT_TESTED")
         self.assertEqual(len(management), 4)
         self.assertTrue(all(method == "GET" for method, _ in management))
-        self.assertEqual([method for method, _ in responses], ["POST", "GET"])
+        self.assertEqual([method for method, _, _ in responses], ["POST", "GET"])
         self.assertIn("/agents/basic-agent/endpoint/protocols/openai/responses", responses[0][1])
         self.assertTrue(responses[1][1].endswith("/responses/response-one"))
         self.assertEqual(sum(stage == "direct-version-get" for stage, _ in records), 2)
+
+    def test_native_retrieve_requires_observed_session_affinity_without_extra_post(self):
+        result, _, responses, _ = self.run_native(require_affinity=True)
+        self.assertEqual(result["status"], "PRIVATE_BASIC_MODEL_PASS")
+        self.assertEqual([method for method, _, _ in responses], ["POST", "GET"])
+        self.assertIsNone(responses[0][2], "Initial POST must not reuse a historical session")
+        self.assertEqual(responses[1][2], "session-one")
+        self.assertTrue(responses[1][1].endswith("/responses/response-one"))
+        self.assertEqual(result["response_id"], "response-one")
+        self.assertEqual(result["session_id"], "session-one")
 
     def test_permission_failure_is_not_retried_or_faked_as_pass(self):
         with self.assertRaises(PermissionDeniedError):
@@ -397,6 +409,10 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertIn('r"MODEL_COMPLETION_READBACK_OK"', fixture)
         self.assertNotIn("INVOKE_LABEL", fixture)
         self.assertNotIn("except Exception as exc:  # noqa: BLE001 - bounded cold-start retry", fixture)
+
+    def test_public_fixture_retrieve_pins_observed_session_header(self):
+        fixture = (REFS.parent / "test-fixture/consumer_prompt.md").read_text()
+        self.assertIn('extra_headers={"x-agent-session-id": result["session_id"]}', fixture)
 
 
 if __name__ == "__main__":

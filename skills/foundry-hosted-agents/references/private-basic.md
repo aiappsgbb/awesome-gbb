@@ -240,6 +240,10 @@ does not affect equality; arbitrary exact phrasing such as `billing` is not the
 criterion. Tool calls, consent requests, empty output, failed/incomplete responses,
 wrong session/version/image or a newer failed GET block success. There is no
 SDK patch, preview routing change, `--skip` flag or synthetic business receipt.
+The response GET explicitly sends `x-agent-session-id` from the completed
+response's observed session ID. Projects SDK 2.3/2.6 do not derive that header
+from a prior POST on the same OpenAI client; a response ID alone does not
+establish Hosted session affinity. This adds no new session or extra POST.
 
 Registration timeout/lost ACK: stop and reconcile native versions before any
 retry. Pull success, registration, health and active metadata are distinct from
