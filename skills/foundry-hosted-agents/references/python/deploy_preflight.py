@@ -125,6 +125,56 @@ def connections(properties: dict) -> dict:
     return result
 
 
+def check_registry_connection(data: dict, project_id: str, registry_id: str,
+                              login_server: str, principal_id: str) -> dict:
+    """Validate ordinary ARM GETs plus retained, non-secret native MI mapping."""
+    scope = project_id + "/connections"
+    inventory = data.get("project_connections")
+    require(isinstance(inventory, dict) and isinstance(inventory.get("value"), list)
+            and not inventory.get("nextLink") and "error" not in inventory,
+            "ACR_CONNECTION_INVENTORY", scope,
+            "Collect all pages of credential-free project connection GETs. Failed/partial reads are unknown, not absence.")
+    name = obj(data.get("target")).get("registry_connection_name")
+    require(text(name) and "/" not in name, "ACR_CONNECTION_INVENTORY", scope,
+            "Select the exact existing or owner-approved missing connection name.")
+    expected_id = scope + "/" + name
+    matches = []
+    for connection in inventory["value"]:
+        require(isinstance(connection, dict) and isinstance(connection.get("properties"), dict),
+                "ACR_CONNECTION_INVENTORY", scope, "Retain complete ordinary GET bodies, never listsecrets.")
+        properties = connection["properties"]
+        metadata = properties.get("metadata") or {}
+        require(isinstance(metadata, dict), "ACR_CONNECTION_INVENTORY", scope,
+                "Retain the connection metadata object.")
+        if (same_id(connection.get("id"), expected_id)
+                or properties.get("target") == login_server
+                or same_id(metadata.get("ResourceId"), registry_id)):
+            matches.append(connection)
+    require(bool(matches), "ACR_CONNECTION_MISSING", expected_id,
+            "Stop deploy. Obtain explicit authorization for the native azd connection-only provisioning route in private-basic.md; preserve hosts, registry, roles and network. Recollect GETs afterward.")
+    require(len(matches) == 1, "ACR_CONNECTION_MISMATCH", expected_id,
+            "Resolve conflicting/duplicate registry connections with the owner. Do not overwrite or delete them.")
+    connection = matches[0]
+    properties = connection["properties"]
+    require(same_id(connection.get("id"), expected_id)
+            and properties.get("category") == "ContainerRegistry"
+            and properties.get("target") == login_server
+            and properties.get("authType") == "ManagedIdentity"
+            and same_id((properties.get("metadata") or {}).get("ResourceId"), registry_id)
+            and not properties.get("error") and not properties.get("credentials"),
+            "ACR_CONNECTION_MISMATCH", expected_id,
+            "Require the selected project-scoped ContainerRegistry, bare loginServer, ResourceId and ManagedIdentity. Use ordinary GETs without credentials; preserve mismatched state for owner review.")
+    mapping = data.get("registry_connection_identity")
+    require(isinstance(mapping, dict) and text(principal_id)
+            and same_id(mapping.get("connection_id"), expected_id)
+            and mapping.get("principal_id") == principal_id
+            and same_id(mapping.get("registry_id"), registry_id)
+            and mapping.get("source") == "native-provisioning" and text(mapping.get("evidence")),
+            "ACR_CONNECTION_IDENTITY", expected_id,
+            "Retain native provisioning evidence: ManagedIdentity clientId maps to the project principalId, resourceId to this registry. GET alone may omit this mapping; unknown stays blocked. Never call listsecrets or infer mapping from AcrPull.")
+    return connection
+
+
 def check_setup(data: object, *, now: datetime | None = None) -> dict:
     """Validate a fresh snapshot. First blocker wins; input remains unchanged."""
     now = now or datetime.now(timezone.utc)
@@ -209,6 +259,8 @@ def check_setup(data: object, *, now: datetime | None = None) -> dict:
         registry_host, repository = image.split("@", 1)[0].split("/", 1)
         require(registry.get("loginServer") == registry_host, "IMAGE", ids["registry"],
                 "Use the digest in the selected registry; image changes require a new observation and signed association.")
+        check_registry_connection(data, ids["project"], ids["registry"], registry_host,
+                                  obj(data["project"].get("identity")).get("principalId"))
         registry_network = target.get("registry_network")
         require(registry_network in ("private", "public")
                 and registry.get("publicNetworkAccess") == ("Disabled" if registry_network == "private" else "Enabled"),
