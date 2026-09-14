@@ -1,19 +1,24 @@
 # Agent Framework Harness live Foundry smoke
 
-This is an execution smoke, not a repository review or repair task.
+**Maintainer-approved runner-native exception (2026-09-14).** The workflow
+executes this smoke directly; no Copilot process runs in the Harness matrix
+leg. The authoritative result is the mandatory native step's outcome, not
+agent-writable marker or receipt files. This proves SDK execution, not an
+agent's ability to follow instructions.
+
+This is an execution contract, not a repository review or repair task.
 The workflow has installed the pinned Python runtime inside the approved
 workspace and authenticated its private Azure CLI profile before starting you.
 Do not install packages, create environments, read credential files, request
 identity tokens, change permissions, or repair the environment.
 
 **CRITICAL — never invoke `copilot` recursively from a Bash tool.**
-You are already the running Copilot CLI process. The workflow captures your
-output and checks the unchanged checkout.
+The workflow captures output and checks the unchanged checkout.
 
 ## Execute the canonical probe once
 
-Your first and only execution action is this exact command from the repository
-root. Do not substitute an interpreter, set `PYTHONPATH`/`PYTHONHOME`, add
+The runner executes this exact command from the repository root.
+Do not substitute an interpreter, set `PYTHONPATH`/`PYTHONHOME`, add
 arguments, redefine helpers inline, or replace the credential.
 
 ```bash
@@ -32,7 +37,10 @@ Only the canonical probe may declare success after its actual live assertions.
 
 ## Result contract
 
-Success requires command exit zero, `HARNESS_LIVE_RESPONSE_OK` in its output,
+Success requires a successful `harness-native` workflow step, command exit zero,
+`HARNESS_LIVE_RESPONSE_OK` in its output,
 and the probe-written `/tmp/agent-framework-harness-smoke-result` containing
 exactly the unadorned success marker. Missing or failed evidence is not success.
-The result file is authoritative; assistant prose is not evidence of execution.
+Receipt checks validate format and consistency only; they do not authenticate
+execution provenance. The runner's executed step is authoritative. Assistant
+prose, or fabricated valid files without that execution, cannot pass the leg.

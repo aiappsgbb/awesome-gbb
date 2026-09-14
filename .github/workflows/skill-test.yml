@@ -5,6 +5,8 @@ name: Skill tests
 # - catalog-lint: validate-skills.py + build-plugins.py --check
 # - build-matrix + copilot-cli-matrix: real Copilot CLI agent runs the
 #   fixture against live Foundry, one runner per skill. THIS is the test.
+#   Maintainer-approved exception: Harness runs its mandatory SDK smoke
+#   directly in the runner, not through a Copilot process (AGENTS.md § 2.8).
 #
 # We deliberately do NOT run pytest-based e2e tests or pin-import smoke
 # tests — those were the legacy approach. The mandate is: a Copilot CLI
@@ -348,6 +350,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Copilot CLI
+        if: matrix.skill != 'agent-framework-harness'
         # Node 22 is pre-installed on ubuntu-latest. npm install is the
         # documented install path; proven green by
         # .github/workflows/copilot-cli-foundry-auth-smoke.yml.
@@ -363,6 +366,7 @@ jobs:
           copilot --version
 
       - name: Install azd (Azure Developer CLI)
+        if: matrix.skill != 'agent-framework-harness'
         # Counter-intuitive: ubuntu-latest does NOT pre-install azd.
         # Run 26699177054 HA leg burned ~5 min hunting for the binary
         # and `curl`-installing it to /tmp/azd-install before any real
@@ -374,6 +378,7 @@ jobs:
         uses: Azure/setup-azd@v2.3.0
 
       - name: Install uv
+        if: matrix.skill != 'agent-framework-harness'
         # Pattern 15: fixture tooling is installed by the workflow, never by
         # the Copilot agent. Pin both the action SHA (v9.0.0) and uv release.
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
@@ -381,11 +386,13 @@ jobs:
           version: "0.12.6"
 
       - name: Install awesome-gbb plugin from this checkout
+        if: matrix.skill != 'agent-framework-harness'
         run: |
           copilot plugin marketplace add "$GITHUB_WORKSPACE"
           copilot plugin install awesome-gbb@awesome-gbb
 
       - name: Get Foundry bearer token
+        if: matrix.skill != 'agent-framework-harness'
         # `--resource` takes the v1 AAD audience identifier (NO `/.default`
         # suffix). Passing the v2 scope form to `--resource` produces
         # AADSTS500011 "resource principal not found". The auth-smoke
@@ -405,6 +412,7 @@ jobs:
           echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       - name: Resolve Foundry project context
+        if: matrix.skill != 'agent-framework-harness'
         id: resolve-foundry-project
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
@@ -461,8 +469,31 @@ jobs:
           set -euo pipefail
           python3 -I scripts/agentops-ci-diagnostic.py check
 
+      - name: Run canonical Harness SDK smoke
+        id: harness-native
+        if: matrix.skill == 'agent-framework-harness'
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL_DEPLOYMENT: gpt-5.4-mini
+        run: |
+          set -euo pipefail
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL PYTHONPATH PYTHONHOME
+          rm -f /tmp/agent-framework-harness-smoke-result \
+            /tmp/agent-framework-harness-smoke-evidence \
+            /tmp/agent-framework-harness-transcript.log
+          git diff --quiet "$GITHUB_SHA" --
+          .scratch/agent-framework-harness-venv/bin/python skills/agent-framework-harness/test-fixture/live_smoke.py \
+            2>&1 | tee /tmp/agent-framework-harness-transcript.log
+          git diff --quiet "$GITHUB_SHA" --
+          python3 -I skills/agent-framework-harness/test-fixture/live_smoke.py --verify-result
+          echo "HARNESS_NATIVE_RESULT=PASS"
+
       - name: Run consumer prompt for ${{ matrix.skill }}
         id: run
+        if: matrix.skill != 'agent-framework-harness'
         # Pattern 21 (AGENTS.md § 9.7): suppress this step's exit code
         # from poisoning the job conclusion so the retry step (below) can
         # actually unfail the job on classified-transient recovery. Without
@@ -764,10 +795,6 @@ jobs:
           # A fixture must execute the checked-in contract as-is. A dirty
           # checkout before invocation is a workflow/predecessor defect.
           assert_tracked_checkout_clean "before Copilot"
-          # Harness uses the runner's CLI login, not agent-managed GitHub tokens.
-          if [ "$SKILL" = "agent-framework-harness" ]; then
-            unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL PYTHONPATH PYTHONHOME
-          fi
           set +e
           copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
                   --allow-all-tools \
@@ -777,10 +804,6 @@ jobs:
           COPILOT_STATUS=${PIPESTATUS[0]}
           set -e
           echo "copilot exit status: $COPILOT_STATUS"
-          if [ "$SKILL" = "agent-framework-harness" ]; then
-            assert_tracked_checkout_clean "after Copilot"
-            python3 -I skills/agent-framework-harness/test-fixture/live_smoke.py --verify-result
-          fi
           if [ -f "$EVIDENCE" ]; then
             cp "$EVIDENCE" "$PRIMARY_EVIDENCE"
             cat "$EVIDENCE"
@@ -1092,9 +1115,6 @@ jobs:
             # Re-check after the cooldown so a process left by the primary
             # attempt cannot mutate tracked inputs while this step sleeps.
             assert_tracked_checkout_clean "before Copilot"
-            if [ "$SKILL" = "agent-framework-harness" ]; then
-              unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL PYTHONPATH PYTHONHOME
-            fi
             set +e
             copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
                     --allow-all-tools \
@@ -1104,10 +1124,6 @@ jobs:
             COPILOT_STATUS=${PIPESTATUS[0]}
             set -e
             echo "copilot retry exit status: $COPILOT_STATUS"
-            if [ "$SKILL" = "agent-framework-harness" ]; then
-              assert_tracked_checkout_clean "after Copilot"
-              python3 -I skills/agent-framework-harness/test-fixture/live_smoke.py --verify-result
-            fi
             if [ -f "$EVIDENCE" ]; then
               cp "$EVIDENCE" "$RETRY_EVIDENCE"
               cat "$EVIDENCE"
@@ -1143,8 +1159,16 @@ jobs:
 
       - name: Post-hoc audit — did the agent reach for the skill?
         if: always()
+        env:
+          HARNESS_NATIVE_OUTCOME: ${{ steps.harness-native.outcome }}
         run: |
           SKILL="${{ matrix.skill }}"
+          if [ "$SKILL" = "agent-framework-harness" ]; then
+            case "$HARNESS_NATIVE_OUTCOME" in
+              success) echo "HARNESS_AUDIT=PASS SDK_ONLY"; exit 0 ;;
+              *) echo "HARNESS_AUDIT=FAIL NATIVE_EXECUTION"; exit 1 ;;
+            esac
+          fi
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
           RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
           if [ "$SKILL" = "foundry-agentops" ]; then

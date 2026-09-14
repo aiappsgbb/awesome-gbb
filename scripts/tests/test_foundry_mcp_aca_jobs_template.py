@@ -675,7 +675,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "| Auto-tier (CI can refresh autonomously) | 31 pins |",
             "| Issue-only (human / complex deploy) | 4 pins |",
             "| Internal IP (no pin) | 4 skills |",
-            "| Copilot-CLI fixtures | 25 skills | Registered for T3",
+            "| CI execution fixtures | 25 skills | Registered for T3",
             "registration is not a passing run",
             "Source counts include the unreleased AgentOps and delegated-auth candidates",
             "| Total skills | 39 |",

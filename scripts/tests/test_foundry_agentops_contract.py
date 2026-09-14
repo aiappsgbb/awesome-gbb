@@ -1122,7 +1122,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         coverage = text.split("### 12.3", 1)[1].split("\n### ", 1)[0]
         self.assertIn(f"({len(skills)} skills, {len(pins)} with upstream pins)", coverage)
         self.assertRegex(coverage, rf"(?m)^\| Auto-tier .* \| {counts['Auto-tier (CI can refresh autonomously)']} pins \|")
-        self.assertRegex(coverage, rf"(?m)^\| Copilot-CLI fixtures \| {len(fixtures)} skills \|")
+        self.assertRegex(coverage, rf"(?m)^\| CI execution fixtures \| {len(fixtures)} skills \|")
 
     def test_proposed_release_notes_link_versioned_skill_changes(self) -> None:
         path = ROOT / "CHANGELOG.md"

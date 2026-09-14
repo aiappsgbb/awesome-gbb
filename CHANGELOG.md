@@ -37,7 +37,7 @@ limitation remain explicitly separate from the proven paths.
 ## 4.33.0 — Proposed / Unreleased
 
 Adds [`agent-framework-harness`](skills/agent-framework-harness/SKILL.md)
-**1.0.2** as the runtime-level contract for Microsoft Agent Framework
+**1.0.3** as the runtime-level contract for Microsoft Agent Framework
 `create_harness_agent`, including verified defaults and provider ordering,
 compaction, bounded plan/execute composition, session recovery, hosted adapter
 wiring, an offline construction smoke, and a registered live Foundry fixture.
@@ -51,6 +51,8 @@ wiring, an offline construction smoke, and a registered live Foundry fixture.
   asking the Copilot process to exchange GitHub identity tokens.
 - Provision the pinned smoke interpreter inside the approved workspace;
   execute one canonical probe and verify its receipt before accepting PASS.
+- Execute only the Harness smoke directly in its runner-controlled CI step
+  under the maintainer-approved exception; no agent-authored result is authoritative.
 - Keep deployment, identity, RBAC, rollout, and lifecycle in
   [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md)
   **2.2.1**, whose reciprocal ownership routing now points runtime

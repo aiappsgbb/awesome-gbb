@@ -3,7 +3,7 @@ name: agent-framework-harness
 description: >
   Build Microsoft Agent Framework Python agents with create_harness_agent: plan/execute modes, persistent todos, context compaction, session/file memory, approval UX, recovery, and opt-in file access, skills, background agents, shell, and bounded looping. Covers actual defaults, internal provider/middleware ordering, local construction, and ResponsesHostServer wiring for Foundry Hosted Agents. USE FOR: Agent Harness, create_harness_agent, harness defaults, plan mode, execute mode, TodoProvider, FileMemoryProvider, compaction, tool approval, auto_approval_rules, AgentSession recovery, loop_should_continue, shell_executor, background_agents, ResponsesHostServer harness wiring. DO NOT USE FOR: deployment, RBAC, containers, or lifecycle (use foundry-hosted-agents); deterministic policy, audit, authorization, or sandbox governance (use foundry-agt); Foundry Skills REST distribution (use foundry-skill-catalog); general eval design (use foundry-evals).
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 ## Quick decision table
@@ -101,21 +101,23 @@ Keep `default_options={"store": False}` because the hosting adapter owns Respons
 
 The baseline also disables mode, file memory, and web search. Re-enable mode only when the protocol transports explicit plan approval and transitions. Re-enable file memory only after choosing durable storage, authenticated tenant partitioning, and path policy.
 
-The CI fixture injects an async `AzureCliCredential` for the workflow's
+The maintainer-approved CI path executes this skill's SDK smoke directly in
+the runner, without a Copilot process. It injects an async `AzureCliCredential` for the workflow's
 subscription. Its private `AZURE_CONFIG_DIR` is created before
 `azure/login@v2`, which binds the tenant and subscription; the SDK uses that
 runner-owned login. Do not pass both tenant and subscription to the CLI
-credential's token request: Azure CLI rejects that combination. The Copilot process
-does not receive the GitHub token-request inputs or perform a manual token
-exchange. This is a CI credential handoff, not a new role or permission grant.
+credential's token request: Azure CLI rejects that combination.
+This is a CI credential handoff, not a new role or permission grant.
 The workflow also provisions the pinned interpreter under the approved
 workspace's `.scratch/` directory. The fixture executes only
 `test-fixture/live_smoke.py`, which rejects a substituted interpreter or
 dependency cohort and writes the marker only after its live assertions.
 The virtual environment uses copied executables, not symlinks to a tool-cache
 path outside the approved workspace; path verification remains enabled.
-The host verifies its sanitized receipt before accepting the marker; a bare
-agent-written PASS is insufficient.
+The receipt is a format/integrity check, not proof of execution provenance.
+The mandatory `harness-native` step's outcome is authoritative: that step
+performs the actual Azure call, and no agent can replace it by writing files.
+This proves SDK execution, not Copilot instruction-following behavior.
 
 | Surface | Status |
 |---|---|
@@ -235,5 +237,5 @@ Harness Agent -> AGT middleware/policy -> ResponsesHostServer
 - [ ] All canonical local, hosted, plan/execute, recovery, and offline files are linked without duplicated bodies.
 - [ ] Hosting adapter and Hosted Agents service statuses remain separate.
 - [ ] Offline smoke proves signature, defaults, construction, and ordering without a model call.
-- [ ] Azure T3 evidence is registered or a maintainer-approved exception is documented.
+- [ ] Current-head Azure T3 evidence exists for the approved runner-native smoke; offline checks are not a substitute.
 - [ ] No deployment, RBAC, lifecycle, Skills REST, AGT policy, or general eval ownership leaks into this skill.

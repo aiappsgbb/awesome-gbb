@@ -200,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             code = str(error) if isinstance(error, SmokeFailure) else type(error).__name__
             print(f"HARNESS_CHECK_FAIL {code}")
             return 1
-        print("HARNESS_RUNTIME_READY" if args == ["--check-runtime"] else "HARNESS_EXECUTION_VERIFIED")
+        print("HARNESS_RUNTIME_READY" if args == ["--check-runtime"] else "HARNESS_RECEIPT_VALIDATED")
         return 0
 
     RESULT_PATH.write_text("SMOKE_RESULT=FAIL Harness smoke did not complete\n")

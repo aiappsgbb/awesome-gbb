@@ -213,6 +213,15 @@ call an Azure endpoint, provision a resource, or authenticate with
 These require multi-resource deployments that exceed CI budget. Document
 manual validation per § 2.9 in the PR description.
 
+**Runner-native exception, approved 2026-09-14:** `agent-framework-harness`
+still requires live Azure T3, but its matrix leg executes the canonical SDK
+smoke directly in the mandatory `harness-native` workflow step. No Copilot
+process runs in that leg. The recorded step outcome, not agent-writable
+marker/receipt claims, is authoritative; failed or skipped native execution
+must fail the leg. Receipt validation checks integrity only. This exception
+does not certify Copilot instruction-following and must not be generalized
+to other skills without approval.
+
 **For skills that don't deploy but connect remotely** (e.g.,
 `foundry-voice-live` connecting to Azure Voice Live WSS): prove the
 credential chain and API surface work. You don't need to deploy
@@ -3031,7 +3040,7 @@ On Copilot-mode PR check-suite success
 | Auto-tier (CI can refresh autonomously) | 31 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 4 skills | T0 only (manual validation) |
-| Copilot-CLI fixtures | 25 skills | Registered for T3 (`copilot-cli-matrix`, see `.github/skill-deps.yml`); registration is not a passing run |
+| CI execution fixtures | 25 skills | Registered for T3: 24 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
 
 The additional `foundry-mcp-auth` entry is an unreleased candidate with live
 single-user delegated PASS for Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox over private
@@ -3091,7 +3100,7 @@ Source counts include the unreleased AgentOps and delegated-auth candidates; see
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 9 |
-| Unit tests | 1250 |
+| Unit tests | 1251 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

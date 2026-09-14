@@ -111,45 +111,29 @@ class HarnessCiAuthTests(unittest.TestCase):
                 self.assertIn(missing, result.stderr)
                 self.assertEqual(list(root.iterdir()), [])
 
-    def test_only_harness_consumer_loses_manual_oidc_inputs_in_both_attempts(self):
-        consumers = [
-            step for step in self.steps()
-            if step.get("id") in ("run", "agentops-retry")
-        ]
-        self.assertEqual(len(consumers), 2)
-        pattern = (
-            r'if \[ "\$SKILL" = "agent-framework-harness" \]; then\n'
-            r'\s+unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL PYTHONPATH PYTHONHOME\n'
-            r'\s*fi'
-        )
-        for step in consumers:
-            with self.subTest(step=step["id"]):
-                matches = list(re.finditer(pattern, step["run"]))
-                self.assertEqual(len(matches), 1, "remove manual OIDC inputs only at the Harness boundary")
-                match = matches[0]
-                self.assertRegex(step["run"][match.end():], r"^\s*set \+e\n\s*copilot -p")
-                for skill in ("agent-framework-harness", "foundry-agentops", "foundry-routines"):
-                    environment = {
-                        "PATH": os.environ["PATH"], "SKILL": skill,
-                        "AZURE_CONFIG_DIR": "/runner/owned-profile",
-                        **dict.fromkeys(OIDC_KEYS, "synthetic-canary"),
-                        "PYTHONPATH": "synthetic-path",
-                        "PYTHONHOME": "synthetic-home",
-                    }
-                    code = (
-                        "printf '%s,%s,%s,%s\\n' "
-                        '"${ACTIONS_ID_TOKEN_REQUEST_TOKEN+set}" '
-                        '"${ACTIONS_ID_TOKEN_REQUEST_URL+set}" '
-                        '"${PYTHONPATH+set}" "${PYTHONHOME+set}"\n'
-                        'test "$AZURE_CONFIG_DIR" = "/runner/owned-profile"'
-                    )
-                    result = subprocess.run(
-                        ["bash", "-c", match[0] + "\n" + code],
-                        env=environment, capture_output=True, text=True, timeout=10,
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    expected = ",,," if skill == "agent-framework-harness" else "set,set,set,set"
-                    self.assertEqual(result.stdout.strip(), expected)
+    def native_step(self):
+        steps = [s for s in self.steps() if s.get("id") == "harness-native"]
+        self.assertEqual(len(steps), 1, "one mandatory runner-controlled execution is required")
+        return steps[0]
+
+    def test_harness_has_no_copilot_process_and_native_step_cannot_be_optional(self):
+        steps = self.steps()
+        native = self.native_step()
+        self.assertEqual(native["if"], "matrix.skill == 'agent-framework-harness'")
+        self.assertNotIn("continue-on-error", native)
+        self.assertNotIn("copilot ", native["run"])
+        consumer = next(s for s in steps if s.get("id") == "run")
+        self.assertEqual(consumer["if"], "matrix.skill != 'agent-framework-harness'")
+        retry = next(s for s in steps if s.get("id") == "agentops-retry")
+        self.assertIn("steps.run.outcome == 'failure'", retry["if"])
+        for name in (
+            "Install Copilot CLI", "Install azd (Azure Developer CLI)",
+            "Install uv", "Install awesome-gbb plugin from this checkout",
+            "Get Foundry bearer token", "Resolve Foundry project context",
+        ):
+            step = next(s for s in steps if s.get("name") == name)
+            self.assertEqual(step["if"], "matrix.skill != 'agent-framework-harness'")
+        self.assertLess(steps.index(native), steps.index(consumer))
 
     def test_fixture_has_no_manual_token_exchange(self):
         fixture = FIXTURE.read_text()
@@ -385,23 +369,68 @@ class HarnessCiAuthTests(unittest.TestCase):
                 with self.assertRaises(namespace["SmokeFailure"]):
                     namespace["load_context"]()
 
-    def test_host_verifies_canonical_receipt_before_printing_evidence(self):
-        command = "python3 -I skills/agent-framework-harness/test-fixture/live_smoke.py --verify-result"
-        for step in self.steps():
-            if step.get("id") not in ("run", "agentops-retry"):
-                continue
-            with self.subTest(step=step["id"]):
-                text = step["run"]
-                self.assertEqual(text.count(command), 1)
-                match = re.search(
-                    r'if \[ "\$SKILL" = "agent-framework-harness" \]; then\n'
-                    r'\s+assert_tracked_checkout_clean "after Copilot"\n'
-                    r"\s+" + re.escape(command) + r"\n\s*fi",
-                    text,
+    def test_fabricated_valid_files_cannot_replace_runner_execution(self):
+        command = self.native_step()["run"]
+        self.assertIn("set -euo pipefail", command)
+        self.assertEqual(command.count(SMOKE_COMMAND), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            namespace = self.smoke_namespace()
+            versions = {
+                match[1]: match[3]
+                for line in REQUIREMENTS.read_text().splitlines()
+                if (match := re.fullmatch(r"(.+?)(~=|==)(.+)", line))
+            }
+            prefix = root / "agent-framework-harness"
+            marker = Path(str(prefix) + "-smoke-result")
+            evidence = Path(str(prefix) + "-smoke-evidence")
+            marker.write_text("SMOKE_RESULT=PASS\n")
+            evidence.write_text(json.dumps(namespace["execution_evidence"](versions)))
+            binary = root / "bin"
+            binary.mkdir()
+            (binary / "git").write_text("#!/bin/sh\nexit 0\n")
+            (binary / "git").chmod(0o700)
+            sdk = root / "sdk-probe"
+            sdk.write_text('#!/bin/sh\nprintf "called" > "$CALL_RECORD"\nexit 17\n')
+            sdk.chmod(0o700)
+            script = command.replace(SMOKE_COMMAND, str(sdk)).replace(
+                "/tmp/agent-framework-harness", str(prefix)
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                env={
+                    "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                    "GITHUB_SHA": "synthetic-sha",
+                    "CALL_RECORD": str(root / "called"),
+                },
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+            self.assertEqual((root / "called").read_text(), "called")
+            self.assertFalse(marker.exists())
+            self.assertFalse(evidence.exists())
+            self.assertNotIn("HARNESS_NATIVE_RESULT=PASS", result.stdout)
+
+    def test_native_audit_uses_runner_step_outcome_not_agent_files(self):
+        audit = next(s for s in self.steps() if s.get("name", "").startswith("Post-hoc audit"))
+        self.assertEqual(
+            audit.get("env", {}).get("HARNESS_NATIVE_OUTCOME"),
+            "${{ steps.harness-native.outcome }}",
+        )
+        match = re.search(
+            r'if \[ "\$SKILL" = "agent-framework-harness" \]; then\n.*?\nfi',
+            audit["run"], re.S,
+        )
+        self.assertIsNotNone(match)
+        for outcome in ("success", "failure", "skipped", "cancelled", ""):
+            with self.subTest(outcome=outcome):
+                result = subprocess.run(
+                    ["bash", "-c", match[0]],
+                    env={"PATH": os.environ["PATH"], "SKILL": "agent-framework-harness",
+                         "HARNESS_NATIVE_OUTCOME": outcome},
+                    capture_output=True, text=True, timeout=10,
                 )
-                self.assertIsNotNone(match)
-                self.assertLess(match.end(), text.index('cat "$EVIDENCE"', match.end()))
-                self.assertLess(match.end(), text.index('if [ -f "$MARKER" ]', match.end()))
+                self.assertEqual(result.returncode, 0 if outcome == "success" else 1)
 
 
 if __name__ == "__main__":
