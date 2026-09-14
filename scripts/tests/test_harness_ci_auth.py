@@ -52,6 +52,8 @@ class HarnessCiAuthTests(unittest.TestCase):
         self.assertEqual(steps[1]["id"], "native-preflight")
         login = next(step for step in steps if step.get("uses") == "azure/login@v2")
         self.assertLess(steps.index(step), steps.index(login))
+        self.assertEqual(login["with"]["tenant-id"], "${{ secrets.AZURE_TENANT_ID }}")
+        self.assertEqual(login["with"]["subscription-id"], "${{ secrets.AZURE_SUBSCRIPTION_ID }}")
         self.assertNotIn("az login", step["run"])
         self.assertNotIn("curl", step["run"])
 
@@ -162,7 +164,7 @@ class HarnessCiAuthTests(unittest.TestCase):
         self.assertTrue(SMOKE.is_file())
         source = SMOKE.read_text()
         self.assertIn("from azure.identity.aio import AzureCliCredential", source)
-        self.assertIn('tenant_id=context["AZURE_TENANT_ID"]', source)
+        self.assertNotIn('tenant_id=context["AZURE_TENANT_ID"]', source)
         self.assertIn('subscription=context["AZURE_SUBSCRIPTION_ID"]', source)
 
     def test_actual_fixture_python_uses_scoped_login_and_one_call(self):
@@ -189,8 +191,8 @@ class HarnessCiAuthTests(unittest.TestCase):
                 case = self
 
                 class Credential:
-                    def __init__(self, *, tenant_id, subscription):
-                        case.assertEqual((tenant_id, subscription), ("ci-tenant", "ci-sub"))
+                    def __init__(self, *, subscription):
+                        case.assertEqual(subscription, "ci-sub")
                         credentials.append(self)
 
                     async def __aenter__(self):

@@ -101,9 +101,11 @@ Keep `default_options={"store": False}` because the hosting adapter owns Respons
 
 The baseline also disables mode, file memory, and web search. Re-enable mode only when the protocol transports explicit plan approval and transitions. Re-enable file memory only after choosing durable storage, authenticated tenant partitioning, and path policy.
 
-The CI fixture injects an async `AzureCliCredential` scoped to the workflow's
-tenant and subscription. Its private `AZURE_CONFIG_DIR` is created before
-`azure/login@v2`; the SDK uses that runner-owned login. The Copilot process
+The CI fixture injects an async `AzureCliCredential` for the workflow's
+subscription. Its private `AZURE_CONFIG_DIR` is created before
+`azure/login@v2`, which binds the tenant and subscription; the SDK uses that
+runner-owned login. Do not pass both tenant and subscription to the CLI
+credential's token request: Azure CLI rejects that combination. The Copilot process
 does not receive the GitHub token-request inputs or perform a manual token
 exchange. This is a CI credential handoff, not a new role or permission grant.
 The workflow also provisions the pinned interpreter under the approved

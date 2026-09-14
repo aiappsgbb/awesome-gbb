@@ -112,7 +112,6 @@ def make_credential(context: dict[str, str]):
 
     try:
         return AzureCliCredential(
-            tenant_id=context["AZURE_TENANT_ID"],
             subscription=context["AZURE_SUBSCRIPTION_ID"],
         )
     except TypeError:
@@ -194,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args == ["--check-runtime"]:
                 validate_runtime()
-                make_credential({"AZURE_TENANT_ID": "ci.example", "AZURE_SUBSCRIPTION_ID": "ci-check"})
+                make_credential({"AZURE_SUBSCRIPTION_ID": "ci-check"})
             else:
                 verify_result()
         except (SmokeFailure, OSError) as error:
