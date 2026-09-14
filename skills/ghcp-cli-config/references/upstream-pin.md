@@ -6,12 +6,13 @@ upstream:
   type: github_repo
   repo: microsoft/playwright-mcp
   ref: main
-  pinned_sha: b301c372ec741289eff1cf6aab9d3bec553f31e2
+  pinned_sha: 8a13ef8e9f7385a0f89477922127f31cbfde9761
   pinned_commit_message: |
-    chore(deps-dev): bump fast-uri from 3.1.0 to 3.1.2 (#1616)
+    devops: restore npm publishing from GitHub Actions (#1734)
   license: Apache-2.0
   notes: |
     ghcp-cli-config relies on multiple public config references. microsoft/playwright-mcp is the GitHub upstream selected for SHA drift because the skill pins the Playwright MCP launch shape; Azure MCP and GHCP docs are revalidated as URLs.
+    This SHA tracks launch-shape documentation, not the shipped npm runtime. SKILL.md and config samples intentionally remain pinned to @playwright/mcp@0.0.42; this refresh does not upgrade runtime packages, SDKs, or permission defaults.
 packages:
   - name: PyYAML
     source: pypi
@@ -34,7 +35,7 @@ validation:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    PINNED_SHA="${PINNED_SHA:-b301c372ec741289eff1cf6aab9d3bec553f31e2}"
+    PINNED_SHA="${PINNED_SHA:-8a13ef8e9f7385a0f89477922127f31cbfde9761}"
     PINNED_VERSION="${PINNED_VERSION:-6.0.3}"
     WORK=".upstream-pin-smoke/ghcp-cli-config"
 
@@ -90,7 +91,7 @@ validation:
     - "canonical config URLs ok"
     - "sample config YAML parse ok"
   failure_signatures: []
-last_validated: 2026-06-18
+last_validated: 2026-09-14
 validated_by: copilot-bot
 known_issues_count: 0
 ---
@@ -110,11 +111,11 @@ Keep them in sync.
 |-------|-------|
 | **Upstream** | `microsoft/playwright-mcp` |
 | **Branch / tag** | `main` |
-| **Pinned SHA** | `32017187a0f044b2b5cbc97c20a78a3878e00ac2` |
-| **Pinned commit subject** | `chore(deps-dev): bump fast-uri from 3.1.0 to 3.1.2 (#1616)` |
+| **Pinned SHA** | `8a13ef8e9f7385a0f89477922127f31cbfde9761` |
+| **Pinned commit subject** | `devops: restore npm publishing from GitHub Actions (#1734)` |
 | **License** | `Apache-2.0` |
 | **First authored against** | `2026-05-15` |
-| **Last re-validated** | `2026-05-28` |
+| **Last re-validated** | `2026-09-14` |
 
 Refresh procedure:
 ```bash
@@ -128,7 +129,7 @@ git ls-remote https://github.com/microsoft/playwright-mcp main
 
 | Package | Source | Pinned version | Notes |
 |---------|--------|----------------|-------|
-| `PyYAML` | PyPI | **6.0.2** | Validation helper for parsing an inline MCP config sample. |
+| `PyYAML` | PyPI | **6.0.3** | Validation helper for parsing an inline MCP config sample. |
 
 ---
 
@@ -142,8 +143,8 @@ git ls-remote https://github.com/microsoft/playwright-mcp main
 #!/usr/bin/env bash
 set -euo pipefail
 
-PINNED_SHA="${PINNED_SHA:-32017187a0f044b2b5cbc97c20a78a3878e00ac2}"
-PINNED_VERSION="${PINNED_VERSION:-6.0.2}"
+PINNED_SHA="${PINNED_SHA:-8a13ef8e9f7385a0f89477922127f31cbfde9761}"
+PINNED_VERSION="${PINNED_VERSION:-6.0.3}"
 WORK=".upstream-pin-smoke/ghcp-cli-config"
 
 rm -rf "$WORK"
@@ -274,3 +275,58 @@ When upstream advances:
 >    a separate issue explicitly asks for a skill rewrite.
 > 3. If the smoke passes, update this pin and PATCH-bump `SKILL.md` only.
 > 4. Never edit `references/data-realism/**`.
+
+---
+
+## 10. Refresh validation — 2026-09-14
+
+Validated by `copilot-bot` against public upstream
+`8a13ef8e9f7385a0f89477922127f31cbfde9761`. Anonymous GitHub API and
+pinned README reads succeeded; the comparison from
+`b301c372ec741289eff1cf6aab9d3bec553f31e2` contains 24 commits.
+The current README retains `mcp-config.json`, `type: local`,
+`--isolated`, and `--headless`.
+
+This SHA refresh tracks launch-shape documentation, not a runtime upgrade:
+upstream source moved from package version `0.0.76` to `0.0.80`, while
+the skill and config samples intentionally retain `@playwright/mcp@0.0.42`.
+No SDK, runtime, permission default, or user configuration was changed.
+The PyYAML table and executable mirror now match the existing `6.0.3`
+front-matter value; the historical smoke record in § 4 is unchanged.
+
+The exact YAML `validation.script` ran in an owned temporary directory
+with `PIN_VALIDATION_REPO_ROOT` pointing to the canonical worktree.
+The isolated environment retained the bundled Git tool's `GIT_EXEC_PATH`;
+without that locator the initial attempt exited 128 before any checks.
+The corrected execution exited **0** and produced all three required markers:
+
+```text
+upstream SHA drift check ok
+canonical config URLs ok
+sample config YAML parse ok
+```
+
+The script and its § 3 mirror are byte-identical. Requests were bounded
+with connection and total timeouts and at most one curl retry.
+Validation uses public GitHub/docs/PyPI and the unauthenticated MCP
+endpoint's HTTP status only; no Azure or workplace API was executed.
+Azure T3 is not applicable to this metadata-only refresh.
+
+The initial online runtime probe was blocked: the local package was
+absent, the temporary npm install exited 1 with `ENOTCONN`, and the
+canonical registry probe exited 35 with a socket connection failure.
+No further online installation attempts were made.
+
+The exact public `0.0.42` package and its dependencies were already in
+the standard npm cache. Its tarball matched the published integrity in
+the cached registry metadata:
+
+```text
+sha512-oYkZnxq6vSPAVUD7Wjensok3IO8m7quCoJLPkRBk4VGx8MGA7zyGTgqjB/fpqB4PABa96TW7dkT/psln0tLipg==
+```
+
+An owned-temporary-directory `npm install --offline --ignore-scripts`
+completed with exit **0**, using only cached packages. The package's
+declared `mcp-server-playwright` executable (`cli.js`) ran with `--help`,
+exited **0**, and advertised both `--isolated` and `--headless`.
+No browser was launched or user configuration changed.
