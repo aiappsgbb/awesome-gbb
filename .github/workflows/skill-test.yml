@@ -304,6 +304,20 @@ jobs:
             echo "AZURE_TOKEN_CREDENTIALS=AzureCliCredential"
           } >> "$GITHUB_ENV"
 
+      - name: Isolate Harness Azure CLI credentials
+        id: harness-auth
+        if: matrix.skill == 'agent-framework-harness'
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP missing}"
+          : "${GITHUB_ENV:?GITHUB_ENV missing}"
+          umask 077
+          PROFILE_DIR=$(mktemp -d "$RUNNER_TEMP/harness-azure-cli.XXXXXX")
+          {
+            printf 'AZURE_CONFIG_DIR=%s\n' "$PROFILE_DIR"
+            printf 'AZURE_TOKEN_CREDENTIALS=AzureCliCredential\n'
+          } >> "$GITHUB_ENV"
+
       - name: Install pinned age for AgentOps diagnostic
         if: matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true'
         run: |
@@ -733,6 +747,10 @@ jobs:
           # A fixture must execute the checked-in contract as-is. A dirty
           # checkout before invocation is a workflow/predecessor defect.
           assert_tracked_checkout_clean "before Copilot"
+          # Harness uses the runner's CLI login, not agent-managed GitHub tokens.
+          if [ "$SKILL" = "agent-framework-harness" ]; then
+            unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+          fi
           set +e
           copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
                   --allow-all-tools \
@@ -1053,6 +1071,9 @@ jobs:
             # Re-check after the cooldown so a process left by the primary
             # attempt cannot mutate tracked inputs while this step sleeps.
             assert_tracked_checkout_clean "before Copilot"
+            if [ "$SKILL" = "agent-framework-harness" ]; then
+              unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+            fi
             set +e
             copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
                     --allow-all-tools \

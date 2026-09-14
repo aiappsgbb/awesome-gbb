@@ -37,7 +37,7 @@ limitation remain explicitly separate from the proven paths.
 ## 4.33.0 — Proposed / Unreleased
 
 Adds [`agent-framework-harness`](skills/agent-framework-harness/SKILL.md)
-**1.0.0** as the runtime-level contract for Microsoft Agent Framework
+**1.0.1** as the runtime-level contract for Microsoft Agent Framework
 `create_harness_agent`, including verified defaults and provider ordering,
 compaction, bounded plan/execute composition, session recovery, hosted adapter
 wiring, an offline construction smoke, and a registered live Foundry fixture.
@@ -47,6 +47,8 @@ wiring, an offline construction smoke, and a registered live Foundry fixture.
   **25 registered fixtures**.
 - Preserve the unpublished AgentOps and delegated MCP auth candidate status and
   every existing ACA Jobs, MCP auth, and AgentOps catalog entry.
+- Use a runner-owned Azure CLI login in the Harness CI fixture rather than
+  asking the Copilot process to exchange GitHub identity tokens.
 - Keep deployment, identity, RBAC, rollout, and lifecycle in
   [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md)
   **2.2.1**, whose reciprocal ownership routing now points runtime

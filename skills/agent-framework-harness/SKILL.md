@@ -3,7 +3,7 @@ name: agent-framework-harness
 description: >
   Build Microsoft Agent Framework Python agents with create_harness_agent: plan/execute modes, persistent todos, context compaction, session/file memory, approval UX, recovery, and opt-in file access, skills, background agents, shell, and bounded looping. Covers actual defaults, internal provider/middleware ordering, local construction, and ResponsesHostServer wiring for Foundry Hosted Agents. USE FOR: Agent Harness, create_harness_agent, harness defaults, plan mode, execute mode, TodoProvider, FileMemoryProvider, compaction, tool approval, auto_approval_rules, AgentSession recovery, loop_should_continue, shell_executor, background_agents, ResponsesHostServer harness wiring. DO NOT USE FOR: deployment, RBAC, containers, or lifecycle (use foundry-hosted-agents); deterministic policy, audit, authorization, or sandbox governance (use foundry-agt); Foundry Skills REST distribution (use foundry-skill-catalog); general eval design (use foundry-evals).
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 ## Quick decision table
@@ -100,6 +100,12 @@ Keep both token budgets so compaction is active, the explicit `.agent-memory` st
 Keep `default_options={"store": False}` because the hosting adapter owns Responses transcript history. The pinned `ResponsesHostServer` uses the Agent Server Responses 2.x provider-backed session, checkpoint, and function-approval storage model and still rejects a history provider that loads messages. Therefore the Harness must receive the reference's no-load/no-store `InMemoryHistoryProvider` (`load_messages=False`, `store_inputs=False`, and `store_outputs=False`). `FoundryChatClient` constructs an async `AIProjectClient`, so use an async Azure credential. The reference's internally created `DefaultAzureCredential` is process-lifetime and its handle is not exposed. A host requiring deterministic close must create and inject its own async credential, retain that handle, and close it.
 
 The baseline also disables mode, file memory, and web search. Re-enable mode only when the protocol transports explicit plan approval and transitions. Re-enable file memory only after choosing durable storage, authenticated tenant partitioning, and path policy.
+
+The CI fixture injects an async `AzureCliCredential` scoped to the workflow's
+tenant and subscription. Its private `AZURE_CONFIG_DIR` is created before
+`azure/login@v2`; the SDK uses that runner-owned login. The Copilot process
+does not receive the GitHub token-request inputs or perform a manual token
+exchange. This is a CI credential handoff, not a new role or permission grant.
 
 | Surface | Status |
 |---|---|
