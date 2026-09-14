@@ -294,6 +294,8 @@ Use a Bash heredoc to write the following program to
 
 ```python
 import os
+from pathlib import Path
+import sys
 import time
 
 from azure.ai.projects import AIProjectClient
@@ -305,6 +307,10 @@ from azure.ai.projects.models import (
     VersionSelector,
 )
 from azure.identity import DefaultAzureCredential
+
+sys.path.insert(0, str(Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
+                       / "skills/foundry-hosted-agents/references/python"))
+from hosted_smoke import model_result, verify_model_readback
 
 evidence_path = "/tmp/foundry-hosted-agents-smoke-evidence"
 
@@ -365,31 +371,21 @@ with DefaultAzureCredential() as credential, AIProjectClient(
 
     # Stable GA Responses invoke - no allow_preview, no preview header.
     openai_client = project.get_openai_client(agent_name=agent_name)
-    response = None
-    last_error = None
-    for attempt in range(6):
-        try:
-            response = openai_client.responses.create(
-                input=(
-                    "Classify this message into exactly one label - "
-                    "billing, technical, or account - and reply with "
-                    "only that single word: "
-                    "'My invoice this month is double what I expected.'"
-                ),
-                stream=False,
-            )
-            break
-        except Exception as exc:  # noqa: BLE001 - bounded cold-start retry
-            last_error = exc
-            time.sleep(10)
-    if response is None:
-        raise RuntimeError(f"invoke never succeeded: {last_error}")
-
-    label = response.output_text.strip().strip(".").lower()
-    assert label in {"billing", "technical", "account"}, (
-        f"expected exactly one of billing/technical/account, got {label!r}"
+    # One request, no retry of authorization errors or uncertain create ACKs.
+    openai_client = openai_client.with_options(max_retries=0, timeout=180)
+    response = openai_client.responses.create(
+        input="Briefly classify this support request: My invoice doubled this month.",
+        stream=False,
     )
-    record(f"INVOKE_LABEL label={label}")
+    result = model_result(response)
+    readback = openai_client.responses.retrieve(
+        result["id"], extra_headers={"x-agent-session-id": result["session_id"]},
+    )
+    session = project.agents.get_session(agent_name=agent_name, session_id=result["session_id"])
+    proof = verify_model_readback(
+        response, readback, session, agent_name=agent_name, agent_version="1",
+    )
+    record("MODEL_COMPLETION_READBACK_OK")
 ```
 
 Do not use `allow_preview=True`, `project.beta.agents.patch_agent_details`,
@@ -501,7 +497,7 @@ required_patterns = (
     r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ha-[0-9a-f]{8}",
     r"AGENT_VERSION_ACTIVE name=ci-smoke-ha-[0-9a-f]{8} protocol=responses/2\.0\.0",
     r"UPDATE_DETAILS_OK name=ci-smoke-ha-[0-9a-f]{8} version=1 traffic=100",
-    r"INVOKE_LABEL label=(billing|technical|account)",
+    r"MODEL_COMPLETION_READBACK_OK",
 )
 for pattern in required_patterns:
     assert any(re.fullmatch(pattern, line) for line in lines), (pattern, lines)

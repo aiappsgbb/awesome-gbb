@@ -5,6 +5,12 @@ Foundry-managed, per-session sandboxes — GA) via `azd` and the unified
 `azure.yaml` — the FoundryChatClient bootstrap, identity (implicit
 access by default), and blue-green/canary version rollout patterns.
 
+The [private BASIC consumer](references/private-basic.md) adds credential-free
+project ACR-connection validation, explicit source-build/prebuilt container
+paths, and a native no-tools model/session readback oracle. Its fresh live
+acceptance remains pending; historical BASIC proof and the public CI fixture
+do not certify the new consumer or governed business effects.
+
 ## Roadmap
 
 **Planned for v0.7.0 — thread-retention reader
