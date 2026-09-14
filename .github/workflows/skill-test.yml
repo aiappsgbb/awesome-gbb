@@ -318,6 +318,23 @@ jobs:
             printf 'AZURE_TOKEN_CREDENTIALS=AzureCliCredential\n'
           } >> "$GITHUB_ENV"
 
+      - uses: actions/setup-python@v5
+        id: harness-python
+        if: matrix.skill == 'agent-framework-harness'
+        with:
+          python-version: "3.12"
+
+      - name: Install Harness smoke runtime
+        id: harness-runtime
+        if: matrix.skill == 'agent-framework-harness'
+        run: |
+          set -euo pipefail
+          unset PYTHONPATH PYTHONHOME
+          python3 -m venv .scratch/agent-framework-harness-venv
+          .scratch/agent-framework-harness-venv/bin/python -m pip install --quiet \
+            --requirement skills/agent-framework-harness/test-fixture/requirements.txt
+          .scratch/agent-framework-harness-venv/bin/python skills/agent-framework-harness/test-fixture/live_smoke.py --check-runtime
+
       - name: Install pinned age for AgentOps diagnostic
         if: matrix.skill == 'foundry-agentops' && needs.build-matrix.outputs.agentops_diagnostic == 'true'
         run: |
@@ -749,7 +766,7 @@ jobs:
           assert_tracked_checkout_clean "before Copilot"
           # Harness uses the runner's CLI login, not agent-managed GitHub tokens.
           if [ "$SKILL" = "agent-framework-harness" ]; then
-            unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+            unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL PYTHONPATH PYTHONHOME
           fi
           set +e
           copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
@@ -760,6 +777,10 @@ jobs:
           COPILOT_STATUS=${PIPESTATUS[0]}
           set -e
           echo "copilot exit status: $COPILOT_STATUS"
+          if [ "$SKILL" = "agent-framework-harness" ]; then
+            assert_tracked_checkout_clean "after Copilot"
+            python3 -I skills/agent-framework-harness/test-fixture/live_smoke.py --verify-result
+          fi
           if [ -f "$EVIDENCE" ]; then
             cp "$EVIDENCE" "$PRIMARY_EVIDENCE"
             cat "$EVIDENCE"
@@ -1072,7 +1093,7 @@ jobs:
             # attempt cannot mutate tracked inputs while this step sleeps.
             assert_tracked_checkout_clean "before Copilot"
             if [ "$SKILL" = "agent-framework-harness" ]; then
-              unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+              unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL PYTHONPATH PYTHONHOME
             fi
             set +e
             copilot -p "$(cat "$PREAMBLE" "$PROMPT")" \
@@ -1083,6 +1104,10 @@ jobs:
             COPILOT_STATUS=${PIPESTATUS[0]}
             set -e
             echo "copilot retry exit status: $COPILOT_STATUS"
+            if [ "$SKILL" = "agent-framework-harness" ]; then
+              assert_tracked_checkout_clean "after Copilot"
+              python3 -I skills/agent-framework-harness/test-fixture/live_smoke.py --verify-result
+            fi
             if [ -f "$EVIDENCE" ]; then
               cp "$EVIDENCE" "$RETRY_EVIDENCE"
               cat "$EVIDENCE"

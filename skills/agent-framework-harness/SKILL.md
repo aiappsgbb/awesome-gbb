@@ -3,7 +3,7 @@ name: agent-framework-harness
 description: >
   Build Microsoft Agent Framework Python agents with create_harness_agent: plan/execute modes, persistent todos, context compaction, session/file memory, approval UX, recovery, and opt-in file access, skills, background agents, shell, and bounded looping. Covers actual defaults, internal provider/middleware ordering, local construction, and ResponsesHostServer wiring for Foundry Hosted Agents. USE FOR: Agent Harness, create_harness_agent, harness defaults, plan mode, execute mode, TodoProvider, FileMemoryProvider, compaction, tool approval, auto_approval_rules, AgentSession recovery, loop_should_continue, shell_executor, background_agents, ResponsesHostServer harness wiring. DO NOT USE FOR: deployment, RBAC, containers, or lifecycle (use foundry-hosted-agents); deterministic policy, audit, authorization, or sandbox governance (use foundry-agt); Foundry Skills REST distribution (use foundry-skill-catalog); general eval design (use foundry-evals).
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 ## Quick decision table
@@ -106,6 +106,12 @@ tenant and subscription. Its private `AZURE_CONFIG_DIR` is created before
 `azure/login@v2`; the SDK uses that runner-owned login. The Copilot process
 does not receive the GitHub token-request inputs or perform a manual token
 exchange. This is a CI credential handoff, not a new role or permission grant.
+The workflow also provisions the pinned interpreter under the approved
+workspace's `.scratch/` directory. The fixture executes only
+`test-fixture/live_smoke.py`, which rejects a substituted interpreter or
+dependency cohort and writes the marker only after its live assertions.
+The host verifies its sanitized receipt before accepting the marker; a bare
+agent-written PASS is insufficient.
 
 | Surface | Status |
 |---|---|

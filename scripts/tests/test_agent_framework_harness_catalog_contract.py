@@ -54,13 +54,15 @@ class AgentFrameworkHarnessCatalogContractTests(unittest.TestCase):
             / "consumer_prompt.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('echo "skills/agent-framework-harness/SKILL.md"', fixture)
-        self.assertIn("never invoke `copilot` recursively", fixture)
         self.assertIn(
-            "printf 'SMOKE_RESULT=PASS\\n' > "
-            "/tmp/agent-framework-harness-smoke-result",
+            ".scratch/agent-framework-harness-venv/bin/python "
+            "skills/agent-framework-harness/test-fixture/live_smoke.py",
             fixture,
         )
+        self.assertIn("never invoke `copilot` recursively", fixture)
+        self.assertIn("/tmp/agent-framework-harness-smoke-result", fixture)
+        self.assertIn("Only the canonical probe may declare success", fixture)
+        self.assertNotIn("printf", fixture)
         self.assertNotIn("git checkout", fixture)
         self.assertNotIn("git commit", fixture)
         self.assertNotIn("git add", fixture)
