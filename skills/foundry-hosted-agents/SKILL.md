@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.2.1"
+  version: "2.3.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -673,6 +673,43 @@ copy), publish them to the project-level **Foundry Skills** store
 See **`foundry-skill-catalog`** for the REST surface, the silent
 JSON-mode-is-write-only trap, and the verified-working `FoundrySkillsSource`
 adapter.
+
+### Prompt caching and inference efficiency
+
+In `ResponsesHostServer -> Agent + SkillsProvider -> FoundryChatClient ->
+model service`, **Foundry owns hosting, MAF owns the tool/inference loop,
+and the model service owns the KV cache**. Do not rewrite the loop to
+benefit from automatic prompt caching on supported models.
+
+**Reduce unnecessary tokens first, then optimize reuse.** Keep baseline
+instructions, the authorized skill catalog, and tool schemas/order stable;
+keep variable context after reusable content where the framework permits.
+Preserve progressive disclosure: never duplicate skill bodies in
+`instructions`, and never add padding just to reach a cache threshold.
+
+Inference options belong on the **Agent/client inside the hosted runtime**,
+not merely on the external caller's Responses request. There is no hosted
+deployment/YAML cache switch here. An implicit cache policy does **not** add
+an explicit breakpoint after the instructions and skill catalog.
+Keep the canonical downstream `store=False`: response/history persistence
+is separate from prompt caching. Do not add a second history manager to the
+default `ResponsesHostServer` path. Persisted sessions, cached skill sources,
+and warm containers neither are nor keep alive the model's KV cache.
+
+> **Compatibility and evidence boundary.** This is public-source guidance,
+> not a live-validated caching recipe for the pinned stack. Automatic caching,
+> explicit breakpoints, and PTU-M have different model/deployment requirements.
+> `ChatMiddleware` is a documented per-inference extension point, but this
+> skill has no verified adapter that marks the complete stable Agent +
+> SkillsProvider prefix. Never blindly mark the last system/developer message;
+> it can contain variable memory or context. `prompt_cache_key` is not an
+> authorization boundary. Measure internal-inference cache reads/writes, cost,
+> and TTFT without logging sensitive prompts or outputs; HTTP 200 and session
+> continuity are not cache-hit evidence.
+>
+> See the [operational guide and compatibility checklist](references/prompt-caching.md)
+> for the dated service requirements, `main` versus pin comparison, and
+> validation still needed before adopting advanced options.
 
 ### Multi-Agent: Calling Other Foundry Agents as Tools
 
