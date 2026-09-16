@@ -99,10 +99,13 @@ These four constraints break deployments if missed:
    to registry RBAC/ABAC mode, `azureADAuthenticationAsArmPolicy: enabled`, and the
    actual private pull path using the
    [shared preflight](../../foundry-hosted-agents/references/deployment-preflight.md).
-2. **You cannot change outbound networking after the fact.** You can't swap the
-   delegated subnet, and you can't add VNet injection to an existing
-   non-injected Foundry. **Adding or changing outbound networking requires a
-   full redeploy** of Foundry.
+2. **Plan hosted-agent injection at account creation.** Current
+   [private-networking guidance](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks#limitations)
+   requires hosted-agent network injection when the account is created; adding
+   it later is unsupported. An inbound PE on an existing account is a separate
+   operation and does not configure egress. Do not interpret this as permission
+   to rebuild an account, swap its delegated subnet, or claim identical
+   migration constraints for every agent/network mode.
 3. **`172.17.0.0/16` is reserved** by Docker bridge networking — never use it
    for the VNet.
 4. **Publishing agents to Teams/M365** works with a public-access-disabled
@@ -150,35 +153,56 @@ hub will differ — adapt peering/firewall to your layout.)
 
 **DNS resolution**
 
-- *Resolves to a public IP* → confirm a `privatelink` private DNS zone exists
-  and is linked to the VNet. Run `nslookup <foundry-endpoint-hostname>` **from
-  inside the VNet**; it must return the private IP.
-- *Custom DNS not resolving* → forward `privatelink` queries to Azure DNS
-  `168.63.129.16`.
+- *Resolves to a public/wrong private IP or NXDOMAIN* → inspect the intended
+  PE's DNS zone group, A records and effective VNet/resolver links. Resolve all
+  three Foundry FQDNs and the failing tool's FQDN from the **actual caller path**;
+  compare with the intended PE addresses, not just any private address.
+- *Custom/on-premises DNS not resolving* → use the
+  [hybrid DNS runbook](../../foundry-network-runbook/SKILL.md#hybrid-dns-on-premises-vpn-and-custom-resolvers).
+  Forward the recommended public service namespaces to the Azure DNS Private
+  Resolver inbound endpoint or an existing Azure-hosted forwarder with linked
+  private zones. `168.63.129.16` is usable from Azure, not as an on-premises
+  forwarding target over VPN/ExpressRoute. Do not create authoritative shadow
+  copies of the public zones or prescribe hosts-file overrides as permanent DNS.
 - *Intermittent DNS* → ensure the DNS server is reachable from all subnets;
   check NIC/VNet DNS settings.
 
 **Connectivity**
 
-- *Times out on 443* → NSG must allow outbound to the PE IP on 443; verify no
-  firewall is blocking.
+- *Times out on 443* → verify DNS, effective routes and applicable NSG/firewall
+  rules for the actual destination. If TCP works but TLS fails, inspect the
+  certificate chain and TLS inspection; never disable certificate verification.
 - *Can't reach from on-prem* → verify VPN/ExpressRoute is up and route tables
   include the VNet address space.
-- *403 Forbidden* → usually **auth**, not networking — check RBAC on the Foundry
-  project.
+- *403 Forbidden* → retain the service error code and distinguish network
+  restrictions, wrong audience/authentication type and effective RBAC for the
+  actual caller. `AuthenticationTypeDisabled` is not proof of network isolation.
 
 **Agent-specific**
 
-- *Agent fails to start* → verify you're using **Standard** agent deployment
-  (not Basic), network injection is configured, and the subnet has free IPs.
-- *Agent can't reach MCP tools* → ensure PEs exist for every Azure service the
-  MCP tools touch, the managed identity has the right RBAC, and firewall rules
-  permit agent → service traffic.
+- *Agent fails to start* → identify Basic/Standard and hosted/prompt first.
+  Reuse the [shared deployment preflight](../../foundry-hosted-agents/references/deployment-preflight.md).
+  Basic private requires a project host without BYO arrays; Standard requires
+  its account/project host and approved BYO connections. Inspect hosted
+  container readiness separately; do not force every private setup to Standard.
+- *Agent can't reach MCP tools; nested 424/external_connector_error* → inspect
+  the project host and dependencies before speculating about firewall rules.
+  An absence of destination logs is inconclusive, not proof of a missing host. Inspect
+  the agent/tool → MCP route and authentication, separately from MCP → downstream
+  services. An internal MCP reachable by private routing does not inherently
+  require its own Azure PE; use the endpoint's actual hosting topology.
 - *Evaluation runs fail with network errors* → confirm all required DNS zones
   are configured and the eval compute can reach Foundry + model endpoints via
   private link.
-- *Agent timeouts on external API calls* → allow outbound HTTPS to those
-  destinations on the firewall, or deploy a NAT gateway for controlled egress.
+- *Agent timeouts on external API calls* → have the network owner inspect the
+  required destination and propose a narrowly approved egress rule. NAT provides
+  address translation, not destination filtering or proof of private transport.
+
+Use [paired ingress and actual agent-egress evidence](../../foundry-network-runbook/SKILL.md#33-evidence-for-private-ingress-and-agent-egress)
+before declaring connectivity fixed. A laptop/VM check cannot certify a hosted
+runtime or platform data-proxy path; destination peer IPs may identify proxies
+or SNAT rather than the originating agent. Leave unobserved paths NOT_TESTED.
+These diagnostics authorize no role grants, public-access changes or host purge.
 
 ---
 
@@ -189,3 +213,4 @@ hub will differ — adapt peering/firewall to your layout.)
 - `SKILL.md` Step 6 / Step 8 — VNet + DNS configuration during the interview.
 - Sample: [`19-hybrid-private-resources-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/19-hybrid-private-resources-agent-setup) — end-to-end agent-tools-in-isolation reference.
 - Upstream: [Configure network isolation for Microsoft Foundry](https://learn.microsoft.com/azure/foundry/how-to/configure-private-link)
+- Hybrid DNS: [Private Endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration)

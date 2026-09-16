@@ -20,7 +20,7 @@ description: >
   foundry-cross-resource); Citadel JWT 403 (use
   citadel-spoke-onboarding); SDK; quota; cost.
 metadata:
-  version: "1.0.3"
+  version: "1.1.0"
 ---
 
 # Foundry Network Runbook — Diagnose connectivity failures after the deploy succeeds
@@ -37,6 +37,11 @@ missing for a private DNS zone, a VNet peering went `Disconnected`, the
 caphost subnet is wedged. You have ≤ 30 minutes to isolate the layer
 before escalating.
 
+An inbound private endpoint does **not** configure agent egress. An approved
+endpoint or a successful ARM deployment is not proof that the agent can reach
+its tool privately. Start with the caller and traffic path in § 3, not a
+firewall change based on the HTTP status alone.
+
 This runbook is **not** a telemetry guide (`foundry-observability`
 covers App Insights + OTel wiring), not a deploy guide
 (`foundry-vnet-deploy` covers Day-0; `foundry-caphost-lifecycle` covers
@@ -52,10 +57,10 @@ Trigger this runbook when **all** of the following are true:
 1. The Foundry deployment (or hosted-agent create, or caphost create)
    reported `Succeeded` in ARM and the resources are visible in the
    portal.
-2. Something fails downstream at the network layer: 503 from inference,
+2. Something fails downstream with a suspected network-layer symptom: 503 from inference,
    DNS resolving to a public IP, project connection showing red, a
-   private endpoint missing or not approved, a fresh redeploy hitting
-   `Subnet already in use`.
+   private endpoint missing or not approved, an MCP connector error with no
+   observed destination request, or a fresh redeploy hitting `Subnet already in use`.
 3. You have a baseline of "this worked yesterday" or "the deploy just
    completed, why doesn't it work now?" — i.e., the failure mode is
    **operational** (post-deploy), not a code or SDK bug.
@@ -72,28 +77,64 @@ Capture this baseline **before** you start diagnosing. Without it you
 will mis-attribute symptoms (e.g., blaming DNS when the real failure is
 a peering that went `Disconnected` 10 minutes earlier).
 
-Run all 7 commands in order. Each block is read-only — none of them
-mutate Azure state.
+### 3.1 Identify the caller and network model
+
+Apply [`azure-tenant-isolation`](../azure-tenant-isolation/SKILL.md) before any
+Azure command. Record the approved tenant/subscription, resource owners, selected
+Basic/Standard setup, BYO/Managed network, agent type and failing destination.
+The commands below describe BYO VNet; do not apply subnet/SAL assumptions to
+Managed VNet. Reuse an existing approved diagnostic host; do not deploy a VM or
+open a public endpoint just to investigate.
+
+| Path | What must be observed | What does not prove it |
+|---|---|---|
+| SDK client or browser/Playground → Foundry | The actual caller's DNS resolver, route, TLS and authenticated data-plane request to the intended Foundry endpoint | ARM success, a PE approval, or a test from another machine |
+| Hosted agent's own code → model/API | The actual hosted runtime's injected-network route and destination access | A laptop or VM `curl` |
+| Platform tool call → private MCP/data service | Tool/data-proxy path, project capability host, destination connectivity and tool authentication | Successful ingress to Foundry or hosted code reaching a different endpoint |
+
+For prompt agents there is no hosted Micro VM on the request path. Reuse the
+[traffic-path reference](../foundry-vnet-deploy/references/agent-networking.md#1-two-traffic-paths-hosted-vs-prompt-agents)
+and [tool reachability matrix](../foundry-vnet-deploy/references/agent-tools-network-isolation.md#1-tool-reachability-matrix).
+Network injection does not make public-endpoint tools private or establish a
+deny-all-public-egress policy.
+
+Record observations with time, endpoint, caller location, approved identity and
+request/tool-call correlation. Keep tokens and customer payloads out of logs.
+Missing permissions or an unavailable private probe location mean **NOT_TESTED**,
+not a successful check and not permission to change resources.
+
+### 3.2 Read-only baseline
+
+Run the 7 checks below in the approved context, marking topology-specific checks
+not applicable only with a recorded reason. `SUB` is the workload subscription;
+`DNS_SUB` and `DNS_RG` identify the zone owner, which may be different. Use the
+owner's resource group/subscription for each zone when they are split. `VNET_RG`
+is the VNet resource group. None of these checks authorize remediation.
+For an existing account/subnet, the canonical
+[read-only network inventory](../foundry-vnet-deploy/SKILL.md#step-9a-read-only-network-inventory)
+can collect the account-side PE and subnet observations. Reuse it rather than
+creating another helper; its `runtime_connectivity: NOT_TESTED` remains valid
+even when all its control-plane checks pass.
 
 ```bash
 # 1. VNet peerings (spoke side): all MUST be Connected
 az network vnet peering list \
-  -g "$RG" --vnet-name "$VNET" \
+  -g "$VNET_RG" --vnet-name "$VNET" --subscription "$SUB" \
   --query "[].{name:name, state:peeringState, remote:remoteVirtualNetwork.id}" \
   -o table
 ```
 
 ```bash
-# 2. Private DNS zones reachable from the spoke
+# 2. Private DNS zone inventory (existence is not proof of resolution)
 az network private-dns zone list \
-  -g "$DNS_RG" \
+  -g "$DNS_RG" --subscription "$DNS_SUB" \
   --query "[].{name:name, vnetLinks:numberOfVirtualNetworkLinks, records:numberOfRecordSets}" \
   -o table
 ```
 
 ```bash
 # 3. Private endpoints in the spoke RG and their approval status
-az network private-endpoint list -g "$RG" \
+az network private-endpoint list -g "$RG" --subscription "$SUB" \
   --query "[].{name:name, target:privateLinkServiceConnections[0].privateLinkServiceId, status:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status}" \
   -o table
 ```
@@ -106,51 +147,92 @@ az rest --method GET \
 ```
 
 ```bash
-# 5. Project MI role assignments (the principal the agent runtime runs as)
+# 5. Project MI roles for platform-managed operations and BYO dependencies
 PRINCIPAL_ID=$(az rest --method GET \
   --url "https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCT}/projects/${PROJ}?api-version=2025-04-01-preview" \
   --query "identity.principalId" -o tsv)
 
-az role assignment list --assignee "$PRINCIPAL_ID" --all \
+az role assignment list --assignee "$PRINCIPAL_ID" --all --subscription "$SUB" \
   --query "[].{role:roleDefinitionName, scope:scope}" -o table
 ```
 
 ```bash
 # 6. Agent subnet binding (serviceAssociationLink + delegation)
 az network vnet subnet show \
-  -g "$VNET_RG" --vnet-name "$VNET" -n "$AGENT_SUBNET" \
+  -g "$VNET_RG" --vnet-name "$VNET" -n "$AGENT_SUBNET" --subscription "$SUB" \
   --query "{name:name, sal:serviceAssociationLinks, delegations:delegations[].serviceName}"
 ```
 
 ```powershell
-# 7. DNS resolution FROM INSIDE the spoke (run on a Bastion VM, peered VM,
-#    or VPN-connected host — NOT from your laptop over the public internet)
+# 7. Set $ACCT in this PowerShell session to the approved account name.
+# Run from the failing caller's approved private network, not an unrelated host.
+Resolve-DnsName "${ACCT}.services.ai.azure.com"
+Resolve-DnsName "${ACCT}.openai.azure.com"
 Resolve-DnsName "${ACCT}.cognitiveservices.azure.com"
-# MUST return a 10.x / 172.16-31.x / 192.168.x private IP.
-# Public IP back = private endpoint missing OR DNS zone not VNet-linked.
+# Compare the CNAME/A answers with the intended PE's actual private addresses.
+# An arbitrary private IP is not sufficient; repeat for the failing tool FQDN.
 ```
 
-If any of the 7 baseline checks already shows an anomaly, jump straight
-to the matching row in § 4.
+The PE listing is a summary of the first automatic connection in the selected
+resource group, not a complete topology inventory. Inspect the intended PE,
+including manual connections, target/subresource, approval, NIC addresses and DNS
+zone group; a PE in another resource group is not missing. Confirm the group's
+records actually exist. The three Foundry zones are not the entire dependency
+set: Standard adds Search/Blob/Cosmos; Basic has its own Monitor/optional ACR
+zones. Use the [selected template's DNS map](../foundry-vnet-deploy/SKILL.md#step-0-choose-the-template-decision-guide).
+
+Also inspect the exact **project** capability host through the
+[shared preflight](../foundry-hosted-agents/references/deployment-preflight.md#scope-before-action):
+Basic requires an `Agents`/`Succeeded` project host without BYO arrays; Standard
+requires the account host/subnet and project host with the approved BYO connection
+names. Do not invent a customer-created account-host prerequisite for Basic.
+Use GET, not PUT as a probe. Failed, incomplete or forbidden reads are unknown,
+not an empty inventory.
+
+The project MI is not necessarily the identity of every outbound request.
+Distinguish the operator, project MI, hosted-agent identity and delegated user
+where applicable; check roles for the actual operation and target scope.
+If a baseline check shows an anomaly, use § 4 to narrow it before proposing a fix.
+
+### 3.3 Evidence for private ingress and agent egress
+
+| Check | Required evidence | Insufficient evidence |
+|---|---|---|
+| Positive ingress | From the intended private caller: expected PE DNS answer, TCP/TLS success and a successful authenticated Foundry data-plane response | HTTP 200 alone, or a control-plane GET |
+| Negative ingress | From an approved caller outside the private route, with otherwise valid authentication: rejection attributable to public-network restrictions, retaining the service error code/body | Any 403, `AuthenticationTypeDisabled`, missing RBAC, or a laptop still using VPN/private proxy |
+| Agent egress | A real agent invocation that actually calls the required tool, correlated with destination-side request/access logs and the expected private route | Agent prose claiming success, a VM-only test, or a successful tool health endpoint |
+
+For MCP, retain the relevant `initialize`, `tools/list` and `tools/call` evidence;
+initialization/listing may belong to an existing reused session. Do not force an
+extra handshake or disable authentication merely to obtain logs. A logged socket
+peer identifies the **immediate hop**: account for APIM, ingress proxies, firewall
+SNAT and trusted forwarding configuration before attributing it to an agent
+subnet. Do not trust an arbitrary forwarded-IP header.
+
+These checks prove the observed paths, not that every public destination is
+blocked. A deny-by-default egress requirement needs separate policy review and an
+explicitly authorized negative test. Keep unobserved paths **NOT_TESTED**. Reuse
+the hosted preflight's evidence contract rather than inventing a new PASS schema.
 
 ## 4. Symptom → cause → fix matrix
 
-Network-layer symptoms only. For application-layer / SDK / quota issues
-see § 8 (cross-references).
+Network-layer symptoms and look-alikes only. A status code or missing application
+log is not a unique root cause. The Fix column is a proposed next action for the
+resource owner, never authorization to grant roles, change NSGs/DNS, open public
+access, delete hosts or purge accounts. For SDK / quota issues see § 8.
 
 | Symptom | Likely cause | Diagnostic | Fix |
 |---|---|---|---|
-| `InvalidPrivateDnsZoneIds` at `az deployment group create` time | Deployment principal lacks `Private DNS Zone Contributor` on one of the 6 hub PDZs | `az role assignment list --assignee <deployer-objectId> --scope /subscriptions/<dnsSub>/resourceGroups/<dnsRg>/providers/Microsoft.Network/privateDnsZones/<zone> -o table` | Grant `Private DNS Zone Contributor` on each zone in the hub subscription (see § 5). Cap: per-zone, not RG-wide. |
-| `Subnet 'agent-subnet' is already in use by capability host` on a second deploy into the same VNet | Caphost subnet still bound by a `serviceAssociationLink` from a prior caphost / account; soft-delete or caphost-only DELETE does **not** release it | `az network vnet subnet show … --query serviceAssociationLinks` returns non-empty | Full account purge — see `foundry-caphost-lifecycle § 8` for the verified GA CLI sequence and § 9 for the redeploy guard. |
-| Agent inference returns HTTP 503 within ~1s, no trace in AppInsights | No private endpoint to the AI Services account from the spoke OR PE exists but DNS zone not VNet-linked | Run § 3 step 3 (enumerate PEs) and step 7 (Resolve-DnsName). PE missing = no row for AIServices in step 3. Zone unlinked = step 7 returns a public IP. | Add the missing PE via `az network private-endpoint create --group-id account --private-connection-resource-id <accountId>`, then `az network private-dns link vnet create` for `privatelink.cognitiveservices.azure.com`, `privatelink.openai.azure.com`, `privatelink.services.ai.azure.com`. |
-| Agent inference hangs ≥ 30s then times out (no HTTP status, no body) | NSG on the agent subnet (or PE subnet) drops egress 443 to the PE private IP | NSG flow logs (§ 6 query A) or `az network nsg rule list -g $RG --nsg-name $NSG -o table` looking for explicit `Deny *:443` outbound | Add an `Allow *:443 outbound to <peSubnetCidr>` rule **above** any deny. Re-test from a Bastion VM with `Test-NetConnection -Port 443 -ComputerName <acct>.cognitiveservices.azure.com`. |
-| `Resolve-DnsName` from inside the spoke returns the public Foundry IP (cloud edge) | PDZ exists somewhere but no VNet link to the spoke VNet, OR link is on the wrong zone name (e.g. `privatelink.openai.azure.com` linked but `privatelink.cognitiveservices.azure.com` not) | `az network private-dns link vnet list --zone-name <zone> -g <dnsRg> -o table` for each of the 6 expected zones | `az network private-dns link vnet create --zone-name <zone> -g <dnsRg> --name <spoke>-link --virtual-network <spokeVnetId> --registration-enabled false` for the missing zone(s). 6 zones expected: `services.ai.azure.com`, `openai.azure.com`, `cognitiveservices.azure.com`, `search.windows.net`, `blob.core.windows.net`, `documents.azure.com`. |
-| Hosted-agent create 403 with `MI provisioning failed` | The caller user / SP lacks `Managed Identity Operator` on the Foundry account | `az role assignment list --assignee <callerObjectId> --scope /subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.CognitiveServices/accounts/$ACCT -o table` | Grant per `foundry-vnet-deploy § 8b`. Propagation: 5-15 min. |
-| Hosted-agent create 403 with `NIC provisioning failed` | The caller lacks `Network Contributor` on the agent injection subnet | Same as above, but scope is `/subscriptions/$SUB/resourceGroups/$VNET_RG/providers/Microsoft.Network/virtualNetworks/$VNET/subnets/$AGENT_SUBNET` | Grant `Network Contributor` per `foundry-vnet-deploy § 8b`. **Do not** grant at VNet scope — minimum needed is the subnet. |
-| APIM call (from inside Foundry, through Citadel hub) returns 404 / 503 | `privatelink.azure-api.net` PDZ not linked to the spoke VNet, so the APIM hostname resolves to a public IP unreachable from the private-only spoke | `Resolve-DnsName <apim>.azure-api.net` from the spoke → public IP = unlinked. `az network private-dns link vnet list --zone-name privatelink.azure-api.net -g <hubDnsRg>` confirms. | Link the zone to the spoke VNet (one-shot `az network private-dns link vnet create`). See `citadel-spoke-onboarding` for the canonical command including the JWT-product-policy follow-up. |
-| Project connection (Storage / Cosmos / AISearch) shows red in portal, agent runtime returns 403 on access | Target resource still has `publicNetworkAccess: Enabled` OR PE connection is `Pending` (not Approved) OR the project MI lacks the data-plane role | `az storage account show -n $STG --query "{public:publicNetworkAccess, peConns:privateEndpointConnections[].privateLinkServiceConnectionState.status}"` (analogous for Cosmos / Search) | Set `publicNetworkAccess: Disabled` once the PE is approved. Approve any `Pending` PE with `az network private-endpoint-connection approve …`. RBAC: per `foundry-vnet-deploy § 11.10` (6 role assignments). |
-| VNet peering shows `Disconnected` after a recent change | Other-side peering was deleted, OR an address-space update on one side broke the contract (overlap, or shrink), OR cross-tenant peering credential expired | `az network vnet peering show -g $RG --vnet-name $VNET -n $PEER --query peeringState` | Both sides must re-peer. Spoke side: delete + recreate `az network vnet peering`. Hub side: ask hub team to re-run their reverse-peering command (`foundry-vnet-deploy § 8d` emits the `hubReversePeeringCommand` output for this). Verify address-space prefixes haven't drifted. |
-| `Subnet 'agent-subnet' delegation 'Microsoft.App/environments' not allowed` on first deploy | Region doesn't yet have `Microsoft.App` registered, or the subnet was pre-created without the delegation | `az provider show -n Microsoft.App --query registrationState` and `az network vnet subnet show … --query delegations` | `az provider register -n Microsoft.App` (idempotent, takes 1-5 min). Add the delegation: `az network vnet subnet update … --delegations Microsoft.App/environments`. |
+| `InvalidPrivateDnsZoneIds` at deploy time | Wrong zone ID/owner scope, nonexistent zone or insufficient deployment-principal access | Check the selected template's zone map, zone existence and effective permissions in the DNS subscription (§ 5) | Ask the DNS owner to correct the mapping or authorize narrowly scoped access; do not recreate central zones. |
+| `Subnet already in use by capability host` on redeploy | Existing live or stale capability-host binding | Read subnet SAL and account/project hosts; determine ownership before classifying the binding as stale | Follow `foundry-caphost-lifecycle § 9`; destructive recovery under § 8 requires separate approval. A non-empty SAL alone never authorizes purge. |
+| Inference 503 with no App Insights trace | Runtime readiness, tool/data-proxy failure or network failure; telemetry may also be absent | Identify the failing hop, inspect project host/readiness and then the intended PE/DNS path (§ 3) | Resolve the observed layer; missing telemetry is not proof that the PE is missing. Use § 8 for container/SDK failures. |
+| `400 external_connector_error` containing `Server returned 424`, no observed MCP request | Missing/unready project host or its dependencies is one candidate; DNS/routing, TLS and connector errors can also prevent arrival | Inspect the project host by GET and the mode-specific preflight; distinguish this from hosted `session_not_ready`. Correlate destination logs before checking NSG/firewall flows | Reuse the existing Basic/Standard preflight and lifecycle path. No automatic host creation, account rebuild or firewall relaxation. |
+| TCP timeout or TLS failure to the intended destination | Route/NSG/firewall deny, wrong DNS target, or certificate/TLS inspection problem | Separate DNS, TCP and TLS; inspect effective routes, applicable NSG/PE network policies, firewall logs and the certificate chain from the failing path | Have the owner propose only the required route/rule/inspection correction. Do not disable TLS verification or assume a default route forces PE traffic through the firewall. |
+| DNS returns a public/wrong private IP, `NXDOMAIN` or `SERVFAIL` | Wrong resolver path, missing zone link/group/A record, stale cache or forwarding loop | Compare all relevant FQDN answers with intended PE addresses; inspect the actual client's resolver, including VPN/browser behavior, and the hybrid chain (§ 5) | Correct the specific record/link/forwarder with its owner; do not create a shadow public zone or add hosts entries as a permanent fix. |
+| Hosted-agent MI/NIC provisioning 403 or subnet delegation error | Caller permissions, wrong/missing delegation, provider registration or an incompatible subnet | Read the exact ARM error, caller identity/scope and subnet delegation. Check required providers, including `Microsoft.App` and `Microsoft.ContainerService`, against the official prerequisites | Use `foundry-vnet-deploy` prerequisites and § Step 8b for owner-approved repair; do not grant broad roles or change a shared subnet speculatively. |
+| APIM 404 / 503 from a Foundry call | DNS/routing to APIM, gateway API/policy configuration or backend failure | Identify which hop returned the response; check APIM DNS/TLS and correlated gateway/backend logs | Use `citadel-spoke-onboarding` after confirming the private route; an HTTP status alone does not prove a missing APIM DNS link. |
+| Project connection red or Storage/Cosmos/Search 403 | Network restriction, token audience/authentication type or missing effective data-plane authorization | Preserve the service error code; check actual destination route/PE approval and the calling identity's target-scoped roles, including Cosmos native SQL roles | Network and authorization are separate checks. `publicNetworkAccess: Enabled` is a posture issue, not itself the cause of a 403; do not toggle it as a fix. |
+| VNet peering `Disconnected` | Missing/changed reverse peering or incompatible address-space configuration | Read both sides and current address spaces; verify effective routing with the network owner | Reconcile the intended topology before an approved repair. Do not delete and recreate peerings as a diagnostic. |
 
 > **Matrix discipline.** The matrix is **deliberately capped at 10
 > rows**. If a symptom is application-layer (model returns wrong text,
@@ -160,11 +242,13 @@ see § 8 (cross-references).
 ## 5. Pre-flight at scale (cross-subscription DNS)
 
 When the spoke is deployed into an enterprise hub-and-spoke topology,
-the 6 Foundry private DNS zones are typically owned by the **platform
+private DNS zones are typically owned by the **platform
 team in a separate connectivity hub subscription**. The deployment
 principal needs RBAC in **both** subscriptions — one for the spoke
 resources, one for the hub PDZs — or the deploy fails with
-`InvalidPrivateDnsZoneIds`. This is the canonical hub-and-spoke pattern
+`InvalidPrivateDnsZoneIds`. The six-zone set below describes Standard; use
+Basic's Monitor/optional ACR map when selected, adding APIM only when applicable.
+This is the canonical hub-and-spoke pattern
 documented in [CAF — Private Link and DNS integration at scale](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale#private-link-and-dns-integration-in-hub-and-spoke-network-architectures).
 
 | Subscription | Resource | Required role | Why |
@@ -176,28 +260,54 @@ documented in [CAF — Private Link and DNS integration at scale](https://learn.
 | Foundry account scope | The AI Services account | `Managed Identity Operator` (caller of hosted-agent create) | Per-user grant; provisioning of agent-instance MIs |
 | Agent subnet scope | The injection subnet | `Network Contributor` (caller of hosted-agent create) | Per-user grant; agent NIC creation in the delegated subnet |
 
-If the deploy fails with `InvalidPrivateDnsZoneIds`, run this in the
-**hub subscription** to confirm the grant exists:
+If the deploy fails with `InvalidPrivateDnsZoneIds`, inspect the approved
+**hub subscription** explicitly, without switching the global CLI default.
+This is one zone; repeat for each zone in the selected deployment:
 
 ```bash
-az account set -s "$HUB_SUB"
 az role assignment list \
   --assignee "$DEPLOYER_OBJECT_ID" \
+  --subscription "$HUB_SUB" --include-inherited \
   --scope "/subscriptions/${HUB_SUB}/resourceGroups/${HUB_DNS_RG}/providers/Microsoft.Network/privateDnsZones/privatelink.cognitiveservices.azure.com" \
   -o table
 ```
 
-If empty, ask the hub team to grant on all 6 zones (or all 7 if Citadel
-APIM is in scope). Propagation: 5-15 min before retry.
+An empty direct/inherited listing is not an automatic grant request: have the
+owner verify group membership, custom roles, conditions and the actual denied
+operation. Any required grant needs explicit approval at the narrowest applicable
+scope; allow propagation before retrying the original operation.
+
+### Hybrid DNS: on-premises, VPN and custom resolvers
+
+For corporate callers, trace **client → corporate DNS → Azure DNS Private
+Resolver inbound endpoint (or existing Azure-hosted forwarder) → Azure DNS →
+linked private zone**. `168.63.129.16` is an Azure-internal resolver address,
+not an on-premises DNS target reachable over VPN/ExpressRoute.
+
+Configure conditional forwarding for the recommended **public service
+namespaces** toward the Azure resolver, not a blanket `privatelink.*`-only rule.
+For Foundry these are `services.ai.azure.com`, `openai.azure.com` and
+`cognitiveservices.azure.com`; add the documented namespaces for actual
+dependencies. Conditional forwarding is not an authoritative public-zone
+override: keep the Azure-managed `privatelink.*` zones and their PE records.
+See [Private Endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration#azure-private-resolver-with-on-premises-dns-forwarder).
+
+Check DNS reachability on UDP/TCP 53, links on the resolver/forwarder VNet, the
+client's selected DNS servers and the complete CNAME/A chain. Where authorized,
+compare an ordinary client lookup with one directed to the inbound resolver:
+different results localize a forwarding/cache/client-path problem. Check for
+forwarding loops and conflicting private zones before adding another link.
+Peering or a connected VPN alone does not configure DNS. A hosts-file override
+is at most a temporary, owner-approved diagnostic; it masks the resolver path
+and must not count as production DNS validation.
 
 ## 6. Diagnostic Kusto queries
 
-All four queries assume a Log Analytics workspace receives diagnostic
-logs from the network resources (NSG flow logs v2, Azure Firewall, the
-Cognitive Services account). If a query returns "table not found", the
-diagnostic setting is missing — that is a Day-0 setup gap, not a
-runtime failure. See `foundry-observability` for diagnostic-setting
-wiring.
+The Kusto queries require the matching ingestion/schema in the selected Log
+Analytics workspace. A missing table may mean missing ingestion or a different
+table mode, not a proven network failure. RBAC query D uses ARM directly.
+See `foundry-observability` for telemetry wiring; do not enable new logging
+resources without approval.
 
 ### A. NSG flow log denies on the agent subnet
 
@@ -214,11 +324,12 @@ AzureNetworkAnalytics_CL
 | take 50
 ```
 
-> **Fallback when NSG flow logs v2 isn't enabled** — use
-> `AzureDiagnostics | where Category == 'NetworkSecurityGroupFlowEvent'`
-> and parse the embedded JSON. v1 is significantly noisier; enabling v2
-> is preferred (`az network watcher flow-log create --location <r>
-> --enabled-nsg <nsgId> --workspace <lawId> --version 2`).
+> **Legacy query:** use only when the existing Traffic Analytics schema matches.
+> New NSG flow logs cannot be created after June 30, 2025; retirement is
+> September 30, 2027. For new coverage, use
+> [VNet flow logs](https://learn.microsoft.com/azure/network-watcher/vnet-flow-logs-overview)
+> and that deployment's documented schema. A missing legacy table is not a
+> reason to try enabling NSG flow logs or to conclude that no traffic occurred.
 
 ### B. Azure Firewall denies for Foundry-bound traffic
 
@@ -239,9 +350,12 @@ AzureDiagnostics
 | take 50
 ```
 
-If you see denies, add an Application Rule allowing the matching FQDNs
-(prefer the FQDN form over the IP — the private endpoint IP can rotate
-on the platform side without notice).
+This query filters Foundry destinations in the legacy `AzureDiagnostics` mode;
+it does not cover every MCP, identity or registry endpoint. Use the actual
+destination and the firewall's configured table mode when investigating other
+hops. Correlate denies with the failing request and have the owner review the
+narrow required rule. No matching log is inconclusive if the route bypasses the
+firewall, ingestion is delayed or the filter/schema does not cover the flow.
 
 ### C. Foundry account `Failed` events from the activity log
 
@@ -274,9 +388,9 @@ az role assignment list --assignee "$PRINCIPAL_ID" --all \
   -o table
 ```
 
-This filter narrows to the role classes relevant to network-layer
-diagnostics (DNS, NSG, MI, Cog Services). Empty result for the
-expected roles is the smoking gun.
+This display-name filter is a starting point, not an effective-permissions
+verdict. Renamed/custom/group-assigned roles may be missed. Inspect the actual
+principal, denied action, scope and conditions before proposing a grant.
 
 ## 7. Health checks (recurring)
 
@@ -287,29 +401,29 @@ rotation, public-access flipped back on by a "compliance" pipeline.
 
 ```bash
 # H1: All spoke peerings must be Connected
-az network vnet peering list -g "$RG" --vnet-name "$VNET" \
+az network vnet peering list -g "$VNET_RG" --vnet-name "$VNET" --subscription "$SUB" \
   --query "[].peeringState" -o tsv | sort -u
-# Expect: a single line `Connected`. Anything else = page on-call.
+# Expect: Connected for every planned peering; an empty list is not proof.
 ```
 
 ```bash
-# H2: All 6 Foundry PDZs have an active VNet link to the spoke
+# H2: Standard + Azure-provided DNS example; adapt zone/VNet ownership per § 5
 for z in privatelink.services.ai.azure.com privatelink.openai.azure.com \
          privatelink.cognitiveservices.azure.com privatelink.search.windows.net \
          privatelink.blob.core.windows.net privatelink.documents.azure.com; do
   found=$(az network private-dns link vnet list \
-    -g "$DNS_RG" --zone-name "$z" \
+    -g "$DNS_RG" --zone-name "$z" --subscription "$DNS_SUB" \
     --query "[?virtualNetwork.id=='${SPOKE_VNET_ID}'].provisioningState" -o tsv)
   printf "%-50s %s\n" "$z" "${found:-MISSING}"
 done
-# Expect: every line ends in `Succeeded`.
+# Expect: every planned link ends in Succeeded. This does not test DNS records.
 ```
 
 ```bash
 # H3: All private endpoints in the spoke RG are Approved
-az network private-endpoint list -g "$RG" \
+az network private-endpoint list -g "$RG" --subscription "$SUB" \
   --query "[?privateLinkServiceConnections[0].privateLinkServiceConnectionState.status!='Approved'].name" -o tsv
-# Expect: empty output. Any name printed = PE pending / disconnected.
+# Empty output is inconclusive if no PEs exist or manual connections are used.
 ```
 
 ```bash
@@ -321,22 +435,25 @@ az rest --method GET \
 ```
 
 ```bash
-# H5: Project MI still has the 5 ARM roles + 1 Cosmos SQL role from § 11.10
+# H5: Standard-only ARM role-count heuristic, not a complete RBAC check
 PRINCIPAL_ID=$(az rest --method GET \
   --url "https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCT}/projects/${PROJ}?api-version=2025-04-01-preview" \
   --query "identity.principalId" -o tsv)
 az role assignment list --assignee "$PRINCIPAL_ID" --all \
   --query "length([?contains(roleDefinitionName, 'Storage Blob') || contains(roleDefinitionName, 'Cosmos DB') || contains(roleDefinitionName, 'Search')])" -o tsv
-# Expect: >= 5. Lower = a cleanup pipeline removed something.
+# A count is not proof of target scopes/conditions and excludes Cosmos SQL roles.
 ```
+
+For H5, verify the actual effective assignments and the separate Cosmos SQL role
+using `foundry-vnet-deploy § 11.10`; Basic has different dependencies and roles.
 
 ```bash
 # H6: Agent subnet SAL still bound to the live caphost (not stale-but-not-purged)
 az network vnet subnet show \
   -g "$VNET_RG" --vnet-name "$VNET" -n "$AGENT_SUBNET" \
   --query "serviceAssociationLinks[].name" -o tsv
-# Expect: exactly one SAL pointing at the current Microsoft.App ME.
-# Empty = caphost gone (next deploy will work). Multiple = ops bug — purge stale account.
+# Compare with the known live host binding; presence or absence alone proves
+# neither safe subnet reuse nor a need to purge. Ownership review is mandatory.
 ```
 
 ## 8. Cross-references
@@ -355,6 +472,10 @@ section, not the whole skill.
 - **`foundry-vnet-deploy § Step 8b`** (hosted-agent developer RBAC).
   Source of truth for the two per-user grants this runbook's § 4
   references for `MI provisioning failed` and `NIC provisioning failed`.
+- **[Hosted deployment preflight](../foundry-hosted-agents/references/deployment-preflight.md)**.
+  Reuse its Basic/Standard host checks and runtime evidence boundaries. For
+  hosted `session_not_ready`, inspect container readiness/startup rather than
+  treating every 424 as the MCP connector failure in § 4.
 - **`foundry-caphost-lifecycle § 7`** (caphost-only DELETE) and
   **`§ 8`** (full account soft-delete + purge). Recovery paths when
   the agent subnet is wedged with a stale SAL and a redeploy fails with
@@ -379,4 +500,7 @@ section, not the whole skill.
 - [Foundry — How to use a custom virtual network](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks) — how the AI Services account's `networkInjections` property and the agent subnet delegation `Microsoft.App/environments` fit together.
 - [Foundry — Hosted agent permissions](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions) — source of truth for the `Managed Identity Operator` + `Network Contributor` grants the § 4 matrix references for hosted-agent create 403s.
 - [Azure CLI — `cognitiveservices account`](https://learn.microsoft.com/cli/azure/cognitiveservices/account) — GA reference for the `delete` / `purge` / `list-deleted` / `show-deleted` commands the matrix points at for stale-SAL recovery.
-- [NSG flow logs (v2)](https://learn.microsoft.com/azure/network-watcher/network-watcher-nsg-flow-logging-overview) — schema for `AzureNetworkAnalytics_CL` (query A in § 6); enable v2 before relying on the query.
+- [NSG flow logs retirement](https://learn.microsoft.com/azure/network-watcher/network-watcher-nsg-flow-logging-overview) — lifecycle limits for the legacy query A; use VNet flow logs for new coverage.
+- [Private Endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration) — resolver placement, public-namespace conditional forwarding and DNS zone groups.
+- [Private Endpoint network policies](https://learn.microsoft.com/azure/private-link/disable-private-endpoint-network-policy) — NSG/UDR applicability and why a default route alone does not prove firewall traversal.
+- [Private Endpoint ingress and agent egress field case](https://techcommunity.microsoft.com/blog/AzureArchitectureBlog/your-private-endpoint-does-not-cover-agent-egress-locking-down-azure-ai-foundry-/4547864) — motivates the paired ingress checks and project-host/MCP investigation. Its observed 424 cause is not universal; use current Learn guidance for DNS forwarding and the existing Basic/Standard contracts. This is external case evidence, not live validation of this runbook.
