@@ -51,6 +51,9 @@ import subprocess
 from typing import Any
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from upstream_policy import sha_tracking_policy  # noqa: E402
+
 try:
     import yaml
 except ImportError:
@@ -338,16 +341,18 @@ def remove_copilot_from_issue(repo: str, issue_number: int, gh_token: str) -> bo
 @dataclasses.dataclass
 class Signal:
     skill: str
-    signal_type: str      # sha_drift | pkg_drift | issue_closed | link_rot | stale_validation | consolidated
+    signal_type: str      # drift types | check_error | manual_check | consolidated
     severity: str         # info | warn | error | critical | high | medium | low
     title: str            # used as issue title
     body: str             # Markdown body
     automation_tier: str  # auto | issue_only — copied from the pin file
     impact: str = "medium"
+    incomplete: bool = False
 
 
-IMPACT_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+IMPACT_ORDER = {"unknown": -1, "critical": 0, "high": 1, "medium": 2, "low": 3}
 IMPACT_HEADINGS = {
+    "unknown": "## ⚠️ UNKNOWN — detection incomplete",
     "critical": "## 🔴 CRITICAL",
     "high": "## 🟠 HIGH",
     "medium": "## 🟡 MEDIUM",
@@ -366,9 +371,9 @@ def labels_for_execution_mode(base_labels: list[str], signal: Signal, execution_
         for label in base_labels
         if label != MANUAL_REVIEW_LABEL and not label.startswith("impact:")
     ]
-    if execution_mode == "manual":
+    if execution_mode == "manual" or signal.incomplete:
         labels.append(MANUAL_REVIEW_LABEL)
-    if signal.signal_type == "consolidated":
+    if signal.signal_type == "consolidated" and signal.impact != "unknown":
         labels.append(f"impact:{signal.impact}")
     return list(dict.fromkeys(labels))
 
@@ -376,10 +381,10 @@ def labels_for_execution_mode(base_labels: list[str], signal: Signal, execution_
 def ownership_note_for_execution_mode(signal: Signal, execution_mode: str) -> str:
     if execution_mode not in EXECUTION_MODES:
         raise ValueError(f"unsupported execution mode: {execution_mode}")
-    if signal.automation_tier != "auto":
+    if signal.incomplete or signal.automation_tier != "auto":
         return "human action required"
     if execution_mode == "copilot":
-        return "assigned to @Copilot"
+        return "Copilot assignment requested (not confirmation of assignment)"
     return "manual review required"
 
 
@@ -392,6 +397,8 @@ def parse_semver(v: str) -> tuple[int, int, int] | None:
 
 
 def classify_impact(signal: Signal) -> str:
+    if signal.signal_type == "check_error":
+        return "unknown"
     if signal.signal_type == "pkg_drift":
         m = re.search(r"([^\s`]+)\s*→\s*([^\s`]+)", signal.title)
         if m:
@@ -416,6 +423,8 @@ def classify_impact(signal: Signal) -> str:
 def consolidate_signals(signals: list[Signal]) -> list[Signal]:
     by_skill: dict[str, list[Signal]] = {}
     for signal in signals:
+        if signal.signal_type == "manual_check":
+            continue
         by_skill.setdefault(signal.skill, []).append(signal)
 
     consolidated: list[Signal] = []
@@ -427,14 +436,24 @@ def consolidate_signals(signals: list[Signal]) -> list[Signal]:
             key=lambda item: (IMPACT_ORDER[item[1].impact], item[0]),
         )
         ordered_signals = [signal for _, signal in ordered]
-        highest_impact = min((signal.impact for signal in ordered_signals), key=lambda impact: IMPACT_ORDER[impact])
+        drift = [signal for signal in ordered_signals if not signal.incomplete]
+        incomplete = any(signal.incomplete for signal in ordered_signals)
+        highest_impact = min(
+            (signal.impact for signal in drift),
+            key=lambda impact: IMPACT_ORDER[impact],
+            default="unknown",
+        )
+        automation_tier = "issue_only" if incomplete else bucket[0].automation_tier
         summary = "\n".join(
             [
                 f"## 🔄 Refresh `{skill}` — consolidated freshness report",
                 "",
                 f"- **Signals**: {len(ordered_signals)}",
                 f"- **Highest impact**: `{highest_impact}`",
-                f"- **Automation tier**: `{bucket[0].automation_tier}`",
+                f"- **Failed checks**: {sum(signal.incomplete for signal in ordered_signals)}",
+                f"- **Automation tier**: `{automation_tier}`",
+                "- **Detection**: incomplete; do not infer resolution or update pins from failed checks."
+                if incomplete else "- **Detection**: enabled checks completed.",
             ]
         )
         sections = [summary]
@@ -456,8 +475,9 @@ def consolidate_signals(signals: list[Signal]) -> list[Signal]:
                 title=f"🔄 Refresh `{skill}`",
                 body=f"**{len(ordered_signals)} signal(s), impact: {highest_impact}**\n\n"
                      + "\n\n---\n\n".join(sections),
-                automation_tier=bucket[0].automation_tier,
+                automation_tier=automation_tier,
                 impact=highest_impact,
+                incomplete=incomplete,
             )
         )
     return consolidated
@@ -528,27 +548,61 @@ def parse_pin_file(path: pathlib.Path) -> PinFile | None:
 
 def discover_pin_files() -> list[PinFile]:
     pins: list[PinFile] = []
+    invalid: list[str] = []
     for p in sorted(SKILLS_DIR.glob("*/references/upstream-pin.md")):
-        pf = parse_pin_file(p)
+        try:
+            pf = parse_pin_file(p)
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"could not read {p}: {exc}") from exc
         if pf is None:
-            print(f"WARN: could not parse {p}", file=sys.stderr)
+            invalid.append(str(p))
             continue
         pins.append(pf)
+    if invalid:
+        raise ValueError("could not parse pin files: " + ", ".join(invalid))
     return pins
 
 
 # ──────────────────────────── detectors ─────────────────────────────
 
 
+def check_error(pin: PinFile, check: str, detail: str) -> Signal:
+    return Signal(
+        skill=pin.skill,
+        signal_type="check_error",
+        severity="error",
+        title=f"🔄 Refresh `{pin.skill}` — {check} check failed",
+        body=f"**Detection incomplete ({check}).** {detail}\n\n"
+             "This is not verified drift. Restore the check before changing a pin "
+             "or declaring its existing issue resolved.",
+        automation_tier="issue_only",
+        impact="unknown",
+        incomplete=True,
+    )
+
+
 def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
+    try:
+        tracking, reason = sha_tracking_policy(pin.fm)
+    except ValueError as exc:
+        return check_error(pin, "SHA policy", str(exc))
+    if tracking == "manual":
+        return Signal(
+            skill=pin.skill,
+            signal_type="manual_check",
+            severity="info",
+            title=f"`{pin.skill}` — SHA tracking is manual",
+            body=f"SHA not queried: {reason}",
+            automation_tier="issue_only",
+        )
     upstream = pin.upstream
     if upstream.get("type") != "github_repo":
         return None
     repo = upstream.get("repo")
     ref = upstream.get("ref")
     pinned = upstream.get("pinned_sha")
-    if not (repo and ref and pinned):
-        return None
+    if not all(isinstance(value, str) and value.strip() for value in (repo, ref, pinned)):
+        return check_error(pin, "SHA", "github_repo requires repo, ref and pinned_sha.")
 
     try:
         out = subprocess.run(
@@ -558,27 +612,15 @@ def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
             check=True,
             timeout=30,
         ).stdout
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        return Signal(
-            skill=pin.skill,
-            signal_type="sha_drift",
-            severity="error",
-            title=f"🔄 Refresh `{pin.skill}` — could not query upstream {repo}@{ref}",
-            body=f"`git ls-remote https://github.com/{repo} {ref}` failed: {e}",
-            automation_tier=pin.automation_tier,
-        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        return check_error(pin, "SHA", f"Could not query `{repo}@{ref}`: {e}")
 
     if not out.strip():
-        return Signal(
-            skill=pin.skill,
-            signal_type="sha_drift",
-            severity="error",
-            title=f"🔄 Refresh `{pin.skill}` — upstream ref `{ref}` not found",
-            body=f"`git ls-remote https://github.com/{repo} {ref}` returned no rows.",
-            automation_tier=pin.automation_tier,
-        )
+        return check_error(pin, "SHA", f"`{repo}@{ref}` returned no rows.")
 
     current_sha = out.split()[0]
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", current_sha):
+        return check_error(pin, "SHA", f"`{repo}@{ref}` returned an invalid SHA.")
     if current_sha == pinned:
         return None
 
@@ -629,29 +671,6 @@ def detect_sha_drift(pin: PinFile, gh_token: str | None) -> Signal | None:
         "- [ ] CI gate `pin-validation.yml` passes "
         "(re-runs `validation.script` on the runner — proof, not claim)",
     ]
-
-    if pin.automation_tier == "auto":
-        body_lines.extend(
-            [
-                "",
-                "---",
-                "",
-                "🤖 This issue is assigned to @Copilot. The coding agent "
-                "will execute the Verification Checklist embedded in the "
-                "pin file and open a PR. A human reviews + merges.",
-            ]
-        )
-    else:
-        body_lines.extend(
-            [
-                "",
-                "---",
-                "",
-                "👤 **Human action required** — validation requires credentials "
-                f"({pin.fm.get('validation', {}).get('requires', [])}) that we "
-                "don't ship to the coding agent.",
-            ]
-        )
 
     return Signal(
         skill=pin.skill,
@@ -733,23 +752,18 @@ def detect_pkg_drift(pin: PinFile) -> list[Signal]:
             )
             r.raise_for_status()
             data = r.json()
-        except Exception as e:
-            out.append(
-                Signal(
-                    skill=pin.skill,
-                    signal_type="pkg_drift",
-                    severity="error",
-                    title=f"🔄 Refresh `{pin.skill}` — PyPI lookup failed for `{name}`",
-                    body=f"PyPI JSON API for `{name}` failed: {e}",
-                    automation_tier=pin.automation_tier,
-                )
-            )
+        except (requests.RequestException, ValueError) as e:
+            out.append(check_error(pin, "PyPI", f"Lookup for `{name}` failed: {e}"))
             continue
 
         pinned_specifier = pinned.strip()
         pinned_release = re.sub(r"^(?:~=|==)\s*", "", pinned_specifier)
-        latest = (data.get("info") or {}).get("version")
-        if not latest or latest == pinned_release:
+        info = data.get("info") if isinstance(data, dict) else None
+        latest = info.get("version") if isinstance(info, dict) else None
+        if not isinstance(latest, str) or not latest.strip():
+            out.append(check_error(pin, "PyPI", f"Lookup for `{name}` returned no valid version."))
+            continue
+        if latest == pinned_release:
             continue
 
         old_v = parse_semver(pinned)
@@ -857,14 +871,14 @@ def detect_issue_closure(pin: PinFile, gh_token: str | None) -> list[Signal]:
             )
             r.raise_for_status()
             data = r.json()
-        except Exception as e:
-            print(
-                f"WARN: github API failed for {url}: {e}",
-                file=sys.stderr,
-            )
+        except (requests.RequestException, ValueError) as e:
+            out.append(check_error(pin, "upstream issue", f"Lookup for `{url}` failed: {e}"))
             continue
 
-        state = data.get("state")  # open | closed
+        state = data.get("state") if isinstance(data, dict) else None
+        if state not in ("open", "closed"):
+            out.append(check_error(pin, "upstream issue", f"Lookup for `{url}` returned no valid state."))
+            continue
         if state == "closed":
             body = "\n".join(
                 [
@@ -904,6 +918,7 @@ def detect_issue_closure(pin: PinFile, gh_token: str | None) -> list[Signal]:
 
 def detect_link_rot(pin: PinFile) -> list[Signal]:
     broken: list[tuple[str, str]] = []
+    errors: list[Signal] = []
     for url in pin.docs:
         try:
             r = requests.head(
@@ -912,13 +927,15 @@ def detect_link_rot(pin: PinFile) -> list[Signal]:
                 timeout=HTTP_TIMEOUT,
                 allow_redirects=True,
             )
-            if r.status_code >= 400:
+            if r.status_code in (404, 410):
                 broken.append((url, f"HTTP {r.status_code}"))
+            elif r.status_code >= 400:
+                errors.append(check_error(pin, "documentation", f"`{url}` returned HTTP {r.status_code}."))
         except requests.RequestException as e:
-            broken.append((url, str(e)))
+            errors.append(check_error(pin, "documentation", f"Lookup for `{url}` failed: {e}"))
 
     if not broken:
-        return []
+        return errors
 
     body = ["## 🔄 Refresh `{}` — link rot detected".format(pin.skill), ""]
     for url, reason in broken:
@@ -932,7 +949,7 @@ def detect_link_rot(pin: PinFile) -> list[Signal]:
             "commit-message opt-in.",
         ]
     )
-    return [
+    return errors + [
         Signal(
             skill=pin.skill,
             signal_type="link_rot",
@@ -947,7 +964,7 @@ def detect_link_rot(pin: PinFile) -> list[Signal]:
 def detect_stale_validation(pin: PinFile, today: dt.date) -> Signal | None:
     lv = pin.last_validated
     if lv is None:
-        return None
+        return check_error(pin, "validation age", "last_validated is missing or invalid.")
     age = (today - lv).days
     if age <= VALIDATION_AGE_DAYS:
         return None
@@ -998,21 +1015,28 @@ def render_report(
     pin_count: int,
     consolidated: bool = True,
     execution_mode: str = "manual",
+    manual_checks: list[Signal] | None = None,
 ) -> str:
     if execution_mode not in EXECUTION_MODES:
         raise ValueError(f"unsupported execution mode: {execution_mode}")
     today = dt.date.today().isoformat()
+    manual_section = ""
+    if manual_checks:
+        manual_section = "\n\n## Manual checks — not verified automatically\n\n" + "\n".join(
+            f"- **{signal.skill}**: {signal.body}" for signal in manual_checks
+        )
     if not signals:
         return (
             f"# 🪴 Skill freshness — {today}\n\n"
-            f"✅ All {pin_count} pinned skills are current. No drift "
-            "detected across SHA / PyPI / upstream-issue / link-rot / "
-            "validation-age signals."
+            f"No actionable drift detected in the enabled checks across {pin_count} pin files. "
+            "This is not live skill validation."
+            + manual_section
         )
 
     lines = [f"# 🪴 Skill freshness — {today}", ""]
     lines.append(
-        f"Detected {len(signals)} drift event(s) across {pin_count} pinned skills.\n"
+        f"Reported {len(signals)} finding(s) across {pin_count} pinned skills. "
+        "Failed checks are not verified drift.\n"
     )
 
     if not consolidated:
@@ -1021,6 +1045,7 @@ def render_report(
             by_signal.setdefault(s.signal_type, []).append(s)
 
         for sig_type in (
+            "check_error",
             "sha_drift",
             "pkg_drift",
             "issue_closed",
@@ -1037,13 +1062,13 @@ def render_report(
                 lines.append(f"- **{s.skill}** — {s.title}{assignee_note}")
             lines.append("")
 
-        return "\n".join(lines)
+        return "\n".join(lines) + manual_section
 
     by_impact: dict[str, list[Signal]] = {}
     for s in signals:
         by_impact.setdefault(s.impact, []).append(s)
 
-    for impact in ("critical", "high", "medium", "low"):
+    for impact in ("unknown", "critical", "high", "medium", "low"):
         bucket = by_impact.get(impact) or []
         if not bucket:
             continue
@@ -1054,10 +1079,35 @@ def render_report(
             lines.append(f"- **{s.skill}** — {s.title}{assignee_note}")
         lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + manual_section
 
 
 # ──────────────────────────── issue upsert ──────────────────────────
+
+
+def search_issues(query: str, headers: dict[str, str]) -> list[dict[str, Any]] | None:
+    try:
+        response = requests.get(
+            "https://api.github.com/search/issues",
+            params={"q": query},
+            headers=headers,
+            timeout=HTTP_TIMEOUT,
+        )
+        if response.status_code != 200:
+            raise ValueError(f"HTTP {response.status_code}")
+        data = response.json()
+        if not isinstance(data, dict) or data.get("incomplete_results", False) is not False:
+            raise ValueError("malformed or incomplete search response")
+        items = data.get("items")
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("title"), str)
+            for item in items
+        ):
+            raise ValueError("missing or malformed issue search items")
+    except (requests.RequestException, ValueError) as exc:
+        print(f"ERROR: issue search failed: {exc}; skipping this issue operation", file=sys.stderr)
+        return None
+    return items
 
 
 def upsert_issue(
@@ -1068,7 +1118,11 @@ def upsert_issue(
     labels: list[str],
     dry_run: bool,
 ) -> bool:
-    body = signal.body
+    body = (
+        signal.body + "\n\n---\n\n**Ownership policy:** "
+        + ownership_note_for_execution_mode(signal, execution_mode)
+        + ". Assignment/removal failures are reported separately by the workflow."
+    )
     title = signal.title
     issue_labels = labels_for_execution_mode(labels, signal, execution_mode)
 
@@ -1082,30 +1136,25 @@ def upsert_issue(
     }
     # Extract skill name for prefix matching: "🔄 Refresh `<skill>`"
     skill_prefix = title.split("—")[0].rstrip(" ").rstrip("—").rstrip() if "—" in title else title
-    search = requests.get(
-        "https://api.github.com/search/issues",
-        params={
-            "q": f'repo:{repo} is:issue is:open in:title "{skill_prefix}"',
-        },
-        headers=headers,
-        timeout=HTTP_TIMEOUT,
+    items = search_issues(
+        f'repo:{repo} is:issue is:open in:title "{skill_prefix}"',
+        headers,
     )
-    if search.status_code == 200:
-        items = search.json().get("items", [])
-        matched = next(
-            (it for it in items if it.get("title", "").startswith(skill_prefix)),
-            None,
-        )
-    else:
-        matched = None
-        print(f"WARN: search API returned {search.status_code}", file=sys.stderr)
+    if items is None:
+        return False
+    matched = next(
+        (it for it in items if it["title"].startswith(skill_prefix)),
+        None,
+    )
 
     payload: dict[str, Any] = {"body": body}
     if issue_labels:
         payload["labels"] = issue_labels
 
-    want_copilot_assign = execution_mode == "copilot" and signal.automation_tier == "auto"
-    want_copilot_remove = execution_mode == "manual" and matched is not None
+    want_copilot_assign = (
+        execution_mode == "copilot" and signal.automation_tier == "auto" and not signal.incomplete
+    )
+    want_copilot_remove = matched is not None and (execution_mode == "manual" or signal.incomplete)
 
     if matched:
         url = matched["url"]
@@ -1170,16 +1219,18 @@ def upsert_issue(
 
 def close_resolved_issues(
     skills_with_signals: set[str],
+    verified_skills: set[str],
     repo: str,
     gh_token: str,
     labels: list[str],
     dry_run: bool,
     execution_mode: str,
 ) -> bool:
-    """Close freshness issues for skills with zero remaining drift signals.
+    """Close issues only for fully checked skills with zero remaining signals.
 
     Searches for open issues with the freshness label and the 🔄 Refresh
-    title pattern, then closes any whose skill has no active signals.
+    title pattern. Missing pins, manual SHA tracking and failed checks never
+    qualify as verified; absence of a signal alone is not evidence of resolution.
 
     In manual execution mode, Copilot must be unassigned from an issue
     BEFORE it closes: a closed-but-still-assigned issue leaves the coding
@@ -1196,20 +1247,15 @@ def close_resolved_issues(
     }
     # Find all open freshness issues
     label_filter = labels[0] if labels else "freshness"
-    search = requests.get(
-        "https://api.github.com/search/issues",
-        params={
-            "q": f'repo:{repo} is:issue is:open label:{label_filter} "🔄 Refresh"',
-        },
-        headers=headers,
-        timeout=HTTP_TIMEOUT,
+    items = search_issues(
+        f'repo:{repo} is:issue is:open label:{label_filter} "🔄 Refresh"',
+        headers,
     )
-    if search.status_code != 200:
-        print(f"WARN: auto-close search returned {search.status_code}", file=sys.stderr)
-        return True
+    if items is None:
+        return False
 
     all_ok = True
-    for issue in search.json().get("items", []):
+    for issue in items:
         title = issue.get("title", "")
         # Extract skill name from "🔄 Refresh `<skill>`"
         m = re.search(r"Refresh `([^`]+)`", title)
@@ -1217,6 +1263,9 @@ def close_resolved_issues(
             continue
         skill = m.group(1)
         if skill in skills_with_signals:
+            continue
+        if skill not in verified_skills:
+            print(f"INFO: leaving {skill} open — not fully checked automatically", file=sys.stderr)
             continue
 
         # This skill has zero signals — close the issue. Search API issue
@@ -1242,7 +1291,9 @@ def close_resolved_issues(
         close_payload = {
             "state": "closed",
             "state_reason": "completed",
-            "body": issue.get("body", "") + "\n\n---\n\n✅ All drift signals resolved. Closing automatically.",
+            "body": issue.get("body", "") + "\n\n---\n\n"
+                    "Enabled freshness checks completed without remaining signals. "
+                    "Closing automatically; this is not live skill validation.",
             "labels": close_labels,
         }
 
@@ -1338,7 +1389,11 @@ def main() -> int:
         ap.error("--execution-mode cannot be combined with --assign-copilot-on-auto-tier")
     execution_mode = args.execution_mode or ("copilot" if args.assign_copilot_on_auto_tier else "manual")
 
-    pins = discover_pin_files()
+    try:
+        pins = discover_pin_files()
+    except ValueError as exc:
+        print(f"ERROR: incomplete pin discovery — {exc}; no issues were changed", file=sys.stderr)
+        return 2
     print(f"Discovered {len(pins)} pin files", file=sys.stderr)
 
     # Warn about skills without pin files (Tier C / internal IP)
@@ -1353,7 +1408,11 @@ def main() -> int:
                 )
 
     signals = collect_signals(pins, gh_token)
-    issue_signals = consolidate_signals(signals) if args.consolidated else signals
+    manual_checks = [signal for signal in signals if signal.signal_type == "manual_check"]
+    actionable = [signal for signal in signals if signal.signal_type != "manual_check"]
+    issue_signals = consolidate_signals(actionable) if args.consolidated else actionable
+    incomplete = any(signal.incomplete for signal in signals)
+    verified_skills = pinned_skills - {signal.skill for signal in signals}
 
     iso_week = dt.date.today().isocalendar()
     iso_week_str = f"{iso_week.year}-W{iso_week.week:02d}"
@@ -1368,6 +1427,7 @@ def main() -> int:
         len(pins),
         consolidated=args.consolidated,
         execution_mode=execution_mode,
+        manual_checks=manual_checks,
     )
 
     if args.print_report:
@@ -1393,6 +1453,7 @@ def main() -> int:
         skills_with_signals = {s.skill for s in issue_signals}
         close_ok = close_resolved_issues(
             skills_with_signals,
+            verified_skills,
             repo=args.repo,
             gh_token=gh_token or "",
             labels=labels,
@@ -1400,13 +1461,17 @@ def main() -> int:
             execution_mode=execution_mode,
         )
         if not upsert_ok or not close_ok:
-            print("ERROR: one or more issue upserts failed", file=sys.stderr)
+            print("ERROR: one or more issue updates/closures failed", file=sys.stderr)
             return 1
 
     print(
-        f"Done — {len(signals)} drift signal(s), {len(issue_signals)} issue candidate(s) across {len(pins)} pins",
+        f"Done — {len(actionable)} finding(s), {len(manual_checks)} manual check(s), "
+        f"{len(issue_signals)} issue candidate(s) across {len(pins)} pins",
         file=sys.stderr,
     )
+    if incomplete:
+        print("ERROR: freshness detection incomplete; failed checks are not resolved", file=sys.stderr)
+        return 1
     return 0
 
 

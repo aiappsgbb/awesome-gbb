@@ -32,11 +32,9 @@ schema_version: 2
 freshness_tier: A
 
 # ──────────── automation policy ────────────────────────────────────
-# auto        = drift opens issue assigned to @Copilot; coding agent runs
-#               validation.script autonomously and opens a PR
-# issue_only  = drift opens unassigned issue; human authors the refresh
-#               (use this when validation.requires includes azure_subscription
-#               or foundry_project — we don't ship credentials to GHCP)
+# auto        = execution-mode manual keeps human ownership (the default);
+#               execution-mode copilot requests coding-agent assignment
+# issue_only  = human-owned in both execution modes
 automation_tier: auto
 
 # ──────────── upstream identity ────────────────────────────────────
@@ -45,6 +43,12 @@ upstream:
   repo: <org>/<repo>           # e.g. microsoft/agent-governance-toolkit
   ref: main                    # branch or tag
   pinned_sha: <40-char SHA>    # `git ls-remote https://github.com/<repo> <ref>` → first column
+  # Optional; omission preserves automatic SHA polling.
+  # sha_tracking: manual      # automatic | manual (github_repo only for manual)
+  # sha_tracking_reason: >
+  #   Required for manual: explain the supported human vendoring/review process.
+  #   Does not disable PyPI, known-issue, documentation or validation-age checks.
+  #   A private upstream or a lookup error never selects manual mode implicitly.
   pinned_commit_message: |
     <commit subject line at the pinned SHA, for human review of weekly diffs>
   license: MIT                 # MIT | Apache-2.0 | proprietary

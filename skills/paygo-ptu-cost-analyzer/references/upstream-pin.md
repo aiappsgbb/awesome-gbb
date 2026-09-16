@@ -10,6 +10,11 @@ upstream:
   repo: aiappsgbb/ptu-paygo-mix
   ref: main
   pinned_sha: 2636464b3604ec417771b4d96337c87c50d34c9f
+  sha_tracking: manual
+  sha_tracking_reason: >
+    The SHA records the last manually vendored analysis core, not an automatic
+    refresh target. Upstream is private; public CI tracks PyPI dependencies,
+    public documentation and validation age without polling its Git ref.
   pinned_commit_message: |
     Merge branch 'charendt:main' into main
   license: MIT

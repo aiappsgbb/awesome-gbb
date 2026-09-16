@@ -138,3 +138,40 @@ merge:
 
 `pip install` + import smoke is not enough for Azure-connected skills. Manual
 mode changes ownership, not the validation bar.
+
+## 9) Manual upstream SHA tracking and incomplete checks
+
+Execution mode controls **issue ownership**, not what gets checked. For a
+vendored GitHub upstream whose SHA is maintained by a human, declare
+`upstream.sha_tracking: manual` and a non-empty
+`upstream.sha_tracking_reason` in its schema-v2 pin. Keep the upstream identity
+and last-vendored SHA. Omission means `automatic`, preserving existing pins.
+The validator and detector reject invalid policies; neither infers an exception
+from repository visibility, an HTTP failure, or a skill name.
+
+A manual SHA check is reported explicitly as **not verified automatically**.
+It does not create a recurring refresh issue by itself. PyPI, known-issue,
+public-documentation and validation-age checks continue, including existing
+package holds. An existing issue such as #356 still needs human reconciliation:
+changing a check to manual must not automatically mark earlier work completed.
+Do not refresh `last_validated`, package versions or the vendored SHA merely
+to change this policy.
+
+Lookup failures are **incomplete detection**, not proof of version drift.
+Failed checks remain actionable and human-owned, including in Copilot mode,
+and make the detector exit non-zero. Mixed reports retain the severity of
+their verified drift and explicitly list failed checks. Documentation 404/410
+responses remain link-rot signals; access failures, throttling, server errors
+and transport failures require investigation rather than an invented new URL.
+
+Automatic closure requires a discovered, fully checked pin with no remaining
+findings. Failed checks, manually tracked SHA checks and absent pins cannot
+be closed based on silence. Unreadable or malformed pin files stop discovery
+before issue writes. Freshness success is not live Azure validation.
+Failed, malformed or explicitly incomplete GitHub issue searches block the
+corresponding upsert/closure; they are never treated as an empty result that
+permits creating a duplicate issue.
+
+Reports and issue bodies describe the requested ownership policy, not an
+assignment that has already succeeded. Actual assignment/removal errors remain
+workflow failures. Keep human assignees and the manual-mode fallback intact.
