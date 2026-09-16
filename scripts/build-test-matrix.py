@@ -57,8 +57,9 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     skipped it.
 
   - AgentOps-only CI helpers map to `foundry-agentops`, not the full
-    matrix. Normal dependency expansion and fixture/quarantine filtering
-    still apply.
+    matrix. Dependency-only fanout excludes its native consumer; direct
+    skill/helper changes and full/shared-contract runs still select it.
+    Other dependency expansion and fixture/quarantine filtering are unchanged.
 
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
@@ -283,6 +284,8 @@ def build(
     changed_skills = _changed_skills_from_diff(changed_files)
     deps_map = _load_dep_map(repo_root)
     expanded = _expand_transitively(changed_skills, deps_map)
+    if "foundry-agentops" not in changed_skills:
+        expanded.discard("foundry-agentops")
 
     # Intersect with the fixtured+non-quarantined set so we never emit
     # a name the downstream job can't actually execute.
