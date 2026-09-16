@@ -417,6 +417,7 @@ class CloseResolvedIssuesManualModeTest(unittest.TestCase):
 
         ok = CF.close_resolved_issues(
             skills_with_signals=set(),
+            verified_skills={"resolved-skill"},
             repo="aiappsgbb/awesome-gbb",
             gh_token="token",
             labels=["freshness", "automation"],
@@ -448,6 +449,7 @@ class CloseResolvedIssuesManualModeTest(unittest.TestCase):
 
         ok = CF.close_resolved_issues(
             skills_with_signals=set(),
+            verified_skills={"stuck-skill"},
             repo="aiappsgbb/awesome-gbb",
             gh_token="token",
             labels=["freshness"],
@@ -474,6 +476,7 @@ class CloseResolvedIssuesManualModeTest(unittest.TestCase):
 
         ok = CF.close_resolved_issues(
             skills_with_signals=set(),
+            verified_skills={"dry-skill"},
             repo="aiappsgbb/awesome-gbb",
             gh_token="token",
             labels=["freshness"],
@@ -533,6 +536,7 @@ class CloseResolvedIssuesManualModeTest(unittest.TestCase):
 
         ok = CF.close_resolved_issues(
             skills_with_signals=set(),
+            verified_skills={"label-less-skill", "valid-skill"},
             repo="aiappsgbb/awesome-gbb",
             gh_token="token",
             labels=["freshness"],
@@ -591,6 +595,7 @@ class CloseResolvedIssuesManualModeTest(unittest.TestCase):
 
         ok = CF.close_resolved_issues(
             skills_with_signals=set(),
+            verified_skills={"label-less-skill-2", "valid-skill-2"},
             repo="aiappsgbb/awesome-gbb",
             gh_token="token",
             labels=["freshness"],

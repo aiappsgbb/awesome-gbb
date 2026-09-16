@@ -17,7 +17,7 @@ description: >
   monitoring (use azure-monitor-query directly), pricing for
   non-Azure-OpenAI services.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # PAYGO vs PTU Cost Analyzer

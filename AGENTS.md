@@ -277,6 +277,40 @@ silent failure. That destroys the catalog's credibility — the one thing
 
 ---
 
+### 2.10 Non-CI live tests must close their resource lifecycle
+
+**A manual/local test is not complete until its temporary resources are
+removed and that removal is verified, or the owner explicitly accepts a
+bounded retention handoff.** Pattern 25's CI-specific best-effort teardown
+does not waive this requirement outside CI. Functional success and cleanup
+status must be reported separately; a working demo with orphaned resources
+is not a completed test.
+
+- Before creating anything, agree on the exact scope, cleanup authority and
+  retention deadline. Record a per-run inventory in private session artifacts:
+  unique run ID, created resource IDs, owner, purpose and deletion/retention
+  disposition. Tag resources with run/owner/expiry where supported; tags alone
+  are not sufficient proof that a resource belongs to the run.
+- Distinguish newly created resources from pre-existing/shared resources and
+  retained demonstrations. Never delete shared resources or a whole resource
+  group to clean up a partial run. Do not publish live inventory in the repo.
+- Arrange cleanup before execution, including failure/interruption paths,
+  authentication lifetime and enough time to verify asynchronous deletion.
+  Clean up only the exact resources recorded as created by this run and
+  covered by the owner's authorization. Follow any tool-specific confirmation
+  requirements; inability to obtain approval is a blocker, not permission.
+- Verify each deletion through the resource's supported read/status path.
+  A submitted delete or a failed lookup caused by auth/network problems is not
+  proof of absence. Include supporting apps/jobs, images, identities and
+  assignments where created for the run, respecting dependency order.
+- If cleanup is blocked, stop creating replacements. Report the precise
+  residual inventory privately, its cost exposure, blocker, responsible owner
+  and next cleanup deadline. Do not retry deployments into new names while
+  leaving failed attempts behind.
+- Reusing a retained resource requires confirming its ownership and suitability;
+  retaining a new one requires explicit owner approval, a purpose and expiry.
+  A pause on live tests means no new resources or live retries until resumed.
+
 ## 3 · Editing checklist (run before every commit)
 
 Mechanical checks. Most are now CI-enforced (§ 9.6), but running them
@@ -3100,7 +3134,7 @@ Source counts include the unreleased AgentOps and delegated-auth candidates; see
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 4 |
 | CI workflows | 9 |
-| Unit tests | 1256 |
+| Unit tests | 1289 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

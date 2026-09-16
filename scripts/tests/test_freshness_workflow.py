@@ -19,6 +19,9 @@ class FreshnessWorkflowTest(unittest.TestCase):
         paths = workflow["on"]["pull_request"]["paths"]
         for path in (
             "scripts/check-freshness.py",
+            "scripts/upstream_policy.py",
+            "scripts/validate-skills.py",
+            "scripts/templates/upstream-pin.template.md",
             "scripts/tests/test_check_freshness_*.py",
             "scripts/tests/test_freshness_workflow.py",
             ".github/workflows/freshness-tests.yml",
@@ -44,6 +47,7 @@ class FreshnessWorkflowTest(unittest.TestCase):
         for module in (
             "scripts.tests.test_check_freshness_pkg_drift",
             "scripts.tests.test_check_freshness_issue_mode",
+            "scripts.tests.test_check_freshness_outcomes",
             "scripts.tests.test_build_site_preserves_manual_freshness",
             "scripts.tests.test_freshness_workflow",
         ):

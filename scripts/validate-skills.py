@@ -42,6 +42,9 @@ import subprocess
 import sys
 from typing import Any
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from upstream_policy import sha_tracking_policy  # noqa: E402
+
 # Force UTF-8 stdout/stderr so the ✅/❌ markers in pass/fail messages
 # work on Windows consoles that default to cp1252. The GitHub Actions
 # runner is already UTF-8, but local contributors would otherwise crash
@@ -305,6 +308,11 @@ def validate_pin_file(path: pathlib.Path) -> list[str]:
             f"{path}: automation_tier must be `auto` or `issue_only` "
             f"(got {automation_tier!r})"
         )
+
+    try:
+        sha_tracking_policy(fm)
+    except ValueError as exc:
+        errors.append(f"{path}: {exc}")
 
     validation = fm.get("validation") or {}
     if not isinstance(validation, dict):
