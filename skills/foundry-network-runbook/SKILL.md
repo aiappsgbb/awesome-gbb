@@ -463,9 +463,10 @@ that scope, follow the pointers below — each one cites a specific
 section, not the whole skill.
 
 - **`foundry-vnet-deploy § 11`** (post-deployment verification — 11.1
-  through 11.11). The Day-0 verification matrix every deploy MUST pass
-  before this runbook applies. If § 11 is failing, the issue is a
-  deploy-time bug, not a runtime one.
+  through 11.11). Reuse its control-plane observations and runtime evidence.
+  A failed or untested connectivity check is a reason to use this runbook,
+  not a requirement to finish every check first. Diagnose the failing layer
+  rather than classifying all § 11 failures as deploy-time bugs.
 - **`foundry-vnet-deploy § Step 8`** (private DNS zones — central DNS
   at scale). Source of truth for the cross-subscription PDZ shape and
   the `dnsZonesSubscriptionId` parameter.
@@ -496,7 +497,7 @@ section, not the whole skill.
 ## 9. References
 
 - [Cloud Adoption Framework — Private Link and DNS integration at scale](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale#private-link-and-dns-integration-in-hub-and-spoke-network-architectures) — canonical hub-and-spoke PDZ pattern; the architecture this runbook's § 5 table is derived from.
-- [Azure Private Endpoint DNS configuration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns) — authoritative list of `privatelink.*` zone names per Azure resource type; verify your 6 Foundry zones match.
+- [Azure Private Endpoint DNS configuration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns) — authoritative list of `privatelink.*` zone names per Azure resource type; verify the zones for the selected Basic/Standard configuration and dependencies.
 - [Foundry — How to use a custom virtual network](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks) — how the AI Services account's `networkInjections` property and the agent subnet delegation `Microsoft.App/environments` fit together.
 - [Foundry — Hosted agent permissions](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-permissions) — source of truth for the `Managed Identity Operator` + `Network Contributor` grants the § 4 matrix references for hosted-agent create 403s.
 - [Azure CLI — `cognitiveservices account`](https://learn.microsoft.com/cli/azure/cognitiveservices/account) — GA reference for the `delete` / `purge` / `list-deleted` / `show-deleted` commands the matrix points at for stale-SAL recovery.
