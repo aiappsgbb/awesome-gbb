@@ -203,6 +203,52 @@ class TestAgentOpsHelperChanges(unittest.TestCase):
         _write_deps(self.repo, {"foundry-agentops": [], "alpha": [], "beta": ["alpha"]})
         self.assertEqual(self.build(["skills/alpha/SKILL.md"]), {"skill": ["alpha", "beta"]})
 
+    def test_dependency_only_agentops_is_excluded_without_losing_siblings(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": ["alpha"], "alpha": [], "beta": ["alpha"]})
+        self.assertEqual(self.build(["skills/alpha/SKILL.md"]), {"skill": ["alpha", "beta"]})
+
+    def test_direct_agentops_inputs_remain_selected_alongside_dependencies(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": ["alpha"], "alpha": [], "beta": ["alpha"]})
+        for path in ("skills/foundry-agentops/SKILL.md",
+                     "skills/foundry-agentops/references/day2-runbook.md",
+                     "skills/foundry-agentops/test-fixture/consumer_prompt.md", *self.HELPERS):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.build(["skills/alpha/SKILL.md", path]),
+                    {"skill": ["alpha", "beta", "foundry-agentops"]},
+                )
+
+    def test_shared_contract_retains_agentops_despite_dependency_only_change(self) -> None:
+        _write_deps(self.repo, {"foundry-agentops": ["alpha"], "alpha": [], "beta": ["alpha"]})
+        for path in (*self.matrix.FORCE_FULL_MATRIX_PATHS, self.matrix.WORKFLOW_PATH):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.build(["skills/alpha/SKILL.md", path]),
+                    {"skill": ["alpha", "beta", "foundry-agentops"]},
+                )
+
+    def test_full_canaries_retain_agentops_without_reading_changed_files(self) -> None:
+        with patch.object(self.matrix, "_diff_filenames", side_effect=AssertionError("unexpected diff")):
+            self.assertEqual(
+                self.matrix.build(self.repo),
+                {"skill": ["alpha", "beta", "foundry-agentops"]},
+            )
+
+    def test_actual_catalog_dependency_fanout_removes_only_agentops(self) -> None:
+        deps = self.matrix._load_dep_map(ROOT)
+        eligible = set(self.matrix._full_fixtured_skills(ROOT))
+        self.assertIn("foundry-agentops", eligible)
+        self.assertTrue(deps["foundry-agentops"])
+        for upstream in deps["foundry-agentops"]:
+            with self.subTest(upstream=upstream):
+                expected = self.matrix._expand_transitively({upstream}, deps) & eligible
+                self.assertIn("foundry-agentops", expected)
+                expected.remove("foundry-agentops")
+                self.assertEqual(
+                    self.build([f"skills/{upstream}/SKILL.md"], ROOT),
+                    {"skill": sorted(expected)},
+                )
+
 
 class TestAgentOpsDiagnosticMode(unittest.TestCase):
     def setUp(self) -> None:
