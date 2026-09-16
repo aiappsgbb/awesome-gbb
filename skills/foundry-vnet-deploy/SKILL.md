@@ -18,7 +18,7 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
@@ -182,7 +182,10 @@ Before starting, verify:
    keep the vendored templates and their Citadel interfaces intact.
 5. Record where each caller runs (agent runtime, SDK client, browser/Playground)
    and how it reaches private DNS and TCP 443. A management-plane check from
-   outside the VNet cannot establish those runtime paths.
+   outside the VNet cannot establish those runtime paths. A Foundry private
+   endpoint covers ingress, not agent egress. Use the
+   [runbook's caller/path intake](../foundry-network-runbook/SKILL.md#31-identify-the-caller-and-network-model)
+   to separate hosted code from platform tool/data-proxy calls.
 
 ### Step 2: Subscription and Resource Group
 
@@ -306,7 +309,13 @@ The format is an object where each key is the zone name and the value is the res
 
 > **Central DNS at scale (hub-and-spoke).** When the spoke is deployed into an enterprise hub-and-spoke topology, the 6 zones above are typically owned by the **platform team in a separate subscription** (often the connectivity hub). The `dnsZonesSubscriptionId` parameter combined with the per-zone resource-group map in `existingDnsZones` is exactly the pattern described in Microsoft's Cloud Adoption Framework — see [Private Link and DNS integration at scale](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale#private-link-and-dns-integration-in-hub-and-spoke-network-architectures) for the canonical reference architecture. The deployment principal needs `Private DNS Zone Contributor` on each zone in the hub subscription to create the VNet links; without this you will hit `InvalidPrivateDnsZoneIds` at deploy time.
 >
-> - For deploy-time DNS troubleshooting (including the `InvalidPrivateDnsZoneIds` symptom → cause → fix table), see the upcoming `foundry-network-runbook` skill.
+> - For DNS troubleshooting, including `InvalidPrivateDnsZoneIds`, use
+>   [`foundry-network-runbook`](../foundry-network-runbook/SKILL.md#5-pre-flight-at-scale-cross-subscription-dns).
+>   With corporate/custom DNS, record the resolver path as well as zone ownership.
+>   On-premises conditional forwarders use the recommended public service
+>   namespaces toward an Azure DNS Private Resolver inbound endpoint or existing
+>   Azure-hosted forwarder, not directly toward `168.63.129.16`. A VNet link or
+>   VPN connection alone does not configure client DNS.
 
 ### Step 8b: Hosted agent developers (optional but recommended)
 
@@ -662,6 +671,9 @@ Repeat Step 9a against the deployed account/subnet. Label this result
 checks from the actual caller network separate. If that network is unavailable,
 report **NOT_TESTED**, not a successful private deployment; never enable public
 access or loosen network policy to make a validation pass.
+Use the [runbook's paired ingress and real agent-egress checks](../foundry-network-runbook/SKILL.md#33-evidence-for-private-ingress-and-agent-egress).
+An external 403 must be attributable to network restrictions, not invalid auth;
+an agent's tool call needs correlated destination evidence, not a VM-only probe.
 
 > **basic-vnet verification differences.** On `templates/basic-vnet`:
 > - **Private Endpoints:** expect **2** (AI Services + Monitor PLS) or **3**
@@ -777,34 +789,31 @@ Verify: 4 Private Endpoints, all with status `Approved`.
 
 ### 11.8 — DNS Zone VNet Links
 
-For each of the 6 DNS zones, verify that the deployment's VNet has an active link.
-If reusing existing zones from another resource group:
+For each zone in the selected template, verify the intended resolver path:
+Standard uses the six app/datastore zones; Basic uses the map above. With
+Azure-provided DNS, verify links for the actual caller VNets. With a centralized
+resolver/forwarder, verify its VNet links and the callers' forwarding path.
+Use each zone's owning subscription/resource group and compare the **exact VNet
+resource ID**, not a resource-group substring.
+
+Read the links for one approved zone at a time:
+
 ```powershell
-# For each zone, list links and look for the one pointing to our VNet
-$zones = @("privatelink.services.ai.azure.com","privatelink.openai.azure.com",
-  "privatelink.cognitiveservices.azure.com","privatelink.search.windows.net",
-  "privatelink.blob.core.windows.net","privatelink.documents.azure.com")
-foreach ($z in $zones) {
-    $all = az network private-dns link vnet list --resource-group {dnsZonesRg} --zone-name $z -o json | ConvertFrom-Json
-    $mine = $all | Where-Object { $_.virtualNetwork.id -match '{rg}' }
-    if ($mine -and $mine.provisioningState -eq "Succeeded") {
-        Write-Host "✅ $z"
-    } else {
-        Write-Host "❌ $z → MISSING VNet link"
-    }
-}
+az network private-dns link vnet list `
+  --subscription {dnsZonesSubscriptionId} --resource-group {dnsZonesRg} `
+  --zone-name {zoneName} --output json
 ```
 
-**⚠️ IMPORTANT**: If VNet links are missing, private DNS resolution will not work from the
-deployment's VNet. Create them manually:
-```powershell
-az network private-dns link vnet create \
-  --resource-group {dnsZonesRg} \
-  --zone-name {zoneName} \
-  --name "{vnetName}-link-{zoneSuffix}" \
-  --virtual-network {vnetResourceId} \
-  --registration-enabled false
-```
+A successful link is not enough: inspect the intended PE's **DNS zone group**
+and each zone's actual **A records**, then compare the full CNAME/A answers from
+the caller with the PE's current private addresses. Check all three Foundry
+FQDNs (`services.ai.azure.com`, `openai.azure.com`,
+`cognitiveservices.azure.com`) and required tool/dependency FQDNs.
+An arbitrary private IP or an empty zone does not pass.
+
+If a link/group/record is missing, report the exact owner and discrepancy.
+Obtain approval for an additive change through the existing IaC/central DNS
+process; do not create a competing zone or mutate shared links as a probe.
 
 ### 11.9 — Private resources (public access disabled)
 
@@ -849,7 +858,10 @@ Verify: Built-in Data Contributor scoped to `dbs/enterprise_memory`.
 
 ### 11.11 — Summary and result
 
-Present a summary table to the user with the status of each check:
+Present a summary table with observed status, time and evidence for each check.
+The counts below describe Standard; adapt to the selected Basic configuration,
+marking non-applicable components with a reason. Use **NOT_TESTED** for unavailable
+checks. The first ten rows are control-plane observations, not runtime proof:
 
 | Component | Status | Detail |
 |---|---|---|
@@ -863,10 +875,15 @@ Present a summary table to the user with the status of each check:
 | DNS VNet Links (6) | ✅/❌ | all linked |
 | Private resources (3) | ✅/❌ | publicAccess Disabled |
 | Role Assignments (6) | ✅/❌ | all present |
+| Private ingress | ✅/❌/NOT_TESTED | actual caller, expected PE DNS, TLS and authenticated response |
+| Public-route rejection | ✅/❌/NOT_TESTED | approved external caller, valid auth, network-specific rejection |
+| Agent/tool egress | ✅/❌/NOT_TESTED | actual invocation correlated with destination evidence; proxy/SNAT accounted for |
 
-If everything is ✅, inform that the deployment is **100% operational**.
+Only claim the **observed paths** succeeded when their runtime evidence is
+present. This does not certify every tool or deny-all-public egress.
 
-If there are ❌, indicate what is missing and offer to fix it automatically.
+For failures or untested paths, report the precise layer, missing evidence and
+owner-approved next action. Do not automatically remediate shared resources.
 
 ### Step 12: VNet access configuration (optional)
 
@@ -958,7 +975,13 @@ foreach ($pe in $pes) {
 
 #### 12A.4 — Generate hosts file entries
 
-Generate the lines for `C:\Windows\System32\drivers\etc\hosts` (or `/etc/hosts` on Linux/Mac):
+First verify the VPN client's DNS configuration with the network owner.
+Production access should use the approved corporate DNS/Private Resolver path
+from [the network runbook](../foundry-network-runbook/SKILL.md#hybrid-dns-on-premises-vpn-and-custom-resolvers).
+P2S does **not** inherently require a hosts file.
+
+Only for an explicitly approved **temporary diagnostic**, generate entries for
+`C:\Windows\System32\drivers\etc\hosts` (or `/etc/hosts` on Linux/Mac):
 ```
 # Foundry VNet - {rg} ({vnetName})
 {ip}  {fqdn}
@@ -970,11 +993,12 @@ Present the lines to the user and remind them to:
 2. **Reconnect the VPN client** (disconnect and reconnect) so it loads the routes
    for the new IP range through the peering with gateway transit
 3. Verify connectivity: `Test-NetConnection -ComputerName {fqdn} -Port 443`
+4. Remove only the temporary entries added for this diagnostic and repeat DNS
+   resolution through the approved resolver before declaring DNS fixed.
 
-> **Note**: The hosts file entries are necessary because private DNS resolution
-> (Private DNS Zones) only works inside the VNet. P2S VPN clients resolve DNS
-> externally, so they need the hosts entries to point to the private IPs of
-> the endpoints.
+> **Evidence limit:** hosts overrides bypass the resolver and can become stale.
+> A successful TCP probe with an override does not validate corporate DNS, TLS,
+> authentication or agent egress.
 
 ### Step 12B — No access configured (create a new VPN Gateway)
 
@@ -1029,17 +1053,20 @@ Ask the user which option they prefer and inform that both take ~30 min to deplo
 If the user already has access to the VNet (or to a peered VNet) via VM, Bastion,
 ExpressRoute or other means:
 
-1. If they access **from inside the VNet** (VM/Bastion): private DNS resolution
-   works automatically via Private DNS Zones → **no hosts file needed**.
+1. If they access **from inside the VNet** (VM/Bastion), confirm whether they use
+   Azure-provided or custom DNS. Linked private zones work through Azure DNS;
+   custom DNS still needs a working forwarding path. Do not assume success
+   solely from the VM's location.
 
 2. If they access **from a different VNet with peering**: verify that:
    - Bidirectional peering exists with `Connected` state
-   - The DNS zones have VNet links to that VNet too
-   - If not, create the VNet links (see step 11.8)
+   - The caller uses linked Azure DNS zones or the approved centralized resolver
+   - If resolution fails, inspect Step 11.8 before requesting a DNS change
 
 3. If they access **via ExpressRoute**: verify that the ExpressRoute circuit is
-   connected to the deployment's VNet (directly or via peering) and that the
-   DNS zones have VNet links configured.
+   connected to the deployment's VNet (directly or via peering), routes cover
+   the intended destinations, and corporate DNS forwards the recommended
+   service namespaces to a reachable Azure resolver with the required zone links.
 
 ### Step 12D — AI Citadel hub spoke (post-deploy verification)
 
@@ -1072,27 +1099,35 @@ Paste it into a Teams/Slack handoff to the hub team.
 
 #### 12D.2 — Pre-flight checklist
 
-Once the hub team confirms the reverse peering is in place, verify end-to-end
-from inside the spoke VNet (a peered VM, Bastion, or VPN-connected client):
+Once the hub team confirms the reverse peering is in place, run operator-side
+DNS/TCP prechecks from the approved spoke path (an existing peered VM, Bastion
+session, or VPN-connected client). These do not yet prove actual agent egress:
 
 ```powershell
 # 1. Both peerings must be in "Connected" state
 az network vnet peering show --resource-group {rg} --vnet-name {vnetName} `
   --name {hubPeeringName} --query peeringState -o tsv      # → "Connected"
 
-# 2. APIM hostname must resolve to a private IP (10.x / 192.168.x / 172.16.x)
-#    — this requires the privatelink.azure-api.net VNet link from Step 8d.
+# 2. Compare APIM DNS with the intended private endpoint/gateway address.
+#    Check the direct zone-link or centralized resolver path.
 Resolve-DnsName "{apim}.azure-api.net"
 
 # 3. End-to-end TCP reachability on 443
 Test-NetConnection -ComputerName "{apim}.azure-api.net" -Port 443
 ```
 
-> **NSG egress (manual)** — if the customer attached a custom NSG to the agent
-> subnet (foundry-vnet-deploy never does this, since attaching an NSG to a
-> delegated subnet is destructive), ensure its outbound rules allow HTTPS (443)
-> to the hub VNet address space or to the `AzureCloud` service tag. The default
-> subnet NSG is permissive and needs no change.
+> **NSG/firewall/routing review** — inspect applicable outbound rules for the
+> actual APIM destination and required identity dependencies. Preserve existing
+> NSGs; attaching one to a delegated subnet is not inherently destructive.
+> Do not add a broad `AzureCloud` allow as a troubleshooting shortcut.
+> PE network policies determine NSG/UDR applicability; a `0.0.0.0/0` route
+> alone does not prove PE traffic traverses the firewall. Check TLS inspection
+> if TCP succeeds but TLS fails; never disable certificate verification.
+> See [Private Endpoint network policies](https://learn.microsoft.com/azure/private-link/disable-private-endpoint-network-policy).
+
+After onboarding, verify an actual agent call through APIM and correlate the
+gateway/backend evidence per Step 11.11. Keep agent egress **NOT_TESTED** until
+that succeeds; operator-side DNS/TCP checks are only prerequisites.
 
 #### 12D.3 — Hand off to citadel-spoke-onboarding
 
@@ -1113,7 +1148,9 @@ After successful verification, remind the user:
 
 1. To use the Agents they need **VNet access** (VPN, ExpressRoute, Bastion, or a VM in the VNet).
 2. They can verify the private IPs of the endpoints with `get_ips_services.ps1`.
-3. The account capability host (with `customerSubnet`) and the project one are already created — **there is NO need to run `createCapHost.sh`** manually.
+3. The selected template creates the required hosts: account + project for Standard,
+   project for Basic. Verify them by GET; **do not run `createCapHost.sh`** as a
+   speculative repair.
 4. If they have a VPN Gateway with peering configured, they must **reconnect the VPN client** after creating the peering to load the new routes.
 
 ## 4. Important rules
@@ -1140,7 +1177,8 @@ After successful verification, remind the user:
 - **Networking workflow integration** — the [official private-network workflow](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/a55fe6da7e24cbcf4331aafb903e4a070a35e972/plugins/azure-skills/skills/microsoft-foundry/resource/private-network/private-network.md) informs the ownership/caller-path intake and separation of control-plane checks from runtime testing. It does not replace our vendored templates or authorize automatic VNet replacement. For the read-only subnet inspection surface, see [Microsoft Learn — diagnose blocking subnet resources](https://learn.microsoft.com/troubleshoot/azure/virtual-network/virtual-network-troubleshoot-cannot-delete-modify-subnet#diagnose-blocking-resources).
 - **Foundry Samples** — [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) — Bicep template set under `templates/` derives from this Foundry samples reference.
 - **Agent networking deep-dive** — hosted vs prompt agent traffic paths, the ~1-IP-per-10-pods allocation model, subnet sizing against the **50-session platform cap** (per subscription/region), hosted-vs-prompt revision IP behavior, and subnet-exhaustion signals: [`references/agent-networking.md`](references/agent-networking.md).
-- **Agent tools behind the VNet** — the tool-by-tool reachability matrix (through-subnet / through-PE / backbone / public / unsupported), isolation feature limits, the **public-ACR-for-hosted-agents** and **can't-change-the-delegated-subnet** gotchas, the firewall FQDN allowlist, and troubleshooting: [`references/agent-tools-network-isolation.md`](references/agent-tools-network-isolation.md).
+- **Agent tools behind the VNet** — the tool-by-tool reachability matrix (through-subnet / through-PE / backbone / public / unsupported), isolation feature limits, project-date-dependent private ACR support, hosted injection constraints, the firewall FQDN allowlist, and troubleshooting: [`references/agent-tools-network-isolation.md`](references/agent-tools-network-isolation.md).
+- **Private-network diagnostic evidence** — [`foundry-network-runbook`](../foundry-network-runbook/SKILL.md#33-evidence-for-private-ingress-and-agent-egress) separates positive/negative ingress checks from actual agent egress. [Private Endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration) is the source for hybrid forwarding and DNS zone-group behavior.
 - **Original interview/automation logic** — Angel Sevillano (Microsoft), [`asevillano/foundry-vnet-deploy`](https://github.com/asevillano/foundry-vnet-deploy).
 - **Related skills** — `azure-tenant-isolation` (set up first), `foundry-hosted-agents` (deploy agents into the host this skill creates), `threadlight-deploy` (`azd`-based public-network alternative), `foundry-cross-resource` (APIM cross-resource model wiring on top), **`citadel-spoke-onboarding` — see Step 8d + Step 12D for the network plumbing this skill creates so the deployed Foundry can be onboarded as a Citadel hub spoke**, `foundry-observability` (App Insights wiring if Step 8c was opted in).
 - **Template fork notice** — the `templates/` set vendors **two** Foundry samples references: `templates/standard-agent/` from [`15-private-network-standard-agent-setup`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/15-private-network-standard-agent-setup) and `templates/basic-vnet/` from [`11-private-network-basic-vnet`](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/11-private-network-basic-vnet). awesome-gbb adds the same four optional integrations on top of **each** template: (1) `modules-network-secured/spoke-hub-peering.bicep` and (2) `modules-network-secured/apim-dns-zone-link.bicep` behind the `hubVnetResourceId` / `apimDnsZoneResourceId` params; (3) a `hubReversePeeringCommand` output; (4) hosted-agent developer RBAC (`agent-developer-role-assignments.bicep` + `agent-developer-subnet-assignment.bicep`) and project-MI telemetry roles (`app-insights-role-assignments.bicep`). Note App Insights + Log Analytics + private trace ingestion (Monitor Private Link Scope) are **upstream-native in template 11** — only the project-MI role delta is awesome-gbb. Future upstream syncs must diff each vendored tree against its origin and re-apply these additions. Pinned SHA + revalidation contract: [`references/upstream-pin.md`](references/upstream-pin.md).
