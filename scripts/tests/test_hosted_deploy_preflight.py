@@ -46,6 +46,7 @@ def evidence():
             "operator_route": "approved-operator-proxy", "runtime_route": "approved-injected-route",
             "tool_endpoints": ["https://tool.internal/mcp"], "connections": {},
             "registry_network": "private", "model_env": "MODEL_DEPLOYMENT_NAME",
+            "registry_connection_name": "registry-connection",
         },
         "account": {
             **resource(ACCOUNT, publicNetworkAccess="Disabled", networkInjections=[{
@@ -68,6 +69,18 @@ def evidence():
             roleAssignmentMode="AbacRepositoryPermissions",
             policies={"azureADAuthenticationAsArmPolicy": {"status": "enabled"}},
         ),
+        "project_connections": {"value": [{
+            "id": PROJECT + "/connections/registry-connection",
+            "properties": {
+                "category": "ContainerRegistry", "target": "registry.azurecr.io",
+                "authType": "ManagedIdentity", "metadata": {"ResourceId": REGISTRY},
+            },
+        }]},
+        "registry_connection_identity": {
+            "connection_id": PROJECT + "/connections/registry-connection",
+            "principal_id": "<project-mi>", "registry_id": REGISTRY,
+            "source": "native-provisioning", "evidence": "reviewed-native-inputs.json",
+        },
         "pull": receipt(
             principal_id="<project-mi>", scope=REGISTRY, role="Container Registry Repository Reader",
             repository="agent", condition_allows_repository=True,
@@ -124,6 +137,54 @@ class HostedPreflightTests(unittest.TestCase):
         self.assertIn("native-session-home", result["pending_live_checks"])
         self.assertIn("project-mi-platform-pull", result["pending_live_checks"])
         self.assertEqual(data, original)
+
+    def test_missing_registry_connection_is_not_pull_or_host_success(self):
+        data = evidence()
+        data["project_connections"]["value"] = []
+        result = self.blocked(data, "ACR_CONNECTION_MISSING")
+        self.assertIn("azd", result["issues"][0]["action"])
+        self.assertIn("authorization", result["issues"][0]["action"])
+
+    def test_unreadable_registry_inventory_is_not_absence(self):
+        for inventory in (None, {}, {"error": {"code": "Forbidden"}},
+                          {"value": [], "nextLink": "next"}):
+            data = evidence()
+            data["project_connections"] = inventory
+            self.blocked(data, "ACR_CONNECTION_INVENTORY")
+
+    def test_mismatched_registry_connection_never_repaired(self):
+        for key, value in (
+            ("category", "AzureOpenAI"), ("target", "other.azurecr.io"),
+            ("target", "https://registry.azurecr.io"),
+            ("authType", "ApiKey"), ("metadata", {"ResourceId": REGISTRY + "-other"}),
+            ("error", "Failed"), ("credentials", {"password": "not-a-real-secret"}),
+        ):
+            with self.subTest(key=key, value=value):
+                data = evidence()
+                data["project_connections"]["value"][0]["properties"][key] = value
+                original = copy.deepcopy(data)
+                self.blocked(data, "ACR_CONNECTION_MISMATCH")
+                self.assertEqual(data, original)
+
+    def test_connection_identity_mapping_requires_native_nonsecret_evidence(self):
+        for field, value in (("principal_id", "<agent-mi>"), ("registry_id", ACCOUNT),
+                             ("connection_id", PROJECT + "/connections/other"),
+                             ("source", "assumed"), ("evidence", "")):
+            data = evidence()
+            data["registry_connection_identity"][field] = value
+            self.blocked(data, "ACR_CONNECTION_IDENTITY")
+
+    def test_registry_connection_does_not_populate_basic_byo_store_arrays(self):
+        data = evidence()
+        self.assertEqual(self.check(data)["status"], "READY_FOR_REGISTRATION")
+        data["project_hosts"]["value"][0]["properties"]["storageConnections"] = ["registry-connection"]
+        self.blocked(data, "HOST_CONNECTIONS")
+
+    def test_conflicting_or_duplicate_registry_matches_fail(self):
+        data = evidence()
+        data["project_connections"]["value"].append(
+            copy.deepcopy(data["project_connections"]["value"][0]))
+        self.blocked(data, "ACR_CONNECTION_MISMATCH")
 
     def test_missing_basic_project_host_fails_despite_account_success(self):
         data = evidence()

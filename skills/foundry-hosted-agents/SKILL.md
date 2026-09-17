@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.3.0"
+  version: "2.4.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -84,7 +84,8 @@ not permission to recreate it; use
 `azd deploy` against a pre-existing project does not certify these prerequisites.
 
 The gate also checks project/model scope, actual operator/runtime-path evidence,
-mode-appropriate project-MI ACR pull access/policy, immutable image and the selected
+the credential-free **project ContainerRegistry connection** and retained native
+identity mapping, mode-appropriate project-MI ACR pull access/policy, immutable image and the selected
 runtime cohort. Preserve the default container identity and verify writable
 `/home/session/.sessions`; a fixed UID can break the native mounted session home.
 Keep management and runtime environments separate. Do not change pins merely
@@ -98,6 +99,36 @@ build, LIST `active`, health, or a noop are insufficient. Lost create ACK means
 reconcile existing versions against the frozen definition before any retry.
 Retain old versions and signed bindings; changed image/version/identity requires
 a new exact observation and association. A prompt agent is not an automatic substitute.
+
+## Private BASIC consumer
+
+For an existing private project/ACR, execute the bounded
+[private BASIC procedure](references/private-basic.md) and its
+[opt-in private fixture](test-fixture/private_consumer_prompt.md).
+This no-tools bootstrap is independent of tool consent and governed business
+execution; the public CI consumer and private prompt-agent E2E are not substitutes.
+
+Use the canonical stager, runtime and native SDK oracle below. Source builds
+retain lock/base/context provenance and need a network-reachable builder.
+Prebuilt images use a service-level immutable `image` with native
+`docker.imagePassthrough: true` / `remoteBuild: false`, plus explicit
+`azd deploy "$AGENT" --from-package "$IMAGE" --no-prompt` on the live-validated
+**azd 1.34.1 + azure.ai.agents 1.0.0-beta.14** compatibility baseline
+(not a minimum-version claim). **azd 1.27.0 is blocked for this private
+prebuilt route:** it can still republish despite that flag. This remote-image argument
+is distinct from `azd publish --from-package`, which consumes a local package
+and pushes it. A matching connection is reused; missing configuration routes
+to separately authorized native connection-only provisioning, while unreadable
+or conflicting state blocks without repair. No public-network opening, new
+grants, global tool update or OCI-format ban is part of this route.
+
+**Validated 2026-09-17 ([#500](https://github.com/aiappsgbb/awesome-gbb/pull/500)):**
+the no-tools private BASIC consumer activated from the existing immutable image,
+completed one model request and passed independent response/session/version
+readbacks. Exact owned native objects were subsequently verified absent; retained
+image/cache and service history have explicit bounded owner custody, not a purge
+claim. This proves the tested BASIC path, not governed business execution or
+other runtime/tooling combinations.
 
 ---
 
@@ -538,6 +569,10 @@ LangGraph state-graph requirements).
 | [`references/yaml/azure.yaml`](references/yaml/azure.yaml) | § azure.yaml (unified hosted-agent configuration) — the single source of truth for hosted-agent config, replacing the old `agent.yaml` + `agent.manifest.yaml` two-file contract |
 | [`references/python/version_rollout.py`](references/python/version_rollout.py) | § Version rollout patterns (blue-green / canary / rollback) |
 | [`references/python/deploy_preflight.py`](references/python/deploy_preflight.py) | § Deployment preflight |
+| [`references/python/private_bootstrap.py`](references/python/private_bootstrap.py) | § Private BASIC consumer: offline staging and build/manifest inventory |
+| [`references/python/basic.py`](references/python/basic.py) | § Private BASIC consumer: no-tools runtime |
+| [`references/docker/Dockerfile.basic`](references/docker/Dockerfile.basic) | § Private BASIC consumer: locked container build |
+| [`references/python/hosted_smoke.py`](references/python/hosted_smoke.py) | § Private BASIC consumer: native model/session oracle |
 
 > **⚠️ Deprecation: `ChatAgent` is gone in MAF 1.6.0**
 >

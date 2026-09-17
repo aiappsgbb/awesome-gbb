@@ -14,6 +14,10 @@
 # Before registration, follow ../deployment-preflight.md and run the read-only
 # evidence gate. Existing project/ACR pointers do not prove private project-host
 # setup, image-pull reachability, or hosted readiness.
+# An existing ACR also requires its project ContainerRegistry connection.
+# For no-tools private bootstrap and immutable image passthrough, use the
+# explicit stager and version-gated deploy --from-package in ../private-basic.md.
+# That deploy route is distinct from publish --from-package (a local package).
 #
 # IMPORTANT: this YAML is necessary but not sufficient for direct-copy
 # brownfield deployment. If you copy these files and run `azd deploy`
