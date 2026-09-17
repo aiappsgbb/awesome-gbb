@@ -110,15 +110,17 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 ## Skills Catalog
 
 > [!IMPORTANT]
-> **Draft candidate eligible for PR validation — proposed catalog 4.31.0, unreleased.**
-> The new `foundry-agentops` skill 1.0.0 is not merged, released, or production-ready.
-> It is not publicly installable through the default install while unmerged.
-> Completed **corrected-source manual execution PASS**;
+> **Merged source, not production readiness.** `foundry-agentops` 1.0.0 merged
+> in [#484](https://github.com/aiappsgbb/awesome-gbb/pull/484) at
+> `2db28d1f52bf288f2d0fd40b7c8beb913ceeee09` and is available in the main-branch
+> catalog source. Separate release approval remains **unreleased / release PENDING**.
+> The exact `96b30384` candidate's [targeted CI run](https://github.com/aiappsgbb/awesome-gbb/actions/runs/34001218180)
+> completed the technical negative-path smoke, not full-matrix or readiness acceptance.
+> Historical **corrected-source manual execution PASS**;
 > **quality FAIL (4/5 thresholds)**; **Doctor readiness BLOCKED**.
-> **release PENDING**. CI results and candidate SHA will be recorded in the PR.
 > See the [sanitized validation record](docs/maintenance/foundry-agentops-validation.md)
 > for manual evidence as of 2026-09-05, before PR CI, and its limits.
-> The published plugin does not include this unmerged addition.
+> Neither source availability nor a green technical smoke overrides these gates.
 
 > **Unreleased addition, proposed catalog 4.32.0:** `foundry-mcp-auth` has live
 > single-user delegated evidence for Prompt/direct-MCP, Prompt/Toolbox and
@@ -144,7 +146,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | Expose durable MCP tools backed by pre-provisioned ACA Jobs — SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, managed-identity callbacks, and one immutable image with separate server/worker entrypoints. |
 | [**foundry-mcp-auth**](skills/foundry-mcp-auth/) | **Unreleased candidate:** custom Entra OAuth recipe, strict resource-server policy and safe user receipts. Three of four paths verified for one user; see [validation notes](docs/maintenance/foundry-mcp-auth-validation.md) for evidence and remaining gates. |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate agents through supported agent-target runs or an explicit invoke+score fallback with real captured responses. Includes bounded polling, per-item scores, configurable judges and corrected citation URL checks, while preserving enriched tool transcripts and the last-run/EVAL-201 integration. |
-| [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.0.0** (draft candidate). Review Doctor diagnostics, release evidence, regression baselines, and workflow ownership; its owner-authorized encrypted Doctor diagnostic is not full-matrix acceptance and never uploads raw output or an operator private key. |
+| [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.0.0** (merged source; readiness not certified). Review Doctor diagnostics, release evidence, regression baselines, and workflow ownership; its owner-authorized encrypted Doctor diagnostic is not full-matrix acceptance and never uploads raw output or an operator private key. |
 | [**foundry-iq**](skills/foundry-iq/) | Enterprise RAG with Foundry IQ — Azure AI Search Knowledge Bases, agentic retrieval, multi-hop reasoning, citation-backed responses, **hosted-agent runtime identity callout** + **7-item bootstrap hardening checklist** (no-`az rest`-uploads, fail-fast, key sanitization, 32k-byte chunking, RBAC propagation wait, post-upload count verify, idempotent recovery) |
 | [**foundry-doc-vision-speech**](skills/foundry-doc-vision-speech/) | Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) into a hosted agent — MCP and native Toolbox patterns + RBAC matrix |
 | [**foundry-observability**](skills/foundry-observability/) | End-to-end App Insights + Log Analytics + OpenTelemetry across hosted agents, MCP servers, ACA jobs, bot, workspace — **closes the silent-telemetry gap** where `azd up` returns 0 but AppIn stays empty |
@@ -218,13 +220,13 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 39 skills in a single [Copilot CLI plugin](plugin.json); the draft AgentOps addition is not yet published, nor is the delegated-auth candidate:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 39 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps and delegated-auth source; installation does not certify their remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:
 > copilot plugin marketplace add aiappsgbb/awesome-gbb
 >
-> # Install the published release (not the draft addition):
+> # Install the catalog source; review each skill's acceptance status:
 > copilot plugin install awesome-gbb@awesome-gbb
 > ```
 >
@@ -265,7 +267,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 ### Per-agent AgentOps adoption
 
 Use [`foundry-agentops`](skills/foundry-agentops/SKILL.md) (skill 1.0.0,
-draft candidate) for the complete adoption and release-evidence workflow for **one
+merged source with pending readiness gates) for the adoption and release-evidence workflow for **one
 already deployed agent**, using exactly `agentops-accelerator==0.14.0`.
 Select its agent root and approved deployment context, review evaluation results
 and Doctor evidence, decide whether to accept a regression baseline, and hand off
@@ -285,8 +287,20 @@ Aggregated evidence is not production-ready certification. The
 the completed corrected-source execution from its **quality FAIL (4/5 thresholds)**
 and **Doctor readiness BLOCKED** outcome. The prior 5/5 cycle remains historical,
 not the corrected result. Neither manual CLI-user cycle validates the unchanged
-CI/SP path, full matrix, or release readiness. There is no released downstream pin;
-the candidate SHA and CI evidence belong in the PR, not a self-referential source pin.
+CI/SP path, full matrix, or release readiness. The later exact-candidate
+[targeted CI result](https://github.com/aiappsgbb/awesome-gbb/pull/484)
+proves technical CI execution with quality FAIL and Doctor BLOCKED; it is not
+full-matrix or release acceptance. [#502](https://github.com/aiappsgbb/awesome-gbb/pull/502)
+only corrects dependency-only CI selection, not quality or approval requirements.
+
+**Optional Toolbox guardrails:** [native named version policies](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox#configure-guardrails)
+can filter tool inputs/outputs independently of model filtering. This adds policy
+setup, exact-version binding/readback and targeted behavior acceptance; the
+benefit is centralized filtering for tools that actually traverse that Toolbox.
+The catalog's wiring sample does not attach such a policy or cover direct/local
+tools outside the Toolbox. Approval metadata still requires runtime enforcement.
+No mandatory rerouting, new guardrail implementation, live acceptance or replacement
+for signed action policy, audit acknowledgement and one-use human approval is implied.
 
 ---
 

@@ -1095,7 +1095,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertIn(f'agentops-accelerator=={package["version"]}', usage)
         version = self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"]
         self.assertIn(f"skill {version}", usage)
-        self.assertIn("# Install the published release (not the draft addition):", usage)
+        self.assertIn("# Install the catalog source; review each skill's acceptance status:", usage)
         count = len(list((ROOT / "skills").glob("*/SKILL.md")))
         self.assertIn(f"skills-{count}-blue", text)
         for advertised in re.findall(r"\ball (\d+) skills\b", text):
@@ -1170,6 +1170,14 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         ):
             self.assertNotIn(stale.casefold(), text)
 
+    def assert_merged_source_status(self, text: str) -> None:
+        text = " ".join(re.sub(r"<[^>]+>", " ", text).replace("**", "").split()).casefold()
+        for expected in ("merged source, not production readiness", "34001218180",
+                         "2db28d1f52bf288f2d0fd40b7c8beb913ceeee09", "release pending"):
+            self.assertIn(expected, text)
+        self.assertNotIn("not merged, released, or production-ready", text)
+        self.assertNotIn("not publicly installable", text)
+
     def test_catalog_sources_link_partial_manual_evidence(self) -> None:
         for name in ("README.md", "CHANGELOG.md", "AGENTS.md"):
             with self.subTest(source=name):
@@ -1178,7 +1186,10 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
                     text = text.split("### 12.3", 1)[1].split("\n### 12.4", 1)[0]
                 self.assertIn(f"]({self.VALIDATION_RECORD})", text)
                 self.assert_partial_validation_status(text)
-                self.assert_draft_candidate_status(text)
+                if name == "README.md":
+                    self.assert_merged_source_status(text)
+                else:
+                    self.assert_draft_candidate_status(text)
                 self.assertNotIn("CI/SP NOT RUN", text)
                 self.assertNotIn("full matrix NOT RUN", text)
                 self.assertNotIn("live Foundry gate remains", text)
@@ -1313,7 +1324,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         plugin = site["load_plugins"](ROOT)[0]
         self.assertEqual(plugin["draft"], agentops["draft"])
         self.assert_partial_validation_status(plugin["draft"]["summary"])
-        self.assert_draft_candidate_status(plugin["draft"]["summary"])
+        self.assert_merged_source_status(plugin["draft"]["summary"])
 
     def test_draft_pages_show_pending_gates_not_public_agentops_install(self) -> None:
         site = runpy.run_path(str(ROOT / "scripts/build-site.py"))
@@ -1333,12 +1344,11 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         for name, text in pages.items():
             with self.subTest(page=name):
                 self.assert_partial_validation_status(text)
-                self.assert_draft_candidate_status(text)
+                self.assert_merged_source_status(text)
                 self.assertNotIn("CI/SP NOT RUN", text)
                 self.assertNotIn("full matrix NOT RUN", text)
                 self.assertIn("/maintenance/foundry-agentops-validation.md", text)
                 self.assertIn("unreleased", text.casefold())
-                self.assertIn("not publicly installable", text)
                 self.assertNotIn("gh skill install aiappsgbb/awesome-gbb foundry-agentops", text)
                 self.assertNotIn("/blob/main/skills/foundry-agentops/SKILL.md", text)
         self.assertNotIn("last validated", pages["agentops"])
