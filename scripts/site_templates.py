@@ -19,7 +19,7 @@ Exports:
 from __future__ import annotations
 
 import html
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 GITHUB_BASE = 'https://github.com/aiappsgbb/awesome-gbb'
 
@@ -29,6 +29,17 @@ GITHUB_BASE = 'https://github.com/aiappsgbb/awesome-gbb'
 # (aiappsgbb.github.io/) and 404s. If/when a CNAME is added that puts the
 # site at a domain root, set this to '' (empty string).
 SITE_BASE = '/awesome-gbb'
+
+
+class PublicationStatus(TypedDict):
+    source_status: Literal['candidate', 'merged']
+    release_status: Literal['pending']
+    record: str
+    summary: str
+
+
+def _merged_source(status: PublicationStatus | None) -> bool:
+    return status is not None and status.get('source_status') == 'merged'
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +614,7 @@ def _skill_categories(skill_name: str, categories: dict[str, list[str]]) -> list
     return [cat for cat, members in categories.items() if skill_name in members]
 
 
-def _draft_notice(draft: dict[str, str] | None) -> str:
+def _draft_notice(draft: PublicationStatus | None) -> str:
     if not draft:
         return ''
     return (
@@ -735,9 +746,12 @@ def render_home(
         for r in ('Copilot CLI', 'Copilot Desktop', 'VS Code agent mode', 'Claude Code')
     )
 
-    install_heading = 'Install the published catalog' if draft else 'Get started in one command'
+    install_heading = 'Install catalog source' if draft else 'Get started in one command'
     install_description = (
-        'These commands install the published release, not the unreleased draft additions.'
+        'These commands install main-branch catalog source, including the merged candidates. '
+        'Separate release approval and readiness acceptance remain pending for the entries disclosed above.'
+        if _merged_source(draft) else
+        'Inspect the selected source ref: unmerged candidate additions are not available from main.'
         if draft else 'Add the marketplace, install the plugin — all skills, zero auth gymnastics.'
     )
     install_cta = (
@@ -1230,8 +1244,12 @@ def render_skill_detail(
             f'<li><a href="{SITE_BASE}/plugins/{_esc(p)}/">{_esc(p)}</a></li>'
             for p in plugins_containing
         )
+        heading = (
+            'Bundled in source' if _merged_source(draft)
+            else 'Proposed bundle' if draft else 'Bundled in'
+        )
         bundled_html = (
-            ('<h2>Proposed bundle</h2>' if draft else '<h2>Bundled in</h2>')
+            f'<h2>{heading}</h2>'
             + f'<ul class="bundled-list">{items}</ul>'
         )
 
@@ -1240,8 +1258,10 @@ def render_skill_detail(
         '<h2>Draft candidate source</h2>'
         f'<p><code>skills/{_esc(name)}/SKILL.md</code> in the draft candidate. '
         'No released downstream pin is available; the candidate SHA will be recorded in the PR.</p>'
-        if draft else
-        '<h2>Install</h2>'
+        if draft and not _merged_source(draft) else
+        ('<h2>Install source</h2><p>Source access does not establish release approval or readiness.</p>'
+         if draft else '<h2>Install</h2>')
+        +
         f'<pre><code>gh skill install aiappsgbb/awesome-gbb {_esc(name)}</code></pre>'
         '<p>'
         f'<a class="cta" href="{GITHUB_BASE}/blob/main/skills/{_esc(name)}/SKILL.md">'
@@ -1276,10 +1296,9 @@ def render_plugins_index(plugins: list[dict[str, Any]]) -> str:
     cards = ['<div class="grid">']
     for p in plugins:
         draft = p.get('draft')
-        install_html = (
-            _draft_notice(draft) if draft else
-            f'<pre><code>copilot plugin install {_esc(p["name"])}@awesome-gbb</code></pre>'
-        )
+        install_html = _draft_notice(draft)
+        if not draft or _merged_source(draft):
+            install_html += f'<pre><code>copilot plugin install {_esc(p["name"])}@awesome-gbb</code></pre>'
         cards.append(
             '<div class="card">'
             f'<h3><a href="{SITE_BASE}/plugins/{_esc(p["name"])}/">{_esc(p["name"])}</a></h3>'
@@ -1291,8 +1310,12 @@ def render_plugins_index(plugins: list[dict[str, Any]]) -> str:
         )
     cards.append('</div>')
     introduction = (
-        '<p>Source catalog overview, including proposed versions. '
-        'The published marketplace does not include unreleased additions.</p>'
+        '<p>Source catalog overview. Some candidate additions are not merged; '
+        'inspect their source and validation status before selecting a ref.</p>'
+        if any(p.get('draft') and not _merged_source(p['draft']) for p in plugins) else
+        '<p>Main-branch catalog source includes merged candidates. '
+        'Source availability is separate from pending release approval and readiness acceptance; '
+        'review each entry before adoption.</p>'
         if any(p.get('draft') for p in plugins) else
         '<p>One Copilot CLI plugin that installs the entire catalog '
         'in one command. Skills also remain installable individually '
@@ -1301,7 +1324,7 @@ def render_plugins_index(plugins: list[dict[str, Any]]) -> str:
     body = (
         '<h1>Plugins</h1>'
         + introduction
-        + '<h2>Register the published marketplace</h2>'
+        + '<h2>Register the source marketplace</h2>'
         '<pre><code>copilot plugin marketplace add aiappsgbb/awesome-gbb</code></pre>'
         + ''.join(cards)
     )
@@ -1347,15 +1370,17 @@ def render_plugin_detail(
 
     description = plugin.get('description', '').strip()
     draft = plugin.get('draft')
-    install_html = (
-        _draft_notice(draft)
-        + '<h2>Draft candidate manifest</h2><p><code>plugin.json</code> at the repository root.</p>'
-        if draft else
-        '<h2>Install</h2>'
+    install_html = _draft_notice(draft)
+    install_html += (
+        '<h2>Draft candidate manifest</h2><p><code>plugin.json</code> in the selected candidate source.</p>'
+        if draft and not _merged_source(draft) else
+        ('<h2>Install source</h2><p>Release approval and readiness remain separate.</p>'
+         if draft else '<h2>Install</h2>')
+        +
         '<pre><code>copilot plugin marketplace add aiappsgbb/awesome-gbb\n'
         f'copilot plugin install {_esc(name)}@awesome-gbb</code></pre>'
         '<p>'
-        f'<a class="cta" href="{GITHUB_BASE}/blob/main/plugins/{_esc(name)}/plugin.json">'
+        f'<a class="cta" href="{GITHUB_BASE}/blob/main/plugin.json">'
         'Open plugin.json on GitHub →</a></p>'
     )
 
@@ -1410,15 +1435,18 @@ def render_llms_txt(
             blurb = _first_sentence(s.get('description', ''))
             url = f'{GITHUB_BASE}/blob/main/skills/{member}/SKILL.md'
             if s.get('draft'):
-                url = f'{SITE_BASE}/skills/{member}/'
-                blurb = 'Unreleased draft candidate. ' + blurb
+                if _merged_source(s['draft']):
+                    blurb = 'Merged source; release approval and readiness pending. ' + blurb
+                else:
+                    url = f'{SITE_BASE}/skills/{member}/'
+                    blurb = 'Unreleased draft candidate. ' + blurb
             lines.append(f'- [{member}]({url}): {blurb}')
         lines.append('')
     lines.append('## Plugins')
     lines.append('')
     for p in plugins:
-        url = f'{GITHUB_BASE}/blob/main/plugins/{p["name"]}/plugin.json'
-        if p.get('draft'):
+        url = f'{GITHUB_BASE}/blob/main/plugin.json'
+        if p.get('draft') and not _merged_source(p['draft']):
             url = f'{SITE_BASE}/plugins/{p["name"]}/'
         blurb = _first_sentence(p.get('description', ''), max_chars=240)
         lines.append(f'- [{p["name"]}]({url}): {blurb}')

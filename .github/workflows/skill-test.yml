@@ -85,6 +85,7 @@ jobs:
           "azure-mgmt-recoveryservicesbackup~=9.1.0"
           "azure-mgmt-dataprotection~=2.0.1"
           "azure-mgmt-resource~=23.1.0"
+          "azure-mgmt-apimanagement~=5.0.0"
           "pydantic~=2.13.5"
           "httpx~=0.28.1"
           "azure-ai-projects~=2.6.0"
