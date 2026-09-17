@@ -1326,7 +1326,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assert_partial_validation_status(plugin["draft"]["summary"])
         self.assert_merged_source_status(plugin["draft"]["summary"])
 
-    def test_draft_pages_show_pending_gates_not_public_agentops_install(self) -> None:
+    def test_pending_pages_show_merged_source_and_acceptance_gates(self) -> None:
         site = runpy.run_path(str(ROOT / "scripts/build-site.py"))
         templates = runpy.run_path(str(ROOT / "scripts/site_templates.py"))
         skills = site["load_skills"](ROOT)
@@ -1349,15 +1349,79 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
                 self.assertNotIn("full matrix NOT RUN", text)
                 self.assertIn("/maintenance/foundry-agentops-validation.md", text)
                 self.assertIn("unreleased", text.casefold())
-                self.assertNotIn("gh skill install aiappsgbb/awesome-gbb foundry-agentops", text)
-                self.assertNotIn("/blob/main/skills/foundry-agentops/SKILL.md", text)
         self.assertNotIn("last validated", pages["agentops"])
+        self.assertIn("gh skill install aiappsgbb/awesome-gbb foundry-agentops", pages["agentops"])
+        self.assertIn("/blob/main/skills/foundry-agentops/SKILL.md", pages["agentops"])
         for name in ("plugins", "plugin"):
-            self.assertNotIn("copilot plugin install awesome-gbb@awesome-gbb", pages[name])
+            self.assertIn("copilot plugin install awesome-gbb@awesome-gbb", pages[name])
         existing = next(s for s in skills if s["name"] == "foundry-evals")
         existing_page = templates["render_skill_detail"](existing, categories, [plugins[0]["name"]])
         self.assertIn("gh skill install aiappsgbb/awesome-gbb foundry-evals", existing_page)
         self.assertNotIn("/maintenance/foundry-agentops-validation.md", existing_page)
+
+    def test_generated_pages_separate_merged_source_from_release_acceptance(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as output:
+            subprocess.run(
+                [sys.executable, str(ROOT / "scripts/build-site.py"), "--out", output, "--validate"],
+                cwd=ROOT, check=True, capture_output=True, text=True,
+            )
+            output = pathlib.Path(output)
+            paths = (
+                "index.html", "plugins/index.html", "plugins/awesome-gbb/index.html",
+                "skills/foundry-agentops/index.html", "skills/foundry-mcp-auth/index.html",
+                "llms.txt",
+            )
+            pages = {path: (output / path).read_text() for path in paths}
+            for path, text in pages.items():
+                with self.subTest(page=path):
+                    self.assertNotIn("Draft candidate source", text)
+                    self.assertNotIn("Draft candidate manifest", text)
+                    self.assertNotIn("in the draft candidate", text)
+                    self.assertNotIn("candidate SHA will be recorded", text)
+                    self.assertNotIn("not the unreleased draft additions", text)
+                    self.assertNotIn("published marketplace does not include unreleased additions", text)
+                    self.assertIn("release", text.casefold())
+                    self.assertIn("pending", text.casefold())
+            for name in ("foundry-agentops", "foundry-mcp-auth"):
+                text = pages[f"skills/{name}/index.html"]
+                self.assertIn(f'href="https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/{name}/SKILL.md"', text)
+                self.assertIn(f"gh skill install aiappsgbb/awesome-gbb {name}", text)
+                self.assertIn(f"[{name}](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/{name}/SKILL.md)", pages["llms.txt"])
+            for path in ("index.html", "plugins/index.html", "plugins/awesome-gbb/index.html"):
+                self.assertIn("copilot plugin install awesome-gbb@awesome-gbb", pages[path])
+                self.assertIn("source", pages[path].casefold())
+            self.assertIn(
+                'href="https://github.com/aiappsgbb/awesome-gbb/blob/main/plugin.json"',
+                pages["plugins/awesome-gbb/index.html"],
+            )
+            self.assertIn(
+                "[awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugin.json)",
+                pages["llms.txt"],
+            )
+            for path in ("index.html", "plugins/index.html", "plugins/awesome-gbb/index.html",
+                         "skills/foundry-agentops/index.html", "llms.txt"):
+                self.assert_partial_validation_status(pages[path])
+            auth = pages["skills/foundry-mcp-auth/index.html"]
+            for boundary in ("single-user", "Late consent", "revocation", "two real users"):
+                self.assertIn(boundary, auth)
+
+    def test_source_access_requires_explicit_merged_status(self) -> None:
+        site = runpy.run_path(str(ROOT / "scripts/build-site.py"))
+        templates = runpy.run_path(str(ROOT / "scripts/site_templates.py"))
+        skill = next(s for s in site["load_skills"](ROOT) if s["name"] == SKILL.name)
+        self.assertEqual(skill["draft"]["source_status"], "merged")
+        self.assertEqual(skill["draft"]["release_status"], "pending")
+        skill["draft"] = dict(skill["draft"], source_status="candidate", summary="Unmerged source; release pending.")
+        text = templates["render_skill_detail"](skill, site["CATEGORIES"], [])
+        self.assertIn("Draft candidate source", text)
+        self.assertNotIn("/blob/main/skills/foundry-agentops/SKILL.md", text)
+        self.assertNotIn("gh skill install aiappsgbb/awesome-gbb foundry-agentops", text)
+        plugin = dict(site["load_plugins"](ROOT)[0], draft=skill["draft"])
+        text = templates["render_plugins_index"]([plugin])
+        self.assertNotIn("Main-branch catalog source includes merged candidates", text)
+        self.assertNotIn("copilot plugin install awesome-gbb@awesome-gbb", text)
 
     def test_manifests_label_proposed_catalog_not_a_public_install(self) -> None:
         plugin = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))

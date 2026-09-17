@@ -81,11 +81,14 @@ CATEGORIES: dict[str, list[str]] = {
     ],
 }
 
-# Catalog status is separate from the runtime SKILL.md contract.
-DRAFT_SKILLS = {
+# The legacy "draft" field records release gates, not source availability.
+DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
     'foundry-mcp-auth': {
+        'source_status': 'merged',
+        'release_status': 'pending',
         'record': 'maintenance/foundry-mcp-auth-validation.md',
         'summary': (
+            'Merged source is available in main after PR #487; separate release approval remains pending. '
             'Unreleased candidate with live single-user delegated PASS for Prompt/direct MCP, Prompt/Toolbox and Hosted/Toolbox. '
             'Actual tool receipts match private MCP server audit; this is not four-path certification. '
             'All four Prompt/Hosted and direct/Toolbox paths remain final acceptance criteria. '
@@ -94,6 +97,8 @@ DRAFT_SKILLS = {
         ),
     },
     'foundry-agentops': {
+        'source_status': 'merged',
+        'release_status': 'pending',
         'record': 'maintenance/foundry-agentops-validation.md',
         'summary': (
             'Merged source, not production readiness: foundry-agentops 1.0.0 is available '

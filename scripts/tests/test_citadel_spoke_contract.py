@@ -231,6 +231,25 @@ class PublishedContractTests(unittest.TestCase):
         self.assertIn("Doctor readiness BLOCKED", readme)
         self.assertNotIn("The published plugin does not include this unmerged addition.", readme)
 
+    def test_reference_separates_live_inventory_from_unexecuted_routes(self):
+        pin = (SKILL / "references/upstream-pin.md").read_text()
+        status = pin.split("### Adoption status — 2026-09-17", 1)[1]
+        for fact in (
+            "09:35:14.539855", "09:35:19.515289", "HUB_INVENTORY",
+            "unassociated", "HOSTED_GATEWAY_ROUTE", "DOWNSTREAM_JWT", "NOT TESTED",
+            "5.0.0", "23.1.1", "1.25.3", "CLEANUP", "zero",
+            "c6de8d1dbdfa7a9edfd5e6facf8eb75ff5ade7a623a8565a02b4721757d9dcfe",
+            "3191f175305b463068035b0910995eb0b0330404fdab25c1412ce72756f625e0",
+        ):
+            self.assertIn(fact, status)
+        self.assertIn("source-only", status)
+        self.assertNotIn("corrected probe and unified Hosted wiring need", pin)
+        skill = (SKILL / "SKILL.md").read_text()
+        self.assertIn("references/upstream-pin.md", skill)
+        self.assertIn("Version 2 migration", skill)
+        self.assertIn("`foundry_connection_status=\"ok\"`", skill)
+        self.assertIn("`hub_contract_status`", skill)
+
 
 if __name__ == "__main__":
     unittest.main()

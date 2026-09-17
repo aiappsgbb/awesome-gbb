@@ -145,9 +145,40 @@ The comparison from `6820ddb` to `63f0f81` found:
 
 This is source compatibility review of the documented LLM path, **not a live
 compatibility claim**. The hub pin's lean gateway evidence and blocked positive
-JWT test remain separate. The corrected probe and unified Hosted wiring need
-owner-authorized live validation on the actual hub/spoke/runtime tuple; local
-native-SDK transport tests do not close that gate.
+JWT test remain separate. The dated adoption status below records the later
+probe execution without implying Hosted runtime or JWT acceptance.
+
+### Adoption status — 2026-09-17
+
+The designated owner executed the canonical probe against an existing approved
+APIM from **09:35:14.539855 to 09:35:19.515289 UTC**, using native
+`AzureCliCredential` in the approved paired tenant-isolated context. Native SDK
+versions were `azure-mgmt-apimanagement` **5.0.0**, `azure-mgmt-resource`
+**23.1.1**, and `azure-identity` **1.25.3**.
+
+| Acceptance surface | Source-bound outcome |
+|---|---|
+| U3 HUB_INVENTORY positive | Existing exact API/product/active scoped subscription: all three booleans true; `hub_contract_status=ok`; Foundry remains `unverified`. |
+| U3 HUB_INVENTORY negative | Existing unassociated API against the same product: API true, product/subscription false; `hub_contract_status=missing`. Native association HEAD independently returned HTTP 404; Foundry remains `unverified`. |
+| U2 HOSTED_GATEWAY_ROUTE | **NOT TESTED**: the authorization covered hub metadata only, not a model invocation. |
+| DOWNSTREAM_JWT | **NOT TESTED**: no inference, keys or new credentials. Connection-managed ApiKey custody is not downstream JWT proof. |
+| CLEANUP | **NOT NEEDED**: zero resources, data or access settings created or modified. |
+
+The helper's SHA-256 was verified before and after execution:
+`c6de8d1dbdfa7a9edfd5e6facf8eb75ff5ade7a623a8565a02b4721757d9dcfe`.
+It matches the implementation committed in
+[`652bc158`](https://github.com/aiappsgbb/awesome-gbb/commit/652bc1587cdfad041f6d49d5a1acda1318061ff8).
+Sanitized receipt SHA-256:
+`3191f175305b463068035b0910995eb0b0330404fdab25c1412ce72756f625e0`.
+The [PR evidence](https://github.com/aiappsgbb/awesome-gbb/pull/507) records the
+bounded execution; raw target IDs, policy XML and private evidence stay private.
+No key/secret retrieval, configuration change, grant or model call occurred.
+
+The frontmatter's `validation.script` remains **source-only T1**, not this live
+execution. Wrong-scope returned data, misleading subscription names, failed
+pagination and 403 are additional offline native-SDK regressions, not extra
+live outcomes. This dated probe result does not certify a hub deployment,
+Hosted gateway route, private runtime path, effective policy or governed action.
 
 ---
 

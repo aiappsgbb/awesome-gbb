@@ -16,9 +16,9 @@ Merged source, not production readiness: foundry-agentops 1.0.0 is available in 
 - [ghcp-hosted-agents](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/ghcp-hosted-agents/SKILL.md): Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) with BYOK authentication and Invocations protocol.
 - [foundry-mcp-aca](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca/SKILL.md): Deploy custom MCP servers as Azure Container Apps or Azure Functions for use with Foundry hosted agents.
 - [foundry-mcp-aca-jobs](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-aca-jobs/SKILL.md): Build job-backed MCP servers for Foundry when the control plane must stay responsive and execution belongs in ACA Jobs.
-- [foundry-mcp-auth](/awesome-gbb/skills/foundry-mcp-auth/): Unreleased draft candidate. Use when a custom Foundry MCP server needs delegated user authentication, OAuth identity passthrough, audience-correct access tokens, per-user scope authorization, or connection-consent troubleshooting.
+- [foundry-mcp-auth](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-mcp-auth/SKILL.md): Merged source; release approval and readiness pending. Use when a custom Foundry MCP server needs delegated user authentication, OAuth identity passthrough, audience-correct access tokens, per-user scope authorization, or connection-consent troubleshooting.
 - [foundry-evals](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-evals/SKILL.md): Evaluate Foundry agents with agent-target runs or an explicit invoke+score fallback.
-- [foundry-agentops](/awesome-gbb/skills/foundry-agentops/): Unreleased draft candidate. Use when adopting native Azure AgentOps for one existing agent.
+- [foundry-agentops](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-agentops/SKILL.md): Merged source; release approval and readiness pending. Use when adopting native Azure AgentOps for one existing agent.
 - [foundry-iq](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-iq/SKILL.md): Build enterprise RAG with Foundry IQ and Azure AI Search Knowledge Bases using agentic retrieval, multi-hop reasoning, query planning, and citation-backed responses.
 - [foundry-doc-vision-speech](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-doc-vision-speech/SKILL.md): Add vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) capabilities to a Foundry hosted agent.
 - [foundry-observability](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/foundry-observability/SKILL.md): End-to-end observability for Azure AI pilots — App Insights + Log Analytics + OpenTelemetry across hosted agents, ACA MCP servers, ACA jobs, bot service, workspace UIs.
@@ -63,4 +63,4 @@ Merged source, not production readiness: foundry-agentops 1.0.0 is available in 
 
 ## Plugins
 
-- [awesome-gbb](/awesome-gbb/plugins/awesome-gbb/): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 39 reusable building blocks for Copilot-assisted engagements, including Agent Framework Harness and the unpublished AgentOps and delegated MCP auth candidates.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugin.json): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 39 reusable building blocks for Copilot-assisted engagements, including Agent Framework Harness and the unpublished AgentOps and delegated MCP auth candidates.
