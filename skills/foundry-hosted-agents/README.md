@@ -5,6 +5,15 @@ Foundry-managed, per-session sandboxes — GA) via `azd` and the unified
 `azure.yaml` — the FoundryChatClient bootstrap, identity (implicit
 access by default), and blue-green/canary version rollout patterns.
 
+The [private BASIC consumer](references/private-basic.md) adds credential-free
+project ACR-connection validation, explicit source-build/prebuilt container
+paths, and a native no-tools model/session readback oracle. A bounded private
+run on **2026-09-17** passed native deployment, one model request, independent
+response/session/version readbacks and verified native cleanup
+([#500](https://github.com/aiappsgbb/awesome-gbb/pull/500)). Retained artifacts
+have explicit bounded custody. This BASIC result is separate from public CI
+and does not certify governed business effects.
+
 ## Roadmap
 
 **Planned for v0.7.0 — thread-retention reader

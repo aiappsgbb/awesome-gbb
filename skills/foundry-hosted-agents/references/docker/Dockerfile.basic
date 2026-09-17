@@ -1,0 +1,14 @@
+# Canonical no-tools container; source of truth for
+# ../../SKILL.md § Private BASIC consumer.
+# Supply approved immutable base references through native azd buildArgs.
+ARG PYTHON_IMAGE
+ARG UV_IMAGE
+FROM ${UV_IMAGE} AS uv
+FROM ${PYTHON_IMAGE}
+WORKDIR /app
+COPY --from=uv /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project && rm -rf /root/.cache
+COPY main.py .
+EXPOSE 8088
+CMD [".venv/bin/python", "main.py"]

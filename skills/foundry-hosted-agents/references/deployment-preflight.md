@@ -18,6 +18,14 @@ the project host. Raw/legacy public or other modes are deliberately **not
 automatically certified** by this bounded gate; review their specific contract.
 Do not introduce `enablePublicHostingEnvironment` into a private project.
 
+Every selected existing registry also needs its own **project-scoped
+ContainerRegistry connection**, separately from the capability-host BYO arrays.
+The gate reuses a correct connection without writes. Missing routes to
+[native connection-only provisioning](private-basic.md#missing-only-native-configurationprovisioning)
+with explicit authorization; unreadable or mismatched state blocks. Native
+identity mapping must have retained non-secret provisioning provenance, not a
+credential-retrieval call or an inference from `AcrPull`.
+
 For verification use only GET, never an idempotent-looking PUT. Retain full
 successful inventories, consume pagination, and read each returned host by its
 actual name. Use the [lifecycle GET shapes](../../foundry-caphost-lifecycle/SKILL.md#5-inspect-query-caphost-state-before-any-change);
@@ -63,7 +71,9 @@ their native camelCase; gate-specific observation records use snake_case.
 | Field | Required content / collection |
 |---|---|
 | `schema_version`, `observed_at` | `1`; timezone-aware ISO timestamp, at most 30 minutes old, not in the future. |
-| `target` | Approved `mode`, `account_id`, `project_id`, `model_id`, `registry_id`, `registry_network` (`private` or `public`), immutable `image` (`registry/repository@sha256:<64 hex>`), `project_endpoint`, `operator_route`, `runtime_route`, `tool_endpoints` (all required tools; empty only if none), `connections` (approved map of connection arrays), and `model_env` (the runtime's model environment key; its declared value must match the deployment name in `model_id`). Private modes also supply `subnet_id`. |
+| `target` | Approved `mode`, `account_id`, `project_id`, `model_id`, `registry_id`, `registry_connection_name`, `registry_network` (`private` or `public`), immutable `image` (`registry/repository@sha256:<64 hex>`), `project_endpoint`, `operator_route`, `runtime_route`, `tool_endpoints` (all required tools; empty only if none), `connections` (approved map of connection arrays), and `model_env` (the runtime's model environment key; its declared value must match the deployment name in `model_id`). Private modes also supply `subnet_id`. The opt-in live BASIC consumer additionally requires `tenant_id`. |
+| `project_connections` | Complete credential-free ordinary ARM GET-list envelope `{"value": [...]}` without error or unconsumed `nextLink`. Selected connection retains exact project child `id`, `properties.category: ContainerRegistry`, bare `target` matching registry `loginServer`, `authType: ManagedIdentity`, `metadata.ResourceId` matching registry ARM ID, no error or returned credentials. Never use listsecrets. |
+| `registry_connection_identity` | Non-secret projection of reviewed native provisioning: selected `connection_id`, project `principal_id`, registry `registry_id`, `source: native-provisioning`, and retained `evidence` reference. The native registry contract maps `credentials.clientId` to **project principalId**, `credentials.resourceId` to the registry ID. Missing provenance blocks; GET metadata/roles alone do not establish this mapping. |
 | `account`, `project`, `model`, `registry` | Exact ARM GET bodies: `id`, `properties.provisioningState`. Account also `kind: AIServices`, `publicNetworkAccess`, `networkInjections`; each private injection has `scenario: agent`, selected `subnetArmId`, `useMicrosoftManagedNetwork: false`. Project retains `identity.principalId`, `systemData.createdAt`, and `properties.endpoints`; selected `project_endpoint` must be among these endpoints. |
 | `account_hosts`, `project_hosts` | Complete successful GET-list envelopes `{"value": [...]}` without unconsumed `nextLink`. Retain exact host GET bodies in `value` after comparing identities with the inventory. Do not turn a read failure into an empty list. |
 | Host properties | `capabilityHostKind: Agents`, `provisioningState: Succeeded`. Standard account: selected `customerSubnet`; project: exact `threadStorageConnections`, `vectorStoreConnections`, `storageConnections`, optional `aiServicesConnections`. Basic: arrays absent/null/empty. Names are not ARM IDs. |
@@ -117,6 +127,13 @@ for legacy mode. Legacy roles are not honored by ABAC registries. Verify narrow
 repository conditions and `azureADAuthenticationAsArmPolicy`; no broad role grants.
 
 ## One route, four evidence gates
+
+These business-execution gates remain mandatory when business tools are
+requested. For a **no-tools** bootstrap, use the separate
+[native private BASIC oracle](private-basic.md): a real completed model response
+and independent response/session/version readbacks, without inventing a business
+receipt or requiring future tool authentication. It does not certify business
+effects or independently prove a native mount write.
 
 1. **Prerequisites:** select mode, read exact project/model/hosts and registry,
    collect path/runtime observations, run setup gate. Use the existing azd
