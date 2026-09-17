@@ -538,18 +538,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs", readme)
         self.assertIn("The proposed catalog contains 39 skills", readme)
         self.assertIn("skills-39-blue", readme)
-        self.assertIn("proposed catalog 4.31.0, unreleased", readme)
-        self.assertIn("the draft AgentOps addition is not yet published", readme)
+        self.assertIn("Merged source, not production readiness", readme)
+        self.assertIn("unreleased / release PENDING", readme)
         self.assertIn(
-            "It is not publicly installable through the default install while unmerged.",
-            readme,
-        )
-        self.assertIn(
-            "# Install the published release (not the draft addition):\n"
+            "# Install the catalog source; review each skill's acceptance status:\n"
             "> copilot plugin install awesome-gbb@awesome-gbb",
             readme,
         )
-        self.assertIn("The published plugin does not include this unmerged addition.", readme)
+        self.assertNotIn("The published plugin does not include this unmerged addition.", readme)
         self.assertIn("foundry-mcp-aca-jobs", build_site)
         self.assertIn("foundry-mcp-aca-jobs:", skill_deps)
         self.assertIn("- foundry-mcp-aca", skill_deps)

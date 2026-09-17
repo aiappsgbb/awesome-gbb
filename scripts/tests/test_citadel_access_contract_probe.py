@@ -44,6 +44,10 @@ class ProbeHubContractTests(unittest.TestCase):
         self.apim_name = "hub-apim"
         self.spoke_id = "spoke-foundry-1"
         self.subscription = "fake-sub"
+        self.scope = "/subscriptions/fake-sub/resourceGroups/hub-rg/providers/Microsoft.ApiManagement/service/hub-apim"
+        self.apim.api.get.return_value = MagicMock(id=self.scope + "/apis/spoke-foundry-1-api")
+        self.apim.product.get.return_value = MagicMock(id=self.scope + "/products/spoke-foundry-1-product")
+        self.apim.product_api.check_entity_exists.return_value = True
         # Patch SDK constructors on the module so probe_hub_contract picks them up.
         self.p_apim = patch.object(access_contract_probe, "ApiManagementClient",
                                    lambda cred, sub: self.apim)
@@ -61,14 +65,15 @@ class ProbeHubContractTests(unittest.TestCase):
     def _assertRequiredKeys(self, result):
         self.assertTrue(REQUIRED_KEYS.issubset(result.keys()),
                         f"missing: {REQUIRED_KEYS - result.keys()}")
+        self.assertEqual(result["foundry_connection_status"], "unverified")
 
     def test_full_happy_path(self):
         """APIM found, product assigned, sub key present → confidence >= 0.8, missing_perms == []."""
         sub_mock = MagicMock(name="sub")
         sub_mock.state = "active"
         sub_mock.display_name = "spoke-foundry-1"
-        self.apim.api.get.return_value = MagicMock(name="api")
-        self.apim.product.get.return_value = MagicMock(name="product")
+        sub_mock.id = self.scope + "/subscriptions/example"
+        sub_mock.scope = self.scope + "/products/spoke-foundry-1-product"
         self.apim.subscription.list.return_value = [sub_mock]
         self.apim.api_policy.get.return_value = MagicMock(value="<rate-limit calls='100' />")
 
@@ -81,13 +86,13 @@ class ProbeHubContractTests(unittest.TestCase):
         self._assertRequiredKeys(result)
         self.assertTrue(result["api_present"])
         self.assertTrue(result["product_assigned"])
-        self.assertEqual(result["foundry_connection_status"], "ok")
+        self.assertEqual(result["hub_contract_status"], "ok")
         self.assertTrue(result["subscription_key_present"])
         self.assertGreaterEqual(result["confidence"], 0.8)
         self.assertEqual(result["missing_perms"], [])
 
     def test_api_missing_returns_error_path(self):
-        """APIM exists but spoke API/product absent (ResourceNotFoundError/404) → missing_perms == [], foundry_connection_status == 'missing', never raises."""
+        """404 is absent hub inventory, not a Foundry connection observation."""
         self.apim.api.get.side_effect = ResourceNotFoundError("api not found")
         self.apim.product.get.side_effect = ResourceNotFoundError("product not found")
 
@@ -100,7 +105,7 @@ class ProbeHubContractTests(unittest.TestCase):
         self._assertRequiredKeys(result)
         self.assertFalse(result["api_present"])
         self.assertFalse(result["product_assigned"])
-        self.assertEqual(result["foundry_connection_status"], "missing")
+        self.assertEqual(result["hub_contract_status"], "missing")
         self.assertEqual(result["missing_perms"], [])  # 404 is "not onboarded", not a permission gap
         self.assertLess(result["confidence"], 0.5)
 
@@ -114,8 +119,11 @@ class ProbeHubContractTests(unittest.TestCase):
         sub_mock = MagicMock(name="sub")
         sub_mock.state = "active"
         sub_mock.display_name = "spoke-foundry-1"
-        self.apim.api.get.return_value = MagicMock(name="api")
-        self.apim.product.get.return_value = MagicMock(name="product")
+        scope = self.scope.replace("/hub-apim", "/hub-apim-auto")
+        sub_mock.id = scope + "/subscriptions/example"
+        sub_mock.scope = scope + "/products/spoke-foundry-1-product"
+        self.apim.api.get.return_value.id = scope + "/apis/spoke-foundry-1-api"
+        self.apim.product.get.return_value.id = scope + "/products/spoke-foundry-1-product"
         self.apim.subscription.list.return_value = [sub_mock]
         self.apim.api_policy.get.return_value = MagicMock(value="<rate-limit calls='100' />")
 
@@ -155,8 +163,7 @@ class ProbeHubContractTests(unittest.TestCase):
                         f"expected ambiguity message in missing_perms, got: {result['missing_perms']}")
 
     def test_permission_denied_populates_missing_perms(self):
-        """403 on product.get → api_present=True (api DID exist), product_assigned=False, foundry_connection_status='errored', missing_perms non-empty, confidence < 0.5."""
-        self.apim.api.get.return_value = MagicMock(name="api")
+        """An unreadable product cannot establish a binding."""
         self.apim.product.get.side_effect = HttpResponseError(
             "403 AuthorizationFailed: caller does not have permission"
         )
@@ -170,12 +177,12 @@ class ProbeHubContractTests(unittest.TestCase):
         self._assertRequiredKeys(result)
         self.assertTrue(result["api_present"])  # api.get succeeded; api DOES exist
         self.assertFalse(result["product_assigned"])
-        self.assertEqual(result["foundry_connection_status"], "errored")
+        self.assertEqual(result["hub_contract_status"], "errored")
         self.assertGreaterEqual(len(result["missing_perms"]), 1)
         self.assertLess(result["confidence"], 0.5)
 
     def test_api_get_permission_denied_returns_errored(self):
-        """403 on api.get → api_present=False, product_assigned=False, foundry_connection_status='errored', missing_perms mentions api.get/403."""
+        """API read failure is an errored hub observation."""
         self.apim.api.get.side_effect = HttpResponseError(
             "403 AuthorizationFailed: caller does not have APIM Reader role"
         )
@@ -191,7 +198,7 @@ class ProbeHubContractTests(unittest.TestCase):
         self._assertRequiredKeys(result)
         self.assertFalse(result["api_present"])
         self.assertFalse(result["product_assigned"])
-        self.assertEqual(result["foundry_connection_status"], "errored")
+        self.assertEqual(result["hub_contract_status"], "errored")
         self.assertGreaterEqual(len(result["missing_perms"]), 1)
         combined = " ".join(result["missing_perms"]).lower()
         self.assertTrue(
@@ -206,8 +213,11 @@ class ProbeHubContractTests(unittest.TestCase):
         sub_mock = MagicMock(name="sub")
         sub_mock.state = "active"
         sub_mock.display_name = "spoke-foundry-1"
-        self.apim.api.get.return_value = MagicMock(name="api")
-        self.apim.product.get.return_value = MagicMock(name="product")
+        scope = self.scope.replace("/hub-rg/", "/env-fallback-rg/")
+        sub_mock.id = scope + "/subscriptions/example"
+        sub_mock.scope = scope + "/products/spoke-foundry-1-product"
+        self.apim.api.get.return_value.id = scope + "/apis/spoke-foundry-1-api"
+        self.apim.product.get.return_value.id = scope + "/products/spoke-foundry-1-product"
         self.apim.subscription.list.return_value = [sub_mock]
         self.apim.api_policy.get.return_value = MagicMock(value="<rate-limit calls='100' />")
 
@@ -226,9 +236,7 @@ class ProbeHubContractTests(unittest.TestCase):
             with self.subTest(fail_site=fail_site):
                 # Reset all side effects and set safe defaults.
                 self.apim.api.get.side_effect = None
-                self.apim.api.get.return_value = MagicMock(name="api")
                 self.apim.product.get.side_effect = None
-                self.apim.product.get.return_value = MagicMock(name="product")
                 self.apim.subscription.list.side_effect = None
                 self.apim.subscription.list.return_value = []
                 self.apim.api_policy.get.side_effect = None
@@ -251,7 +259,8 @@ class ProbeHubContractTests(unittest.TestCase):
                 self.assertIsInstance(result, dict)
                 self._assertRequiredKeys(result)
                 self.assertGreaterEqual(len(result["missing_perms"]), 1)
-                self.assertIn("cosmic-ray", " ".join(result["missing_perms"]))
+                self.assertIn("RuntimeError", " ".join(result["missing_perms"]))
+                self.assertNotIn("cosmic-ray", " ".join(result["missing_perms"]))
 
     def test_empty_spoke_id_returns_error_path(self):
         """Empty spoke_id → immediate error-path, no SDK calls, missing_perms mentions spoke_id."""
@@ -292,8 +301,9 @@ class ProbeHubContractTests(unittest.TestCase):
         self.assertEqual(result["confidence"], 0.0)
 
         # Case 2: no subscription, but env var is set → probe runs to completion.
-        self.apim.api.get.return_value = MagicMock(name="api")
-        self.apim.product.get.return_value = MagicMock(name="product")
+        scope = self.scope.replace("/fake-sub/", "/env-sub-id/")
+        self.apim.api.get.return_value.id = scope + "/apis/spoke-foundry-1-api"
+        self.apim.product.get.return_value.id = scope + "/products/spoke-foundry-1-product"
         self.apim.subscription.list.return_value = []
         self.apim.api_policy.get.return_value = MagicMock(value=None)
         with patch.dict(os.environ, {"AZURE_SUBSCRIPTION_ID": "env-sub-id"}):

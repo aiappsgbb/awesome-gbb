@@ -81,11 +81,14 @@ CATEGORIES: dict[str, list[str]] = {
     ],
 }
 
-# Catalog status is separate from the runtime SKILL.md contract.
-DRAFT_SKILLS = {
+# The legacy "draft" field records release gates, not source availability.
+DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
     'foundry-mcp-auth': {
+        'source_status': 'merged',
+        'release_status': 'pending',
         'record': 'maintenance/foundry-mcp-auth-validation.md',
         'summary': (
+            'Merged source is available in main after PR #487; separate release approval remains pending. '
             'Unreleased candidate with live single-user delegated PASS for Prompt/direct MCP, Prompt/Toolbox and Hosted/Toolbox. '
             'Actual tool receipts match private MCP server audit; this is not four-path certification. '
             'All four Prompt/Hosted and direct/Toolbox paths remain final acceptance criteria. '
@@ -94,16 +97,20 @@ DRAFT_SKILLS = {
         ),
     },
     'foundry-agentops': {
+        'source_status': 'merged',
+        'release_status': 'pending',
         'record': 'maintenance/foundry-agentops-validation.md',
         'summary': (
-            'Unreleased: foundry-agentops 1.0.0 / proposed catalog 4.31.0. '
-            'Draft candidate eligible for PR validation; not merged, released, or production-ready. '
+            'Merged source, not production readiness: foundry-agentops 1.0.0 is available '
+            'in main after PR #484 (2db28d1f52bf288f2d0fd40b7c8beb913ceeee09). '
+            'Unreleased / release PENDING; merge is not separate release approval. '
             'Manual evidence as of 2026-09-05, before PR CI: '
             'Completed corrected-source manual execution PASS; quality FAIL (4/5 thresholds); '
             'Doctor readiness BLOCKED; release PENDING. '
             'Prior 5/5 manual cycle is historical, not the corrected result. '
-            'CI results and candidate SHA will be recorded in the PR. '
-            'The draft addition is not publicly installable through the default install while unmerged.'
+            'Later targeted CI run 34001218180 at 96b30384 completed technical negative-path '
+            'execution, not quality, full-matrix or readiness acceptance; see PR #484. '
+            'PR #502 changes dependency-only selection, not those acceptance gates.'
         ),
     },
 }

@@ -12,14 +12,14 @@ description: >
   deploying model backends, apim backend pools, hub policy fragment deployment,
   spoke-side VNet/peering creation (use foundry-vnet-deploy).
 metadata:
-  version: "1.2.6"
+  version: "2.0.0"
 ---
 
 # Citadel Spoke Onboarding — Reference Guide
 
 How to connect a GenAI application or Microsoft Foundry project to an
-**existing** AI Citadel Governance Hub so that all AI traffic is governed,
-observable, and compliant.
+**existing** AI Citadel Governance Hub. Controls cover the traffic actually routed
+through the gateway, not every agent action or a compliance certification.
 
 > **Threadlight integration**: This skill is the **opt-in Phase 7** of
 > `threadlight-deploy`. It runs ONLY when SPEC § 11b sets
@@ -35,12 +35,18 @@ observable, and compliant.
 > secret pull) violates the keyless-by-mandate posture: it requires
 > the agent to hold an APIM subscription key and read it from KV at
 > runtime. Option B threads the call through a Foundry APIM connection
-> so the agent's UAMI is the only credential, and APIM enforces JWT
-> validation on the project's MI token. If a customer insists on
+> so the agent does not retrieve the subscription key. The pinned connection
+> uses `authType: ApiKey`; this is **not end-to-end keyless**. Caller-to-Foundry
+> Entra authentication, connection-managed secret custody and downstream APIM
+> authentication are separate boundaries. JWT requires its own approved setup
+> and positive/negative runtime evidence; no MI-to-APIM JWT flow is implied.
+> If a customer insists on
 > Option A for a non-threadlight reason, document the deviation in
 > SPEC § 11b explicitly.
 
-> **Source repo:** [Azure-Samples/ai-hub-gateway-solution-accelerator](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) (branch `citadel-v1`)
+> **Source:** [exact hub/spoke revision](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/63f0f812474e713916dc909494d655246783a1d9).
+> The [pin record](references/upstream-pin.md) separates source comparison from
+> live compatibility. `citadel-v1` is a freshness signal, not a deployment input.
 > **Quick link:** <https://aka.ms/ai-hub-gateway>
 
 ---
@@ -77,21 +83,29 @@ observable, and compliant.
 | Permissions | `API Management Service Contributor` on APIM RG, `Key Vault Secrets Officer` on target KV (if used), `Contributor` on Foundry RG (if using Foundry connections) |
 | Foundry Project | Must exist if you want APIM connections inside Foundry |
 
+Before any operator Azure call, apply
+[`azure-tenant-isolation`](../azure-tenant-isolation/SKILL.md): paired isolated
+CLI/AZD context and the approved exact tenant/subscription. Assert the target
+immediately before writes. Read-only inventory grants no repair authority.
+
 ---
 
 ## Step-by-Step: Create an Access Contract
 
 ### 1. Scaffold the Contract Folder
 
-Clone or init the accelerator, then follow the pattern `contracts/<businessunit-usecasename>/<environment>/`:
+Materialize the exact reviewed hub revision, then follow
+`contracts/<businessunit-usecasename>/<environment>/`. Do not overwrite an existing
+checkout, deployed contract or policy to align a pin.
 
-```powershell
-# Option A: clone the accelerator
-git clone -b citadel-v1 https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator.git
-cd ai-hub-gateway-solution-accelerator/bicep/infra/citadel-access-contracts
-
-# Option B: if using azd
-azd init --template Azure-Samples/ai-hub-gateway-solution-accelerator -e my-citadel --branch citadel-v1
+```bash
+PINNED_SHA="63f0f812474e713916dc909494d655246783a1d9"
+git clone --filter=blob:none --no-checkout https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator.git
+cd ai-hub-gateway-solution-accelerator
+git fetch --depth 1 origin "$PINNED_SHA"
+git checkout --detach "$PINNED_SHA"
+test "$(git rev-parse HEAD)" = "$PINNED_SHA"
+cd bicep/infra/citadel-access-contracts
 
 # Create contract folder
 mkdir -p contracts/myteam-myagent/dev
@@ -106,6 +120,10 @@ cp ../../../policies/default-ai-product-policy.xml ai-product-policy.xml
 > [citadel-access-contracts/](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1/bicep/infra/citadel-access-contracts)
 >
 > ⚠️ Sample contracts were removed from the repo. Use `main.bicepparam` as your template base.
+> Review `allowedModels` explicitly: this revision's default LLM policy allows
+> `gpt-4.1,gpt-5.4-mini`, unlike the older policy's broader list. Existing
+> approved policies are not replaced automatically. Leave optional key rotation
+> and additional-gateway settings disabled unless separately approved.
 
 ### 2. Configure the Parameter File
 
@@ -309,8 +327,9 @@ az keyvault secret list `
 > **Threadlight pilots: do NOT use Option A.** Pulling an APIM subscription
 > key from Key Vault means the agent holds a long-lived secret at
 > runtime, which violates the keyless-by-mandate posture. Use Option B
-> (Foundry Connection) below — APIM still authorizes via the project
-> MI token, and the agent never sees a key. Option A remains documented
+> (Foundry Connection) below — the platform connection retains the APIM key,
+> and the agent does not retrieve it. This does not establish downstream JWT.
+> Option A remains documented
 > for traditional non-Foundry apps that don't have a project-level
 > connection surface.
 
@@ -341,24 +360,33 @@ This works at the **agent level** — not via raw `oai.chat.completions.create()
 
 **Hosted Agents (FoundryChatClient):**
 
-Set `MODEL_DEPLOYMENT_NAME` in `agent.yaml` to `connectionName/modelName`:
+Use the current [canonical unified azure.yaml](../foundry-hosted-agents/references/yaml/azure.yaml)
+and [runtime main.py](../foundry-hosted-agents/references/python/main.py) unchanged.
+Set the azd environment's `AZURE_AI_MODEL_DEPLOYMENT_NAME` to the selected
+`connectionName/modelName`, for example `Hub-MyTeam-MyAgent-DEV-LLM/gpt-5.4-mini`.
+This structural excerpt shows the existing hosted service key, not a full
+deployment template:
 
 ```yaml
-# agent.yaml
-environment_variables:
-  - name: MODEL_DEPLOYMENT_NAME
-    value: Hub-MyTeam-MyAgent-DEV-LLM/gpt-5.4
+services:
+  my-agent:
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
 ```
 
-The `FoundryChatClient` in `container.py` resolves the connection automatically:
+The canonical runtime passes that value to `FoundryChatClient(model=...)`.
+Keep its [dependency cohort](../foundry-hosted-agents/references/python/pyproject.toml)
+and deployment preflight; do not substitute the Toolbox or management SDK pins.
+`FOUNDRY_PROJECT_ENDPOINT` is platform-injected, never a declared service variable.
+This wiring correction is not live proof for the selected gateway/model.
 
-```python
-client = FoundryChatClient(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ["MODEL_DEPLOYMENT_NAME"],  # "connectionName/gpt-5.4"
-    credential=DefaultAzureCredential(),
-)
-```
+The [pinned connection module](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/63f0f812474e713916dc909494d655246783a1d9/bicep/infra/citadel-access-contracts/modules/foundryConnection.bicep)
+stores the APIM key in the managed connection. An Entra-authenticated caller to
+Foundry does not make that downstream credential a JWT. Observe the actual
+connection category, target and auth type through credential-free GET; never
+retrieve its secret as a probe. If end-to-end keylessness is required, stop for
+an independently supported and authorized design; no auth migration is supplied here.
 
 **Prompt Agents (PromptAgentDefinition):**
 
@@ -625,10 +653,11 @@ a VNet-isolated spoke this means the agent must:
 - Reach KV over the network (extra private endpoint + DNS link).
 - Hold a static subscription key (defeats keyless-by-mandate posture).
 
-**Option B** routes the call through a Foundry APIM connection so the
-agent's UAMI is the only credential, and APIM enforces JWT validation on
-the project's MI token. There is no static key in the agent. This is the
-**only** sane option when the spoke is private-VNet.
+**Option B** keeps the static key in the Foundry connection, not in agent code.
+Private networking does not alter `authType: ApiKey` into JWT. Keep caller-to-Foundry
+identity, connection custody and downstream APIM authentication distinct.
+The hub pin's positive dual-auth JWT acceptance remains separate and unproven;
+an APIM inventory match or private DNS lookup cannot close it.
 
 **Pre-flight checklist before running this skill**
 
@@ -639,10 +668,12 @@ az network vnet peering show --resource-group <spoke-rg> --vnet-name <spoke-vnet
 Resolve-DnsName "<apim>.azure-api.net"                      # → private IP
 Test-NetConnection -ComputerName "<apim>.azure-api.net" -Port 443
 
-# Confirm the Foundry project's UAMI exists (it does by default after foundry-vnet-deploy)
-az cognitiveservices account show --name <foundry-account> --resource-group <spoke-rg> `
-  --query "identity.principalId" -o tsv
 ```
+
+Read the selected **project** identity separately through its credential-free ARM
+GET. Account identity is not project identity, and neither proves which credential
+the connection uses downstream. Do not create or grant an identity to satisfy
+this read-only check.
 
 If any check fails, **stop** and fix the network plumbing in
 `foundry-vnet-deploy` Step 12D before proceeding — onboarding the spoke
@@ -776,42 +807,61 @@ to verify end-to-end connectivity:
 
 ## Hub-side Access Contract probe
 
-When threadlight-skills (or any consumer) needs to **verify** that an
-existing spoke is properly onboarded into a Citadel hub — without making
-any changes — call the canonical Python helper:
+Use the canonical helper for **hub ARM inventory only**, after tenant isolation
+and approval of the exact read scope. It does not observe a Foundry connection,
+perform inference, verify private routing or enforce policy.
+Use `azure-mgmt-apimanagement~=5.0.0`, `azure-mgmt-resource~=23.1.0` and
+`azure-identity~=1.25.3` in the operator's isolated environment. Add this skill's
+`references/python` directory to `PYTHONPATH`; import the actual module:
 
 ```python
-from skills.citadel_spoke_onboarding.references.python.access_contract_probe import (
-    probe_hub_contract,
-)
+from access_contract_probe import probe_hub_contract
 
 result = probe_hub_contract(
-    hub_rg="rg-citadel-hub",
+    hub_rg="<hub-resource-group>",
     spoke_id="my-spoke",
     subscription="<hub-subscription-id>",
-    # apim_name="hub-apim",       # optional — auto-discovers if hub RG has exactly one APIM
-    # credential=DefaultAzureCredential(),  # optional — defaults to DefaultAzureCredential()
+    apim_name="<hub-apim>",
+    api_id="azure-openai-api",
+    product_id="LLM-MyTeam-MyAgent-DEV",
+    credential=credential,  # already-approved credential for this isolated context
 )
 ```
 
-Returns a never-raising `dict` with this shape (canonical contract — see
-spec §4.2.1):
+Returns a never-raising `dict`. **Version 2 migration:** consumers must not use
+the former `foundry_connection_status="ok"` as hub acceptance. It is now always
+`unverified`; use `hub_contract_status` for this narrower inventory result and
+collect Foundry/runtime evidence independently. This intentional contract change
+requires downstream handling before adopting skill 2.0.0.
 
 | Key                          | Type                            | Meaning                                                                                   |
 |------------------------------|---------------------------------|-------------------------------------------------------------------------------------------|
-| `api_present`                | `bool`                          | True iff `{spoke_id}-api` exists in the hub APIM                                          |
-| `product_assigned`           | `bool`                          | True iff `{spoke_id}-product` exists and the API is bound to it                           |
-| `foundry_connection_status`  | `"ok"` \| `"missing"` \| `"errored"` | `"ok"` = api + product both confirmed; `"missing"` = at least one absent; `"errored"` = a probe call raised |
-| `subscription_key_present`   | `bool`                          | True iff at least one APIM subscription's display name contains `spoke_id` (case-insensitive) |
-| `rate_limit_policy`          | `str` \| `None`                 | Reserved for future hub policy introspection                                              |
+| `api_present`                | `bool`                          | Exact API GET returned the selected resource ID. |
+| `product_assigned`           | `bool`                          | Exact product GET matched scope AND native `product_api.check_entity_exists` confirmed this API association. |
+| `foundry_connection_status`  | `"unverified"` | No Foundry observation is made, even if every hub check passes. |
+| `hub_contract_status`        | `"ok"` \| `"missing"` \| `"errored"` | All three hub signals present / at least one absent / any unreadable or invalid observation. |
+| `evidence_scope`             | `"hub-arm-inventory"` | Not runtime, transport, credentials or enforcement proof. |
+| `subscription_key_present`   | `bool`                          | Legacy name: active subscription metadata with exact product scope in this APIM. No key is retrieved or tested. |
+| `rate_limit_policy`          | `dict` \| `None`                 | Optional `{"raw_xml": ...}` API-level policy snapshot. Not parsed limits or effective product/global policy enforcement; keep XML private. |
 | `last_probe_at`              | `str`                           | ISO-8601 UTC timestamp                                                                    |
-| `confidence`                 | `float` 0.0–1.0                 | `1.0` if all 3 signals present, `0.66`/`0.33`/`0.0` for partial / none                    |
+| `confidence`                 | `float` 0.0–1.0                 | Legacy hub inventory coverage only: `1.0` for all three signals. Never readiness confidence; `hub_contract_status` and errors remain authoritative. |
 | `missing_perms`              | `list[str]`                     | Human-readable explanations when the probe can't make conclusions (perms, ambiguity, SDK absent) |
 
-**Behavioral guarantees** (enforced by `scripts/tests/test_citadel_access_contract_probe.py` — 10 tests, all green):
+**Behavioral guarantees** (offline regressions in
+`scripts/tests/test_citadel_access_contract_probe.py` and
+`scripts/tests/test_citadel_spoke_contract.py`, including native SDK HTTP transport):
 
-- **Never raises.** Any SDK exception (`ResourceNotFoundError`, `HttpResponseError`, generic `Exception`, plain `RuntimeError`) is caught and surfaced via `missing_perms` + zeroed booleans. `BaseException` subclasses (`KeyboardInterrupt`, `SystemExit`) propagate as expected.
-- **404 vs 403 distinction.** A 404 on `api.get` (spoke API not yet onboarded) leaves `missing_perms` empty and reports `foundry_connection_status="missing"`. A 403 (permission gap) populates `missing_perms` and reports `foundry_connection_status="errored"`. This lets consumers decide between "trigger onboarding" and "fix RBAC".
+- **Never raises.** SDK exceptions become an operation/type/status diagnostic in
+  `missing_perms`, without raw exception bodies. Already verified observations
+  are preserved; the failed observation never becomes a pass.
+  `KeyboardInterrupt` / `SystemExit` propagate.
+- **Missing vs unreadable.** Resource/binding 404 is absence; 403, malformed
+  resource IDs or failed inventory pages are errors, not permission to onboard
+  or repair. Subscription pagination completes before any positive result.
+  Exact absolute product scope or documented `/products/<id>` within the selected
+  APIM is accepted; display-name substrings, all-API and other-product scopes are not.
+- **Policy readback.** Optional API policy 404 leaves no snapshot; other errors
+  are explicit. Product/global policies and live behavior require separate evidence.
 - **APIM auto-discovery.** Pass `apim_name=None` and the helper queries the hub RG for `Microsoft.ApiManagement/service` resources. Exactly one match → use it. Zero or more than one → error path with explanation in `missing_perms`.
 - **Env-var fallback for hub RG.** If `hub_rg` is empty, the helper reads `TL_CITADEL_HUB_RG` from the environment (backwards-compat with threadlight v0.5.x runtime).
 - **Env-var fallback for subscription.** If `subscription` is empty, the helper reads `AZURE_SUBSCRIPTION_ID`. If still empty, returns the error-path dict.
@@ -822,16 +872,20 @@ spec §4.2.1):
 > [`references/python/access_contract_probe.py`](references/python/access_contract_probe.py).
 > Repo invariant: AGENTS.md §7 (SSOT).
 
+Use the [opt-in manual acceptance protocol](test-fixture/manual_consumer_prompt.md)
+for the separately authorized live owner. It requires no hub deployment and
+keeps hub inventory, Hosted gateway routing, JWT and cleanup outcomes separate.
+
 ### Naming convention
 
 The probe assumes:
 - API ID: `f"{spoke_id}-api"`
 - Product ID: `f"{spoke_id}-product"`
 
-This matches the deploy convention used elsewhere in this skill. If your
-operator chose different IDs, the probe will report `api_present=False` /
-`product_assigned=False` on a spoke that DOES exist with non-conventional
-naming. Document your deploy choice in the platform-team handoff.
+These defaults are retained only for legacy callers. The native contract uses
+shared APIs from `apiNameMapping` and products `{code}-{BU}-{UseCase}-{ENV}`.
+Pass `api_id` / `product_id` explicitly for those deployments and verify every
+required API, rather than guessing IDs from a display name.
 
 ### Cross-skill: threadlight self-verify integration
 
@@ -839,10 +893,13 @@ naming. Document your deploy choice in the platform-team handoff.
 NET-501 / NET-502 self-verify steps flip from `kind: manual` to
 `kind: sibling-skill` against this helper in threadlight v0.5.2 (tracker:
 [issue #246](https://github.com/aiappsgbb/awesome-gbb/issues/246)).
-Consumers gain machine-readable hub-contract evidence without forcing
+Consumers gain machine-readable partial hub inventory without forcing
 the threadlight runtime to take an `azure-mgmt-*` dependency — the helper
 gracefully degrades to the "SDK not installed" error path when run inside
 threadlight's stdlib-only worker shell.
+Any downstream readiness gate must adopt the version-2 output semantics and
+retain separate credential-free Foundry connection, private-route, actual
+downstream authentication and correlated runtime evidence.
 
 ---
 
