@@ -266,7 +266,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 
 ### Per-agent AgentOps adoption
 
-Use [`foundry-agentops`](skills/foundry-agentops/SKILL.md) (skill 1.1.1,
+Use [`foundry-agentops`](skills/foundry-agentops/SKILL.md) (skill 1.1.2,
 merged source with pending readiness gates) for the adoption and release-evidence workflow for **one
 already deployed agent**, using exactly `agentops-accelerator==0.14.0`.
 Select its agent root and approved deployment context, review evaluation results

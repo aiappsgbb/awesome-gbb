@@ -11,7 +11,7 @@ description: >
   (foundry-agt), deep eval design (foundry-evals), instrumentation
   (foundry-observability), or production-ready certification.
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # Foundry AgentOps adoption

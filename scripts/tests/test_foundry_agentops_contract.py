@@ -1067,7 +1067,18 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertEqual(entry["version"], plugin["version"])
         self.assertEqual(marketplace["metadata"]["version"], plugin["version"])
         self.assertEqual(plugin["version"], "4.33.0")
-        self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.1.1")
+        self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.1.2")
+
+    def test_pre_doctor_observer_is_diagnostic_not_a_native_gate(self) -> None:
+        fixture = (SKILL / "test-fixture/consumer_prompt.md").read_text()
+        for stage in ("install", "sdk_prerequisites", "exporter_cohort", "credential_contract",
+                      "prompt_create", "workspace_config", "analyze", "eval"):
+            self.assertIn(f"| `{stage}` |", fixture)
+        self.assertIn('observe "$AGENTOPS_CI_ATTEMPT" <stage> --', fixture)
+        self.assertIn('stop "$AGENTOPS_CI_ATTEMPT" <stage>', fixture)
+        self.assertIn("STOP; do not retry or bypass the observer", fixture)
+        self.assertIn("untrusted agent-writable diagnostics", fixture)
+        self.assertIn("Missing identity/intent never proves no Azure effects", fixture)
 
     def test_manifest_counts_match_discovered_skills(self) -> None:
         count = len(list((ROOT / "skills").glob("*/SKILL.md")))

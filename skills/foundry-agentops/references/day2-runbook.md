@@ -362,6 +362,37 @@ the byte-exact marker alone is insufficient. Primary and retry summaries are
 separate. Once a private workspace exists, automated replay is conservatively
 blocked so a completed negative cycle cannot be overwritten by a green retry.
 
+Pre-Doctor diagnostics reuse `scripts/agentops-ci-report.py` and the existing
+sanitized summary; there is no new upload, destination or approval mode.
+The fixture observes the original install, prerequisite, credential-constructor,
+prompt-create, configuration, analyze and eval commands. The helper records
+local invocation intent before starting each subprocess, captures its output
+privately, and preserves its actual return code (including signals). It never
+retries, changes native commands or implements scoring. Recording/invocation
+failure requires stopping, not replay or an unobserved invocation.
+
+`diagnostics.pre_doctor` contains only fixed stage/reason enums, numeric exits
+when observed, and the explicit provenance `untrusted_agent_writable`. Each
+private intent is bound to the run/attempt and existing workspace pointer plus
+directory identity. A fixture-reported stop has no native exit. Missing,
+unsafe, conflicting or differently bound observations remain `unknown`; an
+outer agent stopping before executing a stage is not a native command failure.
+The host does not classify arbitrary transcript text. Existing native
+analyze/eval/Doctor exit files can be reported without a returned identity, but
+this does not validate their artifacts or bypass the identity-bound checkers.
+Optional diagnostic absence cannot invalidate otherwise valid native evidence.
+
+In particular, `prompt_create_intent: observed` means only local invocation
+intent, not an HTTP CREATE acknowledgement, ownership or successful creation.
+Missing identity or intent leaves effects `unknown`, never `not_created`.
+These observations cannot satisfy grading, authorize retry/deletion, certify
+cleanup or turn an eval/Doctor gate green. They are not trusted attestations.
+The sanitized projection survives the existing private-root cleanup; raw logs,
+argv, paths, workspace IDs, resource identities and payload text do not. This
+cannot recover the precise cause of an earlier run whose private evidence was
+already deleted. The separate encrypted mode still exports only the approved
+Doctor log, not these pre-Doctor logs or the Copilot transcript.
+
 CI workspaces/identity pointers are private runner context, not native schemas.
 The fixture deletes only its own prompt agent and leaves local evidence for
 host checks. An unconditional finalizer removes only this run/attempt's owned

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — AgentOps diagnostic correction
+
+- [`foundry-agentops`](skills/foundry-agentops/SKILL.md) PATCH **1.1.1 → 1.1.2**:
+  retain payload-free, untrusted pre-Doctor stage/exit observations in the
+  existing sanitized CI summary. Missing evidence and cloud effects remain
+  unknown; approval, retry, execution, quality and readiness gates are unchanged.
+  This does not recover previously deleted evidence or certify live acceptance.
+
 ## Unreleased — upstream workflow integration
 
 Keep the existing awesome-gbb skill names and entry points; integrate verified
