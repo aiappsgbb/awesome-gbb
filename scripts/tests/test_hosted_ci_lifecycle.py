@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -50,6 +51,7 @@ class FakeNative:
         self.extra_versions = False
         self.changed = False
         self.delete_error = False
+        self.cascade_parent = False
 
     def version(self):
         definition = deepcopy(self.ledger.data["definition"])
@@ -90,12 +92,15 @@ class FakeNative:
             self.deleted.add((method.replace("delete", "get", 1), tuple(sorted(args.items()))))
             if method == "delete_session":
                 self.sessions = [s for s in self.sessions if s.agent_session_id != args["session_id"]]
-            if method == "delete":
+            if method == "delete" or method == "delete_version" and self.cascade_parent:
                 self.present = False
             return None
         raise AssertionError(method)
 
     def inventory(self, kind, name):
+        self.calls.append(("list_" + kind, {"agent_name": name}))
+        if self.cascade_parent and not self.present:
+            raise h.Error("INVENTORY_UNKNOWN")
         if kind == "sessions":
             return self.sessions
         key = ("get_version", tuple(sorted({"agent_name": name, "agent_version": "1"}.items())))
@@ -147,6 +152,11 @@ class LifecycleTests(unittest.TestCase):
         })
         self.ledger = h.Ledger(self.path, self.a, self.env)
         self.native = FakeNative(self.ledger)
+        real_record = h.record_native_absence
+        absence = patch.object(h, "record_native_absence",
+                               side_effect=lambda *args: real_record(*args, sleep=lambda _: None))
+        absence.start()
+        self.addCleanup(absence.stop)
 
     def owned(self):
         self.ledger.data.update(
@@ -209,6 +219,59 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(h.Error, "OWNERSHIP_UNKNOWN"):
                 h.reconcile(self.ledger, self.native)
             self.ledger.data[key] = True
+
+    def test_empty_legacy_protocol_default_preserves_complete_frozen_binding(self):
+        from azure.ai.projects.models import HostedAgentDefinition
+        self.owned()
+        self.ledger.data["definition"] = HostedAgentDefinition(
+            kind="hosted", cpu="1", memory="2Gi",
+            container_configuration={"image": self.ledger.data["image"]},
+            protocol_versions=[{"protocol": "responses", "version": "2.0.0"}],
+        ).as_dict()
+        version = self.native.version()
+        expected = h.version_binding(version, self.ledger)
+        frozen = deepcopy(self.ledger.data)
+        actual = version.definition.as_dict() | {"container_protocol_versions": []}
+        version.definition = HostedAgentDefinition(actual)
+        self.assertEqual(h.version_binding(version, self.ledger), expected)
+        self.assertEqual(version.definition.as_dict(), actual)
+        self.assertEqual(self.ledger.data, frozen)
+
+    def test_protocol_default_does_not_hide_protocol_or_other_definition_drift(self):
+        self.owned()
+        self.ledger.data["definition"]["protocol_versions"] = [{"protocol": "responses", "version": "2.0.0"}]
+        for extra in (
+            {"container_protocol_versions": None}, {"container_protocol_versions": {}},
+            {"container_protocol_versions": [{"protocol": "invocations", "version": "2.0.0"}]},
+            {"container_protocol_versions": [], "protocol_versions": []},
+            {"container_protocol_versions": [], "protocol_versions": [{"protocol": "responses", "version": "1.0.0"}]},
+            {"container_protocol_versions": [], "cpu": "2"},
+            {"container_protocol_versions": [], "unknown_default": []},
+        ):
+            with self.subTest(extra=extra):
+                version = self.native.version()
+                version.definition.update(extra)
+                with self.assertRaisesRegex(h.Error, "DEFINITION_CHANGED"):
+                    h.version_binding(version, self.ledger)
+        version = self.native.version()
+        del version.definition["protocol_versions"]
+        version.definition["container_protocol_versions"] = []
+        with self.assertRaisesRegex(h.Error, "DEFINITION_CHANGED"):
+            h.version_binding(version, self.ledger)
+
+    def test_failed_definition_reconciliation_never_enables_cleanup(self):
+        self.owned()
+        self.ledger.data.pop("binding")
+        self.ledger.data.pop("agent_binding")
+        self.ledger.data["state"] = "UNKNOWN"
+        self.native.changed = True
+        with self.assertRaisesRegex(h.Error, "DEFINITION_CHANGED"):
+            h.reconcile(self.ledger, self.native)
+        self.native.changed = False
+        with self.assertRaisesRegex(h.Error, "OWNERSHIP_UNKNOWN"):
+            h.cleanup_native(self.ledger, self.native)
+        self.assertNotIn("binding", self.ledger.data)
+        self.assertFalse(any(method.startswith("delete") for method, _ in self.native.calls))
 
     def test_invoke_budget_persists_across_processes(self):
         self.owned()
@@ -424,6 +487,174 @@ class LifecycleTests(unittest.TestCase):
         h.cleanup_native(h.Ledger(self.path, self.a, self.env), self.native)
         self.assertEqual(len([x for x in self.native.calls if x[0].startswith("delete")]), 3)
 
+    def cascade_receipt(self):
+        self.owned()
+        self.native.cascade_parent = True
+        h.remove_once(self.ledger, self.native, "version",
+                      {"agent_name": NAME, "agent_version": "1"}, sleep=lambda _: None)
+        self.native.calls.clear()
+
+    def test_final_version_cascade_proves_parent_absence_without_inventory_or_delete(self):
+        self.owned()
+        self.native.cascade_parent = True
+        real_remove = h.remove_once
+        with patch.object(h, "remove_once", side_effect=lambda *args: real_remove(*args, sleep=lambda _: None)):
+            h.cleanup_native(self.ledger, self.native)
+        deletes = [(method, args) for method, args in self.native.calls if method.startswith("delete")]
+        self.assertEqual(deletes, [("delete_version", {
+            "agent_name": NAME, "agent_version": "1", "force": False,
+        })])
+        after_delete = self.native.calls[self.native.calls.index(deletes[0]) + 1:]
+        self.assertFalse(any(method.startswith("list_") for method, _ in after_delete))
+        self.assertGreaterEqual(sum(method == "get" for method, _ in after_delete), 2)
+        self.assertTrue(self.ledger.data["native_absent"])
+        self.assertTrue(self.ledger.data["parent_cascade_observed"])
+        self.assertEqual(self.ledger.data["state"], "NATIVE_ABSENT_IMAGES_IDENTITIES_RETAINED")
+        self.assertEqual(len(self.ledger.data["delete_intents"]), 1)
+        self.assertEqual(self.ledger.data["delete_intents"], self.ledger.data["absent"])
+        self.native.calls.clear()
+        h.cleanup_native(h.Ledger(self.path, self.a, self.env), self.native)
+        self.assertEqual([method for method, _ in self.native.calls], ["get", "get_version", "get"])
+
+    def test_cascade_resume_after_interruption_never_reissues_version_delete(self):
+        self.owned()
+        self.native.cascade_parent = True
+        real_remove = h.remove_once
+        real_record = h.record_native_absence
+        def interrupt(*args):
+            if not self.native.present:
+                raise h.Error("INTERRUPTED")
+            return real_record(*args)
+        with patch.object(h, "remove_once", side_effect=lambda *args: real_remove(*args, sleep=lambda _: None)), \
+             patch.object(h, "record_native_absence", side_effect=interrupt):
+            with self.assertRaisesRegex(h.Error, "INTERRUPTED"):
+                h.cleanup_native(self.ledger, self.native)
+        resumed = h.Ledger(self.path, self.a, self.env)
+        self.assertNotIn("native_absent", resumed.data)
+        self.assertEqual(resumed.data["delete_intents"], resumed.data["absent"])
+        self.native.calls.clear()
+        h.cleanup_native(resumed, self.native)
+        self.assertTrue(resumed.data["native_absent"])
+        self.assertEqual([method for method, _ in self.native.calls], ["get", "get_version", "get"])
+
+    def test_cascade_requires_exact_intent_absence_and_prior_reconciled_bindings(self):
+        self.cascade_receipt()
+        original = deepcopy(self.ledger.data)
+        for marker in (False, True):
+            for field, value in (
+                ("binding", None), ("agent_binding", None), ("pre_get_404", False),
+                ("deploy_intent", False), ("delete_intents", []), ("absent", []),
+                ("delete_intents", ["version:foreign"]), ("absent", ["version:foreign"]),
+                ("agent_binding", dict(original["agent_binding"], identity={"principal_id": CLIENT})),
+            ):
+                with self.subTest(native_absent=marker, field=field, value=value):
+                    self.ledger.data = deepcopy(original)
+                    self.ledger.data.update({field: value, "native_absent": marker})
+                    with self.assertRaisesRegex(h.Error, "OWNERSHIP_UNKNOWN"):
+                        h.cleanup_native(self.ledger, self.native)
+        self.assertFalse(any(method.startswith(("delete", "list_")) for method, _ in self.native.calls))
+
+    def test_cascade_parent_reappearance_or_read_errors_fail_closed_on_resume(self):
+        self.cascade_receipt()
+        original = deepcopy(self.ledger.data)
+        real_absent = self.native.absent
+        for completed in (False, True):
+            for observations in (
+                [True, False], [h.Error("NATIVE_REQUEST")],
+                [True, h.Error("NATIVE_REQUEST")], [True, h.Error("ABSENCE_UNPROVEN")],
+            ):
+                with self.subTest(completed=completed, observations=observations):
+                    self.ledger.data = deepcopy(original)
+                    self.ledger.data["native_absent"] = completed
+                    values = iter(observations)
+                    def observe(method, **kwargs):
+                        if method != "get":
+                            return real_absent(method, **kwargs)
+                        value = next(values)
+                        if isinstance(value, h.Error):
+                            raise value
+                        return value
+                    with patch.object(self.native, "absent", side_effect=observe), self.assertRaises(h.Error):
+                        h.cleanup_native(self.ledger, self.native)
+                    expected = original | {"native_absent": completed}
+                    if observations[0] is True:
+                        expected["parent_cascade_observed"] = True
+                    self.assertEqual(self.ledger.data, expected)
+        self.assertFalse(any(method.startswith(("delete", "list_")) for method, _ in self.native.calls))
+
+    def test_interrupted_parent_absence_proof_cannot_delete_a_reappearing_parent(self):
+        self.cascade_receipt()
+        real_absent = self.native.absent
+        reads = iter([True, h.Error("NATIVE_REQUEST")])
+        def observe(method, **kwargs):
+            if method != "get":
+                return real_absent(method, **kwargs)
+            value = next(reads)
+            if isinstance(value, h.Error):
+                raise value
+            return value
+        with patch.object(self.native, "absent", side_effect=observe), \
+             self.assertRaisesRegex(h.Error, "NATIVE_REQUEST"):
+            h.cleanup_native(self.ledger, self.native)
+        resumed = h.Ledger(self.path, self.a, self.env)
+        self.assertTrue(resumed.data["parent_cascade_observed"])
+        self.assertNotIn("native_absent", resumed.data)
+        self.native.present = True
+        self.native.calls.clear()
+        with self.assertRaisesRegex(h.Error, "OWNERSHIP_CHANGED"):
+            h.cleanup_native(resumed, self.native)
+        self.assertFalse(any(method.startswith(("delete", "list_")) for method, _ in self.native.calls))
+        self.assertNotIn("native_absent", resumed.data)
+
+    def test_cascade_requires_fresh_version_absence_even_after_completion(self):
+        self.cascade_receipt()
+        original = deepcopy(self.ledger.data)
+        real_absent = self.native.absent
+        for completed in (False, True):
+            for result in (False, h.Error("NATIVE_REQUEST"), h.Error("ABSENCE_UNPROVEN")):
+                with self.subTest(completed=completed, result=result):
+                    self.ledger.data = deepcopy(original)
+                    self.ledger.data["native_absent"] = completed
+                    def observe(method, **kwargs):
+                        if method != "get_version":
+                            return real_absent(method, **kwargs)
+                        if isinstance(result, h.Error):
+                            raise result
+                        return result
+                    with patch.object(self.native, "absent", side_effect=observe), self.assertRaises(h.Error):
+                        h.cleanup_native(self.ledger, self.native)
+                    self.assertEqual(self.ledger.data, original | {
+                        "native_absent": completed, "parent_cascade_observed": True,
+                    })
+        self.assertFalse(any(method.startswith(("delete", "list_")) for method, _ in self.native.calls))
+
+    def test_cascade_appearing_between_resume_parent_and_version_reads_uses_same_proof(self):
+        self.cascade_receipt()
+        real_absent = self.native.absent
+        def observe(method, **kwargs):
+            if observe.first and method == "get":
+                observe.first = False
+                return False
+            return real_absent(method, **kwargs)
+        observe.first = True
+        with patch.object(self.native, "absent", side_effect=observe):
+            h.cleanup_native(h.Ledger(self.path, self.a, self.env), self.native)
+        self.assertFalse(any(method.startswith(("delete", "list_")) for method, _ in self.native.calls))
+        self.assertTrue(h.Ledger(self.path, self.a, self.env).data["native_absent"])
+
+    def test_inventory_failure_is_not_reclassified_as_parent_cascade(self):
+        self.owned()
+        real_inventory = self.native.inventory
+        def inventory(kind, name):
+            if kind == "sessions":
+                raise h.Error("INVENTORY_UNKNOWN")
+            return real_inventory(kind, name)
+        with patch.object(self.native, "inventory", side_effect=inventory), \
+             self.assertRaisesRegex(h.Error, "INVENTORY_UNKNOWN"):
+            h.cleanup_native(self.ledger, self.native)
+        self.assertNotIn("native_absent", self.ledger.data)
+        self.assertFalse(any(method.startswith("delete") for method, _ in self.native.calls))
+
     def test_failed_delete_is_not_reissued_by_another_process(self):
         self.owned()
         self.native.delete_error = True
@@ -569,6 +800,9 @@ class LifecycleTests(unittest.TestCase):
                   "AZURE_AI_MODEL_DEPLOYMENT_NAME": self.a["model"]}
         (project / ".azure" / NAME).mkdir()
         (project / ".azure" / NAME / ".env").write_text("\n".join(f'{key}="{value}"' for key, value in values.items()))
+        (project / ".azure/.gitignore").write_bytes(b"# .azure is not intended to be committed\n*")
+        (project / ".azure" / NAME / "config.json").write_text("{}")
+        (project / ".azure" / NAME / ".env.lock").touch()
         def run(args, *_):
             return (originals[args[-1].split("/references/")[1]] if args[0] == "git"
                     else json.dumps(values).encode())
@@ -582,6 +816,122 @@ class LifecycleTests(unittest.TestCase):
                 stream.write("\nhooks:\n  predeploy: dangerous\n")
             with self.assertRaisesRegex(h.Error, "SOURCE"):
                 h.source(self.env, self.a, NAME, project)
+
+    def azd_state(self):
+        project = self.root / "azd-state"
+        name = NAME
+        directory = project / ".azure" / name
+        directory.mkdir(parents=True)
+        (project / ".azure/config.json").write_text(json.dumps({"version": 1, "defaultEnvironment": name}))
+        values = {"AZURE_ENV_NAME": name, "AZURE_SUBSCRIPTION_ID": SUB}
+        (directory / ".env").write_text("\n".join(f'{k}="{v}"' for k, v in values.items()))
+        return project, name, values
+
+    def test_azd_generated_metadata_is_exact_and_optional_before_and_after_publish(self):
+        project, name, values = self.azd_state()
+        with patch.object(h, "command", return_value=json.dumps(values).encode()):
+            h.azd_environment(self.env, project, name, values)
+            (project / ".azure/.gitignore").write_bytes(b"# .azure is not intended to be committed\n*")
+            (project / ".azure" / name / "config.json").write_text(" { }\n")
+            (project / ".azure" / name / ".env.lock").touch()
+            h.azd_environment(self.env, project, name, values)
+        image = "testregistry.azurecr.io/exact:tag"
+        key = "SERVICE_" + name.upper().replace("-", "_") + "_IMAGE_NAME"
+        with (project / ".azure" / name / ".env").open("a") as stream:
+            stream.write(f'\n{key}="{image}"\n')
+        with patch.object(h, "command", return_value=json.dumps(values | {key: image}).encode()):
+            h.azd_environment(self.env, project, name, values, image)
+            with self.assertRaisesRegex(h.Error, "AZD_ENV"):
+                h.azd_environment(self.env, project, name, values, "testregistry.azurecr.io/foreign:tag")
+
+    def test_azd_rejects_overrides_extra_paths_and_nonregular_metadata_before_cli(self):
+        project, name, values = self.azd_state()
+        variants = (
+            (".azure/.gitignore", b"*"), (f".azure/{name}/config.json", b'{"hooks": {}}'),
+            (f".azure/{name}/config.json", b'{"services": {}}'),
+            (f".azure/{name}/config.json", b'null'),
+            (f".azure/{name}/.env.lock", b"not an empty lock"),
+            (f".azure/{name}/.env.tmp-foreign", b""), (".azure/foreign", None),
+        )
+        for relative, content in variants:
+            path = project / relative
+            with self.subTest(relative=relative, content=content), patch.object(h, "command") as command:
+                path.mkdir() if content is None else path.write_bytes(content)
+                with self.assertRaises(h.Error):
+                    h.azd_environment(self.env, project, name, values)
+                command.assert_not_called()
+                path.rmdir() if content is None else path.unlink()
+        target = project / ".azure" / name / "config.json"
+        other = self.root / "outside-config"
+        other.write_text("{}")
+        for kind in ("symlink", "hardlink", "fifo", "directory"):
+            with self.subTest(kind=kind), patch.object(h, "command") as command:
+                if kind == "symlink":
+                    target.symlink_to(other)
+                elif kind == "hardlink":
+                    os.link(other, target)
+                elif kind == "fifo":
+                    os.mkfifo(target)
+                else:
+                    target.mkdir()
+                with self.assertRaises(h.Error):
+                    h.azd_environment(self.env, project, name, values)
+                command.assert_not_called()
+                target.rmdir() if kind == "directory" else target.unlink()
+        original = project / ".azure"
+        relocated = self.root / "outside-azure"
+        original.rename(relocated)
+        original.symlink_to(relocated, target_is_directory=True)
+        with patch.object(h, "command") as command, self.assertRaisesRegex(h.Error, "SOURCE"):
+            h.azd_environment(self.env, project, name, values)
+        command.assert_not_called()
+
+    def test_real_cli_credential_uses_verified_subscription_without_conflicting_tenant(self):
+        import azure.identity._credentials.azure_cli as cli
+        from azure.core.exceptions import ClientAuthenticationError
+        from azure.identity import AzureCliCredential
+        account = {"id": SUB, "tenantId": TENANT, "user": {"type": "servicePrincipal", "name": CLIENT}}
+        def token(args, timeout):
+            self.assertEqual(timeout, 20)
+            if "--subscription" in args and "--tenant" in args:
+                raise ClientAuthenticationError("Please specify only one of subscription and tenant, not both")
+            self.assertEqual(args[args.index("--subscription") + 1], SUB)
+            self.assertEqual(args[args.index("--resource") + 1], "https://ai.azure.com")
+            return '{"accessToken":"offline-synthetic","expires_on":2000000000}'
+        with patch.object(cli, "_run_command", side_effect=token) as run:
+            with AzureCliCredential(tenant_id=TENANT, subscription=SUB, process_timeout=20) as broken:
+                with self.assertRaises(ClientAuthenticationError):
+                    broken.get_token("https://ai.azure.com/.default")
+            run.reset_mock()
+            with patch.object(h.common.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stdout=json.dumps(account).encode())), \
+                 patch("azure.ai.projects.AIProjectClient") as project:
+                for skill in h.SKILLS:
+                    with h.Native(self.env, self.a | {"skill": skill}).client():
+                        pass
+                self.assertEqual(run.call_count, 2)
+                kwargs = project.call_args.kwargs
+                self.assertEqual(kwargs["endpoint"], self.a["project_endpoint"])
+                self.assertEqual(kwargs["retry_total"], 0)
+                self.assertEqual(kwargs["redirect_max"], 0)
+                self.assertEqual(kwargs["credential"].get_token("https://ai.azure.com/.default").token,
+                                 "offline-synthetic")
+                with self.assertRaisesRegex(h.Error, "CREDENTIAL_SCOPE"):
+                    kwargs["credential"].get_token("https://other.invalid/.default")
+            for bad in (
+                account | {"id": CLIENT}, account | {"tenantId": SUB},
+                account | {"user": {"type": "user", "name": CLIENT}},
+                account | {"user": {"type": "servicePrincipal", "name": TENANT}},
+            ):
+                run.reset_mock()
+                with patch.object(h.common.subprocess, "run", return_value=SimpleNamespace(
+                        returncode=0, stdout=json.dumps(bad).encode())), \
+                     patch("azure.ai.projects.AIProjectClient") as project:
+                    with self.assertRaisesRegex(h.Error, "CREDENTIAL"):
+                        with h.Native(self.env, self.a).client():
+                            self.fail("unapproved CLI identity")
+                    run.assert_not_called()
+                    project.assert_not_called()
 
     def test_native_pages_require_terminal_page_with_bounded_total(self):
         native = h.Native(self.env, self.a)
@@ -763,6 +1113,26 @@ class LifecycleTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_fixture_deploy_failure_preserves_status_and_stops_before_next_action(self):
+        for skill in h.SKILLS:
+            text = (ROOT / f"skills/{skill}/test-fixture/consumer_prompt.md").read_text()
+            block = next(block for block in re.findall(r"```bash\n(.*?)\n```", text, re.S)
+                         if block.startswith(f"bash /tmp/{skill}-ga-smoke.sh"))
+            self.assertIn("Immutable test, not a repair session.", text)
+            self.assertIn("tool denial, means write FAIL and STOP", text)
+            self.assertIn("bypass the helper", text)
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp)
+                script = path / f"{skill}-ga-smoke.sh"
+                script.write_text("exit 37\n")
+                block = block.replace("/tmp/", str(path) + "/")
+                result = subprocess.run(["bash", "-c", block + "\nprintf 'BYPASS_ATTEMPTED\\n'\n"],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 37)
+                self.assertEqual((path / f"{skill}-smoke-result").read_text(),
+                                 "SMOKE_RESULT=FAIL lifecycle deploy gate\n")
+                self.assertNotIn("BYPASS_ATTEMPTED", result.stdout)
+
     def test_runner_finalizer_and_retry_gate_are_wired(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/skill-test.yml").read_text())
         triggers = workflow[True]

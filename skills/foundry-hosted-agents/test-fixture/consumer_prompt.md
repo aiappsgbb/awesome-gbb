@@ -21,6 +21,14 @@ the running Copilot CLI process. Do not run `copilot -p`, `copilot --version`,
 install Copilot, or invoke any other `copilot` command. The workflow already
 captures output through its outer `tee`; execute the smoke steps directly.
 
+**Immutable test, not a repair session.** Do not edit repository source, tests,
+helpers, approvals or receipts, or run unit tests to repair the runner. Any
+lifecycle gate failure (including SOURCE, credential or ownership errors), or
+tool denial, means write FAIL and STOP. Do not retry with a new name/workspace,
+relax a validator, or bypass the helper with direct SDK/CLI deploy, routing or
+invoke calls. A tool denial is not an Azure RBAC error. Leave exact cleanup to
+the workflow's original-SHA finalizer; never erase custody or a failure marker.
+
 ## Step 0 - auth context
 
 The workflow has already installed `azd` at `/usr/local/bin/azd`. Do not search
@@ -265,7 +273,11 @@ echo "$agent_name" > /tmp/foundry-hosted-agents-agent-name
 ```
 
 ```bash
-bash /tmp/foundry-hosted-agents-ga-smoke.sh
+bash /tmp/foundry-hosted-agents-ga-smoke.sh || {
+  status=$?
+  printf 'SMOKE_RESULT=FAIL lifecycle deploy gate\n' > /tmp/foundry-hosted-agents-smoke-result
+  exit "$status"
+}
 ```
 
 If `azd deploy` fails with a permission/authorization error, that is a hard

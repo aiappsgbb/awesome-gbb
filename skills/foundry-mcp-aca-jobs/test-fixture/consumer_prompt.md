@@ -9,6 +9,12 @@ credentials, change network policy or edit source.
 **Never invoke `copilot` recursively.** You are the running process. The workflow
 owns transcripts, approvals and encrypted inventory. Never overwrite those files.
 
+Any lifecycle gate failure or tool denial means STOP, not repair. Do not edit
+source/tests/validators, erase custody, restart with another name/workspace or
+bypass the helper through direct SDK/CLI deployment, routing or invocation.
+Tool denial is not Azure RBAC evidence. The workflow's original-SHA finalizer
+owns cleanup even on failure; source mutation must still fail checkout integrity.
+
 The owner provides an existing workload RG, ACR, CAE, a dedicated Blob account,
 a dedicated Cosmos account with ONE standing database, and two DISTINCT standing
 app/worker UAMIs. App Job Operator is pre-granted at that exact RG; ACR/Blob/Cosmos

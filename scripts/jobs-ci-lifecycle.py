@@ -633,21 +633,12 @@ def hosted_project(ledger):
 
     def verify(env, approved, agent, directory, published=None):
         require(agent == name and directory == project and approved == a, "SOURCE")
-        allowed = set(expected) | {".azure/config.json", f".azure/{name}/.env"}
-        require(all(not p.is_symlink() and (p.is_dir() or p.relative_to(project).as_posix() in allowed)
-                    for p in project.rglob("*")), "SOURCE")
+        require(project.is_absolute() and project.resolve() == project and
+                {p.name for p in project.iterdir()} <= set(expected) | {".azure"}, "SOURCE")
         for file, raw in expected.items():
-            require((project / file).read_bytes() == raw, "SOURCE")
-        actual = common.parse(hosted.command(["azd", "env", "get-values", "--output", "json"], env, project, 20))
-        wanted = dict(values)
-        image_key = "SERVICE_" + name.upper().replace("-", "_") + "_IMAGE_NAME"
-        if published is not None and image_key in actual:
-            wanted[image_key] = published
-        require(actual == wanted and common.parse((project / ".azure/config.json").read_bytes()) ==
-                {"version": 1, "defaultEnvironment": name}, "AZD_ENV")
-        lines = (project / f".azure/{name}/.env").read_text().splitlines()
-        require(len(lines) == len(wanted) and all(sum(
-            line in (f"{k}={v}", f'{k}="{v}"') for line in lines) == 1 for k, v in wanted.items()), "AZD_ENV")
+            path = project / file
+            require(not path.is_symlink() and path.read_bytes() == raw, "SOURCE")
+        hosted.azd_environment(env, project, name, values, published)
         return {file: hashlib.sha256(raw).hexdigest() for file, raw in expected.items()}
     return project, verify, {"AZURE_AI_MODEL_DEPLOYMENT_NAME": a["model"], **extras}
 

@@ -708,6 +708,56 @@ class JobsLifecycleTests(unittest.TestCase):
         self.assertNotIn("'Owner'", standing)
         self.assertNotIn("Contributor", standing)
 
+    def test_hosted_project_uses_shared_exact_azd_state_validator(self):
+        self.ledger.data.update(state="DEPLOYED", project=str(self.temp), parameters={
+            "cosmosContainerName": "control", "outputStorageContainerName": "output",
+            "appName": "ci-jobs-app", "environmentDomain": "example.invalid",
+        })
+        with patch.object(j, "git_file", side_effect=lambda _, p: (ROOT / p).read_bytes()):
+            project, verify, variables = j.hosted_project(self.ledger)
+        name = j.environment(self.ledger)["HOSTED_NAME"]
+        directory = project / ".azure" / name
+        values = dict(line.split("=", 1) for line in (directory / ".env").read_text().splitlines())
+        self.commands.return_value = json.dumps(values).encode()
+        expected = verify(self.env, self.a["native"], name, project)
+        (project / ".azure/.gitignore").write_bytes(b"# .azure is not intended to be committed\n*")
+        (directory / ".env.lock").touch()
+        (directory / "config.json").write_text("{}")
+        self.assertEqual(verify(self.env, self.a["native"], name, project), expected)
+        self.assertIn("MCP_SERVER_URL", variables)
+        for extra in ({"hooks": {}}, {"services": {}}, {"infra": {"provider": "foreign"}}):
+            (directory / "config.json").write_text(json.dumps(extra))
+            self.commands.reset_mock()
+            with self.assertRaisesRegex(j.Error, "SOURCE"):
+                verify(self.env, self.a["native"], name, project)
+            self.commands.assert_not_called()
+        (directory / "config.json").write_text("{}")
+        image = "testregistry.azurecr.io/owned:tag"
+        key = "SERVICE_" + name.upper().replace("-", "_") + "_IMAGE_NAME"
+        with (directory / ".env").open("a") as stream:
+            stream.write(f"{key}={image}\n")
+        self.commands.return_value = json.dumps(values | {key: image}).encode()
+        self.assertEqual(verify(self.env, self.a["native"], name, project, image), expected)
+        (project / "container.py").write_text("not the frozen reference")
+        with self.assertRaisesRegex(j.Error, "SOURCE"):
+            verify(self.env, self.a["native"], name, project, image)
+
+    def test_jobs_shared_native_client_reaches_sdk_without_tenant_subscription_conflict(self):
+        import azure.identity._credentials.azure_cli as cli
+        account = {"id": SUB, "tenantId": TENANT, "user": {"type": "servicePrincipal", "name": CLIENT}}
+        def token(args, timeout):
+            self.assertNotIn("--tenant", args)
+            self.assertEqual(args[args.index("--subscription") + 1], SUB)
+            self.assertEqual(timeout, 20)
+            return '{"accessToken":"offline-synthetic","expires_on":2000000000}'
+        with patch.object(j.hosted.common.subprocess, "run", return_value=SimpleNamespace(
+                returncode=0, stdout=json.dumps(account).encode())), \
+             patch.object(cli, "_run_command", side_effect=token) as cli_call, \
+             patch("azure.ai.projects.AIProjectClient"):
+            with j.hosted.Native(self.env, self.a["native"]).client():
+                pass
+            cli_call.assert_called_once()
+
     def test_read_helpers_are_not_live_test_evidence(self):
         self.assertFalse(j.absent(403, {"error": {"code": "ResourceNotFound"}}))
         self.assertFalse(j.absent(404, {"error": {"code": "AuthorizationFailed"}}))

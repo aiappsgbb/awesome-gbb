@@ -146,8 +146,9 @@ class Native:
         from azure.core.credentials import AccessToken
         from azure.identity import AzureCliCredential
         common.Arm(self.env)  # Verify the active CLI identity, not just env claims.
-        with AzureCliCredential(tenant_id=self.a["tenant_id"],
-                                subscription=self.env["AZURE_SUBSCRIPTION_ID"],
+        # CLI rejects --tenant together with --subscription. Arm above already
+        # verified the subscription's tenant and service-principal identity.
+        with AzureCliCredential(subscription=self.env["AZURE_SUBSCRIPTION_ID"],
                                 process_timeout=20) as credential:
             token = credential.get_token("https://ai.azure.com/.default")
         class FrozenCredential:
@@ -215,6 +216,11 @@ def version_binding(version, ledger):
     require(version.name == data["agent"] and isinstance(version.version, str) and
             re.fullmatch(r"[1-9][0-9]*", version.version), "VERSION")
     definition = version.definition.as_dict()
+    # The service may add this empty legacy field alongside protocol_versions.
+    # Do not discard a populated/null field or change the required protocol.
+    if "container_protocol_versions" not in data["definition"] and "container_protocol_versions" in definition:
+        require(definition["container_protocol_versions"] == [], "DEFINITION_CHANGED")
+        definition = {k: v for k, v in definition.items() if k != "container_protocol_versions"}
     require(definition == data["definition"] and
             definition["container_configuration"]["image"] == data["image"], "DEFINITION_CHANGED")
     identity = version.instance_identity.as_dict() if version.instance_identity else {}
@@ -265,6 +271,46 @@ def command(argv, env, cwd, seconds=1200):
     return result.stdout
 
 
+def azd_environment(env, project, name, expected_env, published=None):
+    """Validate the pinned azd local state before invoking its env reader."""
+    root = project / ".azure"
+    directories = {root, root / name}
+    required = {root / "config.json", root / name / ".env"}
+    optional = {
+        root / ".gitignore": b"# .azure is not intended to be committed\n*",
+        root / name / ".env.lock": b"",
+        root / name / "config.json": None,
+    }
+    for path in directories:
+        require(not path.is_symlink() and path.is_dir(), "SOURCE")
+    paths = list(root.rglob("*"))
+    require(required <= set(paths), "SOURCE")
+    for path in paths:
+        info = path.lstat()
+        if path in directories:
+            require(stat.S_ISDIR(info.st_mode), "SOURCE")
+            continue
+        require(path in required or path in optional, "SOURCE")
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and
+                info.st_size <= common.MAX_BYTES, "SOURCE")
+        if path in optional:
+            raw = path.read_bytes()
+            require(common.parse(raw) == {} if optional[path] is None else raw == optional[path], "SOURCE")
+    config = common.parse((root / "config.json").read_bytes())
+    require(config == {"version": 1, "defaultEnvironment": name}, "AZD_ENV")
+    lines = (root / name / ".env").read_text().splitlines()
+    wanted = dict(expected_env)
+    image_key = "SERVICE_" + name.upper().replace("-", "_") + "_IMAGE_NAME"
+    if published is not None and any(
+            line in (f"{image_key}={published}", f'{image_key}="{published}"') for line in lines):
+        wanted[image_key] = published
+    require(len(lines) == len(wanted) and all(
+        sum(line in (f"{key}={value}", f'{key}="{value}"') for line in lines) == 1
+        for key, value in wanted.items()), "AZD_ENV")
+    actual = common.parse(command(["azd", "env", "get-values", "--output", "json"], env, project, 20))
+    require(isinstance(actual, dict) and actual == wanted, "AZD_ENV")
+
+
 def source(env, a, name, project, published=None):
     require(re.fullmatch(re.escape(SKILLS[a["skill"]][0]) + r"[0-9a-f]{32}", name), "AGENT_NAME")
     require(project.is_absolute() and project.resolve() == project, "PATH")
@@ -292,27 +338,12 @@ def source(env, a, name, project, published=None):
         hashes["copilot-instructions.md"] = hashlib.sha256(instructions.read_bytes()).hexdigest()
     else:
         require(not instructions.exists(), "SOURCE")
-    values = common.parse(command(["azd", "env", "get-values", "--output", "json"], env, project, 20))
     expected_env = {
         "AZURE_ENV_NAME": name, "AZURE_SUBSCRIPTION_ID": env["AZURE_SUBSCRIPTION_ID"],
         "FOUNDRY_PROJECT_ENDPOINT": a["project_endpoint"], "AZURE_AI_PROJECT_ID": a["project_id"],
         "AZURE_CONTAINER_REGISTRY_ENDPOINT": a["acr_server"], "AZURE_AI_MODEL_DEPLOYMENT_NAME": a["model"],
     }
-    if published is not None:
-        image_key = "SERVICE_" + name.upper().replace("-", "_") + "_IMAGE_NAME"
-        expected_env[image_key] = published
-        if image_key not in values:
-            del expected_env[image_key]
-    require(isinstance(values, dict) and values == expected_env, "AZD_ENV")
-    config = common.parse((project / ".azure/config.json").read_bytes())
-    require(config == {"version": 1, "defaultEnvironment": name}, "AZD_ENV")
-    allowed = {".azure/config.json", f".azure/{name}/.env"}
-    require(all(not p.is_symlink() and (p.is_dir() or p.relative_to(project).as_posix() in allowed)
-                for p in (project / ".azure").rglob("*")), "SOURCE")
-    lines = (project / f".azure/{name}/.env").read_text().splitlines()
-    require(len(lines) == len(expected_env) and all(
-        sum(line in (f"{key}={value}", f'{key}="{value}"') for line in lines) == 1
-        for key, value in expected_env.items()), "AZD_ENV")
+    azd_environment(env, project, name, expected_env, published)
     return hashes
 
 
@@ -625,26 +656,47 @@ def remove_once(ledger, native, kind, arguments, *, clock=time.monotonic, sleep=
     raise Error("ABSENCE_UNPROVEN")
 
 
+def record_native_absence(ledger, native, *, sleep=time.sleep):
+    data = ledger.data
+    name = data["agent"]
+    if not native.absent("get", agent_name=name):
+        require(not data.get("native_absent") and not data.get("parent_cascade_observed"), "OWNERSHIP_CHANGED")
+        return False
+    agent_key = "agent:" + fingerprint({"agent_name": name})
+    if agent_key not in data.get("delete_intents", []):
+        arguments = {"agent_name": name, "agent_version": data["binding"]["version"]}
+        version_key = "version:" + fingerprint(arguments)
+        require(version_key in data.get("delete_intents", []) and
+                version_key in data.get("absent", []), "OWNERSHIP_UNKNOWN")
+        if not data.get("parent_cascade_observed"):
+            data["parent_cascade_observed"] = True
+            ledger.save()
+        require(native.absent("get_version", **arguments), "OWNERSHIP_CHANGED")
+    # Final-version deletion may remove the parent. Verify through GET, never
+    # reinterpret a failed inventory as empty or manufacture a parent DELETE.
+    sleep(5)
+    require(native.absent("get", agent_name=name), "OWNERSHIP_CHANGED")
+    data["native_absent"] = True
+    ledger.state("NATIVE_ABSENT_IMAGES_IDENTITIES_RETAINED")
+    return True
+
+
 def cleanup_native(ledger, native):
     data = ledger.data
-    require(data.get("binding") and data.get("deploy_intent") is True and
+    require(data.get("binding") and data.get("agent_binding") and
+            data["agent_binding"]["identity"] == data["binding"]["identity"] and
+            data.get("deploy_intent") is True and
             data.get("pre_get_404") is True, "OWNERSHIP_UNKNOWN")
     name, version = data["agent"], data["binding"]["version"]
     require(re.fullmatch(re.escape(SKILLS[ledger.a["skill"]][0]) + r"[0-9a-f]{32}", name), "SCOPE")
     # On a resumed finalizer after native deletion, do not reconstruct ownership
     # from a newly appeared name or silently restart DELETE.
-    if data.get("native_absent"):
-        require(native.absent("get", agent_name=name), "OWNERSHIP_CHANGED")
-        return
-    if native.absent("get", agent_name=name):
-        require("agent:" + fingerprint({"agent_name": name}) in data.get("delete_intents", []),
-                "OWNERSHIP_UNKNOWN")
-        remove_once(ledger, native, "agent", {"agent_name": name})
-        data["native_absent"] = True
-        ledger.save()
+    if record_native_absence(ledger, native):
         return
     if native.absent("get_version", agent_name=name, agent_version=version):
         key = "version:" + fingerprint({"agent_name": name, "agent_version": version})
+        if record_native_absence(ledger, native):
+            return
         require(key in data.get("delete_intents", []) and
                 native.inventory("versions", name) == [] and native.inventory("sessions", name) == [],
                 "OWNERSHIP_UNKNOWN")
@@ -671,6 +723,8 @@ def cleanup_native(ledger, native):
     require(native.inventory("sessions", name) == [], "SESSION_UNKNOWN")
     reconcile(ledger, native)
     remove_once(ledger, native, "version", {"agent_name": name, "agent_version": version})
+    if record_native_absence(ledger, native):
+        return
     require(native.inventory("versions", name) == [] and native.inventory("sessions", name) == [], "OWNERSHIP_CHANGED")
     remove_once(ledger, native, "agent", {"agent_name": name})
     data["native_absent"] = True
