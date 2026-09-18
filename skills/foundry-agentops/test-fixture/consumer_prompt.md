@@ -60,6 +60,13 @@ owner-provisioned cache containing only the approved identity, or
 `EnvironmentCredential` / `WorkloadIdentityCredential` with a fresh empty CLI
 directory. Inherit the identical paths and selector in **every Bash** call,
 including helpers, eval, Doctor and cleanup; do not rely on a prior Bash export.
+Also inherit the owner's supported process opt-outs
+`APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=true` and
+`APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED=true` before SDK imports or native
+startup, including precreate helpers, primary/retry, eval, Doctor and cleanup.
+These suppress SDK Statsbeat and OneSettings traffic outside the dedicated
+component, not the approved exporter or any required Doctor source. Missing
+or changed values mean STOP; do not repair them inside an already running SDK.
 Missing or changed isolation means STOP, not fallback to global caches.
 For **all three** modes (including approved cached CLI), `AZD_CONFIG_DIR` must
 be private and **fresh empty**, with **no login or token cache** copied into or
@@ -130,6 +137,9 @@ try:
         "environment": "EnvironmentCredential", "workload": "WorkloadIdentityCredential",
     }
     assert os.environ.get("AZURE_TOKEN_CREDENTIALS") == selectors[route]
+    for key in ("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+                "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"):
+        assert os.environ.get(key) == "true"
     required = [
         "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "FOUNDRY_PROJECT_ENDPOINT",
         "AZURE_CONFIG_DIR", "AZD_CONFIG_DIR", "AZURE_TOKEN_CREDENTIALS",
@@ -285,6 +295,11 @@ Inside that workspace:
    `CognitiveServicesManagementClient` from `azure.mgmt.cognitiveservices`,
    `MonitorManagementClient` from `azure.mgmt.monitor`, and
    `AuthorizationManagementClient` from `azure.mgmt.authorization`.
+   Before importing/initializing telemetry, also assert the verified SDK cohort:
+   `azure-monitor-opentelemetry==1.8.10` and
+   `azure-monitor-opentelemetry-exporter==1.0.0b57` using
+   `importlib.metadata.version`. If resolution differs, STOP for offline
+   verification of the two supported opt-outs, not a live discovery run.
    These are offline local prerequisite checks, not Azure health proof,
 4. install `azure-identity~=1.25.3` in both native/helper environments, verify
    the resolved version and the single credential-name selector support.

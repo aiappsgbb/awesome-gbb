@@ -163,7 +163,7 @@ require_canonical_dependency() {
   fi
 }
 
-suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
+suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 agent_name="ci-smoke-ha-${suffix}"
 work_dir="/tmp/foundry-hosted-agents-${suffix}"
 mkdir -p "$work_dir"
@@ -258,7 +258,7 @@ PY
   verify_azd_value AZURE_AI_MODEL_DEPLOYMENT_NAME
   record "AZD_ENV_CONTRACT_OK"
   record "AZD_DEPLOY_ATTEMPT count=1"
-  azd deploy "$agent_name" --no-prompt
+  "$HOSTED_CI_PYTHON" -I "$repo_root/scripts/hosted-ci-lifecycle.py" deploy "$work_dir" "$agent_name"
 )
 record "AZD_DEPLOY_SUCCEEDED name=${agent_name}"
 echo "$agent_name" > /tmp/foundry-hosted-agents-agent-name
@@ -284,6 +284,7 @@ probe stack, including its direct HTTP transport:
 python3 -m venv /tmp/foundry-hosted-agents-venv
 /tmp/foundry-hosted-agents-venv/bin/pip install --quiet \
   "azure-ai-projects~=2.3.0" \
+  "openai~=2.45.0" \
   "azure-identity~=1.25.3" \
   "httpx~=0.28.1"
 ```
@@ -295,17 +296,11 @@ Use a Bash heredoc to write the following program to
 ```python
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 
 from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import (
-    AgentEndpointConfig,
-    FixedRatioVersionSelectionRule,
-    ProtocolConfiguration,
-    ResponsesProtocolConfiguration,
-    VersionSelector,
-)
 from azure.identity import DefaultAzureCredential
 
 sys.path.insert(0, str(Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
@@ -351,28 +346,18 @@ with DefaultAzureCredential() as credential, AIProjectClient(
     ), f"expected responses protocol 2.0.0, got {protocol_versions}"
     record(f"AGENT_VERSION_ACTIVE name={agent_name} protocol=responses/2.0.0")
 
-    # Stable update_details - not the removed preview patch_agent_details.
-    project.agents.update_details(
-        agent_name=agent_name,
-        agent_endpoint=AgentEndpointConfig(
-            version_selector=VersionSelector(
-                version_selection_rules=[
-                    FixedRatioVersionSelectionRule(
-                        agent_version="1", traffic_percentage=100
-                    )
-                ]
-            ),
-            protocol_configuration=ProtocolConfiguration(
-                responses=ResponsesProtocolConfiguration()
-            ),
-        ),
-    )
+    subprocess.run([os.environ["HOSTED_CI_PYTHON"], "-I",
+                    os.environ["GITHUB_WORKSPACE"] + "/scripts/hosted-ci-lifecycle.py",
+                    "configure-routing"], check=True)
     record(f"UPDATE_DETAILS_OK name={agent_name} version=1 traffic=100")
 
     # Stable GA Responses invoke - no allow_preview, no preview header.
     openai_client = project.get_openai_client(agent_name=agent_name)
     # One request, no retry of authorization errors or uncertain create ACKs.
     openai_client = openai_client.with_options(max_retries=0, timeout=180)
+    subprocess.run([os.environ["HOSTED_CI_PYTHON"], "-I",
+                    os.environ["GITHUB_WORKSPACE"] + "/scripts/hosted-ci-lifecycle.py",
+                    "before-invoke"], check=True)
     response = openai_client.responses.create(
         input="Briefly classify this support request: My invoice doubled this month.",
         stream=False,
@@ -395,84 +380,33 @@ A permission error at any step (`PermissionDenied`, 403) is a hard FAIL -
 do not retry it as if it were a transient cold-start error, and do not
 attempt a manual role assignment to work around it.
 
+Only the runner-owned helper may call `update_details`. It acquires a fresh
+token, reGETs the exact frozen agent/version/definition/identity binding and
+checks remaining approval immediately before the routing write. Routing has
+one durable attempt, separate from the one invocation budget; an uncertain
+routing result blocks invocation and cannot be retried by a new process.
+Do not move this write back into the probe or invoke after a failed helper.
+
 ## Step 4 - best-effort teardown
 
-Read the agent name persisted in Step 2 and perform teardown in a bounded
-5-minute window. A failure or timeout here does NOT affect the PASS marker -
-print one NOTE to stdout and continue to Step 5. The CI resource group is
-periodically pruned of orphaned hosted-agent versions and ACR repositories
-by a separate janitor.
+Do not issue teardown commands from the agent. The mandatory runner-owned
+finalizer executes after this process, on success or failure, within five
+minutes. It rechecks complete version/session inventories and frozen
+definition/image/identity bindings, then deletes exact reconciled native
+objects with `force=False` and supported GET 404 readbacks. UNKNOWN or
+changed ownership forbids deletion and redeployment. No shared RG, identity
+or registry deletion is authorized.
 
-Write the following teardown script to `/tmp/foundry-hosted-agents-teardown.py`:
+Native `azd package`/`publish` image custody is agreed before either runs;
+the immutable image and complete definition are frozen before the single
+`azd deploy --from-package`. This is RECONCILED_OWNERSHIP, not a captured
+CREATE ACK. Missing custody blocks before creation. Images, cache, identities
+and stored response/telemetry data remain under explicit bounded retention,
+not an inferred janitor guarantee.
 
-```python
-#!/usr/bin/env python3
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-evidence = Path("/tmp/foundry-hosted-agents-smoke-evidence")
-agent_name_file = Path("/tmp/foundry-hosted-agents-agent-name")
-
-
-def note(message: str) -> None:
-    print(message)
-    with evidence.open("a", encoding="utf-8") as fp:
-        fp.write(f"{message}\n")
-
-
-if not agent_name_file.exists():
-    note("NOTE teardown skipped: agent name file not found")
-    sys.exit(0)
-
-agent_name = agent_name_file.read_text(encoding="utf-8").strip()
-
-# Best-effort agent delete using stable SDK with force=True.
-try:
-    from azure.ai.projects import AIProjectClient
-    from azure.identity import DefaultAzureCredential
-
-    with DefaultAzureCredential() as credential, AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
-    ) as project:
-        project.agents.delete(agent_name=agent_name, force=True)
-        note(f"AGENT_DELETED name={agent_name}")
-except Exception as exc:  # noqa: BLE001 - teardown is best-effort
-    note(f"NOTE agent delete best-effort failure: {exc}")
-
-# Best-effort ACR repository delete. ACR_LOGIN_SERVER was required above for
-# deploy-time AZURE_CONTAINER_REGISTRY_ENDPOINT and is reused here only to
-# derive the registry name; deletion itself remains best-effort.
-acr_login_server = os.environ.get("ACR_LOGIN_SERVER", "").strip()
-if not acr_login_server:
-    note("NOTE ACR repository cleanup skipped: ACR_LOGIN_SERVER not set")
-else:
-    try:
-        acr_name = acr_login_server.split(".")[0]
-        result = subprocess.run(
-            ["az", "acr", "repository", "delete",
-             "--name", acr_name,
-             "--repository", agent_name,
-             "--yes"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            note(f"ACR_REPO_DELETED name={agent_name}")
-        else:
-            note(f"NOTE ACR repository delete best-effort failure: {result.stderr.strip()}")
-    except Exception as exc:  # noqa: BLE001 - teardown is best-effort
-        note(f"NOTE ACR repository delete best-effort failure: {exc}")
-```
-
-Then run it with a 5-minute cap:
-
-```bash
-timeout 300 /tmp/foundry-hosted-agents-venv/bin/python3 /tmp/foundry-hosted-agents-teardown.py \
-  || echo "NOTE best-effort teardown exceeded 5-minute cap or encountered an error; CI janitor will prune orphaned resources"
-```
+Functional PASS is unchanged by cleanup failure. Only the finalizer's
+separate encrypted inventory records cleanup disposition; neither a marker
+nor `always()` proves absence after cancellation or runner loss.
 
 ## Step 5 - Marker contract
 
@@ -494,9 +428,9 @@ required_patterns = (
     r"CANONICAL_PYPROJECT_OK",
     r"AZD_ENV_CONTRACT_OK",
     r"AZD_DEPLOY_ATTEMPT count=1",
-    r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ha-[0-9a-f]{8}",
-    r"AGENT_VERSION_ACTIVE name=ci-smoke-ha-[0-9a-f]{8} protocol=responses/2\.0\.0",
-    r"UPDATE_DETAILS_OK name=ci-smoke-ha-[0-9a-f]{8} version=1 traffic=100",
+    r"AZD_DEPLOY_SUCCEEDED name=ci-smoke-ha-[0-9a-f]{32}",
+    r"AGENT_VERSION_ACTIVE name=ci-smoke-ha-[0-9a-f]{32} protocol=responses/2\.0\.0",
+    r"UPDATE_DETAILS_OK name=ci-smoke-ha-[0-9a-f]{32} version=1 traffic=100",
     r"MODEL_COMPLETION_READBACK_OK",
 )
 for pattern in required_patterns:
@@ -512,10 +446,9 @@ Only after that check succeeds, your final Bash action is:
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-hosted-agents-smoke-result
 ```
 
-If teardown (Step 4) left a `NOTE` line in the evidence
-file, that does NOT block PASS - teardown is best-effort (5-minute cap).
-The CI resource group is periodically pruned of orphaned hosted-agent
-versions and ACR repositories by a separate janitor.
+The runner finalizer has a separate 5-minute budget and cleanup outcome.
+It does not rewrite functional PASS. Unresolved objects remain in encrypted
+custody for the named owner; no janitor or no-orphans guarantee is implied.
 
 If a required step fails, choose exactly one matching command below as your
 final Bash action:

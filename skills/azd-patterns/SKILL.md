@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.6.0"
+  version: "1.7.0"
 ---
 
 # AZD Tips & Patterns
@@ -735,6 +735,47 @@ the bug is array/object-typed values only.
 ---
 
 ## Composable Bicep Module Library
+
+### Standing and per-run Jobs data
+
+[`jobs-standing-data.bicep`](references/bicep/jobs-standing-data.bicep) is an
+owner-only bootstrap for dedicated synthetic CI Blob/Cosmos accounts and one
+database. It disables key authentication, explicitly enables public networking,
+and grants the separately supplied app, worker and runner principals at those
+dedicated scopes. It must not be pointed at shared/private data accounts.
+Apply through an approved azd composition, then verify the actual networking
+and data-plane access: policy may override the requested public posture.
+
+[`jobs-run-data.bicep`](references/bicep/jobs-run-data.bicep) creates only one
+control container and two private Blob containers in those **existing**
+accounts/database, with no RBAC writes. The Jobs opt-in CI composition uses
+this module in its single azd provision and records native deployment
+operations for exact ownership. Neither module authorizes shared deletions.
+The app and worker UAMIs must be distinct for this contract; the general
+shared-UAMI guidance is not applicable to this isolation boundary.
+
+[`jobs-data-perimeter.bicep`](references/bicep/jobs-data-perimeter.bicep) is an
+explicit owner-only alternative when governance requires
+`SecuredByPerimeter`. It creates one dedicated NSP/profile, one inbound
+subscription rule and exactly two Enforced associations (the new Storage and
+Cosmos accounts). It grants no data permissions, public-IP wildcard or outbound
+allowance. Subscription network admission is broader than an individual
+identity; exact data RBAC remains mandatory.
+
+The Jobs standing composition uses two owner-reviewed azd phases:
+`networkStage=associate` keeps both accounts Disabled, adds the required
+Cosmos system-assigned identity, then creates the associations;
+`networkStage=enforce` changes both accounts to SecuredByPerimeter **only after
+the owner verifies those exact associations**. Association creation follows
+the accounts, so no account/association dependency cycle exists. Do not run
+the enforce phase first or use an exemption/Ignore tag to bypass governance.
+`networkStage=public` remains the original opt-in bootstrap default; ordinary
+consumer templates are unchanged. The compiler checks the supported
+[Storage 2025-01-01](https://learn.microsoft.com/azure/templates/microsoft.storage/2025-01-01/storageaccounts),
+[Cosmos 2025-04-15](https://learn.microsoft.com/azure/templates/microsoft.documentdb/2025-04-15/databaseaccounts)
+and [NSP 2024-07-01 association](https://learn.microsoft.com/azure/templates/microsoft.network/2024-07-01/networksecurityperimeters/resourceassociations)
+shapes. Compilation is not proof of runner-UAMI federated access: live
+account-state, Enforced-association and Blob/Cosmos reads must still pass.
 
 ### Private network composition
 

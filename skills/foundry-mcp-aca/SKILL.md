@@ -14,7 +14,7 @@ description: >
   foundry-mcp-aca-jobs), local MCP development (use mcp-config.json directly),
   general Azure deploy.
 metadata:
-  version: "1.2.6"
+  version: "1.2.7"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP. If the MCP server should hand work to an ACA Job, use [foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md) instead.
 

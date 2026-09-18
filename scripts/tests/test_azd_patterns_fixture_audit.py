@@ -26,7 +26,7 @@ class AzdPatternsFixtureAuditTests(unittest.TestCase):
     def test_skill_version_includes_private_network_modules(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         frontmatter = yaml.safe_load(skill.split("---")[1])
-        self.assertEqual(frontmatter["metadata"]["version"], "1.6.0")
+        self.assertEqual(frontmatter["metadata"]["version"], "1.7.0")
 
 
 if __name__ == "__main__":

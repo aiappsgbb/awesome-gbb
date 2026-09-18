@@ -25,11 +25,19 @@ JOBS = "foundry-mcp-aca-jobs"
 AUTH_ENV = {
     "MCP_AUTH_NETWORK_SMOKE_APPROVED": "yes",
     "MCP_AUTH_SMOKE_ENDPOINT": "https://mcp.example.test/mcp",
+    "MCP_AUTH_SMOKE_ISSUER": "https://login.microsoftonline.com/11111111-2222-4333-8444-555555555555/v2.0",
+    "MCP_AUTH_SMOKE_SCOPE": "api://11111111-2222-4333-8444-555555555555/access",
 }
 JOBS_ENV = {
     "MCP_AUTH_APP_CLIENT_ID": "11111111-2222-4333-8444-555555555555",
     "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.test:443/",
     "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://storage.example.test",
+    **{name: "standing-input" for name in (
+        "MCP_ACA_JOBS_RESOURCE_GROUP_ID", "MCP_ACA_JOBS_ENVIRONMENT_ID",
+        "MCP_ACA_JOBS_APP_IDENTITY_ID", "MCP_ACA_JOBS_WORKER_IDENTITY_ID",
+        "MCP_ACA_JOBS_COSMOS_ACCOUNT_ID", "MCP_ACA_JOBS_COSMOS_DATABASE",
+        "MCP_ACA_JOBS_STORAGE_ACCOUNT_ID", "MCP_ACA_JOBS_CALLER_PRINCIPAL_ID",
+    )},
 }
 CONDITION = (
     "matrix.skill == 'foundry-mcp-auth' || "
@@ -241,7 +249,9 @@ class NativeCiPreflightWorkflowTests(unittest.TestCase):
         for step in consumers:
             for name in AUTH_ENV:
                 self.assertEqual(step["env"].get(name), auth_secret(name))
-            for name in JOBS_ENV:
+            # Standing scope is exported by the runner-owned setup after validation,
+            # not reloaded from mutable secrets by the agent's initial/retry steps.
+            for name in ("MCP_AUTH_APP_CLIENT_ID", "MCP_ACA_JOBS_COSMOS_ENDPOINT", "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"):
                 self.assertEqual(step["env"].get(name), secret(name))
 
     def test_unrelated_legs_do_not_select_the_gate(self):

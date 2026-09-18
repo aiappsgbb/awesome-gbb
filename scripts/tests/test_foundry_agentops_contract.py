@@ -724,6 +724,8 @@ class FoundryAgentOpsCredentialContractTests(unittest.TestCase):
             "AZURE_TENANT_ID": "approved-tenant",
             "AZURE_SUBSCRIPTION_ID": "approved-subscription",
             "FOUNDRY_PROJECT_ENDPOINT": "https://example.invalid/api/projects/synthetic",
+            "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL": "true",
+            "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
             "AZURE_TOKEN_CREDENTIALS": {
                 "cached-user": "AzureCliCredential", "ci-cli": "AzureCliCredential",
                 "environment": "EnvironmentCredential", "workload": "WorkloadIdentityCredential",
@@ -773,6 +775,60 @@ class FoundryAgentOpsCredentialContractTests(unittest.TestCase):
         self.assertNotEqual(self.check_context("environment", AZURE_CLIENT_SECRET=None).returncode, 0)
         self.assertNotEqual(self.check_context("workload", AZURE_FEDERATED_TOKEN_FILE=None).returncode, 0)
         self.assertNotEqual(self.check_context("invented").returncode, 0)
+
+    def test_all_fixture_routes_require_supported_sdk_optouts(self) -> None:
+        for route in ("cached-user", "ci-cli", "environment", "workload"):
+            for name in ("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+                         "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"):
+                for value in (None, "", "false", "TRUE", "1"):
+                    with self.subTest(route=route, name=name, value=value):
+                        result = self.check_context(route, **{name: value})
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(os.environ.get("AGENTOPS_MONITOR_PYTHON"),
+                         "Set AGENTOPS_MONITOR_PYTHON to the verified Monitor SDK environment")
+    def test_supported_sdk_controls_prevent_side_channel_initialization(self) -> None:
+        code = '''
+from importlib.metadata import version
+import os
+import socket
+from unittest.mock import patch
+
+assert version("azure-monitor-opentelemetry") == "1.8.10"
+assert version("azure-monitor-opentelemetry-exporter") == "1.0.0b57"
+with patch.object(socket.socket, "connect", side_effect=AssertionError("Network forbidden")):
+    from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
+    from azure.monitor.opentelemetry.exporter._configuration import _state as configuration
+    from azure.monitor.opentelemetry.exporter.statsbeat import _state as statsbeat
+    with patch("azure.monitor.opentelemetry.exporter._configuration._ConfigurationManager") as manager, \\
+         patch("azure.monitor.opentelemetry.exporter.statsbeat._statsbeat.collect_statsbeat_metrics") as collect:
+        assert statsbeat.is_statsbeat_enabled() is False
+        assert configuration.get_configuration_manager() is None
+        exporter = AzureMonitorTraceExporter(
+            connection_string="InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://example.invalid/",
+            disable_offline_storage=True,
+        )
+        assert exporter._endpoint == "https://example.invalid/"
+        manager.assert_not_called()
+        collect.assert_not_called()
+        exporter.shutdown()
+        # Controls change the upstream initialization decision, not the main exporter.
+        del os.environ["APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"]
+        del os.environ["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"]
+        assert statsbeat.is_statsbeat_enabled() is True
+        assert configuration.get_configuration_manager() is manager.return_value
+        manager.assert_called_once()
+print("SUPPORTED_SDK_PROCESS_CONTROLS=PASS OFFLINE")
+'''
+        result = subprocess.run(
+            [os.environ["AGENTOPS_MONITOR_PYTHON"], "-I", "-c", code],
+            env={"PATH": os.defpath, "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL": "true",
+                 "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true"},
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "SUPPORTED_SDK_PROCESS_CONTROLS=PASS OFFLINE\n")
 
 
 class FoundryAgentOpsDoctorContractTests(unittest.TestCase):
@@ -1011,7 +1067,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertEqual(entry["version"], plugin["version"])
         self.assertEqual(marketplace["metadata"]["version"], plugin["version"])
         self.assertEqual(plugin["version"], "4.33.0")
-        self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.0.0")
+        self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.1.1")
 
     def test_manifest_counts_match_discovered_skills(self) -> None:
         count = len(list((ROOT / "skills").glob("*/SKILL.md")))

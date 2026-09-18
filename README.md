@@ -146,7 +146,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-mcp-aca-jobs**](skills/foundry-mcp-aca-jobs/) | Expose durable MCP tools backed by pre-provisioned ACA Jobs — SEP-2663 Tasks, immediate fallback tools, Cosmos idempotency, managed-identity callbacks, and one immutable image with separate server/worker entrypoints. |
 | [**foundry-mcp-auth**](skills/foundry-mcp-auth/) | **Unreleased candidate:** custom Entra OAuth recipe, strict resource-server policy and safe user receipts. Three of four paths verified for one user; see [validation notes](docs/maintenance/foundry-mcp-auth-validation.md) for evidence and remaining gates. |
 | [**foundry-evals**](skills/foundry-evals/) | Evaluate agents through supported agent-target runs or an explicit invoke+score fallback with real captured responses. Includes bounded polling, per-item scores, configurable judges and corrected citation URL checks, while preserving enriched tool transcripts and the last-run/EVAL-201 integration. |
-| [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.0.0** (merged source; readiness not certified). Review Doctor diagnostics, release evidence, regression baselines, and workflow ownership; its owner-authorized encrypted Doctor diagnostic is not full-matrix acceptance and never uploads raw output or an operator private key. |
+| [**foundry-agentops**](skills/foundry-agentops/) | Adopt native Azure AgentOps **0.14.0** for one existing agent — skill **1.1.1** (readiness not certified). Review Doctor diagnostics, release evidence, regression baselines, and exact-run owner authorization for main/scheduled CI; its owner-authorized encrypted Doctor diagnostic is not full-matrix acceptance and never uploads raw output or an operator private key. |
 | [**foundry-iq**](skills/foundry-iq/) | Enterprise RAG with Foundry IQ — Azure AI Search Knowledge Bases, agentic retrieval, multi-hop reasoning, citation-backed responses, **hosted-agent runtime identity callout** + **7-item bootstrap hardening checklist** (no-`az rest`-uploads, fail-fast, key sanitization, 32k-byte chunking, RBAC propagation wait, post-upload count verify, idempotent recovery) |
 | [**foundry-doc-vision-speech**](skills/foundry-doc-vision-speech/) | Wire vision (gpt-5.4 family), Document Intelligence v4, and Azure Speech (STT/TTS) into a hosted agent — MCP and native Toolbox patterns + RBAC matrix |
 | [**foundry-observability**](skills/foundry-observability/) | End-to-end App Insights + Log Analytics + OpenTelemetry across hosted agents, MCP servers, ACA jobs, bot, workspace — **closes the silent-telemetry gap** where `azd up` returns 0 but AppIn stays empty |
@@ -266,7 +266,7 @@ gh skill install aiappsgbb/awesome-gbb <skill-name>
 
 ### Per-agent AgentOps adoption
 
-Use [`foundry-agentops`](skills/foundry-agentops/SKILL.md) (skill 1.0.0,
+Use [`foundry-agentops`](skills/foundry-agentops/SKILL.md) (skill 1.1.1,
 merged source with pending readiness gates) for the adoption and release-evidence workflow for **one
 already deployed agent**, using exactly `agentops-accelerator==0.14.0`.
 Select its agent root and approved deployment context, review evaluation results

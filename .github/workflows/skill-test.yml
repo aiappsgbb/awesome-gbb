@@ -24,8 +24,13 @@ on:
       - ".github/ci-shared-preamble.md"
       - "scripts/build-test-matrix.py"
       - "scripts/resolve-foundry-project.py"
+      - "scripts/native-ci-preflight.py"
+      - "scripts/mcp-auth-network-smoke.py"
+      - "scripts/mcp-aca-ci-lifecycle.py"
+      - "scripts/hosted-ci-lifecycle.py"
       - "scripts/agentops-ci-*.py"
       - "scripts/setup-agentops-age.sh"
+      - "scripts/jobs-ci-lifecycle.py"
       - "plugin.json"
       - ".github/plugin/**"
   push:
@@ -282,12 +287,29 @@ jobs:
           NATIVE_SMOKE_SKILL: ${{ matrix.skill }}
           MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED }}
           MCP_AUTH_SMOKE_ENDPOINT: ${{ secrets.MCP_AUTH_SMOKE_ENDPOINT }}
+          MCP_AUTH_SMOKE_ISSUER: ${{ secrets.MCP_AUTH_SMOKE_ISSUER }}
+          MCP_AUTH_SMOKE_SCOPE: ${{ secrets.MCP_AUTH_SMOKE_SCOPE }}
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
           MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          MCP_ACA_JOBS_RESOURCE_GROUP_ID: ${{ secrets.MCP_ACA_JOBS_RESOURCE_GROUP_ID }}
+          MCP_ACA_JOBS_ENVIRONMENT_ID: ${{ secrets.MCP_ACA_JOBS_ENVIRONMENT_ID }}
+          MCP_ACA_JOBS_APP_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_APP_IDENTITY_ID }}
+          MCP_ACA_JOBS_WORKER_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_WORKER_IDENTITY_ID }}
+          MCP_ACA_JOBS_COSMOS_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_COSMOS_ACCOUNT_ID }}
+          MCP_ACA_JOBS_COSMOS_DATABASE: ${{ secrets.MCP_ACA_JOBS_COSMOS_DATABASE }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_ID }}
+          MCP_ACA_JOBS_CALLER_PRINCIPAL_ID: ${{ secrets.MCP_ACA_JOBS_CALLER_PRINCIPAL_ID }}
         run: |
           set -euo pipefail
           python3 -I scripts/native-ci-preflight.py "$NATIVE_SMOKE_SKILL"
+
+      - name: Validate AgentOps event authorization before credentials
+        id: agentops-authorization
+        if: matrix.skill == 'foundry-agentops'
+        env:
+          AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
+        run: python3 -I scripts/agentops-ci-preflight.py --check-authorization-only
 
       - name: Isolate AgentOps credential sources
         if: matrix.skill == 'foundry-agentops'
@@ -305,7 +327,28 @@ jobs:
             echo "AZURE_CONFIG_DIR=$ROOT/azure"
             echo "AZD_CONFIG_DIR=$ROOT/azd"
             echo "AZURE_TOKEN_CREDENTIALS=AzureCliCredential"
+            echo "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=true"
+            echo "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED=true"
           } >> "$GITHUB_ENV"
+
+      - name: Prepare exact MCP ACA lifecycle and encrypted custody
+        id: mcp-aca-lifecycle
+        if: matrix.skill == 'foundry-mcp-aca'
+        env:
+          MCP_ACA_CI_LIFECYCLE_APPROVAL_JSON: ${{ secrets.MCP_ACA_CI_LIFECYCLE_APPROVAL_JSON }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/mcp-aca-ci-lifecycle.py check
+          scripts/setup-agentops-age.sh "$RUNNER_TEMP/mcp-aca-age" >> "$GITHUB_ENV"
+          # Use the installer's two fixed output names, never source approval JSON.
+          AGENTOPS_CI_AGE_BIN="$RUNNER_TEMP/mcp-aca-age/age"
+          AGENTOPS_CI_AGE_SHA256=$(sha256sum "$AGENTOPS_CI_AGE_BIN" | cut -d' ' -f1)
+          export AGENTOPS_CI_AGE_BIN AGENTOPS_CI_AGE_SHA256
+          python3 -I scripts/mcp-aca-ci-lifecycle.py init
 
       - name: Isolate Harness Azure CLI credentials
         id: harness-auth
@@ -377,6 +420,8 @@ jobs:
         # to v2.3.0 (latest stable as of 2026-05) keeps drift visible.
         # See AGENTS.md § 9.7 Pattern 15.
         uses: Azure/setup-azd@v2.3.0
+        with:
+          version: ${{ (matrix.skill == 'foundry-hosted-agents' || matrix.skill == 'ghcp-hosted-agents' || matrix.skill == 'foundry-mcp-aca-jobs') && '1.34.1' || 'stable' }}
 
       - name: Install uv
         if: matrix.skill != 'agent-framework-harness'
@@ -385,6 +430,10 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           version: "0.12.6"
+
+      - name: Pin Hosted native package and prebuilt deployment extension
+        if: matrix.skill == 'foundry-hosted-agents' || matrix.skill == 'ghcp-hosted-agents' || matrix.skill == 'foundry-mcp-aca-jobs'
+        run: azd ext install azure.ai.agents --version 1.0.0-beta.14
 
       - name: Install awesome-gbb plugin from this checkout
         if: matrix.skill != 'agent-framework-harness'
@@ -443,6 +492,81 @@ jobs:
 
           echo "::add-mask::$project_id"
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Hosted lifecycle and encrypted custody
+        id: hosted-lifecycle
+        if: matrix.skill == 'foundry-hosted-agents' || matrix.skill == 'ghcp-hosted-agents'
+        env:
+          HOSTED_CI_SKILL: ${{ matrix.skill }}
+          HOSTED_CI_LIFECYCLE_APPROVAL_JSON: ${{ secrets[matrix.skill == 'ghcp-hosted-agents' && 'GHCP_CI_LIFECYCLE_APPROVAL_JSON' || 'HOSTED_CI_LIFECYCLE_APPROVAL_JSON'] }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I scripts/hosted-ci-lifecycle.py check
+          scripts/setup-agentops-age.sh "$RUNNER_TEMP/hosted-age" >> "$GITHUB_ENV"
+          AGENTOPS_CI_AGE_BIN="$RUNNER_TEMP/hosted-age/age"
+          AGENTOPS_CI_AGE_SHA256=$(sha256sum "$AGENTOPS_CI_AGE_BIN" | cut -d' ' -f1)
+          export AGENTOPS_CI_AGE_BIN AGENTOPS_CI_AGE_SHA256
+          python3 -I scripts/hosted-ci-lifecycle.py init
+          python3 -m venv "$RUNNER_TEMP/hosted-lifecycle-runtime"
+          "$RUNNER_TEMP/hosted-lifecycle-runtime/bin/python" -m pip install --quiet \
+            'azure-ai-projects~=2.3.0' 'openai~=2.45.0' 'azure-identity~=1.25.3' 'PyYAML~=6.0.2'
+          echo "HOSTED_CI_SKILL=$HOSTED_CI_SKILL" >> "$GITHUB_ENV"
+          echo "HOSTED_CI_PYTHON=$RUNNER_TEMP/hosted-lifecycle-runtime/bin/python" >> "$GITHUB_ENV"
+
+      - name: Prepare Jobs lifecycle and encrypted custody
+        id: jobs-lifecycle
+        if: matrix.skill == 'foundry-mcp-aca-jobs'
+        env:
+          MCP_ACA_JOBS_CI_LIFECYCLE_APPROVAL_JSON: ${{ secrets.MCP_ACA_JOBS_CI_LIFECYCLE_APPROVAL_JSON }}
+          MCP_ACA_JOBS_NETWORK_PERIMETER_ID: ${{ secrets.MCP_ACA_JOBS_NETWORK_PERIMETER_ID }}
+          MCP_ACA_JOBS_RESOURCE_GROUP_ID: ${{ secrets.MCP_ACA_JOBS_RESOURCE_GROUP_ID }}
+          MCP_ACA_JOBS_ENVIRONMENT_ID: ${{ secrets.MCP_ACA_JOBS_ENVIRONMENT_ID }}
+          MCP_ACA_JOBS_APP_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_APP_IDENTITY_ID }}
+          MCP_ACA_JOBS_WORKER_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_WORKER_IDENTITY_ID }}
+          MCP_ACA_JOBS_COSMOS_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_COSMOS_ACCOUNT_ID }}
+          MCP_ACA_JOBS_COSMOS_DATABASE: ${{ secrets.MCP_ACA_JOBS_COSMOS_DATABASE }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_ID }}
+          MCP_ACA_JOBS_CALLER_PRINCIPAL_ID: ${{ secrets.MCP_ACA_JOBS_CALLER_PRINCIPAL_ID }}
+          MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I scripts/jobs-ci-lifecycle.py check
+          scripts/setup-agentops-age.sh "$RUNNER_TEMP/jobs-age" >> "$GITHUB_ENV"
+          AGENTOPS_CI_AGE_BIN="$RUNNER_TEMP/jobs-age/age"
+          AGENTOPS_CI_AGE_SHA256=$(sha256sum "$AGENTOPS_CI_AGE_BIN" | cut -d' ' -f1)
+          export AGENTOPS_CI_AGE_BIN AGENTOPS_CI_AGE_SHA256
+          python3 -I scripts/jobs-ci-lifecycle.py init
+          uv venv "$RUNNER_TEMP/jobs-runtime"
+          uv pip install --python "$RUNNER_TEMP/jobs-runtime/bin/python" \
+            -r skills/foundry-mcp-aca-jobs/templates/pyproject.toml \
+            --group skills/foundry-mcp-aca-jobs/templates/pyproject.toml:fixture \
+            'openai~=2.45.0' 'PyYAML~=6.0.2'
+          TRUSTED=$(mktemp -d "$RUNNER_TEMP/jobs-runner.XXXXXXXX")
+          for SCRIPT in jobs-ci-lifecycle.py hosted-ci-lifecycle.py mcp-aca-ci-lifecycle.py; do
+            env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS=1 \
+              git show "$GITHUB_SHA:scripts/$SCRIPT" > "$TRUSTED/$SCRIPT"
+          done
+          echo "JOBS_CI_PYTHON=$RUNNER_TEMP/jobs-runtime/bin/python" >> "$GITHUB_ENV"
+          echo "JOBS_CI_HELPER=$TRUSTED/jobs-ci-lifecycle.py" >> "$GITHUB_ENV"
+          python3 -I scripts/jobs-ci-lifecycle.py export-env >> "$GITHUB_ENV"
+          azd auth login --federated-credential-provider github \
+            --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID"
 
       - name: Validate dedicated AgentOps CI authorization
         id: agentops-preflight
@@ -532,6 +656,8 @@ jobs:
           # Owner-supplied reachability inputs, never inferred from the Jobs app.
           MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED || '' }}
           MCP_AUTH_SMOKE_ENDPOINT: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ENDPOINT || '' }}
+          MCP_AUTH_SMOKE_ISSUER: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ISSUER || '' }}
+          MCP_AUTH_SMOKE_SCOPE: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}
           # Required only for the foundry-mcp-aca-jobs fixture; other matrix
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
@@ -879,6 +1005,8 @@ jobs:
           # Owner-supplied reachability inputs, never inferred from the Jobs app.
           MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED || '' }}
           MCP_AUTH_SMOKE_ENDPOINT: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ENDPOINT || '' }}
+          MCP_AUTH_SMOKE_ISSUER: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ISSUER || '' }}
+          MCP_AUTH_SMOKE_SCOPE: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}
           # Required only for the foundry-mcp-aca-jobs fixture; other matrix
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
@@ -895,6 +1023,18 @@ jobs:
         run: |
           set -euo pipefail
           SKILL="${{ matrix.skill }}"
+          if [ "$SKILL" = "foundry-mcp-aca-jobs" ]; then
+            echo "JOBS_CI_LIFECYCLE=FAIL RETRY_REQUIRES_INVENTORY_RECONCILIATION"
+            exit 1
+          fi
+          if [ "$SKILL" = "foundry-mcp-aca" ]; then
+            echo "MCP_ACA_LIFECYCLE=FAIL RETRY_REQUIRES_INVENTORY_RECONCILIATION"
+            exit 1
+          fi
+          if [ "$SKILL" = "foundry-hosted-agents" ] || [ "$SKILL" = "ghcp-hosted-agents" ]; then
+            echo "HOSTED_CI_LIFECYCLE=FAIL RETRY_REQUIRES_INVENTORY_RECONCILIATION"
+            exit 1
+          fi
           PROMPT="skills/${SKILL}/test-fixture/consumer_prompt.md"
           TRANSCRIPT="/tmp/${SKILL}-transcript.log"
           RETRY_TRANSCRIPT="/tmp/${SKILL}-retry.log"
@@ -1157,6 +1297,82 @@ jobs:
             echo "non-transient failure — not retrying"
             exit 1
           fi
+
+      - name: Finalize exact MCP ACA app lifecycle
+        if: always() && matrix.skill == 'foundry-mcp-aca' && steps.mcp-aca-lifecycle.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS=1 \
+            git show "$GITHUB_SHA:scripts/mcp-aca-ci-lifecycle.py" | python3 -I - cleanup
+
+      - name: Preserve encrypted MCP ACA inventory
+        if: always() && matrix.skill == 'foundry-mcp-aca'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-aca-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mcp-aca-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}/inventory.age
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Finalize Hosted native objects and exact temporary roles
+        if: always() && (matrix.skill == 'foundry-hosted-agents' || matrix.skill == 'ghcp-hosted-agents') && steps.hosted-lifecycle.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_AI_PROJECT_ID: ${{ steps.resolve-foundry-project.outputs.project_id }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          umask 077
+          TRUSTED=$(mktemp -d "$RUNNER_TEMP/hosted-finalizer.XXXXXXXX")
+          for SCRIPT in hosted-ci-lifecycle.py mcp-aca-ci-lifecycle.py; do
+            env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS=1 \
+              git show "$GITHUB_SHA:scripts/$SCRIPT" > "$TRUSTED/$SCRIPT"
+          done
+          "$HOSTED_CI_PYTHON" -I "$TRUSTED/hosted-ci-lifecycle.py" cleanup
+
+      - name: Preserve encrypted Hosted lifecycle inventory
+        if: always() && (matrix.skill == 'foundry-hosted-agents' || matrix.skill == 'ghcp-hosted-agents')
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-lifecycle-${{ matrix.skill }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosted-lifecycle-${{ matrix.skill }}-${{ github.run_id }}-${{ github.run_attempt }}/inventory.age
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Finalize exact Jobs run resources
+        if: always() && matrix.skill == 'foundry-mcp-aca-jobs' && steps.jobs-lifecycle.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          umask 077
+          TRUSTED=$(mktemp -d "$RUNNER_TEMP/jobs-finalizer.XXXXXXXX")
+          for SCRIPT in jobs-ci-lifecycle.py hosted-ci-lifecycle.py mcp-aca-ci-lifecycle.py; do
+            env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS=1 \
+              git show "$GITHUB_SHA:scripts/$SCRIPT" > "$TRUSTED/$SCRIPT"
+          done
+          "$JOBS_CI_PYTHON" -I "$TRUSTED/jobs-ci-lifecycle.py" cleanup
+
+      - name: Preserve encrypted Jobs lifecycle inventory
+        if: always() && matrix.skill == 'foundry-mcp-aca-jobs'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobs-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jobs-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}/inventory.age
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Post-hoc audit — did the agent reach for the skill?
         if: always()

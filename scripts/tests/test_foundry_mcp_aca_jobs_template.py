@@ -386,7 +386,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.4.3")
+        self.assertEqual(skill_fm["metadata"]["version"], "1.5.1")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -403,6 +403,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 (2, "Callback contract"),
                 (2, "Security and least-privilege RBAC"),
                 (2, "Deploy with azd"),
+                (3, "Opt-in standing CI composition"),
                 (2, "Operate and observe"),
                 (2, "Stable errors"),
                 (2, "Test the implementation"),
@@ -550,7 +551,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs:", skill_deps)
         self.assertIn("- foundry-mcp-aca", skill_deps)
         self.assertIn("foundry-mcp-aca-jobs", producer)
-        self.assertIn("1.2.6", producer)
+        self.assertIn("1.2.7", producer)
         self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
         self.assertEqual(plugin["version"], "4.33.0")
         self.assertEqual(marketplace["metadata"]["version"], "4.33.0")
@@ -789,25 +790,10 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         )
 
     def test_relocated_template_layout_compiles_with_canonical_job_module(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn(
-            'PROJECT_DIR="$SCRATCH_ROOT/skills/foundry-mcp-aca-jobs/templates"',
-            fixture,
-        )
-        self.assertIn(
-            'CANONICAL_JOB_DIR="$SCRATCH_ROOT/skills/azd-patterns/references/bicep"',
-            fixture,
-        )
-        self.assertIn(
-            'cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-job.bicep"',
-            fixture,
-        )
-        self.assertIn(
-            'cp skills/foundry-mcp-aca-jobs/templates/bicepconfig.json "$PROJECT_DIR/bicepconfig.json"',
-            fixture,
-        )
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        self.assertIn('"scaffold" / SKILL / "templates"', helper)
+        self.assertIn('"skills/azd-patterns/references/bicep/aca-job.bicep"', helper)
+        self.assertIn('git_file(ledger, relative)', helper)
 
         scratch = ROOT / ".scratch"
         scratch.mkdir(exist_ok=True)
@@ -952,13 +938,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
-        self.assertIn(
-            'document["parameters"]["resourceGroupTags"]["value"]',
-            fixture,
-        )
-        self.assertIn('"cleanup": "true"', fixture)
-        self.assertIn('"created-by": "ci-smoke"', fixture)
-        self.assertIn('"ci-smoke-suffix": sys.argv[2]', fixture)
+        self.assertIn("There is no child RG", fixture)
+        self.assertIn("Names are not ownership proof", fixture)
+        self.assertIn("opt-in `ci.bicep`", fixture)
 
     def test_compiled_arm_conditionally_omits_default_empty_resource_group_tags(self) -> None:
         result = subprocess.run(
@@ -1049,104 +1031,52 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn("az role assignment create", prerequisite)
 
     def test_agent_smokes_grade_actual_mcp_call_outputs(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual(
-            fixture.count(
-                'getattr(item, "type", None) == "mcp_call"'
-            ),
-            2,
-        )
-        call_sets = re.findall(
-            r'assert set\(calls_by_name\) == \{(.*?)\}, f"required MCP calls missing',
-            fixture,
-            re.S,
-        )
-        self.assertEqual(len(call_sets), 2)
-        for call_set in call_sets:
-            self.assertIn('"start_aca_job"', call_set)
-            self.assertIn('"get_aca_job_status"', call_set)
-        self.assertEqual(
-            fixture.count('getattr(item, "error", None) in ('),
-            2,
-        )
-        self.assertEqual(
-            fixture.count("assert marker in str("),
-            2,
-        )
-        self.assertNotIn('assert "start_aca_job" in evidence', fixture)
-        self.assertNotIn('assert "get_aca_job_status" in evidence', fixture)
+        probes = (SKILL / "test-fixture/probes.py").read_text()
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        self.assertIn('getattr(item, "type", None) == "mcp_call"', probes)
+        self.assertIn('assert set(names) == {"start_aca_job", "get_aca_job_status"}', probes)
+        self.assertIn('assert getattr(item, "error", None) in (None, "")', probes)
+        self.assertIn('assert outputs["get_aca_job_status"]["taskId"] == start["taskId"]', probes)
+        self.assertIn('"inputRef": expected_input', probes)
+        self.assertIn('probes.invoke(ledger, module, "prompt")', helper)
+        self.assertIn('probes.invoke(ledger, module, "hosted")', helper)
+
 
     def test_legacy_fallback_reads_public_status_field(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        fallback = fixture.split("    fallback = dict(request)", 1)[1].split(
-            "    callback_url = (", 1
-        )[0]
+        probes = (SKILL / "test-fixture/probes.py").read_text()
+        self.assertEqual(probes.count('cancelled["status"]'), 2)
+        self.assertNotIn('cancelled["lifecycleState"]', probes)
+        self.assertIn('mode="legacy", extensions=[]', probes)
 
-        self.assertEqual(fallback.count('cancelled["status"]'), 2)
-        self.assertNotIn('cancelled["lifecycleState"]', fallback)
 
     def test_agent_smoke_input_refs_are_uploaded_before_invocation(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        upload_step = fixture.split(
-            "## Step 4 — task-aware and fallback client smoke", 1
-        )[1].split("## Step 5 — prompt agent smoke", 1)[0]
-        self.assertIn("agent_input_refs = (", upload_step)
-        for marker in (
-            "PROMPT_AGENT_MCP_PASS",
-            "HOSTED_AGENT_MCP_PASS",
-        ):
-            self.assertIn(
-                f'f"{{storage_url}}/{{output_container}}/inputs/{marker}-"'
-                "\n"
-                "        f\"{os.environ['SUFFIX']}.json\"",
-                upload_step,
-            )
-        self.assertIn("for agent_input_ref in agent_input_refs:", upload_step)
-        self.assertIn(
-            "agent_input_blob = BlobClient.from_blob_url(",
-            upload_step,
-        )
-        self.assertIn(
-            "await agent_input_blob.upload_blob(",
-            upload_step,
-        )
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        smoke = helper.split("def smoke(", 1)[1]
+        self.assertLess(smoke.index("upload_inputs("), smoke.index("probes.invoke("))
+        for marker in ("PROMPT_AGENT_MCP_PASS", "HOSTED_AGENT_MCP_PASS"):
+            self.assertIn(marker, helper)
+        self.assertIn('overwrite=False', helper)
+        self.assertIn('MatchConditions.IfMissing', helper)
+        self.assertIn('entry.update(state="OWNED", etag=ack["etag"])', helper)
+
 
     def test_agent_smoke_retries_report_redacted_last_exception(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual(fixture.count("last_error = None"), 2)
-        self.assertEqual(
-            fixture.count("last_error_repr = redact_error(repr(last_error))"),
-            2,
-        )
-        self.assertEqual(
-            fixture.count('assert response is not None, f"invoke never succeeded: {last_error_repr}"'),
-            2,
-        )
-        self.assertEqual(fixture.count("last_error={last_error_repr}"), 6)
-        self.assertIn("<redacted-bearer>", fixture)
-        self.assertIn("<redacted-jwt>", fixture)
+        probes = (SKILL / "test-fixture/probes.py").read_text()
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        self.assertIn("max_retries=0", probes)
+        self.assertEqual(probes.count("client.responses.create("), 1)
+        self.assertNotIn("repr(error)", helper)
+        self.assertIn('"INPUT_OR_EXECUTION"', helper)
+        self.assertIn('ledger.data["blocked"] = True', helper)
+
 
     def test_fixture_captures_and_checks_exact_deployment_verifier_markers(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('verifier_output="$(', fixture)
-        self.assertIn(
-            'grep -Fxq "SHARED_IMAGE_DIGEST_MATCH" <<<"$verifier_output"',
-            fixture,
-        )
-        self.assertIn(
-            'grep -Fxq "ENTRYPOINTS_MATCH" <<<"$verifier_output"',
-            fixture,
-        )
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        self.assertIn('"SHARED_IMAGE_DIGEST_MATCH" in verified', helper)
+        self.assertIn('"ENTRYPOINTS_MATCH" in verified', helper)
+        self.assertIn('verify_deployment.py', helper)
+        self.assertIn('"EXPECTED_IMAGE_DIGEST": image', helper)
+
 
     def test_static_mcp_bearers_are_marked_smoke_only(self) -> None:
         fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
@@ -1235,474 +1165,66 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 )
 
     def test_live_fixture_contract_requires_deterministic_bash_only_azure_smoke(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(encoding="utf-8")
-        normalized = " ".join(fixture.split())
-        marker = "/tmp/foundry-mcp-aca-jobs-smoke-result"
-        shared_rg = "rg-awesome-gbb-ci"
-
-        self.assertIn("## Step -1 — acknowledge the skill contract", fixture)
+        fixture = (SKILL / "test-fixture/consumer_prompt.md").read_text()
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        probes = (SKILL / "test-fixture/probes.py").read_text()
         self.assertIn('echo "skills/foundry-mcp-aca-jobs/SKILL.md"', fixture)
-        self.assertIn("Do NOT browse the repository.", fixture)
-        self.assertIn("never invoke `copilot` recursively", fixture)
-        self.assertFalse((SKILL / "test-fixture" / "run_e2e.py").exists())
-        self.assertIn(marker, fixture)
-        self.assertNotIn(".foundry-mcp-aca-jobs-smoke-result", fixture)
-        self.assertNotIn("do not use `/tmp`", fixture.lower())
-        self.assertIn("## Step 0 — auth context", fixture)
-        required_env = (
-            "AZURE_CLIENT_ID",
-            "AZURE_TENANT_ID",
-            "AZURE_SUBSCRIPTION_ID",
-            "ACR_LOGIN_SERVER",
-            "FOUNDRY_PROJECT_ENDPOINT",
-            "AZURE_AI_PROJECT_ID",
-            "FOUNDRY_MODEL_DEPLOYMENT",
-            "MCP_AUTH_APP_CLIENT_ID",
-            "MCP_ACA_JOBS_COSMOS_ENDPOINT",
-            "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL",
-        )
-        for variable in required_env:
-            self.assertIn(
-                f"SMOKE_RESULT=FAIL missing {variable}",
-                fixture,
-                f"{variable} hard precondition needs a deterministic FAIL marker",
-            )
-        self.assertIn("brownfield Cosmos CI mode", normalized)
-        self.assertIn("az account show --output table || echo", fixture)
-        self.assertIn(
-            "azd auth login \\\n  --federated-credential-provider github \\\n  --client-id \"$AZURE_CLIENT_ID\" \\\n  --tenant-id \"$AZURE_TENANT_ID\"",
-            fixture,
-        )
-        self.assertIn("SMOKE_RESULT=FAIL azd auth login failed", fixture)
-        self.assertIn("## Step 1 — goal and constraints", fixture)
-        self.assertIn(".scratch/ci-smoke-mcp-jobs-", fixture)
-        self.assertIn("uuidgen", fixture)
-        self.assertIn("cut -c1-8", fixture)
-        self.assertIn('CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"', fixture)
-        self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
-        self.assertIn(
-            'document["parameters"]["resourceGroupTags"]["value"]',
-            fixture,
-        )
-        self.assertIn('AZURE_RESOURCE_GROUP="$CHILD_RG"', fixture)
-        self.assertIn('MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="rg-awesome-gbb-ci"', fixture)
-        self.assertNotIn(f'AZURE_RESOURCE_GROUP="{shared_rg}"', fixture)
-        self.assertNotRegex(fixture, rf"azd (?:up|deploy|down)[^\n]*{shared_rg}")
-        self.assertIn("No repository writes outside `.scratch/`.", fixture)
-        self.assertIn("`uv`", fixture)
-        self.assertIn("uv sync --frozen --group fixture", fixture)
-        self.assertIn("uv run --frozen --group fixture python - <<'PY'", fixture)
-        self.assertNotIn("pip install", fixture)
-        self.assertIn("azd ext install microsoft.foundry", fixture)
-        self.assertIn('select(.id == "microsoft.foundry")', fixture)
-        self.assertIn('select(.id == "azure.ai.agents")', fixture)
-        self.assertIn("RBAC_PROVIDER_ACTIONS_MATCH", fixture)
-        self.assertIn(
-            '.name? | select(type == "string") |\n'
-            "     select(ascii_downcase == ($action | ascii_downcase))",
-            fixture,
-        )
-        expected_provider_actions = (
-            "Microsoft.App/jobs/read",
-            "Microsoft.App/jobs/start/action",
-            "Microsoft.App/jobs/execution/read",
-            "Microsoft.App/jobs/executions/read",
-            "Microsoft.App/jobs/stop/execution/action",
-        )
-        provider_loop = fixture.split("for action in \\", 1)[1].split(
-            "echo RBAC_PROVIDER_ACTIONS_MATCH", 1
-        )[0]
-        self.assertEqual(
-            re.findall(r"(?m)^  (Microsoft\.App/\S+)(?: \\)?$", provider_loop),
-            list(expected_provider_actions),
-        )
-        for action in expected_provider_actions:
-            self.assertIn(action, fixture)
-        self.assertIn("SHARED_IMAGE_DIGEST_MATCH", fixture)
-        self.assertIn("ENTRYPOINTS_MATCH", fixture)
-        self.assertIn("from fastmcp_tasks.client import TasksClientExtension", fixture)
-        self.assertIn("from fastmcp_tasks.client import call_tool_task", fixture)
-        self.assertIn("extensions=[TasksClientExtension()]", fixture)
-        self.assertIn("await task.wait(timeout=", fixture)
-        self.assertIn("await task.result()", fixture)
-        self.assertIn("await cancel_task.cancel()", fixture)
-        self.assertIn("auth=access_token", fixture)
-        self.assertIn("extensions=[]", fixture)
-        self.assertIn('mode="legacy"', fixture)
-        self.assertIn("resultType", fixture)
-        self.assertIn("MCP_TASKS_COMPLETED", fixture)
-        self.assertIn("FALLBACK_TOOLS_COMPLETED", fixture)
-        self.assertIn("IDEMPOTENCY_DUPLICATE_SAME_TASK", fixture)
-        self.assertIn("CALLBACK_PAYLOAD_VALID", fixture)
-        self.assertIn("CANCELLATION_TERMINAL", fixture)
-        self.assertIn("from azure.ai.projects.models import MCPTool, PromptAgentDefinition", fixture)
-        self.assertIn("definition=PromptAgentDefinition(", fixture)
-        self.assertIn("MCPTool(", fixture)
-        self.assertIn("authorization=access_token", fixture)
-        self.assertEqual(
-            fixture.count('headers={"Authorization": "Bearer " + access_token}'),
-            1,
-        )
-        self.assertNotIn('headers={"Authorization": f"Bearer {access_token}"}', fixture)
-        self.assertIn("project.agents.create_version(", fixture)
-        self.assertIn("openai.conversations.create()", fixture)
-        self.assertIn("openai.responses.create(", fixture)
-        self.assertIn("project.agents.delete_version(", fixture)
-        self.assertIn("from agent_framework.foundry import FoundryChatClient", fixture)
-        self.assertIn("from azure.identity import DefaultAzureCredential", fixture)
-        self.assertIn(
-            "from azure.identity import DefaultAzureCredential as SyncDefaultAzureCredential",
-            fixture,
-        )
-        self.assertIn(
-            "from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential",
-            fixture,
-        )
-        self.assertIn("token_credential = SyncDefaultAzureCredential()", fixture)
-        self.assertIn("credential=AsyncDefaultAzureCredential()", fixture)
-        self.assertIn("token_credential.get_token(", fixture)
-        self.assertIn('os.environ["MCP_AUTH_AUDIENCE"]', fixture)
-        self.assertIn("client.get_mcp_tool(", fixture)
-        self.assertIn('approval_mode="never_require"', fixture)
-        self.assertIn("ResponsesHostServer", fixture)
-        self.assertNotIn("MCP_BEARER_TOKEN", fixture)
-        self.assertNotRegex(fixture, r"(?m)^[^#\n]*(?:TOKEN|access_token)=[^=\n]*>>.*\\.azure")
-        self.assertIn("PROMPT_AGENT_MCP_PASS", fixture)
-        self.assertIn("HOSTED_AGENT_MCP_PASS", fixture)
-        self.assertIn("exact four fields", normalized)
-        self.assertIn("best-effort targeted cleanup", fixture)
-        self.assertIn("marker-first", normalized)
-        self.assertIn("## Step 2 — deterministic scaffold", fixture)
-        self.assertIn("## Step 3 — provider and build verification", fixture)
-        self.assertIn("## Step 4 — task-aware and fallback client smoke", fixture)
-        self.assertIn("## Step 5 — prompt agent smoke", fixture)
-        self.assertIn("## Step 6 — hosted agent smoke", fixture)
-        self.assertIn("## Step 7 — marker-first teardown", fixture)
-        pass_write = f"printf 'SMOKE_RESULT=PASS\\n' > {marker}"
-        self.assertIn(pass_write, fixture)
-        self.assertIn('rm -rf "$SCRATCH_ROOT"', fixture)
-        self.assertLess(fixture.index(pass_write), fixture.index('rm -rf "$SCRATCH_ROOT"'))
-        self.assertNotIn("az account get-access-token", fixture)
-        self.assertNotIn("az deployment", fixture)
-        self.assertNotIn("az containerapp create", fixture)
+        self.assertIn('"$JOBS_CI_PYTHON" "$JOBS_CI_HELPER" smoke', fixture)
+        self.assertIn("never invoke `copilot` recursively", fixture.lower())
+        self.assertIn('Path("/tmp/foundry-mcp-aca-jobs-smoke-result")', helper)
+        self.assertIn('ledger.data["functional"] = "PASS"', helper)
+        self.assertIn('SMOKE_RESULT=FAIL', helper)
+        for token in ("MCP_TASKS_COMPLETED", "FALLBACK_TOOLS_COMPLETED",
+                      "IDEMPOTENCY_DUPLICATE_SAME_TASK", "CALLBACK_PAYLOAD_VALID",
+                      "CANCELLATION_TERMINAL"):
+            self.assertIn(token, probes)
+        for token in ("await task.wait(", "await task.result()", "await cancel_task.cancel()",
+                      "extensions=[TasksClientExtension()]", 'mode="legacy"', "resultType",
+                      'store=False', "client.responses.create("):
+            self.assertIn(token, probes)
+        self.assertNotIn("conversations.create", probes)
+        self.assertNotIn("force=True", helper)
+        self.assertNotIn("az group delete", helper)
+        for name in ("probes.py", "hosted-container.py"):
+            compile((SKILL / "test-fixture" / name).read_text(), name, "exec")
 
-        python_heredocs = re.findall(
-            r"(?:uv run --frozen --group fixture python -|cat > \"\\$HOSTED_DIR/container\\.py\") <<'PY'\n(.*?)\nPY",
-            fixture,
-            re.S,
-        )
-        self.assertGreaterEqual(len(python_heredocs), 3)
-        for index, source in enumerate(python_heredocs):
-            compile(source, f"<consumer_prompt heredoc {index}>", "exec")
 
     def test_hosted_agent_instance_identity_is_added_to_easy_auth_allowlist(self) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        normalized = " ".join(fixture.split())
-        compact = re.sub(r"\s+", "", fixture)
-        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        auth = helper.split("def authorize_hosted(", 1)[1].split("def before_invoke(", 1)[0]
+        self.assertIn('child.data["binding"]["identity"]["principal_id"]', auth)
+        self.assertIn('policy["allowedPrincipals"]["identities"].append(principal)', auth)
+        self.assertIn('set(policy) == {"allowedPrincipals"}', auth)
+        self.assertIn('hosted.reconcile(child, native)', auth)
+        self.assertIn('read_owned(ledger, arm, "app")', auth)
+        self.assertIn('current["properties"] == original["properties"]', auth)
+        self.assertIn('current["properties"] == expected', auth)
+        self.assertIn('ledger.gate()', auth)
 
-        self.assertIn('print("HOSTED_AGENT_ACTIVE")', fixture)
-        self.assertIn(
-            '--url "${FOUNDRY_PROJECT_ENDPOINT%/}/agents/${HOSTED_NAME}?api-version=v1"',
-            fixture,
-        )
-        self.assertIn("--resource https://ai.azure.com", fixture)
-        self.assertIn("--output json", fixture)
-        self.assertIn(".instance_identity.principal_id", fixture)
-        self.assertIn(".versions.latest.instance_identity.principal_id", fixture)
-        self.assertIn("for attempt in $(seq 1 6); do", fixture)
-        self.assertIn("HOSTED_IDENTITY_LAST_ERROR", fixture)
-        self.assertIn('sleep 10', fixture)
-        self.assertIn('test -n "$HOSTED_PRINCIPAL_ID"', fixture)
-        self.assertIn(
-            'resourceGroups/${CHILD_RG}/providers/Microsoft.App/containerApps/${APP_NAME}/authConfigs/current?api-version=2025-01-01',
-            fixture,
-        )
-        self.assertIn('AUTH_CONFIG_PROPERTIES="$(', fixture)
-        self.assertIn(
-            re.sub(
-                r"\s+",
-                "",
-                ".identityProviders.azureActiveDirectory.validation."
-                "defaultAuthorizationPolicy.allowedPrincipals.identities",
-            ),
-            compact,
-        )
-        self.assertIn("index($principal_id)", fixture)
-        self.assertNotIn("| unique", fixture)
-        for initializer in (
-            "(.identityProviders //= {})",
-            "(.identityProviders.azureActiveDirectory //= {})",
-            "(.identityProviders.azureActiveDirectory.validation //= {})",
-            "(.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy //= {})",
-            "(.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals //= {})",
-            "(.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.identities //= [])",
-        ):
-            self.assertIn(re.sub(r"\s+", "", initializer), compact)
-        self.assertIn("| {properties: .}", fixture)
-        self.assertIn("--method put", fixture)
-        self.assertIn('--body "$UPDATED_AUTH_CONFIG_BODY"', fixture)
-        self.assertIn("for attempt in $(seq 1 12); do", fixture)
-        self.assertIn('sleep 5', fixture)
-        self.assertIn(
-            "--query properties.identityProviders.azureActiveDirectory."
-            "validation.defaultAuthorizationPolicy",
-            normalized,
-        )
-        self.assertIn("(.allowedApplications? == null)", fixture)
-        self.assertIn(
-            "hosted agent identity lookup failed after 6 attempts: $HOSTED_IDENTITY_LAST_ERROR",
-            fixture,
-        )
-        self.assertIn(
-            "Easy Auth configuration read failed",
-            fixture,
-        )
-        self.assertIn(
-            "Easy Auth allowed principal identities update failed",
-            fixture,
-        )
-        self.assertIn(
-            "hosted agent principal object ID missing from Easy Auth allowed principal identities after bounded poll",
-            fixture,
-        )
-        self.assertNotIn('echo "$HOSTED_PRINCIPAL_ID"', fixture)
-        for forbidden in (
-            "az ad sp show",
-            "--query appId",
-            "Microsoft Graph",
-            "Application.Read.All",
-            "Directory.Read.All",
-            "ServicePrincipal.Read.All",
-        ):
-            self.assertNotIn(forbidden, fixture)
-        self.assertIn(
-            "Post-deploy hosted-agent callers use principal object ID mode",
-            skill,
-        )
-        self.assertIn(
-            "defaultAuthorizationPolicy.allowedPrincipals.identities", skill
-        )
 
-        deploy = fixture.index('azd deploy "$HOSTED_NAME"')
-        active = fixture.index('print("HOSTED_AGENT_ACTIVE")')
-        identity = fixture.index(".instance_identity.principal_id")
-        update = fixture.index("--method put", identity)
-        restart = fixture.index(
-            'az containerapp revision restart --resource-group "$CHILD_RG" '
-            '--name "$APP_NAME" --revision "$revision"',
-            update,
-        )
-        invoke = fixture.index("project.agents.update_details(", update)
-        self.assertLess(deploy, active)
-        self.assertLess(active, identity)
-        self.assertLess(identity, update)
-        self.assertLess(update, restart)
-        self.assertLess(restart, invoke)
+    def test_fixture_resolves_ci_uami_principal_through_arm_before_single_azd_up(self) -> None:
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        template = (SKILL / "templates/infra/ci.bicep").read_text()
+        self.assertIn('"caller_principal_id": "MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"', helper)
+        self.assertIn('allowedMcpCallerPrincipalIds: [callerPrincipalId, workerPrincipalId]', template)
+        self.assertNotIn("az identity list", helper)
+        self.assertEqual(helper.count('["azd", "provision", "--no-prompt"]'), 1)
+        self.assertEqual(helper.count('["azd", "deploy", "--no-prompt"]'), 1)
+        self.assertNotIn("roleAssignments", template)
+        self.assertNotIn("roleDefinitions", template)
 
-        identity_assignment = fixture.index('if HOSTED_PRINCIPAL_ID="$(')
-        identity_filter_start = (
-            fixture.index("jq -er '", identity_assignment) + len("jq -er '")
-        )
-        identity_filter_end = fixture.index(
-            '\' <<<"$HOSTED_IDENTITY_RESPONSE"', identity_filter_start
-        )
-        identity_filter = fixture[identity_filter_start:identity_filter_end]
-        for response_shape in (
-            {"instance_identity": {"principal_id": "hosted-principal-object-id"}},
-            {
-                "versions": {
-                    "latest": {
-                        "instance_identity": {
-                            "principal_id": "hosted-principal-object-id"
-                        }
-                    }
-                }
-            },
-            {
-                "instance_identity": {"principal_id": ""},
-                "versions": {
-                    "latest": {
-                        "instance_identity": {
-                            "principal_id": "hosted-principal-object-id"
-                        }
-                    }
-                },
-            },
-        ):
-            with self.subTest(response_shape=response_shape):
-                parsed = subprocess.run(
-                    ["jq", "-er", identity_filter],
-                    input=json.dumps(response_shape),
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                self.assertEqual(parsed.returncode, 0, parsed.stderr)
-                self.assertEqual(
-                    parsed.stdout.strip(), "hosted-principal-object-id"
-                )
 
-        jq_program_match = re.search(
-            r"UPDATED_AUTH_CONFIG_BODY=\"\$\(.*?"
-            r"jq -c --arg principal_id \"\$HOSTED_PRINCIPAL_ID\" '"
-            r"(?P<program>.*?)"
-            r"'\s+<<<\"\$AUTH_CONFIG_PROPERTIES\"",
-            fixture,
-            re.S,
-        )
-        self.assertIsNotNone(jq_program_match)
-        original_properties = {
-            "platform": {"enabled": True},
-            "globalValidation": {"unauthenticatedClientAction": "Return401"},
-            "identityProviders": {
-                "azureActiveDirectory": {
-                    "registration": {"clientId": "resource-app-client"},
-                    "validation": {
-                        "allowedAudiences": ["api://resource-app-client"],
-                        "defaultAuthorizationPolicy": {
-                            "allowedApplications": [
-                                "existing-caller-client",
-                                "hosted-caller-client",
-                            ],
-                            "allowedPrincipals": {
-                                "identities": [
-                                    "ci-uami-principal-object-id",
-                                    "job-uami-principal-object-id",
-                                ]
-                            },
-                        },
-                    },
-                }
-            },
-            "sentinel": {"mustRemain": ["full", "properties", "object"]},
-        }
-        transformed = subprocess.run(
-            [
-                "jq",
-                "-c",
-                "--arg",
-                "principal_id",
-                "hosted-principal-object-id",
-                jq_program_match.group("program"),
-            ],
-            input=json.dumps(original_properties),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(transformed.returncode, 0, transformed.stderr)
-        updated_body = json.loads(transformed.stdout)
-        self.assertEqual(
-            updated_body["properties"]["sentinel"],
-            original_properties["sentinel"],
-        )
-        policy = updated_body["properties"]["identityProviders"][
-            "azureActiveDirectory"
-        ]["validation"]["defaultAuthorizationPolicy"]
-        self.assertNotIn("allowedApplications", policy)
-        self.assertEqual(
-            policy["allowedPrincipals"]["identities"],
-            [
-                "ci-uami-principal-object-id",
-                "job-uami-principal-object-id",
-                "hosted-principal-object-id",
-            ],
-        )
-        transformed_again = subprocess.run(
-            [
-                "jq",
-                "-c",
-                "--arg",
-                "principal_id",
-                "hosted-principal-object-id",
-                jq_program_match.group("program"),
-            ],
-            input=json.dumps(updated_body["properties"]),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(transformed_again.returncode, 0, transformed_again.stderr)
-        self.assertEqual(
-            json.loads(transformed_again.stdout)["properties"][
-                "identityProviders"
-            ]["azureActiveDirectory"]["validation"]["defaultAuthorizationPolicy"][
-                "allowedPrincipals"
-            ]["identities"],
-            [
-                "ci-uami-principal-object-id",
-                "job-uami-principal-object-id",
-                "hosted-principal-object-id",
-            ],
-        )
+    def test_fixture_restarts_active_revisions_after_auth_put_before_invoke(self) -> None:
+        helper = (ROOT / "scripts/jobs-ci-lifecycle.py").read_text()
+        auth = helper.split("def authorize_hosted(", 1)[1].split("def before_invoke(", 1)[0]
+        self.assertIn('rid + "/restart"', auth)
+        self.assertIn('method="POST"', auth)
+        self.assertIn('ledger.intent("restart:" + rid, 600)', auth)
+        self.assertLess(auth.index('arm.put(resource_id'), auth.index('rid + "/restart"'))
+        self.assertLess(auth.index('rid + "/restart"'), auth.index("hosted.configure_routing"))
+        self.assertIn('range(12)', auth)
+        self.assertIn('ledger.gate()', auth)
 
-    def test_fixture_resolves_ci_uami_principal_through_arm_before_single_azd_up(
-        self,
-    ) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        normalized = " ".join(fixture.split())
-        parameters = json.loads(
-            (self._infra_dir() / "main.parameters.json").read_text(encoding="utf-8")
-        )["parameters"]
-
-        self.assertEqual(parameters["allowedMcpCallerClientIds"]["value"], [])
-        self.assertEqual(
-            parameters["allowedMcpCallerPrincipalIds"]["value"],
-            ["${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}"],
-        )
-        self.assertIn("az identity list", fixture)
-        self.assertIn(
-            "--query \"[?clientId=='$AZURE_CLIENT_ID'].principalId\"",
-            fixture,
-        )
-        self.assertNotIn("az resource list", fixture)
-        self.assertNotIn("properties.clientId", fixture)
-        self.assertIn('MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$(', fixture)
-        self.assertIn(
-            'MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"',
-            fixture,
-        )
-        self.assertNotIn('echo "$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"', fixture)
-        self.assertEqual(fixture.count("azd up --no-prompt"), 1)
-        self.assertLess(
-            fixture.index("az identity list"),
-            fixture.index("azd up --no-prompt"),
-        )
-        for forbidden in (
-            "az ad sp show",
-            "Application.Read.All",
-            "Directory.Read.All",
-            "ServicePrincipal.Read.All",
-        ):
-            self.assertNotIn(forbidden, fixture)
-
-    def test_fixture_restarts_active_revisions_after_auth_put_before_invoke(
-        self,
-    ) -> None:
-        fixture = (SKILL / "test-fixture" / "consumer_prompt.md").read_text(
-            encoding="utf-8"
-        )
-        update = fixture.index("--method put")
-        convergence = fixture.index("AUTH_ALLOWLIST_CONVERGED", update)
-        restart = fixture.index(
-            'az containerapp revision restart --resource-group "$CHILD_RG" '
-            '--name "$APP_NAME" --revision "$revision"',
-            convergence,
-        )
-        invoke = fixture.index("project.agents.update_details(", restart)
-
-        self.assertIn("az containerapp revision list", fixture)
-        self.assertIn("[?properties.active].name", fixture)
-        self.assertIn("for attempt in $(seq 1 6); do", fixture[convergence:invoke])
-        self.assertIn("active Container App revision restart failed", fixture)
-        self.assertLess(update, convergence)
-        self.assertLess(convergence, restart)
-        self.assertLess(restart, invoke)
 
     def test_copilot_cli_matrix_timeout_covers_longest_task15_leg(self) -> None:
         workflow_text = (
@@ -2029,7 +1551,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         infra = self._infra_dir()
         self.assertEqual(
             sorted(path.name for path in infra.glob("*.bicep")),
-            ["app.bicep", "cosmos.bicep", "identity-rbac.bicep", "main.bicep"],
+            ["app.bicep", "ci.bicep", "cosmos.bicep", "identity-rbac.bicep", "main.bicep", "standing.bicep"],
         )
         self.assertTrue((infra / "identity-rbac" / "uami.bicep").is_file())
         self.assertTrue((infra / "identity-rbac" / "assignments.bicep").is_file())

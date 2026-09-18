@@ -59,6 +59,10 @@ Sorted alphabetically for deterministic GHA matrix expansion.
   - AgentOps-only CI helpers map to `foundry-agentops`, not the full
     matrix. Dependency-only fanout excludes its native consumer; direct
     skill/helper changes and full/shared-contract runs still select it.
+    MCP-auth likewise excludes dependency-only PR fanout: its separately
+    approved network-boundary probe is not acceptance of an upstream change.
+    The omission is reported on stderr, never as a successful smoke. Direct
+    auth/helper changes and full/shared-contract runs still select the probe.
     Other dependency expansion and fixture/quarantine filtering are unchanged.
 
   - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
@@ -110,11 +114,16 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     "scripts/resolve-foundry-project.py",
 })
 
-SKILL_HELPER_PATHS: dict[str, str] = {
-    "scripts/agentops-ci-preflight.py": "foundry-agentops",
-    "scripts/agentops-ci-report.py": "foundry-agentops",
-    "scripts/agentops-ci-diagnostic.py": "foundry-agentops",
-    "scripts/setup-agentops-age.sh": "foundry-agentops",
+SKILL_HELPER_PATHS: dict[str, tuple[str, ...]] = {
+    "scripts/mcp-auth-network-smoke.py": ("foundry-mcp-auth",),
+    "scripts/mcp-aca-ci-lifecycle.py": ("foundry-mcp-aca", "foundry-hosted-agents", "ghcp-hosted-agents", "foundry-mcp-aca-jobs"),
+    "scripts/hosted-ci-lifecycle.py": ("foundry-hosted-agents", "ghcp-hosted-agents", "foundry-mcp-aca-jobs"),
+    "scripts/jobs-ci-lifecycle.py": ("foundry-mcp-aca-jobs",),
+    "scripts/native-ci-preflight.py": ("foundry-mcp-auth", "foundry-mcp-aca-jobs"),
+    "scripts/agentops-ci-preflight.py": ("foundry-agentops",),
+    "scripts/agentops-ci-report.py": ("foundry-agentops",),
+    "scripts/agentops-ci-diagnostic.py": ("foundry-agentops",),
+    "scripts/setup-agentops-age.sh": ("foundry-agentops", "foundry-mcp-aca", "foundry-hosted-agents", "ghcp-hosted-agents", "foundry-mcp-aca-jobs"),
 }
 DIAGNOSTIC_LABEL = "agentops-diagnostic"
 
@@ -220,8 +229,7 @@ def _changed_skills_from_diff(changed_files: list[str]) -> set[str]:
     """Map skill-folder changes and exact skill-owned helper paths to skills."""
     out: set[str] = set()
     for path in changed_files:
-        if path in SKILL_HELPER_PATHS:
-            out.add(SKILL_HELPER_PATHS[path])
+        out.update(SKILL_HELPER_PATHS.get(path, ()))
         parts = path.split("/")
         if len(parts) >= 2 and parts[0] == "skills":
             out.add(parts[1])
@@ -286,6 +294,15 @@ def build(
     expanded = _expand_transitively(changed_skills, deps_map)
     if "foundry-agentops" not in changed_skills:
         expanded.discard("foundry-agentops")
+    if "foundry-mcp-auth" in expanded and "foundry-mcp-auth" not in changed_skills:
+        expanded.remove("foundry-mcp-auth")
+        print(
+            "::notice::MCP_AUTH_SELECTION=DEPENDENCY_ONLY_EXCLUDED "
+            "The separately approved network-boundary probe is not upstream "
+            "acceptance; direct/helper/shared/main/schedule runs retain it. "
+            "No auth smoke executed or passed.",
+            file=sys.stderr,
+        )
 
     # Intersect with the fixtured+non-quarantined set so we never emit
     # a name the downstream job can't actually execute.

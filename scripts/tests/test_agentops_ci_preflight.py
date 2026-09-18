@@ -205,6 +205,8 @@ class PreflightTests(unittest.TestCase):
             "AZURE_AI_PROJECT_ID": foundry["account_resource_id"] + "/projects/example-project",
             "FOUNDRY_MODEL_DEPLOYMENT": "example-model", "LAW_WORKSPACE_ID": telemetry["workspace_customer_id"],
             "APPLICATIONINSIGHTS_CONNECTION_STRING": connection_string(self.record),
+            "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL": "true",
+            "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
             "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON": json.dumps(self.record, indent=2) + "\n",
         }
         self.account = {
@@ -285,6 +287,32 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 32)
         self.account["user"]["name"] = fake_id("changed-client")
         self.assert_denied(self.run_gate(write=False))
+
+    def test_sdk_side_channel_controls_fail_closed_before_metadata(self):
+        for name in self.gate.SDK_EXPORT_OPTOUTS:
+            for value in (None, "", "false", "TRUE", "1", " true", True):
+                with self.subTest(name=name, value=value):
+                    self.env.pop(name, None)
+                    if value is not None:
+                        self.env[name] = value
+                    self.assertEqual(self.run_gate(),
+                                     (1, "AGENTOPS_CI_PREFLIGHT=FAIL EXPORT_OVERRIDE\n", ""))
+                    self.assertFalse(self.calls)
+                    self.assertFalse(self.path.exists())
+            self.env[name] = "true"
+
+    def test_sdk_side_channel_controls_rechecked_without_renewal(self):
+        self.assertEqual(self.run_gate()[0], 0)
+        original = self.path.read_bytes()
+        del self.env["AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"]
+        self.calls.clear()
+        for name in self.gate.SDK_EXPORT_OPTOUTS:
+            del self.env[name]
+            self.assertEqual(self.run_gate(write=False),
+                             (1, "AGENTOPS_CI_PREFLIGHT=FAIL EXPORT_OVERRIDE\n", ""))
+            self.assertFalse(self.calls)
+            self.assertEqual(self.path.read_bytes(), original)
+            self.env[name] = "true"
 
     def test_uami_readback_accepts_service_resourcegroups_casing(self):
         approved = self.record["identity"]["resource_id"]

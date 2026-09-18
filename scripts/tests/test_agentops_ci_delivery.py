@@ -626,6 +626,8 @@ assert "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON" not in os.environ
 assert "GITHUB_STEP_SUMMARY" not in os.environ
 assert "GITHUB_OUTPUT" not in os.environ
 assert "GITHUB_ENV" not in os.environ
+assert os.environ["APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"] == "true"
+assert os.environ["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] == "true"
 pathlib.Path({str(sentinel)!r}).write_text("called")
 print({CANARY!r})
 print({CANARY!r}, file=sys.stderr)
@@ -666,6 +668,13 @@ PROMPT="{FIXTURE}"
                            FOUNDRY_PROJECT_ENDPOINT="https://example.invalid/api/projects/example",
                            FOUNDRY_MODEL_DEPLOYMENT="example-model",
                            APPLICATIONINSIGHTS_CONNECTION_STRING=CANARY)
+                isolate = next(s for s in steps if s.get("name") == "Isolate AgentOps credential sources")
+                setup = subprocess.run(
+                    ["bash", "-c", "python3() { return 0; }\n" + isolate["run"]],
+                    cwd=ROOT, env=env, text=True, capture_output=True,
+                )
+                self.assertEqual(setup.returncode, 0, setup.stderr)
+                env.update(line.split("=", 1) for line in Path(env["GITHUB_ENV"]).read_text().splitlines())
                 if judge_override:
                     env["AZURE_OPENAI_DEPLOYMENT"] = CANARY
                 result = subprocess.run(["bash", "-c", shell], cwd=ROOT, env=env, text=True, capture_output=True)
@@ -927,6 +936,12 @@ class WorkflowTests(unittest.TestCase):
                      "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "FOUNDRY_MODEL_DEPLOYMENT"):
             self.assertEqual(gate["env"][name], self.primary["env"][name])
         self.assertNotIn("GITHUB_ENV", gate["run"])
+        self.assertEqual(isolate["if"], "matrix.skill == 'foundry-agentops'")
+        for name in ("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+                     "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"):
+            self.assertIn(f'echo "{name}=true"', isolate["run"])
+            for step in self.steps:
+                self.assertNotIn(name, step.get("env", {}), "Do not override the isolated inherited controls")
 
     def test_private_branch_precedes_legacy_outputs_and_rechecks(self):
         for step in (self.primary, self.retry):

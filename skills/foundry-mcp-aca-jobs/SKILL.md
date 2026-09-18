@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.4.3"
+  version: "1.5.1"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -353,6 +353,48 @@ Do not pre-create that resource group. Its exact azd outputs include `MCP_APP_NA
 `MCP_ACA_JOBS_COSMOS_USE_EXISTING_ACCOUNT`; the last value is the lowercase
 string `true` or `false`. Postdeploy consumes these outputs directly, including
 the Cosmos module endpoint created by an ordinary greenfield `azd up`.
+
+### Opt-in standing CI composition
+
+The default subscription-scope consumer path above is unchanged. An owner can
+instead select [`templates/infra/ci.bicep`](templates/infra/ci.bicep) for the
+unattended fixture in an **existing workload RG**. This path consumes separate
+app and worker UAMIs, an existing ACR/CAE, dedicated synthetic-only Blob and
+Cosmos accounts, and one existing Cosmos database. It never creates a child
+RG, identity, role definition or standing assignment, and never mutates a
+shared Job. Its three run-specific data containers come from the canonical
+[`jobs-run-data.bicep`](../azd-patterns/references/bicep/jobs-run-data.bicep).
+Keep that module beside `aca-job.bicep` when staging the CI composition.
+
+The separate owner-only [`standing.bicep`](templates/infra/standing.bicep)
+composes the canonical UAMI/AcrPull/data modules and an exact-RG five-action
+Job Operator role. It is **not** the CI entrypoint. Review its azd what-if and
+obtain owner authority before provisioning; CI must not repair missing roles
+or relax account networking. The dedicated data accounts use an explicit
+public, keyless, synthetic-test posture. This does not authorize making an
+existing private account public. Actual account/RBAC/reachability readbacks,
+not the desired Bicep state, determine readiness. Where public access is
+governance-blocked, the owner can opt into the canonical dedicated NSP via
+`networkStage=associate` followed by `networkStage=enforce` after association
+verification. CI neither creates nor repairs that perimeter. Subscription
+network admission does not replace data RBAC or certify federated-runner access.
+
+The runner-owned Jobs helper freezes approval and source/run context in
+encrypted custody before producers. Native preGET404, one azd provision intent,
+exact deployment/operation evidence and stable resource readbacks bind each
+app, Job and data container; ambiguous effects remain UNKNOWN without a
+replacement or retry. It reuses the reviewed Hosted reconciliation path for
+the secondary agent, owns prompt creation and EasyAuth writes, and keeps
+functional assertions separate from cleanup.
+
+The always-run bounded finalizer deletes only bound run objects. It verifies
+native/ARM absence, execution/auth cascades and captured Blob/Cosmos record
+absence. It does not run `azd down`, delete a shared RG/account/database or
+remove locks. Standing grants are retained, not falsely reported as revoked;
+images, platform identities and deployment history require the explicit owner
+retention handoff. See the [operator contract](../../docs/maintenance/native-ci-preflight.md#jobs-standing-infrastructure-and-run-custody)
+for inputs, budgets, custody and outstanding live gates. Source integration
+and offline regressions alone are not T3 evidence.
 
 ## Operate and observe
 
