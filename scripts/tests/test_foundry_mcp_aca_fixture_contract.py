@@ -920,7 +920,7 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
 
     def test_skill_version_is_patch(self) -> None:
         """Delegated-auth clarification keeps the existing 1.2 contract."""
-        self.assertIn('version: "1.2.6"', self.skill)
+        self.assertIn('version: "1.2.7"', self.skill)
 
     # --- Pin validation contracts ---
 
@@ -1589,16 +1589,11 @@ class TestStatePersistence(unittest.TestCase):
             for body in bash_bodies
             for command in _azd_up_command_lines(body)
         ]
-        self.assertEqual(
-            ["until azd up --no-prompt; do"],
-            executable_azd_up,
-            "there must be exactly one executable azd up path globally",
-        )
-        self.assertEqual(
-            executable_azd_up,
-            _azd_up_command_lines(provision),
-            "the sole executable azd up must be inside the prescribed provision block",
-        )
+        self.assertEqual([], executable_azd_up, "the fixture must not bypass lifecycle capture")
+        invocation = 'python3 -I "$GITHUB_WORKSPACE/scripts/mcp-aca-ci-lifecycle.py" deploy'
+        self.assertEqual(sum(body.count(invocation) for body in bash_bodies), 1)
+        self.assertIn(invocation, provision)
+        self.assertNotIn("azd down", provision)
         self.assertTrue(
             provision.startswith(
                 "source /tmp/foundry-mcp-aca-state.env || "
@@ -1798,8 +1793,8 @@ class TestStatePersistence(unittest.TestCase):
         )
 
     def test_azd_up_block_sources_state(self):
-        """The azd up retry block must source state first."""
-        azdup_idx = self.fixture.index("until azd up --no-prompt")
+        """The lifecycle-wrapped azd up block must source state first."""
+        azdup_idx = self.fixture.index('python3 -I "$GITHUB_WORKSPACE/scripts/mcp-aca-ci-lifecycle.py" deploy')
         block_start = self.fixture.rfind("```bash", 0, azdup_idx)
         block_content = self.fixture[block_start:azdup_idx]
         self.assertIn(
@@ -1824,7 +1819,7 @@ class TestStatePersistence(unittest.TestCase):
             "SUB=$(az account show",
             "CODE=$(curl",
             "TOKEN=$(az account get-access-token",
-            "azd down --purge --force --no-prompt",
+            'python3 -I "$GITHUB_WORKSPACE/scripts/mcp-aca-ci-lifecycle.py" deploy',
         ):
             with self.subTest(marker=marker):
                 block = _standard_bash_block_containing(self.fixture, marker)
@@ -1834,8 +1829,8 @@ class TestStatePersistence(unittest.TestCase):
                     f"fresh block containing {marker!r} must source state first",
                 )
 
-    def test_teardown_restores_project_dir_and_runs_exact_azd_down(self):
-        """Step 7 must run teardown from PROJECT_DIR restored in a fresh shell."""
+    def test_teardown_never_runs_broad_azd_down_even_with_valid_state(self):
+        """Only the runner finalizer deletes; fixture state is not authority."""
         teardown = _teardown_block(self.fixture)
 
         with (
@@ -1897,25 +1892,16 @@ class TestStatePersistence(unittest.TestCase):
                 result.returncode,
                 f"best-effort teardown failed: {result.stderr!r}",
             )
-            self.assertEqual(
-                [
-                    f"cwd={project_dir}",
-                    "args=down --purge --force --no-prompt",
-                ],
-                call_log.read_text(encoding="utf-8").splitlines(),
-            )
-            self.assertEqual(
-                ["duration=300"],
-                timeout_log.read_text(encoding="utf-8").splitlines(),
-            )
-            self.assertNotIn("NOTE:", result.stdout)
+            self.assertFalse(call_log.exists())
+            self.assertFalse(timeout_log.exists())
+            self.assertIn("NOTE: teardown is runner-owned", result.stdout)
             self.assertEqual(
                 "SMOKE_RESULT=PASS\n",
                 SMOKE_MARKER_PATH.read_text(encoding="utf-8"),
             )
 
     def test_teardown_soft_passes_and_notes_each_cleanup_failure(self):
-        """State, cwd, azd, and timeout failures must be observable soft-PASSes."""
+        """Invalid old state must not start deletion or alter the smoke verdict."""
         teardown = _teardown_block(self.fixture)
 
         with (
@@ -1959,7 +1945,7 @@ class TestStatePersistence(unittest.TestCase):
             failure_cases = (
                 ("missing state", None, {}, False),
                 ("invalid project dir", temp / "missing-project", {}, False),
-                ("azd nonzero", project_dir, {"AZD_RESULT": "42"}, True),
+                ("azd nonzero", project_dir, {"AZD_RESULT": "42"}, False),
                 ("timeout", project_dir, {"TIMEOUT_RESULT": "124"}, False),
             )
             for name, state_project_dir, env_overrides, azd_called in failure_cases:

@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.9"
+  version: "2.0.11"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -22,6 +22,13 @@ Deploy Foundry hosted agents using the **GitHub Copilot SDK** with BYOK
 (Bring Your Own Key) authentication. No `GITHUB_TOKEN` required. Uses the
 **Invocations protocol** (GA, version `2.0.0`) with SSE streaming for
 unlimited tool-loop duration.
+
+The public CI fixture uses the runner-owned
+[native lifecycle and custody contract](../../docs/maintenance/native-ci-preflight.md#hosted-and-ghcp-native-reconciliation).
+Native objects and exact temporary Foundry User assignments have separate
+ownership/readback evidence; standing grants remain untouched. Functional PASS
+does not imply all supporting artifacts were removed. The proposed integration
+requires live validation before delivery.
 
 > **GA migration (v2.0.0).** This skill now uses the unified single-file
 > `azure.yaml` deploy shape shared with `foundry-hosted-agents` — the old

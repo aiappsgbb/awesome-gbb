@@ -4,7 +4,7 @@ This fixture does NOT certify user identity, interactive consent, late consent,
 refresh, or any of the four Playground acceptance rows. Those require
 `playground.md` and sanitized operator evidence.
 
-**Gate B required.** CI inputs for this new candidate have not been provisioned.
+**Gate B required.** A configured input is not proof of owner authorization.
 Do not deploy infrastructure, register apps, create connections, grant roles,
 request personal tokens or open/approve consent. Missing inputs are a failure,
 not a reason to install tools, discover another subscription or use public
@@ -13,23 +13,34 @@ fallbacks. The runner must already have approved network reachability.
 **CRITICAL - never invoke `copilot` recursively.** You are the running CLI.
 Do not overwrite the transcript or treat this as a repository audit.
 
-1. Acknowledge `skills/foundry-mcp-auth/SKILL.md`. Read its support boundary.
-2. Require `MCP_AUTH_NETWORK_SMOKE_APPROVED=yes` and an approved HTTPS
-   `MCP_AUTH_SMOKE_ENDPOINT` ending in `/mcp`, with no userinfo, query or
-   fragment. If absent, write the failure marker below and stop.
-3. With no Authorization header, request the endpoint's scoped PRM URL
-   `/.well-known/oauth-protected-resource/mcp`. Require HTTP 200, `resource`
-   exactly matching the approved endpoint, a tenant-specific Entra
-   authorization server and the intended custom scope.
-4. POST MCP initialize anonymously with proper JSON and
-   `Accept: application/json, text/event-stream`. Require HTTP 401 and a
-   `WWW-Authenticate` resource-metadata challenge. A 200 is FAIL, not reachability
-   success. Never print cookies or entire headers; record only status and
-   `NETWORK_AUTH_BOUNDARY_ONLY`.
-5. Only after these checks, write exactly
-   `printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-auth-smoke-result`.
-   On any missing prerequisite/error write
-   `printf 'SMOKE_RESULT=FAIL network/auth prerequisite or probe failed\n' > /tmp/foundry-mcp-auth-smoke-result`.
+## Step 1 - execute the canonical probe (MANDATORY first and final Bash action)
+
+This is an execution task, not a request to inspect, review or edit repository
+files. Do not reimplement HTTP checks, write a success marker yourself, or
+return a prose-only review. Execute exactly this block from the checkout:
+
+```bash
+set -euo pipefail
+echo "skills/foundry-mcp-auth/SKILL.md"
+printf 'SMOKE_RESULT=FAIL probe did not complete\n' > /tmp/foundry-mcp-auth-smoke-result
+python3 -I scripts/mcp-auth-network-smoke.py
+```
+
+The canonical probe requires `MCP_AUTH_NETWORK_SMOKE_APPROVED=yes`,
+`MCP_AUTH_SMOKE_ENDPOINT`, `MCP_AUTH_SMOKE_ISSUER` (tenant-specific Entra v2),
+and `MCP_AUTH_SMOKE_SCOPE` (the exact exposed custom API scope). The owner must
+approve this tuple and the runner's reachability before configuration.
+The endpoint is the exact expected resource; no target discovery or substitution.
+
+It requests only the scoped PRM URL and an anonymous MCP initialize, without
+credentials, redirects or cookies. PRM must return HTTP 200 with the exact
+resource, sole issuer and sole scope. Initialize must return HTTP 401 with
+the exact scoped resource-metadata Bearer challenge. HTTP 200 on initialize,
+missing or invalid inputs, malformed metadata/challenges, and network errors
+all remain FAIL. Each request has a 15-second timeout and a 64-KiB body bound.
+The helper writes the byte-exact success marker only after both assertions.
+Public output contains sanitized codes, never endpoint/issuer/scope values,
+response bodies, headers or credentials.
 
 The marker proves only this narrow network/anonymous-auth boundary. It does
 not waive `playground.md`, supply missing user identities, or permit release.

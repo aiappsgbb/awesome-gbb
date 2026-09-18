@@ -199,6 +199,7 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
             requirements,
             [
                 "azure-ai-projects~=2.3.0",
+                "openai~=2.45.0",
                 "azure-identity~=1.25.3",
                 "httpx~=0.28.1",
             ],
@@ -258,7 +259,8 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
             r"^\s*azd deploy\b.*$", self.fixture, flags=re.MULTILINE
         )
         active_ups = re.findall(r"^\s*azd up\b.*$", self.fixture, flags=re.MULTILINE)
-        self.assertEqual(active_deploys, ['  azd deploy "$agent_name" --no-prompt'])
+        self.assertEqual(active_deploys, [])
+        self.assertEqual(self.fixture.count('hosted-ci-lifecycle.py" deploy "$work_dir" "$agent_name"'), 1)
         self.assertEqual(active_ups, [])
 
     def test_pin_validation_imports_canonical_container_and_otel_bundle(self) -> None:

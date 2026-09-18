@@ -410,9 +410,12 @@ The exact provision block below creates the `azd` environment structure
 directly and then runs `azd up`. Do NOT use `azd env new` or `azd env set`;
 they require interactive prompts that fail in headless CI. The block sources
 the state that Step 0 publishes only after successful `azd auth login`, so
-provision cannot begin on an unauthenticated path. ACA's ARM resolver has a
-documented cross-resource index-rebuild race (`ManagedEnvironmentNotFound`,
-AGENTS.md § 9.7 Pattern 18), so `azd up` uses a bounded retry loop.
+provision cannot begin on an unauthenticated path. The runner must have prepared
+the exact-run lifecycle record and encrypted inventory custody. The canonical
+helper validates the frozen scaffold/env, records an authenticated absent-app
+observation and deployment inventory, then runs this one `azd up` invocation.
+A failed deployment or ambiguous creation receipt is UNKNOWN, not absence:
+do not retry into another name or delete shared resources.
 
 ### Deterministic provision Bash block (MANDATORY)
 
@@ -440,19 +443,8 @@ AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_SERVER}
 EOF
 echo "azd env created at $AZD_ENV_DIR"
 
-attempts=0
-max_attempts=6
-until azd up --no-prompt; do
-  attempts=$((attempts + 1))
-  if [ $attempts -ge $max_attempts ]; then
-    echo "azd up failed after $max_attempts attempts"
-    printf 'SMOKE_RESULT=FAIL azd up failed after retry exhaustion\n' > /tmp/foundry-mcp-aca-smoke-result
-    azd down --purge --force --no-prompt || true
-    exit 1
-  fi
-  echo "azd up attempt $attempts failed, sleeping 5s before retry (Pattern 18 — ARM cross-resource race)"
-  sleep 5
-done
+export APP_NAME PROJECT_DIR
+python3 -I "$GITHUB_WORKSPACE/scripts/mcp-aca-ci-lifecycle.py" deploy
 ```
 
 Total budget for this step: ~8-12 min (ACR remote build ~3-5 min + Bicep
@@ -814,29 +806,26 @@ console. Do NOT decorate the marker line with backticks anywhere.
 
 ## Step 7 — Best-effort teardown (Pattern 25 — AFTER the marker)
 
-ONLY AFTER the PASS marker is written, attempt cleanup. The hard cap
-is **5 minutes** (Pattern 25). If teardown stalls past that, emit a
-single NOTE line to stdout and return — the smoke verdict stays PASS:
+Do not issue deletion from the agent. The workflow's bounded, unconditional
+finalizer reads its exact-run receipt and independently checks the deployment
+operation and current app binding before requesting deletion of that app only.
+It verifies absence by authenticated resource GET/404, not by a submitted
+DELETE, CLI exit or an error mentioning 404.
 
 ```bash
-source /tmp/foundry-mcp-aca-state.env || {
-  echo "NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days) (state file unavailable)"
-  exit 0
-}
-TEARDOWN_NOTE="NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days)"
-if [[ -z "${PROJECT_DIR:-}" || ! -d "$PROJECT_DIR" ]] || ! cd "$PROJECT_DIR"; then
-  echo "$TEARDOWN_NOTE (project directory unavailable)"
-  exit 0
-fi
-set -o pipefail
-if ! timeout 300 azd down --purge --force --no-prompt 2>&1 | tail -20; then
-  echo "$TEARDOWN_NOTE"
-fi
+printf '%s\n' 'NOTE: teardown is runner-owned; cleanup disposition is separate from functional PASS'
 ```
 
 The marker stays `SMOKE_RESULT=PASS`. Cleanup failure does NOT downgrade
 the smoke verdict. Do NOT re-write the marker file in this step under
 any circumstance.
+
+Never run `azd down`, delete a resource group, remove a shared lock, or delete
+the standing CAE/UAMI/LAW/ACR. Image refs are recorded for the owner's explicit
+bounded retention handoff; shared digests are not automatically deleted.
+`APP_ABSENT_IMAGE_RETAINED` is not ALL_DELETED. Cancellation/hard runner loss
+can prevent even an `always()` finalizer; encrypted inventory and unresolved
+status require operator reconciliation before another deployment.
 
 ---
 

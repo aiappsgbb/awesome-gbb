@@ -9,6 +9,9 @@ ACA Job-backed companion to `foundry-mcp-aca`.
 | `SKILL.md` | Canonical contract: when to use, architecture, protocol, lifecycle, security, errors, and test expectations. |
 | `references/` | Canonical Python modules and the upstream pin contract. |
 | `templates/` | Copy-verbatim azd/Bicep/Dockerfile/script templates for the shared-image ACA Job pattern. |
+| `templates/infra/ci.bicep` | Explicit opt-in existing-RG composition; no identity or role creation. |
+| `templates/infra/standing.bicep` | Owner-only bootstrap, never an unattended fixture step. |
+| `test-fixture/` | Runner-helper entrypoint, functional assertions and Hosted MCP runtime. |
 
 The composition root at
 `skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` requires the sibling
@@ -31,6 +34,14 @@ cp skills/azd-patterns/references/bicep/aca-job.bicep "$WORKDIR/skills/azd-patte
 ```
 
 ## Install
+
+The opt-in CI path additionally stages the canonical
+`azd-patterns/references/bicep/jobs-run-data.bicep`. The separate owner bootstrap
+uses `jobs-standing-data.bicep`, `uami.bicep` and `acr-pull.bicep`. Do not swap
+the bootstrap into CI or assume the standing inputs exist. The
+[standing CI contract](../../docs/maintenance/native-ci-preflight.md#jobs-standing-infrastructure-and-run-custody)
+defines exact inputs, expiry, ciphertext custody, cleanup and live proof.
+Default consumer deployment and its subscription-scope root are unchanged.
 
 Install the catalog plugin from the repo root:
 

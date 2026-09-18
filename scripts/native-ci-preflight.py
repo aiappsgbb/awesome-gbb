@@ -75,6 +75,19 @@ def validate(skill: str, environ: dict[str, str]) -> None:
             required(environ, "MCP_AUTH_SMOKE_ENDPOINT"), "MCP_AUTH_SMOKE_ENDPOINT",
             mcp=True,
         )
+        for name, pattern in (
+            ("MCP_AUTH_SMOKE_ISSUER",
+             r"https://login\.microsoftonline\.com/([0-9a-f-]{36})/v2\.0"),
+            ("MCP_AUTH_SMOKE_SCOPE", r"api://([0-9a-f-]{36})/[A-Za-z][A-Za-z0-9_.-]*"),
+        ):
+            value = required(environ, name)
+            match = re.fullmatch(pattern, value)
+            try:
+                valid = match is not None and str(uuid.UUID(match[1])) == match[1]
+            except ValueError:
+                valid = False
+            if not valid:
+                raise PrerequisiteError(f"INVALID_IDENTIFIER {name}")
     else:
         name = "MCP_AUTH_APP_CLIENT_ID"
         value = required(environ, name)
@@ -86,6 +99,14 @@ def validate(skill: str, environ: dict[str, str]) -> None:
             raise PrerequisiteError(f"INVALID_IDENTIFIER {name}")
         for name in ("MCP_ACA_JOBS_COSMOS_ENDPOINT", "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"):
             https_endpoint(required(environ, name), name)
+        for name in (
+            "MCP_ACA_JOBS_RESOURCE_GROUP_ID", "MCP_ACA_JOBS_ENVIRONMENT_ID",
+            "MCP_ACA_JOBS_APP_IDENTITY_ID", "MCP_ACA_JOBS_WORKER_IDENTITY_ID",
+            "MCP_ACA_JOBS_COSMOS_ACCOUNT_ID", "MCP_ACA_JOBS_COSMOS_DATABASE",
+            "MCP_ACA_JOBS_STORAGE_ACCOUNT_ID", "MCP_ACA_JOBS_CALLER_PRINCIPAL_ID",
+        ):
+            # Full exact-scope validation follows in the encrypted lifecycle gate.
+            required(environ, name)
 
 
 def main(argv: list[str], environ: dict[str, str]) -> int:

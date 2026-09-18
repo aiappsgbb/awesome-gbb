@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -38,6 +39,10 @@ LEGACY_FILES = (
     "foundry-agentops-retry-smoke-evidence", "foundry-agentops-invoke.log",
     "foundry-agentops-primary-invoke.log", "foundry-agentops-retry-invoke.log",
     "foundry-agentops-smoke-result",
+)
+OBSERVATION_STAGES = (
+    "install", "sdk_prerequisites", "exporter_cohort", "credential_contract",
+    "prompt_create", "workspace_config", "analyze", "eval",
 )
 
 
@@ -170,6 +175,7 @@ def attempt_dir(root, attempt):
 def prepare(root, attempt):
     target = attempt_dir(root, attempt)
     mkdir(target, root)
+    mkdir(target / "observations", root)
     write(target / "transcript.log", root, b"")
 
 
@@ -186,6 +192,126 @@ def workspace_path(root, attempt):
         raise DiagnosticFailure("absent", "workspace") from None
     except (OSError, ValueError):
         raise DiagnosticFailure("unsafe_or_unreadable", "workspace") from None
+
+
+def observation_binding(root, attempt):
+    workspace = workspace_path(root, attempt)
+    with directory(workspace, root) as fd:
+        info = os.fstat(fd)
+    return workspace, {
+        "run_id": os.environ["GITHUB_RUN_ID"],
+        "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+        "attempt": attempt, "workspace": workspace.name,
+        "device": info.st_dev, "inode": info.st_ino,
+    }
+
+
+def observed_returncode(value):
+    return type(value) is int and (-signal.NSIG < value < 0 or 0 <= value <= 255)
+
+
+def observation_state(root, attempt, stage, binding):
+    path = attempt_dir(root, attempt) / "observations" / stage
+    with directory(path, root) as fd:
+        require(set(os.listdir(fd)) <= {"intent.json", "result.json", "stdout.log", "stderr.log"})
+    intent = parse(read(path / "intent.json", root))
+    require(isinstance(intent, dict) and type(intent.get("schema_version")) is int)
+    require(intent == {"schema_version": 1, "binding": binding, "stage": stage})
+    require(all(type(intent["binding"][key]) is type(value) for key, value in binding.items()))
+    try:
+        result = parse(read(path / "result.json", root))
+    except FileNotFoundError:
+        return {"stage": stage, "reason": "execution_incomplete", "exit_code": None}
+    require(isinstance(result, dict) and set(result) == {"reason", "exit_code"})
+    code, reason = result["exit_code"], result["reason"]
+    if reason in ("launch_failed", "fixture_stop"):
+        require(code is None)
+    else:
+        require(observed_returncode(code))
+        require(reason == ("command_returned" if code == 0 else "command_nonzero"))
+    return {"stage": stage, "reason": reason, "exit_code": code}
+
+
+def write_observation(path, root, value):
+    with new_file(path, root) as stream:
+        stream.write((json.dumps(value, sort_keys=True, allow_nan=False) + "\n").encode())
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def observe(root, attempt, stage, argv, *, stopped=False):
+    require(stage in OBSERVATION_STAGES and (not argv if stopped else bool(argv)))
+    workspace, binding = observation_binding(root, attempt)
+    observations = attempt_dir(root, attempt) / "observations"
+    with directory(observations, root) as fd:
+        prior = os.listdir(fd)
+    require(set(prior) <= set(OBSERVATION_STAGES))
+    for previous in prior:
+        state = observation_state(root, attempt, previous, binding)
+        # A failed/unfinished observation cannot authorize another invocation.
+        require(stopped or state["reason"] == "command_returned")
+    target = observations / stage
+    mkdir(target, root)  # Exclusive: the same stage cannot be replayed.
+    write_observation(target / "intent.json", root,
+                      {"schema_version": 1, "binding": binding, "stage": stage})
+    if stopped:
+        write_observation(target / "result.json", root, {"reason": "fixture_stop", "exit_code": None})
+        return 1
+    code = None
+    try:
+        with new_file(target / "stdout.log", root) as stdout, new_file(target / "stderr.log", root) as stderr:
+            try:
+                result = subprocess.run(argv, cwd=workspace, stdout=stdout, stderr=stderr, check=False)
+            except OSError:
+                write_observation(target / "result.json", root, {"reason": "launch_failed", "exit_code": None})
+                return 125
+            code = result.returncode
+        require(observation_binding(root, attempt)[1] == binding)
+        write_observation(target / "result.json", root,
+                          {"reason": "command_returned" if code == 0 else "command_nonzero",
+                           "exit_code": code})
+    except (OSError, ValueError, DiagnosticFailure):
+        print("AGENTOPS_CI_OBSERVATION=FAIL RECORDING", file=sys.stderr)
+        return code if code else 125
+    return code
+
+
+def diagnostic_observations(root, attempt):
+    # These are agent-writable observations, never attestations or grading inputs.
+    unknown = {"stage": "unknown", "reason": "unknown", "exit_code": None}
+    result = {
+        "provenance": "untrusted_agent_writable",
+        "stages": {stage: dict(unknown) for stage in OBSERVATION_STAGES},
+        "prompt_create_intent": "unknown", "effects": "unknown",
+        "native_exit_codes": {"analyze": None, "eval": None, "doctor": None},
+    }
+    try:
+        workspace, binding = observation_binding(root, attempt)
+    except (OSError, ValueError, DiagnosticFailure):
+        return result
+    for label, relative in (("analyze", ".agentops/analyze-exit-code"),
+                            ("eval", EVAL_FILES[0]), ("doctor", DOCTOR_FILES[0])):
+        try:
+            raw = read(workspace / relative, root)
+            require(re.fullmatch(rb"(?:0|[1-9][0-9]{0,2}|-[1-9][0-9]?)\n?", raw))
+            code = int(raw)
+            require(observed_returncode(code))
+            result["native_exit_codes"][label] = code
+        except (OSError, ValueError):
+            pass
+    try:
+        with directory(attempt_dir(root, attempt) / "observations", root) as fd:
+            require(set(os.listdir(fd)) <= set(OBSERVATION_STAGES))
+    except (OSError, ValueError):
+        return result
+    for stage in OBSERVATION_STAGES:
+        try:
+            result["stages"][stage] = observation_state(root, attempt, stage, binding)
+        except (OSError, ValueError, RecursionError):
+            continue
+        if stage == "prompt_create" and result["stages"][stage]["reason"] != "fixture_stop":
+            result["prompt_create_intent"] = "observed"
+    return result
 
 
 def checker_block(fixture, label):
@@ -343,6 +469,7 @@ def report(root, public, attempt, copilot_status):
         "prompt_agent_cleanup": "unverified", "response_purge": "unverified",
         "sha256": {}, "diagnostics": {},
     }
+    summary["diagnostics"]["pre_doctor"] = diagnostic_observations(root, attempt)
     try:
         marker = read_artifact(target / "marker", root, "marker")
         if marker != b"SMOKE_RESULT=PASS\n":
@@ -447,10 +574,23 @@ def main():
     action = "ARGUMENTS"
     try:
         args = sys.argv[1:]
-        require(args and args[0] in ("init", "prepare", "report", "retry-allowed", "cleanup"))
+        require(args and args[0] in ("init", "prepare", "report", "retry-allowed", "cleanup",
+                                    "observe", "stop"))
         action = args[0]
         root, public = roots()
-        if action == "init":
+        if action in ("observe", "stop"):
+            if action == "observe":
+                require(len(args) >= 5 and args[3] == "--")
+                code = observe(root, args[1], args[2], args[4:])
+            else:
+                require(len(args) == 3)
+                code = observe(root, args[1], args[2], [], stopped=True)
+            if code < 0:
+                if -code not in (signal.SIGKILL, signal.SIGSTOP):
+                    signal.signal(-code, signal.SIG_DFL)
+                os.kill(os.getpid(), -code)
+            return code
+        elif action == "init":
             require(len(args) == 1)
             initialize(root, public)
             ok = True
@@ -472,7 +612,7 @@ def main():
         print(f"AGENTOPS_CI_DELIVERY=FAIL {action.upper()}")
         # Report exit 1 means a host-written negative summary; exit 2 means
         # publication itself failed and no existing path may be uploaded.
-        return 2 if action == "report" else 1
+        return 2 if action == "report" else 125 if action in ("observe", "stop") else 1
     print(f"AGENTOPS_CI_DELIVERY={'PASS' if ok else 'FAIL'} {action.upper()}")
     return 0 if ok else 1
 

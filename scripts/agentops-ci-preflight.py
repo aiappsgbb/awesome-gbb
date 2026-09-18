@@ -16,7 +16,7 @@ discovery, inference, roles, configuration repair or native execution is allowed
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -38,6 +38,7 @@ ERROR_CODES = frozenset({
     "ARGUMENTS", "AZD_NOT_EMPTY", "CI_CONTEXT", "CLI_FAILED", "CLI_IDENTITY",
     "CLI_TIMEOUT", "COMPONENT_BINDING", "CONNECTION_STRING", "CREDENTIAL_ROUTE",
     "EXPIRED", "EXPORT_OVERRIDE", "IDENTITY_BINDING", "INTERNAL_ERROR",
+    "APPROVAL_WINDOW",
     "INVALID_DATE", "INVALID_ENDPOINT", "INVALID_IDENTIFIER", "INVALID_INPUT",
     "INVALID_JSON", "INVALID_RESOURCE", "METADATA", "MISSING_ENV", "MISSING_FIELD",
     "MODEL_BINDING", "OUTPUT_EXISTS", "POLICY", "PROJECT_BINDING", "PURGE_DEADLINE",
@@ -51,6 +52,10 @@ TABLES = (
     "AppRequests", "AppSystemEvents", "AppTraces", "AppGenAIContent",
 )
 SOURCES = ("results_history", "azure_monitor", "foundry_control", "azure_resources")
+SDK_EXPORT_OPTOUTS = (
+    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+    "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
+)
 
 # These are normative schema-v1 policy clauses, not free-form audit annotations.
 POLICY = {
@@ -130,6 +135,9 @@ VARIABLE_FIELDS = {
     "capture": set(),
     "storage_and_cleanup": {"raw_artifact_purge_by"},
 }
+V3_AUTH_FIELDS = (
+    VARIABLE_FIELDS["authorization"] - {"pull_request", "head_branch"}
+) | {"ref", "head_sha", "run_id", "run_attempt", "issued_at"}
 
 
 class PreflightError(Exception):
@@ -232,16 +240,20 @@ def string_set(value, expected, code):
 def validate_record(record, now):
     require(isinstance(record, dict) and "schema_version" in record, "SCHEMA")
     version = record["schema_version"]
-    require(type(version) is int and version in (1, 2), "SCHEMA")
+    require(type(version) is int and version in (1, 2, 3), "SCHEMA")
     expected_top_level = {"schema_version", *POLICY}
     if version == 2:
         expected_top_level.add("diagnostic")
     require(set(record) == expected_top_level, "SCHEMA")
     for group, policies in POLICY.items():
         values = record[group]
+        variable_fields = V3_AUTH_FIELDS if version == 3 and group == "authorization" else VARIABLE_FIELDS[group]
         require(isinstance(values, dict) and
-                set(values) == set(policies) | VARIABLE_FIELDS[group], "SCHEMA")
+                set(values) == set(policies) | variable_fields, "SCHEMA")
         for key, expected in policies.items():
+            if version == 3 and group == "authorization" and key == "event_name":
+                require(values[key] in ("push", "schedule"), "POLICY")
+                continue
             if version == 2 and group == "storage_and_cleanup" and key in V2_STORAGE_POLICY:
                 expected = V2_STORAGE_POLICY[key]
             exact(values[key], expected, "POLICY")
@@ -270,10 +282,21 @@ def validate_record(record, now):
         record["authorization"], record["identity"], record["foundry"],
         record["telemetry"], record["storage_and_cleanup"],
     )
-    for key in ("basis", "purpose", "repository", "head_branch"):
+    for key in ("basis", "purpose", "repository"):
         text(auth[key], "SCHEMA")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", auth["repository"]), "SCHEMA")
-    require(type(auth["pull_request"]) is int and auth["pull_request"] > 0, "SCHEMA")
+    if version == 3:
+        exact(auth["ref"], "refs/heads/main", "POLICY")
+        require(type(auth["head_sha"]) is str and LOWER_HEX_SHA.fullmatch(auth["head_sha"]), "SCHEMA")
+        require(type(auth["run_id"]) is str and re.fullmatch(r"[1-9][0-9]*", auth["run_id"]), "SCHEMA")
+        require(type(auth["run_attempt"]) is int and auth["run_attempt"] > 0, "SCHEMA")
+        issued = utc_date(auth["issued_at"])
+        expiry = utc_date(auth["expires_at"])
+        require(now.tzinfo is not None and issued <= now and
+                issued < expiry <= issued + timedelta(hours=24), "APPROVAL_WINDOW")
+    else:
+        text(auth["head_branch"], "SCHEMA")
+        require(type(auth["pull_request"]) is int and auth["pull_request"] > 0, "SCHEMA")
     expiry, purge = utc_date(auth["expires_at"]), utc_date(storage["raw_artifact_purge_by"])
     require(now.tzinfo is not None and expiry > now, "EXPIRED")
     require(purge > now and purge >= expiry, "PURGE_DEADLINE")
@@ -443,11 +466,31 @@ def write_private(path, private_root, raw):
 
 
 def validate_github_context(record, environ):
-    """Validate repository and pull-request membership from the event payload."""
+    """Bind the exact event; non-PR authorization is single-run, never standing."""
     auth = record["authorization"]
     exact(required_env(environ, "GITHUB_REPOSITORY"), auth["repository"], "CI_CONTEXT")
-    exact(required_env(environ, "GITHUB_EVENT_NAME"), "pull_request", "CI_CONTEXT")
+    exact(required_env(environ, "GITHUB_EVENT_NAME"), auth["event_name"], "CI_CONTEXT")
     event = parse_json(read_file(absolute_path(required_env(environ, "GITHUB_EVENT_PATH"))))
+    if record["schema_version"] == 3:
+        for name, key in (
+            ("GITHUB_REF", "ref"), ("GITHUB_SHA", "head_sha"), ("GITHUB_RUN_ID", "run_id"),
+        ):
+            exact(required_env(environ, name), auth[key], "CI_CONTEXT")
+        exact(required_env(environ, "GITHUB_RUN_ATTEMPT"), str(auth["run_attempt"]), "CI_CONTEXT")
+        exact(field(event, "repository", "full_name"), auth["repository"], "CI_CONTEXT")
+        exact(field(event, "repository", "default_branch"), "main", "CI_CONTEXT")
+        require("pull_request" not in event, "CI_CONTEXT")
+        if auth["event_name"] == "push":
+            exact(field(event, "ref"), auth["ref"], "CI_CONTEXT")
+            exact(field(event, "after"), auth["head_sha"], "CI_CONTEXT")
+            exact(field(event, "deleted"), False, "CI_CONTEXT")
+        else:
+            # Scheduled events have no PR or push after/ref payload fields.
+            text(field(event, "schedule"), "CI_CONTEXT")
+            for key, expected in (("ref", auth["ref"]), ("after", auth["head_sha"])):
+                if key in event:
+                    exact(event[key], expected, "CI_CONTEXT")
+        return event
     for keys, expected in (
         (("number",), auth["pull_request"]),
         (("repository", "full_name"), auth["repository"]),
@@ -495,8 +538,10 @@ def validate_context(record, environ):
         exact(environ["AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING"], "false", "EXPORT_OVERRIDE")
     allowed = {
         "APPLICATIONINSIGHTS_CONNECTION_STRING", "AGENTOPS_APPLICATIONINSIGHTS_CONNECTION_STRING",
-        "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON",
+        "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON", *SDK_EXPORT_OPTOUTS,
     }
+    for name in SDK_EXPORT_OPTOUTS:
+        exact(environ.get(name), "true", "EXPORT_OVERRIDE")
     for name in environ:
         if name in allowed:
             continue
@@ -613,10 +658,18 @@ def validate_metadata(record, routing, read_json):
 
 
 def main(argv=None, *, environ=None, read_json=None, now=None):
+    authorization_only = False
     try:
         args = sys.argv[1:] if argv is None else argv
-        require(len(args) == 2 and args[0] in ("--write-approval", "--approval-file"), "ARGUMENTS")
+        authorization_only = args == ["--check-authorization-only"]
         env = dict(os.environ if environ is None else environ)
+        if authorization_only:
+            record = parse_json(required_env(env, "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON"))
+            validate_record(record, now if now is not None else datetime.now(timezone.utc))
+            validate_github_context(record, env)
+            print("AGENTOPS_CI_AUTHORIZATION=PASS CONFIG_ONLY")
+            return 0
+        require(len(args) == 2 and args[0] in ("--write-approval", "--approval-file"), "ARGUMENTS")
         write = args[0] == "--write-approval"
         path = absolute_path(args[1])
         private_root = validate_paths(path, env, write)
@@ -638,14 +691,14 @@ def main(argv=None, *, environ=None, read_json=None, now=None):
         code = exc.args[0] if len(exc.args) == 1 else None
         if not isinstance(code, str) or code not in ERROR_CODES:
             code = "INTERNAL_ERROR"
-        print("AGENTOPS_CI_PREFLIGHT=FAIL " + code)
+        print(("AGENTOPS_CI_AUTHORIZATION" if authorization_only else "AGENTOPS_CI_PREFLIGHT") + "=FAIL " + code)
         return 1
     except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
-        print("AGENTOPS_CI_PREFLIGHT=FAIL INVALID_INPUT")
+        print(("AGENTOPS_CI_AUTHORIZATION" if authorization_only else "AGENTOPS_CI_PREFLIGHT") + "=FAIL INVALID_INPUT")
         return 1
     except Exception:
         # A programming fault must not emit a traceback containing private inputs.
-        print("AGENTOPS_CI_PREFLIGHT=FAIL INTERNAL_ERROR")
+        print(("AGENTOPS_CI_AUTHORIZATION" if authorization_only else "AGENTOPS_CI_PREFLIGHT") + "=FAIL INTERNAL_ERROR")
         return 1
     print("AGENTOPS_CI_PREFLIGHT=PASS")
     return 0

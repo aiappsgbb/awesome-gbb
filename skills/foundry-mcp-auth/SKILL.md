@@ -12,7 +12,7 @@ description: >
   runtime deployment (use foundry-hosted-agents), durable MCP tasks or jobs
   (use foundry-mcp-aca-jobs), web frontend sign-in, or general network provisioning.
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # Foundry MCP delegated authentication

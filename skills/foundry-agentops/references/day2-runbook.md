@@ -94,6 +94,19 @@ Preserve approved configuration and architecture: the observability owner
 resolves instrumentation/export policy, Citadel owns access/routing, and the
 workflow owner owns CI changes. This runbook does not change any of them.
 
+For the dedicated CI process, set
+`APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=true` and
+`APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED=true` before any SDK/native startup.
+These supported controls were verified offline against Monitor 1.8.10/exporter
+1.0.0b57, resolved by the pinned native 0.14.0 dependency range. They stop
+Statsbeat collection and OneSettings initialization, not telemetry to the
+approved component. Initial preflight and secretless pre-invocation rechecks
+require both exact values; helpers, retries, eval, Doctor and cleanup inherit
+them from the AgentOps-only workflow isolation step. Do not remove required
+sources or patch native credential factories. If SDK resolution changes, stop
+and verify its supported controls offline before initializing telemetry.
+These controls do not replace destination/payload/retention authorization.
+
 The command-path audit at this tag is:
 
 | Documented path | Initialization and approval boundary |
@@ -189,6 +202,68 @@ or package fork. This skill must not implement a parallel invocation engine.
 ## Manual equivalent and outer executor diagnosis
 
 ### Dedicated CI delivery boundary
+
+#### Owner renewal and main-schedule authorization
+
+The offline `--check-authorization-only` gate runs before credential setup,
+Azure login, metadata reads or paid execution. It checks only the private
+record and GitHub event. `CONFIG_ONLY` is not identity, network or smoke proof;
+the full preflight still validates actual identity, project/model, dedicated
+telemetry and retention before each attempt. Never print or upload approval
+contents. An operator may inspect the following public classifications:
+
+| Outcome | Meaning and action |
+|---|---|
+| Authorization `EXPIRED`, `APPROVAL_WINDOW`, `MISSING_ENV` | Stop. Owner reviews a fresh bounded scope and expiry; retry alone cannot repair consent. |
+| Authorization `CI_CONTEXT`, `SCHEMA`, `POLICY` | Record does not authorize this exact context/policy. Do not infer a replacement or widen the record. |
+| Preflight identity/routing/metadata failure | Authorization is not credential or resource proof. Existing owner resolves the exact binding; no fallback destination or re-grant. |
+| Native execution failure | Preserve exit and evidence; existing retry classification/budget is unchanged. |
+| Eval quality or Doctor readiness failure | Keep quality FAIL and readiness BLOCKED distinct from execution and authorization. Renewal does not make either pass. |
+| Cleanup or retention handoff | Record disposition separately; agent deletion never proves Responses or telemetry purge. |
+
+**Approval formats are explicit and are never automatically converted:**
+
+| Version | Authorized event | Binding |
+|---|---|---|
+| v1 | `pull_request` only | Existing repository, PR and head-branch contract, identity/project/model/destination/capture/retention and expiry |
+| v2 | Diagnostic PR synchronize only | v1 scope plus exact head SHA, attempt 1, diagnostic label and encrypted recipient contract; unchanged |
+| v3 | One known `push` on main **or** one known `schedule` run | Exact event, `refs/heads/main`, checkout SHA, run ID and run attempt; no diagnostic, other branch, PR or `workflow_dispatch` |
+
+v3 preserves every v1 non-context policy clause, including one synthetic row,
+full Doctor, all four read sources, existing invocation/retry limits, no
+retry-to-green, approved export/capture and exact retention. In `authorization`
+it replaces `pull_request` and `head_branch` with:
+
+| Field | Required value |
+|---|---|
+| `event_name` | Exactly `push` or `schedule`, not an array or wildcard |
+| `ref` | Exactly `refs/heads/main` |
+| `head_sha` | The original run's exact 40-character lowercase checkout SHA |
+| `run_id` | The known run's canonical positive decimal string |
+| `run_attempt` | The approved positive integer attempt, not a boolean/string |
+| `issued_at` | UTC `YYYY-MM-DDTHH:MM:SSZ`, not in the future |
+| `expires_at` | Same strict UTC format; after issuance and now, at most 24 hours after issuance |
+
+The 24-hour bound is a **schema maximum, not an automatic 24-hour grant**.
+The owner chooses the shortest agreed cycle. Existing purge deadlines must
+still be at or after expiry. Repository/default branch, runtime SHA/ref/run/
+attempt and push `after`/`ref`/`deleted=false` are checked without coercion.
+Schedule uses `github.event.schedule` and the default-branch SHA/ref rather
+than invented PR fields; see [GitHub's event contract](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+**Operational tradeoff: this is not an autonomously green cron.** The first
+main/scheduled run without a matching record remains FAIL before credentials
+or paid work. Once its run ID is known, the owner must explicitly review and
+approve the **next** `run_attempt`, original SHA, event, principal, project,
+models, destinations, payloads and retention. A maintainer then installs the
+reviewed record privately and separately authorizes a rerun of failed jobs
+where supported. Do not run current main instead of the original tested SHA.
+No automatic record generation/renewal, secret mutation, future-run wildcard
+or inherited PR authorization is supported. Internal retries in that same
+run attempt consume the original budget and must revalidate expiry, not obtain
+a new allowance. Another rerun or changed SHA needs another matching approval.
+Existing main/scheduled matrix selection, privacy gates, immutable checkout
+checks and aggregate failure reporting remain enabled.
 
 For the explicitly owner-authorized CI run, the workflow's deterministic
 `agentops-ci-preflight.py` validates the private approval, actual CI principal,
@@ -286,6 +361,37 @@ reuses the exact fixture assertion blocks, not a second scoring/Doctor engine;
 the byte-exact marker alone is insufficient. Primary and retry summaries are
 separate. Once a private workspace exists, automated replay is conservatively
 blocked so a completed negative cycle cannot be overwritten by a green retry.
+
+Pre-Doctor diagnostics reuse `scripts/agentops-ci-report.py` and the existing
+sanitized summary; there is no new upload, destination or approval mode.
+The fixture observes the original install, prerequisite, credential-constructor,
+prompt-create, configuration, analyze and eval commands. The helper records
+local invocation intent before starting each subprocess, captures its output
+privately, and preserves its actual return code (including signals). It never
+retries, changes native commands or implements scoring. Recording/invocation
+failure requires stopping, not replay or an unobserved invocation.
+
+`diagnostics.pre_doctor` contains only fixed stage/reason enums, numeric exits
+when observed, and the explicit provenance `untrusted_agent_writable`. Each
+private intent is bound to the run/attempt and existing workspace pointer plus
+directory identity. A fixture-reported stop has no native exit. Missing,
+unsafe, conflicting or differently bound observations remain `unknown`; an
+outer agent stopping before executing a stage is not a native command failure.
+The host does not classify arbitrary transcript text. Existing native
+analyze/eval/Doctor exit files can be reported without a returned identity, but
+this does not validate their artifacts or bypass the identity-bound checkers.
+Optional diagnostic absence cannot invalidate otherwise valid native evidence.
+
+In particular, `prompt_create_intent: observed` means only local invocation
+intent, not an HTTP CREATE acknowledgement, ownership or successful creation.
+Missing identity or intent leaves effects `unknown`, never `not_created`.
+These observations cannot satisfy grading, authorize retry/deletion, certify
+cleanup or turn an eval/Doctor gate green. They are not trusted attestations.
+The sanitized projection survives the existing private-root cleanup; raw logs,
+argv, paths, workspace IDs, resource identities and payload text do not. This
+cannot recover the precise cause of an earlier run whose private evidence was
+already deleted. The separate encrypted mode still exports only the approved
+Doctor log, not these pre-Doctor logs or the Copilot transcript.
 
 CI workspaces/identity pointers are private runner context, not native schemas.
 The fixture deletes only its own prompt agent and leaves local evidence for

@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.4.1"
+  version: "2.4.3"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -63,6 +63,13 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 > **Choosing a model?** See [`references/model-selection.md`](references/model-selection.md) for the model / region / capacity / data-residency decision before you `azd provision`.
 
 ## Deployment preflight
+
+The public CI fixture uses a separate runner-owned
+[native lifecycle and custody contract](../../docs/maintenance/native-ci-preflight.md#hosted-and-ghcp-native-reconciliation).
+It freezes native package/publication/definition evidence before one deploy;
+cleanup disposition is separate from functional PASS. This proposed fixture
+integration still requires live validation and does not authorize cleanup of
+retained demonstrations or historical runs.
 
 **Platform-managed compute does not mean that private project setup is optional.**
 Before hosted registration, select the account/project/network mode and follow

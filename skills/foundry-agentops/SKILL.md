@@ -11,7 +11,7 @@ description: >
   (foundry-agt), deep eval design (foundry-evals), instrumentation
   (foundry-observability), or production-ready certification.
 metadata:
-  version: "1.0.0"
+  version: "1.1.2"
 ---
 
 # Foundry AgentOps adoption
@@ -205,6 +205,16 @@ architecture. `GITHUB_STEP_SUMMARY` suppression/private logs are **not a
 network-export opt-out**. `AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING=false` does
 not suppress native full input/expected span attributes or Doctor finding text.
 No verified blanket native opt-out is claimed at this pin.
+The dedicated CI route requires the supported process controls
+`APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=true` and
+`APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED=true` before SDK/native startup,
+inherited unchanged by helpers, primary/retry, eval, Doctor and cleanup.
+Verified with Monitor 1.8.10/exporter 1.0.0b57, these suppress SDK Statsbeat and
+OneSettings side-channel traffic only; they do not disable the approved
+component exporter, required sources, capture or retention gates. A separately
+authorized manual equivalent must establish the same controls before startup.
+Missing controls or a different unresolved SDK cohort means STOP for offline
+verification, not permission to probe destinations live.
 Resolve the **actual linked App Insights component and LAW**, including effective
 table retention, before execution. Native Doctor's minimum lookback is **1 day**;
 the four component-scoped aggregates have no per-agent/run filter. Historical

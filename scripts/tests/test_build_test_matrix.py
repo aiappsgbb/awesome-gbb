@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import copy
 import importlib.util
+import io
 import os
 import shlex
 import subprocess
@@ -28,6 +29,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import redirect_stderr
 
 import yaml
 
@@ -166,6 +168,41 @@ class TestAgentOpsHelperChanges(unittest.TestCase):
     def test_actual_catalog_reporter_only_selects_agentops(self) -> None:
         self.assertEqual(self.build([self.HELPERS[1]], ROOT), {"skill": ["foundry-agentops"]})
 
+    def test_mcp_helpers_select_their_actual_consumers(self) -> None:
+        for helper, expected in (
+            ("scripts/mcp-auth-network-smoke.py", {"foundry-mcp-auth"}),
+            ("scripts/mcp-aca-ci-lifecycle.py", {"foundry-mcp-aca", "foundry-hosted-agents", "ghcp-hosted-agents", "foundry-mcp-aca-jobs"}),
+            ("scripts/hosted-ci-lifecycle.py", {"foundry-hosted-agents", "ghcp-hosted-agents", "foundry-mcp-aca-jobs"}),
+            ("scripts/jobs-ci-lifecycle.py", {"foundry-mcp-aca-jobs"}),
+            ("scripts/native-ci-preflight.py", {"foundry-mcp-auth", "foundry-mcp-aca-jobs"}),
+        ):
+            with self.subTest(helper=helper):
+                self.assertEqual(self.matrix._changed_skills_from_diff([helper]), expected)
+                selected = set(self.build([helper], ROOT)["skill"])
+                self.assertTrue(expected <= selected)
+                self.assertNotIn("foundry-agentops", selected)
+                self.assertNotEqual(selected, set(self.matrix.build(ROOT)["skill"]))
+
+    def test_shared_age_helper_selects_all_consumers_and_normal_fanout(self) -> None:
+        path = "scripts/setup-agentops-age.sh"
+        self.assertEqual(self.matrix._changed_skills_from_diff([path]),
+                         {"foundry-agentops", "foundry-mcp-aca", "foundry-hosted-agents", "ghcp-hosted-agents", "foundry-mcp-aca-jobs"})
+        for name in ("foundry-mcp-aca", "foundry-mcp-aca-jobs"):
+            _write_fixture(self.repo, name)
+        _write_deps(self.repo, {"foundry-agentops": ["alpha"], "alpha": [],
+                               "foundry-mcp-aca": [], "foundry-mcp-aca-jobs": ["foundry-mcp-aca"]})
+        self.assertEqual(self.build([path]), {
+            "skill": ["foundry-agentops", "foundry-mcp-aca", "foundry-mcp-aca-jobs"],
+        })
+        self.assertEqual(self.build(["skills/foundry-mcp-aca/SKILL.md"])["skill"],
+                         ["foundry-mcp-aca", "foundry-mcp-aca-jobs"])
+        self.assertEqual(self.build(["skills/alpha/SKILL.md"])["skill"], ["alpha"])
+        self.assertEqual(self.build([path, self.matrix.WORKFLOW_PATH]),
+                         self.matrix.build(self.repo))
+        actual = set(self.build([path], ROOT)["skill"])
+        self.assertTrue({"foundry-agentops", "foundry-mcp-aca"} <= actual)
+        self.assertNotEqual(actual, set(self.matrix.build(ROOT)["skill"]))
+
     def test_helpers_use_normal_dependency_fanout_not_full_matrix(self) -> None:
         _write_deps(self.repo, {"foundry-agentops": [], "alpha": ["foundry-agentops"], "beta": []})
         for helper in self.HELPERS:
@@ -234,7 +271,7 @@ class TestAgentOpsHelperChanges(unittest.TestCase):
                 {"skill": ["alpha", "beta", "foundry-agentops"]},
             )
 
-    def test_actual_catalog_dependency_fanout_removes_only_agentops(self) -> None:
+    def test_actual_catalog_dependency_fanout_removes_only_non_operational_consumers(self) -> None:
         deps = self.matrix._load_dep_map(ROOT)
         eligible = set(self.matrix._full_fixtured_skills(ROOT))
         self.assertIn("foundry-agentops", eligible)
@@ -244,10 +281,55 @@ class TestAgentOpsHelperChanges(unittest.TestCase):
                 expected = self.matrix._expand_transitively({upstream}, deps) & eligible
                 self.assertIn("foundry-agentops", expected)
                 expected.remove("foundry-agentops")
+                expected.discard("foundry-mcp-auth")
                 self.assertEqual(
                     self.build([f"skills/{upstream}/SKILL.md"], ROOT),
                     {"skill": sorted(expected)},
                 )
+
+    def test_dependency_only_auth_omission_has_visible_reason_not_success(self) -> None:
+        _write_fixture(self.repo, "foundry-mcp-auth")
+        _write_deps(self.repo, {"foundry-mcp-auth": ["alpha"],
+                               "foundry-agentops": ["alpha"], "alpha": [], "beta": ["alpha"]})
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.assertEqual(self.build(["skills/alpha/SKILL.md"]), {"skill": ["alpha", "beta"]})
+        self.assertIn("MCP_AUTH_SELECTION=DEPENDENCY_ONLY_EXCLUDED", stderr.getvalue())
+        self.assertIn("No auth smoke executed or passed", stderr.getvalue())
+
+    def test_direct_auth_and_exact_helpers_retain_real_acceptance(self) -> None:
+        _write_fixture(self.repo, "foundry-mcp-auth")
+        _write_deps(self.repo, {"foundry-mcp-auth": ["alpha"], "alpha": [], "beta": ["alpha"]})
+        for path in ("skills/foundry-mcp-auth/SKILL.md",
+                     "skills/foundry-mcp-auth/test-fixture/consumer_prompt.md",
+                     "skills/foundry-mcp-auth/references/python/auth_policy.py",
+                     "scripts/mcp-auth-network-smoke.py", "scripts/native-ci-preflight.py"):
+            stderr = io.StringIO()
+            with self.subTest(path=path), redirect_stderr(stderr):
+                self.assertEqual(self.build(["skills/alpha/SKILL.md", path]),
+                                 {"skill": ["alpha", "beta", "foundry-mcp-auth"]})
+            self.assertNotIn("DEPENDENCY_ONLY_EXCLUDED", stderr.getvalue())
+
+    def test_shared_and_full_auth_selection_never_apply_dependency_omission(self) -> None:
+        _write_fixture(self.repo, "foundry-mcp-auth")
+        _write_deps(self.repo, {"foundry-mcp-auth": ["alpha"], "alpha": [], "beta": []})
+        for path in (*self.matrix.FORCE_FULL_MATRIX_PATHS, self.matrix.WORKFLOW_PATH):
+            with self.subTest(path=path), redirect_stderr(io.StringIO()):
+                self.assertEqual(self.build(["skills/alpha/SKILL.md", path]),
+                                 self.matrix.build(self.repo))
+        with patch.object(self.matrix, "_diff_filenames", side_effect=AssertionError("unexpected diff")):
+            self.assertIn("foundry-mcp-auth", self.matrix.build(self.repo)["skill"])
+
+    def test_actual_catalog_auth_upstreams_preserve_other_fanout(self) -> None:
+        deps = self.matrix._load_dep_map(ROOT)
+        eligible = set(self.matrix._full_fixtured_skills(ROOT))
+        self.assertTrue(deps["foundry-mcp-auth"])
+        for upstream in deps["foundry-mcp-auth"]:
+            expected = self.matrix._expand_transitively({upstream}, deps) & eligible
+            expected -= {"foundry-mcp-auth", "foundry-agentops"}
+            with self.subTest(upstream=upstream), redirect_stderr(io.StringIO()):
+                self.assertEqual(self.build([f"skills/{upstream}/SKILL.md"], ROOT),
+                                 {"skill": sorted(expected)})
 
 
 class TestAgentOpsDiagnosticMode(unittest.TestCase):

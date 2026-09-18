@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import unittest
@@ -601,7 +602,295 @@ class DeliveryTests(unittest.TestCase):
             "official_eval", "observability", "governance", "landing_zone",
         })
         self.assertEqual(summary["coverage"]["component_aggregates"], "unverified")
-        self.assertEqual(summary["diagnostics"], {})
+        self.assertEqual(set(summary["diagnostics"]), {"pre_doctor"})
+        self.assert_unknown_observations(summary)
+
+    def assert_unknown_observations(self, summary):
+        observation = summary["diagnostics"]["pre_doctor"]
+        self.assertEqual(observation["provenance"], "untrusted_agent_writable")
+        self.assertEqual(observation["effects"], "unknown")
+        self.assertEqual(observation["prompt_create_intent"], "unknown")
+        for state in observation["stages"].values():
+            self.assertEqual(state, {"stage": "unknown", "reason": "unknown", "exit_code": None})
+
+    def observe(self, stage, code):
+        return self.cli("observe", "primary", stage, "--", sys.executable, "-I", "-c", code)
+
+    def stage_path(self, stage):
+        return self.attempt / "observations" / stage
+
+    def test_actual_observer_cli_retains_nonzero_signal_and_private_output(self):
+        cases = (
+            ("import sys; sys.exit(7)", 7),
+            ("import os, signal; os.kill(os.getpid(), signal.SIGTERM)", -signal.SIGTERM),
+        )
+        for code, expected in cases:
+            with self.subTest(expected=expected), self.seeded_case():
+                child = f"import sys; print({CANARY!r}, flush=True); print({CANARY!r}, file=sys.stderr, flush=True); {code}"
+                completed = self.observe("sdk_prerequisites", child)
+                self.assertEqual(completed.returncode, expected, completed.stdout + completed.stderr)
+                self.assertIn(CANARY, (self.stage_path("sdk_prerequisites") / "stdout.log").read_text())
+                self.assertIn(CANARY, (self.stage_path("sdk_prerequisites") / "stderr.log").read_text())
+                self.write(self.attempt / "marker", "SMOKE_RESULT=FAIL\n")
+                result, summary = self.report()
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(summary["diagnostics"]["pre_doctor"]["stages"]["sdk_prerequisites"],
+                                 {"stage": "sdk_prerequisites", "reason": "command_nonzero",
+                                  "exit_code": expected})
+                self.assertNotEqual(self.cli("retry-allowed").returncode, 0)
+
+    def test_observer_cwd_environment_stdin_and_original_arguments(self):
+        self.seed()
+        sentinel = self.workspace / "original-called"
+        child = (
+            "import os,pathlib,sys; "
+            f"assert pathlib.Path.cwd() == pathlib.Path({str(self.workspace)!r}); "
+            f"assert os.environ['APPROVED_CONTEXT'] == {CANARY!r}; "
+            f"assert sys.stdin.read() == {CANARY!r}; "
+            "assert sys.argv[1:] == ['--original', 'value with spaces']; "
+            "pathlib.Path('original-called').write_text('called')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-I", str(REPORTER), "observe", "primary", "install", "--",
+             sys.executable, "-I", "-c", child, "--original", "value with spaces"],
+            env=dict(self.env, APPROVED_CONTEXT=CANARY), input=CANARY,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn(CANARY, result.stdout + result.stderr)
+        self.assertTrue(sentinel.exists())
+        self.assertEqual(json.loads((self.stage_path("install") / "result.json").read_text()),
+                         {"reason": "command_returned", "exit_code": 0})
+
+    def test_no_observation_or_identity_never_means_no_effects(self):
+        self.seed()
+        (self.workspace / "agent-identity.json").unlink()
+        self.write(self.attempt / "marker", "SMOKE_RESULT=FAIL\n")
+        _, summary = self.report()
+        self.assert_unknown_observations(summary)
+        self.assertEqual(summary["diagnostics"]["identity"], {"artifact": "identity", "reason": "absent"})
+        self.assertEqual(summary["prompt_agent_cleanup"], "unverified")
+        self.assertEqual(summary["response_purge"], "unverified")
+        # Exit observations are retained, not promoted to identity-bound evidence.
+        self.assertEqual(summary["diagnostics"]["pre_doctor"]["native_exit_codes"],
+                         {"analyze": 0, "eval": 0, "doctor": 0})
+        self.assertEqual(summary["execution_checks"],
+                         {"analyze": "failed", "eval": "failed", "doctor": "failed"})
+
+    def test_intent_is_written_before_command_and_missing_ack_stays_unknown(self):
+        for exit_code in (0, 3):
+            with self.subTest(exit_code=exit_code), self.seeded_case():
+                (self.workspace / "agent-identity.json").unlink()
+                intent = self.stage_path("prompt_create") / "intent.json"
+                result = self.observe("prompt_create",
+                                      f"import pathlib,sys; assert pathlib.Path({str(intent)!r}).is_file(); sys.exit({exit_code})")
+                self.assertEqual(result.returncode, exit_code)
+                _, summary = self.report()
+                obs = summary["diagnostics"]["pre_doctor"]
+                self.assertEqual(obs["prompt_create_intent"], "observed")
+                self.assertEqual(obs["effects"], "unknown")
+                self.assertEqual(summary["prompt_agent_cleanup"], "unverified")
+                self.assertEqual(summary["diagnostics"]["identity"]["reason"], "absent")
+                self.assertEqual(summary["delivery"], "failed")
+
+    def test_incomplete_intent_has_no_invented_exit_and_cannot_replay(self):
+        self.seed()
+        self.assertEqual(self.observe("prompt_create", "pass").returncode, 0)
+        (self.stage_path("prompt_create") / "result.json").unlink()
+        (self.workspace / "agent-identity.json").unlink()
+        marker = self.workspace / "replayed"
+        self.assertEqual(self.observe("prompt_create", f"open({str(marker)!r}, 'w').close()").returncode, 125)
+        self.assertEqual(self.observe("workspace_config", f"open({str(marker)!r}, 'w').close()").returncode, 125)
+        self.assertFalse(marker.exists())
+        _, summary = self.report()
+        obs = summary["diagnostics"]["pre_doctor"]
+        self.assertEqual(obs["stages"]["prompt_create"],
+                         {"stage": "prompt_create", "reason": "execution_incomplete", "exit_code": None})
+        self.assertEqual(obs["effects"], "unknown")
+
+    def test_launch_failure_has_no_native_exit(self):
+        self.seed()
+        result = self.cli("observe", "primary", "install", "--", str(self.workspace / CANARY))
+        self.assertEqual(result.returncode, 125)
+        _, summary = self.report()
+        self.assertEqual(summary["diagnostics"]["pre_doctor"]["stages"]["install"],
+                         {"stage": "install", "reason": "launch_failed", "exit_code": None})
+
+    def test_fixture_stop_is_not_observed_native_failure(self):
+        self.seed()
+        self.assertEqual(self.cli("stop", "primary", "prompt_create").returncode, 1)
+        self.assertEqual(self.observe("prompt_create", "raise SystemExit(0)").returncode, 125)
+        _, summary = self.report()
+        obs = summary["diagnostics"]["pre_doctor"]
+        self.assertEqual(obs["stages"]["prompt_create"],
+                         {"stage": "prompt_create", "reason": "fixture_stop", "exit_code": None})
+        self.assertEqual(obs["prompt_create_intent"], "unknown")
+        self.assertEqual(obs["effects"], "unknown")
+
+    def test_recording_failure_preserves_process_exit_and_refuses_repeat(self):
+        for status in (0, 9, -signal.SIGTERM):
+            with self.subTest(status=status), self.seeded_case():
+                path = self.stage_path("install") / "result.json"
+                finish = f"sys.exit({status})" if status >= 0 else f"os.kill(os.getpid(), {-status})"
+                child = f"import os,pathlib,sys; pathlib.Path({str(path)!r}).write_text({CANARY!r}); {finish}"
+                result = self.observe("install", child)
+                self.assertEqual(result.returncode, status if status else 125)
+                self.assertIn("FAIL RECORDING", result.stderr)
+                self.assertEqual(self.observe("install", "pass").returncode, 125)
+                self.assertEqual(self.observe("sdk_prerequisites", "pass").returncode, 125)
+                _, summary = self.report()
+                self.assert_unknown_observations(summary)
+
+    def test_capture_close_failure_preserves_actual_child_status(self):
+        for status in (0, 9, -signal.SIGTERM):
+            with self.subTest(status=status), self.seeded_case():
+                original = self.reporter.new_file
+
+                @contextlib.contextmanager
+                def close_failure(path, root):
+                    with original(path, root) as stream:
+                        yield stream
+                    if path.name == "stderr.log":
+                        raise OSError(CANARY)
+
+                finish = f"sys.exit({status})" if status >= 0 else f"os.kill(os.getpid(), {-status})"
+                stderr = io.StringIO()
+                with patch.dict(os.environ, self.env, clear=True), \
+                        patch.object(self.reporter, "new_file", close_failure), \
+                        contextlib.redirect_stderr(stderr):
+                    code = self.reporter.observe(self.private, "primary", "install",
+                                                 [sys.executable, "-c", "import os,sys; " + finish])
+                self.assertEqual(code, status or 125)
+                self.assertNotIn(CANARY, stderr.getvalue())
+                self.assertEqual(self.observe("install", "pass").returncode, 125)
+                self.assertEqual(self.observe("sdk_prerequisites", "pass").returncode, 125)
+                _, summary = self.report()
+                self.assertEqual(summary["diagnostics"]["pre_doctor"]["stages"]["install"],
+                                 {"stage": "install", "reason": "execution_incomplete", "exit_code": None})
+
+    def test_optional_observations_never_grade_or_classify_transcripts(self):
+        self.seed(failed_quality=True, critical=1)
+        self.write(self.attempt / "transcript.log",
+                   f"prompt agent create failed\nSMOKE_RESULT=FAIL {CANARY}\nPermission denied\n")
+        shutil.rmtree(self.attempt / "observations")
+        result, summary = self.report()
+        self.assertEqual(result.returncode, 0)
+        self.assert_unknown_observations(summary)
+        self.assertFalse(summary["quality"]["passed"])
+        self.assertEqual(summary["doctor"]["readiness"], "blocked")
+        self.assertEqual(summary["native_exit_codes"], {"eval": 2, "doctor": 2})
+
+    def test_diagnostics_never_replace_native_checkers_or_source_gates(self):
+        self.seed()
+        self.assertEqual(self.observe("eval", "pass").returncode, 0)
+        self.write(self.results, "{}")
+        result, summary = self.report()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(summary["execution_checks"]["eval"], "failed")
+        self.assertEqual(summary["diagnostics"]["pre_doctor"]["stages"]["eval"]["exit_code"], 0)
+
+    def test_observation_binding_and_schema_fail_closed_without_payload(self):
+        variants = ("attempt", "run_id", "run_attempt", "workspace", "inode", "version",
+                    "duplicate", "extra", "extra_binding", "boolean_code", "reason", "exit_code",
+                    "unknown_file", "permissions", "hardlink", "symlink")
+        for variant in variants:
+            with self.subTest(variant=variant), self.seeded_case():
+                self.assertEqual(self.observe("prompt_create", "pass").returncode, 0)
+                path = self.stage_path("prompt_create") / "intent.json"
+                record = json.loads(path.read_text())
+                if variant in ("attempt", "run_id", "run_attempt", "workspace"):
+                    record["binding"][variant] = CANARY
+                elif variant == "inode":
+                    record["binding"]["inode"] += 1
+                elif variant == "version":
+                    record["schema_version"] = True
+                elif variant == "extra":
+                    record["payload"] = CANARY
+                elif variant == "extra_binding":
+                    record["binding"]["payload"] = CANARY
+                self.write(path, json.dumps(record))
+                if variant == "duplicate":
+                    self.write(path, '{"schema_version":1,"schema_version":1}')
+                elif variant in ("boolean_code", "reason", "exit_code"):
+                    value = {"reason": "command_returned", "exit_code": 0}
+                    if variant == "boolean_code":
+                        value["exit_code"] = False
+                    elif variant == "reason":
+                        value["reason"] = CANARY
+                    else:
+                        value["exit_code"] = CANARY
+                    self.write(self.stage_path("prompt_create") / "result.json", json.dumps(value))
+                elif variant == "unknown_file":
+                    self.write(self.stage_path("prompt_create") / "payload", CANARY)
+                elif variant == "permissions":
+                    path.chmod(0o644)
+                elif variant == "hardlink":
+                    os.link(path, self.workspace / "linked-intent")
+                elif variant == "symlink":
+                    path.unlink()
+                    path.symlink_to(self.workspace / "agent-identity.json")
+                result, summary = self.report()
+                self.assertEqual(result.returncode, 0, "Diagnostics cannot invalidate valid native evidence")
+                self.assert_unknown_observations(summary)
+
+    def test_observer_rejects_repointed_workspace_before_execution(self):
+        self.seed()
+        self.assertEqual(self.observe("install", "pass").returncode, 0)
+        replacement = self.private / "workspaces" / uuid.uuid4().hex
+        replacement.mkdir(mode=0o700)
+        self.write(self.attempt / "workspace-pointer", replacement.name + "\n")
+        result = self.observe("prompt_create", f"open({str(replacement / 'called')!r}, 'w').close()")
+        self.assertEqual(result.returncode, 125)
+        self.assertFalse((replacement / "called").exists())
+        _, summary = self.report()
+        self.assert_unknown_observations(summary)
+
+    def test_missing_workspace_binding_refuses_create_without_no_effects_claim(self):
+        self.seed()
+        (self.attempt / "workspace-pointer").unlink()
+        sentinel = self.workspace / "called"
+        self.assertEqual(self.observe("prompt_create", f"open({str(sentinel)!r}, 'w').close()").returncode, 125)
+        self.assertFalse(sentinel.exists())
+        _, summary = self.report()
+        self.assert_unknown_observations(summary)
+
+    def test_first_failure_cannot_be_overwritten_by_stop_or_other_invocation(self):
+        self.seed()
+        self.assertEqual(self.observe("install", "raise SystemExit(6)").returncode, 6)
+        self.assertEqual(self.cli("stop", "primary", "install").returncode, 125)
+        self.assertEqual(self.cli("stop", "primary", "sdk_prerequisites").returncode, 1)
+        sentinel = self.workspace / "called"
+        self.assertEqual(self.observe("exporter_cohort", f"open({str(sentinel)!r}, 'w').close()").returncode, 125)
+        self.assertFalse(sentinel.exists())
+        _, summary = self.report()
+        stages = summary["diagnostics"]["pre_doctor"]["stages"]
+        self.assertEqual(stages["install"]["exit_code"], 6)
+        self.assertEqual(stages["sdk_prerequisites"]["reason"], "fixture_stop")
+        self.assertIsNone(stages["sdk_prerequisites"]["exit_code"])
+
+    def test_invalid_observer_request_never_starts_child(self):
+        self.seed()
+        sentinel = self.workspace / "called"
+        for attempt, stage in (("other", "install"), ("primary", CANARY)):
+            result = self.cli("observe", attempt, stage, "--", sys.executable, "-c",
+                              f"open({str(sentinel)!r}, 'w').close()")
+            self.assertEqual(result.returncode, 125)
+        self.assertFalse(sentinel.exists())
+
+    def test_cleanup_retains_only_sanitized_observations(self):
+        self.seed()
+        self.assertEqual(self.observe("credential_contract",
+                                     f"import sys; print({CANARY!r}); sys.exit(4)").returncode, 4)
+        self.write(self.attempt / "marker", "SMOKE_RESULT=FAIL\n")
+        result, summary = self.report()
+        self.assertEqual(result.returncode, 1)
+        raw = (self.public / "primary.json").read_bytes()
+        self.assertEqual(summary["diagnostics"]["pre_doctor"]["stages"]["credential_contract"]["exit_code"], 4)
+        self.assertEqual(self.cli("cleanup").returncode, 0)
+        self.assertFalse(self.private.exists())
+        self.assertEqual((self.public / "primary.json").read_bytes(), raw)
+        self.assertNotIn(CANARY.encode(), raw)
+        self.assertEqual({path.name for path in self.public.iterdir()}, {"primary.json"})
 
     def test_actual_workflow_private_capture_and_gate_with_inert_copilot(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())
@@ -626,6 +915,8 @@ assert "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON" not in os.environ
 assert "GITHUB_STEP_SUMMARY" not in os.environ
 assert "GITHUB_OUTPUT" not in os.environ
 assert "GITHUB_ENV" not in os.environ
+assert os.environ["APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"] == "true"
+assert os.environ["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] == "true"
 pathlib.Path({str(sentinel)!r}).write_text("called")
 print({CANARY!r})
 print({CANARY!r}, file=sys.stderr)
@@ -666,6 +957,13 @@ PROMPT="{FIXTURE}"
                            FOUNDRY_PROJECT_ENDPOINT="https://example.invalid/api/projects/example",
                            FOUNDRY_MODEL_DEPLOYMENT="example-model",
                            APPLICATIONINSIGHTS_CONNECTION_STRING=CANARY)
+                isolate = next(s for s in steps if s.get("name") == "Isolate AgentOps credential sources")
+                setup = subprocess.run(
+                    ["bash", "-c", "python3() { return 0; }\n" + isolate["run"]],
+                    cwd=ROOT, env=env, text=True, capture_output=True,
+                )
+                self.assertEqual(setup.returncode, 0, setup.stderr)
+                env.update(line.split("=", 1) for line in Path(env["GITHUB_ENV"]).read_text().splitlines())
                 if judge_override:
                     env["AZURE_OPENAI_DEPLOYMENT"] = CANARY
                 result = subprocess.run(["bash", "-c", shell], cwd=ROOT, env=env, text=True, capture_output=True)
@@ -927,6 +1225,12 @@ class WorkflowTests(unittest.TestCase):
                      "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "FOUNDRY_MODEL_DEPLOYMENT"):
             self.assertEqual(gate["env"][name], self.primary["env"][name])
         self.assertNotIn("GITHUB_ENV", gate["run"])
+        self.assertEqual(isolate["if"], "matrix.skill == 'foundry-agentops'")
+        for name in ("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+                     "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"):
+            self.assertIn(f'echo "{name}=true"', isolate["run"])
+            for step in self.steps:
+                self.assertNotIn(name, step.get("env", {}), "Do not override the isolated inherited controls")
 
     def test_private_branch_precedes_legacy_outputs_and_rechecks(self):
         for step in (self.primary, self.retry):

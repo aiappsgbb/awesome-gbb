@@ -60,6 +60,13 @@ owner-provisioned cache containing only the approved identity, or
 `EnvironmentCredential` / `WorkloadIdentityCredential` with a fresh empty CLI
 directory. Inherit the identical paths and selector in **every Bash** call,
 including helpers, eval, Doctor and cleanup; do not rely on a prior Bash export.
+Also inherit the owner's supported process opt-outs
+`APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=true` and
+`APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED=true` before SDK imports or native
+startup, including precreate helpers, primary/retry, eval, Doctor and cleanup.
+These suppress SDK Statsbeat and OneSettings traffic outside the dedicated
+component, not the approved exporter or any required Doctor source. Missing
+or changed values mean STOP; do not repair them inside an already running SDK.
 Missing or changed isolation means STOP, not fallback to global caches.
 For **all three** modes (including approved cached CLI), `AZD_CONFIG_DIR` must
 be private and **fresh empty**, with **no login or token cache** copied into or
@@ -130,6 +137,9 @@ try:
         "environment": "EnvironmentCredential", "workload": "WorkloadIdentityCredential",
     }
     assert os.environ.get("AZURE_TOKEN_CREDENTIALS") == selectors[route]
+    for key in ("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+                "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"):
+        assert os.environ.get(key) == "true"
     required = [
         "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "FOUNDRY_PROJECT_ENDPOINT",
         "AZURE_CONFIG_DIR", "AZD_CONFIG_DIR", "AZURE_TOKEN_CREDENTIALS",
@@ -272,6 +282,67 @@ or copy them to public paths. A workspace allocation conservatively prevents
 automatic replay, even if orchestration subsequently fails.
 Manual runs retain the separately owner-approved private workspace convention.
 
+**CI pre-Doctor observations (mandatory, diagnostic only).** After allocating
+the workspace and pointer, use the existing reporter to observe the original
+commands below. It does not replace any prerequisite, native command or checker.
+Use the same absolute executable/arguments or save the original multi-command
+block to a private workspace script and pass its unchanged invocation. Group
+each stage into one invocation; do not re-run a stage to improve diagnostics.
+An install/check script must stop on its first failed command and return that
+status, not the status of a later successful write.
+
+```bash
+python3 -I "$GITHUB_WORKSPACE/scripts/agentops-ci-report.py" \
+  observe "$AGENTOPS_CI_ATTEMPT" <stage> -- <original-executable> <original-arguments>
+```
+
+Replace placeholders with the selected row and original command, never literal
+angle brackets. The observer sets cwd to the validated workspace and inherits
+the existing approved environment and stdin (including quoted heredocs). It
+captures stdout/stderr privately under the fixed
+`$AGENTOPS_CI_ROOT/attempts/$AGENTOPS_CI_ATTEMPT/observations/<stage>/`
+directory; never print those logs. Keep the existing native artifact/exit-code
+captures in Steps 5/6 **inside** the observed command, at their original paths.
+The observer's logs are not substitutes for native artifacts.
+
+| Stage | Original work to observe once |
+|---|---|
+| `install` | Step 2 venv creation and exact native/helper package installs |
+| `sdk_prerequisites` | Step 2 package/import checks |
+| `exporter_cohort` | Step 2 exact telemetry SDK versions, before initialization |
+| `credential_contract` | Step 2 offline credential-constructor/boundary checks |
+| `prompt_create` | Step 3 original creation helper, including returned identity persistence |
+| `workspace_config` | Step 4 minimal config/dataset writes |
+| `analyze` | Step 5 original analyze command and private output/status capture |
+| `eval` | Step 6 original eval capture block, after the unchanged scope recheck |
+
+The observer durably writes local invocation intent before starting a command,
+then records only the actual child return code. It returns that code, including
+termination by signal; it never converts a failure into success. A tool denial
+or outer-agent stop before invocation leaves the stage **UNKNOWN**, not a
+native failure. If a stage is deliberately stopped before its command, after
+workspace allocation, record only the controlled fixture-reported stop:
+
+```bash
+python3 -I "$GITHUB_WORKSPACE/scripts/agentops-ci-report.py" \
+  stop "$AGENTOPS_CI_ATTEMPT" <stage>
+```
+
+That command returns 1 and records no native exit. Use it only for a stage not
+yet observed; never replace a recorded failure. If observation invocation or
+recording fails, **STOP; do not retry or bypass the observer**. Preserve scoped
+Step 8 cleanup and the FAIL marker. An observed native eval exit 2 still goes
+through the unchanged Step 6 evidence checks; it is not automatically a quality
+pass or an execution failure. No observation can authorize replay or deletion.
+Do not observe cleanup or Doctor through this pre-Doctor helper.
+
+These records are **untrusted agent-writable diagnostics**, not attestations.
+Workspace binding and `prompt_create` intent do not prove a request was sent,
+acknowledged or owned. Missing identity/intent never proves no Azure effects.
+The reporter publishes controlled enums/numbers only before deleting private
+records in the existing finalizer. Missing/unsafe observations remain UNKNOWN;
+do not mine freeform transcripts or invent a cause to fill the gap.
+
 Inside that workspace:
 
 1. create a virtual environment,
@@ -285,6 +356,11 @@ Inside that workspace:
    `CognitiveServicesManagementClient` from `azure.mgmt.cognitiveservices`,
    `MonitorManagementClient` from `azure.mgmt.monitor`, and
    `AuthorizationManagementClient` from `azure.mgmt.authorization`.
+   Before importing/initializing telemetry, also assert the verified SDK cohort:
+   `azure-monitor-opentelemetry==1.8.10` and
+   `azure-monitor-opentelemetry-exporter==1.0.0b57` using
+   `importlib.metadata.version`. If resolution differs, STOP for offline
+   verification of the two supported opt-outs, not a live discovery run.
    These are offline local prerequisite checks, not Azure health proof,
 4. install `azure-identity~=1.25.3` in both native/helper environments, verify
    the resolved version and the single credential-name selector support.
@@ -346,7 +422,8 @@ Requirements:
   the extra developer-CLI leg must remain unable to use a logged-in azd cache.
 
 If agent creation fails, finish with Step 8 using the literal one-line reason
-`prompt agent create failed`.
+`prompt agent create failed`. In CI run the original creation helper through
+the `prompt_create` observer above; do not issue an unobserved create first.
 
 ---
 
@@ -506,6 +583,10 @@ From the isolated workspace, run:
 $AGENTOPS_BIN eval analyze --format json
 ```
 
+In CI observe the `analyze` stage around the original command **and** its
+private output/status capture below. Do not run the displayed command separately
+first. The native arguments remain `eval analyze --format json`.
+
 Requirements:
 
 - the command must succeed,
@@ -527,6 +608,9 @@ Step 8 using the literal one-line reason `eval analyze contract failed`.
 Run exactly one AgentOps evaluation for the temporary prompt agent, only after
 rechecking the pre-execution telemetry approval against the completed workspace
 and effective process environment. If missing or mismatched, STOP as in Step 1.
+In CI pass the complete original capture block below to the `eval` observer
+once, as a private workspace script. Do not execute it once directly and again
+through the observer; the observer returns the original block's exit status.
 
 **Suppress the native CI summary export at the process boundary.** v0.14.0
 automatically appends the full eval report (input/response/expected) when
@@ -926,6 +1010,10 @@ printf 'SMOKE_RESULT=PASS\n' > "$AGENTOPS_CI_MARKER"
 ```
 
 CI execution/evidence failure:
+
+The pre-Doctor observation, when available, supplies a controlled diagnostic
+before this final action. Leave it intact for the reporter; never add reason
+text to the marker or infer native execution from this marker.
 
 ```bash
 umask 077
