@@ -74,7 +74,7 @@ CATEGORIES: dict[str, list[str]] = {
         'azure-sre-agent',
     ],
     '📊 Content Generation': [
-        'gbb-pptx', 'auto-demo-producer',
+        'web-experience-design', 'gbb-pptx', 'auto-demo-producer',
     ],
     '🔍 Discovery': [
         'ip-catalog',
@@ -83,6 +83,18 @@ CATEGORIES: dict[str, list[str]] = {
 
 # The legacy "draft" field records release gates, not source availability.
 DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
+    'web-experience-design': {
+        'source_status': 'candidate',
+        'release_status': 'pending',
+        'record': 'maintenance/web-experience-design-validation.md',
+        'summary': (
+            'Source candidate; release and global promotion pending. '
+            'Local contract checks do not certify generated UI quality. '
+            'Report, comparison/tool and informational-site output acceptance, '
+            'plus native runtime discovery and invocation, remain pending. '
+            'No required external generator or Azure resource workflow.'
+        ),
+    },
     'foundry-mcp-auth': {
         'source_status': 'merged',
         'release_status': 'pending',
@@ -119,6 +131,7 @@ DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
 PUBLISHED_DOCS = (
     'maintenance/foundry-agentops-validation.md',
     'maintenance/foundry-mcp-auth-validation.md',
+    'maintenance/web-experience-design-validation.md',
 )
 
 

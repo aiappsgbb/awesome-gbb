@@ -54,6 +54,7 @@ Merged source, not production readiness: foundry-agentops 1.0.0 is available in 
 
 ### 📊 Content Generation
 
+- [web-experience-design](/awesome-gbb/skills/web-experience-design/): Unreleased draft candidate. Design and improve task-centered web experiences: executive HTML reports, analytical comparisons, catalogs, dashboards, interactive tools, documentation, informational sites and navigable HTML presentations.
 - [gbb-pptx](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/gbb-pptx/SKILL.md): Generate professional PowerPoint (PPTX) presentations using python-pptx (the AI Apps GBB dark/light pitch-deck generator).
 - [auto-demo-producer](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/auto-demo-producer/SKILL.md): Produce narrated video demos of web applications automatically.
 
@@ -63,4 +64,4 @@ Merged source, not production readiness: foundry-agentops 1.0.0 is available in 
 
 ## Plugins
 
-- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugin.json): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 39 reusable building blocks for Copilot-assisted engagements, including Agent Framework Harness and the unpublished AgentOps and delegated MCP auth candidates.
+- [awesome-gbb](https://github.com/aiappsgbb/awesome-gbb/blob/main/plugin.json): Proposed / unreleased Microsoft AI Apps GBB skills catalog — 40 reusable building blocks for Copilot-assisted engagements, including Agent Framework Harness and the unpublished AgentOps, delegated MCP auth and web-experience-design candidates.

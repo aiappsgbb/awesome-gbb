@@ -3067,13 +3067,13 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Draft-inclusive source inventory (39 skills, 35 with upstream pins):**
+**Draft-inclusive source inventory (40 skills, 35 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
 | Auto-tier (CI can refresh autonomously) | 31 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
-| Internal IP (no pin) | 4 skills | T0 only (manual validation) |
+| Internal IP (no pin) | 5 skills | T0 plus per-skill local checks; manual output validation |
 | CI execution fixtures | 25 skills | Registered for T3: 24 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
 
 The additional `foundry-mcp-auth` entry is an unreleased candidate with live
@@ -3100,6 +3100,12 @@ pins remain human-only in every mode. The infra is provisioned (§ 9.7);
 individual pin scripts are being upgraded from pip+import to actual Azure
 API calls incrementally.
 
+The `web-experience-design` entry is a source candidate with no Azure resource
+workflow or required external generator. Its local contract tests are not proof
+of generated UI quality. Report, comparison/tool and informational-site output
+acceptance and native runtime loading remain promotion gates; see its
+[validation record](docs/maintenance/web-experience-design-validation.md).
+
 ### 12.4 The repo IS the product
 
 This is not a docs-only repository. The repo is a **Copilot CLI plugin**
@@ -3123,18 +3129,20 @@ Consequences:
 
 ### 12.5 Catalog at a glance
 
-Source counts include the unreleased AgentOps and delegated-auth candidates; see the
-[validation status](docs/maintenance/foundry-agentops-validation.md).
+Source counts include the unreleased AgentOps and delegated-auth candidates and
+the web-experience-design source candidate; see the
+[AgentOps status](docs/maintenance/foundry-agentops-validation.md) and
+[web experience status](docs/maintenance/web-experience-design-validation.md).
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 39 |
+| Total skills | 40 |
 | Skills with upstream pins | 35 |
 | Auto-tier (CI can refresh autonomously) | 31 |
 | Issue-only (human / complex deploy) | 4 |
-| Internal IP (no upstream) | 4 |
+| Internal IP (no upstream) | 5 |
 | CI workflows | 9 |
-| Unit tests | 1337 |
+| Unit tests | 1350 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
