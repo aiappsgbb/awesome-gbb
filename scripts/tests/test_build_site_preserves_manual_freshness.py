@@ -59,6 +59,7 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
             records = {
                 Path("maintenance/foundry-agentops-validation.md"),
                 Path("maintenance/foundry-mcp-auth-validation.md"),
+                Path("maintenance/web-experience-design-validation.md"),
             }
             for record in records:
                 self.assertEqual(

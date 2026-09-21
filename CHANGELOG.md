@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.34.0 — Proposed / Unreleased
+
+Adds [`web-experience-design`](skills/web-experience-design/SKILL.md)
+**1.0.0 source candidate**: task-first web experiences with content and navigation
+before styling, real-content wireframes, meaningful icons and motion, optional
+design tools, and observable browser task verification.
+
+- Proposed plugin/marketplace MINOR **4.33.0 → 4.34.0**: **40 skills**,
+  **35 upstream pins**, **31 auto-tier pins**, **5 internal-IP entries** and
+  **25 registered Azure fixtures**. No Azure enrollment is added for this local
+  web-design workflow.
+- Separate refinement, audit and structural-design paths; no mandatory theme,
+  stack, model, external generator or global installation.
+- Add local contract tests and three explicitly unexecuted output scenarios.
+  Packaging checks are not generated-UI acceptance.
+- Keep the existing candidate gates intact. New output acceptance, native skill
+  loading and release/global promotion remain pending in the
+  [validation record](docs/maintenance/web-experience-design-validation.md).
+
 ## Unreleased — upstream workflow integration
 
 Keep the existing awesome-gbb skill names and entry points; integrate verified
