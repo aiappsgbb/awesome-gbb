@@ -5,15 +5,15 @@
     "url": "https://github.com/aiappsgbb"
   },
   "metadata": {
-    "description": "Proposed / unreleased Microsoft AI Apps GBB skills catalog for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App, VS Code agent mode, Claude Code). Source inventory: 40 skills, including agent-framework-harness, foundry-mcp-aca-jobs, and the unpublished foundry-agentops, foundry-mcp-auth and web-experience-design candidates.",
-    "version": "4.34.0"
+    "description": "Proposed / unreleased Microsoft AI Apps GBB skills catalog for the GitHub Copilot CLI ecosystem (Copilot CLI GA, Copilot Desktop App, VS Code agent mode, Claude Code). Source inventory: 41 skills, including agent-framework-harness, foundry-mcp-aca-jobs, and the unpublished foundry-agentops, foundry-mcp-auth, web-experience-design and progress-guard candidates.",
+    "version": "4.35.0"
   },
   "homepage": "https://github.com/aiappsgbb/awesome-gbb",
   "plugins": [
     {
       "name": "awesome-gbb",
-      "version": "4.34.0",
-      "description": "Proposed / unreleased catalog of 40 reusable GBB skills, including Agent Framework Harness and the unpublished AgentOps, delegated MCP auth and web-experience-design candidates: task-first web UX, Azure infra (azd, Bicep, ACA, ACA Jobs), Foundry agents (prompt agents, hosted agents, harness runtimes, routines, RAG, MCP, evals, observability, AgentOps adoption and release evidence, network runbook), governance (Citadel, AGT), cost analysis, tenant isolation, and enterprise automation. Threadlight pipeline moved to threadlight-skills. Zava skills moved to zava-constellation.",
+      "version": "4.35.0",
+      "description": "Proposed / unreleased catalog of 41 reusable GBB skills, including Agent Framework Harness and the unpublished AgentOps, delegated MCP auth, web-experience-design and progress-guard candidates: execution memory and bounded recovery, task-first web UX, Azure infra (azd, Bicep, ACA, ACA Jobs), Foundry agents (prompt agents, hosted agents, harness runtimes, routines, RAG, MCP, evals, observability, AgentOps adoption and release evidence, network runbook), governance (Citadel, AGT), cost analysis, tenant isolation, and enterprise automation. Threadlight pipeline moved to threadlight-skills. Zava skills moved to zava-constellation.",
       "source": ".",
       "category": "azure",
       "keywords": [

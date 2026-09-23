@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.35.0 — Proposed / Unreleased
+
+Adds [`progress-guard`](skills/progress-guard/SKILL.md) **1.1.0 draft source
+candidate**: execution memory and bounded recovery, with a compaction preparation
+and selective-readback protocol. Reuses existing plans/todos; no supervisors,
+automatic hooks or claims of runtime/tool preemption.
+
+- Proposed plugin/marketplace MINOR **4.34.0 → 4.35.0**: **41 skills**,
+  **35 upstream pins**, **31 auto-tier pins**, **6 internal-IP entries** and
+  **25 registered Azure fixtures**. No Azure enrollment is needed.
+- Skill MINOR **1.0.0 → 1.1.0** adds native CLI control guidance, host/SDK
+  boundaries, selective recovery and approved fresh-session handoffs.
+  Optional `read --recent 0` omits historical events without changing storage
+  or the existing six-event default.
+- Local tests cover persistence, output selection and packaging, not actual
+  compaction effectiveness. Behavioral trials, native package loading and
+  promotion remain pending in the
+  [validation record](docs/maintenance/progress-guard-validation.md).
+- Complete catalog contract expectations and candidate allowlists, without
+  weakening checks or changing existing skills' acceptance gates.
+
 ## 4.34.0 — Proposed / Unreleased
 
 Adds [`web-experience-design`](skills/web-experience-design/SKILL.md)
