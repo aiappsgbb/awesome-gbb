@@ -6,4 +6,6 @@ validation_notes: |
   behavioral acceptance in docs/maintenance/progress-guard-validation.md.
   This date does not certify agent compliance or native runtime discovery.
   tests/scenarios.md lists unexecuted behavioral acceptance scenarios.
+  Compaction control guidance is documentation-backed; selective readback is
+  tested with synthetic ledger events, not a native runtime compaction.
   No Azure connection, deployment, external service, hooks or watchers required.

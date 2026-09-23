@@ -3106,8 +3106,9 @@ of generated UI quality. Report, comparison/tool and informational-site output
 acceptance and native runtime loading remain promotion gates; see its
 [validation record](docs/maintenance/web-experience-design-validation.md).
 
-The `progress-guard` entry is a draft source candidate with nine local persistence
-tests wired into the catalog unit-test job. Observed behavioral acceptance and
+The `progress-guard` entry is a draft source candidate with twelve local persistence/
+output-selection tests and two packaging tests wired into the catalog unit-test job.
+Observed compaction/behavioral acceptance and
 native runtime loading remain pending; see its
 [validation record](docs/maintenance/progress-guard-validation.md).
 It requires no Azure resources and installs no automatic supervision.
@@ -3149,7 +3150,7 @@ the web-experience-design and progress-guard source candidates; see the
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 6 |
 | CI workflows | 9 |
-| Unit tests | 1359 |
+| Unit tests | 1364 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

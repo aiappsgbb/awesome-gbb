@@ -7,7 +7,7 @@ description: >
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Progress guard
@@ -76,6 +76,19 @@ No mandatory reread before every tool call.
 - Distinguish verified, implemented-but-unverified, pending, blocked and superseded
   work using existing todos plus snapshot facts.
 - Latest user requirements and current evidence outrank a stale snapshot.
+
+## Compaction and selective recovery
+
+When context pressure or repeated summarization threatens continuity, follow
+[the compaction protocol](references/compaction.md): save verified state, use
+the host's native control if available, then read only the current snapshot
+and evidence needed for the next action. Preserve decisions, user constraints,
+failed approaches and unresolved operation handles, not whole transcripts.
+
+The ledger is external memory, not a context-window control. Writing it does
+not evict loaded messages, configure runtime thresholds, or guarantee a faithful
+summary. Do not compact repeatedly without measured benefit or claim to have
+compacted merely because a snapshot was written.
 
 ## Stall triggers
 

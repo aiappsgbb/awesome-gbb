@@ -123,6 +123,85 @@ class LedgerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(path.exists())
 
+    def test_snapshot_only_preserves_latest_state_without_old_events(self):
+        event = self.append()
+        state = json.loads(event["state"])
+        state["avoid"] = [{"attempt": "same request", "retry_only_if": "role changes"}]
+        state["pending_operations"] = [{"handle": "operation-a", "status": "unknown"}]
+        state["context"] = "commit-b; user constraint: no new resources"
+        event["state"] = state
+        script = SCHEMA.parents[1] / "scripts" / "ledger.py"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = [sys.executable, str(script), "--db", str(root / "ledger.sqlite")]
+            def run(*args):
+                return subprocess.run(base + list(args), capture_output=True, text=True,
+                                      timeout=10)
+            self.assertEqual(run("init").returncode, 0)
+            payload = root / "event.json"
+            event["summary"] = "OLD_DETAIL_" * 1000
+            payload.write_text(json.dumps(event))
+            self.assertEqual(run("append", "--event", str(payload)).returncode, 0)
+            event.update(revision=2, event_key="task-a-2", summary="Latest verified state")
+            payload.write_text(json.dumps(event))
+            self.assertEqual(run("append", "--event", str(payload)).returncode, 0)
+            result = run("read", "--work", "task-a", "--recent", "0")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            snapshot = json.loads(result.stdout)
+            self.assertEqual(snapshot["revision"], 2)
+            self.assertEqual(snapshot["state"], state)
+            self.assertNotIn("recent_events", snapshot)
+            self.assertNotIn("OLD_DETAIL_", result.stdout)
+            full = run("read", "--work", "task-a")
+            self.assertEqual(full.returncode, 0, full.stderr)
+            self.assertEqual(len(json.loads(full.stdout)["recent_events"]), 2)
+            self.assertLess(len(result.stdout), len(full.stdout) // 2)
+
+    def test_recent_history_is_bounded_ordered_and_work_scoped(self):
+        event = self.append()
+        event["state"] = json.loads(event["state"])
+        script = SCHEMA.parents[1] / "scripts" / "ledger.py"
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = [sys.executable, str(script), "--db", str(root / "ledger.sqlite")]
+            def run(*args):
+                return subprocess.run(base + list(args), capture_output=True, text=True,
+                                      timeout=10)
+            self.assertEqual(run("init").returncode, 0)
+            payload = root / "event.json"
+            for revision in range(1, 9):
+                event.update(revision=revision, event_key=f"task-a-{revision}")
+                payload.write_text(json.dumps(event))
+                self.assertEqual(run("append", "--event", str(payload)).returncode, 0)
+            event.update(work_id="task-b", revision=1, event_key="task-b-1",
+                         summary="Unrelated work")
+            payload.write_text(json.dumps(event))
+            self.assertEqual(run("append", "--event", str(payload)).returncode, 0)
+            for flags, revisions in (([], [8, 7, 6, 5, 4, 3]),
+                                     (["--recent", "2"], [8, 7])):
+                result = run("read", "--work", "task-a", *flags)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = json.loads(result.stdout)["recent_events"]
+                self.assertEqual([row["revision"] for row in rows], revisions)
+                self.assertNotIn("Unrelated work", result.stdout)
+
+    def test_invalid_recent_arguments_do_not_create_database(self):
+        script = SCHEMA.parents[1] / "scripts" / "ledger.py"
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "missing.sqlite"
+            base = [sys.executable, str(script), "--db", str(path)]
+            for args in (["init", "--recent", "0"],
+                         ["append", "--event", "unused.json", "--recent", "0"],
+                         ["read", "--work", "task-a", "--recent", "-1"],
+                         ["read", "--work", "task-a", "--recent", "7"],
+                         ["read", "--work", "task-a", "--recent", "bad"]):
+                with self.subTest(args=args):
+                    result = subprocess.run(base + args, capture_output=True, text=True,
+                                            timeout=10)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("--recent", result.stderr)
+                    self.assertFalse(path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

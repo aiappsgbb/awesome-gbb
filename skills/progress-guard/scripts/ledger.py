@@ -17,6 +17,8 @@ def main():
     parser.add_argument("action", choices=("init", "read", "append"))
     parser.add_argument("--work")
     parser.add_argument("--event", type=Path, help="JSON file with all event fields")
+    parser.add_argument("--recent", type=int, default=None,
+                        help="read: include 0-6 recent events (default 6; 0 for snapshot only)")
     args = parser.parse_args()
     if not args.db.is_absolute():
         parser.error("--db must be an absolute path in the actual session files folder")
@@ -24,6 +26,9 @@ def main():
         parser.error("read requires --work")
     if args.action == "append" and not args.event:
         parser.error("append requires --event")
+    if args.recent is not None and (
+            args.action != "read" or not 0 <= args.recent <= 6):
+        parser.error("--recent requires read and a value from 0 to 6")
     if args.action != "init" and not args.db.is_file():
         parser.error("Database missing; initialize explicitly first")
     os.umask(0o077)
@@ -46,11 +51,13 @@ def main():
                 raise ValueError("No snapshot for work ID: " + args.work)
             result = dict(row)
             result["state"] = json.loads(result["state"])
-            result["recent_events"] = [dict(r) for r in db.execute(
-                "SELECT revision,kind,summary,evidence,decision "
-                "FROM progress_guard_events WHERE work_id=? "
-                "ORDER BY revision DESC LIMIT 6", (args.work,)
-            )]
+            recent = 6 if args.recent is None else args.recent
+            if recent:
+                result["recent_events"] = [dict(r) for r in db.execute(
+                    "SELECT revision,kind,summary,evidence,decision "
+                    "FROM progress_guard_events WHERE work_id=? "
+                    "ORDER BY revision DESC LIMIT ?", (args.work, recent)
+                )]
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             event = json.loads(args.event.read_text())

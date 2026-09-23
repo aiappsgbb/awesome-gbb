@@ -17,6 +17,13 @@ Never claim they passed merely because the skill contains the expected words.
 | Repeated diagnostics yield trivia | Check convergence to deliverable, zoom out | Reset clock for every fact |
 | Passing component test, deployment missing | Partial result; keep acceptance open | Mark complete |
 | Straightforward file association change | Execute and verify directly; no ledger ceremony | Create research plan and tables |
+| Native compaction completes after verified snapshot | Read latest snapshot only; verify user constraints and next action | Reload all history or claim snapshot write freed tokens |
+| Tool definitions dominate context | Report measured breakdown and request scoped configuration review | Repeated compaction or silent tool disabling |
+| CLI command absent in App/host | State unsupported control and preserve recovery pointer | Run `/compact` in Bash or spawn nested CLI |
+| Old pointer predates latest user decision | Read latest revision and current user instructions | Restore obsolete plan or authorization |
+| Mutation still running across compaction | Read preserved operation handle before deciding | Duplicate mutation or reset retry budget |
+| Approved fresh-session handoff cannot access parent ledger | Transfer compact state with provenance and verify evidence access | Share writable parent DB or invent missing history |
+| Before/after token usage unavailable | Mark savings unknown and inspect actual continuity | Claim faster or more aggressive compaction |
 
 For evaluation, keep the same scenario and acceptance criteria before/after loading
 the skill. Inspect actual actions and state writes, not self-reported compliance.

@@ -32,8 +32,13 @@ python3 "$SKILL_ROOT/scripts/ledger.py" \
 python3 "$SKILL_ROOT/scripts/ledger.py" \
   --db "$SESSION/files/progress-guard.sqlite" append --event "$SESSION/files/guard-event.json"
 python3 "$SKILL_ROOT/scripts/ledger.py" \
-  --db "$SESSION/files/progress-guard.sqlite" read --work EXISTING-TODO-ID
+  --db "$SESSION/files/progress-guard.sqlite" read --work EXISTING-TODO-ID --recent 0
 ```
+
+Use `--recent 0` for snapshot-only recovery. Omitting `--recent` preserves the
+default six-event history; request `--recent 1` through `--recent 6` only when
+those events answer a specific missing-context question. This selects output,
+not a runtime compaction, and does not delete ledger history.
 
 The staging JSON requires work_id, revision, event_key, kind, summary, evidence,
 decision, and state (a JSON object). It is an input, not a second authoritative
@@ -122,6 +127,9 @@ supported. Otherwise write the event first and reconcile todo status after a fai
 Do not mark native todos done before their acceptance criterion is verified.
 
 ## Compaction and handoff
+
+Follow [compaction.md](compaction.md) for preparation, native Copilot controls
+and selective readback. Keep runtime compaction separate from ledger persistence.
 
 Keep one stable pointer in the existing plan or handoff: store type/location, work_id,
 latest revision and unresolved operation handles. On recovery, read the actual latest
