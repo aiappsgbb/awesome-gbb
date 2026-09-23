@@ -1,0 +1,10 @@
+# Freshness tier C: original workflow, no required upstream runtime.
+last_validated: "2026-09-21"
+validated_by: copilot
+validation_notes: |
+  Source-contract review, 13 local skill contract tests and catalog T0 passed.
+  The targeted catalog regression set passed 44 tests, including those 13.
+  This date does not certify generated interfaces or native skill discovery.
+  The report, comparison/tool and informational-site acceptance scenarios
+  remain unexecuted; release and global promotion require recorded acceptance.
+  Optional external design tools are not dependencies of the core workflow.

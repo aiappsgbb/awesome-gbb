@@ -412,6 +412,17 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
+      - name: Configure Copilot model provider
+        if: matrix.skill != 'agent-framework-harness'
+        env:
+          CI_MODEL_PROVIDER: ${{ vars.CI_MODEL_PROVIDER || 'foundry' }}
+          # AgentOps keeps its separately validated diagnostic/auth boundary.
+          CI_MODEL_PROVIDER_EXEMPTION: ${{ matrix.skill == 'foundry-agentops' && 'agentops' || '' }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          CITADEL_CI_GATEWAY_URL: ${{ matrix.skill != 'foundry-agentops' && secrets.CITADEL_CI_GATEWAY_URL || '' }}
+          CITADEL_CI_API_KEY: ${{ matrix.skill != 'foundry-agentops' && secrets.CITADEL_CI_API_KEY || '' }}
+        run: python3 scripts/configure-ci-model-provider.py
+
       - name: Resolve Foundry project context
         if: matrix.skill != 'agent-framework-harness'
         id: resolve-foundry-project
@@ -509,16 +520,8 @@ jobs:
         # false once continue-on-error suppresses the failure signal.
         continue-on-error: true
         env:
-          # BYOK routing → Foundry, identical to the auth-smoke workflow.
-          # Env-var names verified against CLI 1.0.57-2 via `copilot help
-          # providers` / `copilot help environment` (Task 1.0). Legacy
-          # `COPILOT_MODEL_*` names DO NOT EXIST and would be silently
-          # ignored.
-          COPILOT_PROVIDER_TYPE: azure
-          COPILOT_PROVIDER_BASE_URL: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
-          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
-          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
-          COPILOT_PROVIDER_WIRE_API: responses
+          # Driver provider/auth are inherited from the checked configuration
+          # step. Fixture project/model inputs below remain independent.
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
           # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
@@ -861,11 +864,7 @@ jobs:
         # spelled in continue-on-error-compatible terms.
         if: steps.run.outcome == 'failure' && (matrix.skill != 'foundry-agentops' || needs.build-matrix.outputs.agentops_diagnostic != 'true')
         env:
-          COPILOT_PROVIDER_TYPE: azure
-          COPILOT_PROVIDER_BASE_URL: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
-          COPILOT_PROVIDER_MODEL_ID: gpt-5.4-mini
-          COPILOT_PROVIDER_WIRE_MODEL: gpt-5.4-mini
-          COPILOT_PROVIDER_WIRE_API: responses
+          # Same inherited driver provider/auth as the primary attempt.
           COPILOT_ALLOW_ALL: "true"
           COPILOT_AUTO_UPDATE: "false"
           # AUTH/DEPLOY CONTRACT — keep these lines byte-identical in retry.
