@@ -864,6 +864,19 @@ humans open the refresh PRs and use the normal PR path:
 
 ### 9.7 · Azure CI credentials and E2E infrastructure
 
+**CI driver routing:** `CI_MODEL_PROVIDER=foundry` (or unset) retains the direct
+Foundry driver. The optional `citadel` route uses the dedicated
+`CITADEL_CI_GATEWAY_URL` and `CITADEL_CI_API_KEY` repository secrets with
+`gpt-6-luna` and the verified versioned Responses API. Both attempts inherit
+the same checked provider environment; a missing credential fails rather than
+falling back. `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_ENDPOINT` and fixture model
+inputs remain independent and unchanged. AgentOps keeps its separately
+validated direct-Foundry diagnostic boundary; the native Harness leg has no
+Copilot driver. Verify both routes in the auth-smoke workflow and approve
+the gateway token budget before enabling the route for a full matrix. Rollback
+is the repository variable `CI_MODEL_PROVIDER=foundry`, not a project-endpoint
+replacement. No published hostname or key belongs in the repository.
+
 The repo has OIDC-federated Azure credentials and a dedicated CI
 resource group hosting persistent E2E infrastructure. The concrete
 identifiers (subscription ID, resource group name, account names,
@@ -3150,7 +3163,7 @@ the web-experience-design and progress-guard source candidates; see the
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 6 |
 | CI workflows | 9 |
-| Unit tests | 1364 |
+| Unit tests | 1378 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
