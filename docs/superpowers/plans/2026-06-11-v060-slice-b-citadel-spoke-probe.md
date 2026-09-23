@@ -273,7 +273,7 @@ def test_never_raises_on_any_exception(fake_apim_clients):
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/ricchi/.copilot/repos/copilot-worktrees/awesome-gbb/unsafecode-probable-guide && python -m pytest scripts/tests/test_citadel_access_contract_probe.py -v 2>&1 | tail -20`
+Run: `cd "<awesome-gbb-worktree>" && python -m pytest scripts/tests/test_citadel_access_contract_probe.py -v 2>&1 | tail -20`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'access_contract_probe'`.
 

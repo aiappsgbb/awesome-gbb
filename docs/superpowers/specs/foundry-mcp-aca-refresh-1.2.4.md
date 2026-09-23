@@ -298,7 +298,7 @@ reads beyond it).
 transcript SHA-256
 `4c73d6a94805fb40e443932bfd558b351147d64c712aa83725c373df1fd085b9`.
 Transcript lines 1–2 use Edit/Create for
-`~/.copilot/session-state/90ffa132-ffd8-4fbb-b149-a9c76da90f88/plan.md`.
+`~/.copilot/session-state/<session-id>/plan.md`.
 Lines 6–12 merge audit and state while skipping Step 0 auth. Lines 26–32
 then enter the provision path unauthenticated; lines 34–42 repair auth and
 reprovision. The deterministic scaffold itself succeeded with one prescribed

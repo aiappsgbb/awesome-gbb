@@ -246,10 +246,10 @@ inherits this skill):**
    --scope <<ci-container-registry>> --query "[?roleDefinitionName=='AcrPull' ||
    roleDefinitionName=='Container Registry Repository Reader']"`) before
    the fix returned zero rows. The ACR had only `AcrPush` on the workload
-   UAMI principal `85bf66ed-...`. The Foundry project's system MI
-   (`principalId=8c1b62da-a294-4bec-b1eb-e5664b7bd490`, `appId=741f38b0-...`)
+   UAMI principal `<workload-uami-object-id>`. The Foundry project's system MI
+   (`principalId=<project-mi-object-id>`, `appId=<project-mi-client-id>`)
    had **no roles** anywhere on the ACR scope.
-3. The agent in run #1 correctly identified `8c1b62da-...` as the
+3. The agent in run #1 correctly identified `<project-mi-object-id>` as the
    missing-grant principal and attempted a runtime `az role assignment
    create`, but per SKILL.md L1218 the propagation delay for a fresh SP
    grant is 5-15 min — far longer than the 60s × 3 retry loop a fixture
@@ -265,7 +265,7 @@ inherits this skill):**
 ```bash
 SUB=<ci-subscription-id>
 ACR_ID="/subscriptions/${SUB}/resourceGroups/<ci-resource-group>/providers/Microsoft.ContainerRegistry/registries/<ci-container-registry>"
-PROJ_MI=8c1b62da-a294-4bec-b1eb-e5664b7bd490
+PROJ_MI="<project-mi-object-id>"
 
 # Container Registry Repository Reader (primary per SKILL.md L1146):
 az role assignment create \
@@ -283,7 +283,7 @@ az role assignment create \
 ```
 
 Post-fix `az role assignment list --scope <ACR_ID>` returns the expected
-two rows on `8c1b62da-...` alongside the existing UAMI `AcrPush` row.
+two rows on `<project-mi-object-id>` alongside the existing UAMI `AcrPush` row.
 
 **Empirical Az-CLI flag discovery (recorded as finding #10 — see end):**
 `az role assignment create --assignee <guid>` fails with `usage error:
@@ -425,7 +425,7 @@ workers (or human auditors) need to act on it.
 10. **Use `--assignee-object-id ... --assignee-principal-type ServicePrincipal`,
     not `--assignee <guid>`, when role-granting to a Foundry project MI from
     a different tenant graph.** Empirically discovered during the run-#1
-    post-mortem: `az role assignment create --assignee 8c1b62da-...` failed
+    post-mortem: `az role assignment create --assignee <project-mi-object-id>` failed
     with `usage error: --assignee-object-id GUID --assignee-principal-type
     TYPE` because the workload identity running `az` is not a tenant-graph
     reader for cross-tenant SP resolution. The `--assignee-object-id
