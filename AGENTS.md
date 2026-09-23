@@ -3163,7 +3163,7 @@ the web-experience-design and progress-guard source candidates; see the
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 6 |
 | CI workflows | 9 |
-| Unit tests | 1380 |
+| Unit tests | 1398 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

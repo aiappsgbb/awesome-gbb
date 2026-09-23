@@ -15,7 +15,7 @@ description: >
   deploying Foundry agents (use foundry-hosted-agents), deploying
   Citadel gateway (use citadel-hub-deploy).
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Multi-Tenant Azure CLI & AZD Isolation
@@ -259,7 +259,7 @@ copy from there, don't retype from the snippet below):
 | `tenants.<alias>.config_dir` | string\|null | Override for `AZURE_CONFIG_DIR` (used by `az`). `null` → derive `~/.azure-tenants/<alias>`. **`~` is NOT expanded automatically by JSON readers — consumers must expand it themselves** (see "How to read values from the index" below). |
 | `tenants.<alias>.azd_config_dir` | string\|null | Override for `AZD_CONFIG_DIR` (used by `azd`). `null` → derive `~/.azd-tenants/<alias>`. Same `~`-expansion caveat as `config_dir`. **Keep this in lock-step with `config_dir`** — overriding one without the other splits the alias's two halves into different folders, which is almost never what you want. |
 | `tenants.<alias>.default_subscription` | string | Subscription name (or id) passed to `az account set` after login. |
-| `tenants.<alias>.allowed_subscriptions` | string[] | Whitelist for the strict assertion (membership test — see "Assertion variants" below). Empty/missing → only `default_subscription` is accepted. |
+| `tenants.<alias>.allowed_subscriptions` | string[] | Whitelist of subscription names or IDs (exact membership test — see "Assertion variants" below). Empty/missing → only `default_subscription` is accepted, by name or ID. A non-empty list does not implicitly include the default hint. |
 
 ### Bootstrap — manual, no scripts
 
@@ -539,9 +539,9 @@ azd up
 
 **Default to the whitelist variant.** It is the production-safe default: it
 respects the user's explicit subscription choice as long as it's in the
-alias's `allowed_subscriptions` list. The single-value strict form is only
-appropriate when the alias has exactly one subscription AND you want to
-reject any other (rare — usually you want the whitelist).
+alias's `allowed_subscriptions` list. Membership is not permission to select
+another allowed subscription. An explicit task target still requires a
+separate strict assertion, even when the alias allows several subscriptions.
 
 #### Whitelist variant (recommended — primary pattern)
 
@@ -579,15 +579,13 @@ if ($allowedSubs -notcontains $actualSub) { Write-Error "Sub '$actualSub' not in
 
 #### Strict (single-value) variant
 
-Use ONLY when the alias has exactly one subscription AND you want to reject
-any other active sub. The simple snippet earlier in this section checks
-against `default_subscription` from the index — that's the strict form.
-
-> 🛑 **`default_subscription` is a hint, not a default `az` honors.** If you
-> use the strict variant, you must combine it with a `az account set` BEFORE
-> the assertion runs — otherwise a multi-sub tenant will fail the strict
-> check with `Sub '<other-allowed-sub>' != '<default>'` even though the user
-> picked an explicitly-allowed sub.
+Use when the task requires one explicitly selected subscription. Set the
+expected value to that task target, not automatically to the index's
+`default_subscription` hint. The name-based assertion above and
+`assertion-preamble.sh` remain strict; for an exact GUID assertion, compare
+`az account show --query id -o tsv` to the caller's expected subscription ID
+immediately before acting. A mismatch must stop the operation, not trigger
+an automatic switch or login.
 
 ---
 
@@ -755,6 +753,30 @@ Drop this at the top of every shell script that touches Azure: load alias from i
 > **MUST:** Source [`references/bash/bootstrap.sh`](references/bash/bootstrap.sh) verbatim. Do NOT redefine inline — the validator enforces single-source-of-truth. That file is the canonical loader: alias arg → index file → env-var exports → tenant + sub assertion, hardened with empty-session detection and remediation hints.
 >
 > For PowerShell call sites (no canonical reference yet), use the inline template below.
+
+The Bash bootstrap accepts the current subscription when its exact name or
+GUID appears in `allowed_subscriptions`; an empty or missing list falls back
+to `default_subscription`. Malformed lists (including `null`) fail closed.
+It exports both isolated config paths before reading the session, expands
+`~` in the index and path overrides, and derives both paths when overrides
+are missing or `null`. It never runs login or account-set commands, including
+on an absent session or a rejected tenant/subscription. Keep any task-specific
+strict target assertion after bootstrap; the whitelist does not replace it.
+
+Offline regressions run with
+`python3 -m unittest scripts.tests.test_azure_tenant_isolation_bootstrap`.
+For separately authorized manual live evidence, use
+[`test-fixture/read_only_validation.py`](test-fixture/read_only_validation.py)
+with an existing isolated session, an explicitly approved non-default target
+and an existing resource group. Its required arguments are shown by `--help`.
+It refuses missing/mismatched config directories, never authenticates or
+switches accounts, and caps the helper plus one authenticated group read at
+90 seconds without retries. It records exact target evidence privately outside
+the repository and a separate sanitized result with source hashes. This is a
+manual fixture, not automatic CI enrollment or a claim of CI coverage.
+
+The PowerShell template below retains a strict default-subscription assertion;
+use it only when that default is the explicit task target.
 
 PowerShell (`# ── Azure Tenant Isolation (REQUIRED) ──`):
 
