@@ -66,7 +66,7 @@ CATEGORIES: dict[str, list[str]] = {
         'azure-backup-readiness', 'azure-resource-diagnostics',
         'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
-        'ghcp-cli-config', 'paygo-ptu-cost-analyzer',
+        'ghcp-cli-config', 'paygo-ptu-cost-analyzer', 'progress-guard',
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',
@@ -83,6 +83,16 @@ CATEGORIES: dict[str, list[str]] = {
 
 # The legacy "draft" field records release gates, not source availability.
 DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
+    'progress-guard': {
+        'source_status': 'candidate',
+        'release_status': 'pending',
+        'record': 'maintenance/progress-guard-validation.md',
+        'summary': (
+            'Draft source candidate; review and behavioral acceptance pending. '
+            'Local persistence tests do not certify agent compliance or native '
+            'runtime discovery. No automatic supervisors, hooks or tool preemption.'
+        ),
+    },
     'web-experience-design': {
         'source_status': 'candidate',
         'release_status': 'pending',
@@ -129,6 +139,7 @@ DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
 
 # Only these sanitized records are published to fresh outputs; never copy docs/ wholesale.
 PUBLISHED_DOCS = (
+    'maintenance/progress-guard-validation.md',
     'maintenance/foundry-agentops-validation.md',
     'maintenance/foundry-mcp-auth-validation.md',
     'maintenance/web-experience-design-validation.md',

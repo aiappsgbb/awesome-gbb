@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-40-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-41-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -166,6 +166,7 @@ Multi-skill scaffolding and operational discipline used by the [Threadlight pipe
 | [**gbb-humanizer**](skills/gbb-humanizer/) | Remove signs of AI-generated writing from prose — 29 patterns from Wikipedia's "Signs of AI writing" (em-dash overuse, rule-of-three, AI vocabulary, copula avoidance, sycophantic openers, signposting), two-pass rewrite + AI-tell audit. **Ships pre-canned GBB voice samples** (seller pitch + technical blog), **section-aware mode** (skip code/tables/SME quotes), **density-preserving guardrail** so domain rule-of-three lists survive. Adapted from [blader/humanizer](https://github.com/blader/humanizer) v2.5.1 (MIT). |
 | [**ghcp-cli-config**](skills/ghcp-cli-config/) | Bootstrap GitHub Copilot CLI for GBB workflows — 6 recommended MCP servers (mslearn, Azure, Playwright, context7, tavily, mem0), `settings.json` baseline (model, `sessionSync`, `allowedUrls`, `trustedFolders`), work-iq plugin family for Microsoft staff, `autoApprove` safe-default matrix, and a **fresh-machine bootstrap procedure** the agent can execute step-by-step. Distilled from a live GBB engineer's `~/.copilot/`. |
 | [**paygo-ptu-cost-analyzer**](skills/paygo-ptu-cost-analyzer/) | Headless PAYGO-vs-PTU cost analysis for Azure OpenAI deployments — vendored analyzer (`analysis.py` / `formatting.py` / `models.json` / 2× KQL) from [`aiappsgbb/ptu-paygo-mix`](https://github.com/aiappsgbb/ptu-paygo-mix) `@e1786f8` with the Streamlit UI stripped out. Ingests **CSV / Log Analytics KQL / synthetic** and emits a 4-file report (markdown + JSON + 2× PNG charts) with PTU sizing across configurable percentiles, monthly/yearly term pricing, global/data-zone tier rates, and a recommendation rule (target percentile under PAYGO baseline). Ships **two KQL paths** — default uses `InputTokens − ProcessedPromptTokens` for cached-token derivation; `active_tokens.kql` is the fallback for telemetry configs that only expose `ActiveTokens`. CLI: `python references/run_report.py --csv input.csv --model gpt-5.4 --tier global --out-dir ./report`. |
+| [**progress-guard**](skills/progress-guard/) | **Draft source candidate:** execution memory and bounded recovery for long-running work. Reuses existing plans/todos, records meaningful evidence, and stops exhausted retries; no supervisors or tool preemption. [Behavioral acceptance pending](docs/maintenance/progress-guard-validation.md). |
 
 ### 🛡️ Governance
 
@@ -221,7 +222,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 40 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps and delegated-auth source; the web-experience-design addition is a source candidate. Installation does not certify their remaining acceptance gates:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 41 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps and delegated-auth source; web-experience-design and progress-guard are source candidates. Installation does not certify their remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:
