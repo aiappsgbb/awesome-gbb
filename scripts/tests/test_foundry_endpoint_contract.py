@@ -32,11 +32,13 @@ class FoundryEndpointContractTests(unittest.TestCase):
         cls.auth_smoke = load_yaml(AUTH_SMOKE)
         cls.skill_test = load_yaml(SKILL_TEST)
 
-    def test_auth_smoke_routes_copilot_to_project_endpoint(self) -> None:
+    def test_auth_smoke_uses_shared_driver_selector(self) -> None:
         steps = self.auth_smoke["jobs"]["smoke"]["steps"]
         smoke = next(step for step in steps if step.get("name", "").startswith("Smoke test"))
-
-        self.assertEqual(smoke["env"]["COPILOT_PROVIDER_BASE_URL"], PROJECT_SECRET)
+        selector = next(step for step in steps if step.get("name") == "Configure Copilot model provider")
+        self.assertEqual(selector["env"]["FOUNDRY_PROJECT_ENDPOINT"], PROJECT_SECRET)
+        self.assertEqual(selector["run"], "python3 scripts/configure-ci-model-provider.py")
+        self.assertNotIn("COPILOT_PROVIDER_BASE_URL", smoke["env"])
 
     def test_primary_and_retry_share_split_endpoint_contract(self) -> None:
         steps = self.skill_test["jobs"]["copilot-cli-matrix"]["steps"]
@@ -49,10 +51,7 @@ class FoundryEndpointContractTests(unittest.TestCase):
 
         self.assertEqual(primary["env"], retry["env"])
         for step in (primary, retry):
-            self.assertEqual(
-                step["env"]["COPILOT_PROVIDER_BASE_URL"],
-                PROJECT_SECRET,
-            )
+            self.assertNotIn("COPILOT_PROVIDER_BASE_URL", step["env"])
             self.assertEqual(step["env"]["AZURE_AI_ENDPOINT"], ACCOUNT_SECRET)
             self.assertEqual(
                 step["env"]["FOUNDRY_PROJECT_ENDPOINT"],
@@ -82,9 +81,10 @@ class FoundryEndpointContractTests(unittest.TestCase):
             template,
         )
         self.assertIn(
-            "Copilot CLI provider routing and Foundry-project validation",
+            "Foundry-project validation and the fallback CI driver",
             template,
         )
+        self.assertIn("never replace FOUNDRY_PROJECT_ENDPOINT", template)
         self.assertNotIn(
             "used for both E2E skill tests and the Copilot CLI driver",
             template,
