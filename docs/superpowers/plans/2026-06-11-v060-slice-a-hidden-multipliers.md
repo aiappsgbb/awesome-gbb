@@ -219,7 +219,7 @@ def test_returns_all_required_keys(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/ricchi/.copilot/repos/copilot-worktrees/awesome-gbb/unsafecode-probable-guide && python -m pytest scripts/tests/test_foundry_agt_capability_detector.py -v 2>&1 | tail -20`
+Run: `cd "<awesome-gbb-worktree>" && python -m pytest scripts/tests/test_foundry_agt_capability_detector.py -v 2>&1 | tail -20`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'capability_detector'` (the reference module doesn't exist yet).
 
@@ -300,7 +300,7 @@ def detect(repo_root: str = ".") -> dict[str, Any]:
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd /Users/ricchi/.copilot/repos/copilot-worktrees/awesome-gbb/unsafecode-probable-guide && python -m pytest scripts/tests/test_foundry_agt_capability_detector.py -v 2>&1 | tail -20`
+Run: `cd "<awesome-gbb-worktree>" && python -m pytest scripts/tests/test_foundry_agt_capability_detector.py -v 2>&1 | tail -20`
 
 Expected: 5 tests PASS. If any fails, inspect the threadlight source for behavioural differences and adjust either the test (if the threadlight contract is more nuanced than your test asserts) or the implementation (if the lift missed a branch).
 
@@ -508,7 +508,7 @@ def test_async_variants_have_same_signature():
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/ricchi/.copilot/repos/copilot-worktrees/awesome-gbb/unsafecode-probable-guide && python -m pytest scripts/tests/test_foundry_observability_kql_probes.py -v 2>&1 | tail -20`
+Run: `cd "<awesome-gbb-worktree>" && python -m pytest scripts/tests/test_foundry_observability_kql_probes.py -v 2>&1 | tail -20`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'kql_probes'`.
 
@@ -1359,7 +1359,7 @@ don't ship new Azure-connecting code; they wrap existing SDK clients).
 
 Commit the PR body draft into the session-state artifacts dir if helpful:
 ```bash
-mkdir -p /Users/ricchi/.copilot/session-state/<session-id>/files/pr-drafts
+mkdir -p "$HOME/.copilot/session-state/<session-id>/files/pr-drafts"
 # write the body to slice-a.md, do not commit
 ```
 

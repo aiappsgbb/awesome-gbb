@@ -539,8 +539,8 @@ cat ~/.copilot/config.json 2>/dev/null | head -40
 Write the exact env-var names to `docs/superpowers/plans/2026-05-30-deep-audit-and-testing-rethink.md` as a margin note OR (better) record them in a session-state file you'll consult in the next task:
 
 ```bash
-mkdir -p /Users/ricchi/.copilot/session-state/b9c8d150-a8e4-4879-9e84-75837e9f4ff5/files
-cat > /Users/ricchi/.copilot/session-state/b9c8d150-a8e4-4879-9e84-75837e9f4ff5/files/cli-env-vars.md <<'EOF'
+mkdir -p "$HOME/.copilot/session-state/<session-id>/files"
+cat > "$HOME/.copilot/session-state/<session-id>/files/cli-env-vars.md" <<'EOF'
 # Verified Copilot CLI Foundry-routing env-var names (as of 2026-05-30)
 
 CLI version: <fill in>
