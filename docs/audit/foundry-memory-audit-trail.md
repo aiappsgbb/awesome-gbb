@@ -89,7 +89,7 @@ were **silent** on the Pattern 23 server-side-worker RBAC requirement.
 holds only ACR roles — not `Cognitive Services OpenAI User` or
 `Cognitive Services User`. Phase 3 run `26714879734` 401'd on exactly this
 gap; PR #185 fixed it for CI by granting both roles to project SAMI
-`8c1b62da-…` at account scope (AGENTS.md §9.7 Pattern 23). Consumers
+`<project-mi-object-id>` at account scope (AGENTS.md §9.7 Pattern 23). Consumers
 following SKILL.md verbatim would hit the same 401 with no documented
 remediation.
 

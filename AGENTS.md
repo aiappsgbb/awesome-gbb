@@ -2040,7 +2040,7 @@ across chunked reads. See the cost-monitoring fixture
 **🔄 ADDENDUM v3 (2026-06-18, freshness-cycle audit — ROOT CAUSE CORRECTION).**
 Every prior addendum in this section (and Patterns 22/26) conflated
 two different numbers and got the diagnosis subtly wrong. Live recon
-of the CI subscription (`2c745a8f-…`, account `aif-awesome-gbb-ci`,
+of the CI subscription (`<ci-subscription-id>`, account `<ci-foundry-account>`,
 Sweden Central) on 2026-06-18 found:
 
 | What | Stale claim in this doc | Actual measured value |
@@ -2204,9 +2204,9 @@ overlap by default:
 
 | # | Identity | Object ID | Default RBAC | Used by |
 |---|---|---|---|---|
-| 1 | **Account SAMI** | `fbe3089f-…` | Empty | Account-level system tasks (rarely used directly) |
-| 2 | **Project `ci-test` SAMI** | `8c1b62da-…` | **Only ACR roles** | **Foundry server-side workers** (memory consolidation, hosted-agent runtime, evals graders) |
-| 3 | **CI UAMI** | `ff405901-…` | Contributor + AcrPush + Cog OpenAI User + Foundry User | Every CI fixture's direct deployment calls |
+| 1 | **Account SAMI** | `<account-mi-object-id>` | Empty | Account-level system tasks (rarely used directly) |
+| 2 | **Project `<ci-foundry-project>` SAMI** | `<project-mi-object-id>` | **Only ACR roles** | **Foundry server-side workers** (memory consolidation, hosted-agent runtime, evals graders) |
+| 3 | **CI UAMI** | `<ci-uami-object-id>` | Contributor + AcrPush + Cog OpenAI User + Foundry User | Every CI fixture's direct deployment calls |
 
 The 5 passing legs (PA, HA, evals, toolbox, azd-patterns) all call
 deployments **directly** with identity #3 (the UAMI) which has the
@@ -2220,7 +2220,7 @@ Services User` to the **project MI** at **account scope**:
 ```bash
 SUB=<ci-subscription-id>
 ACCT_SCOPE=/subscriptions/$SUB/resourceGroups/<ci-resource-group>/providers/Microsoft.CognitiveServices/accounts/<ci-foundry-account>
-PROJECT_MI_OBJECT_ID=8c1b62da-a294-4bec-b1eb-e5664b7bd490  # from `az cognitiveservices account project show`
+PROJECT_MI_OBJECT_ID="<project-mi-object-id>"  # from `az cognitiveservices account project show`
 
 az role assignment create --assignee-object-id $PROJECT_MI_OBJECT_ID \
   --assignee-principal-type ServicePrincipal \
@@ -3163,7 +3163,7 @@ the web-experience-design and progress-guard source candidates; see the
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 6 |
 | CI workflows | 9 |
-| Unit tests | 1396 |
+| Unit tests | 1398 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

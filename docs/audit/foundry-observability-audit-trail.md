@@ -280,6 +280,6 @@ A new Copilot CLI test fixture lives at `skills/foundry-observability/test-fixtu
 
 ---
 
-_Audit completed by: Phase 4 audit worker (cross-session sister of `Phase 4 coverage + audits` coordinator, project_session_id `256a94b2-ddae-4bf2-8dfd-5c3865781662`)._
+_Audit completed by: Phase 4 audit worker (cross-session sister of `Phase 4 coverage + audits` coordinator, project_session_id `<coordinator-session-id>`)._
 _Audit method: 21-Item Bug-Class Catalog (spec L381-403) applied to SKILL.md + every reference file. Each finding emitted with verdict (`none observed` / `N/A` / `**HIT**`) + evidence (line numbers + scan commands) + remediation (for HITs)._
 _Format reference: `docs/audit/foundry-evals-audit-trail.md` (Phase 4 #4, merged in PR #203)._

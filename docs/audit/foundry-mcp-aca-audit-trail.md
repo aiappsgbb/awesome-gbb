@@ -255,7 +255,7 @@ A new Copilot CLI test fixture lives at `skills/foundry-mcp-aca/test-fixture/con
 
 ## CI matrix runs (stability)
 
-Per AGENTS.md § 9.7 Pattern 1 (≥ 45 s spacing between empty-commit stability runs). All three runs must be GREEN before reporting back to the coordinator (project session `256a94b2-ddae-4bf2-8dfd-5c3865781662`); `auto-merge-copilot.yml` does NOT auto-merge human-authored PRs, so the coordinator runs the admin squash-merge once 3-of-3 are green.
+Per AGENTS.md § 9.7 Pattern 1 (≥ 45 s spacing between empty-commit stability runs). All three runs must be GREEN before reporting back to the coordinator (project session `<coordinator-session-id>`); `auto-merge-copilot.yml` does NOT auto-merge human-authored PRs, so the coordinator runs the admin squash-merge once 3-of-3 are green.
 
 | Run | SHA | Trigger | Status | Notes |
 |-----|-----|---------|--------|-------|
@@ -374,4 +374,4 @@ The path choice is a freshness-loop / customer-validation question that requires
 | Open items deferred | 2 (both HIGH-severity, both single-skill PATCH-scope, both warrant focused follow-up PRs) |
 | Fixture wired into `skill-test.yml` matrix | Yes — via existing `.github/skill-deps.yml` L61-63 + `scripts/build-test-matrix.py` change-gating |
 | Stability runs | TBD (3 required, ≥ 45 s apart, all GREEN before reporting to coordinator) |
-| Coordinator handoff target | project session `256a94b2-ddae-4bf2-8dfd-5c3865781662` |
+| Coordinator handoff target | project session `<coordinator-session-id>` |

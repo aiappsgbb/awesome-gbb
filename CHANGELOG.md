@@ -21,6 +21,18 @@ automatic hooks or claims of runtime/tool preemption.
 - Complete catalog contract expectations and candidate allowlists, without
   weakening checks or changing existing skills' acceptance gates.
 
+## Unreleased — Historical-document sanitization
+
+- Replace personal filesystem paths, session identifiers and managed-identity
+  identifiers in historical documentation and contributor guidance with
+  placeholders. Preserve technical findings and public built-in role IDs.
+- Add two offline regression cases for these historical-document boundaries.
+- This subset changes no skill contracts or versions, runtime code, fixtures,
+  deployment templates or live CI configuration. Skill-level sanitization remains
+  deferred pending its required validation evidence.
+- No Git history rewrite or publication approval for private-upstream content
+  is included.
+
 ## 4.34.0 — Proposed / Unreleased
 
 Adds [`web-experience-design`](skills/web-experience-design/SKILL.md)

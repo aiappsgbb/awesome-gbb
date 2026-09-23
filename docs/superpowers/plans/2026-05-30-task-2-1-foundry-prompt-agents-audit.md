@@ -795,7 +795,7 @@ SKILL.md PATCH-bumped 1.0.2 → 1.0.3. Ready for Task 2.2.
 ```
 
 (Send via the `send_session_message` tool to project session
-`b9a5b076-be19-452c-b1ff-f60b0e1763a6`.)
+`<coordinator-session-id>`.)
 
 ---
 
