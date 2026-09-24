@@ -3151,8 +3151,8 @@ Consequences:
 
 ### 12.5 Catalog at a glance
 
-Source counts include the unreleased AgentOps, delegated-auth and
-web-experience-design entries and the progress-guard source candidate; see the
+Source counts include the unreleased AgentOps and delegated-auth candidates,
+the merged web-experience-design source and the progress-guard source candidate; see the
 [AgentOps status](docs/maintenance/foundry-agentops-validation.md) and
 [web experience status](docs/maintenance/web-experience-design-validation.md) and
 [progress guard status](docs/maintenance/progress-guard-validation.md).
@@ -3165,7 +3165,7 @@ web-experience-design entries and the progress-guard source candidate; see the
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 6 |
 | CI workflows | 9 |
-| Unit tests | 1398 |
+| Unit tests | 1400 |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
