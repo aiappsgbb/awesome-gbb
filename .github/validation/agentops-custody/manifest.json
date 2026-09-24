@@ -2,14 +2,14 @@
   "base_sha": "b7b6571646c74b7cd05426080ede3eb33f8233b0",
   "candidate_full_tree": "9c44a95cd9170ce3617c0d20b8c8095c0e2a7d7d",
   "files": {
-    "_agentops_custody_validation.py": "7a4861b4dfb77f9ecaa628645ff595bec31430b39be77e144a42d8eb6ffc9d32",
+    "_agentops_custody_validation.py": "baa7e660e09914f16fb4251ef029c61d40a2d91cb40209e4184014e38359ce40",
     "scripts/agentops-ci-custody.py": "c2f8299b2ef5908aee1c02185c6c96bdc6dbc112059541b2805c5d270f812cf3",
     "scripts/agentops-ci-isolation.py": "7c37cc5b2baca0b6c83cb754ef0cb7012778047d1015aa55d1562e397f873dcf",
     "scripts/agentops-ci-report.py": "be2493050517b116fe03032b8843d608d2767dd83fcd7929868ec8d1c31ad53e",
     "scripts/tests/test_agentops_ci_custody.py": "5851b86fd13d9c7ced081622b05f0a4dfe85713f79e655942c43f74f0e6f4dc9",
     "skills/foundry-agentops/test-fixture/consumer_prompt.md": "a964acdb1a54a9f4d53739eb95190db2b4219a85830c02e6fa32236464ca0844"
   },
-  "harness_sha256": "7a4861b4dfb77f9ecaa628645ff595bec31430b39be77e144a42d8eb6ffc9d32",
+  "harness_sha256": "baa7e660e09914f16fb4251ef029c61d40a2d91cb40209e4184014e38359ce40",
   "limits": {
     "case_capture_seconds": 30,
     "cleanup_seconds": 90,
@@ -18,7 +18,7 @@
   },
   "no_identity_export": true,
   "no_live_authorization": true,
-  "patch_sha256": "b15c6f4f3ee779862ce5120cb9e92faef936bd0bd3392d39cd1349f5aaea5bd4",
+  "patch_sha256": "221dfa377fb7350966f12432a8d7e3b3c2e0d0c485a3f349259ede08aeb4191f",
   "production_installation": {
     "azd_resolution": "stable",
     "azd_setup_action": "Azure/setup-azd@v2.3.0",
@@ -36,6 +36,6 @@
   "repository": "aiappsgbb/awesome-gbb",
   "runtime": "Same-run production tooling resolution and host/container binary+version parity, not historical cohort reconstruction",
   "schema_version": 1,
-  "snapshot_sha256": "44ea356bf317ab899350d79dcdd4b15c2ca3e2772a29accb101cbaf5cd43edfc",
-  "snapshot_tree": "ac399d0a8d3a70c82a4f6f2710aa84e69b8f9d7d"
+  "snapshot_sha256": "8903a91cc94ae276508d2fca977de6301c05ad0e2abc4a29097b4c4fba414c45",
+  "snapshot_tree": "5eae236186ce2aabe5c67f4296ab04016e64636c"
 }

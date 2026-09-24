@@ -41,6 +41,8 @@ FAILURE_CLASSES = (
     (b"executable file not found", "EXECUTABLE_NOT_FOUND"),
     (b"no such file or directory", "PATH_NOT_FOUND"),
 )
+SONAME = r"lib[A-Za-z0-9_.+-]{1,96}\.so(?:\.[A-Za-z0-9_.+-]{1,32})?"
+MODULE = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
 
 
 def require(value):
@@ -123,6 +125,117 @@ def traced(name, function):
     return invoke
 
 
+def startup_classification(raw):
+    text = raw[:65536].decode("utf-8", errors="replace")
+    record = {"check": "startup", "classification": "UNKNOWN"}
+    loader = re.search(r"error while loading shared libraries:\s*(" + SONAME + r"):", text)
+    module = re.search(r"ModuleNotFoundError: No module named '(" + MODULE + r")'", text)
+    imported = re.search(r"ImportError: cannot import name '[^'\n]+' from '(" + MODULE + r")'", text)
+    if loader:
+        record.update(classification="DYNAMIC_LOADER", soname=loader[1])
+    elif module or imported:
+        name = (module or imported)[1]
+        record.update(classification="PYTHON_MODULE_IMPORT")
+        if len(name) <= 128:
+            record["module"] = name
+    elif re.search(r"(?:exec|execve)[^\n]{0,512}(?:no such file or directory|executable file not found)",
+                   text, flags=re.IGNORECASE):
+        record["classification"] = "EXECUTABLE_OR_LOADER_ENOENT"
+    return record
+
+
+def directory_class(path, prefix):
+    target = Path(path)
+    if not target.is_absolute():
+        return "RELATIVE"
+    if target.is_relative_to(prefix / "lib"):
+        return "PYTHON_PREFIX_LIB"
+    if target.is_relative_to(prefix):
+        return "PYTHON_PREFIX_OTHER"
+    if any(target.is_relative_to(root) for root in
+           ("/lib", "/lib64", "/usr/lib", "/usr/local/lib")):
+        return "SYSTEM"
+    return "OTHER"
+
+
+def python_inspection(binary, container_args, env_file, host_library_path):
+    binary = Path(binary)
+    prefix = binary.parent.parent
+    mounted = []
+    for index, value in enumerate(container_args[:-1]):
+        if value == "--mount":
+            fields = container_args[index + 1].split(",")
+            if "readonly" in fields:
+                target = next((part[7:] for part in fields if part.startswith("target=")), None)
+                if target:
+                    mounted.append(Path(target))
+    def is_mounted(path):
+        # Match the sealed envelope's fixed usr-merge links, not host path spelling.
+        for alias in ("/bin", "/sbin", "/lib", "/lib64"):
+            if path.is_relative_to(alias):
+                path = Path("/usr") / path.relative_to("/")
+                break
+        return any(path.is_relative_to(target) for target in mounted)
+    with binary.open("rb") as stream:
+        elf = stream.read(4) == b"\x7fELF"
+    with env_file.open("rb") as stream:
+        child_library_path_set = any(line.startswith(b"LD_LIBRARY_PATH=")
+                                     for line in stream.read(65536).splitlines())
+    record = {
+        "check": "python_startup_inspection", "elf": elf,
+        "python_prefix_lib_exists": (prefix / "lib").is_dir(),
+        "python_prefix_lib_readonly_mounted": is_mounted(prefix / "lib"),
+        "host_ld_library_path_set": bool(host_library_path),
+        "host_ld_library_path_classes": sorted({
+            directory_class(value, prefix) for value in host_library_path.split(":")[:32]
+            if value
+        }),
+        "child_ld_library_path_set": child_library_path_set,
+    }
+    for tool, flags in (("readelf", ["-l", "-d"]), ("ldd", [])):
+        executable = shutil.which(tool)
+        if executable is None:
+            record[tool] = {"status": "UNAVAILABLE"}
+            continue
+        try:
+            result = subprocess.run([executable, *flags, str(binary)], check=False,
+                                    capture_output=True, timeout=10)
+            info = {"status": "PASS" if result.returncode == 0 else "NONZERO",
+                    "returncode": result.returncode}
+            text = result.stdout[:65536].decode("utf-8", errors="replace")
+            if tool == "readelf":
+                info["needed"] = sorted(set(re.findall(r"Shared library: \[(" + SONAME + r")\]", text)))[:32]
+                interpreter = re.search(r"Requesting program interpreter: ([^\]\n]+)\]", text)
+                if interpreter:
+                    name = Path(interpreter[1]).name
+                    if re.fullmatch(r"ld[A-Za-z0-9_.+-]{1,96}\.so(?:\.[0-9]+)*", name):
+                        info["interpreter"] = name
+                    info["interpreter_readonly_mounted"] = is_mounted(Path(interpreter[1]))
+                rpaths = re.findall(r"\((?:RPATH|RUNPATH)\)[^\n]*\[([^\]\n]+)\]", text)
+                info["rpath_classes"] = sorted({
+                    "ORIGIN_RELATIVE" if "$ORIGIN" in value else directory_class(value, prefix)
+                    for paths in rpaths[:8] for value in paths.split(":")[:32] if value
+                })
+            else:
+                libraries = []
+                for match in re.finditer(r"^\s*(" + SONAME + r") => (not found|/\S+)", text, re.MULTILINE):
+                    location = match[2]
+                    item = {"soname": match[1]}
+                    if location == "not found":
+                        item["directory_class"] = "NOT_FOUND"
+                    else:
+                        directory = Path(location).parent
+                        item["directory_class"] = directory_class(directory, prefix)
+                        item["directory_readonly_mounted"] = is_mounted(directory)
+                    libraries.append(item)
+                info["libraries"] = libraries[:32]
+            record[tool] = info
+        except (OSError, subprocess.TimeoutExpired) as failure:
+            diagnostic_error(failure, "python_inspection")
+            record[tool] = {"status": "ERROR"}
+    print(json.dumps(record, sort_keys=True), flush=True)
+
+
 def case_diagnostics(root):
     for name in ("attempts/primary/transcript.log", "execution-finished.json"):
         try:
@@ -133,6 +246,7 @@ def case_diagnostics(root):
             if name.endswith(".log"):
                 present = b"AGENTOPS_CI_ISOLATION=FAIL TOOL_COHORT" in raw.splitlines()
                 emit("tool_cohort_marker", "FAIL" if present else "NOT_OBSERVED")
+                print(json.dumps(startup_classification(raw), sort_keys=True), flush=True)
             else:
                 value = json.loads(raw)
                 require(isinstance(value, dict))
@@ -317,6 +431,7 @@ def cohort_result(source, record):
 def case(source, work, mode):
     emit(mode, "START")
     emit("case_setup", "START")
+    host_library_path = os.environ.get("LD_LIBRARY_PATH", "")
     isolation = module(source)
     delivery = isolation.delivery
     parent = work / mode
@@ -356,11 +471,13 @@ def case(source, work, mode):
         return original_command(root, tools, [
             tools["python3"]["path"], "-I", str(source / HARNESS), "--child",
         ])
-    def inert_args(*args, **kwargs):
+    def inert_args(root, attempt, image, env_file, inputs, paths, command, **kwargs):
         kwargs["network"] = "none"
-        result = original_args(*args, **kwargs)
+        result = original_args(root, attempt, image, env_file, inputs, paths, command, **kwargs)
         index = result.index("--env-file")
         result[index:index] = ["--env", "INERT_CASE=" + mode]
+        with diagnostic_phase("python_inspection"):
+            python_inspection(observed[-1]["python3"]["path"], result, env_file, host_library_path)
         return result
     def bounded_capture(*args, **kwargs):
         kwargs["seconds"] = 30
