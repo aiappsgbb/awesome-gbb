@@ -3113,7 +3113,9 @@ pins remain human-only in every mode. The infra is provisioned (§ 9.7);
 individual pin scripts are being upgraded from pip+import to actual Azure
 API calls incrementally.
 
-The `web-experience-design` entry is a source candidate with no Azure resource
+The `web-experience-design` source merged in PR #510
+(`ed220bc697635d7ff9c161584e3c64bd13bad94f`) and is available in main;
+release and global promotion remain pending. It has no Azure resource
 workflow or required external generator. Its local contract tests are not proof
 of generated UI quality. Report, comparison/tool and informational-site output
 acceptance and native runtime loading remain promotion gates; see its
@@ -3149,8 +3151,8 @@ Consequences:
 
 ### 12.5 Catalog at a glance
 
-Source counts include the unreleased AgentOps and delegated-auth candidates and
-the web-experience-design and progress-guard source candidates; see the
+Source counts include the unreleased AgentOps, delegated-auth and
+web-experience-design entries and the progress-guard source candidate; see the
 [AgentOps status](docs/maintenance/foundry-agentops-validation.md) and
 [web experience status](docs/maintenance/web-experience-design-validation.md) and
 [progress guard status](docs/maintenance/progress-guard-validation.md).

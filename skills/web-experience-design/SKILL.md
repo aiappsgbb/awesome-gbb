@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: backend-only work, cloud deployment, native mobile apps,
   PowerPoint authoring, prose-only editing or formal accessibility certification.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Web Experience Design
@@ -22,7 +22,7 @@ Make the next useful action obvious, the important content understandable, and
 the detail easy to retrieve. A complete document is not automatically a usable
 interface. Attractive screenshots are not evidence of a working experience.
 
-**Source candidate:** output acceptance and cross-runtime discovery remain
+**Merged source; release pending:** output acceptance and cross-runtime discovery remain
 pending; see [validation boundaries](README.md#validation-and-boundaries).
 
 ## Choose the scope

@@ -199,7 +199,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 
 | Skill | Description |
 |-------|-------------|
-| [**web-experience-design**](skills/web-experience-design/) | **Source candidate:** task-first web experiences for reports, comparisons, catalogs, tools and sites. Content and navigation before styling; meaningful icons/motion; real-content wireframes and browser task evidence. No mandatory theme, stack or external generator. [Output acceptance pending](docs/maintenance/web-experience-design-validation.md). |
+| [**web-experience-design**](skills/web-experience-design/) | **Merged source; release pending:** task-first web experiences for reports, comparisons, catalogs, tools and sites. Content and navigation before styling; meaningful icons/motion; real-content wireframes and browser task evidence. No mandatory theme, stack or external generator. [Output acceptance pending](docs/maintenance/web-experience-design-validation.md). |
 | [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
@@ -222,7 +222,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 41 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps and delegated-auth source; web-experience-design and progress-guard are source candidates. Installation does not certify their remaining acceptance gates:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 41 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard is a source candidate. Installation does not certify their remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:
