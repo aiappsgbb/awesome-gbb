@@ -1,0 +1,41 @@
+{
+  "base_sha": "b7b6571646c74b7cd05426080ede3eb33f8233b0",
+  "candidate_full_tree": "9c44a95cd9170ce3617c0d20b8c8095c0e2a7d7d",
+  "files": {
+    "_agentops_custody_validation.py": "942baf7c2afe4a689a1f2ff04193c8443415a657d1b2e76bdebac5d87e57a500",
+    "scripts/agentops-ci-custody.py": "c2f8299b2ef5908aee1c02185c6c96bdc6dbc112059541b2805c5d270f812cf3",
+    "scripts/agentops-ci-isolation.py": "7c37cc5b2baca0b6c83cb754ef0cb7012778047d1015aa55d1562e397f873dcf",
+    "scripts/agentops-ci-report.py": "be2493050517b116fe03032b8843d608d2767dd83fcd7929868ec8d1c31ad53e",
+    "scripts/tests/test_agentops_ci_custody.py": "5851b86fd13d9c7ced081622b05f0a4dfe85713f79e655942c43f74f0e6f4dc9",
+    "skills/foundry-agentops/test-fixture/consumer_prompt.md": "a964acdb1a54a9f4d53739eb95190db2b4219a85830c02e6fa32236464ca0844"
+  },
+  "harness_sha256": "942baf7c2afe4a689a1f2ff04193c8443415a657d1b2e76bdebac5d87e57a500",
+  "limits": {
+    "case_capture_seconds": 30,
+    "cleanup_seconds": 90,
+    "harness_seconds": 540,
+    "job_minutes": 15
+  },
+  "no_identity_export": true,
+  "no_live_authorization": true,
+  "patch_sha256": "c04a9cd5d6cbc55ebee23b02981e085fc030a7dc6f59e5321e37997cbfea8e25",
+  "production_installation": {
+    "azd_resolution": "stable",
+    "azd_setup_action": "Azure/setup-azd@v2.3.0",
+    "copilot": "1.0.57-3",
+    "preinstalled": [
+      "python3",
+      "node",
+      "az"
+    ],
+    "runner": "ubuntu-latest",
+    "uv": "0.12.6",
+    "uv_setup_action": "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"
+  },
+  "purpose": "Immutable inert test input only; not a second editable production implementation or live approval",
+  "repository": "aiappsgbb/awesome-gbb",
+  "runtime": "Same-run production tooling resolution and host/container binary+version parity, not historical cohort reconstruction",
+  "schema_version": 1,
+  "snapshot_sha256": "ee518a9b7c7c48693e131487dc2d48ee9af04ba3ab4086f246e23d9a50287ded",
+  "snapshot_tree": "e4f2020504ce20a05813353d25eec3059689bd3e"
+}

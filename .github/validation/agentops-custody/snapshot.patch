@@ -1,0 +1,1920 @@
+diff --git a/_agentops_custody_validation.py b/_agentops_custody_validation.py
+new file mode 100644
+index 00000000..47934c1d
+--- /dev/null
++++ b/_agentops_custody_validation.py
+@@ -0,0 +1,360 @@
++"""Credential-free, immutable-candidate runner proof. Never invoke a producer."""
++
++import argparse
++import contextlib
++import hashlib
++import importlib.util
++import json
++import os
++from pathlib import Path
++import re
++import shutil
++import signal
++import subprocess
++import sys
++import tempfile
++from types import SimpleNamespace
++from unittest.mock import patch
++
++
++CASES = (
++    "preserve", "workspace_only", "root_cleanup", "root_cleanup_then_init",
++    "primary_and_workspace", "env_redirect_only", "missing_ack",
++    "native_timeout", "signal", "cohort_mismatch",
++)
++REPOSITORY = "aiappsgbb/awesome-gbb"
++HARNESS = "_agentops_custody_validation.py"
++
++
++def require(value):
++    if not value:
++        raise ValueError("inert validation contract")
++
++
++def emit(check, status):
++    print(json.dumps({"check": check, "status": status}, sort_keys=True), flush=True)
++
++
++def module(source):
++    spec = importlib.util.spec_from_file_location(
++        "inert_isolation", source / "scripts/agentops-ci-isolation.py")
++    loaded = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(loaded)
++    return loaded
++
++
++def command(args, **kwargs):
++    return subprocess.run(args, check=True, capture_output=True, timeout=120, **kwargs)
++
++
++def git(args, cwd):
++    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
++               GIT_TERMINAL_PROMPT="0")
++    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
++                "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
++        env.pop(key, None)
++    return command(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=cwd, env=env).stdout
++
++
++def load_manifest(package):
++    manifest = json.loads((package / "manifest.json").read_text())
++    require(manifest["repository"] == REPOSITORY)
++    require(re.fullmatch("[0-9a-f]{40}", manifest["base_sha"]))
++    require(hashlib.sha256((package / "snapshot.patch").read_bytes()).hexdigest()
++            == manifest["patch_sha256"])
++    require(hashlib.sha256((package / "validate.py").read_bytes()).hexdigest()
++            == manifest["harness_sha256"])
++    return manifest
++
++
++def verify_source(source, manifest):
++    actual = {}
++    for name, digest in manifest["files"].items():
++        relative = Path(name)
++        require(not relative.is_absolute() and ".." not in relative.parts)
++        target = source / relative
++        require(target.is_file() and not target.is_symlink())
++        actual[name] = hashlib.sha256(target.read_bytes()).hexdigest()
++        require(actual[name] == digest)
++    snapshot = hashlib.sha256(json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
++    require(snapshot == manifest["snapshot_sha256"])
++    require(git(["write-tree"], source).decode().strip() == manifest["snapshot_tree"])
++
++
++def prepare(package, work, repository):
++    manifest = load_manifest(package)
++    work.mkdir(mode=0o700)
++    source = work / "source"
++    source.mkdir(mode=0o700)
++    (work / "ownership.json").write_text(json.dumps({
++        "manifest_sha256": hashlib.sha256((package / "manifest.json").read_bytes()).hexdigest(),
++        "cases": list(CASES),
++    }))
++    git(["init", "--quiet"], source)
++    git(["fetch", "--quiet", "--no-tags", "--depth=1", str(repository), manifest["base_sha"]], source)
++    git(["checkout", "--quiet", "--detach", manifest["base_sha"]], source)
++    require(git(["rev-parse", "HEAD"], source).decode().strip() == manifest["base_sha"])
++    patch_path = package / "snapshot.patch"
++    paths = {line.split("\t", 2)[2] for line in
++             git(["apply", "--numstat", str(patch_path)], source).decode().splitlines()}
++    require(paths == set(manifest["files"]))
++    git(["apply", "--index", "--check", str(patch_path)], source)
++    git(["apply", "--index", str(patch_path)], source)
++    verify_source(source, manifest)
++    emit("snapshot", "PASS")
++    return source
++
++
++def child():
++    isolation = module(Path(os.environ["GITHUB_WORKSPACE"]))
++    root = Path(os.environ["AGENTOPS_CI_ROOT"])
++    workspace = root / "workspaces" / os.environ["AGENTOPS_CI_WORKSPACE"]
++    mode = os.environ["INERT_CASE"]
++    require(mode in CASES)
++    require(os.environ["AZURE_CONFIG_DIR"] == str(root / "azure"))
++    require(os.environ["AZD_CONFIG_DIR"] == str(root / "azd"))
++    for key in ("GITHUB_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
++                "COPILOT_PROVIDER_BEARER_TOKEN", "AZURE_CLIENT_SECRET"):
++        require(key not in os.environ)
++    for target in (root / "initialized.json", root / "execution-started",
++                   root / "custody", root / "attempts/primary/transcript.log"):
++        require(not target.exists())
++        try:
++            target.unlink()
++        except OSError:
++            pass
++        else:
++            raise ValueError("host evidence exposed")
++    calls = []
++    name = "ci-smoke-agentops-pa-" + workspace.name
++    def create(**kwargs):
++        require(kwargs == {"agent_name": name})
++        calls.append(1)
++        return SimpleNamespace(name=name, version="1")
++    if mode == "missing_ack":
++        os.environ["AGENTOPS_CI_CUSTODY_TOKEN"] = "inert-rejected-token"
++        try:
++            isolation.custody.create_and_record(create, agent_name=name)
++        except (OSError, ValueError):
++            require(calls == [])
++            return 23
++        raise ValueError("missing ACK accepted")
++    if mode == "native_timeout":
++        def timeout(**kwargs):
++            create(**kwargs)
++            raise TimeoutError("synthetic native timeout")
++        try:
++            isolation.custody.create_and_record(timeout, agent_name=name)
++        except TimeoutError:
++            require(calls == [1])
++            return 24
++        raise ValueError("native timeout accepted")
++    if mode == "signal":
++        isolation.custody.submit("create_intent", {})
++        os.kill(os.getpid(), signal.SIGKILL)
++    isolation.custody.create_and_record(create, agent_name=name)
++    require(calls == [1])
++    local = workspace / "synthetic-payload"
++    local.write_text("INERT_PRIVATE_PIPE_CANARY")
++    require(local.stat().st_mode & 0o777 == 0o600)
++    if mode in ("workspace_only", "primary_and_workspace"):
++        for entry in workspace.iterdir():
++            shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
++    if mode == "primary_and_workspace":
++        for entry in (root / "attempts/primary").iterdir():
++            if entry.name != "workspace-pointer":
++                shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
++    if mode in ("root_cleanup", "root_cleanup_then_init"):
++        require(not isolation.delivery.cleanup(root))
++        if mode == "root_cleanup_then_init":
++            try:
++                isolation.delivery.initialize(root, root.parent / "public")
++            except (OSError, ValueError):
++                pass
++            else:
++                raise ValueError("child initialization accepted")
++    if mode == "env_redirect_only":
++        os.environ["AGENTOPS_CI_ROOT"] = "/inert-not-the-host"
++        os.chdir("/tmp")
++    print("INERT_PRIVATE_PIPE_CANARY", flush=True)
++    return 0
++
++
++def cohort_result(source, record):
++    isolation = module(source)
++    report = {}
++    for name, tool in record.items():
++        result = command([tool["path"], *isolation.TOOLS[name]])
++        require(hashlib.sha256(result.stdout).hexdigest() == tool["version_sha256"])
++        if name == "az":
++            value = json.loads(result.stdout)["azure-cli"]
++        else:
++            found = re.search(r"(?<!\d)(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)", result.stdout.decode())
++            require(found is not None)
++            value = found[1]
++        require(re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", value))
++        if name in ("copilot", "uv"):
++            require(value == {"copilot": "1.0.57-3", "uv": "0.12.6"}[name])
++        report[name] = {"version": value, "binary_sha256": tool["sha256"],
++                        "version_output_sha256": tool["version_sha256"]}
++    print(json.dumps({"same_run_tool_cohort": report}, sort_keys=True), flush=True)
++
++
++def case(source, work, mode):
++    emit(mode, "START")
++    isolation = module(source)
++    delivery = isolation.delivery
++    parent = work / mode
++    parent.mkdir(mode=0o700)
++    root, public = parent / "agentops-ci-123-1", parent / "agentops-ci-public-123-1"
++    delivery.initialize(root, public)
++    delivery.prepare(root, "primary")
++    delivery.write(root / "owner-approval.json", root, b"{}")
++    event = parent / "event.json"
++    event.write_text("{}")
++    home = parent / "home"
++    home.mkdir(mode=0o700)
++    env = {
++        "PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(parent),
++        "PYTHONDONTWRITEBYTECODE": "1", "RUNNER_TEMP": str(parent),
++        "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
++        "GITHUB_WORKSPACE": str(source), "GITHUB_EVENT_PATH": str(event),
++        "AGENTOPS_CI_ROOT": str(root), "AZURE_CONFIG_DIR": str(root / "azure"),
++        "AZD_CONFIG_DIR": str(root / "azd"), "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential",
++        "COPILOT_AUTO_UPDATE": "false",
++        "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL": "true",
++        "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
++    }
++    original_command = isolation.checked_command
++    original_args = isolation.container_arguments
++    original_capture = isolation.capture
++    observed = []
++    def inert_command(root, tools, producer_command):
++        require(producer_command[0] == tools["copilot"]["path"])
++        require(producer_command[1] == "-p")
++        observed.append(json.loads((root / "tool-cohort.json").read_text()))
++        if mode == "cohort_mismatch":
++            bad = json.loads((root / "tool-cohort.json").read_text())
++            bad["copilot"]["sha256"] = "0" * 64
++            (root / "tool-cohort.json").write_text(json.dumps(bad))
++        return original_command(root, tools, [
++            tools["python3"]["path"], "-I", str(source / HARNESS), "--child",
++        ])
++    def inert_args(*args, **kwargs):
++        kwargs["network"] = "none"
++        result = original_args(*args, **kwargs)
++        index = result.index("--env-file")
++        result[index:index] = ["--env", "INERT_CASE=" + mode]
++        return result
++    def bounded_capture(*args, **kwargs):
++        kwargs["seconds"] = 30
++        return original_capture(*args, **kwargs)
++    with patch.dict(os.environ, env, clear=True), \
++            patch.object(isolation, "checked_command", side_effect=inert_command), \
++            patch.object(isolation, "container_arguments", side_effect=inert_args), \
++            patch.object(isolation, "capture", side_effect=bounded_capture):
++        try:
++            result = isolation.run(root, "primary")
++            expected = {"missing_ack": 125, "native_timeout": 24,
++                        "signal": 137, "cohort_mismatch": 125}.get(mode, 0)
++            require(result == expected)
++            require(len(observed) == 1 and not delivery.retry_allowed(root))
++            require((root / "initialized.json").is_file())
++            require((root / "execution-started").read_bytes() == b"primary\n")
++            require(json.loads((root / "execution-finished.json").read_text()) ==
++                    {"attempt": "primary", "exit_code": expected, "container_removed": True})
++            receipt = root / "custody/identity.json"
++            if mode in ("missing_ack", "native_timeout", "signal", "cohort_mismatch"):
++                require(not receipt.exists())
++                if mode == "cohort_mismatch":
++                    require(b"AGENTOPS_CI_ISOLATION=FAIL TOOL_COHORT" in
++                            (root / "attempts/primary/transcript.log").read_bytes())
++            else:
++                value = json.loads(receipt.read_text())
++                require(value["provenance"] == "untrusted_agent_writable")
++                require(value["payload"]["version"] == "1")
++                require(b"INERT_PRIVATE_PIPE_CANARY" in
++                        (root / "attempts/primary/transcript.log").read_bytes())
++            if mode in ("workspace_only", "primary_and_workspace"):
++                key = (root / "attempts/primary/workspace-pointer").read_text().strip()
++                require(not list((root / "workspaces" / key).iterdir()))
++            if mode == "preserve":
++                cohort_result(source, observed[0])
++            emit(mode, "PASS")
++        finally:
++            isolation.cleanup_runtime(root)
++
++
++def cleanup(package, work):
++    if not work.exists():
++        emit("cleanup", "NOT_STARTED")
++        return
++    manifest = load_manifest(package)
++    ownership = json.loads((work / "ownership.json").read_text())
++    require(ownership == {
++        "manifest_sha256": hashlib.sha256((package / "manifest.json").read_bytes()).hexdigest(),
++        "cases": list(CASES),
++    })
++    source = work / "source"
++    verify_source(source, manifest)
++    isolation = module(source)
++    for mode in CASES:
++        root = work / mode / "agentops-ci-123-1"
++        if root.exists():
++            isolation.cleanup_runtime(root)
++    require(work.is_dir() and not work.is_symlink())
++    shutil.rmtree(work)
++    require(not work.exists())
++    emit("cleanup", "PASS")
++
++
++def main():
++    sys.dont_write_bytecode = True
++    os.umask(0o077)
++    if sys.argv[1:] == ["--child"]:
++        return child()
++    parser = argparse.ArgumentParser()
++    parser.add_argument("action", choices=("verify", "run", "cleanup"))
++    parser.add_argument("--work", type=Path, required=True)
++    parser.add_argument("--repository", type=Path, required=True)
++    args = parser.parse_args()
++    package = Path(__file__).resolve().parent
++    work = args.work.absolute()
++    require(work.parent == Path(os.environ["RUNNER_TEMP"]).resolve())
++    require(re.fullmatch("agentops-custody-validation-[1-9][0-9]*-[1-9][0-9]*", work.name))
++    def interrupted(_signum, _frame):
++        raise TimeoutError("inert job deadline")
++    signal.signal(signal.SIGTERM, interrupted)
++    if args.action == "cleanup":
++        cleanup(package, work)
++        return 0
++    try:
++        source = prepare(package, work, args.repository.resolve())
++        if args.action == "run":
++            require(sys.platform == "linux")
++            require(not any(os.environ.get(key) for key in (
++                "AZURE_CLIENT_SECRET", "AZURE_FEDERATED_TOKEN_FILE",
++                "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "COPILOT_PROVIDER_BEARER_TOKEN")))
++            result = command([sys.executable, "-B", "-m", "unittest", "discover",
++                              "-s", str(source / "scripts/tests"),
++                              "-p", "test_agentops_ci_custody.py"], cwd=source)
++            require(b"FAILED" not in result.stderr)
++            count = re.search(rb"Ran (\d+) tests", result.stderr)
++            skipped = re.search(rb"skipped=(\d+)", result.stderr)
++            require(count is not None)
++            print(json.dumps({"check": "custody_regressions", "status": "PASS",
++                              "total": int(count[1]), "skipped": int(skipped[1]) if skipped else 0}),
++                  flush=True)
++            for mode in CASES:
++                case(source, work, mode)
++        return 0
++    finally:
++        cleanup(package, work)
++
++
++if __name__ == "__main__":
++    try:
++        sys.exit(main())
++    except Exception:
++        emit("validation", "FAIL")
++        sys.exit(1)
+diff --git a/scripts/agentops-ci-custody.py b/scripts/agentops-ci-custody.py
+new file mode 100644
+index 00000000..2fd42176
+--- /dev/null
++++ b/scripts/agentops-ci-custody.py
+@@ -0,0 +1,177 @@
++#!/usr/bin/env python3
++"""Bounded private Unix receipt handoff; ACK is custody, not native authenticity."""
++
++from contextlib import contextmanager
++import hmac
++import importlib.util
++import json
++import os
++from pathlib import Path
++import secrets
++import socket
++import stat
++import sys
++import time
++
++
++SPEC = importlib.util.spec_from_file_location("custody_delivery", Path(__file__).with_name("agentops-ci-report.py"))
++delivery = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(delivery)
++LIMIT = 2048
++TIMEOUT = 3
++MAX_CONNECTIONS = 16
++
++
++def packet(stream, *, deadline=None):
++    deadline = time.monotonic() + TIMEOUT if deadline is None else deadline
++    raw = bytearray()
++    while b"\n" not in raw:
++        remaining = deadline - time.monotonic()
++        if remaining <= 0:
++            raise TimeoutError("receipt deadline expired")
++        stream.settimeout(remaining)
++        part = stream.recv(min(512, LIMIT + 1 - len(raw)))
++        delivery.require(part)
++        raw.extend(part)
++        delivery.require(len(raw) <= LIMIT)
++    if time.monotonic() >= deadline:
++        raise TimeoutError("receipt deadline expired")
++    delivery.require(raw.endswith(b"\n") and raw.count(b"\n") == 1)
++    return delivery.parse(raw)
++
++
++class Custody:
++    def __init__(self, root, attempt, workspace):
++        delivery.require(attempt in ("primary", "retry"))
++        delivery.require(delivery.re.fullmatch("[0-9a-f]{32}", workspace))
++        self.root, self.attempt, self.workspace = root, attempt, workspace
++        self.token = secrets.token_hex(32)
++        self.binding = {
++            "run_id": os.environ["GITHUB_RUN_ID"],
++            "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
++            "attempt": attempt, "workspace": workspace,
++        }
++        self.target = root / "custody"
++        self.channel = root / "channel"
++        self.socket_path = self.channel / "receipt.sock"
++        self.connections = 0
++        self.accepted = set()
++
++    @contextmanager
++    def listen(self):
++        delivery.mkdir(self.target, self.root)
++        # Linux sockaddr_un is limited to 108 bytes. Use a short relative bind,
++        # while anchoring the private parent with a retained no-follow dirfd.
++        with delivery.directory(self.channel, self.root) as parent:
++            delivery.require(not os.listdir(parent))
++            endpoint = f"/proc/self/fd/{parent}/receipt.sock"
++            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
++                server.bind(endpoint)
++                os.chmod("receipt.sock", 0o600, dir_fd=parent)
++                identity = os.stat("receipt.sock", dir_fd=parent, follow_symlinks=False)
++                server.listen(1)
++                server.setblocking(False)
++                try:
++                    yield server
++                finally:
++                    current = os.stat("receipt.sock", dir_fd=parent, follow_symlinks=False)
++                    delivery.require(stat.S_ISSOCK(current.st_mode) and
++                                     (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino))
++                    os.unlink("receipt.sock", dir_fd=parent)
++
++    def receive(self, server, *, deadline=None):
++        stream, _ = server.accept()
++        with stream:
++            expires = time.monotonic() + TIMEOUT
++            if deadline is not None:
++                expires = min(expires, deadline)
++            try:
++                self.connections += 1
++                delivery.require(self.connections <= MAX_CONNECTIONS)
++                value = packet(stream, deadline=expires)
++                delivery.require(isinstance(value, dict) and
++                                 set(value) == {"token", "binding", "kind", "payload"})
++                delivery.require(isinstance(value["token"], str) and
++                                 hmac.compare_digest(value["token"], self.token))
++                delivery.require(value["binding"] == self.binding)
++                kind, payload = value["kind"], value["payload"]
++                delivery.require(kind in ("create_intent", "identity") and kind not in self.accepted)
++                if kind == "create_intent":
++                    delivery.require(payload == {} and not self.accepted)
++                else:
++                    delivery.require(self.accepted == {"create_intent"})
++                    delivery.require(isinstance(payload, dict) and set(payload) == {"name", "version"})
++                    delivery.require(payload["name"] == "ci-smoke-agentops-pa-" + self.workspace)
++                    delivery.require(isinstance(payload["version"], str) and
++                                     delivery.re.fullmatch("[A-Za-z0-9._-]{1,128}", payload["version"]))
++                receipt = {
++                    "schema_version": 1, "provenance": "untrusted_agent_writable",
++                    "binding": self.binding, "kind": kind, "payload": payload,
++                }
++                delivery.write_observation(self.target / (kind + ".json"), self.root, receipt)
++                with delivery.directory(self.target, self.root) as parent:
++                    os.fsync(parent)
++                self.accepted.add(kind)
++                remaining = expires - time.monotonic()
++                if remaining <= 0:
++                    raise TimeoutError("receipt deadline expired")
++                stream.settimeout(remaining)
++                stream.sendall(b"ACK\n")
++                return True
++            except (OSError, ValueError, TypeError, RecursionError):
++                # A reject is deliberately payload-free and cannot authorize replay.
++                try:
++                    stream.setblocking(False)
++                    stream.sendall(b"REJECT\n")
++                except OSError:
++                    pass
++                return False
++
++
++def submit(kind, payload):
++    """Called synchronously on the original CREATE path, never as later recovery."""
++    root, _ = delivery.roots()
++    attempt = os.environ["AGENTOPS_CI_ATTEMPT"]
++    workspace = delivery.workspace_path(root, attempt).name
++    value = {
++        "token": os.environ["AGENTOPS_CI_CUSTODY_TOKEN"],
++        "binding": {
++            "run_id": os.environ["GITHUB_RUN_ID"],
++            "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
++            "attempt": attempt, "workspace": workspace,
++        },
++        "kind": kind, "payload": payload,
++    }
++    raw = (json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n").encode()
++    delivery.require(len(raw) <= LIMIT)
++    # The endpoint is fixed. Neither payload nor environment may supply a path.
++    with delivery.directory(root / "channel", root) as parent:
++        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
++            stream.settimeout(TIMEOUT)
++            stream.connect(f"/proc/self/fd/{parent}/receipt.sock")
++            stream.sendall(raw)
++            ack = bytearray()
++            while len(ack) < 4:
++                part = stream.recv(4 - len(ack))
++                delivery.require(part)
++                ack.extend(part)
++            delivery.require(ack == b"ACK\n")
++
++
++def create_and_record(create_version, **kwargs):
++    """Do not return native success until the original identity is in custody."""
++    root, _ = delivery.roots()
++    attempt = os.environ["AGENTOPS_CI_ATTEMPT"]
++    workspace = delivery.workspace_path(root, attempt)
++    delivery.require(kwargs.get("agent_name") == "ci-smoke-agentops-pa-" + workspace.name)
++    submit("create_intent", {})
++    agent = create_version(**kwargs)
++    identity = {"name": agent.name, "version": agent.version}
++    submit("identity", identity)
++    delivery.write_observation(workspace / "agent-identity.json", root, identity)
++    return agent
++
++
++if __name__ == "__main__":
++    print("AGENTOPS_CI_CUSTODY=FAIL DIRECT_INVOCATION")
++    sys.exit(1)
+diff --git a/scripts/agentops-ci-isolation.py b/scripts/agentops-ci-isolation.py
+new file mode 100644
+index 00000000..563bb669
+--- /dev/null
++++ b/scripts/agentops-ci-isolation.py
+@@ -0,0 +1,325 @@
++#!/usr/bin/env python3
++"""Synchronous Docker isolation for the AgentOps child, not a native evaluator."""
++
++import hashlib
++import importlib.util
++import json
++import os
++from pathlib import Path
++import selectors
++import shutil
++import subprocess
++import sys
++import time
++import uuid
++
++
++SPEC = importlib.util.spec_from_file_location("agentops_custody", Path(__file__).with_name("agentops-ci-custody.py"))
++custody = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(custody)
++delivery = custody.delivery
++MAX_SECONDS = 3600
++MAX_TRANSCRIPT = 64 * 1024 * 1024
++ENVIRONMENT = (
++    "GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_SHA",
++    "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_EVENT_PATH", "GITHUB_WORKSPACE",
++    "RUNNER_TEMP", "AGENTOPS_CI_ROOT", "AGENTOPS_CI_ATTEMPT", "AGENTOPS_CI_MARKER",
++    "AGENTOPS_CI_APPROVAL_FILE", "AGENTOPS_CI_DIAGNOSTIC_MODE",
++    "AZURE_CONFIG_DIR", "AZD_CONFIG_DIR", "AZURE_TOKEN_CREDENTIALS",
++    "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "AZURE_AI_PROJECT_ID",
++    "FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL_DEPLOYMENT", "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT",
++    "AZURE_OPENAI_DEPLOYMENT", "AZURE_AI_MODEL_DEPLOYMENT_NAME",
++    "APPLICATIONINSIGHTS_CONNECTION_STRING", "AGENTOPS_APPLICATIONINSIGHTS_CONNECTION_STRING",
++    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
++    "LAW_WORKSPACE_ID", "COPILOT_ALLOW_ALL", "COPILOT_AUTO_UPDATE",
++    "COPILOT_PROVIDER_TYPE", "COPILOT_PROVIDER_BASE_URL", "COPILOT_PROVIDER_MODEL_ID",
++    "COPILOT_PROVIDER_WIRE_MODEL", "COPILOT_PROVIDER_WIRE_API",
++    "COPILOT_PROVIDER_AZURE_API_VERSION", "COPILOT_PROVIDER_API_KEY",
++    "COPILOT_PROVIDER_BEARER_TOKEN", "COPILOT_PROVIDER_API_KEY_COMMAND", "COPILOT_PROVIDER_HEADERS",
++)
++TOOLS = {
++    "python3": ("--version",), "node": ("--version",), "copilot": ("--version",),
++    "az": ("version",), "azd": ("version",), "uv": ("--version",),
++}
++
++
++def docker(argv, **kwargs):
++    return subprocess.run(["docker", *argv], check=True, capture_output=True,
++                          timeout=kwargs.pop("timeout", 60), **kwargs)
++
++
++def mount(source, destination=None, *, writable=False):
++    source = Path(source)
++    delivery.require(source.is_absolute() and not source.is_symlink() and source.exists())
++    destination = str(destination or source)
++    delivery.require("," not in str(source) + destination and "\n" not in str(source) + destination)
++    return ["--mount", f"type=bind,source={source},target={destination}" +
++            ("" if writable else ",readonly")]
++
++
++def tool_cohort():
++    delivery.require(sys.platform == "linux")
++    # System code/libraries only; never /opt as a whole or any host home/cache.
++    paths = {Path(path) for path in (
++        "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/usr/libexec", "/usr/share",
++        "/usr/local/bin", "/usr/local/lib", "/usr/local/share", "/etc/ssl/certs",
++        "/etc/ld.so.cache", "/etc/nsswitch.conf", "/opt/az",
++    ) if Path(path).exists()}
++    tools = {}
++    for name, arguments in TOOLS.items():
++        binary = shutil.which(name)
++        delivery.require(binary is not None)
++        resolved = Path(binary).resolve(strict=True)
++        if not any(resolved.is_relative_to(path) for path in paths):
++            if name in ("azd", "uv"):
++                paths.add(resolved)
++            else:
++                prefix = resolved.parent.parent
++                delivery.require(resolved.parent.name == "bin" and prefix.is_relative_to("/opt")
++                                 and prefix != Path("/opt") and len(prefix.parts) >= 3)
++                paths.add(prefix)
++        version = subprocess.run([str(resolved), *arguments], check=True, capture_output=True, timeout=30)
++        tools[name] = {
++            "path": str(resolved), "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
++            "version_sha256": hashlib.sha256(version.stdout).hexdigest(),
++        }
++    return sorted(paths), tools
++
++
++def child_environment(root, attempt, channel, tools):
++    env = {key: os.environ[key] for key in ENVIRONMENT if key in os.environ}
++    env.update(
++        HOME="/home/agent", TMPDIR="/tmp", PYTHONDONTWRITEBYTECODE="1",
++        PATH=":".join(dict.fromkeys([str(Path(tool["path"]).parent) for tool in tools.values()]
++                                    + ["/usr/local/bin", "/usr/bin", "/bin"])),
++        AGENTOPS_CI_ATTEMPT=attempt,
++        AGENTOPS_CI_WORKSPACE=channel.workspace,
++        AGENTOPS_CI_CUSTODY_TOKEN=channel.token,
++    )
++    delivery.require(env["AGENTOPS_CI_ROOT"] == str(root))
++    return env
++
++
++def scaffold(root, attempt, workspace):
++    """Prepare only one writable handoff/workspace; host records stay unmounted."""
++    inputs = root / "child-inputs"
++    delivery.mkdir(inputs, root)
++    for name in ("observations",):
++        delivery.mkdir(inputs / name, root)
++    delivery.write(inputs / "workspace-pointer", root, (workspace + "\n").encode())
++    delivery.mkdir(root / "workspaces" / workspace, root)
++    delivery.write(delivery.attempt_dir(root, attempt) / "workspace-pointer", root,
++                   (workspace + "\n").encode())
++    return inputs
++
++
++def build_envelope(root, attempt, image_tag, *, base="scratch"):
++    context = root / "container-build"
++    delivery.mkdir(context, root)
++    skeleton = context / "rootfs"
++    skeleton.mkdir(mode=0o700)
++    # Actual runner paths are retained inside the container, not redirected to
++    # host-visible parent directories. Only the mounts below carry data.
++    for path in (root, root / "attempts", root / "attempts" / attempt,
++                 root / "workspaces", root / "channel", root / "azure", root / "azd",
++                 Path("/home/agent"), Path("/tmp"), Path("/etc")):
++        (skeleton / str(path).lstrip("/")).mkdir(parents=True, exist_ok=True, mode=0o700)
++    workspace = delivery.read(root / "child-inputs/workspace-pointer", root).decode().strip()
++    (skeleton / str(root / "workspaces" / workspace).lstrip("/")).mkdir(mode=0o700)
++    for name, destination in (("bin", "usr/bin"), ("sbin", "usr/sbin"),
++                              ("lib", "usr/lib"), ("lib64", "usr/lib64")):
++        (skeleton / name).symlink_to(destination)
++    # No host account database is exposed or changed.
++    (skeleton / "etc/passwd").write_text(f"agent:x:{os.getuid()}:{os.getgid()}:CI:/home/agent:/bin/bash\n")
++    (skeleton / "etc/group").write_text(f"agent:x:{os.getgid()}:\n")
++    dockerfile = f"FROM {base}\nCOPY --chown={os.getuid()}:{os.getgid()} rootfs/ /\n"
++    delivery.write(context / "Dockerfile", root, dockerfile.encode())
++    try:
++        result = docker(["build", "--network=none", "--pull=false", "--tag", image_tag, str(context)], timeout=180)
++    except subprocess.CalledProcessError as failure:
++        delivery.write(root / "container-build.log", root, failure.stdout + failure.stderr)
++        raise
++    delivery.write(root / "container-build.log", root, result.stdout + result.stderr)
++    image = docker(["image", "inspect", "--format", "{{.Id}}", image_tag]).stdout.decode().strip()
++    delivery.require(delivery.re.fullmatch("sha256:[0-9a-f]{64}", image))
++    delivery.write(root / "container-image", root, (image + "\n").encode())
++    return image
++
++
++def container_arguments(root, attempt, image, env_file, inputs, paths, command, *, network="bridge"):
++    delivery.require(network in ("bridge", "none"))
++    args = [
++        "create", "--init", "--read-only", "--log-driver=none",
++        "--cap-drop=ALL", "--security-opt=no-new-privileges",
++        "--user", f"{os.getuid()}:{os.getgid()}", "--network", network,
++        "--pids-limit", "256", "--stop-timeout", "10",
++        "--tmpfs", f"/tmp:rw,nosuid,nodev,size=2g,mode=1777",
++        "--tmpfs", f"/home/agent:rw,nosuid,nodev,size=1g,mode=700,uid={os.getuid()},gid={os.getgid()}",
++        "--env-file", str(env_file), "--workdir", os.environ["GITHUB_WORKSPACE"],
++        "--label", "agentops-ci.run=" + os.environ["GITHUB_RUN_ID"],
++        "--label", "agentops-ci.attempt=" + os.environ["GITHUB_RUN_ATTEMPT"],
++    ]
++    for path in paths:
++        args += mount(path.resolve(strict=True), path)
++    args += mount(Path(os.environ["GITHUB_WORKSPACE"]))
++    # Bind only the allocated UUID, not its parent. A remove/recreate of this
++    # mount's contents cannot reach sibling host workspaces or host records.
++    workspace = delivery.read(inputs / "workspace-pointer", root).decode().strip()
++    args += mount(root / "workspaces" / workspace, writable=True)
++    args += mount(inputs, root / "attempts" / attempt, writable=True)
++    args += mount(inputs / "workspace-pointer", root / "attempts" / attempt / "workspace-pointer")
++    args += mount(root / "channel")
++    args += mount(root / "azure", writable=True)
++    args += mount(root / "azd")
++    args += mount(root / "owner-approval.json")
++    args += mount(Path(os.environ["GITHUB_EVENT_PATH"]))
++    args += [image, *command]
++    return args
++
++
++def checked_command(root, tools, command):
++    code = """import hashlib,json,os,signal,subprocess,sys
++from pathlib import Path
++os.umask(0o077)
++record=json.loads(Path(sys.argv[1]).read_text())
++flags={"python3":["--version"],"node":["--version"],"copilot":["--version"],"az":["version"],"azd":["version"],"uv":["--version"]}
++try:
++ for name,tool in record.items():
++  assert hashlib.sha256(Path(tool["path"]).read_bytes()).hexdigest()==tool["sha256"]
++  result=subprocess.run([tool["path"],*flags[name]],capture_output=True,check=True,timeout=30)
++  assert hashlib.sha256(result.stdout).hexdigest()==tool["version_sha256"]
++except Exception:
++ print("AGENTOPS_CI_ISOLATION=FAIL TOOL_COHORT",file=sys.stderr)
++ sys.exit(125)
++status=subprocess.call(sys.argv[2:])
++if status < 0:
++ os.kill(os.getpid(), -status)
++sys.exit(status)
++"""
++    return [tools["python3"]["path"], "-I", "-c", code, str(root / "tool-cohort.json"), *command]
++
++
++def remove_container(identifier):
++    delivery.require(delivery.re.fullmatch("[0-9a-f]{64}", identifier))
++    query = ["container", "ls", "--all", "--quiet", "--no-trunc", "--filter", f"id={identifier}"]
++    if docker(query).stdout.strip():
++        docker(["rm", "--force", identifier], timeout=30)
++    delivery.require(not docker(query).stdout.strip())
++
++
++def capture(identifier, channel, transcript, *, seconds=MAX_SECONDS):
++    """Only the host writes the transcript; child stdout is a Docker pipe."""
++    deadline, total, good = time.monotonic() + seconds, 0, True
++    with channel.listen() as server, open(transcript, "ab", buffering=0) as output:
++        delivery.file_info(output.fileno())
++        with subprocess.Popen(["docker", "start", "--attach", identifier],
++                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
++                              stdin=subprocess.DEVNULL, close_fds=True) as process:
++            with selectors.DefaultSelector() as selector:
++                selector.register(server, selectors.EVENT_READ, "receipt")
++                selector.register(process.stdout, selectors.EVENT_READ, "stdout")
++                try:
++                    while time.monotonic() < deadline:
++                        for key, _ in selector.select(timeout=0.25):
++                            if key.data == "receipt":
++                                good = channel.receive(server, deadline=deadline) and good
++                                if channel.connections >= custody.MAX_CONNECTIONS:
++                                    selector.unregister(server)
++                            else:
++                                part = os.read(process.stdout.fileno(), 65536)
++                                if not part:
++                                    selector.unregister(process.stdout)
++                                else:
++                                    total += len(part)
++                                    delivery.require(total <= MAX_TRANSCRIPT)
++                                    output.write(part)
++                        if process.poll() is not None and not any(
++                                key.data == "stdout" for key in selector.get_map().values()):
++                            output.flush()
++                            os.fsync(output.fileno())
++                            state = json.loads(docker(["inspect", "--format", "{{json .State}}", identifier]).stdout)
++                            delivery.require(state["Running"] is False and type(state["ExitCode"]) is int)
++                            return state["ExitCode"] if good else 125
++                    raise TimeoutError("bounded child execution expired")
++                finally:
++                    if process.poll() is None:
++                        try:
++                            docker(["stop", "--time", "5", identifier], timeout=15)
++                        finally:
++                            try:
++                                process.wait(timeout=10)
++                            except subprocess.TimeoutExpired:
++                                process.kill()
++                                process.wait(timeout=5)
++
++
++def run(root, attempt):
++    paths, tools = tool_cohort()
++    delivery.write_observation(root / "tool-cohort.json", root, tools)
++    workspace = uuid.uuid4().hex
++    channel = custody.Custody(root, attempt, workspace)
++    # Reserve the single cycle before allocating any child input or process.
++    delivery.begin_execution(root, attempt)
++    inputs = scaffold(root, attempt, workspace)
++    env = child_environment(root, attempt, channel, tools)
++    env_file = root / "container.env"
++    delivery.require(all("\n" not in value and "\x00" not in value for value in env.values()))
++    delivery.write(env_file, root, "".join(f"{key}={value}\n" for key, value in env.items()).encode())
++    tag = "agentops-ci-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]
++    image = build_envelope(root, attempt, tag)
++    repo = Path(os.environ["GITHUB_WORKSPACE"])
++    prompt = (repo / ".github/ci-shared-preamble.md").read_text() + "\n" + (repo / delivery.FIXTURE).read_text()
++    # The directory must exist before constructing its bind mount. capture()
++    # creates the socket before starting the already-created container.
++    delivery.mkdir(root / "channel", root)
++    args = container_arguments(root, attempt, image, env_file, inputs,
++                               [*paths, root / "tool-cohort.json"], checked_command(root, tools, [
++        tools["copilot"]["path"], "-p", prompt, "--allow-all-tools", "--disable-builtin-mcps",
++        "-C", str(repo),
++    ]))
++    identifier = docker(args).stdout.decode().strip()
++    delivery.require(delivery.re.fullmatch("[0-9a-f]{64}", identifier))
++    delivery.write(root / "container-id", root, (identifier + "\n").encode())
++    try:
++        code = capture(identifier, channel, delivery.attempt_dir(root, attempt) / "transcript.log")
++    finally:
++        remove_container(identifier)
++    delivery.write_observation(root / "execution-finished.json", root,
++                               {"attempt": attempt, "exit_code": code, "container_removed": True})
++    return code
++
++
++def cleanup_runtime(root):
++    for name in ("container-id", "container-image"):
++        try:
++            value = delivery.read(root / name, root).decode().strip()
++        except FileNotFoundError:
++            continue
++        if name == "container-id":
++            remove_container(value)
++        else:
++            delivery.require(delivery.re.fullmatch("sha256:[0-9a-f]{64}", value))
++            # Only the image built/recorded by this exact run, never base images.
++            listing = docker(["image", "ls", "--quiet", "--no-trunc"]).stdout.decode().splitlines()
++            if value in listing:
++                docker(["image", "rm", value], timeout=30)
++            delivery.require(value not in docker(
++                ["image", "ls", "--quiet", "--no-trunc"]).stdout.decode().splitlines())
++
++
++def main():
++    os.umask(0o077)
++    try:
++        root, _ = delivery.roots()
++        delivery.require(len(sys.argv) == 2 and sys.argv[1] in ("primary", "retry", "cleanup"))
++        if sys.argv[1] == "cleanup":
++            cleanup_runtime(root)
++            return 0
++        return run(root, sys.argv[1])
++    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
++        print("AGENTOPS_CI_ISOLATION=FAIL", file=sys.stderr)
++        return 125
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/agentops-ci-report.py b/scripts/agentops-ci-report.py
+index 7c927dc4..494b12ef 100644
+--- a/scripts/agentops-ci-report.py
++++ b/scripts/agentops-ci-report.py
+@@ -14,6 +14,7 @@ import json
+ import os
+ from pathlib import Path
+ import re
++import signal
+ import stat
+ import subprocess
+ import sys
+@@ -39,6 +40,10 @@ LEGACY_FILES = (
+     "foundry-agentops-primary-invoke.log", "foundry-agentops-retry-invoke.log",
+     "foundry-agentops-smoke-result",
+ )
++OBSERVATION_STAGES = (
++    "install", "sdk_prerequisites", "exporter_cohort", "credential_contract",
++    "prompt_create", "workspace_config", "analyze", "eval",
++)
+ 
+ 
+ def require(condition):
+@@ -156,10 +161,47 @@ def parse_artifact(raw, artifact):
+ 
+ 
+ def initialize(root, public):
+-    mkdir(root)
+-    for name in ("azure", "azd", "attempts", "workspaces"):
+-        mkdir(root / name, root)
+-    mkdir(public)
++    require(root.parent == public.parent and root != public)
++    with directory(root.parent) as parent:
++        for path in (root, public):
++            try:
++                os.stat(path.name, dir_fd=parent, follow_symlinks=False)
++            except FileNotFoundError:
++                continue
++            raise ValueError("delivery destination already exists")
++        created = {}
++        try:
++            for path in (root, public):
++                mkdir(path)
++                info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
++                created[path] = (info.st_dev, info.st_ino)
++            for name in ("azure", "azd", "attempts", "workspaces"):
++                mkdir(root / name, root)
++            write_observation(root / "initialized.json", root, initialized_state(root))
++            with directory(root, root) as fd:
++                os.fsync(fd)
++            os.fsync(parent)
++        except BaseException:
++            # Roll back only directories allocated by this invocation, not replacements.
++            for path, identity in reversed(tuple(created.items())):
++                info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
++                require((info.st_dev, info.st_ino) == identity)
++                require(cleanup_private(path))
++            raise
++
++
++def initialized_state(root):
++    state = {}
++    for label in ("root", "attempts", "workspaces"):
++        path = root if label == "root" else root / label
++        with directory(path, root) as fd:
++            info = os.fstat(fd)
++            state[label] = [info.st_dev, info.st_ino]
++    return {"schema_version": 1, "directories": state}
++
++
++def validate_initialized(root):
++    require(parse(read(root / "initialized.json", root)) == initialized_state(root))
+ 
+ 
+ def attempt_dir(root, attempt):
+@@ -168,9 +210,29 @@ def attempt_dir(root, attempt):
+ 
+ 
+ def prepare(root, attempt):
++    validate_initialized(root)
+     target = attempt_dir(root, attempt)
+     mkdir(target, root)
++    mkdir(target / "observations", root)
+     write(target / "transcript.log", root, b"")
++    with directory(target, root) as fd:
++        info = os.fstat(fd)
++    write_observation(target / "prepared.json", root,
++                      {"attempt": attempt, "directory": [info.st_dev, info.st_ino]})
++
++
++def begin_execution(root, attempt):
++    require(attempt in ("primary", "retry") and retry_allowed(root))
++    target = attempt_dir(root, attempt)
++    read(target / "prepared.json", root)
++    # This host record must be outside every child mount; absence in child state
++    # is never proof that a paid/native cycle has not already started.
++    with new_file(root / "execution-started", root) as stream:
++        stream.write((attempt + "\n").encode())
++        stream.flush()
++        os.fsync(stream.fileno())
++    with directory(root, root) as fd:
++        os.fsync(fd)
+ 
+ 
+ def workspace_path(root, attempt):
+@@ -188,6 +250,126 @@ def workspace_path(root, attempt):
+         raise DiagnosticFailure("unsafe_or_unreadable", "workspace") from None
+ 
+ 
++def observation_binding(root, attempt):
++    workspace = workspace_path(root, attempt)
++    with directory(workspace, root) as fd:
++        info = os.fstat(fd)
++    return workspace, {
++        "run_id": os.environ["GITHUB_RUN_ID"],
++        "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
++        "attempt": attempt, "workspace": workspace.name,
++        "device": info.st_dev, "inode": info.st_ino,
++    }
++
++
++def observed_returncode(value):
++    return type(value) is int and (-signal.NSIG < value < 0 or 0 <= value <= 255)
++
++
++def observation_state(root, attempt, stage, binding):
++    path = attempt_dir(root, attempt) / "observations" / stage
++    with directory(path, root) as fd:
++        require(set(os.listdir(fd)) <= {"intent.json", "result.json", "stdout.log", "stderr.log"})
++    intent = parse(read(path / "intent.json", root))
++    require(isinstance(intent, dict) and type(intent.get("schema_version")) is int)
++    require(intent == {"schema_version": 1, "binding": binding, "stage": stage})
++    require(all(type(intent["binding"][key]) is type(value) for key, value in binding.items()))
++    try:
++        result = parse(read(path / "result.json", root))
++    except FileNotFoundError:
++        return {"stage": stage, "reason": "execution_incomplete", "exit_code": None}
++    require(isinstance(result, dict) and set(result) == {"reason", "exit_code"})
++    code, reason = result["exit_code"], result["reason"]
++    if reason in ("launch_failed", "fixture_stop"):
++        require(code is None)
++    else:
++        require(observed_returncode(code))
++        require(reason == ("command_returned" if code == 0 else "command_nonzero"))
++    return {"stage": stage, "reason": reason, "exit_code": code}
++
++
++def write_observation(path, root, value):
++    with new_file(path, root) as stream:
++        stream.write((json.dumps(value, sort_keys=True, allow_nan=False) + "\n").encode())
++        stream.flush()
++        os.fsync(stream.fileno())
++
++
++def observe(root, attempt, stage, argv, *, stopped=False):
++    require(stage in OBSERVATION_STAGES and (not argv if stopped else bool(argv)))
++    workspace, binding = observation_binding(root, attempt)
++    observations = attempt_dir(root, attempt) / "observations"
++    with directory(observations, root) as fd:
++        prior = os.listdir(fd)
++    require(set(prior) <= set(OBSERVATION_STAGES))
++    for previous in prior:
++        state = observation_state(root, attempt, previous, binding)
++        # A failed/unfinished observation cannot authorize another invocation.
++        require(stopped or state["reason"] == "command_returned")
++    target = observations / stage
++    mkdir(target, root)  # Exclusive: the same stage cannot be replayed.
++    write_observation(target / "intent.json", root,
++                      {"schema_version": 1, "binding": binding, "stage": stage})
++    if stopped:
++        write_observation(target / "result.json", root, {"reason": "fixture_stop", "exit_code": None})
++        return 1
++    code = None
++    try:
++        with new_file(target / "stdout.log", root) as stdout, new_file(target / "stderr.log", root) as stderr:
++            try:
++                result = subprocess.run(argv, cwd=workspace, stdout=stdout, stderr=stderr, check=False)
++            except OSError:
++                write_observation(target / "result.json", root, {"reason": "launch_failed", "exit_code": None})
++                return 125
++            code = result.returncode
++        require(observation_binding(root, attempt)[1] == binding)
++        write_observation(target / "result.json", root,
++                          {"reason": "command_returned" if code == 0 else "command_nonzero",
++                           "exit_code": code})
++    except (OSError, ValueError, DiagnosticFailure):
++        print("AGENTOPS_CI_OBSERVATION=FAIL RECORDING", file=sys.stderr)
++        return code if code else 125
++    return code
++
++
++def diagnostic_observations(root, attempt):
++    # These are agent-writable observations, never attestations or grading inputs.
++    unknown = {"stage": "unknown", "reason": "unknown", "exit_code": None}
++    result = {
++        "provenance": "untrusted_agent_writable",
++        "stages": {stage: dict(unknown) for stage in OBSERVATION_STAGES},
++        "prompt_create_intent": "unknown", "effects": "unknown",
++        "native_exit_codes": {"analyze": None, "eval": None, "doctor": None},
++    }
++    try:
++        workspace, binding = observation_binding(root, attempt)
++    except (OSError, ValueError, DiagnosticFailure):
++        return result
++    for label, relative in (("analyze", ".agentops/analyze-exit-code"),
++                            ("eval", EVAL_FILES[0]), ("doctor", DOCTOR_FILES[0])):
++        try:
++            raw = read(workspace / relative, root)
++            require(re.fullmatch(rb"(?:0|[1-9][0-9]{0,2}|-[1-9][0-9]?)\n?", raw))
++            code = int(raw)
++            require(observed_returncode(code))
++            result["native_exit_codes"][label] = code
++        except (OSError, ValueError):
++            pass
++    try:
++        with directory(attempt_dir(root, attempt) / "observations", root) as fd:
++            require(set(os.listdir(fd)) <= set(OBSERVATION_STAGES))
++    except (OSError, ValueError):
++        return result
++    for stage in OBSERVATION_STAGES:
++        try:
++            result["stages"][stage] = observation_state(root, attempt, stage, binding)
++        except (OSError, ValueError, RecursionError):
++            continue
++        if stage == "prompt_create" and result["stages"][stage]["reason"] != "fixture_stop":
++            result["prompt_create_intent"] = "observed"
++    return result
++
++
+ def checker_block(fixture, label):
+     begin, end = f"# BEGIN AGENTOPS {label} CHECK", f"# END AGENTOPS {label} CHECK"
+     require(fixture.count(begin) == fixture.count(end) == 1)
+@@ -343,6 +525,31 @@ def report(root, public, attempt, copilot_status):
+         "prompt_agent_cleanup": "unverified", "response_purge": "unverified",
+         "sha256": {}, "diagnostics": {},
+     }
++    summary["diagnostics"]["pre_doctor"] = diagnostic_observations(root, attempt)
++    isolation_ok = True
++    try:
++        with directory(root, root) as fd:
++            isolated = "execution-started" in os.listdir(fd)
++        if isolated:
++            finished = parse(read(root / "execution-finished.json", root))
++            require(finished == {"attempt": attempt, "exit_code": int(copilot_status),
++                                 "container_removed": True})
++            receipt = parse(read(root / "custody/identity.json", root))
++            identity = parse(read(workspace_path(root, attempt) / "agent-identity.json", root))
++            require(receipt["provenance"] == "untrusted_agent_writable" and
++                    receipt["kind"] == "identity" and receipt["payload"] == identity and
++                    receipt["binding"] == {
++                        "run_id": os.environ["GITHUB_RUN_ID"],
++                        "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
++                        "attempt": attempt, "workspace": workspace_path(root, attempt).name,
++                    })
++            summary["diagnostics"]["custody"] = {
++                "reason": "acknowledged", "provenance": "untrusted_agent_writable", "effects": "unknown"}
++            summary["sha256"]["custody_identity"] = hashlib.sha256(
++                read(root / "custody/identity.json", root)).hexdigest()
++    except (OSError, ValueError, KeyError, TypeError, DiagnosticFailure):
++        isolation_ok = False
++        summary["diagnostics"]["custody"] = {"reason": "unknown", "effects": "unknown"}
+     try:
+         marker = read_artifact(target / "marker", root, "marker")
+         if marker != b"SMOKE_RESULT=PASS\n":
+@@ -357,9 +564,10 @@ def report(root, public, attempt, copilot_status):
+     except DiagnosticFailure as failure:
+         summary["diagnostics"]["workspace"] = failure.diagnostic
+     else:
+-        report_workspace(root, target, workspace, summary)
++        if isolation_ok:
++            report_workspace(root, target, workspace, summary)
+     if (all(value == "verified" for value in summary["execution_checks"].values())
+-            and summary["marker"] == "passed" and copilot_status == "0"):
++            and summary["marker"] == "passed" and copilot_status == "0" and isolation_ok):
+         summary["delivery"] = "passed"
+     write(public / f"{attempt}.json", public,
+           (json.dumps(summary, sort_keys=True, allow_nan=False) + "\n").encode())
+@@ -367,10 +575,23 @@ def report(root, public, attempt, copilot_status):
+ 
+ 
+ def retry_allowed(root):
+-    # Conservative: once a workspace exists, retain the primary cycle. A
+-    # classifier hit in native output must never trigger a second evaluation.
+-    with directory(root / "workspaces", root) as fd:
+-        return not os.listdir(fd)
++    # The host's launch record is authoritative. Empty child state is not
++    # proof of no effects, and damaged/missing host evidence never allows replay.
++    try:
++        validate_initialized(root)
++        with directory(root, root) as fd:
++            if "execution-started" in os.listdir(fd):
++                return False
++        primary = attempt_dir(root, "primary")
++        with directory(primary, root) as fd:
++            info = os.fstat(fd)
++        require(parse(read(primary / "prepared.json", root)) ==
++                {"attempt": "primary", "directory": [info.st_dev, info.st_ino]})
++        read(primary / "transcript.log", root)
++        with directory(root / "workspaces", root) as fd:
++            return not os.listdir(fd)
++    except (OSError, ValueError, RecursionError):
++        return False
+ 
+ 
+ def clean_directory(fd):
+@@ -443,14 +664,54 @@ def cleanup(root):
+     return cleanup_legacy() and private_ok
+ 
+ 
++def collect_handoff(root, attempt):
++    """Snapshot only fixed child outputs after Docker has stopped all processes."""
++    finished = parse(read(root / "execution-finished.json", root))
++    require(set(finished) == {"attempt", "exit_code", "container_removed"}
++            and finished["attempt"] == attempt and type(finished["exit_code"]) is int
++            and finished["container_removed"] is True)
++    inputs, target = root / "child-inputs", attempt_dir(root, attempt)
++    for name in ("marker",):
++        try:
++            write(target / name, root, read(inputs / name, root))
++        except FileNotFoundError:
++            continue
++    for stage in OBSERVATION_STAGES:
++        try:
++            with directory(inputs / "observations" / stage, root):
++                pass
++        except FileNotFoundError:
++            continue
++        destination = target / "observations" / stage
++        mkdir(destination, root)
++        for name in ("intent.json", "result.json"):
++            try:
++                write(destination / name, root, read(inputs / "observations" / stage / name, root))
++            except FileNotFoundError:
++                continue
++
++
+ def main():
+     action = "ARGUMENTS"
+     try:
+         args = sys.argv[1:]
+-        require(args and args[0] in ("init", "prepare", "report", "retry-allowed", "cleanup"))
++        require(args and args[0] in ("init", "prepare", "report", "retry-allowed", "cleanup", "collect",
++                                    "observe", "stop"))
+         action = args[0]
+         root, public = roots()
+-        if action == "init":
++        if action in ("observe", "stop"):
++            if action == "observe":
++                require(len(args) >= 5 and args[3] == "--")
++                code = observe(root, args[1], args[2], args[4:])
++            else:
++                require(len(args) == 3)
++                code = observe(root, args[1], args[2], [], stopped=True)
++            if code < 0:
++                if -code not in (signal.SIGKILL, signal.SIGSTOP):
++                    signal.signal(-code, signal.SIG_DFL)
++                os.kill(os.getpid(), -code)
++            return code
++        elif action == "init":
+             require(len(args) == 1)
+             initialize(root, public)
+             ok = True
+@@ -464,6 +725,10 @@ def main():
+         elif action == "retry-allowed":
+             require(len(args) == 1)
+             ok = retry_allowed(root)
++        elif action == "collect":
++            require(len(args) == 2)
++            collect_handoff(root, args[1])
++            ok = True
+         else:
+             require(len(args) == 1)
+             ok = cleanup(root)
+@@ -472,7 +737,7 @@ def main():
+         print(f"AGENTOPS_CI_DELIVERY=FAIL {action.upper()}")
+         # Report exit 1 means a host-written negative summary; exit 2 means
+         # publication itself failed and no existing path may be uploaded.
+-        return 2 if action == "report" else 1
++        return 2 if action == "report" else 125 if action in ("observe", "stop") else 1
+     print(f"AGENTOPS_CI_DELIVERY={'PASS' if ok else 'FAIL'} {action.upper()}")
+     return 0 if ok else 1
+ 
+diff --git a/scripts/tests/test_agentops_ci_custody.py b/scripts/tests/test_agentops_ci_custody.py
+new file mode 100644
+index 00000000..34c23d5a
+--- /dev/null
++++ b/scripts/tests/test_agentops_ci_custody.py
+@@ -0,0 +1,440 @@
++"""Synthetic host-custody regressions; no credentials or network calls."""
++
++import importlib.util
++import contextlib
++import json
++import os
++from pathlib import Path
++import shutil
++import socket
++import subprocess
++import sys
++import tempfile
++import time
++import unittest
++from types import SimpleNamespace
++from unittest.mock import patch
++
++
++ROOT = Path(__file__).resolve().parents[2]
++SPEC = importlib.util.spec_from_file_location("custody_reporter", ROOT / "scripts/agentops-ci-report.py")
++REPORTER = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(REPORTER)
++CUSTODY_SPEC = importlib.util.spec_from_file_location("unix_custody", ROOT / "scripts/agentops-ci-custody.py")
++CUSTODY = importlib.util.module_from_spec(CUSTODY_SPEC)
++CUSTODY_SPEC.loader.exec_module(CUSTODY)
++ISOLATION_SPEC = importlib.util.spec_from_file_location("docker_isolation", ROOT / "scripts/agentops-ci-isolation.py")
++ISOLATION = importlib.util.module_from_spec(ISOLATION_SPEC)
++ISOLATION_SPEC.loader.exec_module(ISOLATION)
++
++
++class HostCustodyTests(unittest.TestCase):
++    def setUp(self):
++        self.previous_umask = os.umask(0o077)
++        self.addCleanup(os.umask, self.previous_umask)
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        self.root = Path(self.temp.name).resolve() / "agentops-ci-123-1"
++        self.public = Path(self.temp.name).resolve() / "agentops-ci-public-123-1"
++
++    def start(self):
++        REPORTER.initialize(self.root, self.public)
++        REPORTER.prepare(self.root, "primary")
++
++    def test_existing_public_destination_cannot_leave_retryable_skeleton(self):
++        self.public.mkdir(mode=0o700)
++        sentinel = self.public / "preserved"
++        sentinel.write_bytes(b"prior evidence")
++        with self.assertRaises((OSError, ValueError)):
++            REPORTER.initialize(self.root, self.public)
++        self.assertFalse(self.root.exists())
++        self.assertEqual(sentinel.read_bytes(), b"prior evidence")
++
++    def test_failed_partial_initialization_removes_only_new_owned_paths(self):
++        mkdir = REPORTER.mkdir
++
++        def fail(path, private=None):
++            if path == self.root / "workspaces":
++                raise OSError("synthetic allocation failure")
++            return mkdir(path, private)
++
++        with patch.object(REPORTER, "mkdir", side_effect=fail):
++            with self.assertRaises(OSError):
++                REPORTER.initialize(self.root, self.public)
++        self.assertFalse(self.root.exists())
++        self.assertFalse(self.public.exists())
++
++    def test_missing_or_replaced_state_is_not_retry_permission(self):
++        for relative in ("initialized.json", "attempts/primary", "workspaces"):
++            with self.subTest(relative=relative):
++                self.start()
++                target = self.root / relative
++                if target.is_dir():
++                    target.rename(target.with_name(target.name + "-previous"))
++                    target.mkdir(mode=0o700)
++                else:
++                    target.unlink(missing_ok=True)
++                try:
++                    self.assertFalse(REPORTER.retry_allowed(self.root))
++                finally:
++                    shutil.rmtree(self.root)
++                    shutil.rmtree(self.public)
++
++    def test_deleted_transcript_is_not_retry_permission(self):
++        self.start()
++        (self.root / "attempts/primary/transcript.log").unlink()
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def test_execution_start_is_durable_and_exclusive(self):
++        self.start()
++        self.assertTrue(REPORTER.retry_allowed(self.root))
++        REPORTER.begin_execution(self.root, "primary")
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++        with self.assertRaises((OSError, ValueError)):
++            REPORTER.begin_execution(self.root, "primary")
++        self.assertEqual((self.root / "execution-started").read_bytes(), b"primary\n")
++
++    def test_removing_child_workspace_after_launch_never_enables_retry(self):
++        self.start()
++        REPORTER.begin_execution(self.root, "primary")
++        workspace = self.root / "workspaces" / ("a" * 32)
++        workspace.mkdir(mode=0o700)
++        workspace.rmdir()
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def channel(self):
++        self.start()
++        REPORTER.begin_execution(self.root, "primary")
++        (self.root / "custody").mkdir(mode=0o700)
++        with patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
++            return CUSTODY.Custody(self.root, "primary", "a" * 32)
++
++    def send(self, channel, value):
++        left, right = socket.socketpair()
++        with left, right:
++            raw = value if isinstance(value, bytes) else json.dumps(value).encode() + b"\n"
++            left.sendall(raw)
++            left.shutdown(socket.SHUT_WR)
++            ok = channel.receive(SimpleNamespace(accept=lambda: (right, None)))
++            return ok, left.recv(32)
++
++    @staticmethod
++    def request(channel, kind="create_intent", payload=None):
++        return {"token": channel.token, "binding": channel.binding,
++                "kind": kind, "payload": {} if payload is None else payload}
++
++    def test_receipt_allowlist_and_exclusive_ack(self):
++        channel = self.channel()
++        self.assertEqual(self.send(channel, self.request(channel)), (True, b"ACK\n"))
++        identity = {"name": "ci-smoke-agentops-pa-" + "a" * 32, "version": "1"}
++        self.assertEqual(self.send(channel, self.request(channel, "identity", identity)), (True, b"ACK\n"))
++        path = self.root / "custody/identity.json"
++        original = path.read_bytes()
++        self.assertEqual(self.send(channel, self.request(channel, "identity", identity)), (False, b"REJECT\n"))
++        self.assertEqual(path.read_bytes(), original)
++        self.assertNotIn(channel.token.encode(), original)
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def test_spoofed_path_oversize_duplicate_json_and_identity_rejected(self):
++        channel = self.channel()
++        for value in (
++            {**self.request(channel), "token": "wrong"},
++            {**self.request(channel), "binding": {**channel.binding, "workspace": "b" * 32}},
++            self.request(channel, payload={"path": "/host/secret"}),
++            self.request(channel, "identity", {"name": "spoof", "version": "1"}),
++            b'{"token":"a","token":"b"}\n',
++            b"x" * (CUSTODY.LIMIT + 1) + b"\n",
++        ):
++            with self.subTest(value=type(value).__name__):
++                self.assertEqual(self.send(channel, value), (False, b"REJECT\n"))
++        self.assertEqual(list((self.root / "custody").iterdir()), [])
++
++    def test_failed_fsync_never_acknowledges(self):
++        channel = self.channel()
++        with patch.object(CUSTODY.delivery.os, "fsync", side_effect=OSError("synthetic")):
++            self.assertEqual(self.send(channel, self.request(channel)), (False, b"REJECT\n"))
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def test_create_timeout_and_missing_identity_ack_are_unknown_no_replay(self):
++        self.start()
++        REPORTER.begin_execution(self.root, "primary")
++        workspace = self.root / "workspaces" / ("a" * 32)
++        workspace.mkdir(mode=0o700)
++        (self.root / "attempts/primary/workspace-pointer").write_text(workspace.name + "\n")
++        calls = []
++
++        def create(**kwargs):
++            calls.append(kwargs)
++            return SimpleNamespace(name=kwargs["agent_name"], version="1")
++
++        with patch.object(CUSTODY.delivery, "roots", return_value=(self.root, self.public)), \
++                patch.dict(os.environ, {"AGENTOPS_CI_ATTEMPT": "primary"}):
++            for failure, expected in (
++                ("intent", 0), ("timeout", 1), ("identity", 1),
++            ):
++                calls.clear()
++                def submit(kind, _payload):
++                    if kind == ("create_intent" if failure == "intent" else "identity"):
++                        raise OSError("ACK unavailable")
++                def native(**kwargs):
++                    result = create(**kwargs)
++                    if failure == "timeout":
++                        raise TimeoutError("native response not observed")
++                    return result
++                with patch.object(CUSTODY, "submit", side_effect=submit):
++                    with self.assertRaises(OSError):
++                        CUSTODY.create_and_record(native, agent_name="ci-smoke-agentops-pa-" + workspace.name)
++                self.assertEqual(len(calls), expected)
++                self.assertFalse((workspace / "agent-identity.json").exists())
++                self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def test_report_survives_missing_attempt_log_without_checkout_claim(self):
++        self.start()
++        REPORTER.begin_execution(self.root, "primary")
++        shutil.rmtree(self.root / "attempts/primary")
++        self.assertFalse(REPORTER.report(self.root, self.public, "primary", "125"))
++        summary = json.loads((self.public / "primary.json").read_text())
++        self.assertEqual(summary["diagnostics"]["custody"]["reason"], "unknown")
++        self.assertEqual(summary["diagnostics"]["workspace"]["reason"], "absent")
++        self.assertNotIn("CHECKOUT_AFTER", json.dumps(summary))
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def test_collection_requires_host_verified_container_absence(self):
++        self.start()
++        for value in (None, {"attempt": "primary", "exit_code": 0, "container_removed": False}):
++            if value is not None:
++                (self.root / "execution-finished.json").write_text(json.dumps(value))
++            with self.assertRaises((OSError, ValueError)):
++                REPORTER.collect_handoff(self.root, "primary")
++        (self.root / "execution-finished.json").write_text(
++            json.dumps({"attempt": "primary", "exit_code": 0, "container_removed": True}))
++        REPORTER.collect_handoff(self.root, "primary")
++
++    def test_child_auth_export_selectors_preserved_without_host_channels(self):
++        channel = SimpleNamespace(workspace="a" * 32, token="synthetic")
++        allowed = {
++            "AGENTOPS_CI_ROOT": str(self.root),
++            "AZURE_CONFIG_DIR": str(self.root / "azure"), "AZD_CONFIG_DIR": str(self.root / "azd"),
++            "AZURE_TOKEN_CREDENTIALS": "AzureCliCredential",
++            "AGENTOPS_CI_DIAGNOSTIC_MODE": "doctor-encrypted",
++            "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL": "true",
++            "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
++        }
++        denied = {key: "PRIVATE_CANARY" for key in (
++            "GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY",
++            "AGENTOPS_CI_TELEMETRY_APPROVAL_JSON", "AGENTOPS_CI_AGE_BIN", "PYTHONPATH")}
++        with patch.dict(os.environ, {**allowed, **denied}, clear=True):
++            env = ISOLATION.child_environment(self.root, "primary", channel, {})
++        self.assertTrue(all(env[key] == value for key, value in allowed.items()))
++        self.assertTrue(set(denied).isdisjoint(env))
++        self.assertNotIn("PRIVATE_CANARY", json.dumps(env))
++
++    def test_runtime_cleanup_deletes_only_recorded_image_and_verifies_id(self):
++        self.start()
++        image = "sha256:" + "a" * 64
++        other = "sha256:" + "b" * 64
++        (self.root / "container-image").write_text(image + "\n")
++        images = {image, other}
++        calls = []
++        def docker(args, **kwargs):
++            calls.append(args)
++            if args[:2] == ["image", "rm"]:
++                images.remove(args[2])
++            else:
++                self.assertEqual(args, ["image", "ls", "--quiet", "--no-trunc"])
++            return SimpleNamespace(stdout="\n".join(sorted(images)).encode())
++        with patch.object(ISOLATION, "docker", side_effect=docker):
++            ISOLATION.cleanup_runtime(self.root)
++        self.assertEqual(images, {other})
++        self.assertEqual(sum(args[:2] == ["image", "rm"] for args in calls), 1)
++        self.assertEqual(calls[-1], ["image", "ls", "--quiet", "--no-trunc"])
++
++    def test_host_capture_retains_pipe_bytes_exit_signal_and_enforces_deadline(self):
++        self.start()
++        native_popen = subprocess.Popen
++        transcript = self.root / "attempts/primary/transcript.log"
++        for case in ("nonzero", "signal", "timeout"):
++            processes = []
++            server, peer = socket.socketpair()
++            with self.subTest(case=case), server, peer:
++                # Only the Docker daemon/CLI is substituted. The capture loop,
++                # OS pipe, selector, wait/termination and status handling are real.
++                @contextlib.contextmanager
++                def listen():
++                    yield server
++                channel = SimpleNamespace(listen=listen)
++                source = ("import os,signal,sys,time; "
++                          "print('PRIVATE_PIPE_CANARY',flush=True); " +
++                          {"nonzero": "sys.exit(7)",
++                           "signal": "os.kill(os.getpid(),signal.SIGKILL)",
++                           "timeout": "time.sleep(20)"}[case])
++                def popen(args, **kwargs):
++                    self.assertEqual(args, ["docker", "start", "--attach", "a" * 64])
++                    process = native_popen([sys.executable, "-c", source], **kwargs)
++                    processes.append(process)
++                    return process
++                def docker(args, **kwargs):
++                    if args[0] == "stop":
++                        processes[0].terminate()
++                        return SimpleNamespace(stdout=b"")
++                    self.assertEqual(args[:2], ["inspect", "--format"])
++                    status = processes[0].poll()
++                    self.assertIsNotNone(status)
++                    return SimpleNamespace(stdout=json.dumps({
++                        "Running": False, "ExitCode": status if status >= 0 else 128 - status,
++                    }).encode())
++                with patch.object(ISOLATION.subprocess, "Popen", side_effect=popen), \
++                        patch.object(ISOLATION, "docker", side_effect=docker):
++                    if case == "timeout":
++                        with self.assertRaises(TimeoutError):
++                            ISOLATION.capture("a" * 64, channel, transcript, seconds=0.2)
++                    else:
++                        result = ISOLATION.capture("a" * 64, channel, transcript, seconds=5)
++                        self.assertEqual(result, 7 if case == "nonzero" else 137)
++                self.assertIsNotNone(processes[0].poll())
++                self.assertIn(b"PRIVATE_PIPE_CANARY", transcript.read_bytes())
++
++    @unittest.skipUnless(sys.platform == "linux" and os.environ.get("AGENTOPS_INERT_TOOLS_ROOT"),
++                         "requires isolated Linux synthetic tool directory")
++    def test_actual_run_orchestration_creates_channel_before_mount_and_captures(self):
++        self.start()
++        (self.root / "owner-approval.json").write_text("{}")
++        event = self.root.parent / "event.json"
++        event.write_text("{}")
++        native_popen = subprocess.Popen
++        identifier, image = "a" * 64, "sha256:" + "b" * 64
++        present = {"container": False, "image": True}
++        calls = []
++        with tempfile.TemporaryDirectory(dir=os.environ["AGENTOPS_INERT_TOOLS_ROOT"]) as tools_root:
++            bindir = Path(tools_root) / "bin"
++            bindir.mkdir()
++            (bindir / "python3").symlink_to(sys.executable)
++            for name in ("node", "copilot", "az", "azd", "uv"):
++                tool = bindir / name
++                tool.write_text(f"#!{sys.executable}\nprint('synthetic-{name}')\n")
++                tool.chmod(0o700)
++            env = {
++                "PATH": str(bindir), "GITHUB_WORKSPACE": str(ROOT),
++                "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
++                "GITHUB_EVENT_PATH": str(event), "RUNNER_TEMP": str(self.root.parent),
++                "AGENTOPS_CI_ROOT": str(self.root),
++            }
++            def docker(args, **kwargs):
++                calls.append(args)
++                output = b""
++                if args[0] == "build":
++                    pass
++                elif args[:2] == ["image", "inspect"]:
++                    output = image.encode()
++                elif args[0] == "create":
++                    self.assertTrue((self.root / "channel").is_dir())
++                    self.assertFalse((self.root / "channel/receipt.sock").exists())
++                    present["container"] = True
++                    output = identifier.encode()
++                elif args[0] == "inspect":
++                    output = b'{"Running":false,"ExitCode":7}'
++                elif args[:2] == ["container", "ls"]:
++                    output = identifier.encode() if present["container"] else b""
++                elif args[0] == "rm":
++                    self.assertEqual(args, ["rm", "--force", identifier])
++                    present["container"] = False
++                elif args[:2] == ["image", "ls"]:
++                    output = image.encode() if present["image"] else b""
++                elif args[:2] == ["image", "rm"]:
++                    self.assertEqual(args, ["image", "rm", image])
++                    present["image"] = False
++                else:
++                    self.fail(f"unexpected Docker operation: {args[0]}")
++                return SimpleNamespace(stdout=output, stderr=b"")
++            def popen(args, **kwargs):
++                if args[:3] == ["docker", "start", "--attach"]:
++                    self.assertEqual(args[-1], identifier)
++                    self.assertTrue((self.root / "channel/receipt.sock").exists())
++                    calls.append(args)
++                    args = [sys.executable, "-c",
++                            "import sys; print('SYNTHETIC_RUN_CAPTURE'); sys.exit(7)"]
++                return native_popen(args, **kwargs)
++            with patch.dict(os.environ, env, clear=True), \
++                    patch.object(ISOLATION, "docker", side_effect=docker), \
++                    patch.object(ISOLATION.subprocess, "Popen", side_effect=popen):
++                self.assertEqual(ISOLATION.run(self.root, "primary"), 7)
++                ISOLATION.cleanup_runtime(self.root)
++        self.assertIn(b"SYNTHETIC_RUN_CAPTURE",
++                      (self.root / "attempts/primary/transcript.log").read_bytes())
++        self.assertEqual(json.loads((self.root / "execution-finished.json").read_text()),
++                         {"attempt": "primary", "exit_code": 7, "container_removed": True})
++        self.assertFalse((self.root / "channel/receipt.sock").exists())
++        self.assertFalse(any(present.values()))
++        self.assertEqual(sum(args[0] == "create" for args in calls), 1)
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++    def test_slow_drip_has_absolute_deadline_and_capture_finalizers_run(self):
++        channel = self.channel()
++        raw = json.dumps(self.request(channel)).encode() + b"\n"
++        clock, timeouts, received = [0.0], [], []
++        left, right = socket.socketpair()
++        with left, right:
++            left.sendall(raw)
++            left.shutdown(socket.SHUT_WR)
++            def recv(size):
++                part = right.recv(min(size, 1))
++                clock[0] += 0.75
++                received.append(part)
++                return part
++            def settimeout(value):
++                timeouts.append(value)
++                right.settimeout(value)
++            with patch.object(CUSTODY, "time", SimpleNamespace(monotonic=lambda: clock[0]),
++                              create=True):
++                with self.assertRaises(TimeoutError):
++                    CUSTODY.packet(SimpleNamespace(recv=recv, settimeout=settimeout))
++        self.assertEqual(clock[0], CUSTODY.TIMEOUT)
++        self.assertEqual(timeouts, [3.0, 2.25, 1.5, 0.75])
++        self.assertEqual(len(received), 4)
++
++        native_popen = subprocess.Popen
++        processes, finalized = [], []
++        server, ready = socket.socketpair()
++        sender, incoming = socket.socketpair()
++        with server, ready, sender, incoming:
++            ready.sendall(b"!")
++            sender.sendall(b"{")
++            @contextlib.contextmanager
++            def listen():
++                try:
++                    yield server
++                finally:
++                    finalized.append("host")
++            def accept():
++                server.recv(1)
++                return incoming, None
++            receive = channel.receive
++            def receive_ready(_server, **kwargs):
++                return receive(SimpleNamespace(accept=accept), **kwargs)
++            def popen(args, **kwargs):
++                process = native_popen([sys.executable, "-c", "import time; time.sleep(20)"], **kwargs)
++                processes.append(process)
++                return process
++            def docker(args, **kwargs):
++                self.assertEqual(args[0], "stop")
++                finalized.append("child")
++                processes[0].terminate()
++                return SimpleNamespace(stdout=b"")
++            before = time.monotonic()
++            with patch.object(channel, "listen", side_effect=listen), \
++                    patch.object(channel, "receive", side_effect=receive_ready), \
++                    patch.object(ISOLATION.subprocess, "Popen", side_effect=popen), \
++                    patch.object(ISOLATION, "docker", side_effect=docker):
++                with self.assertRaises(TimeoutError):
++                    ISOLATION.capture("a" * 64, channel,
++                                      self.root / "attempts/primary/transcript.log", seconds=0.15)
++            self.assertLess(time.monotonic() - before, 1.5)
++        self.assertEqual(finalized, ["child", "host"])
++        self.assertIsNotNone(processes[0].poll())
++        self.assertEqual(channel.connections, 1)
++        self.assertEqual(list((self.root / "custody").iterdir()), [])
++        self.assertFalse(REPORTER.retry_allowed(self.root))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/skills/foundry-agentops/test-fixture/consumer_prompt.md b/skills/foundry-agentops/test-fixture/consumer_prompt.md
+index 7779ee8a..0fdab341 100644
+--- a/skills/foundry-agentops/test-fixture/consumer_prompt.md
++++ b/skills/foundry-agentops/test-fixture/consumer_prompt.md
+@@ -32,7 +32,7 @@ Do NOT provision shared infrastructure. This smoke is limited to:
+ 2. creating one temporary prompt agent with a UUID suffix,
+ 3. creating one isolated temporary AgentOps workspace,
+ 4. running one AgentOps analyze/eval/doctor cycle there,
+-5. deleting the temporary prompt agent and local workspace,
++5. deleting only the exact temporary prompt agent; CI workspace disposal belongs to the runner,
+ 6. writing exactly one marker file.
+ 
+ ---
+@@ -60,6 +60,13 @@ owner-provisioned cache containing only the approved identity, or
+ `EnvironmentCredential` / `WorkloadIdentityCredential` with a fresh empty CLI
+ directory. Inherit the identical paths and selector in **every Bash** call,
+ including helpers, eval, Doctor and cleanup; do not rely on a prior Bash export.
++Also inherit the owner's supported process opt-outs
++`APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL=true` and
++`APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED=true` before SDK imports or native
++startup, including precreate helpers, primary/retry, eval, Doctor and cleanup.
++These suppress SDK Statsbeat and OneSettings traffic outside the dedicated
++component, not the approved exporter or any required Doctor source. Missing
++or changed values mean STOP; do not repair them inside an already running SDK.
+ Missing or changed isolation means STOP, not fallback to global caches.
+ For **all three** modes (including approved cached CLI), `AZD_CONFIG_DIR` must
+ be private and **fresh empty**, with **no login or token cache** copied into or
+@@ -130,6 +137,9 @@ try:
+         "environment": "EnvironmentCredential", "workload": "WorkloadIdentityCredential",
+     }
+     assert os.environ.get("AZURE_TOKEN_CREDENTIALS") == selectors[route]
++    for key in ("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
++                "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"):
++        assert os.environ.get(key) == "true"
+     required = [
+         "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "FOUNDRY_PROJECT_ENDPOINT",
+         "AZURE_CONFIG_DIR", "AZD_CONFIG_DIR", "AZURE_TOKEN_CREDENTIALS",
+@@ -260,18 +270,84 @@ Suggested names:
+ - workspace: `<owner-private-root>/foundry-agentops-<uuid>`
+ - prompt agent: `ci-smoke-agentops-pa-<uuid>`
+ 
+-**CI-only private runner context (not a native schema):** use
+-`$AGENTOPS_CI_ROOT/workspaces/<UUID>` with a fresh 32-lowercase-hex UUID and
+-`umask 077`. Persist ONLY that UUID plus one newline in
++**CI-only private runner context (not a native schema):** the runner allocates
++`$AGENTOPS_CI_ROOT/workspaces/<UUID>` before entering the Docker boundary.
++Use exactly the fresh 32-lowercase-hex UUID in `$AGENTOPS_CI_WORKSPACE` and
++`umask 077`; do not allocate a replacement. The runner already persisted that UUID plus one newline in
+ `$AGENTOPS_CI_ROOT/attempts/$AGENTOPS_CI_ATTEMPT/workspace-pointer` (0600),
+-using exclusive creation. All containing directories must be owned 0700;
++using exclusive creation. Read it; do not replace it. All containing directories must be owned 0700;
+ no symlinks/hardlinks in the pointer, identity or native evidence paths.
+ Never use `/tmp` compatibility output paths in CI. Set pip's local cache under
+ this workspace rather than a shared cache. Keep raw outputs here; do not upload
+ or copy them to public paths. A workspace allocation conservatively prevents
+-automatic replay, even if orchestration subsequently fails.
++automatic replay, even if orchestration subsequently fails. The runner records
++launch before starting the child; even a lost or empty workspace never permits
++a second cycle. The host transcript, initialization, launch and custody evidence
++are outside all writable mounts. Your stdout is a pipe, not the transcript file.
++Do not invoke host `init`, `cleanup`, `prepare`, `collect` or `retry-allowed` helpers.
+ Manual runs retain the separately owner-approved private workspace convention.
+ 
++**CI pre-Doctor observations (mandatory, diagnostic only).** After allocating
++the workspace and pointer, use the existing reporter to observe the original
++commands below. It does not replace any prerequisite, native command or checker.
++Use the same absolute executable/arguments or save the original multi-command
++block to a private workspace script and pass its unchanged invocation. Group
++each stage into one invocation; do not re-run a stage to improve diagnostics.
++An install/check script must stop on its first failed command and return that
++status, not the status of a later successful write.
++
++```bash
++python3 -I "$GITHUB_WORKSPACE/scripts/agentops-ci-report.py" \
++  observe "$AGENTOPS_CI_ATTEMPT" <stage> -- <original-executable> <original-arguments>
++```
++
++Replace placeholders with the selected row and original command, never literal
++angle brackets. The observer sets cwd to the validated workspace and inherits
++the existing approved environment and stdin (including quoted heredocs). It
++captures stdout/stderr privately under the fixed
++`$AGENTOPS_CI_ROOT/attempts/$AGENTOPS_CI_ATTEMPT/observations/<stage>/`
++directory; never print those logs. Keep the existing native artifact/exit-code
++captures in Steps 5/6 **inside** the observed command, at their original paths.
++The observer's logs are not substitutes for native artifacts.
++
++| Stage | Original work to observe once |
++|---|---|
++| `install` | Step 2 venv creation and exact native/helper package installs |
++| `sdk_prerequisites` | Step 2 package/import checks |
++| `exporter_cohort` | Step 2 exact telemetry SDK versions, before initialization |
++| `credential_contract` | Step 2 offline credential-constructor/boundary checks |
++| `prompt_create` | Step 3 original creation helper, including returned identity persistence |
++| `workspace_config` | Step 4 minimal config/dataset writes |
++| `analyze` | Step 5 original analyze command and private output/status capture |
++| `eval` | Step 6 original eval capture block, after the unchanged scope recheck |
++
++The observer durably writes local invocation intent before starting a command,
++then records only the actual child return code. It returns that code, including
++termination by signal; it never converts a failure into success. A tool denial
++or outer-agent stop before invocation leaves the stage **UNKNOWN**, not a
++native failure. If a stage is deliberately stopped before its command, after
++workspace allocation, record only the controlled fixture-reported stop:
++
++```bash
++python3 -I "$GITHUB_WORKSPACE/scripts/agentops-ci-report.py" \
++  stop "$AGENTOPS_CI_ATTEMPT" <stage>
++```
++
++That command returns 1 and records no native exit. Use it only for a stage not
++yet observed; never replace a recorded failure. If observation invocation or
++recording fails, **STOP; do not retry or bypass the observer**. Preserve scoped
++Step 8 cleanup and the FAIL marker. An observed native eval exit 2 still goes
++through the unchanged Step 6 evidence checks; it is not automatically a quality
++pass or an execution failure. No observation can authorize replay or deletion.
++Do not observe cleanup or Doctor through this pre-Doctor helper.
++
++These records are **untrusted agent-writable diagnostics**, not attestations.
++Workspace binding and `prompt_create` intent do not prove a request was sent,
++acknowledged or owned. Missing identity/intent never proves no Azure effects.
++The reporter publishes controlled enums/numbers only before deleting private
++records in the existing finalizer. Missing/unsafe observations remain UNKNOWN;
++do not mine freeform transcripts or invent a cause to fill the gap.
++
+ Inside that workspace:
+ 
+ 1. create a virtual environment,
+@@ -285,6 +361,11 @@ Inside that workspace:
+    `CognitiveServicesManagementClient` from `azure.mgmt.cognitiveservices`,
+    `MonitorManagementClient` from `azure.mgmt.monitor`, and
+    `AuthorizationManagementClient` from `azure.mgmt.authorization`.
++   Before importing/initializing telemetry, also assert the verified SDK cohort:
++   `azure-monitor-opentelemetry==1.8.10` and
++   `azure-monitor-opentelemetry-exporter==1.0.0b57` using
++   `importlib.metadata.version`. If resolution differs, STOP for offline
++   verification of the two supported opt-outs, not a live discovery run.
+    These are offline local prerequisite checks, not Azure health proof,
+ 4. install `azure-identity~=1.25.3` in both native/helper environments, verify
+    the resolved version and the single credential-name selector support.
+@@ -327,7 +408,7 @@ agent in the CI Foundry project at `$FOUNDRY_PROJECT_ENDPOINT`.
+ 
+ Requirements:
+ 
+-- The name MUST include the same short UUID suffix from Step 2.
++- The name MUST include the same UUID suffix from Step 2 (the full assigned UUID in CI).
+ - Use a chat-capable deployment already present in the project (the current CI
+   baseline uses `gpt-5.4-mini`).
+ - Keep the instructions deterministic so one eval row can succeed repeatably.
+@@ -339,6 +420,21 @@ Requirements:
+   `{"name": <returned name>, "version": <returned version>}`. Do not populate it
+   from native results, the requested name, or a later model guess. This private
+   runner identity record is not an addition to the native AgentOps schema.
++- In CI, import `create_and_record` from
++  `$GITHUB_WORKSPACE/scripts/agentops-ci-custody.py` using `importlib.util`
++  and replace only the invocation `project.agents.create_version(...)` with
++  `custody.create_and_record(project.agents.create_version, ...)`, retaining
++  the original arguments and credential/client construction unchanged.
++  Use `ci-smoke-agentops-pa-` plus the full assigned UUID as `agent_name`.
++  This mandatory wrapper ACKs intent before calling CREATE exactly once, then
++  submits the original returned name/version to the private Unix socket and
++  exclusively writes `agent-identity.json` before returning that same object.
++  Do not write the identity a second time or submit it later from prose/results.
++  Missing/rejected ACK or CREATE timeout means UNKNOWN: STOP, no new CREATE,
++  replacement workspace or automatic retry. ACK preserves a child-reported
++  receipt; it does not authenticate Azure ownership or authorize deletion.
++  The original return and existing exact owner-authorized cleanup contract
++  remain necessary. Do not recover identity by listing agents or guessing names.
+ - Use the parent-approved credential route from Step 0 without substitution.
+   The direct SDK DefaultAzureCredential must inherit the same selector and
+   isolated config paths as eval/Doctor, not an unrestricted developer chain.
+@@ -346,7 +442,8 @@ Requirements:
+   the extra developer-CLI leg must remain unable to use a logged-in azd cache.
+ 
+ If agent creation fails, finish with Step 8 using the literal one-line reason
+-`prompt agent create failed`.
++`prompt agent create failed`. In CI run the original creation helper through
++the `prompt_create` observer above; do not issue an unobserved create first.
+ 
+ ---
+ 
+@@ -506,6 +603,10 @@ From the isolated workspace, run:
+ $AGENTOPS_BIN eval analyze --format json
+ ```
+ 
++In CI observe the `analyze` stage around the original command **and** its
++private output/status capture below. Do not run the displayed command separately
++first. The native arguments remain `eval analyze --format json`.
++
+ Requirements:
+ 
+ - the command must succeed,
+@@ -527,6 +628,9 @@ Step 8 using the literal one-line reason `eval analyze contract failed`.
+ Run exactly one AgentOps evaluation for the temporary prompt agent, only after
+ rechecking the pre-execution telemetry approval against the completed workspace
+ and effective process environment. If missing or mismatched, STOP as in Step 1.
++In CI pass the complete original capture block below to the `eval` observer
++once, as a private workspace script. Do not execute it once directly and again
++through the observer; the observer returns the original block's exit status.
+ 
+ **Suppress the native CI summary export at the process boundary.** v0.14.0
+ automatically appends the full eval report (input/response/expected) when
+@@ -927,6 +1031,10 @@ printf 'SMOKE_RESULT=PASS\n' > "$AGENTOPS_CI_MARKER"
+ 
+ CI execution/evidence failure:
+ 
++The pre-Doctor observation, when available, supplies a controlled diagnostic
++before this final action. Leave it intact for the reporter; never add reason
++text to the marker or infer native execution from this marker.
++
+ ```bash
+ umask 077
+ printf 'SMOKE_RESULT=FAIL\n' > "$AGENTOPS_CI_MARKER"
