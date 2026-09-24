@@ -94,11 +94,13 @@ DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
         ),
     },
     'web-experience-design': {
-        'source_status': 'candidate',
+        'source_status': 'merged',
         'release_status': 'pending',
         'record': 'maintenance/web-experience-design-validation.md',
         'summary': (
-            'Source candidate; release and global promotion pending. '
+            'Merged source is available in main after PR #510 '
+            '(ed220bc697635d7ff9c161584e3c64bd13bad94f). '
+            'Separate release approval and global promotion remain pending. '
             'Local contract checks do not certify generated UI quality. '
             'Report, comparison/tool and informational-site output acceptance, '
             'plus native runtime discovery and invocation, remain pending. '

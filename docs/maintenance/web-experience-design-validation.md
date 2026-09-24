@@ -1,7 +1,14 @@
 # Web Experience Design validation
 
-Status: **source candidate; release and global promotion pending**.
-Skill version: **1.0.0**.
+Status: **merged source available; release and global promotion pending**.
+Skill version: **1.0.1** (publication wording correction only).
+
+Version 1.0.0 merged in [PR #510](https://github.com/aiappsgbb/awesome-gbb/pull/510)
+on 2026-09-21 at
+[`ed220bc697635d7ff9c161584e3c64bd13bad94f`](https://github.com/aiappsgbb/awesome-gbb/commit/ed220bc697635d7ff9c161584e3c64bd13bad94f).
+The [source is available in main](https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/web-experience-design/SKILL.md)
+and installable through the catalog. Source availability does not certify output
+quality, native runtime discovery or release/global promotion.
 
 ## Scope
 
@@ -34,8 +41,8 @@ python3 scripts/build-site.py --out docs/ --validate
 ```
 
 Passing these commands is not a substitute for the output acceptance below.
-PR-specific results belong in the PR evidence; this record does not invent a
-CI run or a source SHA before one exists.
+PR-specific results belong in the PR evidence. The merged source provenance
+above is not browser/output acceptance or native runtime validation.
 
 ### Observed local results, 2026-09-21
 
@@ -70,5 +77,6 @@ No score assigned by the generating agent can close these gates. No confidential
 material goes to an external design service. Any optional remote generation
 requires separate approval of the payload, destination, terms and bounded cost.
 
-Until that evidence is accepted: keep this entry a candidate, do not install it
-globally as a default, and do not describe it as production-proven.
+Until that evidence is accepted: keep release and global promotion pending,
+do not install it globally as a default, and do not describe it as
+production-proven. These gates do not hide the already merged catalog source.

@@ -4,7 +4,11 @@ An independent, task-first workflow for useful, distinctive web experiences.
 It addresses content overload and poor findability before choosing colors or
 components. It is not a theme library or a wrapper around a design service.
 
-**Version 1.0.0 is a source candidate, not a claim of accepted output quality.**
+**Merged source is available; release and global promotion remain pending.**
+Version 1.0.0 merged in [PR #510](https://github.com/aiappsgbb/awesome-gbb/pull/510)
+at `ed220bc697635d7ff9c161584e3c64bd13bad94f` on 2026-09-21.
+Version 1.0.1 corrects publication wording only; it does not establish accepted
+output quality or native runtime discovery.
 The repository's validation record is at
 `docs/maintenance/web-experience-design-validation.md`.
 No global installation is performed by the skill.

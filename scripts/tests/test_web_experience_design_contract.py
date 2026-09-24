@@ -5,6 +5,9 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -27,7 +30,7 @@ class WebExperienceDesignContractTests(unittest.TestCase):
         metadata = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(metadata), {"name", "description", "metadata"})
         self.assertEqual(metadata["name"], SKILL.name)
-        self.assertEqual(metadata["metadata"]["version"], "1.0.0")
+        self.assertEqual(metadata["metadata"]["version"], "1.0.1")
         self.assertGreaterEqual(len(metadata["description"]), 200)
         self.assertLessEqual(len(metadata["description"]), 1024)
         self.assertIn("USE FOR:", metadata["description"])
@@ -152,7 +155,7 @@ class WebExperienceDesignContractTests(unittest.TestCase):
         deps = yaml.safe_load((ROOT / ".github" / "skill-deps.yml").read_text())
         self.assertNotIn(SKILL.name, deps.get("skills", deps))
 
-    def test_catalog_marks_candidate_and_publishes_its_validation_record(self) -> None:
+    def test_catalog_marks_merged_source_with_pending_acceptance(self) -> None:
         tree = ast.parse((ROOT / "scripts" / "build-site.py").read_text(encoding="utf-8"))
         declarations = {
             node.target.id: ast.literal_eval(node.value)
@@ -163,12 +166,65 @@ class WebExperienceDesignContractTests(unittest.TestCase):
         }
         self.assertIn(SKILL.name, declarations["CATEGORIES"]["📊 Content Generation"])
         status = declarations["DRAFT_SKILLS"][SKILL.name]
-        self.assertEqual(status["source_status"], "candidate")
+        self.assertEqual(status["source_status"], "merged")
         self.assertEqual(status["release_status"], "pending")
         self.assertEqual(status["record"], "maintenance/web-experience-design-validation.md")
         self.assertIn("not certify", status["summary"])
+        self.assertIn("PR #510", status["summary"])
+        self.assertIn("ed220bc697635d7ff9c161584e3c64bd13bad94f", status["summary"])
+        self.assertIn("global promotion remain pending", status["summary"])
         self.assertTrue(RECORD.is_file())
         self.assertIn("not yet recorded", RECORD.read_text().lower())
+
+    def test_public_status_prose_separates_merged_source_from_acceptance(self) -> None:
+        for path in (SKILL / "SKILL.md", SKILL / "README.md", RECORD):
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8").lower()
+                self.assertIn("merged source", text)
+                self.assertIn("pending", text)
+                self.assertNotIn("source candidate", text)
+        record = RECORD.read_text(encoding="utf-8")
+        self.assertIn("ed220bc697635d7ff9c161584e3c64bd13bad94f", record)
+        self.assertIn("do not install it globally as a default", record)
+        self.assertIn("Browser/output acceptance", record)
+        self.assertIn("Native runtime discovery and invocation", record)
+
+    def test_generated_publication_exposes_source_without_certifying_output(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as output:
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/build-site.py"),
+                 "--out", output, "--validate"],
+                cwd=ROOT, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            output = Path(output)
+            detail = (output / f"skills/{SKILL.name}/index.html").read_text()
+            index = (output / "skills/index.html").read_text()
+            llms = (output / "llms.txt").read_text()
+            source_url = f"https://github.com/aiappsgbb/awesome-gbb/blob/main/skills/{SKILL.name}/SKILL.md"
+            self.assertIn("<h2>Install source</h2>", detail)
+            self.assertIn(f"gh skill install aiappsgbb/awesome-gbb {SKILL.name}", detail)
+            self.assertIn(f'href="{source_url}"', detail)
+            for stale in ("Draft candidate source", "in the draft candidate",
+                          "candidate SHA will be recorded", "No released downstream pin"):
+                self.assertNotIn(stale, detail)
+            for boundary in ("Merged source", "PR #510",
+                             "ed220bc697635d7ff9c161584e3c64bd13bad94f",
+                             "release approval and global promotion remain pending",
+                             "do not certify generated UI quality",
+                             "output acceptance", "native runtime discovery"):
+                self.assertIn(boundary, detail)
+            self.assertIn("/maintenance/web-experience-design-validation.md", detail)
+            entry = next(
+                item for item in re.findall(r"<li data-search=.*?</li>", index, re.DOTALL)
+                if f"/skills/{SKILL.name}/" in item
+            )
+            self.assertIn('class="badge ver">v1.0.1</span>', entry)
+            self.assertNotIn("candidate", entry.lower())
+            line = next(line for line in llms.splitlines() if line.startswith(f"- [{SKILL.name}]"))
+            self.assertIn(f"[{SKILL.name}]({source_url})", line)
+            self.assertIn("Merged source; release approval and readiness pending.", line)
+            self.assertNotIn("Unreleased draft candidate", line)
 
     def test_catalog_versions_and_source_counts_remain_consistent(self) -> None:
         plugin = json.loads((ROOT / "plugin.json").read_text())
