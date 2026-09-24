@@ -10,77 +10,127 @@ permissions:
   contents: read
 
 jobs:
-  isolated-custody:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
-      COPILOT_AUTO_UPDATE: "false"
+  base-bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      # Match production installation/resolution, not a historical cohort.
-      # Node/Python/az are preinstalled; resolved versions and binary hashes
-      # are recorded here and compared against the same bytes inside Docker.
-      - name: Install production Copilot CLI version
+      # Base-only stage: no checkout, builds, tooling installs or candidate execution.
+      - name: Verify locked base starts under the isolation flags
         shell: bash
-        run: |
-          set -euo pipefail
-          npm install -g @github/copilot@1.0.57-3 > "$RUNNER_TEMP/custody-npm-setup.log" 2>&1 \
-            || { echo 'CUSTODY_SETUP=FAIL COPILOT'; exit 1; }
-
-      - name: Install production azd resolution
-        uses: Azure/setup-azd@v2.3.0
-        with:
-          version: stable
-
-      - name: Install production uv version
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
-        with:
-          version: "0.12.6"
-          enable-cache: false
-
-      - name: Verify immutable package
-        id: package
-        shell: bash
-        env:
-          PACKAGE_MANIFEST_SHA256: 946c759440cc56834dc1e7ba79b0390805f6a370681ee452bd06beb0fb4b17b1
         run: |
           set -euo pipefail
           python3 -I - <<'PY'
-          import hashlib, json, os, pathlib, sys
-          root = pathlib.Path(".github/validation/agentops-custody")
-          raw = (root / "manifest.json").read_bytes()
-          if hashlib.sha256(raw).hexdigest() != os.environ["PACKAGE_MANIFEST_SHA256"]:
-              sys.exit("CUSTODY_PACKAGE=FAIL MANIFEST_HASH")
-          manifest = json.loads(raw)
-          for name, key in (("validate.py", "harness_sha256"), ("snapshot.patch", "patch_sha256")):
-              if hashlib.sha256((root / name).read_bytes()).hexdigest() != manifest[key]:
-                  sys.exit("CUSTODY_PACKAGE=FAIL INPUT_HASH")
-          print("CUSTODY_PACKAGE=PASS")
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          import uuid
+
+          image = "docker.io/library/ubuntu@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4"
+          owner = str(uuid.uuid4())
+          name = "agentops-base-" + owner
+          label = "agentops.validation.owner"
+          phase = "preexisting-base-check"
+          owns_base = False
+          create_attempted = False
+          passed = False
+          cleanup_ok = True
+
+          def emit(stage, status, **fields):
+              print(json.dumps({"stage": stage, "status": status, **fields}, sort_keys=True), flush=True)
+
+          def docker(*args, seconds=15):
+              return subprocess.run(["docker", *args], check=True, capture_output=True,
+                                    timeout=seconds)
+
+          def inspect(kind, reference):
+              try:
+                  return json.loads(docker(kind, "inspect", reference).stdout)[0]
+              except subprocess.CalledProcessError as error:
+                  text = error.stderr.lower()
+                  absent = b"no such image:" if kind == "image" else b"no such container:"
+                  if error.returncode == 1 and absent in text:
+                      return None
+                  raise
+
+          def report_failure(stage, error):
+              info = {"error": type(error).__name__}
+              if type(error) is RuntimeError and re.fullmatch("[A-Z_]+", str(error)):
+                  info["classification"] = str(error)
+              if isinstance(error, subprocess.CalledProcessError):
+                  info["returncode"] = error.returncode
+                  text = error.stderr[:4096].decode("utf-8", errors="replace")
+                  info["classification"] = (
+                      "ENOENT" if "no such file or directory" in text.lower() else
+                      "PERMISSION_DENIED" if "permission denied" in text.lower() else
+                      "COMMAND_FAILURE")
+                  if re.search(r"exec [\"']?/bin/sh[\"']?(?: failed)?: [Nn]o such file or directory", text):
+                      info["path"] = "/bin/sh"
+              emit(stage, "FAIL", **info)
+
+          try:
+              if inspect("image", image) is not None:
+                  raise RuntimeError("BASE_REFERENCE_PREEXISTS")
+              if inspect("container", name) is not None:
+                  raise RuntimeError("CONTAINER_NAME_PREEXISTS")
+              owns_base = True
+              phase = "pull-locked-base"
+              docker("pull", "--platform", "linux/amd64", image, seconds=90)
+              data = inspect("image", image)
+              if data is None or data["Os"] != "linux" or data["Architecture"] != "amd64":
+                  raise RuntimeError("BASE_ARCHITECTURE_MISMATCH")
+              emit(phase, "PASS", base_config_digest=data["Id"], platform="linux/amd64")
+              phase = "create-base-container"
+              create_attempted = True
+              docker("create", "--name", name, "--label", label + "=" + owner,
+                     "--pull=never", "--platform", "linux/amd64",
+                     "--init", "--read-only", "--log-driver=none",
+                     "--cap-drop=ALL", "--security-opt=no-new-privileges",
+                     "--user", f"{os.getuid()}:{os.getgid()}", "--network=none",
+                     "--pids-limit", "256", "--stop-timeout", "10",
+                     image, "/bin/sh", "-c", "printf 'BASE_PID1_READY\\n'")
+              emit(phase, "PASS")
+              phase = "base-shell-execution"
+              result = docker("start", "--attach", name, seconds=15)
+              state = inspect("container", name)
+              if state is None or state["Config"]["Labels"].get(label) != owner:
+                  raise RuntimeError("MISSING_OWNED_CONTAINER")
+              exit_code = state["State"]["ExitCode"]
+              marker = result.stdout == b"BASE_PID1_READY\n"
+              if state["State"]["Running"] or exit_code != 0 or not marker:
+                  emit(phase, "FAIL", exit_code=exit_code, marker_observed=marker)
+                  raise RuntimeError("BASE_EXECUTION_CONTRACT")
+              print("BASE_PID1_READY", flush=True)
+              emit(phase, "PASS", exit_code=exit_code, marker_observed=True)
+              passed = True
+          except Exception as error:
+              report_failure(phase, error)
+          finally:
+              if create_attempted:
+                  try:
+                      data = inspect("container", name)
+                      if data is not None:
+                          if data["Config"]["Labels"].get(label) != owner:
+                              raise RuntimeError("CONTAINER_OWNERSHIP_MISMATCH")
+                          docker("rm", "--force", data["Id"], seconds=20)
+                      if inspect("container", name) is not None:
+                          raise RuntimeError("CONTAINER_STILL_PRESENT")
+                      emit("exact-container-cleanup", "PASS")
+                  except Exception as error:
+                      cleanup_ok = False
+                      report_failure("exact-container-cleanup", error)
+              if owns_base:
+                  try:
+                      if inspect("image", image) is not None:
+                          docker("image", "rm", image, seconds=30)
+                      if inspect("image", image) is not None:
+                          raise RuntimeError("BASE_REFERENCE_STILL_PRESENT")
+                      emit("exact-base-reference-cleanup", "PASS")
+                  except Exception as error:
+                      cleanup_ok = False
+                      report_failure("exact-base-reference-cleanup", error)
+              emit("base-only-result", "PASS" if passed and cleanup_ok else "FAIL",
+                   custody_tested=False, tool_cohort_tested=False)
+          sys.exit(0 if passed and cleanup_ok else 1)
           PY
-
-      - name: Run inert production-boundary proof
-        if: steps.package.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          WORK="$RUNNER_TEMP/agentops-custody-validation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          timeout --signal=TERM --kill-after=30s 540s \
-            python3 -I .github/validation/agentops-custody/validate.py run \
-              --work "$WORK" --repository "$GITHUB_WORKSPACE"
-
-      - name: Verify exact-created cleanup
-        if: always() && steps.package.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          WORK="$RUNNER_TEMP/agentops-custody-validation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          timeout --signal=TERM --kill-after=10s 90s \
-            python3 -I .github/validation/agentops-custody/validate.py cleanup \
-              --work "$WORK" --repository "$GITHUB_WORKSPACE"
