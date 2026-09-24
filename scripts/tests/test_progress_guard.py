@@ -19,11 +19,17 @@ class ProgressGuardPackagingTests(unittest.TestCase):
         self.assertTrue(text.startswith("---\nname: progress-guard\ndescription: >\n"))
         metadata = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(metadata), {"name", "description", "metadata"})
-        self.assertEqual(metadata["metadata"]["version"], "1.1.0")
+        self.assertEqual(metadata["metadata"]["version"], "1.2.1")
         self.assertTrue(200 <= len(metadata["description"]) <= 1024)
         self.assertIn("USE FOR:", metadata["description"])
         self.assertIn("DO NOT USE FOR:", metadata["description"])
         self.assertIn("(references/compaction.md)", text)
+        self.assertIn("(references/children.md)", text)
+        self.assertIn("Retry native discovery only after a concrete runtime/catalog", text)
+        self.assertIn("not task expiry", text)
+        self.assertIn("existing ONE bounded recovery", text)
+        self.assertIn("A missing operation ID alone does not prove nothing happened", text)
+        self.assertIn("Never override explicit retry/spend/time limits", text)
         for path in SKILL.rglob("*.md"):
             for link in re.findall(r"\]\(([^)]+)\)", path.read_text(encoding="utf-8")):
                 if "://" not in link:
@@ -41,16 +47,15 @@ class ProgressGuardPackagingTests(unittest.TestCase):
         self.assertIn(record, site["PUBLISHED_DOCS"])
         text = (ROOT / "docs" / record).read_text(encoding="utf-8")
         self.assertIn("not been executed as observed agent trials", text)
-        self.assertIn("1.1.0", text)
+        self.assertIn("1.2.1", text)
         plugin = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))
         self.assertIn(f'## {plugin["version"]}', (ROOT / "CHANGELOG.md").read_text())
 
 
 def load_tests(loader, tests, pattern):
-    path = (Path(__file__).resolve().parents[2] / "skills" / "progress-guard"
-            / "tests" / "test_ledger.py")
-    spec = importlib.util.spec_from_file_location("progress_guard_ledger_tests", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    tests.addTests(loader.loadTestsFromModule(module))
+    for path in sorted((SKILL / "tests").glob("test_*.py")):
+        spec = importlib.util.spec_from_file_location(f"progress_guard_{path.stem}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        tests.addTests(loader.loadTestsFromModule(module))
     return tests

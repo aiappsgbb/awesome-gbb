@@ -38,6 +38,11 @@ review; do not disable tools or rewrite global instructions automatically.
 
 ## Prepare once at a useful boundary
 
+For delegated work, first apply [children.md](children.md): reconcile returned
+results into the parent's ledger without forwarding transcripts. Keep active child
+handles, dependency gates, ownership and unaccepted receipts in the latest snapshot.
+Do not compact away the only copy of a receipt before its parent write is read back.
+
 1. Prefer a phase boundary or actual context pressure, not a timer or every turn.
    Capture usage before compaction if the host exposes it; otherwise mark it
    unknown. Do not infer exact token counts from text length.
@@ -87,6 +92,12 @@ After completion (or when recovering from an automatic compaction):
 4. Resume the next bounded action. If usage is observable, compare before/after
    with the same model and context capacity. If not, report token savings as
    unknown. Fewer tokens alone are not success if essential decisions were lost.
+
+One consolidation can cover several already-returned children; do not wait for
+unrelated children just to compact, or run a compaction per progress message.
+Losing repeated narration is desirable; losing a live assignment or safety gate
+is not. "Aggressive" means minimal sufficient recovery context, not undocumented
+runtime settings or repeated compaction calls.
 
 ## When a fresh session is safer
 

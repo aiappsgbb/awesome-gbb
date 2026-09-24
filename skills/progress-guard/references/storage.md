@@ -40,6 +40,13 @@ default six-event history; request `--recent 1` through `--recent 6` only when
 those events answer a specific missing-context question. This selects output,
 not a runtime compaction, and does not delete ledger history.
 
+Delegated work also uses the [child-session contract](children.md). The optional
+`handoff --work CHILD-WORK-ID` command emits a bounded terminal packet, not the
+full snapshot/history, and sends no messages. A `delegation` object in the child's
+state binds the assignment; the parent's optional `children` array tracks receipts,
+active handles and acceptance. These are additive state fields, not new tables
+or a replacement plan. Existing non-delegated ledgers remain valid.
+
 The staging JSON requires work_id, revision, event_key, kind, summary, evidence,
 decision, and state (a JSON object). It is an input, not a second authoritative
 snapshot; remove it after a verified append. Errors are explicit and do not advance

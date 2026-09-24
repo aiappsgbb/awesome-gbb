@@ -88,9 +88,10 @@ DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
         'release_status': 'pending',
         'record': 'maintenance/progress-guard-validation.md',
         'summary': (
-            'Draft source candidate; review and behavioral acceptance pending. '
-            'Local persistence tests do not certify agent compliance or native '
-            'runtime discovery. No automatic supervisors, hooks or tool preemption.'
+            'Follow-up candidate; review and behavioral acceptance pending. '
+            'Local persistence and handoff tests do not certify quiet child '
+            'execution, parent integration, native loading or compaction. '
+            'No automatic supervisors, hooks or tool preemption.'
         ),
     },
     'web-experience-design': {

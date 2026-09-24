@@ -3,11 +3,11 @@ name: progress-guard
 description: >
   Execution memory and bounded recovery without planning bureaucracy. USE FOR:
   long-running or multi-phase work, repeated failed attempts, stalled tools, plan
-  changes, resumption after compaction, handoffs, stopping rabbit holes, reviewing
+  changes, resumption after compaction, child-session coordination, handoffs, stopping rabbit holes, reviewing
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.1.0"
+  version: "1.2.1"
 ---
 
 # Progress guard
@@ -29,6 +29,15 @@ protocol, not a planner, autonomous supervisor, or tool-call watchdog.
 Simple tasks need no ledger. Activate later if they become complex or stall.
 Follow existing authorization, policy and safety requirements; this skill grants
 no permission to bypass checks, edit protected repos or interrupt other work.
+
+If native loading returns `Skill not found`, read an accessible canonical
+`SKILL.md` once and record the discovery failure, fallback path/version and owning
+runtime/session in the existing snapshot. This is file-based loading, not native
+discovery success. After compaction, reuse that recorded route and load only missing
+relevant instructions. Retry native discovery only after a concrete runtime/catalog
+change, not because another turn or compaction occurred. A new child checks its own
+runtime; it does not inherit proof of discovery. If access is denied by policy, do
+not try another route; if no permitted source is available, report the blocker.
 
 ## Evidence, not activity
 
@@ -104,6 +113,10 @@ Estimate active no-progress time from actual timestamps; exclude time waiting fo
 the user or an inactive session. Include unproductive execution/waiting while work
 was meant to proceed. Disclose unknown timing; use behavioral triggers instead.
 Do not infer continuous work from time since the last event.
+The 15/30-minute defaults are review/escalation thresholds for **no progress**,
+not task expiry, resource lifetime, or an automatic requirement for a new release.
+Do not convert them into per-phase stop clocks, request quotas or zero-retry
+rules. Explicit user limits and actual authorization/operation deadlines still apply.
 
 ## Recovery: one short decision, then action or stop
 
@@ -126,6 +139,14 @@ An explicitly bounded alternative approved by the user may proceed. Preserve the
 failed history; do not reset a budget by renaming work or opening a child session.
 Independent authorized work may continue if it cannot affect the blocked operation.
 
+An ordinary command/input defect can use the existing ONE bounded recovery within
+the current assignment when the correction stays inside its authority and evidence
+establishes that the failed attempt caused no uncertain effects. Record the failure,
+correct it and verify; no new stage approval is needed solely because it failed.
+A missing operation ID alone does not prove nothing happened. If effects are UNKNOWN,
+reconcile actual state first. Never override explicit retry/spend/time limits,
+missing permissions, a required approval or an exhausted recovery allowance.
+
 User-facing escalation, in the user's language:
 "Blocked on X. Last verified result: Y. Tried A/B; evidence Z. I recommend C
 because it tests D. Decision needed: [one concrete choice]."
@@ -142,10 +163,22 @@ preempt it. Report that limit at the next opportunity. Never route around an exc
 tool. Stop only known owned processes when safe/authorized; do not cancel a cloud
 mutation just because a timer elapsed.
 
-One coordinator owns a work item's consolidated state. Children return bounded
-outcomes and evidence, with inherited failed hypotheses and budgets. Do not share
-one writable snapshot between agents. Verify child claims before marking completion.
-Do not delegate merely to satisfy this skill.
+Before authorized delegation, follow [the child-session contract](references/children.md).
+The kickoff MUST explicitly require the child to load this skill and maintain its
+own ledger; do not assume skill/context inheritance. Give one bounded assignment
+with ownership, dependencies, acceptance, failed hypotheses and remaining budget.
+The parent tracks assignments in its existing snapshot, not a competing plan.
+
+Children record intermediate progress locally. Return one compact handoff only
+when the assignment is complete, blocked, needs a decision, or is explicitly paused.
+No unsolicited progress pings, acknowledgment chains or repeated unchanged blockers.
+Safety incidents, urgent cancellation and required permission/input gates are
+immediate exceptions; host-generated notifications cannot be suppressed by a skill.
+
+The parent deduplicates returns, verifies evidence, and records accepted results
+or a precise blocker in its own ledger before dependent work or compaction.
+Child completion is not parent acceptance or overall completion. Do not share
+one writable snapshot, forward transcripts, or create children merely for this skill.
 
 ## Finish
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — progress-guard recovery clarifications
+
+- [`progress-guard`](skills/progress-guard/SKILL.md) PATCH **1.2.0 → 1.2.1**:
+  remember permitted file fallback after failed native discovery; do not retry
+  discovery solely because context was compacted.
+- Clarify no-progress review thresholds are not task expiry or invented phase
+  quotas. Ordinary within-scope corrections may use the existing one bounded
+  recovery only with known effects, without overriding explicit limits or approvals.
+- No schema/helper changes or claims of runtime compaction/discovery repair.
+
+## Unreleased — progress-guard child coordination
+
+- [`progress-guard`](skills/progress-guard/SKILL.md) MINOR **1.1.0 → 1.2.0**:
+  explicit child skill loading and assignment boundaries, quiet intermediate
+  execution, terminal-only returns with safety/approval exceptions, and parent
+  receipt deduplication/verification before dependent work or compaction.
+- Optional read-only `handoff` emits at most 4 KiB of UTF-8 JSON from terminal
+  state; working/waiting states, inconsistent completion and oversize packets
+  fail explicitly. Existing ledger schema and default reads are unchanged.
+- Local synthetic tests are not evidence of App notification suppression,
+  automatic instruction inheritance or runtime compaction effectiveness.
+  Plugin stays at 4.35.0; installed behavior needs explicit loading in each child.
+
 ## 4.35.0 — Proposed / Unreleased
 
 Adds [`progress-guard`](skills/progress-guard/SKILL.md) **1.1.0 draft source
