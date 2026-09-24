@@ -7,7 +7,7 @@ description: >
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # Progress guard
@@ -29,6 +29,15 @@ protocol, not a planner, autonomous supervisor, or tool-call watchdog.
 Simple tasks need no ledger. Activate later if they become complex or stall.
 Follow existing authorization, policy and safety requirements; this skill grants
 no permission to bypass checks, edit protected repos or interrupt other work.
+
+If native loading returns `Skill not found`, read an accessible canonical
+`SKILL.md` once and record the discovery failure, fallback path/version and owning
+runtime/session in the existing snapshot. This is file-based loading, not native
+discovery success. After compaction, reuse that recorded route and load only missing
+relevant instructions. Retry native discovery only after a concrete runtime/catalog
+change, not because another turn or compaction occurred. A new child checks its own
+runtime; it does not inherit proof of discovery. If access is denied by policy, do
+not try another route; if no permitted source is available, report the blocker.
 
 ## Evidence, not activity
 
@@ -104,6 +113,10 @@ Estimate active no-progress time from actual timestamps; exclude time waiting fo
 the user or an inactive session. Include unproductive execution/waiting while work
 was meant to proceed. Disclose unknown timing; use behavioral triggers instead.
 Do not infer continuous work from time since the last event.
+The 15/30-minute defaults are review/escalation thresholds for **no progress**,
+not task expiry, resource lifetime, or an automatic requirement for a new release.
+Do not convert them into per-phase stop clocks, request quotas or zero-retry
+rules. Explicit user limits and actual authorization/operation deadlines still apply.
 
 ## Recovery: one short decision, then action or stop
 
@@ -125,6 +138,14 @@ to repeat exhausted attempts; resume them only with a concrete changed condition
 An explicitly bounded alternative approved by the user may proceed. Preserve the
 failed history; do not reset a budget by renaming work or opening a child session.
 Independent authorized work may continue if it cannot affect the blocked operation.
+
+An ordinary command/input defect can use the existing ONE bounded recovery within
+the current assignment when the correction stays inside its authority and evidence
+establishes that the failed attempt caused no uncertain effects. Record the failure,
+correct it and verify; no new stage approval is needed solely because it failed.
+A missing operation ID alone does not prove nothing happened. If effects are UNKNOWN,
+reconcile actual state first. Never override explicit retry/spend/time limits,
+missing permissions, a required approval or an exhausted recovery allowance.
 
 User-facing escalation, in the user's language:
 "Blocked on X. Last verified result: Y. Tried A/B; evidence Z. I recommend C

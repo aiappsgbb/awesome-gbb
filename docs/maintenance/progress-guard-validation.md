@@ -1,7 +1,14 @@
 # Progress guard validation
 
-`progress-guard` 1.2.0 is a follow-up candidate to the source merged in PR #511.
+`progress-guard` 1.2.1 is a follow-up candidate to the source merged in PR #511.
 Source availability is not release approval or proof of agent behavior.
+
+The 1.2.1 clarification retains a failed-discovery fallback across compaction and
+distinguishes no-progress review thresholds from task expiry. Ordinary corrections
+may consume the existing bounded recovery only inside current authorization and
+with evidence excluding uncertain effects. Explicit limits, permissions and
+UNKNOWN reconciliation remain mandatory. Static wording checks are not behavioral
+acceptance; the added scenarios remain unexecuted.
 
 ## Child coordination follow-up
 

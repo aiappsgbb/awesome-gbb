@@ -19,6 +19,8 @@ Assignment: <unique-assignment-id>; parent work: <existing-work-id>;
 parent plan revision: <current-revision>.
 Load progress-guard explicitly before work. If unavailable, read the supplied
 accessible SKILL.md; if neither works, report blocked, do not pretend it loaded.
+Record failed native discovery and the permitted fallback path/version once.
+Reuse that route after compaction; retry discovery only on runtime/catalog change.
 Use your own session ledger and work ID. Do not write the parent's database.
 Outcome / done_when: <one bounded deliverable and observable acceptance>.
 Scope / exclusions: <owned paths or resources; forbidden changes>.
@@ -38,8 +40,14 @@ Do not invent a base branch or dependency to enable parallelism. If dependent wo
 must wait, launch it after acceptance instead of repeatedly waking a parked child.
 Explicitly permitted independent preparation may proceed under its own acceptance
 criterion, but is not completion of the unreleased dependent work. A time limit is
-a stop condition, not proof the deliverable is done. Preserve one cumulative budget
+a stop condition when explicitly imposed by the user/authority, not proof the
+deliverable is done. Progress Guard's no-progress review defaults are not task
+expiry or invented phase quotas. Preserve one cumulative budget
 across retries/tranches; require a real scope change for a new assignment.
+Include ordinary within-scope corrections in the existing bounded recovery, rather
+than requiring a new parent release for every error. Evidence must first exclude
+uncertain effects; UNKNOWN operations, permissions and explicit limits still gate
+continuation. A rejected command with no receipt is not automatically effect-free.
 
 A launch should not trigger a mandatory "skill loaded" acknowledgment. Put evidence
 of loading in the child's first ledger event and final handoff; the parent checks
