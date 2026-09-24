@@ -9,12 +9,50 @@ from pathlib import Path
 SCHEMA = Path(__file__).resolve().parents[1] / "references" / "ledger.sql"
 FIELDS = ("work_id", "revision", "event_key", "kind", "summary",
           "evidence", "decision", "state")
+HANDOFF_LIMIT_BYTES = 4096
+
+
+def handoff(row, state):
+    """Render a terminal report without history or a second mutable snapshot."""
+    status = state["status"]
+    if status not in ("complete", "blocked", "needs_decision", "paused"):
+        raise ValueError("Handoff requires complete, blocked, needs_decision or paused state")
+    delegation = state.get("delegation")
+    identifiers = ("assignment_id", "parent_work_id", "parent_plan_revision",
+                   "child_session_id")
+    if not isinstance(delegation, dict) or any(
+            not isinstance(delegation.get(key), str) or not delegation[key].strip()
+            for key in identifiers):
+        raise ValueError("Handoff requires delegation: " + ", ".join(identifiers))
+    if not state["plan_ref"].strip() or not state["context"].strip():
+        raise ValueError("Handoff requires assignment plan_ref and source/environment context")
+    if status == "complete" and (
+            row["kind"] != "complete" or not row["evidence"].strip()
+            or state["pending_operations"]
+            or state["blocker"].strip().casefold() not in ("", "none")):
+        raise ValueError("Complete handoff requires a complete event, evidence and no unresolved operations/blocker")
+    if status in ("blocked", "needs_decision") and (
+            state["blocker"].strip().casefold() in ("", "none")):
+        raise ValueError("Blocked handoff requires a precise blocker")
+    packet = {
+        "delegation": {key: delegation[key] for key in identifiers},
+        **{key: row[key] for key in
+           ("work_id", "revision", "event_key", "summary", "evidence", "decision")},
+        **{key: state[key] for key in
+           ("status", "goal", "plan_ref", "plan_revision", "context", "done_when", "blocker",
+            "next_action", "abandon_if", "avoid", "pending_operations",
+            "active_no_progress_minutes")},
+    }
+    output = json.dumps(packet, ensure_ascii=False, separators=(",", ":"))
+    if len((output + "\n").encode("utf-8")) > HANDOFF_LIMIT_BYTES:
+        raise ValueError("Handoff exceeds 4096 UTF-8 bytes; persist concise evidence references, never truncate safety facts")
+    return output
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, type=Path)
-    parser.add_argument("action", choices=("init", "read", "append"))
+    parser.add_argument("action", choices=("init", "read", "append", "handoff"))
     parser.add_argument("--work")
     parser.add_argument("--event", type=Path, help="JSON file with all event fields")
     parser.add_argument("--recent", type=int, default=None,
@@ -22,8 +60,8 @@ def main():
     args = parser.parse_args()
     if not args.db.is_absolute():
         parser.error("--db must be an absolute path in the actual session files folder")
-    if args.action == "read" and not args.work:
-        parser.error("read requires --work")
+    if args.action in ("read", "handoff") and not args.work:
+        parser.error(f"{args.action} requires --work")
     if args.action == "append" and not args.event:
         parser.error("append requires --event")
     if args.recent is not None and (
@@ -43,7 +81,7 @@ def main():
             db.executescript("BEGIN;\n" + SCHEMA.read_text() +
                              "\nPRAGMA user_version=1;\nCOMMIT;")
             print(json.dumps({"initialized": str(args.db), "schema": 1}))
-        elif args.action == "read":
+        elif args.action in ("read", "handoff"):
             row = db.execute(
                 "SELECT * FROM progress_guard_current WHERE work_id=?", (args.work,)
             ).fetchone()
@@ -51,6 +89,9 @@ def main():
                 raise ValueError("No snapshot for work ID: " + args.work)
             result = dict(row)
             result["state"] = json.loads(result["state"])
+            if args.action == "handoff":
+                print(handoff(row, result["state"]))
+                return
             recent = 6 if args.recent is None else args.recent
             if recent:
                 result["recent_events"] = [dict(r) for r in db.execute(

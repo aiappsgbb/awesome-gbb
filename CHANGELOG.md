@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — progress-guard child coordination
+
+- [`progress-guard`](skills/progress-guard/SKILL.md) MINOR **1.1.0 → 1.2.0**:
+  explicit child skill loading and assignment boundaries, quiet intermediate
+  execution, terminal-only returns with safety/approval exceptions, and parent
+  receipt deduplication/verification before dependent work or compaction.
+- Optional read-only `handoff` emits at most 4 KiB of UTF-8 JSON from terminal
+  state; working/waiting states, inconsistent completion and oversize packets
+  fail explicitly. Existing ledger schema and default reads are unchanged.
+- Local synthetic tests are not evidence of App notification suppression,
+  automatic instruction inheritance or runtime compaction effectiveness.
+  Plugin stays at 4.35.0; installed behavior needs explicit loading in each child.
+
 ## 4.35.0 — Proposed / Unreleased
 
 Adds [`progress-guard`](skills/progress-guard/SKILL.md) **1.1.0 draft source

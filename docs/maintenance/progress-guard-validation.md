@@ -1,9 +1,40 @@
 # Progress guard validation
 
-`progress-guard` 1.1.0 is a draft source candidate. Publication as a draft PR is
-not release approval or proof of agent behavior.
+`progress-guard` 1.2.0 is a follow-up candidate to the source merged in PR #511.
+Source availability is not release approval or proof of agent behavior.
 
-## Local validation scope
+## Child coordination follow-up
+
+The 1.1.0 contract described bounded child returns but did not specify mandatory
+child loading, quiet intermediate work, assignment-bound terminal reports or
+parent receipt/acceptance handling. The follow-up adds those instructions and
+an optional read-only `handoff` command. It does not alter the SQLite schema.
+
+Nine synthetic handoff cases cover terminal-state gating, completion consistency,
+assignment binding, exact UTF-8 size limits, unchanged default history behavior
+via the existing suite, retained unknown operations, stable report identities,
+and separate child/parent ledgers with duplicate-receipt rejection. Together with
+the twelve existing cases and two packaging cases these are **23 local tests**.
+These checks exercise helpers and persisted data, not model compliance or
+suppression of App-generated notifications. The parent deduplication/integration
+sequence remains an instruction contract, not an installed orchestrator.
+
+Native child loading, terminal-only delivery, actual parent consolidation after
+notifications, stale-result handling and multi-child compaction require observed
+trials. Do not call these scenarios passed because the instructions exist.
+No active customer sessions are modified for this validation.
+
+Local predecessor validation on 2026-09-24: the **39-test targeted set passed**
+(23 progress-guard cases plus 16 site/adjacent packaging regressions).
+Reapplying the approved change to current main passed **41 targeted tests**
+(23 progress-guard cases plus 18 site/adjacent packaging regressions).
+Full local discovery found **1409 tests**, current main's 1400 plus nine;
+discovery is not execution of the full suite.
+Catalog lint, plugin integrity and the generated site's root-relative link
+validation passed. Remote validation evidence belongs to the new follow-up PR;
+the prior 1.1.0 CI result does not cover these new changes.
+
+## Prior 1.1.0 local validation scope
 
 The twelve bundled persistence/output-selection cases cover latest-snapshot/history reads,
 stale/skipped revisions, duplicate event keys, append-only history,

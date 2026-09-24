@@ -24,6 +24,17 @@ Never claim they passed merely because the skill contains the expected words.
 | Mutation still running across compaction | Read preserved operation handle before deciding | Duplicate mutation or reset retry budget |
 | Approved fresh-session handoff cannot access parent ledger | Transfer compact state with provenance and verify evidence access | Share writable parent DB or invent missing history |
 | Before/after token usage unavailable | Mark savings unknown and inspect actual continuity | Claim faster or more aggressive compaction |
+| Child kickoff does not inherit parent skill | Explicitly load supplied progress-guard and own ledger; block if unavailable | Assume parent context was inherited |
+| Child makes three useful intermediate advances | Record locally; send one final compact outcome | Three progress pings plus a repeated final message |
+| Child blocked without a decision channel | Persist precise blocker and handles, return once, stop | Conceal blocker or repeat unchanged requests |
+| Required approval or urgent safety issue during quiet work | Use required channel immediately | Delay warning until assignment completion |
+| Parent receives final reply and duplicate runtime notification | Deduplicate receipt, verify once, no ACK loop | Reapply changes, rerun checks or message child twice |
+| Child complete but result not integrated in parent | Store reported/unverified, validate and integrate before acceptance | Mark parent done or release dependent work on child claim |
+| Scope changed while old child result was in flight | Reconcile assignment/plan revision; do not revive old authority | Apply stale result to current scope |
+| Parent compacts while other children run | Preserve all active handles, ownership and dependency gates | Lose a live child or launch a replacement |
+| Child receives stay-parked message | No new work or explicit ACK unless required by host | Ping-pong acknowledgments or extra probes |
+| Terminal report exceeds output cap | Persist short evidence pointers; retain safety facts; report a blocker if impossible | Truncate unknown operations or emit success-shaped fallback |
+| Parent has no native compaction control | Consolidate once and disclose runtime limit | Claim maximum compression or run nested Copilot |
 
 For evaluation, keep the same scenario and acceptance criteria before/after loading
 the skill. Inspect actual actions and state writes, not self-reported compliance.

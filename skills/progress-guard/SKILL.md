@@ -3,11 +3,11 @@ name: progress-guard
 description: >
   Execution memory and bounded recovery without planning bureaucracy. USE FOR:
   long-running or multi-phase work, repeated failed attempts, stalled tools, plan
-  changes, resumption after compaction, handoffs, stopping rabbit holes, reviewing
+  changes, resumption after compaction, child-session coordination, handoffs, stopping rabbit holes, reviewing
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Progress guard
@@ -142,10 +142,22 @@ preempt it. Report that limit at the next opportunity. Never route around an exc
 tool. Stop only known owned processes when safe/authorized; do not cancel a cloud
 mutation just because a timer elapsed.
 
-One coordinator owns a work item's consolidated state. Children return bounded
-outcomes and evidence, with inherited failed hypotheses and budgets. Do not share
-one writable snapshot between agents. Verify child claims before marking completion.
-Do not delegate merely to satisfy this skill.
+Before authorized delegation, follow [the child-session contract](references/children.md).
+The kickoff MUST explicitly require the child to load this skill and maintain its
+own ledger; do not assume skill/context inheritance. Give one bounded assignment
+with ownership, dependencies, acceptance, failed hypotheses and remaining budget.
+The parent tracks assignments in its existing snapshot, not a competing plan.
+
+Children record intermediate progress locally. Return one compact handoff only
+when the assignment is complete, blocked, needs a decision, or is explicitly paused.
+No unsolicited progress pings, acknowledgment chains or repeated unchanged blockers.
+Safety incidents, urgent cancellation and required permission/input gates are
+immediate exceptions; host-generated notifications cannot be suppressed by a skill.
+
+The parent deduplicates returns, verifies evidence, and records accepted results
+or a precise blocker in its own ledger before dependent work or compaction.
+Child completion is not parent acceptance or overall completion. Do not share
+one writable snapshot, forward transcripts, or create children merely for this skill.
 
 ## Finish
 
