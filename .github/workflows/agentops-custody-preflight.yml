@@ -47,7 +47,7 @@ jobs:
         id: package
         shell: bash
         env:
-          PACKAGE_MANIFEST_SHA256: 92e08bbf79b31c61a1dc9c0f8e84dfcb80913192a2fdf507186a1592407a62d3
+          PACKAGE_MANIFEST_SHA256: 946c759440cc56834dc1e7ba79b0390805f6a370681ee452bd06beb0fb4b17b1
         run: |
           set -euo pipefail
           python3 -I - <<'PY'

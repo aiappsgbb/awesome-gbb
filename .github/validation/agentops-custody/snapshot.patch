@@ -1,9 +1,9 @@
 diff --git a/_agentops_custody_validation.py b/_agentops_custody_validation.py
 new file mode 100644
-index 0000000..493c482
+index 0000000..286b736
 --- /dev/null
 +++ b/_agentops_custody_validation.py
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,860 @@
 +"""Credential-free, immutable-candidate runner proof. Never invoke a producer."""
 +
 +import argparse
@@ -16,6 +16,7 @@ index 0000000..493c482
 +import re
 +import shutil
 +import signal
++import struct
 +import subprocess
 +import sys
 +import tempfile
@@ -49,6 +50,132 @@ index 0000000..493c482
 +)
 +SONAME = r"lib[A-Za-z0-9_.+-]{1,96}\.so(?:\.[A-Za-z0-9_.+-]{1,32})?"
 +MODULE = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
++RUNTIME_PREFIXES = (
++    "/usr/bin", "/usr/lib", "/usr/lib64", "/usr/local/bin", "/usr/local/lib",
++    "/bin", "/lib", "/lib64",
++)
++STATIC_INSPECTOR = r'''package main
++
++import (
++    "debug/elf"
++    "encoding/json"
++    "errors"
++    "io"
++    "os"
++    "path/filepath"
++    "strings"
++    "syscall"
++)
++
++var prefixes []string
++
++func permitted(path string, ancestor bool) bool {
++    if !filepath.IsAbs(path) { return false }
++    path = filepath.Clean(path)
++    for _, prefix := range prefixes {
++        if path == prefix || strings.HasPrefix(path, prefix + "/") { return true }
++        if ancestor && (path == "/" || strings.HasPrefix(prefix, path + "/")) { return true }
++    }
++    return false
++}
++
++func record(class, path string) {
++    value := map[string]string{"classification": class}
++    if class == "MISSING" && permitted(path, false) { value["path"] = path }
++    raw, _ := json.Marshal(value)
++    os.Stdout.Write(append(append([]byte("AGENTOPS_STATIC_PATH="), raw...), '\n'))
++}
++
++func pathFailure(err error, path string) {
++    if errors.Is(err, os.ErrNotExist) { record("MISSING", path) } else {
++        record("UNREADABLE_OR_UNEXECUTABLE", "")
++    }
++}
++
++func resolveExact(path string) (string, bool) {
++    if !permitted(path, false) { record("OUTSIDE_SCOPE", ""); return "", false }
++    pending := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
++    current, links := "/", 0
++    for len(pending) > 0 {
++        current = filepath.Join(current, pending[0])
++        pending = pending[1:]
++        if !permitted(current, true) { record("OUTSIDE_SCOPE", ""); return "", false }
++        info, err := os.Lstat(current)
++        if err != nil { pathFailure(err, current); return "", false }
++        if info.Mode() & os.ModeSymlink != 0 {
++            links++
++            if links > 40 { record("SYMLINK_LIMIT", ""); return "", false }
++            target, err := os.Readlink(current)
++            if err != nil { pathFailure(err, current); return "", false }
++            if !filepath.IsAbs(target) { target = filepath.Join(filepath.Dir(current), target) }
++            target = filepath.Clean(target)
++            if !permitted(target, true) { record("OUTSIDE_SCOPE", ""); return "", false }
++            pending = append(strings.Split(strings.TrimPrefix(target, "/"), "/"), pending...)
++            current = "/"
++        }
++    }
++    return current, true
++}
++
++func readableExecutable(path string) bool {
++    resolved, ok := resolveExact(path)
++    if !ok { return false }
++    info, err := os.Stat(resolved)
++    if err != nil { pathFailure(err, resolved); return false }
++    if !info.Mode().IsRegular() { record("NOT_REGULAR", ""); return false }
++    file, err := os.Open(resolved)
++    if err != nil { pathFailure(err, resolved); return false }
++    file.Close()
++    if err := syscall.Access(resolved, 1); err != nil {
++        pathFailure(err, resolved); return false
++    }
++    return true
++}
++
++func interpreter(binary string) (string, bool) {
++    file, err := elf.Open(binary)
++    if err != nil { record("ELF_UNAVAILABLE", ""); return "", false }
++    defer file.Close()
++    for _, program := range file.Progs {
++        if program.Type == elf.PT_INTERP {
++            raw, err := io.ReadAll(io.LimitReader(program.Open(), 1025))
++            if err != nil || len(raw) == 0 || len(raw) > 1024 {
++                record("ELF_UNAVAILABLE", ""); return "", false
++            }
++            value := strings.TrimRight(string(raw), "\x00")
++            if !permitted(value, false) { record("OUTSIDE_SCOPE", ""); return "", false }
++            return value, true
++        }
++    }
++    record("NO_ELF_INTERPRETER", "")
++    return "", false
++}
++
++func main() {
++    if len(os.Args) < 3 || json.Unmarshal([]byte(os.Args[1]), &prefixes) != nil {
++        record("INVALID_INPUT", ""); os.Exit(125)
++    }
++    for _, prefix := range prefixes {
++        if !filepath.IsAbs(prefix) || filepath.Clean(prefix) != prefix || prefix == "/" {
++            record("INVALID_INPUT", ""); os.Exit(125)
++        }
++    }
++    binary := os.Args[2]
++    if !permitted(binary, false) { record("OUTSIDE_SCOPE", ""); os.Exit(125) }
++    record("STARTED", "")
++    readableExecutable(binary)
++    if _, ok := resolveExact(binary); ok {
++        if loader, ok := interpreter(binary); ok { readableExecutable(loader) }
++    }
++    // Replace the inspector with the unchanged checked Python command.
++    // Successful inspector startup must never turn a failing Python into PASS.
++    err := syscall.Exec(binary, os.Args[2:], os.Environ())
++    if errors.Is(err, os.ErrNotExist) { record("EXEC_ENOENT", ""); os.Exit(127) }
++    if errors.Is(err, os.ErrPermission) { record("EXEC_PERMISSION", ""); os.Exit(126) }
++    record("EXEC_UNKNOWN", "")
++    os.Exit(125)
++}
++'''
 +
 +
 +def require(value):
@@ -150,6 +277,113 @@ index 0000000..493c482
 +    return record
 +
 +
++def runtime_prefixes(binary):
++    selected = Path(binary)
++    prefixes = list(RUNTIME_PREFIXES)
++    if selected.is_relative_to("/opt") and len(selected.parts) >= 5 and selected.parent.name == "bin":
++        prefixes.append(str(selected.parent.parent))
++    return prefixes
++
++
++def safe_runtime_path(value, prefixes):
++    if not isinstance(value, str) or len(value) > 512:
++        return False
++    if not re.fullmatch(r"/[A-Za-z0-9_./+-]+", value) or "//" in value:
++        return False
++    path = Path(value)
++    return str(path) == value and ".." not in path.parts and any(
++        path.is_relative_to(prefix) for prefix in prefixes)
++
++
++def static_path_diagnostics(raw, binary):
++    prefixes = runtime_prefixes(binary)
++    classes = {
++        "MISSING", "UNREADABLE_OR_UNEXECUTABLE", "OUTSIDE_SCOPE", "SYMLINK_LIMIT",
++        "NOT_REGULAR", "ELF_UNAVAILABLE", "NO_ELF_INTERPRETER", "INVALID_INPUT",
++        "STARTED", "EXEC_ENOENT", "EXEC_PERMISSION", "EXEC_UNKNOWN",
++    }
++    records = []
++    for line in raw[:65536].splitlines():
++        if not line.startswith(b"AGENTOPS_STATIC_PATH=") or len(line) > 1024:
++            continue
++        try:
++            value = json.loads(line[len(b"AGENTOPS_STATIC_PATH="):])
++        except (ValueError, UnicodeError):
++            continue
++        if (not isinstance(value, dict) or not isinstance(value.get("classification"), str)
++                or value["classification"] not in classes):
++            continue
++        record = {"check": "container_path", "classification": value["classification"]}
++        if value["classification"] == "MISSING":
++            if not safe_runtime_path(value.get("path"), prefixes):
++                continue
++            record["path"] = value["path"]
++        if record not in records:
++            records.append(record)
++        if len(records) >= 16:
++            break
++    # An init/exec failure can precede even the statically linked inspector.
++    text = raw[:65536].decode("utf-8", errors="replace")
++    for match in re.finditer(
++            r"\bexec(?:ve)? [\"']?(/[A-Za-z0-9_./+-]+)[\"']?(?: failed)?: "
++            r"[Nn]o such file or directory", text):
++        if safe_runtime_path(match[1], prefixes):
++            records.append({"check": "startup_exec_path", "classification": "EXEC_ENOENT",
++                            "path": match[1]})
++            break
++    return records or [{"check": "container_path", "classification": "UNKNOWN"}]
++
++
++def verify_static_elf(binary):
++    with binary.open("rb") as stream:
++        header = stream.read(64)
++        require(header[:6] == b"\x7fELF\x02\x01")
++        offset = struct.unpack_from("<Q", header, 32)[0]
++        size, count = struct.unpack_from("<HH", header, 54)
++        require(size >= 4 and 0 < count <= 64)
++        for index in range(count):
++            stream.seek(offset + index * size)
++            kind = struct.unpack("<I", stream.read(4))[0]
++            require(kind not in (2, 3))  # No PT_DYNAMIC or PT_INTERP.
++
++
++def build_static_inspector(work):
++    compiler = shutil.which("go")
++    require(compiler is not None)
++    build = work / "static-inspector"
++    build.mkdir(mode=0o700)
++    source, binary = build / "main.go", build / "inspector"
++    source.write_text(STATIC_INSPECTOR)
++    home, cache, temporary = build / "home", build / "cache", build / "tmp"
++    for directory in (home, cache, temporary):
++        directory.mkdir(mode=0o700)
++    env = {
++        "PATH": os.environ["PATH"], "HOME": str(home), "GOCACHE": str(cache),
++        "TMPDIR": str(temporary), "CGO_ENABLED": "0", "GOOS": "linux",
++        "GOTOOLCHAIN": "local", "GOPROXY": "off", "GOSUMDB": "off",
++        "GOENV": "off", "GOWORK": "off", "GO111MODULE": "off",
++        "GOTELEMETRY": "off",
++    }
++    subprocess.run([compiler, "build", "-trimpath", "-buildvcs=false",
++                    "-ldflags=-buildid=", "-o", str(binary), str(source)],
++                   cwd=build, env=env, check=True, capture_output=True, timeout=120)
++    verify_static_elf(binary)
++    binary.chmod(0o500)
++    print(json.dumps({"check": "static_inspector_build", "status": "PASS",
++                      "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()},
++                     sort_keys=True), flush=True)
++    return binary
++
++
++def inspector_arguments(args, image, command, inspector, mount):
++    require(command and args[-len(command):] == command)
++    index = args.index(image)
++    require(index + 1 == len(args) - len(command))
++    target = "/tmp/agentops-static-inspector"
++    return (args[:index] + mount(inspector, target) + [image, target,
++            json.dumps(runtime_prefixes(command[0]), separators=(",", ":"))] + command)
++
++
 +def directory_class(path, prefix):
 +    target = Path(path)
 +    if not target.is_absolute():
@@ -242,7 +476,7 @@ index 0000000..493c482
 +    print(json.dumps(record, sort_keys=True), flush=True)
 +
 +
-+def case_diagnostics(root):
++def case_diagnostics(root, binary=None):
 +    for name in ("attempts/primary/transcript.log", "execution-finished.json"):
 +        try:
 +            path = root / name
@@ -253,6 +487,9 @@ index 0000000..493c482
 +                present = b"AGENTOPS_CI_ISOLATION=FAIL TOOL_COHORT" in raw.splitlines()
 +                emit("tool_cohort_marker", "FAIL" if present else "NOT_OBSERVED")
 +                print(json.dumps(startup_classification(raw), sort_keys=True), flush=True)
++                if binary is not None:
++                    for record in static_path_diagnostics(raw, binary):
++                        print(json.dumps(record, sort_keys=True), flush=True)
 +            else:
 +                value = json.loads(raw)
 +                require(isinstance(value, dict))
@@ -434,7 +671,7 @@ index 0000000..493c482
 +    print(json.dumps({"same_run_tool_cohort": report}, sort_keys=True), flush=True)
 +
 +
-+def case(source, work, mode):
++def case(source, work, mode, inspector=None):
 +    emit(mode, "START")
 +    emit("case_setup", "START")
 +    host_library_path = os.environ.get("LD_LIBRARY_PATH", "")
@@ -484,6 +721,9 @@ index 0000000..493c482
 +        result[index:index] = ["--env", "INERT_CASE=" + mode]
 +        with diagnostic_phase("python_inspection"):
 +            python_inspection(observed[-1]["python3"]["path"], result, env_file, host_library_path)
++        if inspector is not None:
++            require(command[0] == observed[-1]["python3"]["path"])
++            result = inspector_arguments(result, image, command, inspector, isolation.mount)
 +        return result
 +    def bounded_capture(*args, **kwargs):
 +        kwargs["seconds"] = 30
@@ -541,7 +781,7 @@ index 0000000..493c482
 +            diagnostic_error(failure, "case")
 +            raise
 +        finally:
-+            case_diagnostics(root)
++            case_diagnostics(root, observed[-1]["python3"]["path"] if observed else None)
 +            isolation.cleanup_runtime(root)
 +
 +
@@ -607,8 +847,10 @@ index 0000000..493c482
 +            print(json.dumps({"check": "custody_regressions", "status": "PASS",
 +                              "total": int(count[1]), "skipped": int(skipped[1]) if skipped else 0}),
 +                  flush=True)
++            with diagnostic_phase("static_inspector_build"):
++                inspector = build_static_inspector(work)
 +            for mode in CASES:
-+                case(source, work, mode)
++                case(source, work, mode, inspector)
 +        return 0
 +    finally:
 +        with diagnostic_phase("exact_cleanup"):
