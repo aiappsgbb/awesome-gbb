@@ -24,6 +24,23 @@ CASES = (
 )
 REPOSITORY = "aiappsgbb/awesome-gbb"
 HARNESS = "_agentops_custody_validation.py"
+DIAGNOSTIC_FILES = {
+    "validate.py", HARNESS, "agentops-ci-isolation.py",
+    "agentops-ci-custody.py", "agentops-ci-report.py",
+}
+DOCKER_COMMANDS = (
+    ("image", "inspect"), ("image", "ls"), ("image", "rm"),
+    ("container", "ls"), ("build",), ("create",), ("inspect",),
+    ("start",), ("stop",), ("rm",),
+)
+FAILURE_CLASSES = (
+    (b"invalid mount config", "INVALID_MOUNT"),
+    (b"bind source path does not exist", "MISSING_MOUNT_SOURCE"),
+    (b"permission denied", "PERMISSION_DENIED"),
+    (b"cannot connect to the docker daemon", "DOCKER_UNAVAILABLE"),
+    (b"executable file not found", "EXECUTABLE_NOT_FOUND"),
+    (b"no such file or directory", "PATH_NOT_FOUND"),
+)
 
 
 def require(value):
@@ -33,6 +50,103 @@ def require(value):
 
 def emit(check, status):
     print(json.dumps({"check": check, "status": status}, sort_keys=True), flush=True)
+
+
+def command_label(args):
+    if not isinstance(args, (tuple, list)) or not args or not isinstance(args[0], str):
+        return None
+    name = Path(args[0]).name
+    if name == "docker":
+        for prefix in DOCKER_COMMANDS:
+            if tuple(args[1:1 + len(prefix)]) == prefix:
+                return "docker " + " ".join(prefix)
+    if name in ("node", "copilot", "uv") and list(args[1:]) == ["--version"]:
+        return name + " --version"
+    if name in ("az", "azd") and list(args[1:]) == ["version"]:
+        return name + " version"
+    if re.fullmatch(r"python3(?:\.\d+)?", name) and list(args[1:]) == ["--version"]:
+        return "python3 --version"
+    return None
+
+
+def diagnostic_error(failure, phase):
+    known = (
+        AssertionError, ValueError, KeyError, TypeError, RuntimeError,
+        OSError, FileNotFoundError, PermissionError, TimeoutError,
+        subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError,
+    )
+    record = {"check": "exception", "phase": phase,
+              "type": type(failure).__name__ if type(failure) in known else "OtherException"}
+    frames = []
+    frame = failure.__traceback__
+    while frame is not None:
+        name = Path(frame.tb_frame.f_code.co_filename).name
+        if name in DIAGNOSTIC_FILES:
+            frames.append({"file": name, "line": frame.tb_lineno})
+        frame = frame.tb_next
+    record["frames"] = frames[-12:]
+    if isinstance(failure, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        label = command_label(failure.cmd)
+        if label:
+            record["command"] = label
+            if isinstance(failure, subprocess.CalledProcessError):
+                record["returncode"] = failure.returncode
+            if label.startswith("docker "):
+                stderr = failure.stderr
+                if isinstance(stderr, str):
+                    stderr = stderr[:16384].encode()
+                if isinstance(stderr, bytes):
+                    bounded = stderr[:16384].lower()
+                    record["classification"] = next(
+                        (value for token, value in FAILURE_CLASSES if token in bounded),
+                        "UNCLASSIFIED",
+                    )
+    print(json.dumps(record, sort_keys=True), flush=True)
+
+
+@contextlib.contextmanager
+def diagnostic_phase(name):
+    emit(name, "START")
+    try:
+        yield
+    except Exception as failure:
+        diagnostic_error(failure, name)
+        raise
+    else:
+        emit(name, "PASS")
+
+
+def traced(name, function):
+    def invoke(*args, **kwargs):
+        with diagnostic_phase(name):
+            return function(*args, **kwargs)
+    return invoke
+
+
+def case_diagnostics(root):
+    for name in ("attempts/primary/transcript.log", "execution-finished.json"):
+        try:
+            path = root / name
+            require(not path.is_symlink())
+            with path.open("rb") as stream:
+                raw = stream.read(65536 if name.endswith(".log") else 4096)
+            if name.endswith(".log"):
+                present = b"AGENTOPS_CI_ISOLATION=FAIL TOOL_COHORT" in raw.splitlines()
+                emit("tool_cohort_marker", "FAIL" if present else "NOT_OBSERVED")
+            else:
+                value = json.loads(raw)
+                require(isinstance(value, dict))
+                require(type(value.get("exit_code")) is int)
+                require(type(value.get("container_removed")) is bool)
+                print(json.dumps({"check": "container_result",
+                                  "exit_code": value["exit_code"],
+                                  "container_removed": value["container_removed"]},
+                                 sort_keys=True), flush=True)
+        except FileNotFoundError:
+            emit("tool_cohort_marker" if name.endswith(".log") else "container_result",
+                 "NOT_RECORDED")
+        except (OSError, ValueError, TypeError) as failure:
+            diagnostic_error(failure, "case_diagnostics")
 
 
 def module(source):
@@ -202,6 +316,7 @@ def cohort_result(source, record):
 
 def case(source, work, mode):
     emit(mode, "START")
+    emit("case_setup", "START")
     isolation = module(source)
     delivery = isolation.delivery
     parent = work / mode
@@ -228,6 +343,7 @@ def case(source, work, mode):
     original_command = isolation.checked_command
     original_args = isolation.container_arguments
     original_capture = isolation.capture
+    original_docker = isolation.docker
     observed = []
     def inert_command(root, tools, producer_command):
         require(producer_command[0] == tools["copilot"]["path"])
@@ -249,12 +365,27 @@ def case(source, work, mode):
     def bounded_capture(*args, **kwargs):
         kwargs["seconds"] = 30
         return original_capture(*args, **kwargs)
+    def diagnostic_docker(argv, **kwargs):
+        label = command_label(["docker", *argv]) or "docker_other"
+        with diagnostic_phase(label):
+            return original_docker(argv, **kwargs)
+    emit("case_setup", "PASS")
     with patch.dict(os.environ, env, clear=True), \
-            patch.object(isolation, "checked_command", side_effect=inert_command), \
-            patch.object(isolation, "container_arguments", side_effect=inert_args), \
-            patch.object(isolation, "capture", side_effect=bounded_capture):
+            patch.object(isolation, "checked_command",
+                         side_effect=traced("checked_command", inert_command)), \
+            patch.object(isolation, "container_arguments",
+                         side_effect=traced("container_arguments", inert_args)), \
+            patch.object(isolation, "capture",
+                         side_effect=traced("container_capture", bounded_capture)), \
+            patch.object(isolation, "docker", side_effect=diagnostic_docker), \
+            contextlib.ExitStack() as diagnostics:
+        for name in ("tool_cohort", "scaffold", "child_environment", "build_envelope",
+                     "mount", "remove_container", "cleanup_runtime"):
+            diagnostics.enter_context(patch.object(
+                isolation, name, side_effect=traced(name, getattr(isolation, name))))
         try:
             result = isolation.run(root, "primary")
+            emit("case_assertions", "START")
             expected = {"missing_ack": 125, "native_timeout": 24,
                         "signal": 137, "cohort_mismatch": 125}.get(mode, 0)
             require(result == expected)
@@ -279,9 +410,15 @@ def case(source, work, mode):
                 key = (root / "attempts/primary/workspace-pointer").read_text().strip()
                 require(not list((root / "workspaces" / key).iterdir()))
             if mode == "preserve":
-                cohort_result(source, observed[0])
+                with diagnostic_phase("cohort_report"):
+                    cohort_result(source, observed[0])
+            emit("case_assertions", "PASS")
             emit(mode, "PASS")
+        except Exception as failure:
+            diagnostic_error(failure, "case")
+            raise
         finally:
+            case_diagnostics(root)
             isolation.cleanup_runtime(root)
 
 
@@ -329,15 +466,17 @@ def main():
         cleanup(package, work)
         return 0
     try:
-        source = prepare(package, work, args.repository.resolve())
+        with diagnostic_phase("snapshot_prepare"):
+            source = prepare(package, work, args.repository.resolve())
         if args.action == "run":
             require(sys.platform == "linux")
             require(not any(os.environ.get(key) for key in (
                 "AZURE_CLIENT_SECRET", "AZURE_FEDERATED_TOKEN_FILE",
                 "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "COPILOT_PROVIDER_BEARER_TOKEN")))
-            result = command([sys.executable, "-B", "-m", "unittest", "discover",
-                              "-s", str(source / "scripts/tests"),
-                              "-p", "test_agentops_ci_custody.py"], cwd=source)
+            with diagnostic_phase("custody_regressions"):
+                result = command([sys.executable, "-B", "-m", "unittest", "discover",
+                                  "-s", str(source / "scripts/tests"),
+                                  "-p", "test_agentops_ci_custody.py"], cwd=source)
             require(b"FAILED" not in result.stderr)
             count = re.search(rb"Ran (\d+) tests", result.stderr)
             skipped = re.search(rb"skipped=(\d+)", result.stderr)
@@ -349,12 +488,14 @@ def main():
                 case(source, work, mode)
         return 0
     finally:
-        cleanup(package, work)
+        with diagnostic_phase("exact_cleanup"):
+            cleanup(package, work)
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception:
+    except Exception as failure:
+        diagnostic_error(failure, "validation")
         emit("validation", "FAIL")
         sys.exit(1)
