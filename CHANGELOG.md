@@ -23,6 +23,26 @@
   automatic instruction inheritance or runtime compaction effectiveness.
   Plugin stays at 4.35.0; installed behavior needs explicit loading in each child.
 
+## 4.36.0 — Proposed / Unreleased
+
+Adds [`copilot-doctor`](skills/copilot-doctor/SKILL.md) **1.1.0 local source
+candidate** for maintenance of existing Copilot App/CLI setups, separate from
+bootstrap guidance. Includes read-only inventory, secret-value suppression,
+source-attributed findings, opt-in private scan history, bounded CLI help probes
+and an approval/backup/verification/rollback repair runbook.
+
+The 1.1.0 feedback iteration adds opt-in bounded MCP initialization and useful-tool
+checks, independent auth evidence, and explicit accepted structural preferences
+in the same private history store. Browser extension mode can be intentional;
+neither extension nor isolated mode is imposed as a universal requirement.
+
+- Proposed plugin/marketplace MINOR **4.35.0 → 4.36.0**: **42 skills**,
+  **35 upstream pins**, **7 internal-IP entries**; Azure fixture count unchanged.
+- No automatic updates, cleanup, credential resets, MCP startup sweeps, internal
+  database writes or scheduled scans. Intentional pins/exclusions remain intact.
+- Local tests and outstanding runtime/behavioral limits are recorded in the
+  [validation record](docs/maintenance/copilot-doctor-validation.md).
+
 ## 4.35.0 — Proposed / Unreleased
 
 Adds [`progress-guard`](skills/progress-guard/SKILL.md) **1.1.0 draft source

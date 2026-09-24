@@ -1010,7 +1010,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         self.assertEqual(entry["name"], plugin["name"])
         self.assertEqual(entry["version"], plugin["version"])
         self.assertEqual(marketplace["metadata"]["version"], plugin["version"])
-        self.assertEqual(plugin["version"], "4.35.0")
+        self.assertEqual(plugin["version"], "4.36.0")
         self.assertEqual(self.frontmatter(SKILL / "SKILL.md")["metadata"]["version"], "1.0.0")
 
     def test_manifest_counts_match_discovered_skills(self) -> None:
@@ -1318,7 +1318,7 @@ class FoundryAgentOpsCatalogTests(unittest.TestCase):
         drafts = [s for s in skills if s.get("draft")]
         self.assertEqual(
             {s["name"] for s in drafts},
-            {SKILL.name, "foundry-mcp-auth", "web-experience-design", "progress-guard"},
+            {SKILL.name, "foundry-mcp-auth", "web-experience-design", "progress-guard", "copilot-doctor"},
         )
         agentops = next(s for s in drafts if s["name"] == SKILL.name)
         auth = next(s for s in drafts if s["name"] == "foundry-mcp-auth")
