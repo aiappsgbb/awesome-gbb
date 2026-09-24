@@ -57,6 +57,7 @@ class BuildSitePreservesMaintenanceDocsTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("0 broken root-relative links", result.stdout)
             records = {
+                Path("maintenance/copilot-doctor-validation.md"),
                 Path("maintenance/foundry-agentops-validation.md"),
                 Path("maintenance/foundry-mcp-auth-validation.md"),
                 Path("maintenance/web-experience-design-validation.md"),

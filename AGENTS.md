@@ -3080,13 +3080,13 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Draft-inclusive source inventory (41 skills, 35 with upstream pins):**
+**Draft-inclusive source inventory (42 skills, 35 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
 | Auto-tier (CI can refresh autonomously) | 31 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
-| Internal IP (no pin) | 6 skills | T0 plus per-skill local checks; manual output validation |
+| Internal IP (no pin) | 7 skills | T0 plus per-skill local checks; manual output validation |
 | CI execution fixtures | 25 skills | Registered for T3: 24 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
 
 The additional `foundry-mcp-auth` entry is an unreleased candidate with live
@@ -3128,6 +3128,11 @@ native runtime loading remain pending; see its
 [validation record](docs/maintenance/progress-guard-validation.md).
 It requires no Azure resources and installs no automatic supervision.
 
+The `copilot-doctor` entry is a local source candidate for read-only setup inventory,
+private scan comparison and selected bounded CLI checks. It is not an MCP health or
+App startup certification and performs no automatic repair; see its
+[validation record](docs/maintenance/copilot-doctor-validation.md).
+
 ### 12.4 The repo IS the product
 
 This is not a docs-only repository. The repo is a **Copilot CLI plugin**
@@ -3152,20 +3157,21 @@ Consequences:
 ### 12.5 Catalog at a glance
 
 Source counts include the unreleased AgentOps and delegated-auth candidates,
-the merged web-experience-design source and the progress-guard source candidate; see the
+the merged web-experience-design source and the progress-guard and copilot-doctor source candidates; see the
 [AgentOps status](docs/maintenance/foundry-agentops-validation.md) and
 [web experience status](docs/maintenance/web-experience-design-validation.md) and
 [progress guard status](docs/maintenance/progress-guard-validation.md).
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 41 |
+| Total skills | 42 |
 | Skills with upstream pins | 35 |
 | Auto-tier (CI can refresh autonomously) | 31 |
 | Issue-only (human / complex deploy) | 4 |
-| Internal IP (no upstream) | 6 |
+| Internal IP (no upstream) | 7 |
 | CI workflows | 9 |
-| Unit tests | 1409 |
+| Unit tests | 1448 |
+| Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

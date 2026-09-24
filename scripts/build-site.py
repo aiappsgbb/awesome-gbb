@@ -66,7 +66,7 @@ CATEGORIES: dict[str, list[str]] = {
         'azure-backup-readiness', 'azure-resource-diagnostics',
         'foundry-cost-monitoring', 'foundry-network-runbook',
         'gbb-humanizer',
-        'ghcp-cli-config', 'paygo-ptu-cost-analyzer', 'progress-guard',
+        'ghcp-cli-config', 'copilot-doctor', 'paygo-ptu-cost-analyzer', 'progress-guard',
     ],
     '🛡️ Governance': [
         'citadel-hub-deploy', 'citadel-spoke-onboarding', 'foundry-agt',
@@ -83,6 +83,16 @@ CATEGORIES: dict[str, list[str]] = {
 
 # The legacy "draft" field records release gates, not source availability.
 DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
+    'copilot-doctor': {
+        'source_status': 'candidate',
+        'release_status': 'pending',
+        'record': 'maintenance/copilot-doctor-validation.md',
+        'summary': (
+            'Local setup-doctor candidate: read-only inventory and opt-in bounded CLI checks. '
+            'Collector tests do not certify App startup, MCP authentication or tool results. '
+            'No automatic repairs, cleanup, updates or scheduled scans.'
+        ),
+    },
     'progress-guard': {
         'source_status': 'candidate',
         'release_status': 'pending',
@@ -142,6 +152,7 @@ DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
 
 # Only these sanitized records are published to fresh outputs; never copy docs/ wholesale.
 PUBLISHED_DOCS = (
+    'maintenance/copilot-doctor-validation.md',
     'maintenance/progress-guard-validation.md',
     'maintenance/foundry-agentops-validation.md',
     'maintenance/foundry-mcp-auth-validation.md',
@@ -207,7 +218,7 @@ def load_plugins(repo_root: pathlib.Path) -> list[dict[str, Any]]:
             'description': data.get('description', ''),
             'version': str(data.get('version', '1.0.0')),
             'skills': all_skills,
-            'draft': next((s['draft'] for s in skills if s.get('draft')), None),
+            'draft': tpl.catalog_publication_status(skills),
         })
     return plugins
 

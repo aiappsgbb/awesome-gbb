@@ -1,0 +1,13 @@
+# Internal IP: read-only inventory, not an upstream wrapper.
+last_validated: "2026-09-24"
+validated_by: copilot
+validation_notes: |
+  Local collector tests and packaging checks; no Azure dependency.
+  Local installation/discovery and remaining behavioral limitations are recorded
+  in docs/maintenance/copilot-doctor-validation.md.
+  Version 1.1.0 adds approved live initialization for seven MCP registrations and
+  selected read-only functional checks; auth evidence is scoped per request.
+  Browser actions, Azure resource auth and M365 delegated auth remain untested.
+  No SSO acceptance, model invocation, update or repair certified.
+  Version 1.1.1 review uses synthetic protocol and process-cleanup tests only;
+  it does not repeat or extend the earlier live-service certification scope.

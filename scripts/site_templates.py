@@ -42,6 +42,13 @@ def _merged_source(status: PublicationStatus | None) -> bool:
     return status is not None and status.get('source_status') == 'merged'
 
 
+def catalog_publication_status(skills: list[dict[str, Any]]) -> PublicationStatus | None:
+    # New unmerged additions must not relabel the existing merged catalog source.
+    statuses = [s['draft'] for s in skills if s.get('draft')]
+    return next((status for status in statuses if _merged_source(status)),
+                statuses[0] if statuses else None)
+
+
 # ---------------------------------------------------------------------------
 # Stylesheet — palette + variable names taken verbatim from
 # threadlight-experience.html so the two surfaces share a visual language.
@@ -712,7 +719,7 @@ def render_home(
     but no longer surface on the home page.
     """
     _ = categories  # unused on home — preserved for API stability
-    draft = next((s['draft'] for s in skills if s.get('draft')), None)
+    draft = catalog_publication_status(skills)
     browse_description = (
         f'Browse {len(skills)} source entries, including unreleased additions.'
         if draft else f'Install the plugin to get all {len(skills)} skills, or pick individual ones.'
@@ -1157,7 +1164,7 @@ def render_skills_index(
     categories: dict[str, list[str]],
 ) -> str:
     """Render the flat searchable skill list with category chip filter."""
-    draft = next((s['draft'] for s in skills if s.get('draft')), None)
+    draft = catalog_publication_status(skills)
     chips = [
         f'<button type="button" class="chip active" data-cat="">All '
         f'<span class="chip-count">{len(skills)}</span></button>'
@@ -1418,7 +1425,7 @@ def render_llms_txt(
     lines.append('')
     lines.append('> Microsoft AI Apps GBB Copilot skills + plugins for Azure AI, Microsoft Foundry, and governance.')
     lines.append('')
-    draft = next((s['draft'] for s in skills if s.get('draft')), None)
+    draft = catalog_publication_status(skills)
     if draft:
         lines.append(draft['summary'])
         lines.append(f'[Sanitized validation record]({SITE_BASE}/{draft["record"]})')
