@@ -3170,7 +3170,8 @@ the merged web-experience-design source and the progress-guard and copilot-docto
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 7 |
 | CI workflows | 9 |
-| Unit tests | 1462 |
+| Unit tests | 1448 |
+| Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |

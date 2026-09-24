@@ -9,3 +9,5 @@ validation_notes: |
   selected read-only functional checks; auth evidence is scoped per request.
   Browser actions, Azure resource auth and M365 delegated auth remain untested.
   No SSO acceptance, model invocation, update or repair certified.
+  Version 1.1.1 review uses synthetic protocol and process-cleanup tests only;
+  it does not repeat or extend the earlier live-service certification scope.

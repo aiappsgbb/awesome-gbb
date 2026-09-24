@@ -77,11 +77,16 @@ python3 "$SKILL_ROOT/scripts/probe_cli.py" --binary /absolute/path/to/copilot \
 ```
 
 Pass option-shaped values using `--flag=--no-auto-update`. It checks `--version` and the chosen help topic, each with a
-15-second timeout, sets `COPILOT_AUTO_UPDATE=false`, never starts a prompt session,
+15-second timeout plus at most two seconds for cleanup, sets `COPILOT_AUTO_UPDATE=false`, never starts a prompt session,
 and emits only version/status/flag presence. Use the exact binary of the owning
 runtime, not a value copied out of MCP config. `not-listed` means help did not list
 the flag, not definitive removal. A probe timeout or nonzero exit stops without
 retry; missing help/version coverage remains explicit.
+The CLI probe requires POSIX, launches each check in its own process group, and
+escalates cleanup for descendants even when the group leader has exited. The MCP
+probe uses the same cleanup helper. A launcher that deliberately daemonizes into
+a different session is outside this process-group boundary; do not select such
+launchers. No unrelated user process group is terminated.
 
 ## Leave alone unless proven relevant
 
@@ -159,6 +164,9 @@ For seven typical services, choose minimal checks, never a sweep of all tools:
 Every selected tool must remain in the registration's allowlist. A tools/list
 response is metadata, not permission to invoke anything. The private plan records
 authorization; the runner cannot decide whether arbitrary arguments are harmless.
+Malformed allowlists or expectation types are rejected before launch. Schema type
+metadata is restricted to JSON Schema primitive names; arbitrary type values are
+not emitted or stored.
 The server may perform its own internal caching/telemetry/auth refresh on a read.
 No automatic consent handling is installed.
 

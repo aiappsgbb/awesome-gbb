@@ -109,7 +109,10 @@ def inspect_server(name, config, source, *, home=None, search_path=None):
         return result
     result["env_names"] = sorted(label(k) for k in env)
     tools = config.get("tools")
-    result["tools_policy"] = ("all" if tools == ["*"] else
+    if "tools" in config and (not isinstance(tools, list)
+                              or any(not isinstance(t, str) or not t for t in tools)):
+        signals.append("unsupported-tools-policy")
+    result["tools_policy"] = ("all" if isinstance(tools, list) and "*" in tools else
                               "explicit" if isinstance(tools, list) else "unspecified")
     result["tools_count"] = len(tools) if isinstance(tools, list) else None
     result["tools_fingerprint"] = digest(json.dumps(tools, sort_keys=True))

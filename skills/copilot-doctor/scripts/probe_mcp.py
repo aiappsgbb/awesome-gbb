@@ -14,12 +14,12 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-import signal
 import sqlite3
 import sys
 import time
 
 from inventory import parse_json, read_text, label
+from processes import stop_group
 from contextlib import closing
 
 
@@ -61,7 +61,7 @@ async def owned_stdio(launch, env, cwd):
             process.terminate()
             try:
                 await asyncio.wait_for(process.wait(), 1)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
         await reads.aclose()
@@ -80,10 +80,16 @@ def validate_plan(plan):
         raise ValueError("deadline must be 5-60 seconds")
     config_path = Path(plan["config_path"]).expanduser()
     config = parse_json(read_text(config_path))["mcpServers"][plan["server"]]
+    if not isinstance(config, dict):
+        raise ValueError("invalid registration")
     if fingerprint(config) != plan.get("config_fingerprint"):
         raise ValueError("registered configuration changed since review")
     if config.get("disabled") is True:
         raise ValueError("disabled registration")
+    policy = config.get("tools")
+    if "tools" in config and (not isinstance(policy, list)
+                              or any(not isinstance(t, str) or not t for t in policy)):
+        raise ValueError("invalid registration allowlist")
     tool = plan.get("tool")
     if tool is not None:
         if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
@@ -92,11 +98,14 @@ def validate_plan(plan):
             raise ValueError("tool requires arguments and expected response shape")
         if tool["expect"].get("kind") not in ("text-contains", "json-keys", "nonempty-text"):
             raise ValueError("unsupported expectation")
-        if tool["expect"]["kind"] == "text-contains" and not tool["expect"].get("value"):
-            raise ValueError("nonempty expected text required")
-        if tool["expect"]["kind"] == "json-keys" and not tool["expect"].get("keys"):
-            raise ValueError("expected keys required")
-        policy = config.get("tools")
+        if tool["expect"]["kind"] == "text-contains":
+            value = tool["expect"].get("value")
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("nonempty expected text required")
+        if tool["expect"]["kind"] == "json-keys":
+            keys = tool["expect"].get("keys")
+            if not isinstance(keys, list) or not keys or any(not isinstance(k, str) or not k for k in keys):
+                raise ValueError("expected keys must be nonempty strings")
         if isinstance(policy, list) and "*" not in policy and tool["name"] not in policy:
             raise ValueError("selected tool not in registration allowlist")
     if "url" not in config:
@@ -157,8 +166,20 @@ def response_shape(result):
             "known_keys": sorted(k for k in data if k in known) if isinstance(data, dict) else []}
 
 
+def schema_type(schema):
+    allowed = ("string", "number", "integer", "boolean", "object", "array", "null")
+    value = schema.get("type")
+    if isinstance(value, str) and value in allowed:
+        return value
+    if isinstance(value, list) and value and all(isinstance(v, str) and v in allowed for v in value):
+        return value
+    return "unspecified"
+
+
 def safe_error(exc):
     # Do not emit error text: SDK errors may contain URLs, tokens or tool content.
+    if isinstance(exc, ImportError):
+        return "missing-or-incompatible-dependency"
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
         return "timeout"
     nested = getattr(exc, "exceptions", ())
@@ -205,7 +226,7 @@ async def execute(plan, config, emit):
         result["tool_count"] = len(tools.tools)
         result["tools"] = [{"name": label(t.name),
                             "required": [label(k) for k in t.inputSchema.get("required", [])],
-                            "parameters": {label(k): v.get("type", "unspecified")
+                            "parameters": {label(k): schema_type(v)
                                            for k, v in t.inputSchema.get("properties", {}).items()
                                            if isinstance(v, dict)}}
                            for t in tools.tools]
@@ -269,19 +290,16 @@ def run_probe(plan):
             result["error"] = "deadline-exceeded"
         elif not process.is_alive() and "cleanup" not in result and "error" not in result:
             result["error"] = "worker-exited-incomplete"
-        # Only the process group created for this probe, never any user's MCP/browser.
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        process.join(1)
-        if process.is_alive():
-            os.killpg(process.pid, signal.SIGKILL)
-            process.join(1)
-        result["worker_stopped"] = not process.is_alive()
         if result.get("error") == "auth-required-or-denied":
             result["authentication"] = "required-or-denied"
     finally:
+        # Cleanup must also run on interruption or a broken result pipe.
+        stop_group(process.pid, process.join)
+        if process.is_alive():
+            # Covers interruption before the spawned worker could call setsid().
+            process.kill()
+        process.join(1)
+        result["worker_stopped"] = not process.is_alive()
         parent.close()
         process.close()
     return result

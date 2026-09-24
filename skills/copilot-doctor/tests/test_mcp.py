@@ -3,11 +3,14 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import sqlite3
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -29,7 +32,8 @@ class PreferenceTests(unittest.TestCase):
         self.path.write_text(json.dumps({"mcpServers": {"Playwright": {"command": sys.executable, "args": args}}}))
 
     def test_extension_is_accepted_without_isolation_dogma(self):
-        report = inventory.inventory(self.home)
+        with patch.object(inventory.shutil, "which", return_value=sys.executable):
+            report = inventory.inventory(self.home)
         inventory.apply_preferences(self.store, report, ["Playwright:browser_mode"])
         self.assertEqual(report["servers"][0]["browser_mode"], "extension")
         self.assertEqual(report["servers"][0]["preferences"]["browser_mode"], "accepted")
@@ -108,6 +112,33 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe_mcp.validate_plan(self.plan)
 
+    def test_malformed_allowlist_fails_closed(self):
+        for policy in ("safe", {"safe": True}, [1], None):
+            with self.subTest(policy=policy):
+                self.config["tools"] = policy
+                self.path.write_text(json.dumps({"mcpServers": {"test": self.config}}))
+                self.plan["config_fingerprint"] = probe_mcp.fingerprint(self.config)
+                self.plan["tool"] = {"name": "excluded", "arguments": {},
+                                     "expect": {"kind": "nonempty-text"}}
+                with self.assertRaises(ValueError):
+                    probe_mcp.validate_plan(self.plan)
+
+    def test_invalid_expectation_rejected_before_execution(self):
+        for expectation in ({"kind": "json-keys", "keys": "status"},
+                            {"kind": "json-keys", "keys": [1]},
+                            {"kind": "text-contains", "value": 1}):
+            with self.subTest(expectation=expectation):
+                self.plan["tool"] = {"name": "ping", "arguments": {}, "expect": expectation}
+                with self.assertRaises(ValueError):
+                    probe_mcp.validate_plan(self.plan)
+
+    def test_schema_types_are_structural_not_raw_metadata(self):
+        self.assertEqual(probe_mcp.schema_type({"type": "string"}), "string")
+        self.assertEqual(probe_mcp.schema_type({"type": ["string", "null"]}), ["string", "null"])
+        for value in ("secret-never-output", {"private": "secret-never-output"},
+                      ["string", "secret-never-output"]):
+            self.assertEqual(probe_mcp.schema_type({"type": value}), "unspecified")
+
     def test_shape_validation_and_nonempty_are_distinct(self):
         response = SimpleNamespace(isError=False, content=[
             SimpleNamespace(type="text", text='{"status":"ready"}')], structuredContent=None)
@@ -120,6 +151,8 @@ class PlanTests(unittest.TestCase):
     def test_errors_never_echo_values(self):
         exc = ValueError("secret-never-output https://user:password@example.test")
         self.assertNotIn("secret", probe_mcp.safe_error(exc))
+        self.assertEqual(probe_mcp.safe_error(ImportError("private module")),
+                         "missing-or-incompatible-dependency")
 
     def test_fastmcp_string_wrapper_not_mistaken_for_api_shape(self):
         response = SimpleNamespace(isError=False, content=[
@@ -155,7 +188,7 @@ class PlanTests(unittest.TestCase):
             " if 'id' not in r: continue\n"
             " m=r['method']\n"
             " if m=='initialize': v={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'test','version':'1'}}\n"
-            " elif m=='tools/list': v={'tools':[{'name':'ping','inputSchema':{'type':'object','properties':{}}}]}\n"
+            " elif m=='tools/list': v={'tools':[{'name':'ping','inputSchema':{'type':'object','properties':{'flag':{'type':'secret-never-output'}}}}]}\n"
             " else: v={'content':[{'type':'text','text':'{\"status\":\"ready\"}'}],'isError':False}\n"
             " print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':v}),flush=True)\n")
         self.plan["launcher"]["args"] = [str(script)]
@@ -169,6 +202,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(result["authentication"], "not-required")
         self.assertTrue(result["worker_stopped"])
         self.assertNotIn("ready", json.dumps(result))
+        self.assertNotIn("secret-never-output", json.dumps(result))
+        self.assertEqual(result["tools"][0]["parameters"]["flag"], "unspecified")
 
     @unittest.skipUnless(os.name == "posix", "POSIX owned-process-group probe")
     def test_hung_server_is_stopped_at_deadline(self):
@@ -176,6 +211,35 @@ class PlanTests(unittest.TestCase):
         result = probe_mcp.run_probe(self.plan)
         self.assertEqual(result["error"], "deadline-exceeded")
         self.assertTrue(result["worker_stopped"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX owned-process-group probe")
+    def test_deadline_stops_descendant_ignoring_term(self):
+        pidfile = self.root / "descendant.pid"
+        child = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)"
+        launcher = (
+            "import subprocess,sys,time\n"
+            f"p=subprocess.Popen([sys.executable,'-c',{child!r}])\n"
+            f"open({str(pidfile)!r},'w').write(str(p.pid))\n"
+            "time.sleep(30)\n"
+        )
+        self.plan["launcher"]["args"] = ["-c", launcher]
+        started = time.monotonic()
+        try:
+            result = probe_mcp.run_probe(self.plan)
+            self.assertEqual(result["error"], "deadline-exceeded")
+            self.assertTrue(result["worker_stopped"])
+            self.assertLess(time.monotonic() - started, 8)
+            self.assertTrue(pidfile.exists())
+            import subprocess
+            state = subprocess.run(["ps", "-o", "stat=", "-p", pidfile.read_text()],
+                                   capture_output=True, text=True, timeout=2).stdout.strip()
+            self.assertTrue(not state or state.startswith("Z"), state)
+        finally:
+            if pidfile.exists():
+                try:
+                    os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 if __name__ == "__main__":

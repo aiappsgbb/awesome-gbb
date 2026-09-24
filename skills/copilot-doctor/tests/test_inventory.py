@@ -3,12 +3,16 @@ from contextlib import closing
 import json
 import os
 from pathlib import Path
+import signal
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 SPEC = importlib.util.spec_from_file_location(
     "doctor_inventory", Path(__file__).resolve().parents[1] / "scripts/inventory.py")
 inventory = importlib.util.module_from_spec(SPEC)
@@ -76,9 +80,12 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(report["isolated_browser"])
         self.assertNotIn("get_azure_bestpractices", json.dumps(report))
         self.assertNotIn("pricing", json.dumps(report))
+        config["tools"] = ["*", "monitor"]
+        self.assertEqual(inventory.inspect_server("Azure", config, "source")["tools_policy"], "all")
 
     def test_bad_server_shapes_are_findings(self):
-        for config in ([], {"env": []}, {"args": {}}, {"command": 5}):
+        for config in ([], {"env": []}, {"args": {}}, {"command": 5},
+                       {"command": sys.executable, "tools": "safe"}):
             self.assertTrue(inventory.inspect_server("test", config, "source")["signals"])
 
     def test_yaml_unavailable_is_explicit(self):
@@ -280,24 +287,68 @@ class ScanTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "POSIX owned-process-group probe")
+    def test_real_cli_timeout_stops_pipe_inheriting_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "child.pid"
+            child = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)"
+            launcher = (
+                "import subprocess,sys,time\n"
+                f"p=subprocess.Popen([sys.executable,'-c',{child!r}])\n"
+                f"open({str(pidfile)!r},'w').write(str(p.pid))\n"
+                "time.sleep(30)\n"
+            )
+            started = time.monotonic()
+            try:
+                with patch.object(probe_cli, "TIMEOUT_SECONDS", 0.5):
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        probe_cli.run_check([sys.executable, "-c", launcher], dict(os.environ))
+                self.assertLess(time.monotonic() - started, 3)
+                self.assertTrue(pidfile.exists(), "synthetic child must have started")
+                pid = int(pidfile.read_text())
+                # A killed orphan may remain a zombie until the host init reaps it.
+                state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                                       capture_output=True, text=True, timeout=2).stdout.strip()
+                self.assertTrue(not state or state.startswith("Z"), state)
+            finally:
+                if pidfile.exists():
+                    try:
+                        os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    @unittest.skipUnless(os.name == "posix", "POSIX owned-process-group probe")
+    def test_cli_runner_owns_group_and_suppresses_stderr(self):
+        with patch.object(probe_cli.subprocess, "Popen") as popen, \
+                patch.object(probe_cli, "stop_group") as stop:
+            process = popen.return_value.__enter__.return_value
+            process.communicate.return_value = ("help", None)
+            process.returncode = 0
+            probe_cli.run_check(["selected-binary", "--help"], {})
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+            self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
+            self.assertFalse(popen.call_args.kwargs.get("shell", False))
+            process.communicate.assert_called_once_with(timeout=15)
+            stop.assert_called_once_with(process.pid, process.wait)
+
     def test_bounded_help_and_version(self):
         import sys
         responses = [
             subprocess.CompletedProcess([], 0, "GitHub Copilot CLI 1.0.88\n", ""),
             subprocess.CompletedProcess([], 0, "options: --no-auto-update --other", ""),
         ]
-        with patch.object(probe_cli.subprocess, "run", side_effect=responses) as run:
+        with patch.object(probe_cli, "run_check", side_effect=responses) as run:
             result = probe_cli.probe(Path(sys.executable), flag="--no-auto-update")
         self.assertEqual(result["version"], "1.0.88")
         self.assertEqual(result["flag_status"], "documented")
         for call in run.call_args_list:
-            self.assertEqual(call.kwargs["timeout"], 15)
-            self.assertFalse(call.kwargs.get("shell", False))
-            self.assertEqual(call.kwargs["env"]["COPILOT_AUTO_UPDATE"], "false")
+            self.assertEqual(call.args[1]["COPILOT_AUTO_UPDATE"], "false")
+            self.assertNotIn("-p", call.args[0])
+        self.assertEqual(probe_cli.TIMEOUT_SECONDS, 15)
 
     def test_failures_never_echo_stderr(self):
         import sys
-        with patch.object(probe_cli.subprocess, "run", return_value=
+        with patch.object(probe_cli, "run_check", return_value=
                           subprocess.CompletedProcess([], 1, "", "secret-never-output")):
             result = probe_cli.probe(Path(sys.executable))
         self.assertEqual(result["version"], "exit-1")
@@ -306,7 +357,7 @@ class ProbeTests(unittest.TestCase):
 
     def test_timeout_does_not_retry(self):
         import sys
-        with patch.object(probe_cli.subprocess, "run", side_effect=
+        with patch.object(probe_cli, "run_check", side_effect=
                           subprocess.TimeoutExpired("private-command", 15)) as run:
             result = probe_cli.probe(Path(sys.executable))
         self.assertEqual(result["version"], "timeout")
@@ -314,7 +365,7 @@ class ProbeTests(unittest.TestCase):
 
     def test_unlisted_flag_not_proven_unsupported(self):
         import sys
-        with patch.object(probe_cli.subprocess, "run", side_effect=[
+        with patch.object(probe_cli, "run_check", side_effect=[
             subprocess.CompletedProcess([], 0, "GitHub Copilot CLI 1.0.88", ""),
             subprocess.CompletedProcess([], 0, "--flag-longer", "")]):
             result = probe_cli.probe(Path(sys.executable), flag="--flag")

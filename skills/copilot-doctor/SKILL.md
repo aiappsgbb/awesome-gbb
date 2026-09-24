@@ -10,7 +10,7 @@ description: >
   machine bootstrap (use ghcp-cli-config), security or exploit audits, automatic
   updates or cleanup, credential resets, or Azure deployment.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Copilot setup doctor
@@ -83,7 +83,9 @@ launcher is a valid intentional alternative to a dynamic package runner.
 
 Only after a concrete finding, select the cheapest bounded check in the runbook.
 The optional `scripts/probe_cli.py` checks one approved binary's version/help with
-15-second deadlines; it is never called by the default inventory.
+15-second deadlines plus at most two seconds for owned-process-group cleanup.
+Both probe runners require POSIX; inventory remains portable. The CLI probe is
+never called by the default inventory.
 Do not start every MCP, trigger SSO, invoke a model or execute commands copied
 from configuration. A handshake, successful authentication and a useful tool result
 are **three separate statuses**, each with its own evidence and timestamp.
@@ -139,3 +141,5 @@ python3 -m unittest discover -s "$SKILL_ROOT/tests" -p 'test_*.py' -v
 
 These tests prove collector behavior, not App health, agent instruction-following,
 authentication or the usefulness of an MCP tool.
+Use `requirements-test.txt` in an approved isolated test environment for the MCP
+1.27.x protocol tests; the catalog's shared MCP 2.x environment is incompatible.

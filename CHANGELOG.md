@@ -25,7 +25,7 @@
 
 ## 4.36.0 — Proposed / Unreleased
 
-Adds [`copilot-doctor`](skills/copilot-doctor/SKILL.md) **1.1.0 local source
+Adds [`copilot-doctor`](skills/copilot-doctor/SKILL.md) **1.1.1 local source
 candidate** for maintenance of existing Copilot App/CLI setups, separate from
 bootstrap guidance. Includes read-only inventory, secret-value suppression,
 source-attributed findings, opt-in private scan history, bounded CLI help probes
@@ -35,6 +35,10 @@ The 1.1.0 feedback iteration adds opt-in bounded MCP initialization and useful-t
 checks, independent auth evidence, and explicit accepted structural preferences
 in the same private history store. Browser extension mode can be intentional;
 neither extension nor isolated mode is imposed as a universal requirement.
+
+The 1.1.1 review fixes isolate MCP 1.27.x protocol tests from the shared MCP 2.x
+cohort, enforce malformed-policy/expectation rejection, restrict schema metadata,
+and terminate owned probe descendants even after their group leader exits.
 
 - Proposed plugin/marketplace MINOR **4.35.0 → 4.36.0**: **42 skills**,
   **35 upstream pins**, **7 internal-IP entries**; Azure fixture count unchanged.

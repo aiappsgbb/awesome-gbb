@@ -1,6 +1,6 @@
 # Copilot doctor validation
 
-Status: **local source candidate**, skill **1.1.0**, proposed catalog **4.36.0**.
+Status: **local source candidate**, skill **1.1.1**, proposed catalog **4.36.0**.
 No PR, push, release or broad runtime certification is implied.
 
 ## Initial 1.0.0 acceptance scope
@@ -111,3 +111,33 @@ the combined affected regression selection: **210 tests, OK, 2 skipped**.
 T0, single-plugin validation and 51-page generated-site link validation passed.
 Publication checks exclude private scan receipts/history, probe plans, credentials,
 machine-specific paths and installation backups from the commit.
+
+## Independent PR review corrections (1.1.1)
+
+The initial PR #517 unit-test run failed on three doctor tests. The shared
+catalog interpreter installs MCP 2.x, incompatible with this skill's MCP 1.27.x
+transport imports and session API. Protocol tests now run in a separate pinned
+environment in the same unit-test job, without skipping them or changing the
+shared SDK cohort. The preference test no longer depends on a terminal Copilot
+installation on the test host.
+
+Independent synthetic regressions also exposed and corrected malformed allowlist
+and expectation acceptance, arbitrary schema-type metadata emission, and
+process-group cleanup that previously stopped escalating once the worker exited.
+Both opt-in probes now stop owned children that ignore TERM, including
+pipe-inheriting CLI children. Cleanup also runs on interrupted MCP reads.
+Deliberately daemonized processes outside the owned group remain out of scope;
+such launchers must not be selected.
+
+All **59 doctor tests** passed in an isolated MCP 1.27.x environment, including
+real synthetic stdio exchange and descendant timeout cleanup. **64 selected
+catalog/site regressions passed (two skipped)**. The first independent local
+full-suite attempt exposed unrelated missing/stale Azure SDK dependencies in the
+host interpreter. Restoring only those two SDKs in a private test environment
+produced **1,448 shared-suite tests, OK (32 skipped)**. The **21 MCP protocol
+tests** run separately from that shared suite; no test was removed to resolve
+the SDK conflict. Exact-head Linux CI remains the full-environment acceptance
+gate and is recorded in the PR review evidence.
+
+No live MCP service, browser action, model request, user-scope installation,
+configuration write, release or merge was performed during this review.

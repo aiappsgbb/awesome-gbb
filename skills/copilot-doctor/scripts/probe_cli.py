@@ -11,7 +11,23 @@ import re
 import subprocess
 import sys
 
+from processes import stop_group
+
 TOPICS = ("root", "skill", "plugin", "mcp", "config")
+TIMEOUT_SECONDS = 15
+
+
+def run_check(command, env):
+    if os.name != "posix":
+        raise ValueError("bounded child-tree cleanup currently requires POSIX")
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                          text=True, env=env, start_new_session=True) as process:
+        try:
+            stdout, _ = process.communicate(timeout=TIMEOUT_SECONDS)
+            return subprocess.CompletedProcess(command, process.returncode, stdout, "")
+        finally:
+            stop_group(process.pid, process.wait)
+            process.wait(timeout=1)
 
 
 def probe(binary, topic="root", flag=None):
@@ -30,7 +46,7 @@ def probe(binary, topic="root", flag=None):
               ("help", [str(binary), *([] if topic == "root" else [topic]), "--help"])]
     for name, command in checks:
         try:
-            response = subprocess.run(command, capture_output=True, text=True, timeout=15, env=env)
+            response = run_check(command, env)
         except subprocess.TimeoutExpired:
             result[name] = "timeout"
             break
