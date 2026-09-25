@@ -1,6 +1,7 @@
 """Mechanical reporting boundaries, not observed multi-agent behavior."""
 
 import json
+import copy
 import sqlite3
 import subprocess
 import sys
@@ -48,10 +49,11 @@ class HandoffTests(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", timeout=10,
         )
 
-    def append(self, revision=1, kind="complete", summary="Parser completed"):
+    def append(self, revision=1, kind="complete", summary="Parser completed",
+               work="child-task", succeeds=True):
         event = {
-            "work_id": "child-task", "revision": revision,
-            "event_key": f"child-event-{revision}", "kind": kind,
+            "work_id": work, "revision": revision,
+            "event_key": f"{work}-event-{revision}", "kind": kind,
             "summary": summary, "evidence": "commit-a:test-output.txt",
             "decision": "Stop after reporting; parent owns acceptance",
             "state": self.state,
@@ -59,7 +61,12 @@ class HandoffTests(unittest.TestCase):
         path = self.root / "event.json"
         path.write_text(json.dumps(event), encoding="utf-8")
         result = self.run_cli("append", "--event", str(path))
-        self.assertEqual(result.returncode, 0, result.stderr)
+        if succeeds:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        else:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+        return result
 
     def report(self):
         return self.run_cli("handoff", "--work", "child-task")
@@ -72,7 +79,7 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         packet = json.loads(result.stdout)
         self.assertEqual(packet["revision"], 2)
-        self.assertEqual(packet["event_key"], "child-event-2")
+        self.assertEqual(packet["event_key"], "child-task-event-2")
         self.assertEqual(packet["delegation"], self.state["delegation"])
         self.assertEqual(packet["goal"], self.state["goal"])
         self.assertEqual(packet["done_when"], self.state["done_when"])
@@ -220,6 +227,182 @@ class HandoffTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db)) as child:
             self.assertEqual(child.execute(
                 "SELECT count(*) FROM progress_guard_events").fetchone()[0], 1)
+
+    def test_optional_scope_preserves_outcomes_without_invented_limits(self):
+        self.append()
+        legacy = json.loads(self.report().stdout)
+        self.assertNotIn("declared_limits", legacy)
+        self.assertNotIn("assignment_scope", legacy)
+        self.state["assignment_scope"] = {
+            "outcome": "Parser passes",
+            "overall_outcome": "Import flow usable; parent integration pending",
+            "write_scope": ["parser.py"], "shared_capacity": ["shared build runner"],
+            "depends_on": [], "ordinary_operations": ["edit", "test"],
+            "escalate_if": ["new permission or external effect"],
+        }
+        self.state["declared_limits"] = ["user: no cloud writes"]
+        self.append(2)
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(packet["assignment_scope"], self.state["assignment_scope"])
+        self.assertEqual(packet["declared_limits"], ["user: no cloud writes"])
+        self.assertNotEqual(packet["assignment_scope"]["outcome"],
+                            packet["assignment_scope"]["overall_outcome"])
+
+    def test_recorded_blocked_sibling_does_not_gate_independent_work_items(self):
+        ready = copy.deepcopy(self.state)
+        self.state.update(status="blocked", blocker="Writer owns parser.py",
+                          blocker_scope={"blocks": ["parser.py"],
+                                         "does_not_block": ["docs.md", "ui.py"]})
+        self.append(kind="blocked")
+        blocked = json.loads(self.report().stdout)
+        self.assertEqual(blocked["blocker_scope"]["blocks"], ["parser.py"])
+        for work, target in (("docs", "docs.md"), ("ui", "ui.py")):
+            self.state = copy.deepcopy(ready)
+            self.state["delegation"].update(assignment_id=work, child_session_id=work)
+            self.state["context"] = f"Independent owner; {target}"
+            self.append(work=work)
+            result = self.run_cli("handoff", "--work", work)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["status"], "complete")
+        self.assertEqual(json.loads(self.report().stdout)["status"], "blocked")
+
+    def test_recorded_same_target_conflict_cannot_be_reported_complete(self):
+        self.state.update(
+            status="blocked", blocker="Owner-a still writes parser.py; owner-b denied",
+            blocker_scope={"blocks": ["parser.py"], "does_not_block": ["docs.md"]},
+            pending_operations=[{"handle": "owner-a", "status": "running",
+                                 "lookup": "verify release and target version"}],
+        )
+        self.append(kind="blocked")
+        self.assertEqual(json.loads(self.report().stdout)["status"], "blocked")
+        self.state.update(status="complete", blocker="none", pending_operations=[])
+        self.append(2)
+        result = self.report()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Complete handoff requires", result.stderr)
+
+    def test_changed_notice_roundtrip_duplicate_and_unchanged_rejected(self):
+        change = {
+            "change_id": "parser-owner-a-released-v2", "kind": "ownership_released",
+            "scope": ["parser.py"], "before": "owner-a writing v1",
+            "after": "owner-a released v2", "affected_assignments": ["owner-b"],
+        }
+        self.state["coordination_change"] = change
+        self.append()
+        before = self.db.read_bytes()
+        packet = self.report()
+        self.assertEqual(packet.stdout, self.report().stdout)
+        self.assertEqual(json.loads(packet.stdout)["coordination_change"], change)
+        self.assertEqual(self.db.read_bytes(), before)
+        event = json.loads((self.root / "event.json").read_text())
+        event["revision"] = 2
+        (self.root / "event.json").write_text(json.dumps(event))
+        duplicate = self.run_cli("append", "--event", str(self.root / "event.json"))
+        self.assertNotEqual(duplicate.returncode, 0)
+        self.state["coordination_change"]["after"] = change["before"]
+        unchanged = self.append(2, succeeds=False)
+        self.assertIn("coordination_change", unchanged.stderr)
+        latest = self.run_cli("read", "--work", "child-task", "--recent", "0")
+        self.assertEqual(json.loads(latest.stdout)["revision"], 1)
+
+    def test_changed_input_preserves_only_affected_proof_delta(self):
+        self.state["evidence_delta"] = {
+            "reused": ["layout-proof@a: inputs unchanged"],
+            "invalidated": ["parser-proof@b: schema changed to c"],
+        }
+        self.state["coordination_change"] = {
+            "change_id": "schema-b-to-c", "kind": "dependency_changed",
+            "scope": ["schema"], "before": "hash-b", "after": "hash-c",
+            "affected_assignments": ["parser"],
+        }
+        self.append()
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(packet["evidence_delta"], self.state["evidence_delta"])
+        self.assertEqual(packet["coordination_change"]["affected_assignments"], ["parser"])
+        self.assertNotIn("layout", packet["coordination_change"]["affected_assignments"])
+
+    def test_recorded_effect_free_correction_retains_same_assignment(self):
+        binding = copy.deepcopy(self.state["delegation"])
+        self.state.update(status="working",
+                          next_action="Correct local test path within same authority",
+                          avoid=[{"attempt": "wrong local path",
+                                  "evidence": "local pre-dispatch rejection; no effects",
+                                  "retry_only_if": "one authorized corrected path"}])
+        self.append(kind="recovery", summary="Effect-free local path defect")
+        self.state.update(status="complete", next_action="Parent checks passing test")
+        self.append(2)
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(packet["delegation"], binding)
+        self.assertEqual(packet["avoid"], self.state["avoid"])
+
+    def test_unknown_handle_survives_reads_without_replay_or_boundary_loss(self):
+        self.state.update(
+            status="blocked", blocker="Mutation outcome unknown",
+            pending_operations=[{"handle": "mutation-1", "status": "unknown",
+                                 "lookup": "supported read of target"}],
+            blocker_scope={"blocks": ["target and reconciliation inputs"],
+                           "does_not_block": ["offline docs with separate owner"]},
+        )
+        self.append(kind="blocked")
+        before = self.db.read_bytes()
+        for _ in range(2):
+            result = self.report()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            packet = json.loads(result.stdout)
+            self.assertEqual(packet["pending_operations"], self.state["pending_operations"])
+            self.assertEqual(packet["blocker_scope"], self.state["blocker_scope"])
+        self.assertEqual(before, self.db.read_bytes())
+
+    def test_healthy_long_build_record_is_not_expired_by_helper(self):
+        self.state.update(status="waiting", active_no_progress_minutes=0,
+                          pending_operations=[{"handle": "build-1", "status": "running",
+                                               "elapsed_minutes": 60,
+                                               "evidence": "new compiled targets"}])
+        self.append(kind="progress", summary="Healthy build still advancing")
+        result = self.run_cli("read", "--work", "child-task", "--recent", "0")
+        state = json.loads(result.stdout)["state"]
+        self.assertEqual(state["status"], "waiting")
+        self.assertEqual(state["pending_operations"], self.state["pending_operations"])
+        self.assertNotIn("declared_limits", state)
+        self.assertNotEqual(self.report().returncode, 0)
+        after = self.run_cli("read", "--work", "child-task", "--recent", "0")
+        self.assertEqual(result.stdout, after.stdout)
+
+    def test_optional_field_errors_are_explicit_and_do_not_append(self):
+        baseline = copy.deepcopy(self.state)
+        bad_fields = (
+            ("declared_limits", 30),
+            ("declared_limits", [""]),
+            ("assignment_scope", {"outcome": "incomplete shape"}),
+            ("blocker_scope", {"blocks": ["same"], "does_not_block": ["same"]}),
+            ("evidence_delta", {"reused": "not a list", "invalidated": []}),
+            ("coordination_change", {"change_id": "c", "kind": "heartbeat",
+                                     "scope": ["s"], "before": "a", "after": "b",
+                                     "affected_assignments": ["x"]}),
+        )
+        for name, value in bad_fields:
+            with self.subTest(field=name, value=value):
+                self.state = dict(baseline, **{name: value})
+                result = self.append(succeeds=False)
+                self.assertIn(name, result.stderr)
+                self.assertNotEqual(self.report().returncode, 0)
+        self.state = dict(baseline, declared_limits=[])
+        self.append()
+        self.assertEqual(json.loads(self.report().stdout)["declared_limits"], [])
+
+    def test_optional_fields_count_toward_output_cap_without_truncation(self):
+        self.state.update(status="blocked", blocker="Unknown outcome",
+                          blocker_scope={"blocks": ["target"],
+                                         "does_not_block": ["docs"]},
+                          evidence_delta={"reused": ["x" * 4096], "invalidated": []})
+        self.append(kind="blocked")
+        result = self.report()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("4096 UTF-8 bytes", result.stderr)
+        stored = self.run_cli("read", "--work", "child-task", "--recent", "0")
+        self.assertEqual(json.loads(stored.stdout)["state"], self.state)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,37 @@
 # Progress guard validation
 
-`progress-guard` 1.2.1 is a follow-up candidate to the source merged in PR #511.
+`progress-guard` 1.3.0 is a follow-up candidate to the source merged in PR #516.
 Source availability is not release approval or proof of agent behavior.
+
+## Scale-out contract candidate
+
+The additive 1.3.0 contract assigns end-to-end outcomes with explicit write
+ownership, ordinary authorized operations, true dependencies and escalation
+boundaries. Shared capacity is distinct from write conflict. A blocker preserves
+`blocks`/`does_not_block` scopes without releasing UNKNOWN effects or dependent
+reconciliation work. Limits are optional declarations, never guessed budgets.
+
+Optional `assignment_scope`, `declared_limits`, `blocker_scope`, `evidence_delta`
+and `coordination_change` fields use the existing JSON state/schema. The helper
+checks declared shape and simple contradictions, preserves them in the existing
+4 KiB terminal packet and never sends notifications or schedules operations.
+One actionable dependency-change/ownership-release notice is an instruction-level
+exception to quiet intermediate work, not a new working-state `handoff` command.
+
+Ten new deterministic tests exercise scripted sibling records, conflict blocking,
+duplicate/unchanged receipts, affected proof deltas, same-assignment effect-free
+correction, UNKNOWN preservation, a healthy long-build record, optional-field
+compatibility/errors and output size. Combined with the existing 21 bundled cases
+and two packaging cases, the candidate has **33 local contract tests**.
+
+The tests provide decisions as input. They do **not** demonstrate an agent chose
+correctly, detect real path/resource aliases, prove independence, enforce cloud
+write exclusion or measure interventions/throughput. No coordinator/child model
+evaluation, real long build, Azure operation or native loading trial was run for
+this candidate. Those observed-behavior gates remain pending. Exact source and CI
+results belong in the candidate PR; previous results below are historical.
+
+## Prior 1.2.1 clarification
 
 The 1.2.1 clarification retains a failed-discovery fallback across compaction and
 distinguishes no-progress review thresholds from task expiry. Ordinary corrections

@@ -41,6 +41,8 @@ review; do not disable tools or rewrite global instructions automatically.
 For delegated work, first apply [children.md](children.md): reconcile returned
 results into the parent's ledger without forwarding transcripts. Keep active child
 handles, dependency gates, ownership and unaccepted receipts in the latest snapshot.
+Preserve blocker `blocks`/`does_not_block` boundaries, any declared limits,
+accepted change IDs and the affected evidence delta, not copies of unchanged proofs.
 Do not compact away the only copy of a receipt before its parent write is read back.
 
 1. Prefer a phase boundary or actual context pressure, not a timer or every turn.
