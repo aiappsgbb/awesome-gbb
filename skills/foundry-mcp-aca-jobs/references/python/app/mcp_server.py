@@ -87,7 +87,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 
 from .aca_jobs import AcaJobsAdapter
 from .aca_tasks_extension import AcaTasksExtension
-from .control_store import CosmosControlStore
+from .control_store import ConcurrencyError, CosmosControlStore
 from .models import CallbackEvent, Policy, PublicError, StartRequest, TaskRecord
 from .orchestrator import Orchestrator
 from .telemetry import configure as configure_telemetry
@@ -323,6 +323,7 @@ def _start_response(task: TaskRecord) -> dict[str, Any]:
         "status": task.lifecycle_state.value,
         "acaExecutionId": task.aca_execution_id,
         "pollAfterMs": _FALLBACK_POLL_AFTER_MS,
+        "effectState": task.effect_state,
     }
 
 
@@ -336,6 +337,7 @@ def _status_response(task: TaskRecord) -> dict[str, Any]:
         "errorCode": task.error_code,
         "createdAt": _public_timestamp(task.created_at),
         "updatedAt": _public_timestamp(task.updated_at),
+        "effectState": task.effect_state,
     }
 
 
@@ -344,6 +346,7 @@ def _cancel_response(task: TaskRecord) -> dict[str, Any]:
         "taskId": str(task.task_id),
         "status": task.lifecycle_state.value,
         "cancellationRequested": True,
+        "effectState": task.effect_state,
     }
 
 
@@ -464,11 +467,28 @@ def runtime_from_env() -> Runtime:
     sync_credential = ManagedIdentityCredential(client_id=client_id)
     async_credential = AioManagedIdentityCredential(client_id=client_id)
     cosmos_client = CosmosClient(cosmos_endpoint, credential=async_credential)
-    app_client = ContainerAppsAPIClient(credential=sync_credential, subscription_id=subscription_id)
+    app_client = ContainerAppsAPIClient(credential=sync_credential, subscription_id=subscription_id,
+                                       retry_total=0, connection_timeout=10, read_timeout=30)
     database = cosmos_client.get_database_client(cosmos_database)
     container = database.get_container_client(cosmos_container)
     store = CosmosControlStore(container)
-    jobs = AcaJobsAdapter(app_client)
+    async def record_operation(owner_scope, task_id, observation):
+        for _ in range(3):
+            current = await store.get(owner_scope, task_id)
+            native = {**(current.native_operation or {}), **observation}
+            if observation.get("request_id") and not native.get("first_request_id"):
+                native["first_request_id"] = observation["request_id"]
+            if current.native_operation and current.native_operation.get("operation_url"):
+                native["operation_url"] = current.native_operation["operation_url"]
+            candidate = current.model_copy(update={"native_operation": native})
+            try:
+                await store.replace(candidate, current.etag)
+                return
+            except ConcurrencyError:
+                continue
+        raise PublicError("CONTROL_STORE_UNAVAILABLE", "operation receipt could not be persisted")
+
+    jobs = AcaJobsAdapter(app_client, record_operation=record_operation)
     orchestrator = Orchestrator(store, jobs, policy, clock=_utcnow)
     callback_capture = BlobCallbackCapture.from_container_url(callback_container_url, credential=async_credential)
 

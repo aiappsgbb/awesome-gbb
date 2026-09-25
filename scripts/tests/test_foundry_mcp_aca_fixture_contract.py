@@ -8,7 +8,7 @@ that CI cannot catch through grep alone. They verify:
 - MCP protocol conformance (initialized must be status-gated, not || true)
 - Named tool invocation (echo with exact payload assertion, no first-tool fallback)
 - Prose/hard-gate consistency (all three protocol steps listed)
-- SKILL.md version is PATCH (1.2.5)
+- SKILL.md version is PATCH (1.2.7)
 - Pin script validates mcp explicitly
 """
 
@@ -23,6 +23,7 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+import uuid
 
 import yaml
 
@@ -39,6 +40,7 @@ STATE_LOCK_PATH = pathlib.Path("/tmp/foundry-mcp-aca-state.env.lock")
 SMOKE_MARKER_PATH = pathlib.Path("/tmp/foundry-mcp-aca-smoke-result")
 SMOKE_MARKER_LOCK_PATH = pathlib.Path("/tmp/foundry-mcp-aca-smoke-result.lock")
 STATE_MARKER = 'STATE_FILE="/tmp/foundry-mcp-aca-state.env"'
+TEST_RUN_ID = str(uuid.UUID(int=0xABCDEF12 << 96))
 SMOKE_MARKER_LITERAL = "/tmp/foundry-mcp-aca-smoke-result"
 BOOTSTRAP_BLOCK_HEADING = "### Deterministic bootstrap Bash block (MANDATORY)"
 PROVISION_BLOCK_HEADING = "### Deterministic provision Bash block (MANDATORY)"
@@ -60,7 +62,8 @@ EXPECTED_PARAMETERS_HEREDOC = """{
   "parameters": {
     "appName": { "value": "${APP_NAME}" },
     "uamiResourceId": { "value": "${UAMI_RESOURCE_ID}" },
-    "acrServer": { "value": "${ACR_SERVER}" }
+    "acrServer": { "value": "${ACR_SERVER}" },
+    "smokeRunId": { "value": "${SMOKE_RUN_ID}" }
   }
 }"""
 EXPECTED_AZURE_YAML_HEREDOC = """name: ${APP_NAME}
@@ -103,6 +106,7 @@ SCAFFOLD_STATE_VARIABLES = (
     "PROJECT_DIR",
     "UAMI_RESOURCE_ID",
     "ACR_SERVER",
+    "SMOKE_RUN_ID",
 )
 
 
@@ -113,7 +117,7 @@ def _bootstrap_stub_bin(root: pathlib.Path) -> pathlib.Path:
     scripts = {
         "az": "#!/usr/bin/env bash\nexit 0\n",
         "azd": "#!/usr/bin/env bash\nexit 0\n",
-        "uuidgen": "#!/usr/bin/env bash\nprintf 'ABCDEF12-3456-7890\\n'\n",
+        "uuidgen": f"#!/usr/bin/env bash\nprintf '{TEST_RUN_ID}\\n'\n",
     }
     for name, content in scripts.items():
         path = bin_dir / name
@@ -182,6 +186,9 @@ param location string = 'swedencentral'
 @description('Container App name (also used as ACR repo tag).')
 param appName string
 
+@description('Unique fixture run identity, bound to the pre-create inventory.')
+param smokeRunId string
+
 @description('Container image reference. Defaults to placeholder; azd deploy patches with the real image.')
 param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -203,6 +210,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   location: location
   tags: {
     'azd-service-name': appName
+    'gbb-smoke-run': smokeRunId
   }
   identity: {
     type: 'UserAssigned'
@@ -920,7 +928,7 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
 
     def test_skill_version_is_patch(self) -> None:
         """Delegated-auth clarification keeps the existing 1.2 contract."""
-        self.assertIn('version: "1.2.6"', self.skill)
+        self.assertIn('version: "1.2.7"', self.skill)
 
     # --- Pin validation contracts ---
 
@@ -1406,7 +1414,7 @@ class TestStatePersistence(unittest.TestCase):
             )
             (bin_dir / "uuidgen").write_text(
                 "#!/usr/bin/env bash\n"
-                "printf 'ABCDEF12-3456-7890-ABCD-EF1234567890\\n'\n",
+                f"printf '{TEST_RUN_ID}\\n'\n",
                 encoding="utf-8",
             )
             for stub in ("az", "azd", "uuidgen"):
@@ -1495,6 +1503,7 @@ class TestStatePersistence(unittest.TestCase):
                     f"PROJECT_DIR={temp}/.scratch/ci-smoke-mcp-abcdef12",
                     f"UAMI_RESOURCE_ID={expected_uami}",
                     "ACR_SERVER=test.azurecr.io",
+                    f"SMOKE_RUN_ID={TEST_RUN_ID}",
                 ],
                 STATE_PATH.read_text(encoding="utf-8").splitlines(),
             )
@@ -1590,7 +1599,7 @@ class TestStatePersistence(unittest.TestCase):
             for command in _azd_up_command_lines(body)
         ]
         self.assertEqual(
-            ["until azd up --no-prompt; do"],
+            ["if azd up --no-prompt; then"],
             executable_azd_up,
             "there must be exactly one executable azd up path globally",
         )
@@ -1798,8 +1807,8 @@ class TestStatePersistence(unittest.TestCase):
         )
 
     def test_azd_up_block_sources_state(self):
-        """The azd up retry block must source state first."""
-        azdup_idx = self.fixture.index("until azd up --no-prompt")
+        """The one-shot azd up block must source state first."""
+        azdup_idx = self.fixture.index("if azd up --no-prompt")
         block_start = self.fixture.rfind("```bash", 0, azdup_idx)
         block_content = self.fixture[block_start:azdup_idx]
         self.assertIn(
@@ -1824,7 +1833,7 @@ class TestStatePersistence(unittest.TestCase):
             "SUB=$(az account show",
             "CODE=$(curl",
             "TOKEN=$(az account get-access-token",
-            "azd down --purge --force --no-prompt",
+            "if ! fixture_owned_cleanup;",
         ):
             with self.subTest(marker=marker):
                 block = _standard_bash_block_containing(self.fixture, marker)
@@ -1834,169 +1843,107 @@ class TestStatePersistence(unittest.TestCase):
                     f"fresh block containing {marker!r} must source state first",
                 )
 
-    def test_teardown_restores_project_dir_and_runs_exact_azd_down(self):
-        """Step 7 must run teardown from PROJECT_DIR restored in a fresh shell."""
+    def test_teardown_calls_only_owned_cleanup_and_preserves_pass(self):
+        """Step 7 restores the guard, never runs group-scoped azd teardown."""
         teardown = _teardown_block(self.fixture)
-
         with (
             tempfile.TemporaryDirectory() as temp_dir,
             _isolated_shipped_state_file(),
             _isolated_shipped_smoke_marker(),
         ):
             temp = pathlib.Path(temp_dir)
-            project_dir = temp / "restored-project"
-            project_dir.mkdir()
             safe_cwd = temp / "fresh-shell-cwd"
             safe_cwd.mkdir()
             bin_dir = temp / "bin"
             bin_dir.mkdir()
-            call_log = temp / "azd-call.log"
-            timeout_log = temp / "timeout-call.log"
-
-            timeout_stub = bin_dir / "timeout"
-            timeout_stub.write_text(
+            call_log = temp / "helper-call.log"
+            helper_stub = bin_dir / "python3"
+            helper_stub.write_text(
                 "#!/usr/bin/env bash\n"
-                "duration=$1\n"
-                "shift\n"
-                'printf "duration=%s\\n" "$duration" > "$TIMEOUT_CALL_LOG"\n'
-                'if [ "${TIMEOUT_RESULT:-0}" -ne 0 ]; then '
-                'exit "$TIMEOUT_RESULT"; fi\n'
-                'exec "$@"\n',
+                'printf "cwd=%s\\nargs=%s\\n" "$PWD" "$*" > "$HELPER_CALL_LOG"\n',
                 encoding="utf-8",
             )
-            azd_stub = bin_dir / "azd"
-            azd_stub.write_text(
-                "#!/usr/bin/env bash\n"
-                'printf "cwd=%s\\nargs=%s\\n" "$PWD" "$*" > "$AZD_CALL_LOG"\n'
-                'exit "${AZD_RESULT:-0}"\n',
-                encoding="utf-8",
-            )
-            timeout_stub.chmod(0o755)
-            azd_stub.chmod(0o755)
-
+            helper_stub.chmod(0o755)
             STATE_PATH.write_text(
-                f"PROJECT_DIR={shlex.quote(str(project_dir))}\n",
+                f"APP_NAME=ci-smoke-mcp-abcdef12\nACR_SERVER=test.azurecr.io\n"
+                f"SMOKE_RUN_ID={TEST_RUN_ID}\n"
+                f"source {shlex.quote(str(ROOT / 'skills/foundry-mcp-aca/references/bash/fixture_cleanup_guard.sh'))}\n",
                 encoding="utf-8",
             )
-            SMOKE_MARKER_PATH.write_text(
-                "SMOKE_RESULT=PASS\n",
-                encoding="utf-8",
-            )
+            SMOKE_MARKER_PATH.write_text("SMOKE_RESULT=PASS\n", encoding="utf-8")
             result = _run_bash(
                 teardown,
                 {
                     "PATH": f"{bin_dir}:/usr/bin:/bin",
-                    "AZD_CALL_LOG": str(call_log),
-                    "TIMEOUT_CALL_LOG": str(timeout_log),
+                    "HELPER_CALL_LOG": str(call_log),
+                    "GITHUB_WORKSPACE": str(ROOT),
+                    "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                    "AZURE_TENANT_ID": "test-tenant",
                 },
                 cwd=safe_cwd,
             )
-
-            self.assertEqual(
-                0,
-                result.returncode,
-                f"best-effort teardown failed: {result.stderr!r}",
-            )
-            self.assertEqual(
-                [
-                    f"cwd={project_dir}",
-                    "args=down --purge --force --no-prompt",
-                ],
-                call_log.read_text(encoding="utf-8").splitlines(),
-            )
-            self.assertEqual(
-                ["duration=300"],
-                timeout_log.read_text(encoding="utf-8").splitlines(),
-            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            invocation = call_log.read_text(encoding="utf-8")
+            self.assertIn(f"cwd={safe_cwd.resolve()}", invocation)
+            self.assertIn("fixture_ownership.py cleanup", invocation)
+            self.assertIn(f"--run-id {TEST_RUN_ID}", invocation)
+            self.assertNotIn("azd down", self.fixture)
+            self.assertNotIn("group delete", invocation)
             self.assertNotIn("NOTE:", result.stdout)
-            self.assertEqual(
-                "SMOKE_RESULT=PASS\n",
-                SMOKE_MARKER_PATH.read_text(encoding="utf-8"),
-            )
+            self.assertEqual(SMOKE_MARKER_PATH.read_text(), "SMOKE_RESULT=PASS\n")
 
     def test_teardown_soft_passes_and_notes_each_cleanup_failure(self):
-        """State, cwd, azd, and timeout failures must be observable soft-PASSes."""
+        """Missing context and helper failures remain explicit CI residuals."""
         teardown = _teardown_block(self.fixture)
-
         with (
             tempfile.TemporaryDirectory() as temp_dir,
             _isolated_shipped_state_file(),
             _isolated_shipped_smoke_marker(),
         ):
             temp = pathlib.Path(temp_dir)
-            project_dir = temp / "restored-project"
-            project_dir.mkdir()
-            safe_cwd = temp / "fresh-shell-cwd"
-            safe_cwd.mkdir()
             bin_dir = temp / "bin"
             bin_dir.mkdir()
-            call_log = temp / "azd-call.log"
-
-            timeout_stub = bin_dir / "timeout"
-            timeout_stub.write_text(
+            call_log = temp / "helper-call.log"
+            helper_stub = bin_dir / "python3"
+            helper_stub.write_text(
                 "#!/usr/bin/env bash\n"
-                "duration=$1\n"
-                "shift\n"
-                'if [ "${TIMEOUT_RESULT:-0}" -ne 0 ]; then '
-                'exit "$TIMEOUT_RESULT"; fi\n'
-                'exec "$@"\n',
+                'printf "called\\n" >> "$HELPER_CALL_LOG"\n'
+                'exit "${HELPER_RESULT:-0}"\n',
                 encoding="utf-8",
             )
-            azd_stub = bin_dir / "azd"
-            azd_stub.write_text(
-                "#!/usr/bin/env bash\n"
-                'printf "called\\n" >> "$AZD_CALL_LOG"\n'
-                'exit "${AZD_RESULT:-0}"\n',
-                encoding="utf-8",
-            )
-            timeout_stub.chmod(0o755)
-            azd_stub.chmod(0o755)
+            helper_stub.chmod(0o755)
             base_env = {
                 "PATH": f"{bin_dir}:/usr/bin:/bin",
-                "AZD_CALL_LOG": str(call_log),
+                "HELPER_CALL_LOG": str(call_log),
+                "GITHUB_WORKSPACE": str(ROOT),
+                "AZURE_SUBSCRIPTION_ID": "test-subscription",
+                "AZURE_TENANT_ID": "test-tenant",
             }
-
             failure_cases = (
-                ("missing state", None, {}, False),
-                ("invalid project dir", temp / "missing-project", {}, False),
-                ("azd nonzero", project_dir, {"AZD_RESULT": "42"}, True),
-                ("timeout", project_dir, {"TIMEOUT_RESULT": "124"}, False),
+                ("missing state", False, {}, False),
+                ("missing context", True, {"AZURE_TENANT_ID": ""}, False),
+                ("helper residual", True, {"HELPER_RESULT": "2"}, True),
+                ("helper interrupted", True, {"HELPER_RESULT": "124"}, True),
             )
-            for name, state_project_dir, env_overrides, azd_called in failure_cases:
+            for name, has_state, env_overrides, called in failure_cases:
                 with self.subTest(failure=name):
                     call_log.unlink(missing_ok=True)
                     STATE_PATH.unlink(missing_ok=True)
-                    if state_project_dir is not None:
+                    if has_state:
                         STATE_PATH.write_text(
-                            f"PROJECT_DIR={shlex.quote(str(state_project_dir))}\n",
+                            f"APP_NAME=ci-smoke-mcp-abcdef12\nACR_SERVER=test.azurecr.io\n"
+                            f"SMOKE_RUN_ID={TEST_RUN_ID}\n"
+                            f"source {shlex.quote(str(ROOT / 'skills/foundry-mcp-aca/references/bash/fixture_cleanup_guard.sh'))}\n",
                             encoding="utf-8",
                         )
-                    SMOKE_MARKER_PATH.write_text(
-                        "SMOKE_RESULT=PASS\n",
-                        encoding="utf-8",
-                    )
-
+                    SMOKE_MARKER_PATH.write_text("SMOKE_RESULT=PASS\n", encoding="utf-8")
                     result = _run_bash(
-                        teardown,
-                        {**base_env, **env_overrides},
-                        cwd=safe_cwd,
+                        teardown, {**base_env, **env_overrides}, cwd=temp,
                     )
-
-                    self.assertEqual(
-                        0,
-                        result.returncode,
-                        f"{name} must remain best-effort: {result.stderr!r}",
-                    )
-                    self.assertIn(
-                        "NOTE: teardown",
-                        result.stdout,
-                        f"{name} must be visible in the transcript",
-                    )
-                    self.assertEqual(azd_called, call_log.exists())
-                    self.assertEqual(
-                        "SMOKE_RESULT=PASS\n",
-                        SMOKE_MARKER_PATH.read_text(encoding="utf-8"),
-                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("NOTE: teardown", result.stdout)
+                    self.assertEqual(called, call_log.exists())
+                    self.assertEqual(SMOKE_MARKER_PATH.read_text(), "SMOKE_RESULT=PASS\n")
 
     def test_azure_tenant_id_in_azd_env(self):
         """azd env .env must include AZURE_TENANT_ID for federated-credential CI."""
@@ -2411,13 +2358,14 @@ AZDYAML
                         "value": state_values["UAMI_RESOURCE_ID"]
                     },
                     "acrServer": {"value": state_values["ACR_SERVER"]},
+                    "smokeRunId": {"value": state_values["SMOKE_RUN_ID"]},
                 },
             }
             self.assertEqual(
                 expected_parameters,
                 parameters,
                 "main.parameters.json must be exactly the schema, content version, "
-                "and three persisted deployment parameters",
+                "and four persisted deployment parameters",
             )
 
             app_name = state_values["APP_NAME"]

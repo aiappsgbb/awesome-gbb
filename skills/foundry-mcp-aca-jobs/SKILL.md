@@ -8,7 +8,7 @@ description: >
   foundry-mcp-aca), Service Bus/queue/event-dispatch workflows, or business
   logic that should run directly in the MCP server or Docket container.
 metadata:
-  version: "1.4.3"
+  version: "2.0.0"
 ---
 
 > **ACA Job-backed companion to [foundry-mcp-aca](../foundry-mcp-aca/SKILL.md).**
@@ -118,15 +118,26 @@ These tools are a compatibility path, not a second workflow model. They still
 write the same control record and still persist results through the same worker.
 Their public response shapes are closed:
 
-- `start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, and `pollAfterMs` (`2000`).
-- `get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, and `updatedAt`.
-- `cancel_aca_job` returns exactly `taskId`, `status`, and `cancellationRequested` (`true`).
+- `start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `pollAfterMs` (`2000`), and `effectState`.
+- `get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, `updatedAt`, and `effectState`.
+- `cancel_aca_job` returns exactly `taskId`, `status`, `cancellationRequested` (`true`), and `effectState`.
+
+`effectState` is separate from lifecycle: UNKNOWN is never cleared by a timeout,
+missing result or cancellation. Native MCP Tasks completed results carry the
+same value in `structuredContent`; protocol `working`/`cancelled` alone makes
+no business-effect claim. Only an independent authorized readback may establish
+VERIFIED; the generic worker does not infer it from a handler result.
 
 `status` is the public lifecycle value (`Accepted`, `Starting`, `Running`,
 `Succeeded`, `Failed`, or `Cancelled`). Never return the internal `TaskRecord`
 or expose owner scopes, hashes, worker tokens, ETags, or internal timestamps.
 
 ## Control record and lifecycle
+
+Version 2 adds private `nativeOperation` metadata and a separate `effectState`.
+Existing records default to `UNKNOWN`, never “no effect”. Lifecycle failure due
+to an exhausted observation budget does not prove business failure or authorize
+replay. Public status adapters must not expose signed/raw operation material.
 
 The control record is the source of truth. It carries `taskId`, `ownerScope`,
 `jobType`, `idempotencyKeyHash`, `requestFingerprint`, `inputRef`,
@@ -183,9 +194,24 @@ Uncertain starts are reconciled deterministically:
   already-known execution ID is a pure no-op and must not stop it.
 - If the start never becomes observable, the task stays `Starting` until the
   reconciliation budget expires.
-- After three attempts or five minutes, only an unbound uncertain start fails
+- After the existing observation budget, only an unbound uncertain start fails
   with `START_RECONCILIATION_EXHAUSTED`; a bound or worker-claimed execution
   remains authoritative even when an ARM list is temporarily empty.
+
+**No automatic replay (2.0).** A grace period plus an empty eventually-consistent
+execution list does not prove that the original POST was rejected. Reconciliation
+now only reads/binds the original execution; it does not issue another start.
+The monitoring outcome `START_RECONCILIATION_EXHAUSTED` leaves `effectState:
+UNKNOWN`. Retain the same task/fingerprint and native receipt for the owner.
+
+`AcaJobsAdapter` now requires a durable `record_operation` callback before
+start. The server wires it to the existing ETag-protected control store; raw SDK
+response hooks save request/operation identity before result interpretation.
+Per-I/O and poller waits are bounded. A client deadline does not cancel remote
+execution; reconcile rather than creating another task ID.
+The 5.0 SDK calls use `polling=False`: a timed `LROPoller.result` alone would
+leave its background polling thread running. Read/bind the original operation
+through the existing reconciler; a submitted stop is not terminal-state proof.
 
 Terminal reconciliation uses a distinct ten-minute unresolved-reconciliation budget
 anchored at the existing durable `startAttemptedAt`, falling back to
@@ -221,6 +247,14 @@ failures map to `CONTROL_STORE_UNAVAILABLE`. ETag replacement preserves
 non-system unknown fields from the raw point read, excludes `id` and
 underscore-prefixed service metadata, then overlays the canonical known record
 so cleared known fields cannot be resurrected.
+
+A previous worker with an expired lease and no durable output has an **unknown
+effect**, not a clean retry opportunity. Return `WORKER_EFFECT_UNRESOLVED`
+without invoking its business handler again. Existing output may still be
+reconciled without running the handler. Lease/ETag fencing prevents competing
+state writes; it cannot alone deduplicate an external business API after a crash.
+Independent readback must name the actual reader identity and consistency
+contract. See the [operation evidence contract](../foundry-hosted-agents/SKILL.md#operation-recovery).
 
 ## Callback contract
 
@@ -282,6 +316,70 @@ dispatch hooks.
 
 The deployment contract is `azd` only. Copy the canonical files verbatim; do
 not fork the template shapes here.
+
+**Explicit CI reuse, not the ordinary default.** The opt-in
+[`templates/infra/ci-reuse.bicep`](templates/infra/ci-reuse.bicep) entrypoint is
+resource-group scoped and composes the existing app, Cosmos and canonical
+`azd-patterns` Job modules. It never creates a resource group, identity,
+database, role definition or role assignment. The ordinary subscription
+`main.bicep` and its defaults remain the provisioning consumer.
+
+[`templates/infra/scripts/ci_reuse.py`](templates/infra/scripts/ci_reuse.py)
+stages that route only with `MCP_ACA_JOBS_CI_REUSE=existing`. It requires
+explicit standing resource IDs for RG, environment, app/worker identities,
+Cosmos account/database, storage and registry; expected tenant/subscription,
+executor client/principal, existing audience and exact account endpoints.
+No default resource discovery, missing-input provisioning or shared grant
+fallback is allowed. IDs/endpoints are operator inputs, never committed
+inventory. All standing resources currently must belong to the selected RG;
+other layouts require a reviewed contract rather than inferred scopes.
+
+Before the first write, authenticated GET/list checks bind those exact
+resources, UAMI client/principal mappings and active executor context, require
+the database to exist, and compare endpoints. The executor's existing Cosmos
+role may be database-scoped **reader**; app and worker need database-scoped
+writers. Blob rights must cover the new run containers, and app Job operator
+rights must cover the run Job. Conditional or insufficient permissions block
+without grants. The supported registry route is explicitly existing legacy
+registry-wide access, not repository-only isolation. Read-only ARM checks do
+not prove network reachability or absence of deny assignments; the approved
+runner/runtime network path and SecuredByPerimeter posture must already be
+established. No network setting is changed by this route.
+
+The staged CI `main.bicep` creates only the run's app, Job, Cosmos control
+container **inside the standing database**, and two run-specific blob
+containers. The image has a new UUID repository with explicit documented
+`docker.registry`, `docker.image`, and `docker.tag` inputs; the normal
+`SERVICE_MCP_IMAGE_NAME` output and canonical convergence helper verify the
+actual build result. Preprovision/predeploy hooks re-check standing inputs,
+the active azd target, and the staged Bicep/parameter hashes. Removing the
+reuse marker while keeping reuse enabled fails closed.
+
+Cleanup is not `azd down`, RG deletion or database deletion. Retain the private
+`ci-run-owned.json` pre-write absence record, `ci-created.json` actual creation
+observations and `ci-image.json` digest receipt. Only matching run objects
+may be deleted; replaced/unregistered resources, a changed image or extra image
+tags block deletion. Each supported resource read must verify absence;
+an auth/network error is not absence. On partial provision, use the read-only
+`record` action to reconcile exact created objects, never re-provision to
+reconstruct evidence. Missing native creation provenance requires owner
+disposition, not broader cleanup. Standing database/identities/grants/storage/
+registry/RG are never cleanup targets. Hosted agents/build images are separate
+run receipts; verify their supported deletion or obtain explicit bounded
+retention. This path has local contract coverage; live CI reuse acceptance is
+required on the integrated source before release.
+The staged `.dockerignore` and `.azdignore` allow only Dockerfile, dependency
+files and `app/`; private preflight/ownership captures and `.azure` are not
+build/upload inputs. Native creation timestamps and exact image metadata
+remain required ownership evidence; an API that omits them blocks automatic
+cleanup for an explicit owner disposition, never a database/RG delete fallback.
+The fixture's prompt and hosted model calls use one recorded dispatch with SDK
+retries disabled. A malformed or lost response preserves UNKNOWN and cannot
+be retried using a new operation journal. The hosted target must be absent
+before deployment; cleanup deletes only the observed version with matching
+creation identity, not an entire pre-existing agent. The two new image
+repositories are checked absent before build, explicitly selected in azd and
+independently recorded by digest before their targeted cleanup.
 
 `skills/foundry-mcp-aca-jobs/templates/infra/main.bicep` requires the sibling
 catalog checkout layout: `skills/foundry-mcp-aca-jobs` and
@@ -374,7 +472,7 @@ visibility comes from task status, result URLs, and telemetry.
 
 ## Stable errors
 
-These codes are user-visible and must stay stable within the `1.x` contract:
+These codes are user-visible and must stay stable within the `2.x` contract:
 
 | Family | Stable codes |
 |---|---|
@@ -388,7 +486,8 @@ These codes are user-visible and must stay stable within the `1.x` contract:
 | `CALLBACK_*` | `CALLBACK_DELIVERY_REJECTED`, `CALLBACK_DELIVERY_EXHAUSTED`, `CALLBACK_PAYLOAD_CONFLICT` |
 | `CONTROL_STORE_*` | `CONTROL_STORE_UNAVAILABLE` |
 | `DEPLOYMENT_*` | `DEPLOYMENT_CONTRACT_MISMATCH` |
-| `WORKER_*` | `WORKER_EXECUTION_FAILED` |
+| `WORKER_*` | `WORKER_EXECUTION_FAILED`, `WORKER_EFFECT_UNRESOLVED` |
+| `OPERATION_*` | `OPERATION_CUSTODY_REQUIRED` |
 
 `RESULT_REFERENCE_MISSING` stays in the failed terminal family, but the MCP
 projection is still `completed` with `isError: true`.

@@ -16,7 +16,7 @@ description: >
   (use foundry-toolbox), file-system SkillsProvider wiring (use
   foundry-hosted-agents), generic hosted-agent runtime.
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # Foundry Skills Catalog — Reference Guide
@@ -29,9 +29,10 @@ tracks `default_version` and `latest_version`; they need not be equal.
 **Preview boundary:** Skills, including Toolbox skill discovery, remain preview.
 Do not infer a production SLA from Toolbox's GA status. The current
 [Skills documentation](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/skills)
-also states that the Skills API does **not** support private endpoints: public
-network access must be enabled. Do not change networking to bypass this limit
-without the resource owner's approval.
+now supports **private networking**. This does not make every tool or external
+endpoint used by a skill private. Verify catalog access and any downstream
+calls separately; keep public access disabled when validating a private path.
+Do not change networking to bypass a failure without resource-owner approval.
 
 This skill retains both existing consumption patterns:
 
@@ -60,9 +61,45 @@ a hosted or local agent. There is no justification for a blanket
 Resources clients** via `resources/list` and `resources/read`.
 
 This does **not** establish automatic Prompt-agent support. A client that only
-uses MCP `tools/list` does not thereby load MCP Resources. Do not invent a
-PromptAgentDefinition `skills` field or assume a model will load skills without
-a provider. Verify the actual consumer's resource-discovery behavior.
+uses MCP `tools/list` does not thereby load MCP Resources. SDK 2.7 adds optional
+`PromptAgentDefinition.harness` and `skills` fields, but schema availability
+alone does not prove the deployed service, selected harness or pinned runtime
+can use them. This skill retains SDK 2.6 and the existing MAF pin; it does not
+enable a native Prompt skills route or upgrade a runtime to use those fields.
+Verify the actual consumer's resource-discovery behavior.
+
+### Progressive loading is a separate capability
+
+Distinguish three different pieces of evidence:
+
+| Path | What happens | What it does not prove |
+|---|---|---|
+| Direct download/injection sample | Downloads SKILL.md and supplies instructions to the agent | Native resource discovery or on-demand loading |
+| Existing Pattern B adapter | Downloads selected instruction bodies at `get_skills()` time; provider caching applies | Lazy remote asset reads or per-turn refresh |
+| Resource-aware Toolbox provider | Advertises names/descriptions, loads selected bodies, then reads assets on demand | Compatibility with every MCP client or Python runtime |
+
+The existing Python **MAF core 1.17** line includes experimental
+`MCPSkillsSource`. It reads `skill://index.json` for metadata, then fetches a
+selected skill's body through `resources/read` when `load_skill` is invoked.
+This is separate from Pattern B, which downloads bodies before constructing
+inline skills. **MUST:** use
+[`references/mcp_skills_provider.py`](references/mcp_skills_provider.py) for the
+native composition with an already authenticated, caller-owned MCP session.
+Keep that session open throughout agent execution; close it at the caller's
+lifecycle boundary. Install the bounded `mcp~=1.29.0` transport alongside the
+existing core pin, not a general framework upgrade.
+
+Loading requires approval by default. `trusted_skill_loading=True` opts out
+only for reviewed, trusted skill bodies; it does not disable resource/script
+approval or authorize arbitrary skill instructions. The live synthetic test
+used this explicit opt-in. No customer content or scripts were executed.
+
+Current Learn also links a C# `AgentSkillsProviderBuilder.UseMcpSkills` sample.
+That sample does not certify every Python provider version. Capture actual
+metadata/body reads and show that unrelated bodies were not fetched; separately
+test model application. Archive-backed skills and supplementary assets need
+their own checks: do not infer lazy archive downloads or asset reads from the
+inline-body case.
 
 ## When to use this vs alternatives
 
@@ -259,7 +296,10 @@ and its lightweight sibling [`references/skill_packages.py`](references/skill_pa
 into the same directory, verbatim. They are the source of truth, not inline
 duplicates. The adapter re-exports the shared download/validation helpers.
 
-The public constructor and `async get_skills() -> list[Skill]` remain compatible.
+The public constructor and no-argument `async get_skills()` remain compatible.
+The source also accepts the optional context argument passed by the pinned
+MAF 1.17 `SkillsProvider`; it does not interpret that context as a different
+catalog selection or permission grant.
 Structural wiring excerpt, assuming an existing synchronous token credential:
 
 ```python
@@ -287,11 +327,13 @@ compatibility, not a fallback on Azure errors.
 ### Caching
 
 The source does not cache: each explicit `get_skills()` reads current defaults.
-MAF **SkillsProvider may cache** the source output. Configure its cache policy or
-recreate/reload the provider when promoting; do not promise changes on every
-turn or session without checking that policy. Production callers should pin
-versions or intentionally control reloads. Network failures fail loading instead
-of silently substituting stale instruction bodies.
+MAF 1.17 passes a caller-supplied `SkillsSource` through without automatically
+caching it. Its `disable_caching` and `cache_refresh_interval` constructor
+options apply to provider-built file/in-memory sources, not this source.
+If the application wraps this source in `CachingSkillsSource`, control that
+wrapper's refresh and isolation policy explicitly. Production callers should
+pin versions or intentionally control reloads. Network failures fail loading
+instead of silently substituting stale instruction bodies.
 
 ## Governing skill versions in production
 
@@ -323,6 +365,12 @@ The consumer must actually call `resources/list` and `resources/read`.
 Verify skill content, not only `tools/list`; attach success alone is not proof
 that an agent uses the skill. For full Toolbox composition/auth use
 [`foundry-toolbox`](../foundry-toolbox/SKILL.md).
+
+Use `allow_preview=True` for management that attaches skill references, keeping
+the Skills opt-in separate from GA Toolbox management. Test a version-specific
+Toolbox endpoint before promotion. A pinned Toolbox version containing a
+floating skill reference still follows that skill's default when reloaded:
+pin **both** the Toolbox and skill versions for reproducible content.
 
 The official azd workflow includes create/show/list/download, native default
 promotion and Toolbox skill add/list/remove. **CLI file-input support differs
@@ -358,6 +406,30 @@ verification exercised `has_blob` ZIP/JSON behavior and preview-header errors.
 Those legacy observations are retained as compatibility history, not current
 native limitations. See the pin audit trail for validation scope.
 
+**2026-09-25 scoped live acceptance:** SDK 2.6.1 executed the unchanged
+synchronous `download_catalog` / `skill_archive` reader against two inline
+versions and a ZIP version. Exact/default selection, promotion, rollback,
+pinned content, supplementary asset bytes and individual-version deletion
+passed. A separate skill/Toolbox test called actual MCP `resources/list` and
+`resources/read` through version-specific endpoints: after skill promotion,
+the pinned reference retained the original body while the floating reference
+served the new body on reconnect. All Skills and the Toolbox created for these
+cases were deleted with authenticated 404 readback.
+
+These package/resource tests made no model calls. A subsequent isolated
+MAF core 1.17.0 / Foundry client 1.13.0 / OpenAI adapter 1.14.2 test exercised
+the native MCP provider: metadata advertised two skills, the model invoked
+`load_skill` for the relevant one, only that skill's body was fetched, and the
+model returned the sentinel present only in those instructions. The unrelated
+body was not fetched. The canonical Pattern B adapter also loaded a pinned
+version with the actual provider context argument. The temporary Skills and
+Toolbox were deleted; the direct model call used `store=False` and its returned
+response was not retrievable.
+
+This proves the tested progressive inline-body/model path, not on-demand
+supplementary assets, private networking or an upgraded framework. The CI
+consumer fixture itself has not run in CI.
+
 ## Troubleshooting
 
 | Symptom | Action |
@@ -370,7 +442,7 @@ native limitations. See the pin audit trail for validation scope.
 | Legacy JSON warning | Recover original instructions and republish; the placeholder is not the skill body |
 | Skill loads old content after promotion | Check explicit pins and provider cache, then reload intentionally |
 | Toolbox tools work but skills do not appear | Check same-project references, Toolbox promotion and MCP Resources support |
-| Private endpoint cannot access Skills | Current product limitation; do not disable isolation without approval |
+| Private endpoint cannot access Skills | Private networking is supported; inspect project/data private endpoints, DNS, routing and the actual caller. Do not enable public access as a fallback |
 | ZIP validation fails | Supply one root SKILL.md with safe relative assets; no archive traversal or symlinks |
 | Explicit bundle selection rejects stale output | Use a clean target directory; review/move old files manually, never silently retain excluded skills |
 | Build-only import tries to load MAF | Copy `sync_skills.py` plus `skill_packages.py`, not the MAF adapter |
@@ -386,8 +458,42 @@ native limitations. See the pin audit trail for validation scope.
 - [MAF Agent Skills](https://learn.microsoft.com/agent-framework/agents/skills?pivots=programming-language-python)
 - [Agent Skills specification](https://agentskills.io/)
 
+## Candidate acceptance and private networking
+
+The [consumer fixture](test-fixture/consumer_prompt.md) exercises the native
+version and canonical package-reader path without MAF, using the existing SDK
+2.6 cap. It is registered in the central dependency map; registration is not
+a passing CI run. Its marker is not evidence of model behavior or dynamic
+Toolbox loading.
+
+The [additional acceptance cases](test-fixture/service_acceptance.md) require
+separate authorized runs for MCP resource discovery, true progressive loading
+and private networking. The September 13 public-project observations above
+must not be relabeled as private-endpoint or dynamic-loading evidence. For a
+private run, establish approved runner placement and DNS/routing first, keep
+public network access disabled, and exercise the exact pinned package download
+and Toolbox resource reads. A skill can still call a public downstream service;
+audit those calls separately.
+
+Source alignment on September 24 adds guidance and a fixture candidate.
+September 25 manual evidence is scoped above; it does not certify the untested
+variants or change the upstream pin's validation date. Resource scope, cost,
+credentials, consent and verified cleanup remain explicit owner gates before
+further execution or publication.
+
+A subsequent private-ingress test used an isolated Basic account/project with
+public access disabled. The managed-identity runner resolved the project host
+to its private endpoint, loaded a pinned package through the unchanged canonical
+reader and verified actual Toolbox MCP resource content. An authenticated
+external request was rejected for disabled public access. These results prove
+the tested private-ingress path, not all downstream networking used by skills.
+See the [scoped validation record](../../docs/maintenance/foundry-service-pr1-validation.md).
+
 ## Catalog history
 
+- **2.1.0** — Current private-network support, progressive-loading evidence
+  boundaries, two-level version pinning and a native package fixture candidate.
+  Existing API/adapter and MAF dependency pins are unchanged.
 - **2.0.0** — Native API/dependency baseline and documented section migration;
   the skill name and adapter's two-argument async interface remain unchanged.
   Native immutable versions, default promotion/rollback, selected

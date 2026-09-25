@@ -1330,7 +1330,8 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.callback_principal_id, "callback-principal-id-1")
         managed_identity.assert_called_once_with(client_id="client-id-1")
         aio_managed_identity.assert_called_once_with(client_id="client-id-1")
-        jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1")
+        jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1",
+                                            retry_total=0, connection_timeout=10, read_timeout=30)
         cosmos_client.assert_called_once_with("https://cosmos.example.com:443/", credential=fake_async_credential)
         from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=fake_async_credential)
 
@@ -1448,6 +1449,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 "status": "Running",
                 "acaExecutionId": "exec-start",
                 "pollAfterMs": 2000,
+                "effectState": "UNKNOWN",
             },
         )
         self.assertEqual(
@@ -1461,6 +1463,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 "errorCode": "ACA_EXECUTION_FAILED",
                 "createdAt": "2026-09-03T17:01:02Z",
                 "updatedAt": "2026-09-03T17:01:07Z",
+                "effectState": "UNKNOWN",
             },
         )
         self.assertEqual(
@@ -1469,10 +1472,12 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
                 "taskId": str(base.task_id),
                 "status": "Running",
                 "cancellationRequested": True,
+                "effectState": "UNKNOWN",
             },
         )
         for response in (started.data, status.data, cancelled.data):
             self.assertNotIn("resultType", response)
+            self.assertNotIn("nativeOperation", response)
 
     async def test_tools_round_trip_and_restart_same_store(self) -> None:
         runtime = self._runtime(trust_aca_auth_headers=True)
@@ -1704,7 +1709,8 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
 
         managed_identity.assert_called_once_with(client_id="client-id-1")
         aio_managed_identity.assert_called_once_with(client_id="client-id-1")
-        jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1")
+        jobs_client.assert_called_once_with(credential=fake_sync_credential, subscription_id="sub-id-1",
+                                            retry_total=0, connection_timeout=10, read_timeout=30)
         cosmos_client.assert_called_once_with("https://cosmos.example.com:443/", credential=fake_async_credential)
         from_container_url.assert_called_once_with("https://storage.example.com/callbacks", credential=fake_async_credential)
         self.assertIsInstance(runtime.policy, app_models.Policy)
