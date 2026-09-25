@@ -36,6 +36,11 @@ Every PR runs local tests and the final `smoke-result` job, including
 scripts-only changes. Live consumers wait for unit tests, catalog validation
 and delegated-auth local contracts.
 
+The unit-test total is reported by discovery in the run, not maintained as a
+hardcoded documentation number. Adding a regression test must not require a
+catalog documentation/count-only correction before the live gates can start.
+Catalog skill, fixture and manifest counts remain independently validated.
+
 For every selected Copilot provider, `driver-preflight` runs a single bounded
 PONG request using the same CLI version and provider selector as the consumer.
 It disables custom instructions and tool use, does not provision resources,
