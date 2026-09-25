@@ -3121,8 +3121,8 @@ of generated UI quality. Report, comparison/tool and informational-site output
 acceptance and native runtime loading remain promotion gates; see its
 [validation record](docs/maintenance/web-experience-design-validation.md).
 
-The `progress-guard` entry is a follow-up candidate with twenty-one local persistence/
-output-selection/handoff tests and two packaging tests wired into the catalog unit-test job.
+The `progress-guard` entry is a follow-up candidate with thirty-one local persistence/
+output-selection/handoff/scale-out tests and two packaging tests wired into the catalog unit-test job.
 Observed compaction/behavioral acceptance and
 native runtime loading remain pending; see its
 [validation record](docs/maintenance/progress-guard-validation.md).
@@ -3170,7 +3170,7 @@ the merged web-experience-design source and the progress-guard and copilot-docto
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 7 |
 | CI workflows | 9 |
-| Unit tests | 1448 |
+| Unit tests | 1458 |
 | Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |

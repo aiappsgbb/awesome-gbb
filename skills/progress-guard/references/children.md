@@ -22,16 +22,21 @@ accessible SKILL.md; if neither works, report blocked, do not pretend it loaded.
 Record failed native discovery and the permitted fallback path/version once.
 Reuse that route after compaction; retry discovery only on runtime/catalog change.
 Use your own session ledger and work ID. Do not write the parent's database.
-Outcome / done_when: <one bounded deliverable and observable acceptance>.
-Scope / exclusions: <owned paths or resources; forbidden changes>.
-Baseline / dependencies: <commit/environment; accepted inputs; gates still closed>.
-Authority: <allowed reads/writes; shared-resource owner; required approvals>.
-Remaining budget / abandon_if: <inherited limits and one bounded recovery>.
+Outcome / done_when: <end-to-end assigned result; distinguish overall user outcome>.
+Write scope / exclusions: <exact owned paths/resources; forbidden/shared writes>.
+Shared capacity: <actual limiting resource and evidence, if any; not write ownership>.
+Baseline / dependencies: <accepted evidence; only dependencies blocking this outcome>.
+Authority: <ordinary implementation/test/recovery operations already included;
+new effects, permissions or risks requiring escalation; shared-write owner>.
+Declared limits, if any / abandon_if: <only supplied limits and their source;
+existing one bounded recovery; no invented numeric budget>.
 Avoid: <failed approaches + evidence pointers + concrete retry conditions>.
 Return channel: <one supported delivery mechanism to the known parent>.
 Intermediate findings go to your ledger, not parent messages.
 Return once on completion, block/decision-needed, or explicit pause; urgent
 safety/cancellation/permission gates are exceptions. No progress or ACK loop.
+One actionable dependency-change/ownership-release notice to affected consumers
+is allowed; persist its change ID and deduplicate, never send unchanged notices.
 Send a compact handoff with assignment identity, evidence and unresolved work.
 Stop after the return. Do not choose a new phase or delegate further.
 ```
@@ -55,7 +60,7 @@ it with the task evidence. Do not infer loading from a label or self-report alon
 
 ## Child: execute locally, report at a boundary
 
-Persist the received contract, parent plan revision, failed hypotheses and budget
+Persist the received contract, parent plan revision, failed hypotheses and any declared limits
 in your own snapshot. Keep the task's constraints/current context there across
 compaction. Use native permission/input mechanisms when required; never hide a
 permission request just to obey quiet mode. Tool waiting/notification rules win.
@@ -68,6 +73,7 @@ permission request just to obey quiet mode. Tool waiting/notification rules win.
 | Blocked / needs decision | Persist result, exact obstacle, remaining budget, unresolved handles and one needed decision; return once, stop |
 | Explicit pause/cancel | Stop new work; record safe disposition and still-running operations; return once if needed |
 | New safety incident, urgent scope correction, required approval | Notify immediately using the required channel; do not wait for completion |
+| Shared dependency actually changed or an owned write boundary released | Record one change ID, before/after proof and affected consumers; notify only those whose next action changes |
 
 Never create another child or restart an exhausted approach to escape a blocker.
 No acknowledgment-only response to a receipt or "stay parked" message. If the host
@@ -83,7 +89,9 @@ of narrative plus short evidence references. Include the exact assignment identi
 child session/work/revision, parent plan revision and tested source/environment.
 State completion vs block vs decision vs pause. Include what was proven, acceptance
 criterion, artifact/commit and evidence pointers, outstanding operations, retry
-conditions and remaining work. Never omit a safety fact to meet a size target.
+conditions and remaining work. Distinguish assignment completion from the overall
+user outcome; a tested helper is not a usable end-to-end delivery. Never omit a
+safety fact to meet a size target.
 
 The fallback helper can render this packet from the latest snapshot:
 
@@ -107,7 +115,7 @@ child's existing `state` before reporting; no schema migration is needed:
 ```
 
 `context` binds the current source/environment; `plan_ref` points to the accessible
-assignment contract (scope, dependencies, approvals and remaining budget).
+assignment contract (scope, dependencies, approvals and any declared limits).
 `evidence` holds short immutable references, not logs; `avoid` and
 `pending_operations` carry unresolved constraints. The helper refuses working/
 waiting states, inconsistent completion and packets over 4 KiB of UTF-8 JSON.
@@ -120,6 +128,43 @@ the same packet on a repeat read. It validates shape, not delivery, truth, runti
 skill loading, or acceptance. Native SQL users select the same fields from their
 current snapshot and follow the same reporting rules; no second database needed.
 
+## Ownership, blockers and evidence deltas
+
+Assign the ordinary implementation, verification and effect-free correction cycle
+inside the end-to-end mandate. Escalate new authority, external effects or risks,
+not each routine phase. Existing human/security gates and the one-recovery rule
+still apply. A failed operation without a receipt is not proof of no effect.
+
+One writer owns a target at a time, including parent versus child. Resolve
+overlapping paths, aliases, generated outputs and shared resources before writing;
+deny concurrent writes to the same target until its owner releases it and the
+next owner accepts the current version. Shared service usage alone is not a write
+conflict. Serialize shared capacity only against an actual limit and observed
+contention, not an invented child-count quota. A healthy long build is not expired
+by the no-progress thresholds.
+
+For a block, identify concrete `blocks` and `does_not_block` scopes and the evidence
+for independence. UNKNOWN includes operations which could race with or invalidate
+reconciliation, not just the original command. Do not release that boundary on a
+timer or an unchanged status. An independent sibling can finish while this boundary
+stays blocked; no new child or replay is implied.
+
+Use the optional [storage fields](storage.md#optional-coordination-fields) to retain
+this contract and compact proof references. Reuse accepted evidence when its relevant
+inputs/context are unchanged. Compare manifests/hashes mechanically where available;
+review the content/risk delta, not every unchanged file. A changed input invalidates
+only affected proof and consumers, unless its dependency reach is uncertain.
+Record that uncertainty as a blocker rather than assuming independence.
+
+A dependency or ownership-release notice carries a stable `change_id`, affected
+scope/assignments and before/after evidence. Record it in an existing event kind
+(`progress` only with evidence, otherwise `observation`); send once only if another
+owner can act on it. The terminal-only CLI is not a notification sender: use the
+existing return channel for this compact exception, not `handoff` on working state.
+The parent records the accepted change ID and resulting action once. Duplicate or
+unchanged notices cause no message, new tests or reapplication. Reconcile stale
+versions before releasing dependencies. Ownership release is not new authorization.
+
 ## Parent: receive, verify, consolidate, then proceed
 
 1. Route by actual child handle plus assignment ID. Compare parent plan revision
@@ -128,7 +173,10 @@ current snapshot and follow the same reporting rules; no second database needed.
 2. Deduplicate by assignment, child session, work ID and event key/revision. A
    repeated notification is not new progress: no repeated import, tests or ACK.
    Retain the accepted high-water revision; late older receipts cannot overwrite it.
-3. Inspect only relevant referenced artifacts and acceptance evidence. A child
+3. Inspect only relevant referenced artifacts and acceptance evidence. Reuse prior
+   accepted proof; recheck affected claims when inputs/context change or evidence
+   is inconsistent. Keep an `evidence_delta` of reused/invalidated references and
+   reasons, not copied manifests. A child
    commit in its worktree is not integrated into the parent's checkout. If needed,
    integrate through the authorized workflow and run targeted checks before marking
    it accepted. Missing/unreachable evidence means unverified, not success.
@@ -136,7 +184,8 @@ current snapshot and follow the same reporting rules; no second database needed.
    array (optional state field) with assignment/handle, plan revision, last receipt,
    disposition (`reported`, `accepted`, `blocked`, `superseded`), evidence reference
    and next dependency/decision. Preserve **all still-active child handles**, write
-   ownership, retry conditions and unresolved operations across compaction.
+   ownership, accepted change IDs, blocker scope, declared limits, retry conditions
+   and unresolved operations across compaction.
    Read back this write before starting dependent work or requesting compaction.
 5. Return no routine ACK. Send a follow-up only for a concrete missing fact,
    changed assignment, cancellation or required decision. Reuse the existing child
