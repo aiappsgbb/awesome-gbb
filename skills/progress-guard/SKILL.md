@@ -7,7 +7,7 @@ description: >
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
 ---
 
 # Progress guard
@@ -80,6 +80,9 @@ No mandatory reread before every tool call.
 - Check applicable "do not retry unless" findings.
 - Check context freshness: changed commits, identities, environments or requirements
   may invalidate conclusions. Preserve history and append a correction.
+- Reuse accepted evidence until its inputs/context change or an inconsistency is
+  found. Check the relevant canonical index once before declaring prerequisites
+  missing; do not hunt credential stores. Record only the affected proof delta.
 - Compare the actual plan with plan_ref/plan_revision. Reconcile user edits; never
   rewrite the plan to justify work already performed.
 - Distinguish verified, implemented-but-unverified, pending, blocked and superseded
@@ -166,14 +169,24 @@ mutation just because a timer elapsed.
 Before authorized delegation, follow [the child-session contract](references/children.md).
 The kickoff MUST explicitly require the child to load this skill and maintain its
 own ledger; do not assume skill/context inheritance. Give one bounded assignment
-with ownership, dependencies, acceptance, failed hypotheses and remaining budget.
+with an end-to-end outcome, write ownership, dependencies, ordinary authorized
+operations, escalation boundaries, acceptance and failed hypotheses. Record
+declared limits only when supplied; never invent a numeric budget.
 The parent tracks assignments in its existing snapshot, not a competing plan.
+
+Serialize actual overlapping writes, dependencies or measured shared capacity,
+not all work that uses the same service. A blocker states what it blocks and what
+it does not block. UNKNOWN fences the effect and anything that could interfere
+with reconciliation; demonstrably independent authorized work may continue.
 
 Children record intermediate progress locally. Return one compact handoff only
 when the assignment is complete, blocked, needs a decision, or is explicitly paused.
 No unsolicited progress pings, acknowledgment chains or repeated unchanged blockers.
 Safety incidents, urgent cancellation and required permission/input gates are
 immediate exceptions; host-generated notifications cannot be suppressed by a skill.
+One changed-dependency or ownership-release notice may go to affected consumers
+when it changes their next action; persist/deduplicate it, never turn it into a
+heartbeat. This is not a second completion report or an automatic scheduler.
 
 The parent deduplicates returns, verifies evidence, and records accepted results
 or a precise blocker in its own ledger before dependent work or compaction.

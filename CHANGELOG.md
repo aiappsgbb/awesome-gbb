@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — progress-guard scale-out contract
+
+- `progress-guard` MINOR **1.2.1 → 1.3.0**: end-to-end assignment ownership,
+  ordinary authorized operations versus new-effect escalation, scoped blockers,
+  evidence reuse/invalidation and one actionable dependency/release notice.
+- Optional declared limits and coordination fields preserve the existing SQLite
+  schema and bounded terminal output. No scheduler, notification sender, automatic
+  write lock, runtime installation or behavioral certification.
+- Ten synthetic regression cases; catalog and runtime behavior remain distinct.
+
 ## Unreleased — progress-guard recovery clarifications
 
 - [`progress-guard`](skills/progress-guard/SKILL.md) PATCH **1.2.0 → 1.2.1**:

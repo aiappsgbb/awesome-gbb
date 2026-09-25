@@ -702,22 +702,14 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        documented_unit_tests = re.search(
-            r"^\| Unit tests \| (\d+) \|$",
-            agents,
-            flags=re.MULTILINE,
-        )
         discovered_unit_tests = re.search(
             r"^UNITTEST_CASE_COUNT=(\d+)$",
             count_probe.stdout,
             flags=re.MULTILINE,
         )
-        self.assertIsNotNone(documented_unit_tests)
+        self.assertIn("| Unit tests | Reported by unittest discovery in each CI run |", agents)
         self.assertIsNotNone(discovered_unit_tests)
-        self.assertEqual(
-            int(documented_unit_tests.group(1)),
-            int(discovered_unit_tests.group(1)),
-        )
+        self.assertGreater(int(discovered_unit_tests.group(1)), 0)
 
     def test_home_landing_renders_measured_skill_count(self) -> None:
         from scripts.site_templates import render_home

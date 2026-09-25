@@ -64,10 +64,8 @@ class ResolveFoundryProjectTests(unittest.TestCase):
         workflow = yaml.safe_load(WORKFLOW.read_text())
         triggers = workflow.get("on", workflow.get(True))
 
-        self.assertIn(
-            "scripts/resolve-foundry-project.py",
-            triggers["pull_request"]["paths"],
-        )
+        self.assertIn("pull_request", triggers)
+        self.assertIsNone(triggers["pull_request"])
 
     def test_primary_and_retry_share_configured_project_contract(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text())

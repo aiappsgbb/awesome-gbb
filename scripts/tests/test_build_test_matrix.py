@@ -625,13 +625,13 @@ class TestWorkflowChangeScope(unittest.TestCase):
         del removed["jobs"]["unit-tests"]
         self.assertEqual(self.select(removed), ["alpha", "beta", "gamma"])
 
-    def test_dependent_local_job_is_not_exempt(self) -> None:
+    def test_local_gate_dependency_does_not_expand_live_coverage(self) -> None:
         self.workflow["jobs"]["copilot-cli-matrix"]["needs"] = ["build-matrix", "unit-tests"]
         self.select(self.workflow)
         base = _git(self.repo, "rev-parse", "HEAD")
         self.workflow["jobs"]["unit-tests"]["steps"].append({"run": "changed"})
         self.select(self.workflow)
-        self.assertEqual(_run_changed_only(self.repo, base), ["alpha", "beta", "gamma"])
+        self.assertEqual(_run_changed_only(self.repo, base), [])
 
     def test_local_job_with_shared_outputs_or_credentials_is_not_exempt(self) -> None:
         for key in ("outputs", "secrets", "permissions", "environment", "uses"):

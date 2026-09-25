@@ -252,6 +252,18 @@ What "tested on Azure" means, by change type:
 | Description / trigger-phrase only | T0 lint is sufficient — no Azure test needed |
 | Pin file refresh (version bump) | Run `validation.script`; if the script calls Azure, that counts |
 
+**Incremental CI policy (2026-09-25):** live evidence is required for changed
+operational contracts, not for every unchanged consumer on every commit.
+Description/version-only frontmatter changes with a byte-identical body and
+unchanged remaining metadata require local gates only. Local test-file edits
+do not require live execution; fixture-only edits run that fixture. Operational
+skill changes retain downstream coverage. CI orchestration-only changes run
+the native Harness and prompt-agent canaries; they do not certify deployment
+or full-catalog acceptance. Consumer runtime/authentication changes retain the
+full matrix. See [incremental CI](docs/maintenance/incremental-ci.md) for the
+exact selection and blocking contracts. No missing prerequisite, skipped
+required consumer, stale marker or failed cleanup becomes a passing result.
+
 **Who tests:**
 - **Human contributors** test locally or in a dev subscription before
   opening the PR. Document what you tested in the PR description.
@@ -857,10 +869,13 @@ humans open the refresh PRs and use the normal PR path:
 > run on every PR and no-op cheaply (sub-minute) when nothing relevant
 > changed (each underlying script exits 0 on an empty/non-skill changeset).
 > **Never add a `paths:` filter to a workflow whose job is a required check.**
-> By contrast, the heavy `copilot-cli-matrix` (`skill-test.yml`) is **not** a
-> required check, so it **keeps** its `paths:` filter and stays dormant on
-> non-skill PRs — that is how "avoid running the full matrix unnecessarily"
-> and "never deadlock a PR" coexist.
+> `skill-test.yml` also reports on every PR: local tests and its `smoke-result`
+> aggregate must not disappear on scripts-only edits. The expensive matrix
+> remains change-selected inside the workflow, not path-filtered at event
+> level. The aggregate rejects failed local gates, driver unavailability and
+> skipped expected consumers; an empty selected matrix is explicitly valid.
+> Branch-protection settings are separate from workflow files: preserve the
+> existing contexts and add the aggregate only once it is reporting reliably.
 
 ### 9.7 · Azure CI credentials and E2E infrastructure
 
@@ -872,7 +887,9 @@ the same checked provider environment; a missing credential fails rather than
 falling back. `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_ENDPOINT` and fixture model
 inputs remain independent and unchanged. AgentOps keeps its separately
 validated direct-Foundry diagnostic boundary; the native Harness leg has no
-Copilot driver. Verify both routes in the auth-smoke workflow and approve
+Copilot driver. The auth-smoke and consumer matrix use the same pinned CLI.
+Automatic auth-smoke runs test the active route; explicitly select `both`
+through dispatch to validate an alternate route before a cutover. Verify both routes and approve
 the gateway token budget before enabling the route for a full matrix. Rollback
 is the repository variable `CI_MODEL_PROVIDER=foundry`, not a project-endpoint
 replacement. No published hostname or key belongs in the repository.
@@ -2279,16 +2296,23 @@ files to changed skills, applies **forward fanout** from
 and B `depends_on` A, run B too), and forces a full matrix on
 **input-contract changes** (shared execution in `.github/workflows/skill-test.yml`,
 `.github/quarantine.yml`, `.github/ci-shared-preamble.md`,
-`scripts/resolve-foundry-project.py`). The
-`push: main` and `schedule:` paths always run the full matrix.
+`scripts/resolve-foundry-project.py` and the model-provider configuration).
+PRs compare against the PR base; main pushes compare against the event's
+`before` SHA, not merely `HEAD~1`. Missing push history selects full.
+Scheduled and manual runs retain the full matrix.
 
 Workflow changes are compared structurally at the base SHA and `HEAD`.
-Changes only to independent `unit-tests`, `catalog-lint` or
-`delegated-auth-local` jobs retain normal skill/dependency selection. Global
-configuration, shared matrix jobs, unknown jobs, local-job removal, credential
-or output declarations, or matrix dependencies on local jobs still force full.
+Changes only to `unit-tests`, `catalog-lint` or `delegated-auth-local` jobs
+retain normal skill/dependency selection, including when these jobs gate
+the live matrix. Routing, matrix selection, driver preflight and final
+aggregation changes select the Harness and prompt-agent live canaries,
+unioned with any changed operational skills. Global configuration, consumer
+steps, unknown jobs, local-job removal and local shared credentials/outputs
+still force full.
 Missing/unparseable/duplicate-key workflow YAML also forces full with a warning.
-This exemption never skips the local jobs or changes required status checks.
+This does not change consumer code or waive operational live evidence.
+Local gates and the exact-version driver probe must pass before consumers start.
+Native-only Harness selection needs no Copilot driver probe.
 
 **What's deliberately NOT in the force-full list:**
 
@@ -2300,7 +2324,7 @@ This exemption never skips the local jobs or changes required status checks.
   Decides WHICH legs run, not what they do. Logic regressions are
   caught by 12 unit tests in
   [`scripts/tests/test_build_test_matrix.py`](scripts/tests/test_build_test_matrix.py)
-  + the push-to-main canary. Keeping it in FORCE_FULL caused a
+  + the scheduled full canary. Keeping it in FORCE_FULL caused a
   chicken-and-egg: every fix to the matrix logic fanned out the
   full matrix, costing ~30 min per iteration.
 - `.github/skill-deps.yml` — read live by `_load_dep_map` for forward
@@ -2308,28 +2332,27 @@ This exemption never skips the local jobs or changes required status checks.
   new skill) is purely additive — it doesn't change existing fanout
   edges. Removals/renames are rare and covered by
   `validate-skills.py` (cycle + unknown-ref checks) + the
-  push-to-main canary.
+  scheduled full canary.
 
 Treating any of these as infra (the original design) fired a full
 14-leg matrix on PR #240's `4.14.0 → 4.15.0` plugin bump (1 line of
 metadata) + on every subsequent matrix-builder iteration. Catch-rate
-for structural drift is preserved by the weekly + push-to-main
-full-matrix paths within ≤7 days.
+for structural drift is preserved by the twice-weekly scheduled full matrix.
 
 **Cost / benefit.** A PR that touches only `foundry-memory/test-fixture/`
 runs ONE leg (memory) instead of six. A new-skill PR like #240 runs
 the new skill + its forward-fanout (2 legs) instead of 14. Wall-clock
 for an iterative retry drops from ~30 min to ~13 min; budget cost
 drops 5/6 on iterative PRs, ~12/14 on new-skill PRs. Catch rate is
-preserved because the full matrix still runs on `main` and weekly,
+preserved because the full matrix still runs on schedule and explicit dispatch,
 and forward fanout protects against upstream-skill changes silently
 breaking downstream consumers.
 
 **Cross-skill carry rule.** When you add a new fixture, also add
 an entry to `.github/skill-deps.yml` even if `depends_on: []`. The
-matrix-builder's "all fixtured skills" set is derived from this
-file; a missing entry → your fixture never runs in CI even when
-its files change.
+matrix builder discovers fixture directories; the catalog validator
+requires a matching dependency entry so an omitted edge cannot silently
+remove intended downstream coverage.
 
 **Gotcha.** Change-gating diffs against `github.event.pull_request.base.sha`,
 which is the **target branch's HEAD** (usually `main`). So iterative
@@ -3121,8 +3144,8 @@ of generated UI quality. Report, comparison/tool and informational-site output
 acceptance and native runtime loading remain promotion gates; see its
 [validation record](docs/maintenance/web-experience-design-validation.md).
 
-The `progress-guard` entry is a follow-up candidate with twenty-one local persistence/
-output-selection/handoff tests and two packaging tests wired into the catalog unit-test job.
+The `progress-guard` entry is a follow-up candidate with thirty-one local persistence/
+output-selection/handoff/scale-out tests and two packaging tests wired into the catalog unit-test job.
 Observed compaction/behavioral acceptance and
 native runtime loading remain pending; see its
 [validation record](docs/maintenance/progress-guard-validation.md).
@@ -3170,7 +3193,7 @@ the merged web-experience-design source and the progress-guard and copilot-docto
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 7 |
 | CI workflows | 9 |
-| Unit tests | 1469 |
+| Unit tests | Reported by unittest discovery in each CI run |
 | Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
 | Additional Foundry service contract tests | 19 isolated tests for Toolbox management, Routines creator wire behavior and Skills reader/provider/fixture wiring |

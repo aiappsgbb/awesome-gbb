@@ -131,9 +131,11 @@ set. Targeted integration checks passed, including generated-docs versions and
 link validation. Nineteen owned
 offline tests are now wired into a separate CI environment; the native Skills
 consumer fixture is registered without altering auth/retry/quarantine gates.
-The registered repository count is now **1,469** after adding 21 cleanup tests;
-this count does not claim a new full-suite execution. The closure pass covers
-only the changed fixture/cleanup contracts and directly related metadata.
+Repository test totals are reported by unittest discovery in each CI run, not
+maintained as a hardcoded catalog count. The earlier 1,448-test result above is
+historical evidence, not a claim about the merged incremental-CI baseline.
+The closure pass covers only the changed fixture/cleanup contracts and directly
+related metadata.
 
 PR checks and their exact source SHA must be recorded in the pull request.
 Manual user-identity evidence is not CI/OIDC evidence, and registration is not
@@ -173,7 +175,9 @@ with unchanged tags and no new retention was required.
 
 **This is real helper CRUD/cleanup evidence, not the full revised MCP deployment
 and authentication fixture.** The focused cleanup suites passed 96 tests and
-108 subtests. Neither this evidence nor the three protected branch checks
-(`gate`, `validate-pins`, `validate`) waives execution of the corrected Skills
-fixture or permits launching an unsafe legacy Jobs path. The coordinator owns
-the minimal safe Jobs integration and publication decision.
+108 subtests. Neither this evidence nor the four protected branch checks
+(`gate`, `validate-pins`, `validate`, `smoke-result`) waives execution of the
+corrected Skills fixture or permits launching an unsafe legacy Jobs path.
+The [incremental CI contract](incremental-ci.md) selects live work from changed
+contracts; results for its own rollout do not validate this PR's merged head.
+The coordinator owns the minimal safe Jobs integration and publication decision.
