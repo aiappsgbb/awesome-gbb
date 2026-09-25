@@ -1,8 +1,10 @@
 # Foundry deployment contracts — #518 acceptance record
 
-**Unreleased candidate. Not Azure-validated, not ready for issue closure.**
-Source baseline: `2a29e084882a52e74b94def3ee9bb32b73592e60`; subsequent changes
-are local corrections, not a published/adopted revision. The owner subsequently
+**Unreleased draft candidate. Partial source-bound Azure evidence, not ready
+for issue closure.**
+Original source baseline: `2a29e084882a52e74b94def3ee9bb32b73592e60`.
+Candidate `67a0409f8203f2994962379a7d737926e6dc9d73` is published in #520,
+not an installed/adopted revision. The owner subsequently
 authorized the necessary CI setup, live verification, run-owned cleanup and one
 candidate PR. A dedicated validation-only Entra audience/application principal
 and native project registry connection are now verified standing prerequisites,
@@ -165,7 +167,69 @@ Its cleanup uses pre-write absence/native ownership receipts and exact app/image
 targets, never `azd down` against the shared resource group. Eight additional
 local tests cover these changes. The fresh isolated catalog run completed
 **1498 tests in 156.326 seconds: PASS, 32 unchanged conditional skips**.
-T0 and plugin checks also pass. Linux/native and live acceptance remain pending.
+T0 and plugin checks also pass. The later Linux/live results below are attached
+to their exact candidate and do not retroactively certify other revisions.
+
+## First candidate execution and safe stop
+
+[Run 36131433448](https://github.com/aiappsgbb/awesome-gbb/actions/runs/36131433448)
+tested `67a0409f8203f2994962379a7d737926e6dc9d73`. Its final outcome was
+**cancelled on the owner's instruction**, not a successful complete matrix:
+11 Azure legs succeeded, 2 failed and 12 were cancelled.
+
+- Linux catalog: **1498 tests PASS, 3 conditional skips**, 164.440 seconds;
+  the separate supported hosted cohort passed 83 tests and Doctor passed 21.
+  Pin validation, T0, automation gate and delegated-auth local checks passed.
+- Passing legs: Harness (authoritative native SDK step), azd-patterns, backup,
+  monitor baseline, AGT, caphost lifecycle, cost monitoring, document/vision/
+  speech, evals, hosted agents and IQ. A leg PASS is not broader contract,
+  private networking, business-effect or client-delivery certification.
+- Resource diagnostics produced the malformed marker `PASS`, not the required
+  exact result marker. The read-only probe reported a result, but the leg
+  correctly failed; no platform failure or successful CI verdict is inferred.
+- AgentOps stopped at the missing explicit telemetry-approval input, before
+  eval/Doctor. The owner later approved one synthetic run with specific privacy,
+  retention and expiry terms; actual dedicated workspace/table retention was
+  checked and a private v1 record supplied. A job-specific rerun request was
+  rejected because the original workflow was still running. No AgentOps live
+  execution or quality/readiness PASS is claimed.
+- During cancellation IQ finished; MCP ACA reached bootstrap only, before
+  scaffold/provision, and Jobs did not start. Neither authenticated producer
+  acceptance nor the Jobs reuse live contract has passed.
+
+**Cleanup is separate and incomplete.** The azd-patterns Job was no longer
+present in the scoped readback; the caphost group's original resource set was
+unchanged. Hosted teardown was denied by the runner's shell tool. Exact
+readback confirmed the run's hosted version and its actual image manifest
+remain present. A repository-name lookup derived from the agent name was not
+the image's actual reference and is not absence evidence. No alternative delete
+was attempted to bypass the denial. Evals reported deletion but its complete
+original object identity was not retained; IQ recorded DELETE 204 without an
+independent absence check. These gaps remain explicit, not zero-residue claims.
+
+**Target binding remains unresolved.** The actual CI hosted target was an
+existing non-default project, while the new standing registry connection and
+the initial AgentOps approval record were bound to the platform-default
+project. Neither resource health nor the default flag authorizes replacing
+`FOUNDRY_PROJECT_ENDPOINT`. Reconcile the intended project, exact connection
+and still-valid approval before further affected execution; no implicit switch,
+approval extension, broad grant or network change is permitted.
+
+## Incremental CI integration
+
+The coordinator handed off main
+`5fba230af14189bec50b1bdff159c4345e02a1ac` (#521 and #522) for local integration,
+preserving the original candidate commit. The merge keeps the new local gates,
+driver preflight, required `smoke-result`, and discovery-reported test total;
+it also retains this candidate's supported SDK cohort and standing-input checks.
+See [incremental CI](incremental-ci.md).
+
+On the merged working tree, **184 targeted tests PASS** and the full isolated
+macOS catalog reports **1539 tests PASS, 32 unchanged conditional skips** in
+160.847 seconds; T0 and plugin checks pass. These are local integration results,
+not Azure validation of the merged head. The cloud blockers above remain in
+force. Calculate selection against the actual PR base before any push; do not
+treat this integration as authorization for another full matrix.
 
 ## Live and publication gates
 

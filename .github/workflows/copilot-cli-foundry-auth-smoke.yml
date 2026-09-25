@@ -17,6 +17,12 @@ name: copilot-cli-foundry-auth-smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: "Driver to verify (both is diagnostic, not automatic failover)"
+        type: choice
+        default: active
+        options: [active, foundry, citadel, both]
   pull_request:
     # Run on PRs that touch THIS workflow file so we can validate the
     # auth contract live before merging changes to it. Once we trust
@@ -26,6 +32,8 @@ on:
       - ".github/workflows/copilot-cli-foundry-auth-smoke.yml"
       - "scripts/configure-ci-model-provider.py"
       - "scripts/tests/test_ci_model_provider.py"
+      - "scripts/probe-ci-driver.py"
+      - "scripts/tests/test_ci_driver_probe.py"
   schedule:
     # Monday 06:17 UTC — runs ~45min before skill-freshness (Monday 07:00).
     # If this is red, the freshness loop's auto-PRs are pointless because
@@ -43,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [foundry, citadel]
+        provider: ${{ inputs.provider == 'both' && fromJSON('["foundry","citadel"]') || fromJSON(format('["{0}"]', (inputs.provider != '' && inputs.provider != 'active') && inputs.provider || vars.CI_MODEL_PROVIDER || 'foundry')) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +67,7 @@ jobs:
           # Node 22 is pre-installed on ubuntu-latest. npm install is the
           # method documented at
           # https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli
-          npm install -g @github/copilot
+          npm install -g @github/copilot@1.0.57-3
           copilot --version
 
       - name: Get Foundry bearer token
@@ -114,19 +122,4 @@ jobs:
           COPILOT_AUTO_UPDATE: "false"
         timeout-minutes: 5
         run: |
-          set -euo pipefail
-          # --disable-builtin-mcps drops the GitHub MCP server (we don't
-          # want this smoke test depending on github.com reachability —
-          # the whole point is to isolate the Foundry auth path).
-          OUT=$(copilot -s -p "Reply with the single word PONG and nothing else. Do not call tools." \
-                        --no-custom-instructions --no-ask-user --no-auto-update \
-                        --deny-tool shell --deny-tool write \
-                        --disable-builtin-mcps)
-          echo "----- copilot output -----"
-          echo "$OUT"
-          echo "--------------------------"
-          echo "$OUT" | grep -qx "PONG" || {
-            echo "smoke FAILED: expected 'PONG' in copilot output but none found"
-            exit 1
-          }
-          echo "smoke PASSED"
+          python3 scripts/probe-ci-driver.py

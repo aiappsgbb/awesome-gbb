@@ -16,18 +16,7 @@ name: Skill tests
 
 on:
   pull_request:
-    paths:
-      - "skills/**"
-      - ".github/workflows/skill-test.yml"
-      - ".github/skill-deps.yml"
-      - ".github/quarantine.yml"
-      - ".github/ci-shared-preamble.md"
-      - "scripts/build-test-matrix.py"
-      - "scripts/resolve-foundry-project.py"
-      - "scripts/agentops-ci-*.py"
-      - "scripts/setup-agentops-age.sh"
-      - "plugin.json"
-      - ".github/plugin/**"
+    # Always report the local tests and aggregate; live work is change-selected.
   push:
     branches: [main]
     paths:
@@ -39,6 +28,7 @@ on:
       - ".github/skill-deps.yml"
       - ".github/quarantine.yml"
       - ".github/ci-shared-preamble.md"
+      - ".github/workflows/copilot-cli-foundry-auth-smoke.yml"
   schedule:
     - cron: "0 8 * * 1"  # Monday 08:00 UTC (after freshness at 07:00)
     - cron: "0 8 * * 4"  # Thursday 08:00 UTC (redundancy)
@@ -178,6 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
+      providers: ${{ steps.build.outputs.providers }}
       # Explicitly diagnostic-only; this is not full 23-fixture acceptance.
       agentops_diagnostic: ${{ steps.build.outputs.agentops_diagnostic }}
     steps:
@@ -194,22 +185,32 @@ jobs:
         env:
           # Host-only gate input. It is never forwarded to the paid process.
           AGENTOPS_CI_TELEMETRY_APPROVAL_JSON: ${{ secrets.AGENTOPS_CI_TELEMETRY_APPROVAL_JSON }}
-        # PRs: emit only skills with touched files (plus forward fanout
-        # via .github/skill-deps.yml). Shared workflow configuration,
-        # quarantine, preamble or project-resolver changes force full.
-        # Independent local-test job edits retain skill-level selection;
-        # manifests, site output and matrix logic do not force full.
-        # push:main, schedule:, workflow_dispatch: always full matrix.
+          CI_MODEL_PROVIDER: ${{ vars.CI_MODEL_PROVIDER || 'foundry' }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        # Operational skill changes retain dependency fanout. Orchestration
+        # edits add representative canaries; consumer-runtime, preamble,
+        # provider and project-resolver changes retain full coverage.
+        # Editorial metadata, local tests and site output need no live work.
+        # Main pushes use the actual push range, including multi-commit pushes.
+        # Schedule/dispatch remain full; missing push history fails closed.
         run: |
           set -euo pipefail
           DIAGNOSTIC=$(python3 -I scripts/build-test-matrix.py --agentops-diagnostic-mode)
           if [ "$DIAGNOSTIC" = "true" ]; then
             MATRIX='{"skill":["foundry-agentops"]}'
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
             MATRIX=$(python3 -I scripts/build-test-matrix.py \
               --repo-root . \
               --changed-only \
-              --base-ref "${{ github.event.pull_request.base.sha }}")
+              --base-ref "$PR_BASE")
+          elif [ "$EVENT_NAME" = "push" ] && \
+               [[ "$PUSH_BEFORE" =~ ^[0-9a-f]{40}$ ]] && \
+               [[ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]] && \
+               git cat-file -e "$PUSH_BEFORE^{commit}"; then
+            MATRIX=$(python3 -I scripts/build-test-matrix.py \
+              --repo-root . --changed-only --base-ref "$PUSH_BEFORE")
           else
             MATRIX=$(python3 -I scripts/build-test-matrix.py --repo-root .)
           fi
@@ -217,6 +218,58 @@ jobs:
           echo "agentops_diagnostic=$DIAGNOSTIC" >> "$GITHUB_OUTPUT"
           echo "Resolved matrix: $MATRIX"
           echo "AgentOps diagnostic-only selection: $DIAGNOSTIC (not full 23-fixture acceptance)"
+          export MATRIX_JSON="$MATRIX"
+          python3 - <<'PY'
+          import json
+          import os
+          provider = os.environ["CI_MODEL_PROVIDER"]
+          if provider not in {"foundry", "citadel"}:
+              raise SystemExit("Invalid CI_MODEL_PROVIDER")
+          skills = json.loads(os.environ["MATRIX_JSON"])["skill"]
+          providers = sorted({
+              "foundry" if skill == "foundry-agentops" else provider
+              for skill in skills if skill != "agent-framework-harness"
+          })
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("providers=" + json.dumps({"provider": providers}) + "\n")
+          PY
+
+  driver-preflight:
+    needs: [build-matrix, unit-tests, catalog-lint, delegated-auth-local]
+    if: fromJSON(needs.build-matrix.outputs.providers).provider[0] != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build-matrix.outputs.providers) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot@1.0.57-3
+      - name: Get Foundry bearer token
+        run: |
+          set -euo pipefail
+          TOKEN=$(az account get-access-token --resource https://ai.azure.com \
+            --query accessToken -o tsv | tr -d '\r\n')
+          echo "::add-mask::$TOKEN"
+          echo "COPILOT_PROVIDER_BEARER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: Configure Copilot model provider
+        env:
+          CI_MODEL_PROVIDER: ${{ matrix.provider }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          CITADEL_CI_GATEWAY_URL: ${{ secrets.CITADEL_CI_GATEWAY_URL }}
+          CITADEL_CI_API_KEY: ${{ secrets.CITADEL_CI_API_KEY }}
+        run: python3 scripts/configure-ci-model-provider.py
+      - name: Verify driver authentication before fanout
+        run: python3 scripts/probe-ci-driver.py
 
   # ── Job 4: Copilot-CLI consumer matrix (the real validation gate) ──
   # Spawns ONE runner per discovered skill. Each runner installs the
@@ -228,8 +281,17 @@ jobs:
   # CLI appends a `Changes / Duration / Tokens` footer that cannot be
   # suppressed, so `tail -n 1` form CANNOT be used here.
   copilot-cli-matrix:
-    needs: build-matrix
-    if: fromJSON(needs.build-matrix.outputs.matrix).skill[0] != null
+    needs: [build-matrix, unit-tests, catalog-lint, delegated-auth-local, driver-preflight]
+    if: >-
+      ${{ !cancelled() &&
+      needs.build-matrix.result == 'success' &&
+      needs.unit-tests.result == 'success' &&
+      needs.catalog-lint.result == 'success' &&
+      needs.delegated-auth-local.result == 'success' &&
+      fromJSON(needs.build-matrix.outputs.matrix).skill[0] != null &&
+      (needs.driver-preflight.result == 'success' ||
+       (fromJSON(needs.build-matrix.outputs.providers).provider[0] == null &&
+        needs.driver-preflight.result == 'skipped')) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1359,7 +1421,7 @@ jobs:
   # A suppressed build output must not turn an expected consumer run into a
   # successful workflow. Empty matrices remain a legitimate no-test result.
   smoke-result:
-    needs: [build-matrix, copilot-cli-matrix]
+    needs: [build-matrix, unit-tests, catalog-lint, delegated-auth-local, driver-preflight, copilot-cli-matrix]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1367,6 +1429,7 @@ jobs:
         env:
           MATRIX_JSON: ${{ needs.build-matrix.outputs.matrix }}
           CONSUMER_RESULT: ${{ needs.copilot-cli-matrix.result }}
+          LOCAL_RESULTS: ${{ toJSON(needs) }}
         run: |
           python3 -I - <<'PY'
           import json
@@ -1378,6 +1441,13 @@ jobs:
           def finish(ok, code):
               print(f"SMOKE_GUARD={'PASS' if ok else 'FAIL'} {code}")
               raise SystemExit(0 if ok else 1)
+
+          results = json.loads(os.environ["LOCAL_RESULTS"])
+          for job in ("build-matrix", "unit-tests", "catalog-lint", "delegated-auth-local"):
+              if results.get(job, {}).get("result") != "success":
+                  finish(False, "LOCAL_OR_SELECTION_FAILURE")
+          if results.get("driver-preflight", {}).get("result") not in ("success", "skipped"):
+              finish(False, "DRIVER_UNAVAILABLE")
 
           if not raw.strip():
               finish(False, "MATRIX_MISSING")

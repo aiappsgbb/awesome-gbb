@@ -2,7 +2,8 @@
 
 ## Unreleased — #518 deployment and recovery contract candidate
 
-Local implementation only; live acceptance, adoption and release remain pending.
+Candidate live results remain source-bound; full acceptance, adoption and release
+remain pending. See the deployment-contract acceptance record for actual coverage.
 
 - [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md) MAJOR **3.0.0**:
   versioned consumer profile, early capabilities, pre-parse response custody,
@@ -29,6 +30,16 @@ Local implementation only; live acceptance, adoption and release remain pending.
   grants are never provisioned or cleaned up by that path; exact temporary
   objects and image receipts drive verified cleanup. Ordinary consumer
   provisioning remains the default. Live execution is still separately gated.
+
+## Unreleased — progress-guard scale-out contract
+
+- `progress-guard` MINOR **1.2.1 → 1.3.0**: end-to-end assignment ownership,
+  ordinary authorized operations versus new-effect escalation, scoped blockers,
+  evidence reuse/invalidation and one actionable dependency/release notice.
+- Optional declared limits and coordination fields preserve the existing SQLite
+  schema and bounded terminal output. No scheduler, notification sender, automatic
+  write lock, runtime installation or behavioral certification.
+- Ten synthetic regression cases; catalog and runtime behavior remain distinct.
 
 ## Unreleased — progress-guard recovery clarifications
 

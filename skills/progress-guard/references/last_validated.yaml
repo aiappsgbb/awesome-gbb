@@ -1,5 +1,5 @@
 # Freshness tier C: original protocol and standard-library persistence helper.
-last_validated: "2026-09-24"
+last_validated: "2026-09-25"
 validated_by: copilot
 validation_notes: |
   Local persistence tests and catalog checks are recorded separately from
@@ -10,4 +10,6 @@ validation_notes: |
   tested with synthetic ledger events, not a native runtime compaction.
   Child terminal reporting and parent receipt persistence have synthetic local
   coverage, not observed App multi-session enforcement.
+  Optional scale-out fields have scripted state/output coverage, not independent
+  verification of ownership, capacity, authorization or proof validity.
   No Azure connection, deployment, external service, hooks or watchers required.
