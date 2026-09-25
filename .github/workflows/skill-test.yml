@@ -123,6 +123,16 @@ jobs:
           "$RUNNER_TEMP/foundry-service-tests/bin/python" -m unittest discover -s skills/foundry-routines/tests -v
           "$RUNNER_TEMP/foundry-service-tests/bin/python" -m unittest discover -s skills/foundry-skill-catalog/tests -v
 
+      - name: Run isolated managed voice contracts
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/voice-contracts"
+          "$RUNNER_TEMP/voice-contracts/bin/python" -m pip install --quiet \
+            -r skills/foundry-voice-agents/requirements-dev.txt \
+            -c skills/foundry-voice-agents/constraints.txt
+          "$RUNNER_TEMP/voice-contracts/bin/python" -m unittest discover -s skills/foundry-voice-agents/tests -v
+          "$RUNNER_TEMP/voice-contracts/bin/python" -m pip check
+
   # No Azure credentials: three incompatible local SDK cohorts remain isolated.
   delegated-auth-local:
     runs-on: ubuntu-latest
