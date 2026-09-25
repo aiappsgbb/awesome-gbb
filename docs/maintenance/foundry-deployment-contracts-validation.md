@@ -1,7 +1,7 @@
 # Foundry deployment contracts — #518 acceptance record
 
-**Unreleased draft candidate. Partial source-bound Azure evidence, not ready
-for issue closure.**
+**Candidate integrated under an explicit owner validation exception.
+Partial source-bound Azure evidence; no complete T3 or cleanup PASS.**
 Original source baseline: `2a29e084882a52e74b94def3ee9bb32b73592e60`.
 Candidate `67a0409f8203f2994962379a7d737926e6dc9d73` is published in #520,
 not an installed/adopted revision. The owner subsequently
@@ -256,6 +256,41 @@ objects, without blocking independent UUID-scoped tests. Selection against the
 actual PR base remains 25 legs because of this candidate's shared consumer
 input/toolchain changes; the CI integration alone selects only two canaries.
 No selector override, assertion relaxation or duplicate full rerun was introduced.
+
+## Owner-directed exception and integration stop
+
+The owner subsequently directed closure/integration of #519 and #520 under an
+explicit exception, with no further live/test cycles. The designated coordinator
+owns merge and the published exception; this record does not turn a waiver into
+passing tests or independent full-diff review.
+
+Current-head run
+[36142019713](https://github.com/aiappsgbb/awesome-gbb/actions/runs/36142019713)
+tested `9d499eea47d851316f1d8f14d37211781ae2484f` and was ordinarily cancelled at
+the read-only diagnostics boundary. Four Azure legs passed (Harness,
+azd-patterns, backup and monitor baseline), 21 were cancelled. Its Linux suite
+passed **1547 tests / 3 skips**, the supported hosted cohort passed 83 and Doctor
+passed 21. Local gates and the driver passed. The six directly changed live
+consumers had not executed; their missing evidence is not replaced by these
+passing legs. A prepared extra client-custody live probe was not executed.
+
+The merge integration preserves main
+`33e24e464344e0a9d806e40347ccad93d7c720f0` (#519), its feature contracts and the
+#522 gates/count policy. The producer now uses #519's canonical
+`fixture_ownership.py` and `fixture_cleanup_guard.sh`, not the alternate
+`run_resources.py` helper. It retains #520's mandatory auth-before-image and
+caller-policy checks; restoration preserves the original failure and the
+canonical failure cleanup. Image/deployment artifacts that the canonical
+helper cannot prove owned remain explicit residuals, not deleted or reported
+as cleaned. Duplicate recovery headings and obsolete version expectations were
+reconciled without removing either feature set.
+
+No new test or Azure execution was performed for this final merge integration.
+Earlier results remain attached to their original source. The retained first-run
+hosted objects still carry the owner's no-delete instruction; cost exposure and
+unverified residuals remain recorded privately. No approval expiry was extended,
+no shared resource was deleted and no complete independent code-review verdict
+was invented.
 
 ## Live and publication gates
 

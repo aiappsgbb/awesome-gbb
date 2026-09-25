@@ -467,17 +467,21 @@ from the canonical
 >   [§ Preview appendix](#preview-appendix-source-code-deploy-still-preview)
 >   at the end of this file. Do not mix its guidance into the container
 >   (GA) path documented above it.
-> - **A2A protocol** and **Voice Live** are each preview, independently
->   of the container/Responses GA surface — see `foundry-toolbox` and
->   `foundry-voice-live` respectively for those contracts.
+> - **A2A 1.0** is GA; **A2A 0.3** remains preview. This does not imply
+>   that every hosted runtime can expose an incoming A2A endpoint.
+>   See `foundry-toolbox` for the protocol/client/access boundary.
+>   **Voice Live** retains its separately documented status in `foundry-voice-live`.
 > - **Hosted tracing** (distributed traces / gen_ai spans in App
 >   Insights) is partial GA / preview depending on the exact signal —
 >   see `foundry-observability` for the current split.
 > - **Agent guardrails** (content-safety toggle), **Optimizer**,
->   **Routines**, and **Memory** all remain preview surfaces layered on
+>   and **Memory** remain preview surfaces layered on
 >   top of the GA hosted-agent runtime — see their owning skills
->   (`foundry-routines`, `foundry-memory`) for details; this skill does
+>   (`foundry-memory`) for details; this skill does
 >   not restate their contracts.
+> - **Routines** is a GA service with a Python `beta.routines` client surface.
+>   See `foundry-routines` for client versions, trigger/delivery evidence and
+>   creator identity; it does not require a hosted-framework upgrade.
 >
 > Sources:
 > [container deploy](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent),
@@ -1995,8 +1999,11 @@ unique build stamp.
 
 ## Operation recovery
 
-Use the [response/effect custody contract](references/operation-recovery.md)
+**MUST:** use the [response/effect custody contract](references/operation-recovery.md)
 and canonical [`operation_evidence.py`](references/python/operation_evidence.py).
+The caller supplies a private durable recorder; failure to persist intent
+prevents dispatch. These standard-library primitives do not select a hosted
+profile or dispatch work.
 Request intent, dispatch, service completion, business effect, independent
 readback and client/browser delivery are separate facts. A client correlation
 ID is not a service-issued retrievable response ID.

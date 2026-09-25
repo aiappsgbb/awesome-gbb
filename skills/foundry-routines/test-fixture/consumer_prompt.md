@@ -3,6 +3,12 @@
 You are a developer on a customer team. Prove that the `foundry-routines`
 consumer contract works end-to-end against the CI Foundry project.
 
+**Coverage:** this legacy SDK 2.4 fixture proves creation, manual enqueue, list
+and deletion only. It does not certify timer/schedule delivery, run history,
+creator identity, event consent, private networking or agent business completion.
+Those are separate cases in `service_acceptance.md`; do not expand this run
+or upgrade its SDK implicitly.
+
 **This is an EXECUTION smoke, not a catalog inspection.** You MUST run every
 Bash code block below in order. Execute each fenced Bash block as its own Bash
 tool call. Do not combine multiple numbered steps into one command. Do NOT

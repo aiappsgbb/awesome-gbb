@@ -22,7 +22,9 @@ what you create in the scratch project. Specifically forbidden:
   evidence only — do NOT `cat`/`view` the file)
 - `scripts/tests/*.py` (test files)
 - `.github/workflows/*.yml` (workflow definitions)
-- `skills/foundry-mcp-aca/references/*` (audit trail, pin files)
+- `skills/foundry-mcp-aca/references/*` (audit trail, pin files), except
+  executing the prescribed `fixture_ownership.py` and sourcing
+  `fixture_cleanup_guard.sh`; do not inspect or rewrite either helper
 - `.github/skill-deps.yml`, `.github/ci-shared-preamble.md`
 - Any file under `skills/`, `docs/`, or `scripts/`
 
@@ -133,8 +135,9 @@ from state created by an unauthenticated invocation.
 `MCP_AUTH_APP_CLIENT_ID` is the client ID of the standing API audience;
 `AZURE_CLIENT_ID` is the distinct authorized caller. The provisioning block
 requires both and validates the complete policy before its first Azure write.
-Only the explicitly named `auth_config.py` and `run_resources.py` helpers may
-be executed from the repository; the catalog-inspection prohibition is unchanged.
+Only the explicitly named `auth_config.py`, `fixture_ownership.py` and
+`fixture_cleanup_guard.sh` helpers may be executed from the repository;
+the catalog-inspection prohibition is unchanged.
 
 Do NOT invent additional credential checks (no `az ad sp show`, no
 `az role assignment list`, no `az login --service-principal`). Do NOT
@@ -171,7 +174,8 @@ azd auth login \
   --client-id "$AZURE_CLIENT_ID" \
   --tenant-id "$AZURE_TENANT_ID" || FAIL "azd auth login failed"
 
-SUFFIX=$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)
+SMOKE_RUN_ID=$(uuidgen | tr 'A-Z' 'a-z')
+SUFFIX="${SMOKE_RUN_ID:0:8}"
 APP_NAME="ci-smoke-mcp-${SUFFIX}"
 PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"
 UAMI_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
@@ -181,6 +185,7 @@ ACR_SERVER="$ACR_LOGIN_SERVER"
   printf 'PROJECT_DIR=%s\n' "$PROJECT_DIR"
   printf 'UAMI_RESOURCE_ID=%s\n' "$UAMI_RESOURCE_ID"
   printf 'ACR_SERVER=%s\n' "$ACR_SERVER"
+  printf 'SMOKE_RUN_ID=%s\n' "$SMOKE_RUN_ID"
 } > "$STATE_TMP"
 mv "$STATE_TMP" "$STATE_FILE"
 trap - ERR
@@ -201,7 +206,7 @@ deployed FQDN and call the MCP HTTP endpoint with three JSON-RPC requests
 
 Copilot CLI runs each Bash tool invocation in a **fresh process** — env
 vars set in one call are NOT available in the next. Step 0 atomically
-publishes `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER`
+publishes `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, `ACR_SERVER` and `SMOKE_RUN_ID`
 only after authentication succeeds. The next Bash tool invocation is the
 single deterministic scaffold block in Step 2. It restores that state,
 creates the scaffold directories, and enters `$PROJECT_DIR` in the
@@ -238,7 +243,8 @@ preview-CLI flag drift) does NOT downgrade the smoke verdict. The
 7 days.
 
 Do NOT chain marker emission after cleanup. The smoke is the contract;
-cleanup is best-effort.
+cleanup is best-effort. It never authorizes deleting the shared resource group,
+CAE, registry, identity or unproven image/deployment artifacts.
 
 ---
 
@@ -250,7 +256,7 @@ cleanup is best-effort.
 source /tmp/foundry-mcp-aca-state.env || { printf 'SMOKE_RESULT=FAIL scaffold block failed\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; }
 set -Eeuo pipefail
 trap 'printf "SMOKE_RESULT=FAIL scaffold block failed\n" > /tmp/foundry-mcp-aca-smoke-result' ERR
-if [[ -z "${APP_NAME:-}" || -z "${PROJECT_DIR:-}" || -z "${UAMI_RESOURCE_ID:-}" || -z "${ACR_SERVER:-}" ]]; then printf 'SMOKE_RESULT=FAIL scaffold state incomplete\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; fi
+if [[ -z "${APP_NAME:-}" || -z "${PROJECT_DIR:-}" || -z "${UAMI_RESOURCE_ID:-}" || -z "${ACR_SERVER:-}" || -z "${SMOKE_RUN_ID:-}" ]]; then printf 'SMOKE_RESULT=FAIL scaffold state incomplete\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; fi
 mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
 cd "$PROJECT_DIR"
 cat > src/server.py <<'PY'
@@ -299,6 +305,9 @@ param location string = 'swedencentral'
 @description('Container App name (also used as ACR repo tag).')
 param appName string
 
+@description('Unique fixture run identity, bound to the pre-create inventory.')
+param smokeRunId string
+
 @description('Container image reference. Defaults to placeholder; azd deploy patches with the real image.')
 param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -320,7 +329,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   location: location
   tags: {
     'azd-service-name': appName
-    'ci-run-id': appName
+    'gbb-smoke-run': smokeRunId
   }
   identity: {
     type: 'UserAssigned'
@@ -387,7 +396,8 @@ cat > infra/main.parameters.json <<PARAMS
   "parameters": {
     "appName": { "value": "${APP_NAME}" },
     "uamiResourceId": { "value": "${UAMI_RESOURCE_ID}" },
-    "acrServer": { "value": "${ACR_SERVER}" }
+    "acrServer": { "value": "${ACR_SERVER}" },
+    "smokeRunId": { "value": "${SMOKE_RUN_ID}" }
   }
 }
 PARAMS
@@ -426,9 +436,20 @@ The exact provision block below creates the `azd` environment structure
 directly and then runs `azd up`. Do NOT use `azd env new` or `azd env set`;
 they require interactive prompts that fail in headless CI. The block sources
 the state that Step 0 publishes only after successful `azd auth login`, so
-provision cannot begin on an unauthenticated path. ACA's ARM resolver has a
-documented cross-resource index-rebuild race (`ManagedEnvironmentNotFound`,
-AGENTS.md § 9.7 Pattern 18), so `azd up` uses a bounded retry loop.
+provision cannot begin on an unauthenticated path.
+
+Before the first create, the ownership helper verifies the exact approved
+subscription/tenant and existing resource group, proves the exact app ID is
+absent, and persists a private inventory. The Bicep run tag binds a later
+readback to that intent; a name prefix/suffix alone is not ownership proof.
+The inventory survives a failed step and must never be reset to permit a retry.
+An existing app or inventory blocks deployment rather than being adopted.
+
+The EXIT guard is appended to the existing state file so every later Bash
+step restores it. Any intermediate failure reconciles the exact app ID,
+attempts only owned-app cleanup, and preserves the original failure status.
+An uncertain `azd up` is not automatically replayed, including on a resolver
+race: inspect the saved inventory and receipts first.
 
 ### Deterministic provision Bash block (MANDATORY)
 
@@ -459,17 +480,28 @@ echo "azd env created at $AZD_ENV_DIR"
 python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/auth_config.py" \
   --tenant "$AZURE_TENANT_ID" --audience "${MCP_AUTH_APP_CLIENT_ID:?API audience required}" \
   --caller "$AZURE_CLIENT_ID" > infra/mcp-authconfig.json
-export APP_NAME UAMI_RESOURCE_ID ACR_SERVER PROJECT_DIR
-python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/test-fixture/run_resources.py" prepare "$PROJECT_DIR"
-# Provision installs the auth child before deploy replaces the inert placeholder.
-# A failed up may have written resources; do not replay it or delete a shared RG.
-if ! azd up --no-prompt; then
-  printf 'SMOKE_RESULT=FAIL azd up failed; reconcile original deployment before retry\n' > /tmp/foundry-mcp-aca-smoke-result
-  python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/test-fixture/run_resources.py" record "$PROJECT_DIR" &&
-    python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/test-fixture/run_resources.py" cleanup "$PROJECT_DIR"
-  exit 1
+
+OWNERSHIP_HELPER="$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/fixture_ownership.py"
+OWNERSHIP_ARGS=(
+  --state /tmp/foundry-mcp-aca-ownership.json
+  --evidence /tmp/foundry-mcp-aca-smoke-evidence
+  --run-id "$SMOKE_RUN_ID"
+  --subscription "$AZURE_SUBSCRIPTION_ID" --tenant "$AZURE_TENANT_ID"
+  --resource-group rg-awesome-gbb-ci --app-name "$APP_NAME" --registry "$ACR_SERVER"
+)
+python3 "$OWNERSHIP_HELPER" prepare "${OWNERSHIP_ARGS[@]}"
+printf '\nsource "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/bash/fixture_cleanup_guard.sh"\n' \
+  >> /tmp/foundry-mcp-aca-state.env
+source "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/bash/fixture_cleanup_guard.sh"
+python3 "$OWNERSHIP_HELPER" start "${OWNERSHIP_ARGS[@]}"
+if azd up --no-prompt; then
+  python3 "$OWNERSHIP_HELPER" capture "${OWNERSHIP_ARGS[@]}"
+else
+  DEPLOY_STATUS=$?
+  printf 'SMOKE_RESULT=FAIL azd up exited %s; reconcile owned inventory\n' "$DEPLOY_STATUS" \
+    > /tmp/foundry-mcp-aca-smoke-result
+  exit "$DEPLOY_STATUS"
 fi
-python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/test-fixture/run_resources.py" record "$PROJECT_DIR"
 ```
 
 Total budget for this step: ~8-12 min (ACR remote build ~3-5 min + Bicep
@@ -698,8 +730,8 @@ echo "tools/call echo payload verified: $ECHO_TEXT"
 ```
 
 If all three calls (initialize, tools/list, tools/call) return 200 with
-conformant bodies, the hard gates have passed. Proceed IMMEDIATELY to
-Step 6.
+conformant bodies, the protocol gate has passed. Proceed to Step 5b; do not
+write a PASS marker before the required authorization checks.
 
 DO NOT use `azd ai mcp` preview-CLI subcommands or any other preview
 CLI that hides the HTTP wire protocol (Pattern 16). The HTTP endpoint
@@ -811,10 +843,26 @@ Both assertions must hold before the caller-exclusion test; do not skip it.
        --query clientId -o tsv --only-show-errors)
      test -n "$NEGATIVE_CALLER" && test "$NEGATIVE_CALLER" != "$AZURE_CLIENT_ID" || exit 1
      AUTH_URL="https://management.azure.com/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.App/containerApps/$APP_NAME/authConfigs/current?api-version=2025-01-01"
+     POLICY_RESTORE_ATTEMPTED=0
      restore_ci_policy() {
+       [ "$POLICY_RESTORE_ATTEMPTED" -eq 0 ] || return 1
+       POLICY_RESTORE_ATTEMPTED=1
        timeout 60 az rest --method put --url "$AUTH_URL" --body @/tmp/mcp-authconfig.json --only-show-errors >/dev/null
      }
-     trap restore_ci_policy EXIT
+     restore_policy_and_preserve_failure() {
+       local original_status=$?
+       trap - EXIT
+       if ! restore_ci_policy; then
+         echo "NOTE: auth policy restoration remains unverified" >&2
+       fi
+       if [ "$original_status" -ne 0 ]; then
+         if ! fixture_owned_cleanup; then
+           echo "NOTE: teardown incomplete; preserve original failure and ownership evidence" >&2
+         fi
+       fi
+       exit "$original_status"
+     }
+     trap restore_policy_and_preserve_failure EXIT
      python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/auth_config.py" \
        --tenant "$AZURE_TENANT_ID" --audience "$MCP_AUTH_APP_CLIENT_ID" \
        --caller "$NEGATIVE_CALLER" > /tmp/mcp-authconfig-negative.json
@@ -828,7 +876,7 @@ Both assertions must hold before the caller-exclusion test; do not skip it.
        sleep 10
      done
      restore_ci_policy || exit 1
-     trap - EXIT
+     trap fixture_owned_exit EXIT
      [ "$DENIED_CODE" = 403 ] || {
        printf 'SMOKE_RESULT=FAIL valid token excluded caller was not denied\n' > /tmp/foundry-mcp-aca-smoke-result
        exit 1
@@ -866,11 +914,12 @@ and `cmp -s` against `printf 'SMOKE_RESULT=PASS\n'` for byte-exact
 match (FAIL beats PASS):
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-aca-smoke-result
 ```
 
 If at ANY point in Steps 0-5 a hard gate failed (auth missing, `azd up`
-failed after retry exhaustion, MCP call returned non-200, JSON parse
+failed, MCP call returned non-200, JSON parse
 failed, missing `serverInfo.name`, missing tools), you MUST already have
 written `SMOKE_RESULT=FAIL <one-line reason>` to the same marker file
 inline at the failure site.
@@ -883,35 +932,42 @@ console. Do NOT decorate the marker line with backticks anywhere.
 
 ## Step 7 — Best-effort teardown (Pattern 25 — AFTER the marker)
 
-ONLY AFTER the PASS marker is written, attempt cleanup. The hard cap
-is **5 minutes** (Pattern 25). If teardown stalls past that, emit a
-single NOTE line to stdout and return — the smoke verdict stays PASS:
+ONLY AFTER the PASS marker is written, attempt the same exact-owned cleanup
+used on failure. CLI/HTTP calls and deletion polling are finite. Pattern 25
+keeps a proven functional PASS separate from cleanup status, never from its
+safety boundaries. Unknown/auth/network results are not absence.
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env || {
-  echo "NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days) (state file unavailable)"
+  echo "NOTE: teardown blocked: state unavailable; no deletion authorized"
   exit 0
 }
-TEARDOWN_NOTE="NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days)"
-if [[ -z "${PROJECT_DIR:-}" || ! -d "$PROJECT_DIR" ]] || ! cd "$PROJECT_DIR"; then
-  echo "$TEARDOWN_NOTE (project directory unavailable)"
-  exit 0
-fi
-set -o pipefail
-export PROJECT_DIR
-if ! timeout 300 python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/test-fixture/run_resources.py" cleanup "$PROJECT_DIR"; then
-  echo "$TEARDOWN_NOTE"
+if ! fixture_owned_cleanup; then
+  echo "NOTE: teardown incomplete; inspect the exported ownership inventory and exact residuals"
 fi
 ```
 
-Never run `azd down` on the shared CI resource group. The helper requires
-pre-write absence plus native creation/binding receipts, deletes only this
-run's app and exact image digest, and verifies absence. Shared identities,
-registry, environment, resource group and the standing audience are retained.
+Never invoke group-scoped teardown against the shared CI resource group.
+The canonical helper requires pre-write absence and exact run ownership,
+deletes only the run's app, and verifies absence. Image and deployment artifacts
+remain explicit residuals unless their immutable ownership is separately proven.
+Shared identities, registry, environment, resource group and standing audience
+are retained.
 
 The marker stays `SMOKE_RESULT=PASS`. Cleanup failure does NOT downgrade
 the smoke verdict. Do NOT re-write the marker file in this step under
 any circumstance.
+
+The helper deletes only the app whose pre-create absence, exact ID and run tag
+match the inventory. It never deletes a resource group, CAE, registry, UAMI,
+repository, image or deployment record. `azd` does not supply an immutable
+per-image custody receipt here, so observed app image references and possible
+build/deployment artifacts are exported as explicit residuals for the owner;
+do not claim those artifacts were deleted or delete an entire shared repository.
+The authoritative `/tmp/foundry-mcp-aca-ownership.json` is not reset on retries.
+The raw inventory is owner-readable on the runner. A scope-redacted snapshot
+with a scope hash is written to the existing smoke-evidence artifact path;
+it is not an executable replacement for the private inventory.
 
 ---
 
@@ -920,7 +976,8 @@ any circumstance.
 
 - Missing CI env var (Pattern 11 — workflow bug)
 - `azd auth login` non-zero (workflow OIDC bug)
-- `azd up` failed (original deployment outcome must be reconciled)
+- `azd up` failed (reconcile the exact owned inventory before another attempt —
+  infra or skill bug)
 - MCP `initialize` returned non-200 or missing `result.serverInfo.name`
 - MCP `initialize` did not return a `Mcp-Session-Id` header (empty session ID)
 - MCP `initialize` did not return a negotiated `protocolVersion` or

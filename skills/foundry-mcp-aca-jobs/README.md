@@ -62,8 +62,8 @@ absence and never deletes the standing database, identities or RG.
 
 See `SKILL.md`'s **Deploy with azd** section and the fixture for exact inputs.
 The local candidate is not evidence that the selected CI identities currently
-have every prerequisite; live audience/binding/cost/cleanup approval remains
-separate.
+have every prerequisite; verify live audience/binding/access and cleanup on
+the approved standing environment before reporting acceptance.
 
 For producer-side MCP hosting without an external worker, use
 [`foundry-mcp-aca`](../foundry-mcp-aca/SKILL.md). For the canonical ACA Job

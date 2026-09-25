@@ -406,6 +406,27 @@ Azure Functions use HTTP Streamable transport by default.
 
 Build a custom Docker image with your MCP tools and deploy as ACA.
 
+**CI fixture cleanup:** shared infrastructure is never the teardown target.
+The fixture uses
+[`fixture_ownership.py`](references/python/fixture_ownership.py) to record
+pre-create absence and a unique run tag, capture the exact app receipt, and
+delete only that app after a fresh ownership/context check. The
+[`failure guard`](references/bash/fixture_cleanup_guard.sh) runs cleanup on
+intermediate shell failures without masking their exit status. Unknown creates
+are reconciled by exact ID, not replayed. Image/deployment artifacts without
+proven custody remain explicit inventory residuals; a prefix is not ownership
+and a shared registry/repository must not be deleted to clean one image.
+The cleanup fix has offline transport/shell coverage. A scoped manual check
+on 2026-09-25 exercised the real helper with one new UUID-tagged MCR-placeholder
+app through `azd provision`: the app was removed, and the separately proven
+owned deployment-history record was deleted without touching shared resources.
+No image was built or pushed. An unclassified post-delete 404 was not treated
+as absence; a later typed ARM read confirmed removal. The helper now records
+and re-observes that ambiguous post-delete response within its existing bound,
+without reissuing DELETE. This is not proof of the full MCP `azd up`/auth flow;
+the revised fixture still needs that live run before release. Pattern 25
+separates functional CI results from cleanup reporting, not from safety.
+
 ### Example: Playwright MCP on ACA
 
 For browser automation in Foundry (hosted agent containers cannot run browsers locally):

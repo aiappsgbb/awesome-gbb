@@ -1,11 +1,11 @@
 ---
 name: foundry-routines
 description: >
-  Schedule and dispatch Foundry agent invocations via Routines: cron,
+  Schedule and dispatch Foundry agent invocations via Routines GA: cron,
   timer, GitHub issue and supported custom events. Covers the
   azure-ai-projects 2.4.x `client.beta.routines` lifecycle, azd run
   history and declarative azure.yaml, Responses/Invocations actions,
-  preview headers and dispatch identity boundaries.
+  client/header compatibility and isolated SDK creator-identity configuration.
   USE FOR: routines, scheduled agent, timer trigger, recurring
   trigger, cron schedule, agent automation, run history,
   dispatch_async, Foundry-Features header, RoutineDispatchPayload,
@@ -16,7 +16,7 @@ description: >
   Functions / Logic Apps), agent runtime (use foundry-prompt-agents
   or foundry-hosted-agents).
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Microsoft Foundry Routines — Reference Guide
@@ -29,10 +29,14 @@ stores a run record you can inspect later. Routines remove the need
 to host your own scheduler (Functions, Logic Apps, cron jobs)
 around an agent that already lives in Foundry.
 
-> **Status: preview.** Send the
-> `Foundry-Features: Routines=V1Preview` header on every REST call
-> (the SDK adds it automatically). Availability and identity constraints
-> are service-version dependent — see § 2 and § 7.
+> **Service status: GA; Python surface: `client.beta.routines`.** The SDK
+> namespace is not the service maturity label. Existing SDK 2.4 consumers are
+> preserved. SDK 2.6.1 injects `Foundry-Features: Routines=V2Preview`
+> through its beta-operation proxy; the existing 2.4 path uses `Routines=V1Preview`.
+> Current Learn REST examples omit a feature header.
+> Do not infer header retirement from GA or remove it from older validated
+> clients without testing that exact service/client path. See § 7 for the
+> additive creator-identity path and § 11 for acceptance scope.
 
 The SDK examples remain the existing consumer path. For imperative CLI
 and source-controlled deployment, use the
@@ -86,7 +90,7 @@ skill automates its invocation.
    `foundry-prompt-agents`) or a hosted agent (see
    `foundry-hosted-agents`) both qualify. Pure prompt-only agents
    without an agent identity are rejected by the service when
-   bound to a routine action.
+   bound to a routine action. Workflow agents are not supported.
 
 3. **Foundry User role** (or higher) on the project scope. (The
    Foundry RBAC roles were recently renamed — Foundry User /
@@ -100,11 +104,13 @@ skill automates its invocation.
    pip install "azure-ai-projects~=2.4.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
    ```
 
-   Routines surface under `client.beta.routines` requires
+   The existing Routines surface under `client.beta.routines` requires
    `azure-ai-projects` 2.2.0 or later (preview). Earlier versions
    raise `AttributeError` on `client.beta.routines`. The explicit
    `httpx` pin works around an `azure-ai-projects` 2.4.0 packaging gap:
-   the SDK imports `httpx` directly but does not declare it.
+   the SDK imports `httpx` directly but does not declare it. Typed creator
+   authorization was added in 2.6.0 and is documented/tested offline here on
+   2.6.1 in a separate management environment; do not upgrade the agent runtime.
 
 5. **Authentication** via `DefaultAzureCredential` for SDK calls
    or `az account get-access-token --resource https://ai.azure.com`
@@ -267,11 +273,13 @@ downstream-service correlation handle (e.g. the Responses API
 response ID).
 
 An enqueue acknowledgment is not agent completion. Inspect the correlated
-run before reporting that the agent succeeded.
+run for delivery status, then obtain independent downstream evidence before
+reporting that the agent's business task succeeded.
 
 > **REST equivalent:** `POST {endpoint}/routines/{name}:dispatch_async`
-> with the same payload, plus the `Foundry-Features: Routines=V1Preview`
-> header. The endpoint suffix is `:dispatch_async` (note the colon),
+> with `?api-version=v1` and the same payload. Preserve the compatibility
+> header for the existing validated REST path described above. The endpoint
+> suffix is `:dispatch_async` (note the colon),
 > not `/dispatch`.
 
 ---
@@ -329,13 +337,18 @@ Useful `RoutineRun` fields:
 | Field | Meaning |
 |---|---|
 | `id` | Run record ID |
-| `phase` | `queued` / `running` / `completed` / `failed` |
-| `attempt_source` | `schedule_delivery` or `manual_dispatch` |
-| `trigger_type` | `schedule` or `timer` |
+| `phase` | Delivery lifecycle `queued` / `dispatching` / `completed` / `failed`; not a business-result assertion |
+| `attempt_source` | `schedule_delivery`, `timer_delivery`, `event_fire`, `manual_dispatch` or `queued_dispatch`; correlate manual work by `dispatch_id`, not one source label |
+| `trigger_type` | `schedule`, `timer`, `github_issue` or `custom` |
 | `started_at` / `ended_at` | UTC timestamps |
 | `dispatch_id` | Matches the `dispatch_id` from a manual `dispatch()` call |
 | `response_id` | Correlation handle for the downstream response; it does not guarantee that the current caller can retrieve its body |
 | `error_type` / `error_message` | Populated when `phase == "failed"` |
+
+Manual `dispatch()` can produce a `queued_dispatch` history row even when it
+completes successfully. A poll that requires `attempt_source == "manual_dispatch"`
+will falsely time out. Match the returned `dispatch_id` and inspect terminal
+phase; record the actual source instead of replacing it with an expected label.
 
 ### CLI, portal & REST alternatives
 
@@ -344,8 +357,8 @@ Useful `RoutineRun` fields:
   [azd reference](references/azd-routines.md#imperative-lifecycle).
 - The Foundry portal exposes a run table on each routine's detail
   page with the same fields, plus links to the full agent response.
-- REST: `GET {endpoint}/routines/{name}/runs` with the
-  `Foundry-Features: Routines=V1Preview` header.
+- REST: `GET {endpoint}/routines/{name}/runs?api-version=v1`; retain the
+  compatibility header on the existing validated client path.
 
 **Completion and response readback are different checks.** In manual
 acceptance, the run reached `phase=completed`, `status=Finished`, with no
@@ -371,13 +384,43 @@ granting downstream RBAC. The project MI grants used by the existing CI
 fixture are fixture preconditions, not a universal identity model.
 
 The current service also documents **creator identity** as an explicit
-REST create-time opt-in for delegated tools. It means the routine creator,
+create-time opt-in for delegated tools. It means the routine creator,
 not the agent creator, a later editor or an arbitrary dispatch user.
 Changing that setting requires recreation; an update does not change it.
-The current SDK/azd models use the default agent identity. See
+SDK 2.6.0 added `authorization=RoutineAuthorization(identity="creator")`;
+the existing 2.4 examples and fixture still use the default agent identity.
+The current Learn example selects SDK 2.6.1 for typed configuration. See
 [dispatch identity](https://learn.microsoft.com/azure/foundry/agents/how-to/use-routines#choose-a-dispatch-identity)
-before adopting the REST opt-in; it is not covered by this skill's SDK
-lifecycle fixture.
+before adopting the opt-in; it is not covered by this skill's existing SDK
+lifecycle fixture. A service principal creating a routine does not acquire a
+human user's delegated permissions simply by selecting `creator`.
+
+### Typed creator-identity management
+
+**MUST:** use [`references/creator_routine.py`](references/creator_routine.py)
+for disabled creation and saved-identity readback. It takes an existing project
+client; it performs no login, consent, dispatch or role grants. Choose a fresh,
+uniquely owned name, never a shared routine. The existence check is not an
+atomic create-only operation; do not run concurrent authors against that name.
+Authorization is ignored on update, so this helper refuses an existing name.
+In the inspected 2.6.1 SDK, `Routine` lacks a typed `authorization` property,
+despite Learn's `saved_routine.authorization.identity` example. The canonical
+helper checks the preserved wire mapping from `saved.as_dict()` instead and
+fails if it is missing, malformed or not `creator`. This is an offline-verified
+SDK shape, not proof that a live service has stored the requested identity.
+
+Install [`tests/requirements-management.txt`](tests/requirements-management.txt)
+in an isolated management environment only. `azure-ai-projects~=2.6.1`
+requires OpenAI 3, unlike the existing 2.4 consumer line. No MAF or hosting
+upgrade is required or authorized by this recipe. Keep the existing pin file
+and SDK lifecycle fixture on 2.4.
+
+Readback of `authorization.identity="creator"` and `enabled=False` proves only
+stored configuration. Before enabling, validate the intended creator's access
+and consent for each tool, then a real trigger and downstream operation. Do not
+silently fall back to agent identity on failure. Recreating under a different
+principal changes the creator; use an approved replacement/cutover and verified
+retirement rather than attempting an in-place authorization switch.
 
 ### Governance notes
 
@@ -393,6 +436,9 @@ lifecycle fixture.
 ---
 
 ## 8 · Preview limitations (source alignment: September 2026)
+
+This retained heading is a historical link target. These are service/client
+constraints, not a claim that the Routines service remains preview.
 
 1. **One trigger and one action per routine.** Multi-trigger or
    multi-action shapes are rejected by the service.
@@ -419,9 +465,11 @@ lifecycle fixture.
    `dispatch()` caps at 32,768 characters.
 10. **`agent_name` is bounded.** ≤ 256 characters on both action
     types.
-11. **`Foundry-Features: Routines=V1Preview` header is required on
-    every REST call.** The Python SDK injects it automatically; raw
-    REST clients must set it explicitly.
+11. **Header compatibility is client-specific.** The Python 2.6.1 beta proxy
+    injects `Foundry-Features: Routines=V2Preview`, not the 2.4 client's
+    `Routines=V1Preview`. Current REST docs omit it. Header-free live acceptance
+    and older-client migration remain distinct
+    checks, not consequences of the service GA announcement.
 
 ---
 
@@ -449,3 +497,41 @@ lifecycle fixture.
   - `foundry-prompt-agents` — author the agent a routine will invoke
   - `foundry-hosted-agents` — same, for container-hosted agents
   - `foundry-observability` — observe routine runs via Foundry traces
+
+## 11 · Acceptance by surface
+
+The existing consumer fixture checks SDK 2.4 creation, manual enqueue,
+list and deletion. It deliberately does not wait for a scheduled fire or
+inspect downstream output. A PASS cannot certify those omitted behaviors.
+The earlier manual run-history observation in § 6 remains valid history, not
+new evidence for this candidate.
+
+Use the [additional acceptance cases](test-fixture/service_acceptance.md)
+after explicit resource, cost, identity and cleanup approval. Require manual
+dispatch correlation **and** a real timer/schedule delivery, separately.
+GitHub/Teams delivery, creator consent/revocation, private-network use and
+downstream business completion each need their own evidence. Record source,
+dispatch/run IDs and exact service/client versions without publishing live
+inventory or tokens. A completed delivery record alone is insufficient.
+
+Version 1.2.0 adds GA/client maturity separation, typed creator management and
+these acceptance cases.
+
+**2026-09-25 scoped live acceptance:** isolated SDK 2.6.1 ran the canonical
+creator helper, verified disabled state and the saved creator wire mapping,
+then exercised a separate creator-authorized one-shot timer. Its history
+reported `timer_delivery` and completed before any manual dispatch. A subsequent
+manual dispatch correlated by ID to a distinct completed `queued_dispatch` row.
+The initial test's stricter source-label filter timed out; inspecting that same
+dispatch proved it had completed, without redispatching or creating replacements.
+Both original responses were retrieved through the **agent-bound** OpenAI client
+and matched their distinct synthetic inputs. Project-level retrieval returned
+404; no permission or identity change was used to work around it.
+
+Both routines, the disposable prompt agent and both observed response records
+were removed with authenticated absence readback. No conversation IDs were
+returned. This proves the creator configuration and these two delivery/output
+paths on a public-access project. It does **not** prove delegated tool consent,
+GitHub/Teams events, a recurring schedule, private networking or header-free
+REST. The earlier September 13 readback limitation remains separate historical
+evidence; the newer result does not establish the cause of that earlier 404.

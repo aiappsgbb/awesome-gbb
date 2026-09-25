@@ -2,6 +2,10 @@
 
 This reference extends `foundry-routines`; it does not replace its SDK/REST
 consumer contract or require installation of another skill catalog.
+The service is GA; the routines extension and Python `beta.routines` surface
+retain their own client maturity. This reference preserves the existing
+agent-identity CLI path. Typed creator authorization uses the isolated SDK
+reference in SKILL.md, not an invented CLI authorization flag.
 
 ## Setup and target
 
@@ -91,6 +95,7 @@ azd ai routine run list daily-summary --top 20 --output json -p "$FOUNDRY_PROJEC
 `action.input`. Match the input to the chosen action protocol and the target
 agent's expected payload. Inspect run history using the returned dispatch ID:
 enqueueing a run does not prove that the agent completed successfully.
+Even a completed delivery record is not a downstream business-result check.
 
 Imperative `create` refuses to overwrite an existing routine unless `--force`
 is explicitly supplied. Inspect the existing definition before approving an

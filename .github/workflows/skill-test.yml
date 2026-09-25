@@ -111,6 +111,18 @@ jobs:
           "$RUNNER_TEMP/doctor-tests/bin/pip" install --quiet -r skills/copilot-doctor/requirements-test.txt
           "$RUNNER_TEMP/doctor-tests/bin/python" -m unittest discover -s skills/copilot-doctor/tests -p test_mcp.py -v
 
+      - name: Run isolated Foundry service contract tests
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/foundry-service-tests"
+          "$RUNNER_TEMP/foundry-service-tests/bin/pip" install --quiet \
+            -r skills/foundry-toolbox/tests/requirements-management.txt \
+            -r skills/foundry-routines/tests/requirements-management.txt \
+            -r skills/foundry-skill-catalog/tests/requirements.txt
+          "$RUNNER_TEMP/foundry-service-tests/bin/python" -m unittest discover -s skills/foundry-toolbox/tests -v
+          "$RUNNER_TEMP/foundry-service-tests/bin/python" -m unittest discover -s skills/foundry-routines/tests -v
+          "$RUNNER_TEMP/foundry-service-tests/bin/python" -m unittest discover -s skills/foundry-skill-catalog/tests -v
+
   # No Azure credentials: three incompatible local SDK cohorts remain isolated.
   delegated-auth-local:
     runs-on: ubuntu-latest

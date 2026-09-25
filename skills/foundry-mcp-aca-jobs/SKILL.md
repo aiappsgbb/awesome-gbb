@@ -366,7 +366,8 @@ reconstruct evidence. Missing native creation provenance requires owner
 disposition, not broader cleanup. Standing database/identities/grants/storage/
 registry/RG are never cleanup targets. Hosted agents/build images are separate
 run receipts; verify their supported deletion or obtain explicit bounded
-retention. This path is locally validated, not yet authorized or tested live.
+retention. This path has local contract coverage; live CI reuse acceptance is
+required on the integrated source before release.
 The staged `.dockerignore` and `.azdignore` allow only Dockerfile, dependency
 files and `app/`; private preflight/ownership captures and `.azure` are not
 build/upload inputs. Native creation timestamps and exact image metadata

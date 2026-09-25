@@ -34,14 +34,16 @@ class CallerAclTests(unittest.TestCase):
     def test_fixture_restores_positive_acl_after_negative_probe(self):
         text = (ROOT / "skills/foundry-mcp-aca/test-fixture/consumer_prompt.md").read_text()
         self.assertIn("--caller \"$AZURE_CLIENT_ID\"", text)
-        self.assertIn("trap restore_ci_policy EXIT", text)
+        self.assertIn("trap restore_policy_and_preserve_failure EXIT", text)
+        self.assertIn("trap fixture_owned_exit EXIT", text)
+        self.assertIn('exit "$original_status"', text)
         self.assertIn('test "$NEGATIVE_CALLER" != "$AZURE_CLIENT_ID"', text)
         self.assertIn('[ "$DENIED_CODE" = 403 ]', text)
         self.assertIn('[ "$RESTORED_CODE" = 200 ]', text)
         self.assertIn("CALLER_ACL_RESTORED_200", text)
         self.assertIn("properties: loadJsonContent('mcp-authconfig.json').properties", text)
         provision = text.split("### Deterministic provision Bash block (MANDATORY)", 1)[1]
-        self.assertLess(provision.index("--caller \"$AZURE_CLIENT_ID\""), provision.index("if ! azd up"))
+        self.assertLess(provision.index("--caller \"$AZURE_CLIENT_ID\""), provision.index("if azd up"))
         self.assertNotIn("until azd up", text)
         bicep = (ROOT / "skills/foundry-mcp-aca/references/bicep/mcp-aca-auth.bicep").read_text()
         self.assertIn("@minLength(1)\nparam allowedCallerClientIds array", bicep)
