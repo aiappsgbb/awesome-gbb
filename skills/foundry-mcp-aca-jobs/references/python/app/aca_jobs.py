@@ -6,6 +6,8 @@ Source of truth for the prose example in ../../../SKILL.md § Architecture and s
 from __future__ import annotations
 
 import asyncio
+import re
+from urllib.parse import parse_qsl, unquote, urlsplit
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping, Protocol, runtime_checkable
@@ -48,6 +50,25 @@ def _status_code(error: BaseException) -> int | None:
         return status
     response = getattr(error, "response", None)
     return getattr(response, "status_code", None)
+
+
+def _same_arm_operation_scope(location: str, request_url: str) -> bool:
+    try:
+        target, source = urlsplit(location), urlsplit(request_url)
+        parts, expected = unquote(target.path).split("/"), unquote(source.path).split("/")
+        return (
+            target.scheme == source.scheme == "https"
+            and target.hostname == source.hostname == "management.azure.com"
+            and target.port in (None, 443) and source.port in (None, 443)
+            and target.username is None and target.password is None and not target.fragment
+            and len(parts) >= 3 and len(expected) >= 3
+            and parts[1].lower() == expected[1].lower() == "subscriptions"
+            and parts[2].lower() == expected[2].lower()
+            and not any(part in (".", "..") for part in parts)
+            and all(key == "api-version" for key, _ in parse_qsl(target.query, keep_blank_values=True))
+        )
+    except ValueError:
+        return False
 
 
 def _raw_value(value: Any, name: str, default: Any = None) -> Any:
@@ -267,8 +288,9 @@ class AcaJobsClient(Protocol):
 
 
 class AcaJobsAdapter:
-    def __init__(self, client: ContainerAppsAPIClient) -> None:
+    def __init__(self, client: ContainerAppsAPIClient, *, record_operation=None) -> None:
         self._client = client
+        self._record_operation = record_operation
 
     @staticmethod
     def _translate_client_error(error: Exception, *, phase: str) -> None:
@@ -277,6 +299,27 @@ class AcaJobsAdapter:
         _translate_http_error(error, phase=phase)
 
     async def start(self, policy: JobPolicy, owner_scope: str, task_id: str) -> AcaExecution:
+        if self._record_operation is None:
+            raise PublicError("OPERATION_CUSTODY_REQUIRED", "a durable operation recorder is required before start")
+        await self._record_operation(owner_scope, task_id, {"phase": "intent", "effect": "UNKNOWN"})
+        loop = asyncio.get_running_loop()
+
+        def observe(pipeline_response):
+            response = pipeline_response.http_response
+            observation = {"phase": "response-received", "status_code": response.status_code}
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            request_id = headers.get("x-ms-request-id")
+            if isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", request_id):
+                observation["request_id"] = request_id
+            location = headers.get("azure-asyncoperation") or headers.get("location")
+            if location:
+                if _same_arm_operation_scope(location, pipeline_response.http_request.url):
+                    observation["operation_url"] = location
+                else:
+                    observation["operation_location"] = "UNVERIFIED_PRIVATE_CAPTURE_REQUIRED"
+            asyncio.run_coroutine_threadsafe(
+                self._record_operation(owner_scope, task_id, observation), loop,
+            ).result(timeout=30)
         try:
             job = await asyncio.to_thread(self._client.jobs.get, policy.resource_group, policy.job_name)
         except HttpResponseError as error:
@@ -287,19 +330,37 @@ class AcaJobsAdapter:
         template = _execution_template_for_start(job, policy, owner_scope, task_id)
 
         try:
-            poller = await asyncio.to_thread(self._client.jobs.begin_start, policy.resource_group, policy.job_name, template)
+            poller = await asyncio.to_thread(
+                self._client.jobs.begin_start, policy.resource_group, policy.job_name, template,
+                raw_response_hook=observe, polling=False,
+            )
         except HttpResponseError as error:
             _translate_http_error(error, phase="start")
         except Exception as error:
             self._translate_client_error(error, phase="start")
 
         try:
-            response = await asyncio.to_thread(poller.result)
+            response = await asyncio.to_thread(poller.result, timeout=60)
         except HttpResponseError as error:
             _translate_http_error(error, phase="start")
         except Exception as error:
             self._translate_client_error(error, phase="start")
 
+        if response is None:
+            _raise_public_error("ARM_STATUS_UNAVAILABLE")
+        execution_name = _raw_value(response, "name")
+        await self._record_operation(owner_scope, task_id, {
+            "phase": "start-response",
+            "execution_name": execution_name if isinstance(execution_name, str) and re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,256}", execution_name,
+            ) else None,
+            "status": _execution_status(response),
+        })
+        if _raw_value(response, "name") is None and _raw_value(response, "id") is None:
+            await self._record_operation(owner_scope, task_id, {
+                "phase": "accepted-unbound", "classification": "PENDING_OPERATION", "effect": "UNKNOWN",
+            })
+            _raise_public_error("ARM_STATUS_UNAVAILABLE")
         execution_id = _execution_id_from_response(response)
         status = _execution_status(response)
         if status == "Unknown" and _raw_value(_raw_value(response, "properties", response), "status") is None:
@@ -340,13 +401,14 @@ class AcaJobsAdapter:
                 policy.resource_group,
                 policy.job_name,
                 execution_id,
+                polling=False,
             )
         except HttpResponseError as error:
             _translate_http_error(error, phase="stop")
         except Exception as error:
             self._translate_client_error(error, phase="stop")
         try:
-            await asyncio.to_thread(poller.result)
+            await asyncio.to_thread(poller.result, timeout=60)
         except HttpResponseError as error:
             _translate_http_error(error, phase="stop")
         except Exception as error:

@@ -17,6 +17,14 @@ import uuid
 
 
 SKILLS = ("foundry-mcp-auth", "foundry-mcp-aca-jobs")
+CI_REUSE_INPUTS = (
+    "MCP_ACA_JOBS_RESOURCE_GROUP_ID", "MCP_ACA_JOBS_ENVIRONMENT_ID",
+    "MCP_ACA_JOBS_APP_IDENTITY_ID", "MCP_ACA_JOBS_WORKER_IDENTITY_ID",
+    "MCP_ACA_JOBS_COSMOS_ACCOUNT_ID", "MCP_ACA_JOBS_COSMOS_DATABASE",
+    "MCP_ACA_JOBS_STORAGE_ACCOUNT_ID", "MCP_ACA_JOBS_REGISTRY_ID",
+    "MCP_ACA_JOBS_CALLER_PRINCIPAL_ID", "AZURE_TENANT_ID",
+    "AZURE_SUBSCRIPTION_ID", "AZURE_CLIENT_ID", "ACR_LOGIN_SERVER",
+)
 
 
 class PrerequisiteError(Exception):
@@ -86,6 +94,10 @@ def validate(skill: str, environ: dict[str, str]) -> None:
             raise PrerequisiteError(f"INVALID_IDENTIFIER {name}")
         for name in ("MCP_ACA_JOBS_COSMOS_ENDPOINT", "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"):
             https_endpoint(required(environ, name), name)
+        for name in CI_REUSE_INPUTS:
+            required(environ, name)
+        if required(environ, "MCP_ACA_JOBS_CI_REUSE") != "existing":
+            raise PrerequisiteError("EXPLICIT_CI_REUSE_REQUIRED")
 
 
 def main(argv: list[str], environ: dict[str, str]) -> int:

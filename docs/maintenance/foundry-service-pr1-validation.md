@@ -122,6 +122,27 @@ Existing event/CLI compatibility guidance was not expanded into new certified
 recipes. Skills and Prompt Toolbox integration keep their preview terms;
 experimental native MCP provider support is not a GA runtime claim.
 
+## Leased Jobs compatibility slice
+
+The minimal Jobs reuse prerequisite is integrated from the owner's committed
+source `67a0409f8203f2994962379a7d737926e6dc9d73`, not by merging the unrelated
+branch. It retains package/runtime pins and the single accepted MCP ACA cleanup
+path. The slice includes the standing-resource fixture and its five runtime
+modules, a standard-library operation-evidence helper, scoped preflight inputs
+and their focused tests.
+
+Jobs 2.0 exposes `effectState` separately from lifecycle status and does not
+replay uncertain starts or expired worker claims without durable output.
+The explicit CI reuse graph preserves the standing RG, identities, roles and
+database. Preflight requires their exact existing bindings and access; it cannot
+provision replacements or broaden permissions. Its temporary app/Job/control
+container/blob containers and image digests have separate custody checks.
+
+The new Jobs path has passed local contract tests, **not yet live acceptance**.
+The integrated CI run must prove actual reuse execution and cleanup. Static
+compilation, previously configured secrets and the incremental-CI rollout's
+own canaries are not proof of that path.
+
 ## Offline and CI boundaries
 
 The unchanged five applicable pin scripts passed through the official isolated

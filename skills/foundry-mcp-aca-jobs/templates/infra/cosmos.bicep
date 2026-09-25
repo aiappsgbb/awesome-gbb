@@ -7,6 +7,11 @@ param name string
 @description('Use an existing Cosmos DB account instead of creating a new one.')
 param useExistingAccount bool = false
 
+@description('Explicit CI reuse: preserve the existing database; create only the selected temporary control container.')
+param useExistingDatabase bool = false
+
+assert existingDatabaseRequiresExistingAccount = !useExistingDatabase || useExistingAccount
+
 @description('Existing Cosmos DB account endpoint for brownfield CI mode.')
 param existingAccountEndpoint string = ''
 
@@ -63,7 +68,7 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15
   }
 }
 
-resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' = if (useExistingAccount) {
+resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' = if (useExistingAccount && !useExistingDatabase) {
   parent: existingAccount
   name: databaseName
   properties: {
@@ -100,8 +105,7 @@ resource tasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@20
 }
 
 resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount) {
-  parent: brownfieldDatabase
-  name: containerName
+  name: '${name}/${databaseName}/${containerName}'
   properties: {
     resource: {
       id: containerName
@@ -123,6 +127,7 @@ resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
       }
     }
   }
+  dependsOn: [brownfieldDatabase]
 }
 
 var effectiveEndpoint = useExistingAccount ? existingAccountEndpoint : account!.properties.documentEndpoint

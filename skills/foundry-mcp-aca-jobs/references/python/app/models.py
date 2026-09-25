@@ -264,6 +264,8 @@ class TaskRecord(BaseModel):
     callback_alias: str = Field(alias="callbackAlias", min_length=1)
     lifecycle_state: LifecycleState = Field(default=LifecycleState.ACCEPTED, alias="lifecycleState")
     aca_execution_id: str | None = Field(default=None, alias="acaExecutionId")
+    native_operation: dict[str, Any] | None = Field(default=None, alias="nativeOperation")
+    effect_state: Literal["UNKNOWN", "VERIFIED", "NOT_DISPATCHED"] = Field(default="UNKNOWN", alias="effectState")
     result_url: HttpUrl | None = Field(default=None, alias="resultUrl")
     error_code: str | None = Field(default=None, alias="errorCode")
     callback_delivery_state: CallbackDeliveryState = Field(
@@ -353,6 +355,7 @@ class TaskRecord(BaseModel):
                     result={
                         "content": [{"type": "text", "text": "RESULT_REFERENCE_MISSING"}],
                         "isError": True,
+                        "structuredContent": {"effectState": self.effect_state},
                     },
                     **task_fields,
                 )
@@ -361,6 +364,7 @@ class TaskRecord(BaseModel):
                 "structuredContent": {
                     "status": "Succeeded",
                     "resultUrl": str(self.result_url),
+                    "effectState": self.effect_state,
                 },
                 "isError": False,
             }
@@ -370,6 +374,7 @@ class TaskRecord(BaseModel):
             result = {
                 "content": [{"type": "text", "text": self.error_code or "ACA_EXECUTION_FAILED"}],
                 "isError": True,
+                "structuredContent": {"effectState": self.effect_state},
             }
             return GetTaskResult(status="completed", result=result, **task_fields)
 

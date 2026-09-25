@@ -30,6 +30,15 @@ JOBS_ENV = {
     "MCP_AUTH_APP_CLIENT_ID": "11111111-2222-4333-8444-555555555555",
     "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.test:443/",
     "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL": "https://storage.example.test",
+    "MCP_ACA_JOBS_CI_REUSE": "existing",
+    **{key: "standing-synthetic-value" for key in (
+        "MCP_ACA_JOBS_RESOURCE_GROUP_ID", "MCP_ACA_JOBS_ENVIRONMENT_ID",
+        "MCP_ACA_JOBS_APP_IDENTITY_ID", "MCP_ACA_JOBS_WORKER_IDENTITY_ID",
+        "MCP_ACA_JOBS_COSMOS_ACCOUNT_ID", "MCP_ACA_JOBS_COSMOS_DATABASE",
+        "MCP_ACA_JOBS_STORAGE_ACCOUNT_ID", "MCP_ACA_JOBS_REGISTRY_ID",
+        "MCP_ACA_JOBS_CALLER_PRINCIPAL_ID", "AZURE_TENANT_ID",
+        "AZURE_SUBSCRIPTION_ID", "AZURE_CLIENT_ID", "ACR_LOGIN_SERVER",
+    )},
 }
 CONDITION = (
     "matrix.skill == 'foundry-mcp-auth' || "
@@ -39,6 +48,8 @@ SUCCESS = "NATIVE_CI_PREFLIGHT=PASS CONFIG_ONLY\n"
 
 
 def secret(name: str) -> str:
+    if name == "MCP_ACA_JOBS_CI_REUSE":
+        return "existing"
     return "${{ secrets." + name + " }}"
 
 

@@ -1688,6 +1688,24 @@ class FoundryMcpAcaJobsWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(current.result_url), output.urls[self._task_path(str(self.task.task_id))])
         self.assertEqual(current.callback_delivery_state, self.CallbackDeliveryState.DELIVERED)
 
+    async def test_expired_worker_without_output_does_not_repeat_uncertain_effect(self) -> None:
+        worker, store, handler, callback_sender, output = await self._build_worker()
+        claimed = self.task.model_copy(update={
+            "lifecycle_state": self.LifecycleState.RUNNING,
+            "worker_claimed_at": self.fixed_now - timedelta(minutes=10),
+            "worker_claim_token": "prior-claim",
+            "worker_claim_expires_at": self.fixed_now - timedelta(seconds=1),
+        })
+        await self._seed_task(store, claimed)
+        with self.assertRaisesRegex(Exception, "prior worker effect is unknown"):
+            await worker.run("scope-a", str(self.task.task_id))
+        self.assertEqual(handler.calls, [])
+        self.assertEqual(output.write_calls, [])
+        self.assertEqual(callback_sender.calls, [])
+        current = await store.get("scope-a", str(self.task.task_id))
+        self.assertEqual(current.worker_claim_token, "prior-claim")
+        self.assertEqual(current.effect_state, "UNKNOWN")
+
     async def test_existing_output_recovery_skips_handler(self) -> None:
         worker, store, handler, callback_sender, output = await self._build_worker()
         self.task.model_copy(update={"lifecycle_state": self.LifecycleState.RUNNING})

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from azure.mgmt.appcontainers.models import JobExecution
 
@@ -98,7 +98,9 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         cls.JobPolicy = cls.models.JobPolicy
         cls.PublicError = cls.models.PublicError
         cls.AcaExecution = cls.module.AcaExecution
-        cls.AcaJobsAdapter = cls.module.AcaJobsAdapter
+        cls.AcaJobsAdapter = staticmethod(lambda client: cls.module.AcaJobsAdapter(
+            client, record_operation=AsyncMock(),
+        ))
 
     def _policy(self) -> Any:
         return self.JobPolicy(
@@ -108,6 +110,88 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
             image_digest="example.azurecr.io/worker@sha256:" + "a" * 64,
             command=["python", "-m", "app.job_worker"],
         )
+
+    async def test_start_without_durable_recorder_is_rejected_before_azure(self):
+        client = MagicMock()
+        adapter = self.module.AcaJobsAdapter(client)
+        with self.assertRaises(self.PublicError) as error:
+            await adapter.start(self._policy(), "owner", "task")
+        self.assertEqual(error.exception.code, "OPERATION_CUSTODY_REQUIRED")
+        client.jobs.get.assert_not_called()
+        client.jobs.begin_start.assert_not_called()
+
+    async def test_native_receipt_is_saved_before_malformed_start_result(self):
+        import json
+        from azure.core.credentials import AccessToken
+        from azure.core.pipeline.transport import HttpResponse, HttpTransport
+        records = []
+        async def record(owner, task, observation):
+            records.append(observation)
+        job = {
+            "properties": {"template": {"containers": [{
+                "name": "worker", "image": self._policy().image_digest,
+                "command": ["python", "-m", "app.job_worker"],
+            }]}}
+        }
+        class Response(HttpResponse):
+            def __init__(self, request, body, status=200):
+                super().__init__(request, None)
+                self.status_code = status
+                self.headers = {"content-type": "application/json", "x-ms-request-id": "request-one"}
+                if status == 202:
+                    self.headers["azure-asyncoperation"] = (
+                        "https://MANAGEMENT.AZURE.COM:443/subscriptions/EXAMPLE/providers/Microsoft.App/"
+                        "locations/region/operations/one?api-version=2025-01-01"
+                    )
+                self.content_type = "application/json"
+                self._body = json.dumps(body).encode()
+            def body(self):
+                return self._body
+            def read(self):
+                return self._body
+            def iter_bytes(self):
+                yield self._body
+            def iter_raw(self):
+                yield self._body
+            def json(self):
+                return json.loads(self._body)
+        class Transport(HttpTransport):
+            def __init__(self):
+                self.calls = []
+            def open(self):
+                pass
+            def close(self):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                self.close()
+            def send(self, request, **kwargs):
+                self.calls.append((request.method, request.url))
+                if request.method == "GET" and "/jobs/job-worker?" in request.url:
+                    return Response(request, job)
+                if request.method == "POST" and "/jobs/job-worker/start?" in request.url:
+                    return Response(request, {"properties": {"status": "Processing"}}, 202)
+                raise AssertionError("Unexpected dispatch, including hidden LRO polling")
+        credential = SimpleNamespace(get_token=lambda *a, **k: AccessToken("offline-token", 9999999999))
+        transport = Transport()
+        with ContainerAppsAPIClient(credential, "example", transport=transport, retry_total=0) as client:
+            adapter = self.module.AcaJobsAdapter(client, record_operation=record)
+            with self.assertRaises(self.PublicError) as error:
+                await adapter.start(self._policy(), "owner", "task")
+        self.assertEqual(error.exception.code, "ARM_STATUS_UNAVAILABLE")
+        self.assertEqual(records[0]["phase"], "intent")
+        self.assertEqual(records[1]["request_id"], "request-one")
+        self.assertIn("operation_url", records[1])
+        self.assertEqual(records[-1]["classification"], "PENDING_OPERATION")
+        self.assertEqual(sum(method == "POST" for method, _ in transport.calls), 1)
+        self.assertGreaterEqual(sum(method == "GET" for method, _ in transport.calls), 1)
+        self.assertFalse(self.module._same_arm_operation_scope(
+            "https://management.azure.com/subscriptions/other/operations/one", transport.calls[1][1]))
+        self.assertFalse(self.module._same_arm_operation_scope(
+            "https://management.azure.com/subscriptions/example/%2e%2e/other", transport.calls[1][1]))
+        self.assertFalse(self.module._same_arm_operation_scope(
+            "https://untrusted.example/subscriptions/example/operations/one", transport.calls[1][1]))
 
     def _job(self) -> SimpleNamespace:
         container = SimpleNamespace(
@@ -716,7 +800,7 @@ class FoundryMcpAcaJobsAzureTests(unittest.IsolatedAsyncioTestCase):
         client.jobs.begin_stop_execution.return_value = stop_poller
         stopped = await adapter.stop(policy, "execution-1")
         self.assertIsNone(stopped)
-        client.jobs.begin_stop_execution.assert_called_once_with(policy.resource_group, policy.job_name, "execution-1")
+        client.jobs.begin_stop_execution.assert_called_once_with(policy.resource_group, policy.job_name, "execution-1", polling=False)
         self.assertEqual(stop_poller.result.call_count, 1)
 
         for status_code, expected_code in [

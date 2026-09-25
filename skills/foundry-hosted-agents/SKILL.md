@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.4.2"
+  version: "2.5.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -423,6 +423,17 @@ from the canonical
 [`references/python/pyproject.toml`](references/python/pyproject.toml).
 
 ---
+
+## Operation recovery
+
+**MUST:** use [`operation_evidence.py`](references/python/operation_evidence.py)
+for durable request intent and allowlisted response identity before application
+parsing. The caller supplies a private durable recorder; failure to persist
+intent prevents dispatch. Save service IDs and transport metadata before
+interpreting the body. A completed response is not verified business effect.
+Timeouts, malformed responses and missing readback leave the original outcome
+unknown: reconcile that operation, never replay it under a new ID. These
+standard-library primitives do not select a hosted profile or dispatch work.
 
 ## Container GA status and adjacent preview surfaces
 

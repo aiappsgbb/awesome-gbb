@@ -22,6 +22,15 @@ already has **Storage Blob Data Contributor** at the
 read, and delete its UUID-scoped blobs and containers. **Do NOT re-grant** this
 role in the fixture: RBAC propagation would race the smoke timeout.
 
+**Explicit standing-resource CI route.** This fixture uses existing resource
+group, app/worker identities and Cosmos database. It never provisions a child
+resource group, identity, role definition or role assignment. The executor's
+Cosmos access is read-only; app/worker identities write their run-specific
+control container. Storage and registry permissions must already cover the
+temporary objects. Missing/mismatched permission is a blocker, not a grant.
+Public endpoint reachability is NOT inferred from ARM reads; preserve any
+SecuredByPerimeter configuration and fail on an unreachable data path.
+
 ## Step 0 — auth context and deterministic failure contract
 
 The workflow has installed `az`, `azd`, `uv`, `curl`, `jq`, `python3`, and
@@ -107,16 +116,19 @@ SUFFIX="$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)"
 SCRATCH_ROOT="$GITHUB_WORKSPACE/.scratch/ci-smoke-mcp-jobs-$SUFFIX"
 PROJECT_DIR="$SCRATCH_ROOT/skills/foundry-mcp-aca-jobs/templates"
 CANONICAL_JOB_DIR="$SCRATCH_ROOT/skills/azd-patterns/references/bicep"
-CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"
 AZD_ENV_NAME="ci-smoke-mcp-jobs-$SUFFIX"
 APP_NAME="ci-smoke-mcp-jobs-$SUFFIX"
 JOB_NAME="ci-smoke-mcp-jobs-worker-$SUFFIX"
 HOSTED_NAME="ci-smoke-mcp-jobs-hosted-$SUFFIX"
 ACR_NAME="${ACR_LOGIN_SERVER%%.*}"
-MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="rg-awesome-gbb-ci"
-MCP_ACA_JOBS_ENVIRONMENT_NAME="cae-awesome-gbb-ci"
+export MCP_ACA_JOBS_CI_REUSE=existing
+test -n "${MCP_ACA_JOBS_RESOURCE_GROUP_ID:-}" || fail "missing standing resource group ID"
+test -n "${MCP_ACA_JOBS_COSMOS_DATABASE:-}" || fail "missing standing Cosmos database"
+test -n "${MCP_ACA_JOBS_ENVIRONMENT_ID:-}" || fail "missing standing environment ID"
+CHILD_RG="${MCP_ACA_JOBS_RESOURCE_GROUP_ID##*/}"
+MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="$CHILD_RG"
+MCP_ACA_JOBS_ENVIRONMENT_NAME="${MCP_ACA_JOBS_ENVIRONMENT_ID##*/}"
 MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME="mcpjobs-$SUFFIX"
-MCP_ACA_JOBS_COSMOS_DATABASE="ci-smoke-mcp-jobs-db-$SUFFIX"
 MCP_ACA_JOBS_COSMOS_CONTAINER="ci-smoke-mcp-jobs-task-$SUFFIX"
 MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"]).hostname or "").split(".")[0])'
@@ -124,19 +136,7 @@ MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$(
 MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$(
   python3 -c 'import os,urllib.parse; print((urllib.parse.urlsplit(os.environ["MCP_ACA_JOBS_COSMOS_ENDPOINT"]).hostname or "").split(".")[0])'
 )"
-CI_CALLER_PRINCIPAL_IDS="$(
-  az identity list \
-    --query "[?clientId=='$AZURE_CLIENT_ID'].principalId" \
-    --output json
-)" || fail "CI caller identity ARM lookup failed"
-jq -e \
-  'type == "array" and length == 1 and
-   (.[0] | type == "string" and length > 0)' \
-  <<<"$CI_CALLER_PRINCIPAL_IDS" >/dev/null ||
-  fail "CI caller identity ARM lookup did not return exactly one nonempty principalId"
-MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$(
-  jq -r '.[0]' <<<"$CI_CALLER_PRINCIPAL_IDS"
-)"
+test -n "${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID:-}" || fail "missing standing executor principal"
 export SUFFIX SCRATCH_ROOT PROJECT_DIR CANONICAL_JOB_DIR
 export CHILD_RG AZD_ENV_NAME APP_NAME JOB_NAME HOSTED_NAME
 export ACR_NAME MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP
@@ -147,44 +147,36 @@ export MCP_ACA_JOBS_CALLER_PRINCIPAL_ID
 
 [[ "$SCRATCH_ROOT" == "$GITHUB_WORKSPACE/.scratch/"* ]] ||
   fail "scratch workspace escaped GITHUB_WORKSPACE/.scratch"
-[[ "$CHILD_RG" == rg-foundry-mcp-aca-jobs-ci-* ]] ||
-  fail "child resource group name is invalid"
+# CHILD_RG is retained as the fixture's workload-scope variable, not a new RG.
 
 ## Step 2 — deterministic scaffold
 
 mkdir -p "$PROJECT_DIR" "$CANONICAL_JOB_DIR"
 cp skills/foundry-mcp-aca-jobs/templates/azure.yaml "$PROJECT_DIR/azure.yaml"
 cp skills/foundry-mcp-aca-jobs/templates/Dockerfile "$PROJECT_DIR/Dockerfile"
+cp skills/foundry-mcp-aca-jobs/templates/.dockerignore "$PROJECT_DIR/.dockerignore"
+cp skills/foundry-mcp-aca-jobs/templates/.azdignore "$PROJECT_DIR/.azdignore"
 cp skills/foundry-mcp-aca-jobs/templates/pyproject.toml "$PROJECT_DIR/pyproject.toml"
 cp skills/foundry-mcp-aca-jobs/templates/uv.lock "$PROJECT_DIR/uv.lock"
 cp skills/foundry-mcp-aca-jobs/templates/bicepconfig.json "$PROJECT_DIR/bicepconfig.json"
 cp -R skills/foundry-mcp-aca-jobs/templates/infra "$PROJECT_DIR/infra"
 cp skills/azd-patterns/references/bicep/aca-job.bicep "$CANONICAL_JOB_DIR/aca-job.bicep"
 cp -R skills/foundry-mcp-aca-jobs/references/python/app "$PROJECT_DIR/app"
+cp skills/foundry-hosted-agents/references/python/operation_evidence.py "$PROJECT_DIR/operation_evidence.py"
 mkdir -p "$PROJECT_DIR/.azure/$AZD_ENV_NAME"
 
-python3 - "$PROJECT_DIR/infra/main.parameters.json" "$SUFFIX" <<'PY'
-import json
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-document = json.loads(path.read_text(encoding="utf-8"))
-document["parameters"]["cosmosUseExistingAccount"]["value"] = True
-document["parameters"]["resourceGroupTags"]["value"] = {
-    "cleanup": "true",
-    "created-by": "ci-smoke",
-    "ci-smoke-suffix": sys.argv[2],
-}
-path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-PY
+# Authenticated GET/list preflight validates exact standing bindings, runtime
+# writers vs executor reader, and absence of every run target BEFORE any write.
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" prepare \
+  --project "$PROJECT_DIR" --run-id "$SUFFIX" || fail "standing reuse preflight blocked"
+CI_LOCATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["parameters"]["location"]["value"])' "$PROJECT_DIR/infra/main.parameters.json")"
 
 cat > "$PROJECT_DIR/.azure/config.json" <<EOF
 {"defaultEnvironment":"$AZD_ENV_NAME"}
 EOF
 cat > "$PROJECT_DIR/.azure/$AZD_ENV_NAME/.env" <<EOF
 AZURE_ENV_NAME="$AZD_ENV_NAME"
-AZURE_LOCATION="swedencentral"
+AZURE_LOCATION="$CI_LOCATION"
 AZURE_RESOURCE_GROUP="$CHILD_RG"
 AZURE_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
 AZURE_TENANT_ID="$AZURE_TENANT_ID"
@@ -195,10 +187,10 @@ MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="$MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP"
 MCP_ACA_JOBS_ENVIRONMENT_NAME="$MCP_ACA_JOBS_ENVIRONMENT_NAME"
 MCP_ACA_JOBS_APP_NAME="$APP_NAME"
 MCP_ACA_JOBS_JOB_NAME="$JOB_NAME"
-MCP_ACA_JOBS_STORAGE_ACCOUNT_URL="${MCP_ACA_JOBS_STORAGE_ACCOUNT_URL%/}"
+MCP_ACA_JOBS_STORAGE_ACCOUNT_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["storage_endpoint"])' "$PROJECT_DIR/ci-reuse.json")"
 MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME="$MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME"
 MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME="$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME"
-MCP_ACA_JOBS_COSMOS_ENDPOINT="${MCP_ACA_JOBS_COSMOS_ENDPOINT%/}"
+MCP_ACA_JOBS_COSMOS_ENDPOINT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cosmos_endpoint"])' "$PROJECT_DIR/ci-reuse.json")"
 MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME="$MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME"
 MCP_ACA_JOBS_COSMOS_DATABASE="$MCP_ACA_JOBS_COSMOS_DATABASE"
 MCP_ACA_JOBS_COSMOS_CONTAINER="$MCP_ACA_JOBS_COSMOS_CONTAINER"
@@ -208,7 +200,7 @@ FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_PROJECT_ENDPOINT"
 AZURE_AI_PROJECT_ID="$AZURE_AI_PROJECT_ID"
 AZURE_AI_MODEL_DEPLOYMENT_NAME="$FOUNDRY_MODEL_DEPLOYMENT"
 AZURE_CONTAINER_REGISTRY_ENDPOINT="$ACR_LOGIN_SERVER"
-SERVICE_MCP_IMAGE_NAME="$ACR_LOGIN_SERVER/mcp/service:ci-smoke-$SUFFIX"
+SERVICE_MCP_IMAGE_NAME="$ACR_LOGIN_SERVER/ci-smoke-mcp-jobs-$SUFFIX:run"
 EOF
 
 (
@@ -236,6 +228,8 @@ echo RBAC_PROVIDER_ACTIONS_MATCH
 
 azd ext install microsoft.foundry ||
   fail "microsoft.foundry extension install failed"
+azd ext install azure.ai.agents --version 1.0.0-beta.14 --force ||
+  fail "supported hosted consumer install failed"
 extensions_json="$(azd ext list --output json)"
 jq -e \
   '[.[] | select(.id == "microsoft.foundry") | .installedVersion |
@@ -252,6 +246,8 @@ jq -e \
   cd "$PROJECT_DIR"
   AZURE_ENV_NAME="$AZD_ENV_NAME" azd up --no-prompt
 ) || fail "azd up failed"
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" record-image \
+  --project "$PROJECT_DIR" || fail "exact run image not recorded"
 
 MCP_FQDN="$(az containerapp show \
   --resource-group "$CHILD_RG" \
@@ -321,8 +317,10 @@ def payload(result):
     raise AssertionError("tool result has no structured object")
 
 
-def result_url(value, storage_host):
-    assert set(value) == {"status", "resultUrl"}
+def result_url(value, storage_host, *, callback=False):
+    assert set(value) == ({"status", "resultUrl"} if callback else {"status", "resultUrl", "effectState"})
+    if not callback:
+        assert value["effectState"] == "UNKNOWN"
     assert value["status"] == "Succeeded"
     parsed = urlsplit(value["resultUrl"])
     assert parsed.scheme == "https" and parsed.hostname == storage_host
@@ -444,6 +442,7 @@ async def main():
     assert result_url(
         {"status": callback["status"], "resultUrl": callback["resultUrl"]},
         urlsplit(storage_url).hostname or "",
+        callback=True,
     ) == direct_url
     await credential.close()
 
@@ -470,6 +469,7 @@ import time
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import MCPTool, PromptAgentDefinition
 from azure.identity import DefaultAzureCredential
+from infra.scripts.ci_reuse import invoke_once
 
 
 def redact_error(value):
@@ -513,26 +513,18 @@ try:
     response = None
     last_error = None
     marker = "PROMPT_AGENT_MCP_PASS"
-    for _ in range(12):
-        try:
-            response = openai.responses.create(
-                conversation=conversation.id,
-                extra_body={
-                    "agent_reference": {"name": name, "type": "agent_reference"}
-                },
-                input=(
-                    "Call start_aca_job with jobType short-job, idempotencyKey "
-                    f"prompt-{os.environ['SUFFIX']}, inputRef "
-                    f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
-                    f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
-                    f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
-                    "Then call get_aca_job_status with the returned taskId."
-                ),
-            )
-            break
-        except Exception as exc:
-            last_error = exc
-            time.sleep(10)
+    response = invoke_once(openai, "prompt", {
+        "conversation": conversation.id,
+        "extra_body": {"agent_reference": {"name": name, "type": "agent_reference"}},
+        "input": (
+            "Call start_aca_job with jobType short-job, idempotencyKey "
+            f"prompt-{os.environ['SUFFIX']}, inputRef "
+            f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
+            f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
+            f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
+            "Then call get_aca_job_status with the returned taskId."
+        ),
+    })
     last_error_repr = redact_error(repr(last_error))
     assert response is not None, f"invoke never succeeded: {last_error_repr}"
     calls = [
@@ -573,6 +565,15 @@ cp skills/foundry-hosted-agents/references/docker/Dockerfile "$HOSTED_DIR/Docker
 cp skills/foundry-hosted-agents/references/python/pyproject.toml "$HOSTED_DIR/pyproject.toml"
 printf 'Use the ACA Jobs MCP tools exactly as instructed.\n' \
   > "$HOSTED_DIR/copilot-instructions.md"
+cat > "$HOSTED_DIR/.dockerignore" <<'IGNORE'
+**
+!Dockerfile
+!container.py
+!pyproject.toml
+!uv.lock
+!copilot-instructions.md
+IGNORE
+cp "$HOSTED_DIR/.dockerignore" "$HOSTED_DIR/.azdignore"
 
 cat > "$HOSTED_DIR/container.py" <<'PY'
 import os
@@ -631,6 +632,10 @@ services:
     host: azure.ai.agent
     project: .
     language: docker
+    docker:
+      registry: $ACR_LOGIN_SERVER
+      image: $HOSTED_NAME
+      tag: run
     uses:
       - ai-project
     kind: hosted
@@ -659,15 +664,41 @@ MCP_SERVER_URL="$MCP_URL"
 MCP_AUTH_AUDIENCE="api://$MCP_AUTH_APP_CLIENT_ID/.default"
 EOF
 (
+cd "$PROJECT_DIR"
+uv run --frozen --group fixture python - <<'PY'
+import os
+from pathlib import Path
+from azure.ai.projects import AIProjectClient
+from azure.core.exceptions import ResourceNotFoundError
+from azure.identity import DefaultAzureCredential
+from infra.scripts.ci_reuse import write_new
+
+with DefaultAzureCredential() as credential, AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential,
+    retry_total=0, connection_timeout=10, read_timeout=30,
+) as project:
+    try:
+        project.agents.get(agent_name=os.environ["HOSTED_NAME"])
+    except ResourceNotFoundError:
+        write_new(Path("ci-hosted-intent.json"), {"name": os.environ["HOSTED_NAME"], "absent_before": True})
+    else:
+        raise RuntimeError("Hosted target already exists; do not adopt or delete it")
+PY
+) || fail "hosted ownership preflight failed"
+(
   cd "$HOSTED_DIR"
   AZURE_ENV_NAME="$AZD_ENV_NAME" azd deploy "$HOSTED_NAME" --no-prompt
 ) || fail "hosted agent deploy failed"
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" record-image --hosted-image \
+  --project "$PROJECT_DIR" || fail "hosted run image not recorded"
 
 (
 cd "$PROJECT_DIR"
 uv run --frozen --group fixture python - <<'PY'
 import os
 import time
+from pathlib import Path
+from infra.scripts.ci_reuse import write_new
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
@@ -684,6 +715,12 @@ try:
         )
         status = version.get("status") if isinstance(version, dict) else version.status
         if status == "active":
+            assert version.name == os.environ["HOSTED_NAME"] and str(version.version) == "1"
+            assert version.created_at is not None, "Missing native creation identity"
+            write_new(Path("ci-hosted-owned.json"), {
+                "name": os.environ["HOSTED_NAME"], "version": str(version.version),
+                "created_at": str(version.created_at),
+            })
             print("HOSTED_AGENT_ACTIVE")
             break
         if status == "failed":
@@ -862,6 +899,7 @@ project = AIProjectClient(
     endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
 )
 name = os.environ["HOSTED_NAME"]
+from infra.scripts.ci_reuse import invoke_once
 
 project.agents.update_details(
     agent_name=name,
@@ -882,23 +920,17 @@ openai = project.get_openai_client(agent_name=name)
 response = None
 last_error = None
 marker = "HOSTED_AGENT_MCP_PASS"
-for _ in range(12):
-    try:
-        response = openai.responses.create(
-            input=(
-                "Call start_aca_job with jobType short-job, idempotencyKey "
-                f"hosted-{os.environ['SUFFIX']}, inputRef "
-                f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
-                f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
-                f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
-                "Then call get_aca_job_status with the returned taskId."
-            ),
-            stream=False,
-        )
-        break
-    except Exception as exc:
-        last_error = exc
-        time.sleep(10)
+response = invoke_once(openai, "hosted", {
+    "input": (
+        "Call start_aca_job with jobType short-job, idempotencyKey "
+        f"hosted-{os.environ['SUFFIX']}, inputRef "
+        f"{os.environ['MCP_ACA_JOBS_STORAGE_ACCOUNT_URL'].rstrip('/')}/"
+        f"{os.environ['MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME']}/inputs/"
+        f"{marker}-{os.environ['SUFFIX']}.json, and callbackAlias ops. "
+        "Then call get_aca_job_status with the returned taskId."
+    ),
+    "stream": False,
+})
 last_error_repr = redact_error(repr(last_error))
 assert response is not None, f"invoke never succeeded: {last_error_repr}"
 calls = [
@@ -925,30 +957,14 @@ print("HOSTED_AGENT_MCP_CALLS_VALID")
 PY
 )
 
-## Step 7 — marker-first teardown
+## Step 7 — targeted run-owned cleanup
 
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-aca-jobs-smoke-result
-trap - ERR
-set +e
-
-# Five-minute best-effort targeted cleanup. The PASS marker is authoritative.
-timeout 300 bash -c '
-  az group delete --name "$CHILD_RG" --yes --no-wait
-  az cosmosdb sql database delete \
-    --resource-group "$MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP" \
-    --account-name "$MCP_ACA_JOBS_COSMOS_ACCOUNT_NAME" \
-    --name "$MCP_ACA_JOBS_COSMOS_DATABASE" --yes
-  for container in \
-    "$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME" \
-    "$MCP_ACA_JOBS_OUTPUT_CONTAINER_NAME-callbacks"
-  do
-    az storage container delete \
-      --account-name "$MCP_ACA_JOBS_STORAGE_ACCOUNT_NAME" \
-      --name "$container" --auth-mode login
-  done
-  az acr repository delete --name "$ACR_NAME" \
-    --image "mcp/service:ci-smoke-$SUFFIX" --yes
-' || echo "NOTE best-effort Azure cleanup incomplete; PASS marker retained"
+# Only the exact five ARM objects with recorded pre-write absence and matching
+# creation observations are cleanup candidates. This NEVER deletes the standing
+# database/account/storage/identity/RG/grants. The current live approval must
+# cover their deletion. An unverified residual is a cleanup blocker, not PASS.
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" cleanup \
+  --project "$PROJECT_DIR" --execute || fail "run-owned cleanup incomplete"
 
 (
 cd "$PROJECT_DIR"
@@ -956,27 +972,55 @@ uv run --frozen --group fixture python - <<'PY'
 import os
 
 from azure.ai.projects import AIProjectClient
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 
-try:
-    credential = DefaultAzureCredential()
-    project = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
-    )
-    project.agents.delete(agent_name=os.environ["HOSTED_NAME"], force=True)
-    project.close()
-    credential.close()
-except Exception as exc:
-    print(f"NOTE hosted-agent delete best effort: {type(exc).__name__}")
+with DefaultAzureCredential() as credential, AIProjectClient(
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential,
+    retry_total=0, connection_timeout=10, read_timeout=30,
+) as project:
+    from pathlib import Path
+    from infra.scripts.ci_reuse import load, write_new
+    intent = load(Path("ci-hosted-intent.json"))
+    owned = load(Path("ci-hosted-owned.json"))
+    assert intent == {"name": os.environ["HOSTED_NAME"], "absent_before": True}
+    assert owned["name"] == intent["name"]
+    version = project.agents.get_version(agent_name=owned["name"], agent_version=owned["version"])
+    assert str(version.created_at) == owned["created_at"], "Hosted resource was replaced"
+    project.agents.delete_version(owned["name"], owned["version"])
+    try:
+        project.agents.get_version(agent_name=owned["name"], agent_version=owned["version"])
+    except ResourceNotFoundError:
+        write_new(Path("ci-hosted-deleted.json"), {"name": owned["name"], "version": owned["version"], "absent": True})
+        print("HOSTED_AGENT_ABSENCE_VERIFIED")
+    else:
+        raise RuntimeError("Owned hosted agent still present; cleanup incomplete")
 PY
-) || true
+) || fail "hosted-agent cleanup not verified"
 
-rm -rf "$SCRATCH_ROOT"
-echo "CLEANUP_BEST_EFFORT_COMPLETE"
+# Preserve ci-run-owned.json/ci-created.json and all original operation receipts.
+# Native hosted agent and the exact ACR image digest require their own recorded
+# create provenance and absence verification; do not delete shared repositories
+# or reconstruct logs by redeploying. Report retained image/agent residuals to
+# the owner; require explicit bounded retention before declaring lifecycle done.
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" cleanup-image \
+  --project "$PROJECT_DIR" --execute || fail "run image cleanup not verified"
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" cleanup-image --hosted-image \
+  --project "$PROJECT_DIR" --execute || fail "hosted image cleanup not verified"
+printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-aca-jobs-smoke-result
+echo "CI_REUSE_RESOURCE_CLEANUP_VERIFIED"
 ```
 
 No repository writes outside `.scratch/`. The brownfield Cosmos
-CI mode creates only the UUID database/container in the standing account.
+CI mode preserves the standing database and creates only its UUID control
+container plus two UUID blob containers and the app/job. Identity, grants and
+network configuration remain unchanged. On failure before postprovision records
+creation, run only `ci_reuse.py record` to reconcile the exact partial deployment
+before authorized cleanup; missing creation evidence blocks deletion. Never
+rerun provisioning to obtain ownership evidence.
 The callback payload must contain the exact four fields shown in Step 4.
-PASS is written before best-effort targeted cleanup, and cleanup failure must
-never replace it.
+PASS is written only after exact run-resource and shared worker-image deletion
+has been verified, including the separately recorded hosted build image.
+If cleanup cannot be proved, stop and obtain explicit bounded retention rather
+than writing PASS. On interruption retain the original
+ownership manifests and report residuals, never delete the shared RG/database.
