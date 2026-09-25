@@ -126,7 +126,9 @@ class CIModelProviderTests(unittest.TestCase):
                 steps = workflow["jobs"][job]["steps"]
                 token = next(i for i, s in enumerate(steps) if s.get("name") == "Get Foundry bearer token")
                 selector = next(i for i, s in enumerate(steps) if s.get("name") == "Configure Copilot model provider")
-                consumer = next(i for i, s in enumerate(steps) if "copilot -p" in s.get("run", "") or "copilot -s -p" in s.get("run", ""))
+                consumer = next(i for i, s in enumerate(steps)
+                                if "copilot -p" in s.get("run", "")
+                                or "scripts/probe-ci-driver.py" in s.get("run", ""))
                 self.assertLess(token, selector)
                 self.assertLess(selector, consumer)
                 self.assertEqual(steps[selector]["run"], "python3 scripts/configure-ci-model-provider.py")
@@ -134,15 +136,17 @@ class CIModelProviderTests(unittest.TestCase):
                     self.assertIn("agent-framework-harness", steps[selector]["if"])
                     self.assertIn("foundry-agentops", steps[selector]["env"]["CI_MODEL_PROVIDER_EXEMPTION"])
 
-    def test_canary_checks_both_routes_without_repository_cutover(self):
+    def test_canary_checks_active_route_and_allows_explicit_both_without_cutover(self):
         workflow = yaml.load(
             (ROOT / ".github/workflows/copilot-cli-foundry-auth-smoke.yml").read_text(),
             Loader=yaml.BaseLoader,
         )
-        self.assertEqual(
-            workflow["jobs"]["smoke"]["strategy"]["matrix"]["provider"],
-            ["foundry", "citadel"],
-        )
+        matrix = workflow["jobs"]["smoke"]["strategy"]["matrix"]["provider"]
+        self.assertIn("inputs.provider == 'both'", matrix)
+        self.assertIn("vars.CI_MODEL_PROVIDER || 'foundry'", matrix)
+        self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["provider"]["default"], "active")
+        self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["provider"]["options"],
+                         ["active", "foundry", "citadel", "both"])
         selector = next(
             s for s in workflow["jobs"]["smoke"]["steps"]
             if s.get("name") == "Configure Copilot model provider"
