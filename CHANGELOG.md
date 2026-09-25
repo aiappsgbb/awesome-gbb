@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased — #518 deployment and recovery contract candidate
+
+Local implementation only; live acceptance, adoption and release remain pending.
+
+- [`foundry-hosted-agents`](skills/foundry-hosted-agents/SKILL.md) MAJOR **3.0.0**:
+  versioned consumer profile, early capabilities, pre-parse response custody,
+  adoption hashes and bounded recovery; existing MAF dependency cohort retained.
+- [`foundry-mcp-aca`](skills/foundry-mcp-aca/SKILL.md) MAJOR **2.0.0**,
+  [`foundry-mcp-aca-jobs`](skills/foundry-mcp-aca-jobs/SKILL.md) MAJOR **2.0.0**,
+  [`foundry-teams-bot`](skills/foundry-teams-bot/SKILL.md) MAJOR **2.0.0**,
+  [`foundry-mcp-auth`](skills/foundry-mcp-auth/SKILL.md) MAJOR **2.0.0**, and
+  [`ghcp-hosted-agents`](skills/ghcp-hosted-agents/SKILL.md) MAJOR **3.0.0**:
+  explicit operation custody and no replay based on an uncertain client result.
+  Candidate delegated-auth release gates remain unchanged.
+- [`foundry-iq`](skills/foundry-iq/SKILL.md) MAJOR **2.0.0**: replace custom
+  reserved `FOUNDRY_IQ_*` environment names with `APP_IQ_*`.
+- Contract-reference PATCH updates: `azd-patterns` **1.6.1**,
+  `foundry-network-runbook` **1.1.1**, `foundry-caphost-lifecycle` **2.0.2**,
+  `foundry-vnet-deploy` **1.3.2**, `foundry-rbac-audit` **1.0.2**,
+  [`foundry-evals`](skills/foundry-evals/SKILL.md) **1.4.2**,
+  `foundry-doc-vision-speech` **1.2.10**, `foundry-observability` **1.2.5**,
+  and `azure-sre-agent` **1.0.2**.
+- The #509 tenant bootstrap and manual fixture remain byte-identical.
+  Downstream installation/adoption is not performed by this change.
+- The Jobs candidate adds an explicit resource-group-scoped CI reuse entrypoint
+  and authenticated standing-input gate. Existing identities/database/RG and
+  grants are never provisioned or cleaned up by that path; exact temporary
+  objects and image receipts drive verified cleanup. Ordinary consumer
+  provisioning remains the default. Live execution is still separately gated.
+
 ## Unreleased — progress-guard recovery clarifications
 
 - [`progress-guard`](skills/progress-guard/SKILL.md) PATCH **1.2.0 → 1.2.1**:

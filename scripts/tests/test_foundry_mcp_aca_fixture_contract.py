@@ -203,6 +203,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   location: location
   tags: {
     'azd-service-name': appName
+    'ci-run-id': appName
   }
   identity: {
     type: 'UserAssigned'
@@ -255,6 +256,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output fqdn string = app.properties.configuration.ingress.fqdn
 output appName string = app.name
+
+resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
+  parent: app
+  name: 'current'
+  properties: loadJsonContent('mcp-authconfig.json').properties
+}
 """
 EXPECTED_GUARD_SENTENCES = (
     "Invoke only the prescribed Bash block in Step 2 to author the six "
@@ -916,11 +923,9 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
             spec = spec_path.read_text(encoding="utf-8")
             self.assertNotIn("2025-08-05", spec, "Spec has wrong year — should be 2026")
 
-    # --- Issue #7: PATCH version ---
-
-    def test_skill_version_is_patch(self) -> None:
-        """Delegated-auth clarification keeps the existing 1.2 contract."""
-        self.assertIn('version: "1.2.6"', self.skill)
+    def test_skill_version_marks_recovery_contract_break(self) -> None:
+        """No automatic recovery/replay is a documented 2.0 contract change."""
+        self.assertIn('version: "2.0.0"', self.skill)
 
     # --- Pin validation contracts ---
 
@@ -1590,7 +1595,7 @@ class TestStatePersistence(unittest.TestCase):
             for command in _azd_up_command_lines(body)
         ]
         self.assertEqual(
-            ["until azd up --no-prompt; do"],
+            ["if ! azd up --no-prompt; then"],
             executable_azd_up,
             "there must be exactly one executable azd up path globally",
         )
@@ -1798,8 +1803,8 @@ class TestStatePersistence(unittest.TestCase):
         )
 
     def test_azd_up_block_sources_state(self):
-        """The azd up retry block must source state first."""
-        azdup_idx = self.fixture.index("until azd up --no-prompt")
+        """The single azd up attempt must source state first."""
+        azdup_idx = self.fixture.index("if ! azd up --no-prompt")
         block_start = self.fixture.rfind("```bash", 0, azdup_idx)
         block_content = self.fixture[block_start:azdup_idx]
         self.assertIn(
@@ -1821,10 +1826,10 @@ class TestStatePersistence(unittest.TestCase):
         """Fresh Bash calls that consume deployment state must restore it first."""
         for marker in (
             "INIT_RESPONSE=$(curl",
-            "SUB=$(az account show",
+            'cp "$PROJECT_DIR/infra/mcp-authconfig.json"',
             "CODE=$(curl",
             "TOKEN=$(az account get-access-token",
-            "azd down --purge --force --no-prompt",
+            "if ! timeout 300 python3",
         ):
             with self.subTest(marker=marker):
                 block = _standard_bash_block_containing(self.fixture, marker)
@@ -1834,7 +1839,7 @@ class TestStatePersistence(unittest.TestCase):
                     f"fresh block containing {marker!r} must source state first",
                 )
 
-    def test_teardown_restores_project_dir_and_runs_exact_azd_down(self):
+    def test_teardown_restores_project_dir_and_runs_owned_cleanup(self):
         """Step 7 must run teardown from PROJECT_DIR restored in a fresh shell."""
         teardown = _teardown_block(self.fixture)
 
@@ -1864,7 +1869,7 @@ class TestStatePersistence(unittest.TestCase):
                 'exec "$@"\n',
                 encoding="utf-8",
             )
-            azd_stub = bin_dir / "azd"
+            azd_stub = bin_dir / "python3"
             azd_stub.write_text(
                 "#!/usr/bin/env bash\n"
                 'printf "cwd=%s\\nargs=%s\\n" "$PWD" "$*" > "$AZD_CALL_LOG"\n'
@@ -1888,6 +1893,7 @@ class TestStatePersistence(unittest.TestCase):
                     "PATH": f"{bin_dir}:/usr/bin:/bin",
                     "AZD_CALL_LOG": str(call_log),
                     "TIMEOUT_CALL_LOG": str(timeout_log),
+                    "GITHUB_WORKSPACE": str(ROOT),
                 },
                 cwd=safe_cwd,
             )
@@ -1900,7 +1906,7 @@ class TestStatePersistence(unittest.TestCase):
             self.assertEqual(
                 [
                     f"cwd={project_dir}",
-                    "args=down --purge --force --no-prompt",
+                    f"args={ROOT}/skills/foundry-mcp-aca/test-fixture/run_resources.py cleanup {project_dir}",
                 ],
                 call_log.read_text(encoding="utf-8").splitlines(),
             )
@@ -1942,7 +1948,7 @@ class TestStatePersistence(unittest.TestCase):
                 'exec "$@"\n',
                 encoding="utf-8",
             )
-            azd_stub = bin_dir / "azd"
+            azd_stub = bin_dir / "python3"
             azd_stub.write_text(
                 "#!/usr/bin/env bash\n"
                 'printf "called\\n" >> "$AZD_CALL_LOG"\n'
@@ -1954,6 +1960,7 @@ class TestStatePersistence(unittest.TestCase):
             base_env = {
                 "PATH": f"{bin_dir}:/usr/bin:/bin",
                 "AZD_CALL_LOG": str(call_log),
+                "GITHUB_WORKSPACE": str(ROOT),
             }
 
             failure_cases = (

@@ -309,6 +309,8 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
                 "callback_alias",
                 "lifecycle_state",
                 "aca_execution_id",
+                "native_operation",
+                "effect_state",
                 "result_url",
                 "error_code",
                 "callback_delivery_state",
@@ -525,13 +527,14 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
                 "structuredContent": {
                     "status": "Succeeded",
                     "resultUrl": "https://example.invalid/result.json",
+                    "effectState": "UNKNOWN",
                 },
                 "isError": False,
             },
         )
         self.assertEqual(
             succeeded_task.result["structuredContent"],
-            {"status": "Succeeded", "resultUrl": "https://example.invalid/result.json"},
+            {"status": "Succeeded", "resultUrl": "https://example.invalid/result.json", "effectState": "UNKNOWN"},
         )
 
         succeeded_without_result = record.model_copy(update={"lifecycle_state": LifecycleState.SUCCEEDED})
@@ -545,6 +548,7 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             result={
                 "content": [{"type": "text", "text": "RESULT_REFERENCE_MISSING"}],
                 "isError": True,
+                "structuredContent": {"effectState": "UNKNOWN"},
             },
         )
         dumped = self._dump_task_result(succeeded_without_result_task)
@@ -565,6 +569,7 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             result={
                 "content": [{"type": "text", "text": "RESULT_REFERENCE_MISSING"}],
                 "isError": True,
+                "structuredContent": {"effectState": "UNKNOWN"},
             },
         )
 
@@ -612,6 +617,7 @@ class FoundryMcpAcaJobsModelTests(unittest.TestCase):
             result={
                 "content": [{"type": "text", "text": "ACA_EXECUTION_FAILED"}],
                 "isError": True,
+                "structuredContent": {"effectState": "UNKNOWN"},
             },
         )
         self.assertNotEqual(getattr(business_failed_task, "status", None), "failed")

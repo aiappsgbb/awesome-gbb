@@ -14,6 +14,14 @@ response/session/version readbacks and verified native cleanup
 have explicit bounded custody. This BASIC result is separate from public CI
 and does not certify governed business effects.
 
+Select the [versioned deployment profile](references/hosted-contract.json)
+before generating or refreshing manifests. Newer tools are not implicitly
+compatible; legacy two-file projects require a reviewed migration. The
+[operation custody guide](references/operation-recovery.md) separates service
+completion, business effect and client delivery, and forbids replay after an
+uncertain outcome. Compare actual adopted helper/template hashes with
+`references/python/hosted_contract.py`, not only skill version labels.
+
 ## Roadmap
 
 **Planned for v0.7.0 — thread-retention reader

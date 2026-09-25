@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 
+from hosted_contract import ContractError, select_profile
 
 CONNECTIONS = (
     "threadStorageConnections", "vectorStoreConnections",
@@ -70,12 +71,116 @@ def fresh(value: object, now: datetime) -> bool:
         return False
 
 
+def private_registry_supported(created: object) -> bool:
+    try:
+        return timestamp(created).astimezone(timezone.utc).date() > datetime(2026, 6, 25).date()
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
 def receipt(value: object) -> bool:
     return isinstance(value, dict) and value.get("result") == "pass" and text(value.get("evidence"))
 
 
 def failure(error: GateError) -> dict:
     return {"status": "BLOCKED", "live_execution": "NOT_PROVEN", "issues": [error.issue]}
+
+
+def check_capabilities(data: object, *, now: datetime | None = None) -> dict:
+    """Check feasibility BEFORE preparing images; receipts are operator evidence."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        data = obj(data)
+        require(data.get("schema_version") == 1 and fresh(data.get("observed_at"), now),
+                "EVIDENCE_AGE", "capabilities", "Collect a fresh capability snapshot, schema_version 1.")
+        target = obj(data.get("target"))
+        try:
+            select_profile(target.get("profile"), data.get("consumer"))
+        except ContractError:
+            raise GateError("UNSUPPORTED_CAPABILITY", "consumer",
+                            "Select an explicitly supported consumer/profile; no automatic upgrade or legacy conversion.")
+        environment = obj(data.get("environment"))
+        features = target.get("required_features")
+        supported = environment.get("supported_features")
+        mode = target.get("mode")
+        registry_network = target.get("registry_network")
+        require(mode in ("basic-private", "standard-private", "managed-public")
+                and registry_network in ("private", "public"),
+                "CAPABILITY_DECISION", "environment", "Select the hosting mode and registry network boundary.")
+        mandatory = {"hosted-container"}
+        if mode != "managed-public":
+            mandatory.add("private-agent-network")
+        if mode == "standard-private":
+            mandatory.add("byo-stores")
+        if registry_network == "private":
+            mandatory.add("private-registry-pull")
+            require(private_registry_supported(environment.get("project_created_at")),
+                    "UNSUPPORTED_CAPABILITY", "private-registry",
+                    "Verify project creation after June 25, 2026 before preparing an image; boundary/unknown requires review.")
+        require(receipt(environment) and text(target.get("environment_id")) and text(environment.get("resource_id"))
+                and same_id(environment.get("resource_id"), target.get("environment_id", ""))
+                and isinstance(features, list) and bool(features) and all(text(f) for f in features)
+                and mandatory.issubset(features)
+                and isinstance(supported, list) and all(text(f) for f in supported)
+                and set(features).issubset(supported),
+                "UNSUPPORTED_CAPABILITY", "environment",
+                "Verify each requested hosting/resource feature on this exact environment before preparing artifacts.")
+        registry = obj(data.get("registry"))
+        requirement = target.get("pull_requirement")
+        mode = registry.get("role_assignment_mode")
+        require(requirement in ("repository-only", "registry-wide")
+                and text(target.get("repository")) and text(target.get("registry_id"))
+                and receipt(registry) and same_id(registry.get("id"), target["registry_id"]),
+                "CAPABILITY_DECISION", "registry", "Record the approved pull boundary and exact repository/registry.")
+        require(mode in ("AbacRepositoryPermissions", "LegacyRegistryPermissions"),
+                "UNSUPPORTED_CAPABILITY", "registry", "Read the actual registry authorization mode; never change it automatically.")
+        require(not (requirement == "repository-only" and mode == "LegacyRegistryPermissions"),
+                "UNSUPPORTED_CAPABILITY", "registry",
+                "Legacy registry-wide AcrPull cannot satisfy repository-only access. Stop for the owner; no broad-role fallback.")
+        if requirement == "repository-only":
+            require(registry.get("repository_condition_verified") is True
+                    and registry.get("broader_pull_grants_excluded") is True,
+                    "ACR_PULL", "registry",
+                    "Verify effective repository conditions and absence of broader grants; a role name alone is not isolation.")
+        else:
+            require(target.get("registry_wide_approved") is True, "CAPABILITY_DECISION", "registry",
+                    "Registry-wide pull needs an explicit owner decision, never an implicit fallback.")
+        require(type(target.get("source_access_required")) is bool, "CAPABILITY_DECISION", "source",
+                "Declare whether the workload accesses an external source.")
+        expected = target.get("required_permissions")
+        observed = data.get("permissions")
+        operations = {"image-pull", "invoke", "version-read", "response-read", "session-read"}
+        if target["source_access_required"]:
+            operations.add("source-read")
+        require(isinstance(expected, list) and isinstance(observed, list)
+                and all(isinstance(p, dict) and text(p.get("operation")) for p in expected + observed)
+                and {p.get("operation") for p in expected} == operations
+                and len(expected) == len(operations),
+                "PERMISSION_CONTRACT", "permissions",
+                "Declare each required operation with its actual principal, scope, exact actions and reviewed API contract.")
+        for permission in expected:
+            operation = permission["operation"]
+            actions = permission.get("actions")
+            require(all(text(permission.get(k)) for k in ("principal_id", "scope", "api_contract"))
+                    and isinstance(actions, list) and bool(actions) and all(text(a) for a in actions),
+                    "PERMISSION_CONTRACT", operation, "Do not infer invoke/read/pull/source permissions from another identity.")
+            matches = [p for p in observed if p.get("operation") == operation]
+            require(len(matches) == 1 and receipt(matches[0])
+                    and all(matches[0].get(k) == permission[k] for k in ("principal_id", "scope", "actions", "api_contract"))
+                    and matches[0].get("effective_conditions_verified") is True,
+                    "PERMISSION_UNVERIFIED", operation,
+                    "Verify exact data actions, scope, effective conditions and the selected identity; unreadable is not absent.")
+        ingress = obj(data.get("ingress"))
+        require(receipt(ingress) and ingress.get("authentication_enforced") is True
+                and ingress.get("direct_backend_bypass_blocked") is True
+                and ingress.get("forwarded_headers") in ("ignored", "verified-proxy-chain")
+                and (ingress["forwarded_headers"] == "ignored"
+                     or text(ingress.get("trusted_proxy_contract"))),
+                "INGRESS_UNVERIFIED", "ingress",
+                "Verify the authenticated route and header replacement by trusted ingress; never trust arbitrary forwarded headers.")
+        return {"status": "READY_FOR_ARTIFACTS", "live_execution": "NOT_PROVEN", "issues": []}
+    except GateError as error:
+        return failure(error)
 
 
 def host_list(value: object, scope: str) -> list:
@@ -268,11 +373,7 @@ def check_setup(data: object, *, now: datetime | None = None) -> dict:
                 "Match the approved registry network boundary. Do not expose a private registry to pass preflight.")
         if registry["publicNetworkAccess"] == "Disabled":
             created = obj(data["project"].get("systemData")).get("createdAt")
-            try:
-                created_date = timestamp(created).astimezone(timezone.utc).date()
-            except (ValueError, TypeError, OverflowError):
-                created_date = None
-            require(created_date is not None and created_date > datetime(2026, 6, 25).date(),
+            require(private_registry_supported(created),
                     "PRIVATE_ACR_GENERATION", ids["project"],
                     "Verify project creation AFTER June 25, 2026 (Learn checked 2026-09-12). Boundary/older/unknown: stop for supported-route review; do not expose ACR.")
         policy = obj(obj(registry.get("policies")).get("azureADAuthenticationAsArmPolicy"))
@@ -419,7 +520,7 @@ def unique_keys(pairs: list[tuple[str, object]]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", type=Path)
-    parser.add_argument("--phase", choices=("setup", "execution"), default="setup")
+    parser.add_argument("--phase", choices=("capabilities", "setup", "execution"), default="setup")
     args = parser.parse_args()
     try:
         data = json.loads(args.evidence.read_text(encoding="utf-8"), object_pairs_hook=unique_keys)
@@ -427,7 +528,8 @@ def main() -> int:
         result = failure(GateError("INPUT", "evidence file",
                                    "Supply readable UTF-8 JSON with unique keys; do not include credentials."))
     else:
-        result = (check_setup if args.phase == "setup" else check_execution)(data)
+        result = {"capabilities": check_capabilities, "setup": check_setup,
+                  "execution": check_execution}[args.phase](data)
     print(json.dumps(result, indent=2))
     return 1 if result["status"] == "BLOCKED" else 0
 

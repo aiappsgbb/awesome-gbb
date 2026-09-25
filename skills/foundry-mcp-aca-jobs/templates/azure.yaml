@@ -11,6 +11,33 @@ services:
       context: .
 
 hooks:
+  preprovision:
+    shell: sh
+    interactive: false
+    continueOnError: false
+    run: |
+      set -eu
+      if [ "${MCP_ACA_JOBS_CI_REUSE:-}" != "" ] || [ -f ci-reuse.json ]; then
+        python3 infra/scripts/ci_reuse.py check --project .
+      fi
+  predeploy:
+    shell: sh
+    interactive: false
+    continueOnError: false
+    run: |
+      set -eu
+      if [ "${MCP_ACA_JOBS_CI_REUSE:-}" != "" ] || [ -f ci-reuse.json ]; then
+        python3 infra/scripts/ci_reuse.py check --project .
+      fi
+  postprovision:
+    shell: sh
+    interactive: false
+    continueOnError: false
+    run: |
+      set -eu
+      if [ "${MCP_ACA_JOBS_CI_REUSE:-}" != "" ] || [ -f ci-reuse.json ]; then
+        python3 infra/scripts/ci_reuse.py record --project .
+      fi
   postdeploy:
     shell: sh
     interactive: false

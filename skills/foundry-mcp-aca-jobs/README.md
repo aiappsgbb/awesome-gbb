@@ -51,6 +51,20 @@ the `2025-01-01` authConfig API applies logical AND when both are present.
 Hosted agent instance callers use principal object ID mode; client ID mode
 remains supported for app-only callers.
 
+The CI fixture has an explicit **standing-resource reuse** path, separate from
+the normal subscription-scope consumer. `templates/infra/ci-reuse.bicep`
+composes the existing modules and `templates/infra/scripts/ci_reuse.py` gates
+exact resources/identities/endpoints/permissions before any write. It uses an
+existing RG, identities and database; only the UUID app/Job/control container,
+blob containers and image are temporary. No shared role/grant/network
+provisioning is a fallback. Cleanup requires recorded ownership and verified
+absence and never deletes the standing database, identities or RG.
+
+See `SKILL.md`'s **Deploy with azd** section and the fixture for exact inputs.
+The local candidate is not evidence that the selected CI identities currently
+have every prerequisite; live audience/binding/cost/cleanup approval remains
+separate.
+
 For producer-side MCP hosting without an external worker, use
 [`foundry-mcp-aca`](../foundry-mcp-aca/SKILL.md). For the canonical ACA Job
 module and azd wiring, use [`azd-patterns`](../azd-patterns/SKILL.md).

@@ -12,6 +12,7 @@ import logging
 import os
 import asyncio
 import traceback
+from invocation_custody import ExistingInvocation, InvocationJournal, invocation_events
 
 import aiohttp
 from dotenv import load_dotenv
@@ -41,10 +42,10 @@ PROJECT_ENDPOINT = os.environ.get("PROJECT_ENDPOINT", "")
 if not PROJECT_ENDPOINT or PROJECT_ENDPOINT == "":
     raise ValueError("PROJECT_ENDPOINT env var is required")
 if AGENT_NAME == "__PROJECT_NAME__":
-    logger.warning("AGENT_NAME still has placeholder value — update agent.yaml or env var")
+    logger.warning("AGENT_NAME still has placeholder value — select the hosted profile and environment")
 
 
-async def _invoke_invocations(endpoint: str, credential, agent_name: str, query: str) -> str:
+async def _invoke_invocations(endpoint: str, credential, agent_name: str, query: str, journal) -> str:
     """Invoke agent via Invocations SSE endpoint and return response text.
 
     Parses both assistant.message (complete) and assistant.message_delta
@@ -67,29 +68,16 @@ async def _invoke_invocations(endpoint: str, credential, agent_name: str, query:
             headers={
                 "Authorization": f"Bearer {token.token}",
                 "Content-Type": "application/json",
-                "Foundry-Features": "HostedAgents=V1Preview",
             },
             timeout=aiohttp.ClientTimeout(total=600),
         ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                raise RuntimeError(f"Invocations endpoint returned {resp.status}: {body[:500]}")
-
-            async for line_bytes in resp.content:
-                line = line_bytes.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data: "):
-                    continue
-                try:
-                    event = json.loads(line[6:])
-                    event_type = event.get("type", "")
-                    content = event.get("data", {}).get("content", "")
-
-                    if event_type == "assistant.message" and content:
-                        message_text += content
-                    elif event_type == "assistant.message_delta" and content:
-                        delta_text += content
-                except json.JSONDecodeError:
-                    continue
+            async for event in invocation_events(resp, journal):
+                event_type = event.get("type", "")
+                content = event.get("data", {}).get("content", "")
+                if event_type == "assistant.message" and content:
+                    message_text += content
+                elif event_type == "assistant.message_delta" and content:
+                    delta_text += content
 
     return message_text if message_text else delta_text
 
@@ -102,7 +90,7 @@ def _friendly_error(raw: str) -> str:
     if "permissiondenied" in lower or "401" in lower or "403" in lower:
         return "🔒 The agent doesn't have the right permissions yet. Please contact the administrator."
     if "timeout" in lower or "timed out" in lower:
-        return "⏱️ The request timed out. The agent may be warming up — please try again in a moment."
+        return "⏱️ The response timed out. The operation may have completed; reconcile it before submitting again."
     if "rate limit" in lower or "429" in lower:
         return "⏳ Too many requests — please wait a moment and try again."
     if len(raw) > 300:
@@ -121,7 +109,6 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
     project_client = AIProjectClient(
         endpoint=PROJECT_ENDPOINT,
         credential=credential,
-        allow_preview=True,
     )
 
     # Verify agent exists (retry — RBAC may still be propagating)
@@ -155,26 +142,31 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
             await context.send_activity("🔄 Conversation reset.")
             return
 
-        max_retries = 2
-        for attempt in range(max_retries):
+        try:
+            journal = InvocationJournal(context.activity)
+        except ExistingInvocation:
+            await context.send_activity("This activity was already submitted. Check its original result; it was not sent again.")
+            return
+        try:
             try:
+                journal.record("dispatch-start", {"effect": "UNKNOWN"})
                 response_text = await _invoke_invocations(
-                    PROJECT_ENDPOINT, credential, AGENT_NAME, user_message,
+                    PROJECT_ENDPOINT, credential, AGENT_NAME, user_message, journal,
                 )
 
                 if response_text:
                     await context.send_activity(response_text)
+                    journal.record("client-delivered", {"effect": "UNKNOWN"})
                 else:
                     await context.send_activity(
                         "🤔 I processed your request but didn't receive a text response."
                     )
-                break
-
             except Exception as e:
-                logger.error("Error (attempt %d): %s\n%s", attempt + 1, e, traceback.format_exc())
-                if attempt < max_retries - 1:
-                    continue
-                await context.send_activity(_friendly_error(str(e)))
-                break
+                journal.error(e)
+                logger.error("Invocation/delivery unresolved: %s", type(e).__name__)
+                await context.send_activity(_friendly_error(type(e).__name__) +
+                                            " Check the original operation record before submitting again.")
+        finally:
+            journal.close()
 
     return AGENT_APP, CONNECTION_MANAGER

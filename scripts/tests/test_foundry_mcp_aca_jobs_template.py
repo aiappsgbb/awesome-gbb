@@ -386,7 +386,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         headings = [(len(match.group(1)), match.group(2)) for match in re.finditer(r"(?m)^(#{2,3}) (.+)$", body)]
 
         self.assertEqual(skill_fm["name"], "foundry-mcp-aca-jobs")
-        self.assertEqual(skill_fm["metadata"]["version"], "1.4.3")
+        self.assertEqual(skill_fm["metadata"]["version"], "2.0.0")
         self.assertGreaterEqual(len(skill_fm["description"]), 200)
         self.assertLessEqual(len(skill_fm["description"]), 1024)
         self.assertRegex(skill_text, r"(?m)^# Foundry MCP ACA Jobs$")
@@ -481,9 +481,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             1,
         )[0]
         for response_contract in (
-            "`start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, and `pollAfterMs`",
-            "`get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, and `updatedAt`",
-            "`cancel_aca_job` returns exactly `taskId`, `status`, and `cancellationRequested`",
+            "`start_aca_job` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `pollAfterMs` (`2000`), and `effectState`.",
+            "`get_aca_job_status` returns exactly `taskId`, `jobType`, `status`, `acaExecutionId`, `resultUrl`, `errorCode`, `createdAt`, `updatedAt`, and `effectState`.",
+            "`cancel_aca_job` returns exactly `taskId`, `status`, `cancellationRequested` (`true`), and `effectState`.",
             "Never return the internal `TaskRecord`",
         ):
             self.assertIn(response_contract, compatibility)
@@ -550,7 +550,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs:", skill_deps)
         self.assertIn("- foundry-mcp-aca", skill_deps)
         self.assertIn("foundry-mcp-aca-jobs", producer)
-        self.assertIn("1.2.6", producer)
+        self.assertIn('version: "2.0.0"', producer)
         self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
         self.assertEqual(plugin["version"], "4.36.0")
         self.assertEqual(marketplace["metadata"]["version"], "4.36.0")
@@ -952,13 +952,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
-        self.assertIn(
-            'document["parameters"]["resourceGroupTags"]["value"]',
-            fixture,
-        )
-        self.assertIn('"cleanup": "true"', fixture)
-        self.assertIn('"created-by": "ci-smoke"', fixture)
-        self.assertIn('"ci-smoke-suffix": sys.argv[2]', fixture)
+        self.assertIn('ci_reuse.py" prepare', fixture)
+        self.assertNotIn('document["parameters"]["resourceGroupTags"]["value"]', fixture)
 
     def test_compiled_arm_conditionally_omits_default_empty_resource_group_tags(self) -> None:
         result = subprocess.run(
@@ -1278,14 +1273,11 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn(".scratch/ci-smoke-mcp-jobs-", fixture)
         self.assertIn("uuidgen", fixture)
         self.assertIn("cut -c1-8", fixture)
-        self.assertIn('CHILD_RG="rg-foundry-mcp-aca-jobs-ci-$SUFFIX"', fixture)
+        self.assertIn('CHILD_RG="${MCP_ACA_JOBS_RESOURCE_GROUP_ID##*/}"', fixture)
         self.assertNotIn('az group create --name "$CHILD_RG"', fixture)
-        self.assertIn(
-            'document["parameters"]["resourceGroupTags"]["value"]',
-            fixture,
-        )
+        self.assertIn('export MCP_ACA_JOBS_CI_REUSE=existing', fixture)
         self.assertIn('AZURE_RESOURCE_GROUP="$CHILD_RG"', fixture)
-        self.assertIn('MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="rg-awesome-gbb-ci"', fixture)
+        self.assertIn('MCP_ACA_JOBS_PLATFORM_RESOURCE_GROUP="$CHILD_RG"', fixture)
         self.assertNotIn(f'AZURE_RESOURCE_GROUP="{shared_rg}"', fixture)
         self.assertNotRegex(fixture, rf"azd (?:up|deploy|down)[^\n]*{shared_rg}")
         self.assertIn("No repository writes outside `.scratch/`.", fixture)
@@ -1346,7 +1338,8 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn('headers={"Authorization": f"Bearer {access_token}"}', fixture)
         self.assertIn("project.agents.create_version(", fixture)
         self.assertIn("openai.conversations.create()", fixture)
-        self.assertIn("openai.responses.create(", fixture)
+        self.assertIn('invoke_once(openai, "prompt"', fixture)
+        self.assertIn('invoke_once(openai, "hosted"', fixture)
         self.assertIn("project.agents.delete_version(", fixture)
         self.assertIn("from agent_framework.foundry import FoundryChatClient", fixture)
         self.assertIn("from azure.identity import DefaultAzureCredential", fixture)
@@ -1370,18 +1363,19 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("PROMPT_AGENT_MCP_PASS", fixture)
         self.assertIn("HOSTED_AGENT_MCP_PASS", fixture)
         self.assertIn("exact four fields", normalized)
-        self.assertIn("best-effort targeted cleanup", fixture)
-        self.assertIn("marker-first", normalized)
+        self.assertIn("targeted run-owned cleanup", fixture)
+        self.assertNotIn("az group delete", fixture)
+        self.assertNotIn("az cosmosdb sql database delete", fixture)
         self.assertIn("## Step 2 — deterministic scaffold", fixture)
         self.assertIn("## Step 3 — provider and build verification", fixture)
         self.assertIn("## Step 4 — task-aware and fallback client smoke", fixture)
         self.assertIn("## Step 5 — prompt agent smoke", fixture)
         self.assertIn("## Step 6 — hosted agent smoke", fixture)
-        self.assertIn("## Step 7 — marker-first teardown", fixture)
+        self.assertIn("## Step 7 — targeted run-owned cleanup", fixture)
         pass_write = f"printf 'SMOKE_RESULT=PASS\\n' > {marker}"
         self.assertIn(pass_write, fixture)
-        self.assertIn('rm -rf "$SCRATCH_ROOT"', fixture)
-        self.assertLess(fixture.index(pass_write), fixture.index('rm -rf "$SCRATCH_ROOT"'))
+        self.assertNotIn('rm -rf "$SCRATCH_ROOT"', fixture)
+        self.assertLess(fixture.index('ci_reuse.py" cleanup'), fixture.index(pass_write))
         self.assertNotIn("az account get-access-token", fixture)
         self.assertNotIn("az deployment", fixture)
         self.assertNotIn("az containerapp create", fixture)
@@ -1655,14 +1649,12 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             parameters["allowedMcpCallerPrincipalIds"]["value"],
             ["${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID}"],
         )
-        self.assertIn("az identity list", fixture)
-        self.assertIn(
-            "--query \"[?clientId=='$AZURE_CLIENT_ID'].principalId\"",
-            fixture,
-        )
+        helper = (self._infra_dir() / "scripts/ci_reuse.py").read_text()
+        self.assertIn('["identity", "list", "--resource-group"', helper)
+        self.assertIn('same(i.get("clientId"), config["executor_client"])', helper)
         self.assertNotIn("az resource list", fixture)
         self.assertNotIn("properties.clientId", fixture)
-        self.assertIn('MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$(', fixture)
+        self.assertIn('test -n "${MCP_ACA_JOBS_CALLER_PRINCIPAL_ID:-}"', fixture)
         self.assertIn(
             'MCP_ACA_JOBS_CALLER_PRINCIPAL_ID="$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"',
             fixture,
@@ -1670,7 +1662,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertNotIn('echo "$MCP_ACA_JOBS_CALLER_PRINCIPAL_ID"', fixture)
         self.assertEqual(fixture.count("azd up --no-prompt"), 1)
         self.assertLess(
-            fixture.index("az identity list"),
+            fixture.index('ci_reuse.py" prepare'),
             fixture.index("azd up --no-prompt"),
         )
         for forbidden in (
@@ -2029,7 +2021,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         infra = self._infra_dir()
         self.assertEqual(
             sorted(path.name for path in infra.glob("*.bicep")),
-            ["app.bicep", "cosmos.bicep", "identity-rbac.bicep", "main.bicep"],
+            ["app.bicep", "ci-reuse.bicep", "cosmos.bicep", "identity-rbac.bicep", "main.bicep"],
         )
         self.assertTrue((infra / "identity-rbac" / "uami.bicep").is_file())
         self.assertTrue((infra / "identity-rbac" / "assignments.bicep").is_file())
@@ -2105,9 +2097,9 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15", cosmos)
         self.assertIn("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15", cosmos)
         self.assertIn("resource existingAccount 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' existing = if (useExistingAccount)", cosmos)
-        self.assertIn("resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' = if (useExistingAccount)", cosmos)
+        self.assertIn("resource brownfieldDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-04-15' = if (useExistingAccount && !useExistingDatabase)", cosmos)
         self.assertIn("resource brownfieldTasks 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = if (useExistingAccount)", cosmos)
-        self.assertNotIn("existingDatabase", cosmos)
+        self.assertIn("param useExistingDatabase bool = false", cosmos)
         self.assertNotIn("existingTasks", cosmos)
         self.assertIn("paths: [ '/ownerScope' ]", normalized)
         self.assertIn("paths: [ '/idempotencyKeyHash' ]", normalized)

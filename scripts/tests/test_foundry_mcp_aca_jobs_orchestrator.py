@@ -1461,7 +1461,7 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.updated_at, self.fixed_now)
         self.jobs.start.assert_not_awaited()
 
-    async def test_reconcile_zero_matches_retries_start_only_after_grace_and_without_cancellation(self) -> None:
+    async def test_reconcile_zero_matches_never_replays_uncertain_start_after_grace(self) -> None:
         store = InMemoryControlStore()
         orchestrator = self._orchestrator(store)
         self.jobs.start.side_effect = [
@@ -1487,9 +1487,10 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.clock.advance(3)
         updated = await orchestrator.reconcile(self.owner_scope, str(created.task_id))
-        self.assertEqual(updated.start_attempt_count, 2)
-        self.assertEqual(updated.aca_execution_id, "exec-2")
-        self.assertEqual(self.jobs.start.await_count, 1)
+        self.assertEqual(updated.start_attempt_count, 1)
+        self.assertIsNone(updated.aca_execution_id)
+        self.assertEqual(self.jobs.start.await_count, 0)
+        self.assertEqual(updated.effect_state, "UNKNOWN")
 
     async def test_reconcile_one_match_binds_and_refreshes(self) -> None:
         store = InMemoryControlStore()
@@ -1822,10 +1823,10 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         )
 
         reconcile_task = asyncio.create_task(
-            orchestrator.reconcile(self.owner_scope, str(seeded.task_id)),
+            orchestrator._claim_start(seeded),
             name="cancel-race",
         )
-        await store.first_replace_failed.wait()
+        await asyncio.wait_for(store.first_replace_failed.wait(), timeout=1)
 
         current = await store.get(self.owner_scope, str(seeded.task_id))
         updated = await store.replace(
@@ -1834,14 +1835,15 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         )
         retry_release.set()
 
-        record = await reconcile_task
+        self.assertIsNone(await asyncio.wait_for(reconcile_task, timeout=1))
+        record = await store.get(self.owner_scope, str(seeded.task_id))
 
         self.assertEqual(record.cancellation_requested_at, self.fixed_now)
         self.assertEqual(record.lifecycle_state, LifecycleState.STARTING)
         self.assertEqual(updated.cancellation_requested_at, self.fixed_now)
         self.jobs.start.assert_not_awaited()
 
-    async def test_concurrent_reconcile_calls_after_one_412_only_start_once(self) -> None:
+    async def test_concurrent_reconcile_calls_do_not_replay_unknown_start(self) -> None:
         store = CoordinatedClaimStore(
             fail_first_replace_for="reconcile-1",
             retry_block_task_name="reconcile-1",
@@ -1888,11 +1890,12 @@ class FoundryMcpAcaJobsOrchestratorTests(unittest.IsolatedAsyncioTestCase):
 
         final = await store.get(self.owner_scope, str(seeded.task_id))
 
-        self.assertEqual(self.jobs.start.await_count, 1)
-        self.assertTrue(store.first_replace_failed.is_set())
-        self.assertTrue(store.second_replace_committed.is_set())
-        self.assertEqual(final.aca_execution_id, "exec-1")
-        self.assertEqual(final.start_attempt_count, 2)
+        self.jobs.start.assert_not_awaited()
+        self.assertFalse(store.first_replace_failed.is_set())
+        self.assertFalse(store.second_replace_committed.is_set())
+        self.assertIsNone(final.aca_execution_id)
+        self.assertEqual(final.start_attempt_count, 1)
+        self.assertEqual(final.effect_state, "UNKNOWN")
 
     async def test_store_mutation_retries_concurrency_error_by_rereading(self) -> None:
         store = FlakyStore(fail_replace_times=1)

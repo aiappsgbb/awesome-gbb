@@ -102,6 +102,18 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
+      - name: Verify hosted contract in its supported SDK cohort
+        run: |
+          python -m venv "$RUNNER_TEMP/hosted-contract"
+          "$RUNNER_TEMP/hosted-contract/bin/python" -m pip install --quiet \
+            -r skills/foundry-hosted-agents/test-fixture/requirements-contract.txt
+          "$RUNNER_TEMP/hosted-contract/bin/python" -m unittest \
+            scripts.tests.test_hosted_contract \
+            scripts.tests.test_hosted_deploy_preflight \
+            scripts.tests.test_private_hosted_bootstrap \
+            scripts.tests.test_operation_evidence \
+            scripts.tests.test_teams_operation_custody
+
       - name: Run doctor MCP 1.x protocol tests
         run: |
           set -euo pipefail
@@ -292,6 +304,20 @@ jobs:
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
           MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          MCP_ACA_JOBS_CI_REUSE: existing
+          MCP_ACA_JOBS_RESOURCE_GROUP_ID: ${{ secrets.MCP_ACA_JOBS_RESOURCE_GROUP_ID }}
+          MCP_ACA_JOBS_ENVIRONMENT_ID: ${{ secrets.MCP_ACA_JOBS_ENVIRONMENT_ID }}
+          MCP_ACA_JOBS_APP_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_APP_IDENTITY_ID }}
+          MCP_ACA_JOBS_WORKER_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_WORKER_IDENTITY_ID }}
+          MCP_ACA_JOBS_COSMOS_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_COSMOS_ACCOUNT_ID }}
+          MCP_ACA_JOBS_COSMOS_DATABASE: ${{ secrets.MCP_ACA_JOBS_COSMOS_DATABASE }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_ID }}
+          MCP_ACA_JOBS_REGISTRY_ID: ${{ secrets.MCP_ACA_JOBS_REGISTRY_ID }}
+          MCP_ACA_JOBS_CALLER_PRINCIPAL_ID: ${{ secrets.MCP_ACA_JOBS_CALLER_PRINCIPAL_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
         run: |
           set -euo pipefail
           python3 -I scripts/native-ci-preflight.py "$NATIVE_SMOKE_SKILL"
@@ -384,6 +410,8 @@ jobs:
         # to v2.3.0 (latest stable as of 2026-05) keeps drift visible.
         # See AGENTS.md § 9.7 Pattern 15.
         uses: Azure/setup-azd@v2.3.0
+        with:
+          version: "1.34.1"
 
       - name: Install uv
         if: matrix.skill != 'agent-framework-harness'
@@ -546,6 +574,16 @@ jobs:
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
           MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          MCP_ACA_JOBS_CI_REUSE: existing
+          MCP_ACA_JOBS_RESOURCE_GROUP_ID: ${{ secrets.MCP_ACA_JOBS_RESOURCE_GROUP_ID }}
+          MCP_ACA_JOBS_ENVIRONMENT_ID: ${{ secrets.MCP_ACA_JOBS_ENVIRONMENT_ID }}
+          MCP_ACA_JOBS_APP_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_APP_IDENTITY_ID }}
+          MCP_ACA_JOBS_WORKER_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_WORKER_IDENTITY_ID }}
+          MCP_ACA_JOBS_COSMOS_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_COSMOS_ACCOUNT_ID }}
+          MCP_ACA_JOBS_COSMOS_DATABASE: ${{ secrets.MCP_ACA_JOBS_COSMOS_DATABASE }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_ID }}
+          MCP_ACA_JOBS_REGISTRY_ID: ${{ secrets.MCP_ACA_JOBS_REGISTRY_ID }}
+          MCP_ACA_JOBS_CALLER_PRINCIPAL_ID: ${{ secrets.MCP_ACA_JOBS_CALLER_PRINCIPAL_ID }}
           # Shared optional caller app client ID; foundry-mcp-aca-jobs
           # elevates it to required in its explicit fixture precondition.
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
@@ -889,6 +927,16 @@ jobs:
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
           MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
+          MCP_ACA_JOBS_CI_REUSE: existing
+          MCP_ACA_JOBS_RESOURCE_GROUP_ID: ${{ secrets.MCP_ACA_JOBS_RESOURCE_GROUP_ID }}
+          MCP_ACA_JOBS_ENVIRONMENT_ID: ${{ secrets.MCP_ACA_JOBS_ENVIRONMENT_ID }}
+          MCP_ACA_JOBS_APP_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_APP_IDENTITY_ID }}
+          MCP_ACA_JOBS_WORKER_IDENTITY_ID: ${{ secrets.MCP_ACA_JOBS_WORKER_IDENTITY_ID }}
+          MCP_ACA_JOBS_COSMOS_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_COSMOS_ACCOUNT_ID }}
+          MCP_ACA_JOBS_COSMOS_DATABASE: ${{ secrets.MCP_ACA_JOBS_COSMOS_DATABASE }}
+          MCP_ACA_JOBS_STORAGE_ACCOUNT_ID: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_ID }}
+          MCP_ACA_JOBS_REGISTRY_ID: ${{ secrets.MCP_ACA_JOBS_REGISTRY_ID }}
+          MCP_ACA_JOBS_CALLER_PRINCIPAL_ID: ${{ secrets.MCP_ACA_JOBS_CALLER_PRINCIPAL_ID }}
           # Shared optional caller app client ID; foundry-mcp-aca-jobs
           # elevates it to required in its explicit fixture precondition.
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}

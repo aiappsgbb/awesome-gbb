@@ -12,7 +12,7 @@ description: >
   runtime deployment (use foundry-hosted-agents), durable MCP tasks or jobs
   (use foundry-mcp-aca-jobs), web frontend sign-in, or general network provisioning.
 metadata:
-  version: "1.3.0"
+  version: "2.0.0"
 ---
 
 # Foundry MCP delegated authentication
@@ -171,6 +171,16 @@ per portal login.
 auto-approves OAuth or admin consent. Denial must not become empty data.
 
 ## Agent integration
+
+The management invoker now requires a durable `record` callback. Package the
+canonical [operation evidence helper](../foundry-hosted-agents/references/python/operation_evidence.py)
+beside it, or add that canonical directory to the management environment's
+module path. Intent is saved before dispatch and returned IDs/status before
+application parsing; pending responses remain pending. No automatic replay,
+consent approval or permission expansion is added. A failed SDK parse retains
+available error/request metadata and UNKNOWN rather than inventing an ID.
+This change does not promote the delegated-auth candidate or close its remaining
+multi-user/consent release gates.
 
 Both Prompt and Hosted use the canonical shared instructions: identity
 questions trigger a fresh `who_am_i` call, and actual claims are rendered in

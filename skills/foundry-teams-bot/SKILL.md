@@ -9,7 +9,7 @@ description: >
   DO NOT USE FOR: designing the agent (use threadlight-design), deploying the hosted agent
   itself (use threadlight-deploy), general Bot Framework development.
 metadata:
-  version: "1.1.5"
+  version: "2.0.0"
 ---
 
 # Foundry Teams Bot
@@ -117,16 +117,39 @@ Ask the user for:
 
 > **Template:** [`templates/copilot/bot.py`](templates/copilot/bot.py)
 
-The bot MUST use the **refreshed preview invocation pattern** — agent-bound client.
+The bot uses the selected **agent-bound invocation contract**, not a universal
+preview recipe. Its requirements retain the existing upstream pin's Projects
+2.3.x / Identity 1.25.x cohort rather than floating across SDK minor versions.
 Replace `__PROJECT_NAME__` with the Foundry agent name.
 
 **Critical implementation notes:**
-- Uses `get_openai_client(agent_name=...)` — the **refreshed preview** pattern
+- Uses `get_openai_client(agent_name=...)` for the selected hosted agent
 - Do NOT use `extra_body={"agent_reference": ...}` — that's the old pattern and silently fails
-- `allow_preview=True` on `AIProjectClient` is REQUIRED for `agent_name` to work
+- Projects 2.3 does not require `allow_preview=True` for this route; do not
+  carry legacy preview headers into the selected current contract
 - Collect all streaming chunks before sending — Teams garbles individual chunks
 - `!reset` command clears stale conversations (break after agent version updates)
-- Auto-retry on `server_error` by resetting thread_id
+- Never reinvoke automatically after `server_error`, timeout, parsing failure
+  or Teams delivery failure; reconcile the original service operation.
+
+**Custody migration (2.0).** Copy
+[`invocation_custody.py`](templates/copilot/invocation_custody.py) beside the
+chosen bot, and copy the canonical
+[`operation_evidence.py`](../foundry-hosted-agents/references/python/operation_evidence.py)
+beside it. Set `BOT_OPERATION_DIR` to an existing owner-private absolute
+directory before launch. All three templates write intent before dispatch and
+reject duplicate channel/conversation/activity IDs without a second invocation.
+Use a durable volume or the application's existing durable store for recovery
+across container replacement; ephemeral local storage proves only that lifetime.
+No new cloud storage service is required for a bounded demo.
+
+The journal contains metadata, not conversation content. Service completion,
+effect verification and Teams delivery remain separate. `!reset` does not erase
+it. A failed delivery can be retried from an already saved result if supported
+by the channel; do not obtain the result by repeating the business action.
+The custom GHCP runtime's `invocation_id` is not automatically a retrievable
+Foundry response ID. Follow the
+[shared recovery contract](../foundry-hosted-agents/references/operation-recovery.md).
 
 ### Invocations Protocol Agents (GHCP SDK)
 
@@ -156,7 +179,6 @@ async def _invoke_invocations(endpoint: str, credential, agent_name: str, query:
             json={"input": query},
             headers={
                 "Authorization": f"Bearer {token.token}",
-                "Foundry-Features": "HostedAgents=V1Preview",
             },
             timeout=aiohttp.ClientTimeout(total=600),
         ) as resp:
@@ -857,7 +879,6 @@ async def _send_session_files(context, session_id: str):
 
     headers = {
         "Authorization": f"Bearer {token.token}",
-        "Foundry-Features": "HostedAgents=V1Preview",
     }
 
     async with aiohttp.ClientSession() as http:
@@ -1015,7 +1036,6 @@ async def _download_session_file(session_id: str, filename: str) -> bytes:
     endpoint = os.environ["PROJECT_ENDPOINT"]
     headers = {
         "Authorization": f"Bearer {token.token}",
-        "Foundry-Features": "HostedAgents=V1Preview",
     }
     url = f"{endpoint}/agents/{AGENT_NAME}/endpoint/sessions/{session_id}/files/content?api-version=v1&path={filename}"
     async with aiohttp.ClientSession() as http:
@@ -1159,7 +1179,7 @@ user_token = result["access_token"]
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| Bot returns "Response could not be saved" | Old-style `agent_reference` invocation | Use `get_openai_client(agent_name=...)` with `allow_preview=True` |
+| Bot returns "Response could not be saved" | Check the selected protocol and SDK cohort rather than assuming a universal cause | Use the selected agent-bound contract; retain original IDs/status and reconcile any effect before retrying |
 | Bot auth 401 on /api/messages | UAMI not in CONNECTIONS__ env vars | Set all 4 `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` vars: CLIENTID, TENANTID, AUTHORITYENDPOINT, **AUTHTYPE=UserManagedIdentity** |
 | **Bot returns HTTP 500 with `AADSTS7000216` on every real Teams message** | **Missing `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE` → MSAL falls back to ConfidentialClient (needs a client secret the keyless deploy never provisioned)** | **Set `AUTHTYPE=UserManagedIdentity`. Synthetic JWT probe in safe-check returns OK_jwt_alive because JWT middleware fires before outbound token acquisition; only `safe-check --phase post-deploy` Step 5.7 catches it. Quick patch: `az containerapp update --set-env-vars CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE=UserManagedIdentity`** |
 | Teams can't find bot | manifest botId mismatch | `botId` must equal UAMI client ID used as `msaAppId` |

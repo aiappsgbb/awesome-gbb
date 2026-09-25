@@ -553,31 +553,8 @@ class Orchestrator:
                 )
             return exhausted
 
-        if elapsed < _START_RECONCILIATION_GRACE:
-            return task
-
-        claimed = await self._claim_start(task)
-        if claimed is None:
-            with self._telemetry.operation("store.get", {"task.id": str(task.task_id), "operation": "store.get"}):
-                return await self._store.get(task.owner_scope, str(task.task_id))
-
-        try:
-            with self._telemetry.operation("aca.start", self._telemetry_attributes(claimed, "aca.start")):
-                execution = await self._jobs.start(job_policy, task.owner_scope, str(task.task_id))
-        except PublicError as error:
-            if error.code == "ARM_START_REJECTED":
-                return await self._persist_failed_start(claimed, error)
-            if error.code == "ARM_STATUS_UNAVAILABLE":
-                return claimed
-            if error.code == "DEPLOYMENT_CONTRACT_MISMATCH":
-                self._telemetry.record(
-                    "digest_mismatch",
-                    self._telemetry_attributes(claimed, "digest_mismatch"),
-                    outcome="failure",
-                    error_code=error.code,
-                )
-            raise
-        return await self._bind_execution(claimed, execution, job_policy)
+        # Empty eventually-consistent inventory is not proof of no dispatch.
+        return task
 
     async def _persist_reconciliation_exhausted(self, task: TaskRecord) -> TaskRecord:
         now = self._clock()

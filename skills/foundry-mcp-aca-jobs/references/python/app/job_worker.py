@@ -258,6 +258,13 @@ class JobWorker:
             now = self._clock()
             if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
                 return 0
+            if current.worker_claimed_at is not None:
+                prior_path = (self._output.result_path(str(current.task_id))
+                              if hasattr(self._output, "result_path")
+                              else f"results/{current.task_id}/result.json")
+                if not await self._output.exists(prior_path):
+                    raise PublicError("WORKER_EFFECT_UNRESOLVED",
+                                      "prior worker effect is unknown; reconcile before executing again")
 
             with self._telemetry.operation("worker.claim", self._telemetry_attributes(current, "worker.claim")):
                 claimed = await self._claim(current, now, execution_id)
@@ -463,6 +470,8 @@ class JobWorker:
                 if execution_id is not None and current.aca_execution_id is not None and current.aca_execution_id != execution_id:
                     return None
                 if current.worker_claim_expires_at is not None and current.worker_claim_expires_at > now:
+                    return None
+                if current.worker_claimed_at is not None:
                     return None
                 next_task = current.model_copy(
                     update={

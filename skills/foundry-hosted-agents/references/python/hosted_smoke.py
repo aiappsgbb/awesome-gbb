@@ -27,6 +27,7 @@ from openai import APIError
 from openai.types.responses import Response
 
 from deploy_preflight import check_setup, fresh, same_id, unique_keys
+from operation_evidence import begin_operation, capture_response, error_metadata
 
 
 def demand(condition: bool, message: str) -> None:
@@ -79,10 +80,13 @@ def verify_model_readback(response: Response, readback: Response, session: Agent
 
 
 def version_binding(version: AgentVersionDetails, *, name: str, number: str,
-                    image: str, model: str) -> dict:
+                    image: str, model: str) -> dict | None:
     demand(version.name == name and version.version == number, "Direct version identity mismatch")
     demand(not version.get("error") and version.status not in {"failed", "deleting", "deleted"},
            "Direct version GET reports failure")
+    if version.status == "creating":
+        return None
+    demand(version.status == "active", "Unrecognized version state; retain observation without invoking")
     definition = version.definition
     demand(definition is not None and definition.kind == "hosted", "Not a Hosted container")
     container = definition.get("container_configuration")
@@ -152,7 +156,7 @@ def check_context(data: dict) -> None:
 
 
 def execute(project: AIProjectClient, data: dict, name: str, number: str,
-            record, *, attempts: int = 60, sleep=time.sleep) -> dict:
+            record, *, attempts: int = 60, sleep=time.sleep, raw_capture=None) -> dict:
     target = private_setup(data)
     demand(2 <= attempts <= 90, "Readiness polling budget must be 2-90 attempts")
     binding = None
@@ -165,6 +169,12 @@ def execute(project: AIProjectClient, data: dict, name: str, number: str,
             version, name=name, number=number, image=target["image"],
             model=target["model_id"].rsplit("/", 1)[1],
         )
+        if current is None:
+            record("direct-version-get", {"version": number, "status": version.status,
+                                          "classification": "PENDING_OPERATION"})
+            active = 0
+            sleep(10)
+            continue
         demand(binding is None or current == binding, "Hosted binding changed between direct GETs")
         binding = current
         record("direct-version-get", {**binding, "status": version.status})
@@ -176,8 +186,18 @@ def execute(project: AIProjectClient, data: dict, name: str, number: str,
     # No routing mutation. A returned session on another version is a hard mismatch.
     with project.get_openai_client(agent_name=name, max_retries=0,
                                    timeout=httpx.Timeout(180, connect=10)) as client:
-        record("invoke-start", {"agent": name, "version": number})
-        response = client.responses.create(input="Say hello in one short sentence.", stream=False)
+        correlation = begin_operation(record, target=target["project_endpoint"],
+                                      intent={"agent": name, "version": number, "purpose": "no-tools-model-smoke"})
+        record("invoke-start", {"agent": name, "version": number, "client_correlation_id": correlation})
+        try:
+            raw = client.responses.with_raw_response.create(
+                input="Say hello in one short sentence.", stream=False,
+                extra_headers={"x-ms-client-request-id": correlation},
+            )
+            response = capture_response(raw, record, raw_capture=raw_capture)
+        except (ValueError, APIError, httpx.HTTPError) as error:
+            record("invoke-unresolved", error_metadata(error))
+            raise
         result = model_result(response)
         record("model-completed", {"response_id": result["id"], "session_id": result["session_id"]})
         record("response-readback-start", {"response_id": result["id"]})
@@ -227,13 +247,21 @@ def main() -> int:
                 output.write(json.dumps({"stage": step, "observed_at": datetime.now(timezone.utc).isoformat(),
                                          **value}) + "\n")
                 output.flush()
+                os.fsync(output.fileno())
+            def raw_capture(body):
+                raw_path = args.evidence.with_name(args.evidence.name + ".response.bin")
+                raw_fd = os.open(raw_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(raw_fd, "wb") as raw_file:
+                    raw_file.write(body)
+                    raw_file.flush()
+                    os.fsync(raw_file.fileno())
             record("context", {"project_id": target["project_id"], "registry_id": target["registry_id"],
                                "setup_sha256": hashlib.sha256(args.setup.read_bytes()).hexdigest()})
             with AzureCliCredential(tenant_id=target["tenant_id"]) as credential, AIProjectClient(
                 endpoint=target["project_endpoint"], credential=credential,
                 retry_total=0, connection_timeout=10, read_timeout=30,
             ) as project:
-                result = execute(project, data, args.agent, args.version, record)
+                result = execute(project, data, args.agent, args.version, record, raw_capture=raw_capture)
                 record("result", result)
     except (ValueError, OSError, subprocess.SubprocessError, AzureError, APIError) as error:
         # Never print raw SDK errors, signed operation URLs or credential-bearing bodies.

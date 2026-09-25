@@ -178,6 +178,10 @@ roles. Unknown/insufficient pull access is a separate owner decision.
 
 ## 2. Stage a minimal container
 
+Complete the [early capability gate](deployment-preflight.md#early-capability-evidence)
+before building/publishing. Retain its profile/toolchain and artifact-provenance
+receipt alongside setup evidence. Do not infer adoption from the skill version.
+
 Use a dedicated local management venv with `azure-ai-projects~=2.3.0`,
 `azure-identity~=1.25.3`, `httpx~=0.28.1` and `PyYAML~=6.0`. Never update a global
 SDK or mix this environment with the container's canonical dependencies.

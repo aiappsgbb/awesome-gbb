@@ -11,8 +11,9 @@
 // clientSecretSettingName + an ACA secret only if you also need interactive
 // browser sign-in.
 //
-// Also grants the app's user-assigned MI exactly one least-privilege role
-// (Key Vault Secrets User) — Layer 2's confused-deputy defense.
+// Key Vault Secrets User matches the reference's get_secret API, which can
+// read values even though the tool returns properties. Metadata-only policy
+// requires a separately reviewed API/role; this is not a fallback grant.
 // =============================================================================
 
 @description('Name of the existing MCP container app (from mcp-aca.bicep)')
@@ -21,10 +22,9 @@ param containerAppName string
 @description('Entra app (client) ID whose api://<clientId> audience callers request')
 param authClientId string
 
-@description('Client IDs of the app-only callers (server-to-server / MI bearer) allowed to invoke the server. App-only tokens are rejected with 403 unless their client id is listed here — often the CALLER MI/SP, which may differ from authClientId. Empty array = no app-only caller allowed.')
-param allowedCallerClientIds array = [
-  authClientId
-]
+@description('Explicit client IDs of the allowed app-only callers; never substitute the API audience client ID.')
+@minLength(1)
+param allowedCallerClientIds array
 
 @description('Entra tenant ID that issues the tokens')
 param tenantId string = subscription().tenantId
@@ -61,11 +61,8 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
           // No clientSecretSettingName: validation-only (bearer JWT check).
         }
         validation: {
-          // A token's `aud` MUST match one of these or ACA returns 401. Delegated
-          // (user) and app-only (server/MI) tokens carry DIFFERENT audiences:
-          //   - Delegated   (api://<appId>/<scope>): aud = 'api://<appId>'
-          //   - App-only v2  (client-credentials/MI, .default): aud = bare '<appId>'
-          // List both so either consumer model passes audience validation.
+          // v2 aud is the API client GUID; v1 can use its resource URI.
+          // Neither spelling authorizes a caller: the explicit ACL below does.
           allowedAudiences: [
             'api://${authClientId}'
             authClientId
@@ -73,8 +70,8 @@ resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
           // App-only tokens (server-to-server / MI bearer — this skill's PRIMARY
           // consumer model) are REJECTED with 403 unless the caller's client id is
           // listed here, EVEN WHEN the audience matches. Empty [] = deny all
-          // app-only callers. NOTE: editing this after deploy needs a revision
-          // restart (auth-sidecar reload) to take effect.
+          // app-only callers. Verify the loaded policy after an edit; do not
+          // infer success from PATCH or automatically restart shared resources.
           defaultAuthorizationPolicy: {
             allowedApplications: allowedCallerClientIds
           }

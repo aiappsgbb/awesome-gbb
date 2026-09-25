@@ -18,7 +18,7 @@ description: >
   DO NOT USE FOR: continuous eval (foundry-evals), pre-deploy gates
   (threadlight-safe-check), Foundry IQ monitoring (foundry-iq).
 metadata:
-  version: "1.2.4"
+  version: "1.2.5"
 ---
 
 # Foundry Observability
@@ -335,6 +335,14 @@ postprovision script extends the same grant to the platform-managed
 identities.
 
 ### Step 2.3 — agent.yaml — what NOT to set
+
+This historical heading covers the same reserved-name rule in the selected
+[versioned hosted manifest](../foundry-hosted-agents/references/hosted-contract.json).
+Do not regenerate a legacy `agent.yaml` for a unified-profile consumer. Keep
+management environment values distinct from user-declared container variables;
+management PATCH success is not evidence that the serving process loaded the
+new telemetry configuration. Use a safe actual-runtime discriminator, not an
+automatic restart or a diagnostic invoke that replays business work.
 
 ```yaml
 # agent.yaml

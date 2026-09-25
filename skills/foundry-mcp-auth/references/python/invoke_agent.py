@@ -2,7 +2,11 @@
 
 Source of truth for `../../SKILL.md § Agent integration`.
 The caller owns its isolated credential, private transport and consent UX.
+Package the canonical operation_evidence.py from foundry-hosted-agents beside
+this module; its record sink must be durable before invoking stateful tools.
 """
+
+from operation_evidence import begin_operation, response_metadata, error_metadata
 
 
 def invoke_agent(
@@ -10,6 +14,7 @@ def invoke_agent(
     http_client_factory, previous_response_id: str | None = None,
     agent_version: str | None = None,
     require_tool: bool = True,
+    record=None,
 ):
     if kind not in ("prompt", "hosted") or not agent_name.strip() or not user_input.strip():
         raise ValueError("Explicit prompt/hosted kind, agent name and input are required")
@@ -17,6 +22,8 @@ def invoke_agent(
         raise ValueError("Explicit versions here apply only to Prompt agent references")
     if type(require_tool) is not bool:
         raise ValueError("require_tool must be an explicit boolean")
+    if not callable(record):
+        raise ValueError("A durable operation record sink is required before invoking")
     options = {
         "input": user_input,
         "max_output_tokens": 1000,
@@ -31,9 +38,21 @@ def invoke_agent(
         options["previous_response_id"] = previous_response_id
     with project.get_openai_client(
         agent_name=agent_name if kind == "hosted" else None,
-        http_client=http_client_factory(), max_retries=0,
+        http_client=http_client_factory(), max_retries=0, timeout=180,
     ) as client:
-        response = client.responses.create(**options)
+        correlation = begin_operation(record, target=str(client.base_url), intent={
+            "agent_name": agent_name, "kind": kind, "agent_version": agent_version,
+            "previous_response_id": previous_response_id, "input": user_input,
+        })
+        try:
+            record("dispatch-start", {"client_correlation_id": correlation, "effect": "UNKNOWN"})
+            response = client.responses.create(**options)
+            record("response-received", response_metadata(response))
+        except Exception as error:
+            record("invoke-unresolved", error_metadata(error))
+            raise
+    if response.status in ("queued", "in_progress"):
+        return response
     if response.status == "failed":
         code = response.error.code if response.error else "unknown"
         raise RuntimeError(f"Agent response failed ({code}); inspect response {response.id} before retrying")

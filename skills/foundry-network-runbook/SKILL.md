@@ -20,7 +20,7 @@ description: >
   foundry-cross-resource); Citadel JWT 403 (use
   citadel-spoke-onboarding); SDK; quota; cost.
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Foundry Network Runbook — Diagnose connectivity failures after the deploy succeeds
@@ -72,6 +72,13 @@ hosted-agent-creation 403 with `MI provisioning failed` or
 `foundry-vnet-deploy § 8b` for the RBAC fix.
 
 ## 3. Pre-flight checklist
+
+Select the [versioned hosted contract](../foundry-hosted-agents/references/hosted-contract.json)
+and its early capability/permission gate before dependent work. Distinguish
+invoke permission from version, session and response retrieval rights for the
+actual reader. Use finite per-I/O deadlines as well as a diagnostic objective;
+a stalled tool does not establish an Azure failure. Preserve original operation
+IDs and UNKNOWN under the [recovery contract](../foundry-hosted-agents/references/operation-recovery.md).
 
 Capture this baseline **before** you start diagnosing. Without it you
 will mis-attribute symptoms (e.g., blaming DNS when the real failure is

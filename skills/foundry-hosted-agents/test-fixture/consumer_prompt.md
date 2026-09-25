@@ -102,6 +102,7 @@ route around with an ad hoc role grant.
 
 ```bash
 azd ext install microsoft.foundry
+azd ext install azure.ai.agents --version 1.0.0-beta.14 --force
 extensions_json="$(azd ext list --output json)"
 microsoft_foundry_version="$(jq -er \
   '[.[] | select(.id == "microsoft.foundry") | .installedVersion | select(type == "string" and length > 0)]
@@ -128,6 +129,16 @@ any other version-probing command — `azd ext list --output json` is the only
 supported way to verify this in the fixture.
 
 ## Step 2 - deploy the canonical container agent
+
+Before artifact preparation, read `references/hosted-contract.json` and compare
+the observed azd/extension pair with its selected profile. Record the actual
+`hosted_contract.py` provenance inventory and consumer versions. A different
+pair is a compatibility blocker, not permission to upgrade or modify the
+manifest. Complete the capability/permission observations in
+`references/deployment-preflight.md#early-capability-evidence`, using the actual
+CI target and identities. Invoke permission alone does not prove version or
+response retrieval. Unsupported/unreadable capability must fail before build;
+never invent receipt fields or change the shared registry/network/RBAC.
 
 Before the deployment script, classify the existing project's network/setup
 mode using [the shared preflight](../references/deployment-preflight.md).
@@ -311,6 +322,8 @@ from azure.identity import DefaultAzureCredential
 sys.path.insert(0, str(Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
                        / "skills/foundry-hosted-agents/references/python"))
 from hosted_smoke import model_result, verify_model_readback
+from operation_evidence import begin_operation, capture_response, error_metadata
+import json
 
 evidence_path = "/tmp/foundry-hosted-agents-smoke-evidence"
 
@@ -373,10 +386,18 @@ with DefaultAzureCredential() as credential, AIProjectClient(
     openai_client = project.get_openai_client(agent_name=agent_name)
     # One request, no retry of authorization errors or uncertain create ACKs.
     openai_client = openai_client.with_options(max_retries=0, timeout=180)
-    response = openai_client.responses.create(
-        input="Briefly classify this support request: My invoice doubled this month.",
-        stream=False,
-    )
+    def operation_record(event, metadata):
+        record(json.dumps({"event": event, **metadata}))
+    begin_operation(operation_record, target=endpoint, intent={"agent": agent_name, "purpose": "model-smoke"})
+    try:
+        raw = openai_client.responses.with_raw_response.create(
+            input="Briefly classify this support request: My invoice doubled this month.",
+            stream=False,
+        )
+        response = capture_response(raw, operation_record)
+    except Exception as error:
+        operation_record("invoke-unresolved", error_metadata(error))
+        raise RuntimeError("Original invocation unresolved; do not replay") from None
     result = model_result(response)
     readback = openai_client.responses.retrieve(
         result["id"], extra_headers={"x-agent-session-id": result["session_id"]},

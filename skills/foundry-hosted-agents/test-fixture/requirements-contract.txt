@@ -1,0 +1,5 @@
+# Isolated management/transport test cohort; runtime pins remain in references/python/pyproject.toml.
+azure-ai-projects~=2.3.0
+azure-identity~=1.25.3
+httpx~=0.28.1
+PyYAML~=6.0
