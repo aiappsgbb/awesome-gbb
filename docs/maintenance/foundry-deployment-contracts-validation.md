@@ -207,13 +207,35 @@ was attempted to bypass the denial. Evals reported deletion but its complete
 original object identity was not retained; IQ recorded DELETE 204 without an
 independent absence check. These gaps remain explicit, not zero-residue claims.
 
-**Target binding remains unresolved.** The actual CI hosted target was an
+**Target mismatch observed in the first run.** The actual CI hosted target was an
 existing non-default project, while the new standing registry connection and
 the initial AgentOps approval record were bound to the platform-default
 project. Neither resource health nor the default flag authorizes replacing
 `FOUNDRY_PROJECT_ENDPOINT`. Reconcile the intended project, exact connection
 and still-valid approval before further affected execution; no implicit switch,
 approval extension, broad grant or network change is permitted.
+
+The owner's subsequent completion mandate explicitly selected the **existing
+actual CI project**, without changing the endpoint, and authorized correcting
+its connection and the approval's endpoint binding. The native default
+connection name returned an ownership conflict with the other project's
+backing workspace. The failed ARM deployment and unchanged owner connection
+were reconciled before one project-qualified connection was provisioned using
+the same native generic module. Its ordinary GET matched the exact registry
+and retained project-MI mapping; no role, network or registry-mode change was
+made. The AgentOps record changed only its approved project endpoint; the
+original privacy terms, telemetry destinations and expiry remain unchanged.
+
+The owner explicitly instructed that the previously retained hosted version
+and associated image **must not be deleted**. They remain retained with residual
+cost exposure, not a cleanup PASS or an invented retention deadline. Independent
+validation is authorized to continue. New hosted fixture runs now record
+pre-write absence and exact version/image custody, and use a bounded helper
+that removes only its recorded version, otherwise-empty agent and actual image
+manifest. Local tests cover changed versions, shared/nested image repositories
+and independent absence readbacks; live validation of this helper is pending.
+The follow-up full local suite passed **1547 tests with 32 unchanged skips**
+in 164.625 seconds, including eight new hosted-ownership tests. T0 passed.
 
 ## Incremental CI integration
 
@@ -227,9 +249,13 @@ See [incremental CI](incremental-ci.md).
 On the merged working tree, **184 targeted tests PASS** and the full isolated
 macOS catalog reports **1539 tests PASS, 32 unchanged conditional skips** in
 160.847 seconds; T0 and plugin checks pass. These are local integration results,
-not Azure validation of the merged head. The cloud blockers above remain in
-force. Calculate selection against the actual PR base before any push; do not
-treat this integration as authorization for another full matrix.
+not Azure validation of the merged head. The owner subsequently authorized
+completion, necessary execution and normal protected merge. The specific
+no-delete instruction remains in force for the retained first-run hosted
+objects, without blocking independent UUID-scoped tests. Selection against the
+actual PR base remains 25 legs because of this candidate's shared consumer
+input/toolchain changes; the CI integration alone selects only two canaries.
+No selector override, assertion relaxation or duplicate full rerun was introduced.
 
 ## Live and publication gates
 
