@@ -46,6 +46,8 @@ full snapshot/history, and sends no messages. A `delegation` object in the child
 state binds the assignment; the parent's optional `children` array tracks receipts,
 active handles and acceptance. These are additive state fields, not new tables
 or a replacement plan. Existing non-delegated ledgers remain valid.
+Optional coordination fields below also survive terminal `handoff` output; the
+same 4 KiB cap applies to the entire packet. Absence adds no defaults or budget.
 
 The staging JSON requires work_id, revision, event_key, kind, summary, evidence,
 decision, and state (a JSON object). It is an input, not a second authoritative
@@ -85,6 +87,70 @@ active work, not elapsed overnight time; annotate uncertainty in the event summa
 Only a meaningful evidenced result resets it. Plan changes, delegation and recovery
 events do not themselves reset the stall history. Explicit new scope gets a new work
 ID with a reference to the old one; continuing the same blocker retains its history.
+
+## Optional coordination fields
+
+Use these additive `state` fields only where useful. They require no schema
+migration, scheduler or shared writable database. Missing fields stay absent;
+`declared_limits` may be omitted or empty. Never infer limits from this example,
+the no-progress thresholds or an inherited template.
+
+```json
+{
+  "assignment_scope": {
+    "outcome": "Deliver the parser with regression proof",
+    "overall_outcome": "Usable import flow; integration still belongs to parent",
+    "write_scope": ["src/parser.py", "tests/test_parser.py"],
+    "shared_capacity": [],
+    "depends_on": ["schema@revision-a accepted"],
+    "ordinary_operations": ["implement", "test", "one effect-free correction"],
+    "escalate_if": ["new external mutation", "write scope overlaps another owner"]
+  },
+  "declared_limits": [],
+  "blocker_scope": {
+    "blocks": ["publish parser until schema change reconciled"],
+    "does_not_block": ["docs owner: offline examples on separate files"]
+  },
+  "evidence_delta": {
+    "reused": ["format-proof@hash-a: formatting inputs unchanged"],
+    "invalidated": ["schema-proof@hash-b: schema input changed to revision-b"]
+  },
+  "coordination_change": {
+    "change_id": "schema-revision-a-to-b",
+    "kind": "dependency_changed",
+    "scope": ["schema"],
+    "before": "schema@revision-a",
+    "after": "schema@revision-b",
+    "affected_assignments": ["parser"]
+  }
+}
+```
+
+Each listed object requires its shown keys when present: text values are nonempty
+strings; list values contain nonempty strings (empty lists are permitted).
+`declared_limits` contains only actual constraints with their authority/source,
+for example `"user instruction: no cloud writes"`, not guessed quotas.
+Evidence entries include immutable references and a reuse/invalidation reason.
+For `ownership_released`, before/after identify the owner, exact target/version
+and disposition; releasing a target does not grant new authority.
+
+The helper validates these shapes on append and handoff. It rejects identical
+literal scopes in both blocker lists and a change with equal before/after,
+unknown kind, empty scope or empty affected-consumer list. It preserves all
+present fields in the bounded terminal packet. The SQLite schema is unchanged:
+native SQL callers follow the same contract, but do not inherit CLI-only checks.
+A complete handoff also requires an empty `blocker_scope.blocks` when present;
+clearing the prose blocker alone cannot hide a still-declared write conflict.
+
+These are consistency checks, not proof of path aliasing, cloud write exclusion,
+permission, actual change, correct invalidation or independence. Human/agent owners
+still verify those facts. The helper neither schedules work nor sends notices,
+deduplicates cross-session delivery, times out builds, or replays operations.
+Record a receiver's accepted `change_id` in its existing receipt before acting;
+an unchanged/duplicate receipt has no new action. UNKNOWN and live ownership remain
+in `pending_operations`/the scope record across compaction even when other work
+completes. Shorten evidence pointers if a terminal packet exceeds 4 KiB; never drop
+the blocked scope or unresolved handle to make it fit.
 
 ## Read
 

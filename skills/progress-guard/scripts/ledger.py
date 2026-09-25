@@ -10,6 +10,53 @@ SCHEMA = Path(__file__).resolve().parents[1] / "references" / "ledger.sql"
 FIELDS = ("work_id", "revision", "event_key", "kind", "summary",
           "evidence", "decision", "state")
 HANDOFF_LIMIT_BYTES = 4096
+COORDINATION_FIELDS = {
+    "assignment_scope": {
+        "outcome": str, "overall_outcome": str, "write_scope": list,
+        "shared_capacity": list, "depends_on": list,
+        "ordinary_operations": list, "escalate_if": list,
+    },
+    "blocker_scope": {"blocks": list, "does_not_block": list},
+    "evidence_delta": {"reused": list, "invalidated": list},
+    "coordination_change": {
+        "change_id": str, "kind": str, "scope": list, "before": str,
+        "after": str, "affected_assignments": list,
+    },
+}
+
+
+def coordination_fields(state):
+    """Check declared shapes, not independence, permission or evidence truth."""
+    def valid(value, expected):
+        if expected is str:
+            return isinstance(value, str) and bool(value.strip())
+        return isinstance(value, list) and all(valid(item, str) for item in value)
+
+    result = {}
+    for name, fields in COORDINATION_FIELDS.items():
+        if name not in state:
+            continue
+        value = state[name]
+        if not isinstance(value, dict) or any(
+                not valid(value.get(key), expected) for key, expected in fields.items()):
+            raise ValueError(f"{name} requires nonempty text or text-list fields: "
+                             + ", ".join(fields))
+        result[name] = value
+    if "declared_limits" in state:
+        if not valid(state["declared_limits"], list):
+            raise ValueError("declared_limits requires a text list of supplied limits and sources")
+        result["declared_limits"] = state["declared_limits"]
+    if "blocker_scope" in result:
+        scope = result["blocker_scope"]
+        if set(scope["blocks"]) & set(scope["does_not_block"]):
+            raise ValueError("blocker_scope cannot declare the same scope blocked and independent")
+    if "coordination_change" in result:
+        change = result["coordination_change"]
+        if (change["kind"] not in ("dependency_changed", "ownership_released")
+                or change["before"] == change["after"]
+                or not change["scope"] or not change["affected_assignments"]):
+            raise ValueError("coordination_change requires a changed dependency/ownership boundary and affected consumers")
+    return result
 
 
 def handoff(row, state):
@@ -26,10 +73,12 @@ def handoff(row, state):
         raise ValueError("Handoff requires delegation: " + ", ".join(identifiers))
     if not state["plan_ref"].strip() or not state["context"].strip():
         raise ValueError("Handoff requires assignment plan_ref and source/environment context")
+    coordination = coordination_fields(state)
     if status == "complete" and (
             row["kind"] != "complete" or not row["evidence"].strip()
             or state["pending_operations"]
-            or state["blocker"].strip().casefold() not in ("", "none")):
+            or state["blocker"].strip().casefold() not in ("", "none")
+            or coordination.get("blocker_scope", {}).get("blocks")):
         raise ValueError("Complete handoff requires a complete event, evidence and no unresolved operations/blocker")
     if status in ("blocked", "needs_decision") and (
             state["blocker"].strip().casefold() in ("", "none")):
@@ -42,6 +91,7 @@ def handoff(row, state):
            ("status", "goal", "plan_ref", "plan_revision", "context", "done_when", "blocker",
             "next_action", "abandon_if", "avoid", "pending_operations",
             "active_no_progress_minutes")},
+        **coordination,
     }
     output = json.dumps(packet, ensure_ascii=False, separators=(",", ":"))
     if len((output + "\n").encode("utf-8")) > HANDOFF_LIMIT_BYTES:
@@ -106,6 +156,7 @@ def main():
                 raise ValueError("Event requires exactly: " + ", ".join(FIELDS))
             if not isinstance(event["state"], dict):
                 raise ValueError("state must be a JSON object")
+            coordination_fields(event["state"])
             event["state"] = json.dumps(event["state"], ensure_ascii=False)
             with db:
                 db.execute(
