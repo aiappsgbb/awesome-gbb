@@ -3087,7 +3087,7 @@ On Copilot-mode PR check-suite success
 | Auto-tier (CI can refresh autonomously) | 31 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
 | Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
 | Internal IP (no pin) | 7 skills | T0 plus per-skill local checks; manual output validation |
-| CI execution fixtures | 25 skills | Registered for T3: 24 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
+| CI execution fixtures | 26 skills | Registered for T3: 25 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
 
 The additional `foundry-mcp-auth` entry is an unreleased candidate with live
 single-user delegated PASS for Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox over private
@@ -3173,6 +3173,7 @@ the merged web-experience-design source and the progress-guard and copilot-docto
 | Unit tests | 1448 |
 | Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
+| Additional Foundry service contract tests | 18 isolated tests for Toolbox management, Routines creator wire behavior and Skills reader/provider wiring |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

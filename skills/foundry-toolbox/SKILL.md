@@ -6,8 +6,8 @@ description: >
   stable AIProjectClient.toolboxes CRUD, SDK models,
   agent_framework_foundry_hosting.FoundryToolbox, authentication,
   immutable-version promotion and rollback, the azd ai toolbox declarative
-  path, and stable Tool Search. Distinguishes the GA Toolbox core from
-  preview A2A, Work IQ, Fabric IQ, Browser Automation, Reminder, and skills in
+  path, A2A 1.0 GA and stable Tool Search. Distinguishes these from
+  preview A2A 0.3, Work IQ, Fabric IQ, Browser Automation, Reminder, and skills in
   Toolboxes; explains that azure_ai_search wraps an index, not a Foundry IQ
   knowledge base. USE FOR: foundry toolbox, toolbox MCP endpoint,
   AIProjectClient toolboxes, FoundryToolbox, toolbox version promote,
@@ -18,7 +18,7 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
   validated: 2026-08-04
 ---
 
@@ -43,9 +43,11 @@ terms even though the parent Toolbox resource is GA.
 |---|---|---|
 | Toolbox resource, versions, promotion, CRUD, and MCP `v1` endpoints | **GA** | `AIProjectClient.toolboxes`; no preview feature header |
 | MCP, Web Search, Azure AI Search, Code Interpreter, File Search, OpenAPI | **GA Toolbox tool types** | Toolbox-specific SDK model classes |
-| A2A, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
+| A2A protocol 1.0 | **GA** | `A2AToolboxTool`, wire type `a2a`, required `a2a_version` |
+| A2A protocol 0.3, Work IQ, Fabric IQ, Browser Automation, Reminder | **Preview** | Classes retain `Preview` in their names |
 | Tool Search | **Stable Toolbox capability** | `ToolSearchToolboxTool`; returns `tool_search` + `call_tool` |
 | Skills in Toolboxes | **Preview** | Opt in explicitly; no SLA |
+| Prompt Agent consumption of a Toolbox | **Preview integration** | MCP bridge; GA management and Tool Search do not make this integration GA |
 | `agent_framework_foundry_hosting.FoundryToolbox` | **Prerelease client package** | High-level consumer for the GA Toolbox MCP endpoint |
 | `microsoft.foundry` azd bundle `1.0.0-beta.1` | **Beta client bundle** | Recommended CLI install; currently bundles Toolbox component `azure.ai.toolboxes` `1.0.0-beta.2` |
 
@@ -65,7 +67,8 @@ Foundry project
     │   ├── CodeInterpreterToolboxTool
     │   ├── FileSearchToolboxTool
     │   ├── ToolSearchToolboxTool
-    │   └── OpenApiToolboxTool
+    │   ├── OpenApiToolboxTool
+    │   └── A2AToolboxTool (protocol 1.0)
     └── preview tool models
         ├── A2APreviewToolboxTool
         ├── WorkIQPreviewToolboxTool
@@ -99,11 +102,11 @@ is not itself an Agent `tools[].type`. Use the consumer that matches the host:
 |---|---|---|
 | Hosted Microsoft Agent Framework code | `FoundryToolbox` in the Agent `tools` list | GA Toolbox path through a prerelease hosting wrapper |
 | LangGraph or another code framework | Its authenticated Streamable HTTP MCP client | Framework-specific |
-| Prompt Agent | `MCPTool` pointing at the Toolbox endpoint with Tool Search enabled | Stable Tool Search bridge |
+| Prompt Agent | `MCPTool` pointing at the Toolbox endpoint with Tool Search enabled | Preview integration of GA Tool Search |
 
 Do not invent `tools=[{"type": "toolbox"}]`; that Agent tool type does not
 exist. A Prompt Agent can use the documented Tool Search bridge, where the
-Toolbox endpoint exposes only `tool_search` and `call_tool`. For stable hosted
+Toolbox endpoint exposes `tool_search`, `call_tool` and pinned tools. For existing hosted
 production composition, use `FoundryToolbox` in code.
 
 ## When to use Toolbox vs alternatives
@@ -124,7 +127,8 @@ production composition, use `FoundryToolbox` in code.
 
 `ToolboxTool` is the abstract base. Use the concrete subclasses below for
 Toolbox versions. Generic Agent models such as `MCPTool` and `WebSearchTool`
-belong to Agent definitions and are not the canonical Toolbox 2.4 models.
+belong to Agent definitions and are not Toolbox models. The existing consumer
+stack remains on SDK 2.4; the additive A2A management path below is isolated.
 
 | SDK model | Wire type | Status | Required configuration |
 |---|---|---|---|
@@ -135,6 +139,7 @@ belong to Agent definitions and are not the canonical Toolbox 2.4 models.
 | `FileSearchToolboxTool` | `file_search` | GA | Vector-store configuration |
 | `OpenApiToolboxTool` | `openapi` | GA | `openapi=OpenApiFunctionDefinition(...)` |
 | `ToolSearchToolboxTool` | `toolbox_search` | GA | No required fields; activates `tool_search` and `call_tool` |
+| `A2AToolboxTool` | `a2a` | GA, protocol 1.0 | Required `a2a_version=A2AProtocolVersion.V1_0`; remote agent connection |
 | `A2APreviewToolboxTool` | `a2a_preview` | Preview | Remote agent URL and project connection as needed |
 | `WorkIQPreviewToolboxTool` | `work_iq_preview` | Preview | Work IQ project connection |
 | `FabricIQPreviewToolboxTool` | `fabric_iq_preview` | Preview | Fabric IQ project connection and target server details |
@@ -150,10 +155,13 @@ belong to Agent definitions and are not the canonical Toolbox 2.4 models.
 > identifiers found`. This is not limited to duplicate instances of the same
 > tool type — two unnamed tools of any types collide.
 
+The `toolbox_search` configuration directive is not a callable tool and does
+not consume this unnamed-tool allowance.
+
 ### Per-tool anti-patterns
 
-- **`azure_ai_search` tool:** DO NOT use when you need vector + keyword hybrid search in a VNet-injected agent (file_search VNet support is broken as of May 2026). DO use a custom MCP-wrapped AI Search in those cases, wired via the `mcp` tool type.
-- **`file_search` tool:** DO NOT use in VNet-isolated Foundry projects (the file_search backend doesn't yet support PMI in VNet). DO use Cosmos MCP or custom AI Search MCP via `foundry-mcp-aca` or wire directly with `mcp` tool type.
+- **`azure_ai_search` tool:** wraps an index, not a Knowledge Base. Private endpoint support does not turn index retrieval into agentic KB retrieval.
+- **`file_search` tool:** private networking is supported. Validate the project's data-resource private endpoints, DNS and intended caller; do not disable isolation to work around a failed probe.
 - **`code_interpreter` tool:** DO NOT use for long-running computations (>5 min wall-clock) — the container will timeout and fail silently. DO use ACA Jobs via `azd-patterns` for batch work.
 - **`web_search` tool:** DO NOT enable in regulated-data contexts without explicit allow-listing of source domains. DO use the `allowed_domains` parameter when you need to scope results to a restricted set of trusted sources.
 
@@ -723,9 +731,36 @@ assert tool_search.as_dict() == {"type": "toolbox_search"}
 | `ToolboxSearchPreviewToolboxTool` | `ToolSearchToolboxTool` |
 | `toolbox_search_preview` | `toolbox_search` |
 
-When Tool Search is enabled, the initial tool list exposes `tool_search` and
-`call_tool` instead of every full schema. Search first, then call the
-discovered tool.
+When Tool Search is enabled, the initial tool list exposes `tool_search`,
+`call_tool` and pinned tools instead of every full schema. Search first, then
+call the discovered tool by its exact returned name. This Toolbox mechanism
+is distinct from request-scoped deferred-tool search in the Responses API.
+
+Search uses **BM25**, indexing names, descriptions and parameter information.
+`tool_search` takes `query` and optional `limit` (default 5, maximum 10).
+`tool_configs` belongs on each underlying Toolbox tool entry, not the search
+directive or the Toolbox parent:
+
+| Configuration | Effect |
+|---|---|
+| Exact source-tool name, such as `lookup_order` | Configures that tool; takes precedence over `*` |
+| `*` | Default configuration for every tool from that entry |
+| `pin=True` | Keeps the tool visible alongside the two meta-tools |
+| `additional_search_text` | Adds ranking keywords, not model-visible schema text |
+
+Unknown configuration keys are silently ignored by the service: verify the
+source names and inspect discovery rather than treating a successful create as
+proof. MCP calls still use the discovered `{server_label}___{tool_name}` name;
+do not substitute that prefixed name for the source key in `tool_configs`.
+Learn also documents per-user auto-pinning after repeated calls. Record the
+caller's history when assessing extra visible tools; do not interpret pinning
+as permission or approval. Keep the existing consent and approval gates.
+
+**MUST:** use the typed search composition in
+[`references/python/service_tools.py`](references/python/service_tools.py).
+It constructs models only; it neither connects nor promotes a Toolbox.
+For an explicitly approved public no-auth MCP server, pass `connection_id=None`;
+do not create a dummy project connection or silently omit a required one.
 
 Microsoft showed one side-by-side trace with 467 input tokens versus roughly
 4,700 without Tool Search, a 90.1% arithmetic reduction for that trace. Treat
@@ -743,7 +778,8 @@ explained](https://techcommunity.microsoft.com/blog/microsoftmechanicsblog/token
 > [foundry-mcp-auth](../foundry-mcp-auth/SKILL.md) is the delegated recipe;
 > its inner custom MCP connection remains OAuth2 with the MCP's own audience.
 
-Prompt Agents do not yet accept a Toolbox resource directly. For Prompt Agent
+**The Prompt/Toolbox integration remains preview.** Prompt Agents do not accept
+a Toolbox resource as an Agent tool type. For Prompt Agent
 scenarios that need Tool Search, expose the versioned Toolbox endpoint as an
 `MCPTool` and pass one short-lived `https://ai.azure.com/.default` token. This is a
 structural excerpt that uses the `toolbox_version` returned by the preceding
@@ -1042,13 +1078,16 @@ of the project**. Do not put per-user data in either when deployed
 multi-tenant. Use a per-user MCP server backed by Cosmos with row-level
 security if you need isolation.
 
-### `file_search` — no VNet support
+<a id="file_search--no-vnet-support"></a>
 
-Unlike every other tool type, `file_search` is **NOT supported** when the
-Foundry project uses network isolation (private link). If your customer
-mandates VNet (`foundry-vnet-deploy`), drop file_search from the toolbox
-and substitute Foundry IQ KB or a custom MCP server backed by AI Search
-on a private endpoint.
+### `file_search` — private networking
+
+The current [Toolbox network matrix](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox-network-isolation)
+supports File Search through a private endpoint. Earlier blanket bans are
+obsolete. Verify retrieval from the intended vector store on a runner inside
+the approved network, with public access still disabled. Network support is
+not proof of per-user data isolation or evidence that this repository's
+historical public-endpoint smoke exercised the private path.
 
 ### `web_search` — first-party billing, no DPA
 
@@ -1132,15 +1171,108 @@ for the Adaptive Card 1.5 wrapper.
 | `azure_ai_search` | ✅ | Through private endpoint |
 | `code_interpreter` | ✅ | Microsoft backbone network |
 | `web_search` | ✅ | Public endpoint (Bing — outside DPA) |
-| `openapi` | ✅ | Depends on target API network configuration |
-| `file_search` | ❌ | **Not supported in VNet — drop or substitute** |
-| `a2a_preview` | ✅ | Through private endpoint |
+| `openapi` | ✅ | Through your VNet subnet; target must be reachable |
+| `file_search` | ✅ | Through private endpoint |
+| `a2a` / `a2a_preview` | ✅ | Through your VNet subnet; protocol maturity remains separate |
+| Skills | ✅ | Skill loading supported; any tools used by a skill keep their own network requirements |
+| Work IQ / Browser Automation | ❌ | Not supported in network-isolated projects |
+| Fabric IQ | Partial | Depends on the Fabric item and its MCP/network configuration |
+| Tool Search | N/A | Discovery configuration, not a downstream network route |
 
-Pair this with `foundry-vnet-deploy` SKILL when the customer mandates
-network isolation. The `file_search` gap is the most common gotcha —
-discover early during design
-([`threadlight-design`](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design)
-SPEC § 7c).
+The Toolbox inherits its project's network configuration; it does not deploy
+a separate network. Pair with `foundry-vnet-deploy` for infrastructure. Validate
+both private ingress to the Toolbox and each downstream route before claiming
+private end-to-end support. Never add a public fallback without owner approval.
+
+## A2A 1.0 management without a runtime upgrade
+
+Use `A2AToolboxTool(a2a_version=A2AProtocolVersion.V1_0, ...)` for new GA
+integrations. `A2APreviewToolboxTool` / `a2a_preview` remains protocol 0.3
+preview; renaming that wire type alone is not a migration. Current azd A2A
+examples still emit the preview type: inspect their resulting version before
+calling it GA. Preserve existing 0.3 consumers until their peer is verified
+on 1.0.
+
+**MUST:** use [`service_tools.py`](references/python/service_tools.py) for the
+GA A2A model and Tool Search configuration. Install
+[`tests/requirements-management.txt`](tests/requirements-management.txt) only
+in a separate management environment. It caps `azure-ai-projects~=2.6.1`;
+A2A models first appeared in 2.5.0. That SDK line requires OpenAI 3, so do
+not inject it into the existing SDK 2.4 / MAF 1.13 / hosting environment.
+The upstream pin and canonical hosted wiring remain unchanged.
+
+Reference an already-approved `RemoteA2A` connection. For a Foundry peer its
+target is the agent's `/endpoint/protocols/a2a` base path, not the agent-card
+URL; incoming A2A must already be enabled. Its audience is `https://ai.azure.com`.
+The actual calling identity requires Foundry Agent Consumer or higher on the
+target project. Connection creation, incoming-protocol enablement and role
+grants are separate authorized work, not side effects of this model helper.
+Foundry peers currently support text JSON-RPC requests, not streaming.
+For a `RemoteA2A` ARM connection, the audience belongs in
+`properties.audience`. Do not copy the RemoteTool-specific `metadata.audience`
+mapping above: the A2A resolver can return `TokenAudience could not be resolved`
+even though creation stored that metadata successfully.
+
+Invoke the exact tool name and input schema returned by discovery. The tested
+`SendMessage` tool accepts a `message` object containing `parts`, each with
+`kind: "text"` and `text`; passing a plain string as `message` is rejected.
+This MCP-facing schema is not the raw A2A JSON-RPC request schema.
+
+**A2A record lifecycle:** Foundry documents 60-day retention for tasks and
+contexts, reset by each write. Agent/Toolbox/connection deletion does not by
+itself prove erasure of those service-managed records. Before a test that
+requires immediate erasure, establish a supported purge path or explicitly
+accept that bounded retention. An `AGENT_NOT_FOUND` read after deleting the
+peer is not a `TASK_NOT_FOUND` result and must not be reported as record cleanup.
+
+Test a new immutable Toolbox version before promotion. A reachable agent card,
+valid connection, or successful `tools/list` is not an A2A invocation PASS:
+call the discovered peer tool with a harmless request and verify its returned
+result. Follow the [service acceptance cases](test-fixture/service_acceptance.md).
+**2026-09-25 A2A functional acceptance:** the canonical A2A helper created a GA
+1.0 Toolbox tool using a disposable RemoteA2A connection and prompt-agent peer.
+Project-managed-identity authentication used pre-existing effective endpoint
+access, without role grants. The discovered tool returned a completed task
+and the expected synthetic peer result. The peer, connection and Toolbox were
+deleted with authenticated absence readback. Immediate removal of the returned
+service-managed task/context was not proven; the owner explicitly accepted
+the documented 60-day retention for these synthetic records, with no further
+writes. This is accepted bounded retention, **not verified deletion**. The public
+no-auth MCP test below is separate evidence and does not substitute for A2A.
+
+**2026-09-25 scoped live acceptance:** using isolated SDK 2.6.1 / MCP 1.29.x,
+the canonical `searchable_mcp` helper created a version with the public
+Microsoft Learn MCP and no project connection. Initial discovery included both
+meta-tools and the explicitly pinned search tool. A keyword search returned the
+intended fetch tool; one explicitly authorized synthetic documentation query
+returned non-error content through the pinned tool's exact discovered name.
+An additional scoped case invoked the discovered fetch tool through `call_tool`
+and verified the expected public document content. Version metadata confirmed
+explicit promotion, rollback and continued access to the original immutable
+version. Both disposable Toolboxes were deleted with authenticated 404 readback.
+This proves these configured search/discovery/call paths and version metadata,
+not ranking quality, every `call_tool` variant, A2A, the Prompt bridge or private networking.
+No MAF runtime or existing upstream pin changed.
+
+A separate SDK 2.6.1 **Prompt/Toolbox preview** test created a temporary prompt
+agent with the documented short-lived-token MCP bridge. Its response contained
+actual `tool_search` and `call_tool` calls and the expected public documentation
+URL. The agent, Toolbox and stored response were deleted and read back as
+absent. This does not establish delegated-user passthrough.
+
+Private-network acceptance used an isolated Basic project with public access
+disabled and a managed-identity ACA runner. The project hostname resolved to
+the intended private address; the same service rejected an authenticated
+external request because public access was disabled. Canonical Skills downloads,
+MCP resource reads and a File Search call returning the indexed synthetic
+document all passed on the private route. This covers **private ingress with
+platform-managed backing stores**, not BYO datastore or general agent-egress
+isolation. See the [validation record](../../docs/maintenance/foundry-service-pr1-validation.md)
+for exact coverage and resource disposition.
+
+Sources: [A2A protocol/version contract](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/agent-to-agent),
+[incoming A2A](https://learn.microsoft.com/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint),
+[SDK 2.6.1 changelog](https://github.com/Azure/azure-sdk-for-python/blob/azure-ai-projects_2.6.1/sdk/ai/azure-ai-projects/CHANGELOG.md).
 
 ---
 
@@ -1185,6 +1317,9 @@ SPEC § 7c).
 
 ## Catalog history
 
+- `2.3.0` - additive isolated A2A 1.0 management, typed Tool Search tuning,
+  current private-network support and explicit Prompt integration preview
+  boundary. Existing runtime pins and live acceptance remain unchanged.
 - `2.2.0` - integrate direct/nested OAuth consent decoding for BYO clients,
   preserve non-consent failures, correct proxy tool names and approval-map
   transport, and clarify runtime approval enforcement while retaining GA

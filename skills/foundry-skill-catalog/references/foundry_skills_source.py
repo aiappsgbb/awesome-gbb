@@ -35,7 +35,7 @@ class FoundrySkillsSource(SkillsSource):
         self._credential = credential
         self._skill_versions = None if skill_versions is None else dict(skill_versions)
 
-    async def get_skills(self) -> list[Skill]:
+    async def get_skills(self, context: object | None = None) -> list[Skill]:
         return await asyncio.to_thread(self._collect)
 
     def _collect(self) -> list[Skill]:

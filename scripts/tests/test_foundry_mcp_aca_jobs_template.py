@@ -490,7 +490,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         prompt_fm, _ = self._frontmatter_and_body(
             ROOT / "skills" / "foundry-prompt-agents" / "SKILL.md"
         )
-        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.10")
+        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.11")
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
@@ -641,7 +641,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 len(skill_paths) - len(pin_paths),
                 len(fixture_paths),
             ),
-            (42, 35, 31, 4, 7, 25),
+            (42, 35, 31, 4, 7, 26),
         )
         self.assertEqual(
             (
@@ -671,7 +671,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "| Auto-tier (CI can refresh autonomously) | 31 pins |",
             "| Issue-only (human / complex deploy) | 4 pins |",
             "| Internal IP (no pin) | 7 skills |",
-            "| CI execution fixtures | 25 skills | Registered for T3",
+            "| CI execution fixtures | 26 skills | Registered for T3",
             "registration is not a passing run",
             "Source counts include the unreleased AgentOps and delegated-auth candidates",
             "| Total skills | 42 |",

@@ -4,6 +4,11 @@ Execute a live Microsoft Foundry Toolbox smoke against the CI project. This is
 an execution test, not a catalog-inspection task. Follow the exact API contract
 below; do not browse the repository or load the full SKILL.md into context.
 
+**Coverage:** this baseline retains SDK 2.4 / MAF 1.13. It does not certify the
+additive A2A 1.0 management path, tuned search/pinning, Prompt preview bridge,
+Skills or private File Search. Those need the separately approved cases in
+`service_acceptance.md`; do not upgrade this runtime implicitly.
+
 ## Step -1 - acknowledge the skill contract
 
 Your first Bash action must be:

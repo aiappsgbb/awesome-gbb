@@ -46,6 +46,9 @@ skills:
     depends_on: []
   foundry-toolbox:
     depends_on: []
+  # Native Skills package fixture uses neither a prompt agent nor Toolbox.
+  foundry-skill-catalog:
+    depends_on: []
   # Local-only delegated auth candidate. Its unattended fixture proves only
   # approved network/anonymous-auth boundaries, never interactive user OAuth.
   foundry-mcp-auth:

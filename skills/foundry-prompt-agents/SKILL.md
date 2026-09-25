@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.10"
+  version: "1.1.11"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -240,42 +240,27 @@ for tenant-admin consent + scope guidance.
 
 #### ToolSearchTool
 
-Lets a prompt agent dynamically discover and call tools registered in a
-Foundry **toolbox** (server-side MCP bundle) without enumerating every
-tool in `tools=[...]`.
+For Toolbox discovery, do not use the obsolete `toolbox_ids` constructor.
+Configure `ToolSearchToolboxTool` in a **Toolbox version**, then connect the
+Prompt Agent through the documented `MCPTool` bridge to that version's MCP
+endpoint. See [`foundry-toolbox` — Prompt Agent bridge](../foundry-toolbox/SKILL.md#prompt-agent-bridge)
+for the canonical wiring and token/approval boundary.
 
-```python
-from azure.ai.projects.models import ToolSearchTool, PromptAgentDefinition
-
-definition = PromptAgentDefinition(
-    model="gpt-5-mini",
-    instructions="Use the most appropriate tool for the user's task.",
-    tools=[ToolSearchTool(toolbox_ids=["<toolbox-id>"])],
-)
-```
-
-Toolbox registration is server-side — see the `foundry-toolboxes` skill
-(forthcoming in this catalog) for the toolbox lifecycle. ToolSearchTool
-is the **consumption** side; `foundry-toolboxes` is the **production**
-side.
+Tool Search and Toolbox management are GA; **Prompt/Toolbox integration remains
+preview**. A live synthetic test on SDK 2.6.1 verified the Prompt agent actually
+called `tool_search` and `call_tool` and returned the public documentation result.
+This does not prove delegated-user passthrough. Request-scoped Responses API
+deferred-tool search is a different API, not a substitute Toolbox identifier.
 
 #### SkillReferenceTool
 
-Lets a prompt agent invoke a published **Foundry Skill** (a declarative
-tool pack) by reference, the same way a hosted agent does.
-
-```python
-from azure.ai.projects.models import SkillReferenceTool, PromptAgentDefinition
-
-definition = PromptAgentDefinition(
-    model="gpt-5-mini",
-    instructions="Use the published payments-lookup skill when asked about transactions.",
-    tools=[SkillReferenceTool(skill_id="<published-skill-id>")],
-)
-```
-
-Foundry Skills are managed in the same catalog as Toolboxes — see the
-`foundry-toolboxes` skill (forthcoming) for publishing + versioning.
+This historical heading is retained for navigation, not an available tool
+constructor. Do not instantiate `SkillReferenceTool(skill_id=...)`.
+Foundry Skills are versioned instruction packages, not a Prompt Agent tool
+pack. Use [`foundry-skill-catalog`](../foundry-skill-catalog/SKILL.md) for native
+versions, explicit download/injection and resource-aware Toolbox consumers.
+SDK 2.7 schema fields alone do not prove native Prompt/harness support; this
+skill does not enable that unvalidated route or change the existing SDK pin.
 
 #### GuardrailTool
 
@@ -309,22 +294,14 @@ workload needs both content scanning and tool-action governance.
 
 #### A2ATool
 
-Lets a prompt agent invoke a peer hosted agent (Agent-to-Agent protocol,
-GA at //build 2026).
-
-```python
-from azure.ai.projects.models import A2ATool, PromptAgentDefinition
-
-definition = PromptAgentDefinition(
-    model="gpt-5-mini",
-    instructions="When asked for current weather, delegate to the weather-bot agent.",
-    tools=[A2ATool(target_agent_id="<peer-agent-id>")],
-)
-```
-
-Identity propagation, peer-agent RBAC, and the project-MI Cog-roles
-gotcha (AGENTS.md §9.7 Pattern 23) are documented under the
-`a2a_preview` tool type in the `foundry-toolbox` skill.
+Use the GA **protocol 1.0** contract, not `target_agent_id`. The direct SDK
+model uses `A2ATool(a2a_version=A2AProtocolVersion.V1_0, project_connection_id=...)`;
+the Toolbox model is `A2AToolboxTool`. Protocol 0.3 / `a2a_preview` remains
+preview. See [`foundry-toolbox` — A2A management](../foundry-toolbox/SKILL.md#a2a-10-management-without-a-runtime-upgrade)
+for the isolated SDK environment, connection audience, actual caller access and
+tested Toolbox invocation path. Do not silently upgrade this skill's existing
+SDK runtime to import newer models, or assume a hosted peer supports incoming
+A2A because its container deployed.
 
 #### BrowserAutomationTool
 
@@ -616,10 +593,7 @@ from azure.ai.projects.models import (
     # //build 2026 additions (preview) — see § 2 "Build 2026 additions"
     FabricIQTool,
     WorkIQTool,
-    ToolSearchTool,
-    SkillReferenceTool,
     GuardrailTool,
-    A2ATool,
     BrowserAutomationTool,
 )
 ```
@@ -636,8 +610,8 @@ from azure.ai.projects.models import (
 | MAF hosted-agent action governance (not prompt-agent GuardrailTool selection) | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |
 | Memory across sessions | `foundry-memory` |
-| In-process toolbox utilities | `foundry-toolbox` |
-| Server-side MCP toolboxes + Foundry-Skills (ToolSearchTool / SkillReferenceTool) | `foundry-toolboxes` (forthcoming) |
-| A2A peer-agent invocation (A2ATool) | `foundry-toolbox` (`a2a_preview` tool type) |
+| Managed Toolbox and preview Prompt bridge | `foundry-toolbox` |
+| Versioned Skills and resource-aware consumers | `foundry-skill-catalog` |
+| A2A peer-agent invocation | `foundry-toolbox` (`a2a` GA 1.0 versus `a2a_preview` 0.3) |
 | Remote browser automation (BrowserAutomationTool) | `foundry-browser-automation` (forthcoming) |
 | Eval-driven prompt optimization (`azd ai agent eval/optimize/apply` loop) | `foundry-agent-optimizer` (forthcoming) |
