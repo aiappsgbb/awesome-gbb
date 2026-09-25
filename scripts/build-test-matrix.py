@@ -25,10 +25,10 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     Azure resources.
 
     `.github/workflows/skill-test.yml` is compared structurally at base and
-    HEAD. Only independent, named local-test jobs may change without full
-    fanout. Shared/global configuration, unknown jobs, credentials, outputs,
-    dependencies on local jobs, missing versions or ambiguous YAML still
-    force full. Comment-only edits do not change execution.
+    HEAD. Local test edits do not trigger live work. Routing, selection,
+    preflight and aggregate edits select two representative live canaries.
+    Consumer steps, shared credentials, unknown jobs, missing versions and
+    ambiguous YAML still force full. Comment-only edits change no execution.
 
     `plugin.json`, `.github/plugin/marketplace.json`,
     `scripts/build-test-matrix.py`, and `.github/skill-deps.yml` are
@@ -47,10 +47,9 @@ Sorted alphabetically for deterministic GHA matrix expansion.
         adds new edges that fire only when their roots change. A
         REMOVED or RENAMED entry could cause silent regressions; that
         rare case is covered by `validate-skills.py` (cycle + unknown-
-        ref checks) and by the unconditional `push: main` / weekly
-        full-matrix canary.
+        ref checks) and by the scheduled full-matrix canary.
 
-    The push-to-main + weekly schedule paths still run the full
+    The scheduled and manual paths still run the full
     matrix as a catalogue canary, so any plugin-structural change
     (categories, keywords, name), matrix-logic drift, or dep-graph
     rename is re-validated within ≤7 days even when the PR fan-out
@@ -61,16 +60,19 @@ Sorted alphabetically for deterministic GHA matrix expansion.
     skill/helper changes and full/shared-contract runs still select it.
     Other dependency expansion and fixture/quarantine filtering are unchanged.
 
-  - Transitive forward fanout via `.github/skill-deps.yml`: if skill A
+  - One-hop forward fanout via `.github/skill-deps.yml`: if skill A
     changed and skill B declares `depends_on: [A]`, B is also emitted.
     Single-hop only (cycles are ruled out by validate-skills.py).
 
   Empty changed-set → `{"skill": []}`. The downstream matrix job's
   `if: fromJSON(...).skill[0] != null` guard handles the no-op case.
 
-  PR events MUST pass `--changed-only --base-ref <base.sha>`. `push: main`,
-  `schedule:`, and `workflow_dispatch` MUST omit `--changed-only` so the
-  full matrix runs as a catalogue health canary.
+  PRs and main pushes use --changed-only against the PR base and push
+  before SHA respectively. Scheduled and manual runs retain the full canary.
+  Editorial frontmatter and local test changes require no live execution;
+  fixture-only edits execute that fixture without downstream fanout.
+  Orchestration-only workflow changes run the native Harness and prompt-agent
+  canaries; changes to consumer execution still require the full matrix.
 """
 from __future__ import annotations
 
@@ -95,10 +97,12 @@ import yaml
 # is covered by its own unit tests, and skill-deps.yml is read live by
 # _load_dep_map (a new entry is additive and doesn't change existing
 # fanout). All non-listed structural drift is caught by the
-# unconditional push:main full-matrix canary within ≤7 days.
+# scheduled full-matrix canary within the regular cadence.
 # See module docstring for full rationale.
 WORKFLOW_PATH = ".github/workflows/skill-test.yml"
 LOCAL_TEST_JOBS = frozenset({"unit-tests", "catalog-lint", "delegated-auth-local"})
+ORCHESTRATION_JOBS = frozenset({"build-matrix", "driver-preflight", "smoke-result"})
+ORCHESTRATION_CANARIES = frozenset({"agent-framework-harness", "foundry-prompt-agents"})
 
 FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     ".github/quarantine.yml",
@@ -108,6 +112,7 @@ FORCE_FULL_MATRIX_PATHS: frozenset[str] = frozenset({
     ".github/ci-shared-preamble.md",
     # Every Azure fixture consumes the project context selected here.
     "scripts/resolve-foundry-project.py",
+    "scripts/configure-ci-model-provider.py",
 })
 
 SKILL_HELPER_PATHS: dict[str, str] = {
@@ -116,6 +121,7 @@ SKILL_HELPER_PATHS: dict[str, str] = {
     "scripts/agentops-ci-diagnostic.py": "foundry-agentops",
     "scripts/setup-agentops-age.sh": "foundry-agentops",
 }
+NATIVE_HELPER_SKILLS = frozenset({"foundry-mcp-auth", "foundry-mcp-aca-jobs"})
 DIAGNOSTIC_LABEL = "agentops-diagnostic"
 
 
@@ -177,43 +183,105 @@ def _read_workflow(repo_root: Path, ref: str) -> dict:
     return workflow
 
 
-def _shared_workflow_changed(repo_root: Path, base_ref: str) -> bool:
+def _workflow_change_scope(repo_root: Path, base_ref: str) -> str:
     try:
         before = _read_workflow(repo_root, base_ref)
         after = _read_workflow(repo_root, "HEAD")
         if before == after:
-            return False
+            return "none"
         before_jobs, after_jobs = before.pop("jobs"), after.pop("jobs")
+        routing_changed = (before.get("on", before.get(True)) !=
+                           after.get("on", after.get(True)))
+        # Event routing affects selection, not the execution contract of a leg.
+        before.pop("on", None)
+        after.pop("on", None)
+        before.pop(True, None)  # PyYAML's YAML 1.1 spelling of `on`.
+        after.pop(True, None)
         if before != after:
-            return True
-        before_shared = {k: v for k, v in before_jobs.items() if k not in LOCAL_TEST_JOBS}
-        after_shared = {k: v for k, v in after_jobs.items() if k not in LOCAL_TEST_JOBS}
+            return "full"
+        excluded = LOCAL_TEST_JOBS | ORCHESTRATION_JOBS
+        before_shared = {k: v.copy() for k, v in before_jobs.items() if k not in excluded}
+        after_shared = {k: v.copy() for k, v in after_jobs.items() if k not in excluded}
+        for shared in (before_shared, after_shared):
+            shared["copilot-cli-matrix"].pop("needs", None)
+            shared["copilot-cli-matrix"].pop("if", None)
         if before_shared != after_shared:
-            return True
+            return "full"
         if (before_jobs.keys() & LOCAL_TEST_JOBS) - after_jobs.keys():
-            return True
+            return "full"
         for jobs in (before_jobs, after_jobs):
             for name, job in jobs.items():
                 if name in LOCAL_TEST_JOBS:
                     if {"outputs", "permissions", "secrets", "environment", "uses"} & job.keys():
-                        return True
+                        return "full"
                     continue
                 needs = job.get("needs", [])
                 if isinstance(needs, str):
                     needs = [needs]
                 if not isinstance(needs, list) or any(
-                    not isinstance(dep, str) or "${{" in dep or dep in LOCAL_TEST_JOBS
+                    not isinstance(dep, str) or "${{" in dep
+                    or dep not in LOCAL_TEST_JOBS | ORCHESTRATION_JOBS | {"copilot-cli-matrix"}
                     for dep in needs
                 ):
-                    return True
-        return False
+                    return "full"
+        changed_jobs = {
+            name for name in before_jobs.keys() | after_jobs.keys()
+            if before_jobs.get(name) != after_jobs.get(name)
+        }
+        if changed_jobs <= LOCAL_TEST_JOBS and not routing_changed:
+            return "none"
+        return "canary"
     except (OSError, subprocess.CalledProcessError, yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
         print(
-            f"::warning::Cannot establish local-only workflow change ({type(exc).__name__}); "
+            f"::warning::Cannot establish workflow change scope ({type(exc).__name__}); "
             "using full Azure matrix.",
             file=sys.stderr,
         )
-        return True
+        return "full"
+
+
+def _editorial_frontmatter_only(repo_root: Path, base_ref: str, path: str) -> bool:
+    try:
+        versions = [
+            subprocess.check_output(
+                ["git", "-C", str(repo_root), "show", f"{ref}:{path}"],
+                text=True, stderr=subprocess.PIPE,
+            )
+            for ref in (base_ref, "HEAD")
+        ]
+        parsed = []
+        for text in versions:
+            if not text.startswith("---\n"):
+                return False
+            parts = text.split("---", 2)
+            if len(parts) != 3:
+                return False
+            front = yaml.load(parts[1], Loader=_WorkflowLoader)
+            if not isinstance(front, dict) or not isinstance(front.get("metadata"), dict):
+                return False
+            if not isinstance(front.get("description"), str) or not isinstance(front.get("name"), str):
+                return False
+            front.pop("description")
+            front["metadata"].pop("version", None)
+            parsed.append((front, parts[2]))
+        return parsed[0] == parsed[1]
+    except (OSError, subprocess.CalledProcessError, yaml.YAMLError, ValueError, TypeError):
+        return False
+
+
+def _skill_change_kind(repo_root: Path, base_ref: str, path: str) -> str:
+    parts = path.split("/")
+    if len(parts) < 3 or parts[0] != "skills":
+        return "operational"
+    relative = "/".join(parts[2:])
+    if (relative.startswith("tests/") and parts[-1].startswith("test_")
+            and parts[-1].endswith(".py")) or relative == "requirements-test.txt":
+        return "local"
+    if relative == "SKILL.md" and _editorial_frontmatter_only(repo_root, base_ref, path):
+        return "local"
+    if relative.startswith("test-fixture/"):
+        return "fixture"
+    return "operational"
 
 
 def _changed_skills_from_diff(changed_files: list[str]) -> set[str]:
@@ -278,14 +346,39 @@ def build(
     # Force full matrix on any infra/gating-file change.
     if any(f in FORCE_FULL_MATRIX_PATHS for f in changed_files):
         return {"skill": all_fixtured}
-    if WORKFLOW_PATH in changed_files and _shared_workflow_changed(repo_root, base_ref):
-        return {"skill": all_fixtured}
+    canaries: set[str] = set()
+    if WORKFLOW_PATH in changed_files:
+        scope = _workflow_change_scope(repo_root, base_ref)
+        if scope == "full":
+            return {"skill": all_fixtured}
+        if scope == "canary":
+            canaries = set(ORCHESTRATION_CANARIES)
+    if "scripts/probe-ci-driver.py" in changed_files:
+        canaries.update(ORCHESTRATION_CANARIES)
 
-    changed_skills = _changed_skills_from_diff(changed_files)
+    operational_files = []
+    fixture_skills: set[str] = set()
+    for path in changed_files:
+        kind = _skill_change_kind(repo_root, base_ref, path)
+        if kind == "fixture":
+            fixture_skills.update(_changed_skills_from_diff([path]))
+        elif kind == "operational":
+            operational_files.append(path)
+    changed_skills = _changed_skills_from_diff(operational_files)
+    if "scripts/native-ci-preflight.py" in changed_files:
+        fixture_skills.update(NATIVE_HELPER_SKILLS)
     deps_map = _load_dep_map(repo_root)
     expanded = _expand_transitively(changed_skills, deps_map)
-    if "foundry-agentops" not in changed_skills:
+    expanded.update(fixture_skills)
+    if "foundry-agentops" not in changed_skills | fixture_skills:
         expanded.discard("foundry-agentops")
+    if canaries:
+        # A missing/quarantined required canary must not silently narrow coverage.
+        if not canaries <= set(all_fixtured):
+            print("::warning::Required orchestration canary unavailable; selecting the full eligible matrix.",
+                  file=sys.stderr)
+            return {"skill": all_fixtured}
+        expanded.update(canaries)
 
     # Intersect with the fixtured+non-quarantined set so we never emit
     # a name the downstream job can't actually execute.

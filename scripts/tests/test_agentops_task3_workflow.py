@@ -46,9 +46,7 @@ class AgentOpsTask3WorkflowTests(unittest.TestCase):
 
     def test_pull_request_has_no_label_trigger(self) -> None:
         pull_request = self.workflow[True]["pull_request"]
-        self.assertIsInstance(pull_request, dict)
-        self.assertNotIn("types", pull_request)
-        self.assertIn("scripts/setup-agentops-age.sh", pull_request["paths"])
+        self.assertIsNone(pull_request)
 
     def test_build_job_selects_only_agentops_for_approved_diagnostic(self) -> None:
         self.assertEqual(
@@ -70,7 +68,10 @@ class AgentOpsTask3WorkflowTests(unittest.TestCase):
 
     def test_final_result_guard_executes_the_matrix_consumer_contract(self) -> None:
         guard = self.workflow["jobs"]["smoke-result"]
-        self.assertEqual(guard["needs"], ["build-matrix", "copilot-cli-matrix"])
+        self.assertEqual(guard["needs"], [
+            "build-matrix", "unit-tests", "catalog-lint", "delegated-auth-local",
+            "driver-preflight", "copilot-cli-matrix",
+        ])
         self.assertEqual(guard["if"], "always()")
         step = guard["steps"][0]
         self.assertEqual(step["env"]["MATRIX_JSON"], "${{ needs.build-matrix.outputs.matrix }}")
@@ -124,6 +125,9 @@ class AgentOpsTask3WorkflowTests(unittest.TestCase):
                     "PATH": os.environ["PATH"],
                     "MATRIX_JSON": matrix,
                     "CONSUMER_RESULT": consumer,
+                    "LOCAL_RESULTS": json.dumps({
+                        job: {"result": "success"} for job in guard["needs"]
+                    }),
                     "SECRET_CANARY": "SECRET_CANARY_MUST_NOT_ESCAPE",
                 }
                 result = subprocess.run(
