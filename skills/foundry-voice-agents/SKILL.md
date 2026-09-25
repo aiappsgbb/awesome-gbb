@@ -20,8 +20,8 @@ function call, interruption and stored readback/cleanup passed on 2026-09-25.
 Manual service-trace correlation also passed, but **metadata-only tracing
 failed**: server-side message/tool content was emitted without a client toggle.
 Existing synthetic traces have a one-run, owner-accepted 30-day retention
-exception; new trace capture is not authorized by that exception. Targeted CI
-remains pending; see the
+exception; new trace capture is not authorized by that exception. Current-head
+targeted CI outcomes are recorded in the PR; see the
 [validation record](../../docs/maintenance/foundry-voice-agents-validation.md).
 Do not represent this candidate as production-ready. The service
 capability is public preview, with no preview SLA; the SDK's stable package

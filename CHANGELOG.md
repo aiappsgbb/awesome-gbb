@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.37.0 — Proposed / Unreleased
+
+- Add [`foundry-voice-agents`](skills/foundry-voice-agents/SKILL.md) **1.0.0**:
+  service-native managed prompt voice in public preview, with isolated Projects
+  2.7.0 dependencies, synthetic audio/greeting/function/barge-in and consented
+  stored transcript/stereo-audio readback and verified owned cleanup.
+- Manual service trace correlation passed, but metadata-only tracing failed:
+  nonempty message/tool-result attributes were emitted without a client toggle.
+  The owner accepted only the existing synthetic test window's 30-day retention.
+  No new capture consent or metadata-only success is implied.
+- The automated fixture refuses configured account/project tracing before
+  invocation; it creates no telemetry binding or role. Manual correlation,
+  privacy deviation and automated functional coverage remain separate in the
+  [validation record](docs/maintenance/foundry-voice-agents-validation.md).
+- Catalog MINOR **4.36.0 → 4.37.0**: **43 skills**, **36 upstream pins** and
+  **27 registered fixtures**. Unit-test totals remain discovery-driven.
+  Existing Voice Live, Agent Framework and shared CI consumer contracts stay
+  unchanged; the new SDK cohort runs in a dedicated local-test environment.
+
 ## Unreleased — #518 deployment and recovery contract candidate
 
 Candidate live results remain source-bound; full acceptance, adoption and release

@@ -1,7 +1,7 @@
 # Managed Voice Agent candidate acceptance
 
 Status: **unreleased candidate; functional voice and manual service correlation
-PASS, metadata-only tracing FAIL; targeted CI pending**.
+PASS, metadata-only tracing FAIL; current-head CI reported in the PR**.
 The capability is Foundry Agent Service public preview, not a change to the
 existing Voice Live API contract. No waiver from another PR applies.
 
@@ -38,7 +38,7 @@ conversation IDs remain private.
 | Existing synthetic trace retention | OWNER-ACCEPTED | Explicit exception for the already-created test window only, under existing 30-day retention; not a metadata-only PASS or future capture consent |
 | Browser/speaker hardware | NOT TESTED | Buffered synthetic client does not certify microphone, speaker-queue flush, echo or WebRTC |
 | BYOM/BYO storage/simulation/azd provisioning | NOT TESTED | Outside this managed existing-project test |
-| Targeted current-head CI | NOT RUN | Publication waits for required acceptance and narrow selection |
+| Automated Voice consumer | See current-head PR checks | Functional/privacy-preflight/cleanup coverage only; no automated tracing claim |
 
 The successful corrected cycle used three sessions and three function calls.
 The service reported 2,787 total tokens across its response usage records;

@@ -339,13 +339,17 @@ class FailureGuardTests(unittest.TestCase):
                 root = Path(directory)
                 project = root / "project"
                 project.mkdir()
+                (project / "infra").mkdir()
                 binaries = root / "bin"
                 binaries.mkdir()
                 log = root / "commands"
                 for name, text in {
                     "azd": '#!/bin/sh\nprintf "azd %s\\n" "$*" >> "$COMMAND_LOG"\nexit "$AZD_STATUS"\n',
                     "python3": (
-                        '#!/bin/sh\nprintf "helper %s\\n" "$2" >> "$COMMAND_LOG"\n'
+                        '#!/bin/sh\n'
+                        'case "$1" in */auth_config.py) printf "auth_config\\n" >> "$COMMAND_LOG"; '
+                        'printf "{}\\n"; exit 0;; esac\n'
+                        'printf "helper %s\\n" "$2" >> "$COMMAND_LOG"\n'
                         'if [ "$2" = capture ]; then exit "$CAPTURE_STATUS"; fi\n'
                         'if [ "$2" = cleanup ]; then exit 2; fi\n'
                     ),
@@ -363,6 +367,8 @@ class FailureGuardTests(unittest.TestCase):
                     "GITHUB_WORKSPACE": str(ROOT),
                     "AZURE_SUBSCRIPTION_ID": scope().subscription,
                     "AZURE_TENANT_ID": scope().tenant,
+                    "MCP_AUTH_APP_CLIENT_ID": str(uuid.UUID(int=4)),
+                    "AZURE_CLIENT_ID": str(uuid.UUID(int=5)),
                     "COMMAND_LOG": str(log), "AZD_STATUS": str(azd_status),
                     "CAPTURE_STATUS": str(capture_status),
                 }
@@ -372,7 +378,7 @@ class FailureGuardTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, expected, result.stderr)
                 calls = log.read_text().splitlines()
-                self.assertEqual(calls[:3], ["helper prepare", "helper start", "azd up --no-prompt"])
+                self.assertEqual(calls[:4], ["auth_config", "helper prepare", "helper start", "azd up --no-prompt"])
                 self.assertEqual(calls.count("azd up --no-prompt"), 1)
                 if expected:
                     self.assertEqual(calls[-1], "helper cleanup")
