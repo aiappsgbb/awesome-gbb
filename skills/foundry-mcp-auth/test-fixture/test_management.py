@@ -1,11 +1,14 @@
 """Offline serialization/write-boundary tests; project methods are local fakes."""
 
 import unittest
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, MagicMock
 from uuid import UUID
 import httpx
 from openai import OpenAI
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "foundry-hosted-agents/references/python"))
 
 from references.python.configure_foundry import build_definitions, create_bindings
 
@@ -49,9 +52,9 @@ class ManagementTests(unittest.TestCase):
                 client.__enter__.return_value = client
                 project = SimpleNamespace(get_openai_client=Mock(return_value=client))
                 transport = object()
-                invoke_agent(project, "demo", kind, "Call the demo tools", http_client_factory=lambda: transport)
+                invoke_agent(project, "demo", kind, "Call the demo tools", http_client_factory=lambda: transport, record=Mock())
                 project.get_openai_client.assert_called_once_with(
-                    agent_name="demo" if kind == "hosted" else None, http_client=transport, max_retries=0,
+                    agent_name="demo" if kind == "hosted" else None, http_client=transport, max_retries=0, timeout=180,
                 )
                 options = client.responses.create.call_args.kwargs
                 self.assertEqual("extra_body" in options, kind == "prompt")
@@ -64,7 +67,7 @@ class ManagementTests(unittest.TestCase):
             client.responses.create.return_value = SimpleNamespace(status="completed", output=[object()])
             project = SimpleNamespace(get_openai_client=Mock(return_value=client))
             invoke_agent(project, "demo", "prompt", "Who am I?",
-                         http_client_factory=object, require_tool=require_tool)
+                         http_client_factory=object, require_tool=require_tool, record=Mock())
             options = client.responses.create.call_args.kwargs
             if require_tool:
                 self.assertEqual(options["tool_choice"], "required")
@@ -72,7 +75,7 @@ class ManagementTests(unittest.TestCase):
                 self.assertNotIn("tool_choice", options)
         with self.assertRaises(ValueError):
             invoke_agent(project, "demo", "prompt", "Who am I?",
-                         http_client_factory=object, require_tool="false")
+                         http_client_factory=object, require_tool="false", record=Mock())
 
     def test_failed_responses_never_become_successful_empty_results(self):
         from references.python.invoke_agent import invoke_agent
@@ -80,9 +83,13 @@ class ManagementTests(unittest.TestCase):
         client.responses.create.return_value = SimpleNamespace(
             status="failed", error=SimpleNamespace(code="server_error"), id="response-id",
         )
+        receipt = Mock()
         with self.assertRaisesRegex(RuntimeError, "server_error"):
             invoke_agent(SimpleNamespace(get_openai_client=Mock(return_value=client)),
-                         "demo", "hosted", "Call tools", http_client_factory=object)
+                         "demo", "hosted", "Call tools", http_client_factory=object, record=receipt)
+        self.assertEqual(receipt.call_args.args[0], "response-received")
+        self.assertEqual(receipt.call_args.args[1]["response_id"], "response-id")
+        self.assertEqual(receipt.call_args.args[1]["effect"], "UNKNOWN")
 
     def test_consent_continuation_uses_previous_response_without_auto_approval(self):
         from references.python.invoke_agent import invoke_agent
@@ -90,7 +97,7 @@ class ManagementTests(unittest.TestCase):
         response = SimpleNamespace(status="completed", output=[SimpleNamespace(type="oauth_consent_request")])
         client.responses.create.return_value = response
         result = invoke_agent(SimpleNamespace(get_openai_client=Mock(return_value=client)),
-                              "demo", "prompt", "Call tools", http_client_factory=object, previous_response_id="prior")
+                              "demo", "prompt", "Call tools", http_client_factory=object, previous_response_id="prior", record=Mock())
         self.assertIs(result, response)
         self.assertEqual(client.responses.create.call_args.kwargs["previous_response_id"], "prior")
         self.assertNotIn("mcp_approval_response", str(client.responses.create.call_args.kwargs))
@@ -114,11 +121,11 @@ class ManagementTests(unittest.TestCase):
             return transport
         project = SimpleNamespace(get_openai_client=lambda **kwargs: OpenAI(
             api_key="local-test-only", base_url="https://example.test/v1",
-            http_client=kwargs["http_client"], max_retries=0,
+            http_client=kwargs["http_client"], max_retries=0, timeout=kwargs["timeout"],
         ))
-        first = invoke_agent(project, "demo", "prompt", "First", http_client_factory=transport_factory, agent_version="1")
+        first = invoke_agent(project, "demo", "prompt", "First", http_client_factory=transport_factory, agent_version="1", record=Mock())
         invoke_agent(project, "demo", "prompt", "Continue", http_client_factory=transport_factory,
-                     previous_response_id=first.id, agent_version="1")
+                     previous_response_id=first.id, agent_version="1", record=Mock())
         self.assertEqual(len(requests), 2)
         self.assertTrue(all(t.is_closed for t in transports))
         import json
@@ -132,7 +139,7 @@ class ManagementTests(unittest.TestCase):
         client.responses.create.return_value = SimpleNamespace(status="completed", output=[], id="empty")
         with self.assertRaisesRegex(RuntimeError, "empty"):
             invoke_agent(SimpleNamespace(get_openai_client=Mock(return_value=client)), "demo", "hosted",
-                         "Call tools", http_client_factory=object)
+                         "Call tools", http_client_factory=object, record=Mock())
 
     def test_ga_oauth_properties_use_custom_audience_and_scope(self):
         from references.python.provision_connection import build_oauth_properties

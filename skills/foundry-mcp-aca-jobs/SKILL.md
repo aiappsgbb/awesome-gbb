@@ -254,7 +254,7 @@ without invoking its business handler again. Existing output may still be
 reconciled without running the handler. Lease/ETag fencing prevents competing
 state writes; it cannot alone deduplicate an external business API after a crash.
 Independent readback must name the actual reader identity and consistency
-contract. See the [operation evidence contract](../foundry-hosted-agents/SKILL.md#operation-recovery).
+contract. See the [shared custody guide](../foundry-hosted-agents/references/operation-recovery.md).
 
 ## Callback contract
 

@@ -22,6 +22,13 @@ engineer says to skip more setup. Preserve the environment regardless of deadlin
 | Working comparator has a different runtime cohort and an empty unmodeled protocol field | Keep selected validated cohort; inspect typed Responses 2.0.0, do not speculate about serializer or mass-change pins. |
 | Create timed out; LIST says active but direct GET says failed | Reconcile frozen inputs, preserve version/identity/binding. Direct GET failure blocks readiness; no blind second create. |
 | Two active direct GETs, endpoint health 200, no actual tool receipt | Registration metadata only, not business proof; require authenticated invocation and independent requested-result audit. |
+| Repository-only requirement on legacy registry | Unsupported capability before image preparation; no broad grant or registry mode change. |
+| Invoke works but result/version reader lacks access | Explicit permission blocker, not successful custody; do not repeat the invoke. |
+| Version still creating with null future identity | Pending observation; no invoke until two exact active bindings. |
+| Response parsing fails after service returns its response/session IDs | IDs/status remain in evidence; reconcile original operation with no second POST. |
+| Business save succeeds but browser/Teams delivery fails | Effect and client completion remain separate; never repeat the save for a better client response. |
+| Lost ACA start ACK and eventually-consistent list is empty | Preserve original task/native operation, no replay after grace. |
+| Installed helper version label matches but file hash differs | Adoption drift, not verified installation; review actual bytes before use. |
 
 Deterministic equivalents run with
 `python3 -m unittest scripts.tests.test_hosted_deploy_preflight`.

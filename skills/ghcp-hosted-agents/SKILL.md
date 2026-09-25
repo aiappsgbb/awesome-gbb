@@ -13,7 +13,7 @@ description: >
   DO NOT USE FOR: MAF agents (use foundry-hosted-agents), prompt agents,
   declarative agents, general Azure deploy.
 metadata:
-  version: "2.0.9"
+  version: "3.0.0"
 ---
 
 # GHCP SDK Hosted Agents on Foundry
@@ -40,6 +40,20 @@ unlimited tool-loop duration.
 > agents".
 
 ## When to Use GHCP SDK Instead of MAF
+
+**Shared deployment, distinct runtime.** Select/review the consumer against
+the [hosted contract](../foundry-hosted-agents/references/hosted-contract.json).
+The MAF private BASIC evidence does not certify this GHCP/Invocations variant.
+Keep its BYOK identities and permissions; do not copy the MAF implicit-access
+assumption to a different account-level call.
+
+The optional Python invoker now requires a durable `record` callback, or
+`INVOCATION_EVIDENCE_FILE` for the CLI. Package the canonical
+[operation evidence helper](../foundry-hosted-agents/references/python/operation_evidence.py)
+beside it. It retains intent/HTTP metadata, rejects truncated or malformed SSE,
+and treats the template runtime's `invocation_id` as a custom ID, not proof of
+a retrievable Foundry response. Reconcile an uncertain effect; never repeat it
+merely to recover output. See the [recovery contract](../foundry-hosted-agents/references/operation-recovery.md).
 
 | Consideration | MAF | GHCP SDK |
 |---------------|-----|----------|

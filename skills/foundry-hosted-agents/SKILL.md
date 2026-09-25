@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "2.5.0"
+  version: "3.0.0"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -53,7 +53,8 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 - Blue-green / canary / rollback traffic routing across agent versions
 - **Migrating from MAF 1.3.x → 1.4.0** ([§ below](#maf-140-breaking-changes-may-2026))
 - **Migrating from the legacy two-file `agent.yaml` + `agent.manifest.yaml`
-  contract** — both are gone; a single `azure.yaml` is now the source of truth
+  contract** — select and verify the versioned consumer before migration;
+  the supported unified profile uses a single `azure.yaml`
   ([§ azure.yaml](#azureyaml-unified-hosted-agent-configuration))
 
 | Need | Use |
@@ -63,6 +64,27 @@ for that path in isolation. Covers the `Agent` + `FoundryChatClient` +
 > **Choosing a model?** See [`references/model-selection.md`](references/model-selection.md) for the model / region / capacity / data-residency decision before you `azd provision`.
 
 ## Deployment preflight
+
+**Select a versioned contract before authoring.** The authoritative profile is
+[`references/hosted-contract.json`](references/hosted-contract.json), consumed by
+[`hosted_contract.py`](references/python/hosted_contract.py) and the stager.
+It binds the tested consumer, manifest/environment shape, protocol, runtime
+dependencies, identities and lifecycle; the existing template and pyproject
+remain the source of their actual content. The recorded private BASIC profile
+is azd **1.34.1 + azure.ai.agents 1.0.0-beta.14**, not “this version or newer”.
+Its historical no-tools evidence does not certify other modes or business tools.
+
+Legacy two-file manifests are **migration-only**. Preserve them until the owner
+selects and verifies a migration; do not delete them merely because this skill
+documents a unified manifest. Current Learn pages use an `env` map while the
+recorded consumer template uses an `environmentVariables` list. Do not mix
+the shapes or rewrite a working cohort without checking actual consumer emission.
+An unknown toolchain is `UNSUPPORTED_CAPABILITY`, not permission to upgrade.
+
+Run the new **capabilities** phase of the existing preflight before building or
+publishing an image; then the setup and execution phases at their own boundaries.
+See [capability evidence](references/deployment-preflight.md#early-capability-evidence).
+The capability check is not a new deployment framework and never changes Azure.
 
 **Platform-managed compute does not mean that private project setup is optional.**
 Before hosted registration, select the account/project/network mode and follow
@@ -201,7 +223,8 @@ image **reference**. There are two common shapes:
   newest pushed image on every container start. Auto-picks up MAF
   rebuilds the next time the agent provisions.
 - `<acr>.azurecr.io/tl-maf-orchestrator@sha256:abc…` — pinned to a
-  specific layer digest. Reproducible, but **frozen at the MAF version
+  specific registry manifest/index digest (not a local image configuration ID
+  or an individual layer digest). Reproducible, but **frozen at the MAF version
   that was in the image when the digest was computed**.
 
 After a MAF 1.4.0 rebuild, agents using `:latest` work; agents using
@@ -424,17 +447,6 @@ from the canonical
 
 ---
 
-## Operation recovery
-
-**MUST:** use [`operation_evidence.py`](references/python/operation_evidence.py)
-for durable request intent and allowlisted response identity before application
-parsing. The caller supplies a private durable recorder; failure to persist
-intent prevents dispatch. Save service IDs and transport metadata before
-interpreting the body. A completed response is not verified business effect.
-Timeouts, malformed responses and missing readback leave the original outcome
-unknown: reconcile that operation, never replay it under a new ID. These
-standard-library primitives do not select a hosted profile or dispatch work.
-
 ## Container GA status and adjacent preview surfaces
 
 > **Status.** **Container-based** hosted agent deploy (Dockerfile +
@@ -514,14 +526,12 @@ libraries.
 
 ### Unified `azure.yaml` (replaces the old two-file contract)
 
-The old **two-file** contract (`agent.yaml` literal values +
-`agent.manifest.yaml` mustache scaffold) is gone. As of the current
-Foundry `azd` extensions, **all hosted-agent configuration lives in a
-single `azure.yaml`** — see
+For the selected unified-manifest consumer, configuration lives in
+`azure.yaml`; the older `agent.yaml`/`agent.manifest.yaml` pair is a
+separate migration-only contract, not interchangeable input. See
 [§ azure.yaml (unified hosted-agent configuration)](#azureyaml-unified-hosted-agent-configuration)
-below for the canonical shape. If you're migrating an older project,
-delete `agent.yaml` and `agent.manifest.yaml` and move their content
-into the `azure.ai.agent` service block.
+below for the canonical shape. Migrate only after reviewing the actual consumer,
+comparing the rendered definition and retaining the old project for rollback.
 
 ### Hosting SDK matrix (Python)
 
@@ -1312,8 +1322,7 @@ with the hosting package's declared bounds.
 
 ## azure.yaml (unified hosted-agent configuration)
 
-The old **two-file** contract (`agent.yaml` + `agent.manifest.yaml`) is
-gone. A single `azure.yaml` at the project root is now the source of
+For the selected profile, a single `azure.yaml` at the project root is the source of
 truth for both the Foundry project/model deployment and the hosted
 agent itself — declared as a graph of `services`, each with a `host`
 field and a `uses` list of dependencies.
@@ -1585,6 +1594,11 @@ azd up
 ```
 
 ### Invocation
+
+Persist the original operation before dispatch and its returned identity/status
+before interpreting content. The short example below omits custody plumbing;
+use [Operation recovery](#operation-recovery) for executable consumers with
+tools or remote effects. A failed response does not authorize another invoke.
 
 ```python
 from azure.ai.projects import AIProjectClient
@@ -1983,6 +1997,32 @@ unique build stamp.
 
 ---
 
+## Operation recovery
+
+**MUST:** use the [response/effect custody contract](references/operation-recovery.md)
+and canonical [`operation_evidence.py`](references/python/operation_evidence.py).
+The caller supplies a private durable recorder; failure to persist intent
+prevents dispatch. These standard-library primitives do not select a hosted
+profile or dispatch work.
+Request intent, dispatch, service completion, business effect, independent
+readback and client/browser delivery are separate facts. A client correlation
+ID is not a service-issued retrievable response ID.
+
+The private oracle persists a safe HTTP envelope and response/session IDs
+before semantic parsing, with an optional private raw body capture. A pending
+version may omit its future identity; it is observed without invoking. An
+active version still requires the exact binding. No timeout, malformed output,
+generic404 or failed client assertion clears UNKNOWN or authorizes replay.
+
+**Adoption is separate from source review.** Run the read-only
+`hosted_contract.py --references <actual-loaded-references-directory>` inventory
+on the reviewed source and the actual adopted directory. Compare every hash,
+not just `metadata.version`. Record source commit, any local correction, contract
+profile and installed/packaged hashes separately; no automatic mirror update.
+Downstream authoring/refresh flows must stop on drift, review a contract-version
+change, regenerate only the selected profile and rerun its acceptance cases.
+Threadlight adoption belongs to its owner and is not completed by a merge here.
+
 ## Troubleshooting
 
 ### Diagnosing `server_error` locally
@@ -2030,10 +2070,12 @@ MODEL_DEPLOYMENT_NAME=<deployment> \
   ./references/bash/diagnose_server_error.sh
 ```
 
-The helper prints `=== Verdict ===` ending in `CONFIRMED 429` / `LIKELY 429`
-/ `NOT 429` / `inconclusive`. On `CONFIRMED 429`, raise the deployment's
-`Capacity` (TPM in thousands) via portal or `az cognitiveservices account
-deployment update --capacity <N>` — no agent redeploy needed.
+Set `DIAGNOSTIC_EVIDENCE_DIR` to an existing private directory. By default the
+helper reads quota metadata only. A new inference requires the separate explicit
+`ALLOW_NEW_MODEL_PROBE=yes` decision; its result describes that new call, not
+the original failure. Every CLI/curl call has a finite deadline. Raw body/headers
+stay private; telemetry failure is inconclusive, never “LIKELY 429”.
+Any capacity change needs a separate approved capacity/cost decision.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -2227,11 +2269,11 @@ unified-`azure.yaml` contract this skill now documents throughout.
 | Postdeploy hook auto-assigns `Foundry User` to the agent identity | No role assignment needed by default — implicit access to model inferencing + session storage |
 | `northcentralus`/`eastus`/`swedencentral`/`westus` known-working region list (April 2026) | 20-region list including East US 2 — see [§ Region Availability](#region-availability) |
 
-If you're migrating an older project that still has `agent.yaml` +
-`agent.manifest.yaml` and a `postdeploy-agent.sh`-style RBAC script,
-delete both files and the script, move their content into the unified
-`azure.yaml` service block, and remove the manual RBAC grant unless you
-have a genuine [advanced-access](#agent-access-beyond-defaults-advanced-scenarios-only) requirement.
+If migrating an older project, retain its files and grants until the selected
+consumer, identity and exact access requirements have been reviewed. Generate
+the new profile separately, compare the emitted definition and validate it.
+Removing an obsolete file is not authorization to revoke an existing grant;
+advanced-access requirements remain operation-specific.
 
 
 ---

@@ -22,6 +22,7 @@ import time
 
 import requests
 from azure.identity import DefaultAzureCredential
+from operation_evidence import SSEFrames, begin_operation, error_metadata, safe_id
 
 
 def invoke_invocations(
@@ -30,6 +31,8 @@ def invoke_invocations(
     agent_name: str,
     query: str,
     timeout: int = 600,
+    *,
+    record=None,
 ) -> str:
     """Invoke via Invocations SSE endpoint and extract response text.
 
@@ -37,11 +40,23 @@ def invoke_invocations(
       - assistant.message: full final message (preferred)
       - assistant.message_delta: streaming content chunks (fallback)
     """
+    if not callable(record):
+        raise ValueError("A durable operation record is required before invoking")
+    if not isinstance(timeout, (int, float)) or not 0 < timeout <= 1800:
+        raise ValueError("Use a finite invocation deadline between 0 and 1800 seconds")
     # GA endpoint — no `Foundry-Features: *=V1Preview` header (removed for
     # GA, Azure/azure-dev PR #8866). `api-version=v1` is the current GA
     # literal for this endpoint.
-    url = f"{endpoint}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
-    resp = requests.post(
+    url = f"{endpoint.rstrip('/')}/agents/{agent_name}/endpoint/protocols/invocations?api-version=v1"
+    begin_operation(record, target=url, intent={"input": query})
+    deadline = time.monotonic() + timeout
+    def post_once(*args, **kwargs):
+        try:
+            return requests.post(*args, **kwargs)
+        except requests.RequestException as error:
+            record("invoke-unresolved", error_metadata(error))
+            raise
+    resp = post_once(
         url,
         json={"input": query},
         headers={
@@ -49,20 +64,36 @@ def invoke_invocations(
             "Content-Type": "application/json",
         },
         stream=True,
-        timeout=timeout,
+        timeout=(min(10, timeout), min(timeout, 60)),
     )
-    resp.raise_for_status()
-
+    try:
+        record("http-response", {"status_code": resp.status_code,
+                                "request_id": safe_id(resp.headers.get("x-request-id"))})
+    except BaseException:
+        resp.close()
+        raise
     message_text = ""
     delta_text = ""
     tool_count = 0
-
-    for line in resp.iter_lines(decode_unicode=True):
-        if not line or not line.startswith("data: "):
-            continue
-        try:
-            event = json.loads(line[6:])
+    frames = SSEFrames()
+    completed = False
+    try:
+        resp.raise_for_status()
+        for line in resp.iter_lines(decode_unicode=True):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Invocation observation expired; reconcile original operation")
+            frame = frames.feed(line)
+            if frame is None:
+                continue
+            event_name, event = frame
+            if event_name == "done":
+                record("runtime-completed", {"runtime_invocation_id": safe_id(event.get("invocation_id")),
+                                              "native_retrievable_id": False, "effect": "UNKNOWN"})
+                completed = True
+                break
             event_type = event.get("type", "")
+            if event_type in ("error", "session.error"):
+                raise RuntimeError("Runtime invocation failed; original effect remains unknown")
             content = event.get("data", {}).get("content", "")
 
             if event_type == "assistant.message" and content:
@@ -71,8 +102,13 @@ def invoke_invocations(
                 delta_text += content
             elif event_type == "tool.execution_start":
                 tool_count += 1
-        except json.JSONDecodeError:
-            continue
+        if not completed:
+            raise RuntimeError("Invocation stream ended without completion; reconcile original operation")
+    except (ValueError, RuntimeError, TimeoutError, requests.RequestException) as error:
+        record("invoke-unresolved", error_metadata(error))
+        raise
+    finally:
+        resp.close()
 
     return message_text if message_text else delta_text
 
@@ -94,7 +130,14 @@ def main():
 
     print(f"Invoking {agent_name}: {query[:80]}...")
     t0 = time.time()
-    response = invoke_invocations(endpoint, token, agent_name, query)
+    descriptor = os.open(os.environ["INVOCATION_EVIDENCE_FILE"],
+                         os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as evidence:
+        def record(event, data):
+            evidence.write(json.dumps({"event": event, **data}) + "\n")
+            evidence.flush()
+            os.fsync(evidence.fileno())
+        response = invoke_invocations(endpoint, token, agent_name, query, record=record)
     elapsed = time.time() - t0
 
     print(f"\n--- Response ({len(response)} chars, {elapsed:.1f}s) ---")

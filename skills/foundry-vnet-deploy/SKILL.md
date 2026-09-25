@@ -18,10 +18,18 @@ description: >
   (use azure-tenant-isolation), Citadel app-layer onboarding (use
   citadel-spoke-onboarding for APIM products + Foundry connection).
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # Foundry VNet Deploy — Agent Setup inside a Private VNet
+
+Before hosted artifact preparation, select the
+[versioned hosted profile](../foundry-hosted-agents/references/hosted-contract.json)
+and complete its capability/permission feasibility gate. An existing VNet,
+capability host or ARM success does not prove serving configuration, runtime
+pull or result-reader access. Preserve the Basic/Standard topology and use the
+[shared recovery contract](../foundry-hosted-agents/references/operation-recovery.md)
+instead of changing network/authentication after an uncertain result.
 
 ## 1. Goal
 

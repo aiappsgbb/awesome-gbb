@@ -41,10 +41,10 @@ description: Investigate failed Microsoft Foundry hosted-agent deployments — M
    | `cannot import name 'AzureOpenAIChatClient' from 'agent_framework.azure'` | MAF SDK 1.4.0 breaking change | foundry-hosted-agents KI-002 (replace with `OpenAIChatClient` from `agent_framework.openai`) |
    | `SkillsProvider object has no attribute 'skill_paths'` | MAF API change | foundry-hosted-agents KI-003 (use `SkillsProvider.from_paths(...)`) |
    | `Quota exceeded` / `OperationLimitExceeded` | AOAI TPM cap hit | Hand off to `quota_throttle_expert` |
-   | `ImagePullBackOff` / `pull access denied` | ACR pull failed | Grant `AcrPull` on the project's ACR to agent's UAMI |
-   | `403 Forbidden /openai/deployments/...` | Foundry MI lacks `Cognitive Services User` on BYOK AOAI | Grant role |
+   | `ImagePullBackOff` / `pull access denied` | Pull identity, registry mode/policy or reachability needs verification | Use the selected hosted contract's actual pull identity and mode-appropriate repository permission; do not grant to the agent identity or change registry mode automatically |
+   | `403 Forbidden /openai/deployments/...` | Actual caller lacks the required OpenAI data action, or another access boundary rejected it | Verify caller/scope and exact data actions first; account-level OpenAI access uses Cognitive Services OpenAI User, not a broad automatic grant |
    | `Request body must be a JSON object with a non-empty input string` | `azd ai agent invoke` envelope bug | ghcp-hosted-agents KI-001 (use `curl` with `{"input":"..."}`) |
-   | `agent.yaml: services: block missing` | `azd ai agent init` doesn't generate it | ghcp-hosted-agents KI-002 (add manually) |
+   | Manifest/schema rejected | Consumer/profile mismatch is one candidate | Select the versioned foundry-hosted-agents contract; preserve legacy files and compare actual consumer output before changing them |
 
 5. **For 401 patterns**, hand off to `byok_401_debug_expert`.
 6. **For 429/quota**, hand off to `quota_throttle_expert`.

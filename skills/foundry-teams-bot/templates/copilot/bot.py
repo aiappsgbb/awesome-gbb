@@ -20,6 +20,7 @@ from microsoft_agents.hosting.core import (
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.activity import load_configuration_from_env
+from invocation_custody import ExistingInvocation, InvocationJournal
 
 agents_sdk_config = load_configuration_from_env(os.environ)
 
@@ -34,7 +35,7 @@ PROJECT_ENDPOINT = os.environ.get("PROJECT_ENDPOINT", "")
 if not PROJECT_ENDPOINT or PROJECT_ENDPOINT == "":
     raise ValueError("PROJECT_ENDPOINT env var is required")
 if AGENT_NAME == "__PROJECT_NAME__":
-    logger.warning("AGENT_NAME still has placeholder value — update agent.yaml or env var")
+    logger.warning("AGENT_NAME still has placeholder value — select the hosted profile and environment")
 REPORT_EXTENSIONS = {".html", ".csv", ".md", ".json"}
 
 
@@ -47,7 +48,6 @@ async def _send_session_files(context: TurnContext, session_id: str):
 
         headers = {
             "Authorization": f"Bearer {token.token}",
-            "Foundry-Features": "HostedAgents=V1Preview",
         }
 
         async with aiohttp.ClientSession() as http:
@@ -99,7 +99,7 @@ def _friendly_error(raw: str) -> str:
     if "permissiondenied" in lower or "401" in lower or "403" in lower:
         return "🔒 The agent doesn't have the right permissions yet. Please contact the administrator."
     if "timeout" in lower or "timed out" in lower:
-        return "⏱️ The request timed out. The agent may be warming up — please try again in a moment."
+        return "⏱️ The response timed out. The operation may have completed; reconcile it before submitting again."
     if "rate limit" in lower or "429" in lower:
         return "⏳ Too many requests — please wait a moment and try again."
     if len(raw) > 300:
@@ -118,7 +118,6 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
     project_client = AIProjectClient(
         endpoint=PROJECT_ENDPOINT,
         credential=credential,
-        allow_preview=True,
     )
 
     # Verify agent exists (retry — RBAC may still be propagating)
@@ -134,7 +133,7 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
     if agent is None:
         raise RuntimeError(f"Agent '{AGENT_NAME}' not reachable after 5 attempts")
 
-    oai_client = project_client.get_openai_client(agent_name=AGENT_NAME)
+    oai_client = project_client.get_openai_client(agent_name=AGENT_NAME, max_retries=0, timeout=180)
 
     AGENT_APP = AgentApplication[TurnState](
         storage=STORAGE,
@@ -156,8 +155,12 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
             await context.send_activity("🔄 Conversation reset. Send a new message to start fresh.")
             return
 
-        max_retries = 2
-        for attempt in range(max_retries):
+        try:
+            journal = InvocationJournal(context.activity)
+        except ExistingInvocation:
+            await context.send_activity("This activity was already submitted. Check its original result; it was not sent again.")
+            return
+        try:
             thread_id = state.get_value(
                 "ConversationState.thread_id", lambda: "", target_cls=str
             )
@@ -168,6 +171,7 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                 state.set_value("ConversationState.thread_id", thread_id)
 
             try:
+                journal.record("dispatch-start", {"effect": "UNKNOWN"})
                 stream = await oai_client.responses.create(
                     conversation=thread_id,
                     input=user_message,
@@ -177,10 +181,12 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                 collected_text: list[str] = []
                 error_msg = None
                 session_id = None
-                server_error = False
+                completed = False
 
                 async for event in stream:
                     event_type = getattr(event, "type", None)
+                    if getattr(event, "response", None) is not None:
+                        journal.response(event.response)
 
                     if event_type == "response.output_text.delta":
                         chunk = getattr(event, "delta", "")
@@ -198,14 +204,13 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                             resp = getattr(event, "response", None)
                             if resp:
                                 err = getattr(resp, "error", None)
-                                if err and getattr(err, "code", "") == "server_error":
-                                    server_error = True
                                 error_msg = getattr(resp, "status_details", None) or str(resp)
                             else:
                                 error_msg = str(event)
                         logger.error("Response failed: %s", error_msg)
                         break
                     elif event_type == "response.completed":
+                        completed = True
                         response = getattr(event, "response", None)
                         if response:
                             session_id = getattr(response, "agent_session_id", None)
@@ -218,15 +223,12 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                         break
 
                 final_text = "".join(collected_text).strip()
-
-                # On server_error, reset conversation and retry
-                if server_error and not final_text and attempt < max_retries - 1:
-                    logger.warning("Server error — resetting conversation (attempt %d)", attempt + 1)
-                    state.set_value("ConversationState.thread_id", "")
-                    continue
+                if not completed:
+                    raise RuntimeError("Response did not complete; reconcile the original operation before replay")
 
                 if final_text:
                     await context.send_activity(final_text)
+                    journal.record("client-delivered", {"effect": "UNKNOWN"})
                 elif error_msg:
                     await context.send_activity(_friendly_error(error_msg))
                 else:
@@ -237,14 +239,12 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                 # Send session files if any
                 if session_id and final_text:
                     await _send_session_files(context, session_id)
-                break
-
             except Exception as e:
-                logger.error("Error: %s\n%s", e, traceback.format_exc())
-                if attempt < max_retries - 1:
-                    state.set_value("ConversationState.thread_id", "")
-                    continue
-                await context.send_activity(_friendly_error(str(e)))
-                break
+                journal.error(e)
+                logger.error("Invocation/delivery unresolved: %s", type(e).__name__)
+                await context.send_activity(_friendly_error(type(e).__name__) +
+                                            " Check the original operation record before submitting again.")
+        finally:
+            journal.close()
 
     return AGENT_APP, CONNECTION_MANAGER

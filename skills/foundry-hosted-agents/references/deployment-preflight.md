@@ -5,6 +5,37 @@ lifecycle. It is not a deployment framework or permission to repair resources.
 Use `azd` by default. For an approved raw/brownfield integration, preserve its
 native creation contract and the selected runtime cohort.
 
+## Early capability evidence
+
+Before preparing an image, run `deploy_preflight.py <private-capabilities.json>
+--phase capabilities`. This separate schema-1 snapshot needs no image or future
+session. `READY_FOR_ARTIFACTS` is an evidence-consistency result, not authorization,
+not effective-policy evaluation by the helper, and not runtime proof.
+
+| Field | Required observation/decision |
+|---|---|
+| `schema_version`, `observed_at` | `1`, oldest observation timestamp; same freshness rules as setup |
+| `target.profile`, `consumer` | Explicit profile from `hosted-contract.json`, observed exact azd/extension versions |
+| `target.mode`, `target.registry_network` | `basic-private`, `standard-private` or `managed-public`; registry `private` or `public`. Required features must include hosted-container and the selected private-agent-network/private-registry-pull/byo-stores capabilities. A private registry also requires the native `environment.project_created_at` observation after the documented June 25 boundary. |
+| `target.environment_id`, `target.required_features`; `environment` | Exact environment resource, supported feature names and retained evidence; receipt fields `result`, `evidence`, `resource_id`, `supported_features` |
+| `target.registry_id`, `target.repository`, `target.pull_requirement` | Explicit registry/repository and `repository-only` or `registry-wide`; the latter also requires `registry_wide_approved: true` |
+| `registry` | Receipt with `id`, `role_assignment_mode`; repository-only requires `repository_condition_verified` and `broader_pull_grants_excluded`, both true based on real effective-policy observations |
+| `target.source_access_required` | Explicit boolean; false only for a workload with no external source |
+| `target.required_permissions` | One row per `image-pull`, `invoke`, `version-read`, `response-read`, `session-read`; add `source-read` if needed. Each row: `operation`, actual `principal_id`, `scope`, exact required `actions`, reviewed versioned `api_contract` reference |
+| `permissions` | Exactly one matching receipt per operation, identical identity/scope/actions/API contract plus `effective_conditions_verified: true`; the collector must examine applicable roles/conditions, not merely copy the requested values |
+| `ingress` | Receipt with `authentication_enforced`, `direct_backend_bypass_blocked`; `forwarded_headers: ignored` or `verified-proxy-chain` with a retained `trusted_proxy_contract` |
+
+Use the actual identities per hop. Project-MI pull does not establish the caller's
+version-read or result-read permission. Invoke permission does not imply either
+read. Registry-wide `AcrPull` cannot meet repository-only requirements, and an
+ABAC role without a repository condition is also registry-wide. Missing access
+or an unsupported environment blocks dependent work without grants, registry-mode
+changes, public exposure or trusting arbitrary headers.
+
+The setup schema below is retained for existing observation files. It does not
+replace this earlier gate; its legacy `condition_allows_repository` boolean
+proves neither repository isolation nor this expanded permission contract.
+
 ## Scope before action
 
 | Mode accepted by the gate | Required setup | Missing or incompatible setup |

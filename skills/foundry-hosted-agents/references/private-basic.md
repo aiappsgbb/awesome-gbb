@@ -158,6 +158,13 @@ This is a separately authorized prerequisite repair, never an automatic retry:
    decision, not silent substitution. Review the ejected parameter file and
    compiled graph; a tool version with another shape must not receive guessed
    parameters.
+   A connection name can already belong to a different backing workspace even
+   when this project's connection list is empty. If the service reports that
+   exact ownership conflict, preserve the owning project's connection and
+   reconcile the failed deployment before proceeding. Use the native generic
+   connection module below with an explicitly selected project-qualified name
+   when authorized; never overwrite/delete the other project's connection or
+   switch the configured project to make the name work.
 4. A previously ejected native **generic `modules/connections.bicep`** can
    instead be reused as a connection-only module. Its verified parameter
    contract is `foundryAccountName`, `foundryProjectName`, `connections` (one
@@ -177,6 +184,10 @@ metadata, and is especially wrong for an ABAC registry expecting repository
 roles. Unknown/insufficient pull access is a separate owner decision.
 
 ## 2. Stage a minimal container
+
+Complete the [early capability gate](deployment-preflight.md#early-capability-evidence)
+before building/publishing. Retain its profile/toolchain and artifact-provenance
+receipt alongside setup evidence. Do not infer adoption from the skill version.
 
 Use a dedicated local management venv with `azure-ai-projects~=2.3.0`,
 `azure-identity~=1.25.3`, `httpx~=0.28.1` and `PyYAML~=6.0`. Never update a global

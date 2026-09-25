@@ -1,0 +1,57 @@
+{
+  "$comment": "Canonical profile inventory for SKILL.md Deployment preflight. Versioned separately from the skill; package pins and templates remain in their canonical files.",
+  "schema_version": 1,
+  "contract_version": "1.0.0",
+  "profiles": {
+    "maf-container-beta14": {
+      "status": "supported",
+      "consumer": {
+        "azd": "1.34.1",
+        "azure.ai.agents": "1.0.0-beta.14"
+      },
+      "manifest": {
+        "path": "yaml/azure.yaml",
+        "environment_key": "environmentVariables",
+        "environment_shape": "name-value-list",
+        "protocol": "responses",
+        "protocol_version": "2.0.0"
+      },
+      "runtime_dependencies": "python/pyproject.toml",
+      "runtime_sources": ["python/basic.py", "docker/Dockerfile.basic", "docker/basic.dockerignore"],
+      "reserved_environment_prefixes": ["FOUNDRY_", "AGENT_"],
+      "reserved_environment_names": ["APPLICATIONINSIGHTS_CONNECTION_STRING"],
+      "identity": {
+        "image_pull": "project-managed-identity",
+        "runtime": "dedicated-agent-identity",
+        "project_model_and_session_access": "platform-default",
+        "external_source_and_result_access": "operation-specific-preflight"
+      },
+      "lifecycle": {
+        "readiness": "two-direct-active-version-gets-then-native-invocation",
+        "unknown_create": "reconcile-frozen-definition-without-replay",
+        "routing_update": "desired-state-not-serving-proof"
+      },
+      "evidence": {
+        "scope": "private-basic-prebuilt-no-tools",
+        "reference": "private-basic.md",
+        "live_date": "2026-09-17",
+        "limitations": [
+          "Historical evidence is not authorization or a fresh live test.",
+          "Public, source-build, Standard/BYO and business-tool paths require their own validation.",
+          "The current Learn env map is not substituted for this consumer's recorded environmentVariables list.",
+          "Newer consumer versions are not implicitly supported."
+        ]
+      }
+    },
+    "legacy-two-file": {
+      "status": "migration-only",
+      "manifest_files": ["agent.yaml", "agent.manifest.yaml"],
+      "action": "Review the selected consumer and migrate explicitly; do not delete or rewrite an existing project automatically."
+    },
+    "ghcp-invocations": {
+      "status": "review-required",
+      "owner": "../../ghcp-hosted-agents/SKILL.md",
+      "action": "Adopt only the shared deployment fields after verifying the selected consumer. Preserve the GHCP runtime, Invocations protocol and BYOK identity contract."
+    }
+  }
+}

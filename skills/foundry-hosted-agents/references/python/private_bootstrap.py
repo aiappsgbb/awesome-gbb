@@ -17,6 +17,7 @@ import shutil
 import yaml
 
 from deploy_preflight import immutable_image, unique_keys
+from hosted_contract import load_contract, validate_service
 
 REFS = Path(__file__).resolve().parents[1]
 BUILD_FILES = ("main.py", "pyproject.toml", "uv.lock", "Dockerfile")
@@ -31,6 +32,7 @@ def prepare(destination: Path, agent_name: str, build: str, image: str | None = 
         raise ValueError("Only prebuilt mode accepts (and requires) an immutable image digest")
     config = yaml.safe_load((REFS / "yaml/azure.yaml").read_text())
     agent = config["services"].pop("my-agent")
+    validate_service(agent, load_contract()["profiles"]["maf-container-beta14"])
     agent.update(name=agent_name, project="app", description="No-tools BASIC model bootstrap")
     agent["docker"] = {"remoteBuild": build == "remote", "imagePassthrough": build == "prebuilt"}
     if build == "prebuilt":
@@ -83,6 +85,7 @@ def validate_build(directory: Path, agent_name: str) -> dict:
     service = config["services"][agent_name]
     if service.get("language") != "docker" or "codeConfiguration" in service or service.get("project") != "app":
         raise ValueError("Require the explicit app/ container route")
+    validate_service(service, load_contract()["profiles"]["maf-container-beta14"])
     docker = service.get("docker", {})
     if docker.get("imagePassthrough") is True:
         if docker.get("remoteBuild") is not False or not immutable_image(service.get("image")):

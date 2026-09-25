@@ -550,7 +550,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         self.assertIn("foundry-mcp-aca-jobs:", skill_deps)
         self.assertIn("- foundry-mcp-aca", skill_deps)
         self.assertIn("foundry-mcp-aca-jobs", producer)
-        self.assertIn('version: "1.2.7"', producer)
+        self.assertIn('version: "2.0.0"', producer)
         self.assertIn("foundry-mcp-aca-jobs", plugin["description"])
         self.assertEqual(plugin["version"], "4.36.0")
         self.assertEqual(marketplace["metadata"]["version"], "4.36.0")

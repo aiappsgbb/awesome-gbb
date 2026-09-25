@@ -92,6 +92,18 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
+      - name: Verify hosted contract in its supported SDK cohort
+        run: |
+          python -m venv "$RUNNER_TEMP/hosted-contract"
+          "$RUNNER_TEMP/hosted-contract/bin/python" -m pip install --quiet \
+            -r skills/foundry-hosted-agents/test-fixture/requirements-contract.txt
+          "$RUNNER_TEMP/hosted-contract/bin/python" -m unittest \
+            scripts.tests.test_hosted_contract \
+            scripts.tests.test_hosted_deploy_preflight \
+            scripts.tests.test_private_hosted_bootstrap \
+            scripts.tests.test_operation_evidence \
+            scripts.tests.test_teams_operation_custody
+
       - name: Run doctor MCP 1.x protocol tests
         run: |
           set -euo pipefail

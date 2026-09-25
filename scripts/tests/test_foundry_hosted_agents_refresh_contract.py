@@ -309,6 +309,7 @@ class FoundryHostedAgentsRefreshContractTests(unittest.TestCase):
         self.assertEqual(
             self.pin_frontmatter["validation"]["expected_output"],
             [
+                "ok hosted profile and artifact provenance",
                 "ok canonical container import",
                 "ok hosted coherent stack",
                 "ok update_details",

@@ -245,9 +245,10 @@ class JsonHttpResponse(HttpResponse):
 
 
 class NativeTransport(HttpTransport):
-    def __init__(self, agent_version):
+    def __init__(self, agent_version, pending_first=False):
         self.agent_version = agent_version
         self.calls = []
+        self.pending_first = pending_first
 
     def open(self):
         pass
@@ -266,6 +267,12 @@ class NativeTransport(HttpTransport):
         if "/sessions/session-one" in request.url:
             return JsonHttpResponse(request, session_body())
         if "/versions/7" in request.url:
+            if self.pending_first:
+                self.pending_first = False
+                return JsonHttpResponse(request, {
+                    **self.agent_version, "status": "creating",
+                    "instance_identity": None, "definition": None,
+                })
             return JsonHttpResponse(request, self.agent_version)
         raise AssertionError("Unexpected native management request: " + request.url)
 
@@ -284,7 +291,7 @@ class NativeExecutionTests(unittest.TestCase):
         data["registry"]["properties"]["adminUserEnabled"] = False
         return data
 
-    def run_native(self, *, denied=False, mutate=None, require_affinity=False):
+    def run_native(self, *, denied=False, mutate=None, require_affinity=False, pending_first=False):
         helper = importlib.import_module("hosted_smoke")
         data = self.setup()
         native = {
@@ -299,7 +306,7 @@ class NativeExecutionTests(unittest.TestCase):
         }
         if mutate:
             mutate(native)
-        transport = NativeTransport(native)
+        transport = NativeTransport(native, pending_first=pending_first)
         calls = []
 
         def handle(request):
@@ -324,7 +331,7 @@ class NativeExecutionTests(unittest.TestCase):
                 with patch.object(project, "get_openai_client", side_effect=openai):
                     result = helper.execute(project, data, "basic-agent", "7",
                                             lambda stage, value: records.append((stage, value)),
-                                            attempts=2, sleep=lambda seconds: None)
+                                            attempts=3 if pending_first else 2, sleep=lambda seconds: None)
         return result, transport.calls, calls, records
 
     def test_real_sdk_transport_executes_gets_one_invoke_and_independent_readbacks(self):
@@ -337,6 +344,14 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertIn("/agents/basic-agent/endpoint/protocols/openai/responses", responses[0][1])
         self.assertTrue(responses[1][1].endswith("/responses/response-one"))
         self.assertEqual(sum(stage == "direct-version-get" for stage, _ in records), 2)
+
+    def test_creating_without_future_identity_is_pending_not_terminal(self):
+        result, management, responses, records = self.run_native(pending_first=True)
+        self.assertEqual(result["status"], "PRIVATE_BASIC_MODEL_PASS")
+        self.assertEqual([method for method, _, _ in responses], ["POST", "GET"])
+        observed = [data for stage, data in records if stage == "direct-version-get"]
+        self.assertEqual(observed[0]["classification"], "PENDING_OPERATION")
+        self.assertEqual([data["status"] for data in observed], ["creating", "active", "active"])
 
     def test_native_retrieve_requires_observed_session_affinity_without_extra_post(self):
         result, _, responses, _ = self.run_native(require_affinity=True)

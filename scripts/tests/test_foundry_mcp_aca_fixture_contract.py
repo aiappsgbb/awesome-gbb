@@ -8,7 +8,7 @@ that CI cannot catch through grep alone. They verify:
 - MCP protocol conformance (initialized must be status-gated, not || true)
 - Named tool invocation (echo with exact payload assertion, no first-tool fallback)
 - Prose/hard-gate consistency (all three protocol steps listed)
-- SKILL.md version is PATCH (1.2.7)
+- SKILL.md version reflects the 2.0 recovery/auth contract
 - Pin script validates mcp explicitly
 """
 
@@ -263,6 +263,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output fqdn string = app.properties.configuration.ingress.fqdn
 output appName string = app.name
+
+resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
+  parent: app
+  name: 'current'
+  properties: loadJsonContent('mcp-authconfig.json').properties
+}
 """
 EXPECTED_GUARD_SENTENCES = (
     "Invoke only the prescribed Bash block in Step 2 to author the six "
@@ -924,11 +930,9 @@ class FoundryMcpAcaFixtureContractTests(unittest.TestCase):
             spec = spec_path.read_text(encoding="utf-8")
             self.assertNotIn("2025-08-05", spec, "Spec has wrong year — should be 2026")
 
-    # --- Issue #7: PATCH version ---
-
-    def test_skill_version_is_patch(self) -> None:
-        """Delegated-auth clarification keeps the existing 1.2 contract."""
-        self.assertIn('version: "1.2.7"', self.skill)
+    def test_skill_version_marks_recovery_contract_break(self) -> None:
+        """No automatic recovery/replay is a documented 2.0 contract change."""
+        self.assertIn('version: "2.0.0"', self.skill)
 
     # --- Pin validation contracts ---
 
@@ -1830,7 +1834,7 @@ class TestStatePersistence(unittest.TestCase):
         """Fresh Bash calls that consume deployment state must restore it first."""
         for marker in (
             "INIT_RESPONSE=$(curl",
-            "SUB=$(az account show",
+            'cp "$PROJECT_DIR/infra/mcp-authconfig.json"',
             "CODE=$(curl",
             "TOKEN=$(az account get-access-token",
             "if ! fixture_owned_cleanup;",

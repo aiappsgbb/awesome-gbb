@@ -15,7 +15,7 @@ description: >
   RBAC — use foundry-agt; DO NOT USE FOR: hub-side Citadel security
   checks — use citadel-spoke-onboarding probe_hub_contract.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # foundry-rbac-audit
@@ -132,6 +132,12 @@ file at `out/IAM-101.json` is the cross-process handoff for
 threadlight's apply-plan reasoner.
 
 ## Known limitations (v1.0.0)
+
+This elevated-role audit is **not** the hosted exact-permission preflight.
+It does not certify invoke, version-read, response-read, source access or
+repository-scoped pull. Use the actual caller/pull/runtime/result-reader
+identities and [operation-specific evidence](../foundry-hosted-agents/references/deployment-preflight.md#early-capability-evidence);
+do not treat an `ok` here as permission to proceed with those operations.
 
 - Orphan principal detection (assignments to deleted Entra IDs) is
   **out of scope** for v1. Threadlight has not requested it.

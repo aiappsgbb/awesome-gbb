@@ -14,7 +14,7 @@ description: >
   DO NOT USE FOR: az login, tenant switching, subscription isolation (use
   azure-tenant-isolation), Foundry agents (use microsoft-foundry).
 metadata:
-  version: "1.6.0"
+  version: "1.6.1"
 ---
 
 # AZD Tips & Patterns
@@ -886,7 +886,9 @@ that wastes 45 min on every fresh PoC)".
 3. Add a row to the catalog table above
 4. Update `threadlight-deploy` Phase 6's selector parser to recognize the new key
 5. If the module wires a runtime service (cosmos, search, vision, etc.), add a
-   line to `agent.yaml`'s `environment_variables:` so the agent receives endpoints
+   entry to the environment field of the selected
+   [hosted contract](../foundry-hosted-agents/references/hosted-contract.json)
+   so the agent receives endpoints
 
 ---
 
@@ -1182,7 +1184,17 @@ resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' =
 
 ## ACR + ACA Registry Binding (complete example)
 
-> **MUST:** Every UAMI assigned to an ACA container app needs `AcrPull` on the container registry. This applies to EVERY service — not just the first one. Missing `AcrPull` causes `ImagePullError` with a misleading "Key Vault 401" message.
+Preflight the registry's authorization mode before build. The library's
+`acr-pull.bicep` is a **legacy registry-wide** grant, not repository isolation.
+Repository-only requirements need verified ABAC conditions and no broader
+effective grants; an incompatible existing registry is an owner decision.
+Never change its mode or fall back to broad roles automatically. Image-pull
+identity, deployer and result reader are separate subjects.
+
+> **MUST:** Every ACA image-pull identity needs the mode-appropriate permission:
+> `AcrPull` only for a legacy registry, or the appropriate repository-reader
+> role/condition for an ABAC registry. Verify every service separately; a
+> deployer's successful push is not evidence of runtime pull authorization.
 
 > 🛑 **MUST rule.** In a multi-service pilot, **every ACA app's UAMI** independently
 > needs `AcrPull` on the ACR — not just a "shared env UAMI" or the Foundry **project** MI

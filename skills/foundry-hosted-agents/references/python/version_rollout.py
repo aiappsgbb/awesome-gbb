@@ -26,6 +26,7 @@ Usage:
     export AGENT_NAME=my-agent
     export NEW_IMAGE=myregistry.azurecr.io/my-agent@sha256:def...
     export AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-5.4-mini
+    export ROLLOUT_EVIDENCE_FILE=/absolute/private/path/new-operation.jsonl
     python version_rollout.py blue-green
     python version_rollout.py canary 1            # prior version is "1"
     python version_rollout.py rollback 1          # revert to version "1"
@@ -34,6 +35,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import json
 import sys
 import time
 
@@ -89,7 +91,7 @@ def wait_for_active(
             return
     raise RuntimeError(
         f"Timed out waiting for v{agent_version} to reach 'active' "
-        f"({max_attempts} * {sleep_seconds}s = {int(max_attempts * sleep_seconds)}s)"
+        f"after {max_attempts} observations; this does not prove absence or permit replay"
     )
 
 
@@ -97,6 +99,8 @@ def update_routing(
     project: AIProjectClient,
     agent_name: str,
     splits: list[tuple[str, int]],
+    *,
+    record=None,
 ) -> None:
     """Set the agent endpoint's traffic split via the stable update_details call.
 
@@ -107,10 +111,13 @@ def update_routing(
     total = sum(p for _, p in splits)
     if total != 100:
         raise ValueError(f"Traffic percentages must sum to 100, got {total}: {splits}")
+    if not callable(record):
+        raise ValueError("A durable operation record is required before updating routing")
     rules = [
         FixedRatioVersionSelectionRule(agent_version=v, traffic_percentage=p)
         for v, p in splits
     ]
+    record("routing-intent", {"agent": agent_name, "splits": splits, "effect": "UNKNOWN"})
     project.agents.update_details(
         agent_name=agent_name,
         agent_endpoint=AgentEndpointConfig(
@@ -120,7 +127,8 @@ def update_routing(
             ),
         ),
     )
-    print(f"  routed: {splits}")
+    record("routing-acknowledged", {"agent": agent_name, "splits": splits, "serving": "NOT_PROVEN"})
+    print(f"  routing update acknowledged: {splits}; serving behavior NOT_PROVEN")
 
 
 def create_new_version(
@@ -129,6 +137,8 @@ def create_new_version(
     image: str,
     cpu: str = "1",
     memory: str = "2Gi",
+    *,
+    record=None,
 ) -> str:
     """Create a new agent version. Returns the version id (e.g. '2').
 
@@ -142,6 +152,12 @@ def create_new_version(
     you ship a change, not `update_details` (that call only ever touches
     endpoint/routing config, never the version's own definition).
     """
+    if not callable(record):
+        raise ValueError("A durable frozen-operation record is required before creating a version")
+    build_stamp = str(int(time.time()))
+    model = _env("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+    record("create-intent", {"agent": agent_name, "image": image, "model": model,
+                             "build_stamp": build_stamp, "effect": "UNKNOWN"})
     v = project.agents.create_version(
         agent_name=agent_name,
         metadata={"enableVnextExperience": "true"},
@@ -157,24 +173,23 @@ def create_new_version(
                 ),
             ],
             environment_variables={
-                "AZURE_AI_MODEL_DEPLOYMENT_NAME": _env(
-                    "AZURE_AI_MODEL_DEPLOYMENT_NAME"
-                ),
-                "_BUILD_TS": str(int(time.time())),
+                "AZURE_AI_MODEL_DEPLOYMENT_NAME": model,
+                "_BUILD_TS": build_stamp,
             },
         ),
     )
-    print(f"  created v{v.version} (status: {v['status']})")
+    record("create-response", {"version": v.version, "status": v.get("status"), "effect": "UNKNOWN"})
+    print(f"  create acknowledged for v{v.version}; readiness NOT_PROVEN")
     return v.version
 
 
-def blue_green(project: AIProjectClient, agent_name: str, new_image: str) -> str:
+def blue_green(project: AIProjectClient, agent_name: str, new_image: str, *, record=None) -> str:
     """Pattern A: atomic 0 -> 100 % cutover. Returns new version id."""
     print("== BLUE-GREEN ==")
-    new_v = create_new_version(project, agent_name, new_image)
+    new_v = create_new_version(project, agent_name, new_image, record=record)
     wait_for_active(project, agent_name, new_v)
-    update_routing(project, agent_name, [(new_v, 100)])
-    print(f"  cutover complete; v{new_v} now serves 100 % traffic")
+    update_routing(project, agent_name, [(new_v, 100)], record=record)
+    print(f"  v{new_v} routing requested; verify the actual serving session before accepting cutover")
     return new_v
 
 
@@ -185,6 +200,8 @@ def canary(
     prior_version: str,
     ramp: tuple[int, ...] = (10, 50, 100),
     observe_seconds_between_ramps: float = 0.0,
+    *,
+    record=None,
 ) -> str:
     """Pattern B: gradual ramp (default 10/90 -> 50/50 -> 100/0).
 
@@ -192,17 +209,17 @@ def canary(
     pass hours / days converted to seconds. Returns new version id.
     """
     print(f"== CANARY (ramp: {ramp}) ==")
-    new_v = create_new_version(project, agent_name, new_image)
+    new_v = create_new_version(project, agent_name, new_image, record=record)
     wait_for_active(project, agent_name, new_v)
     for new_pct in ramp:
         if new_pct < 100:
             splits = [(prior_version, 100 - new_pct), (new_v, new_pct)]
         else:
             splits = [(new_v, 100)]
-        update_routing(project, agent_name, splits)
+        update_routing(project, agent_name, splits, record=record)
         if new_pct < 100 and observe_seconds_between_ramps > 0:
             time.sleep(observe_seconds_between_ramps)
-    print(f"  promotion complete; v{new_v} now serves 100 % traffic")
+    print(f"  v{new_v} routing requested; serving behavior NOT_PROVEN")
     return new_v
 
 
@@ -210,6 +227,8 @@ def rollback(
     project: AIProjectClient,
     agent_name: str,
     prior_version: str,
+    *,
+    record=None,
 ) -> None:
     """Pattern C: immediate revert to a known-good prior version.
 
@@ -219,8 +238,8 @@ def rollback(
     `prior_version` for >= 24 h after promotion.
     """
     print(f"== ROLLBACK to v{prior_version} ==")
-    update_routing(project, agent_name, [(prior_version, 100)])
-    print(f"  revert complete; v{prior_version} now serves 100 % traffic")
+    update_routing(project, agent_name, [(prior_version, 100)], record=record)
+    print(f"  v{prior_version} rollback routing requested; serving behavior NOT_PROVEN")
 
 
 def main() -> None:
@@ -230,19 +249,29 @@ def main() -> None:
 
     endpoint = _env("FOUNDRY_PROJECT_ENDPOINT")
     agent_name = _env("AGENT_NAME")
-    project = AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential())
-
-    mode = sys.argv[1]
-    if mode == "blue-green":
-        blue_green(project, agent_name, _env("NEW_IMAGE"))
-    elif mode == "canary":
-        if len(sys.argv) < 3:
-            raise SystemExit("canary requires a <prior_version> argument")
-        canary(project, agent_name, _env("NEW_IMAGE"), prior_version=sys.argv[2])
-    elif mode == "rollback":
-        if len(sys.argv) < 3:
-            raise SystemExit("rollback requires a <prior_version> argument")
-        rollback(project, agent_name, prior_version=sys.argv[2])
+    evidence = _env("ROLLOUT_EVIDENCE_FILE")
+    descriptor = os.open(evidence, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        def record(event, data):
+            output.write(json.dumps({"event": event, **data}) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        mode = sys.argv[1]
+        record("rollout-intent", {"agent": agent_name, "mode": mode, "effect": "UNKNOWN"})
+        with DefaultAzureCredential() as credential, AIProjectClient(
+            endpoint=endpoint, credential=credential, retry_total=0,
+            connection_timeout=10, read_timeout=30,
+        ) as project:
+            if mode == "blue-green":
+                blue_green(project, agent_name, _env("NEW_IMAGE"), record=record)
+            elif mode == "canary":
+                if len(sys.argv) < 3:
+                    raise SystemExit("canary requires a <prior_version> argument")
+                canary(project, agent_name, _env("NEW_IMAGE"), prior_version=sys.argv[2], record=record)
+            elif mode == "rollback":
+                if len(sys.argv) < 3:
+                    raise SystemExit("rollback requires a <prior_version> argument")
+                rollback(project, agent_name, prior_version=sys.argv[2], record=record)
 
 
 if __name__ == "__main__":

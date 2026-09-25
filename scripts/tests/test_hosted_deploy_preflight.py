@@ -17,6 +17,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills/foundry-hosted-agents"
 HELPER = SKILL / "references/python/deploy_preflight.py"
+sys.path.insert(0, str(HELPER.parent))
 NOW = datetime(2026, 9, 12, 20, 0, tzinfo=timezone.utc)
 ACCOUNT = "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>"
 PROJECT = ACCOUNT + "/projects/<project>"
@@ -494,8 +495,10 @@ class HostedPreflightTests(unittest.TestCase):
         }
         exec(compile(module, "<creation-function>", "exec"), namespace)
         project = Project()
-        namespace["create_new_version"](project, "agent", IMAGE)
+        records = []
+        namespace["create_new_version"](project, "agent", IMAGE, record=lambda *args: records.append(args))
         self.assertEqual(project.kwargs.get("metadata"), {"enableVnextExperience": "true"})
+        self.assertEqual([event for event, _ in records], ["create-intent", "create-response"])
 
     def test_rollout_wait_uses_two_direct_gets_and_failure_wins(self):
         # Isolate the polling function without importing Azure or running main.

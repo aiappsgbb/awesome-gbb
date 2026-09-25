@@ -22,6 +22,10 @@ No raw private inventory, credentials, signed URLs or logs belong in GitHub.
 1. Read the pinned contract and preserve all prior evidence. Check the selected
    source file hashes and installed azd/extension versions. Do not silently
    choose the official sample's preview code route.
+   Run the new capabilities phase before preparing an image, using fresh
+   owner-collected observations of the environment, registry mode and the
+   distinct pull/invoke/version/result-reader identities. Hash the actual
+   adopted helper files, not just their version labels.
 2. Inspect the real connection without credentials. Correct: reuse. Missing:
    stop for separately approved native connection-only provisioning; do not
    remove anything to reproduce absence. Mismatched/unreadable: precise blocker.

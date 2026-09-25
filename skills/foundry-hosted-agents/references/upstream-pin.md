@@ -283,6 +283,14 @@ validation:
     assert pyproject_path.exists(), f"missing canonical pyproject: {pyproject_path}"
     assert container_path.exists(), f"missing canonical container: {container_path}"
     assert pin_path.exists(), f"missing canonical pin: {pin_path}"
+    sys.path.insert(0, str(container_path.parent))
+    from hosted_contract import load_contract, validate_service, provenance
+    contract = load_contract()
+    profile = contract["profiles"]["maf-container-beta14"]
+    manifest = yaml.safe_load((container_path.parent.parent / profile["manifest"]["path"]).read_text())
+    validate_service(manifest["services"]["my-agent"], profile)
+    assert provenance()["contract_version"] == contract["contract_version"]
+    print("ok hosted profile and artifact provenance")
 
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     dependencies = pyproject["project"]["dependencies"]
@@ -372,6 +380,7 @@ validation:
     print("ok otel bundle")
     PY
   expected_output:
+    - "ok hosted profile and artifact provenance"
     - "ok canonical container import"
     - "ok hosted coherent stack"
     - "ok update_details"

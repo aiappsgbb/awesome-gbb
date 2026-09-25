@@ -13,7 +13,7 @@ description: >
   standalone Work IQ, Fabric IQ, or Web IQ workloads, MCP server deployment (use
   foundry-mcp-aca), agent runtime (use foundry-hosted-agents).
 metadata:
-  version: "1.4.2"
+  version: "2.0.0"
 ---
 
 # Foundry IQ Agent Framework Integration Skill
@@ -41,7 +41,7 @@ metadata:
 | `infra/modules/foundry-iq-index.bicep` | Composed by `azd-patterns` Bicep library; included by `threadlight-deploy` Phase 6 when SPEC § 7 declares foundry-iq |
 | `infra/scripts/bootstrap_foundry_iq.py` | Postprovision hook that creates the index + uploads documents + creates the Knowledge Agent |
 | `src/agent/skills/<knowledge-skill>/SKILL.md` | Skill that wraps the Knowledge Agent retrieval call as a tool |
-| `agent.yaml` env vars | `FOUNDRY_IQ_INDEX`, `FOUNDRY_IQ_AGENT_NAME`, `AI_SEARCH_ENDPOINT` |
+| User env in the [selected hosted profile](../foundry-hosted-agents/references/hosted-contract.json) | `APP_IQ_INDEX`, `APP_IQ_AGENT_NAME`, `AI_SEARCH_ENDPOINT`. In 2.0, migrate the former `FOUNDRY_IQ_*` keys: the hosted platform reserves `FOUNDRY_*`; do not declare those old names in a container. |
 
 ---
 
@@ -658,7 +658,7 @@ from azure.identity import DefaultAzureCredential
 
 client = SearchClient(
     endpoint=os.environ["AI_SEARCH_ENDPOINT"],
-    index_name=os.environ["FOUNDRY_IQ_INDEX"],
+    index_name=os.environ["APP_IQ_INDEX"],
     credential=DefaultAzureCredential(),
 )
 results = client.upload_documents(documents=docs)
@@ -666,7 +666,7 @@ ok = sum(1 for r in results if r.succeeded)
 fail = [(r.key, r.status_code, r.error_message) for r in results if not r.succeeded]
 if fail:
     raise RuntimeError(f"Search upload partial: ok={ok} failed={len(fail)} first_fail={fail[0]}")
-print(f"Seeded {ok} docs into '{os.environ['FOUNDRY_IQ_INDEX']}'")
+print(f"Seeded {ok} docs into '{os.environ['APP_IQ_INDEX']}'")
 ```
 
 ### 2. Fail-fast on every shell-out
@@ -814,7 +814,7 @@ from azure.identity import DefaultAzureCredential
 def kb_doc_count() -> int:
     sc = SearchClient(
         endpoint=os.environ["AI_SEARCH_ENDPOINT"],
-        index_name=os.environ["FOUNDRY_IQ_INDEX"],
+        index_name=os.environ["APP_IQ_INDEX"],
         credential=DefaultAzureCredential(),
     )
     return sc.get_document_count()

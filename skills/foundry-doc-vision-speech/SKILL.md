@@ -12,7 +12,7 @@ description: >
   deployment (use foundry-mcp-aca), Foundry IQ knowledge retrieval (use foundry-iq),
   real-time voice / Voice Live (use foundry-voice-live).
 metadata:
-  version: "1.2.9"
+  version: "1.2.10"
 ---
 
 # Foundry Doc / Vision / Speech
@@ -896,7 +896,7 @@ Tool naming: verb_noun snake_case, prefixed by modality
 | `src/agent/skills/<skill>/handler.py` | One handler per declared visual / doc / voice tool |
 | `src/agent/skills/<skill>/SKILL.md` | Skill definition; lists the tool contracts |
 | Module selectors for `infra/main.bicep` | `vision`, `doc_intel`, `speech` keys consumed by Phase 6 |
-| `agent.yaml` env vars | `VISION_DEPLOYMENT_NAME`, `DOC_INTEL_ENDPOINT`, `SPEECH_ENDPOINT`, `SPEECH_REGION` |
+| User env in the [selected hosted profile](../foundry-hosted-agents/references/hosted-contract.json) | `VISION_DEPLOYMENT_NAME`, `DOC_INTEL_ENDPOINT`, `SPEECH_ENDPOINT`, `SPEECH_REGION` |
 | `tests/eval-scenarios.yaml` additions | Per-tool eval scenarios (happy / boundary / negative) |
 | Training scripts | `scripts/train_custom_doc_model.py` if `doc_intel.models` includes a `customer-*` ID |
 

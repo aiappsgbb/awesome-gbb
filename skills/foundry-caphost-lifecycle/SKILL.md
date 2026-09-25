@@ -17,7 +17,7 @@ description: >
   spoke onboarding (use citadel-spoke-onboarding), tenant isolation
   (use azure-tenant-isolation).
 metadata:
-  version: "2.0.1"
+  version: "2.0.2"
 ---
 
 # Foundry Capability Host Lifecycle — Day-2 Operations
@@ -162,6 +162,13 @@ check. For Basic, expect empty/absent BYO arrays; for Standard, compare exact
 approved connection names. An unsuccessful GET is not an empty inventory.
 
 ### 5.3 Poll an in-flight operation
+
+Persist intent and native response headers/operation identity before parsing,
+using the [shared custody vocabulary](../foundry-hosted-agents/references/operation-recovery.md).
+Give each GET a finite I/O timeout within the observation budget. A timeout or
+generic404 alone does not prove failure, absence or permission to replay.
+The verb-specific final-state checks below are not a generic response-recovery
+rule; retain the exact target, caller/read identity and API version.
 
 The GA 2025-06-01 Swagger uses different LRO contracts by verb:
 

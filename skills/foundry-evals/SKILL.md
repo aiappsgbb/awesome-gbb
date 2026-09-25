@@ -14,7 +14,7 @@ description: >
   unit testing code, reimplementing evaluator framework (use foundry-assert), writing
   your own optimizer loop (use foundry-agent-optimizer).
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
 ---
 
 # Foundry Agent Evaluations
@@ -1467,7 +1467,7 @@ code change.
 | `infra/jobs/continuous_eval/Dockerfile` | Container for the ACA Job | B |
 | `infra/modules/kpi-workbook.bicep` | App Insights workbook | B |
 | `infra/modules/alerts.bicep` | Per-KPI scheduled query alert rules | B |
-| `agent.yaml` env vars | `EVAL_DEFINITION_ID`, `KPI_WORKBOOK_ID` (B), `EVAL_RULE_ID` (A) | Both |
+| User env in the [selected hosted profile](../foundry-hosted-agents/references/hosted-contract.json) | `EVAL_DEFINITION_ID`, `KPI_WORKBOOK_ID` (B), `EVAL_RULE_ID` (A) | Both |
 | `specs/kpis.yaml` | Extracted from SPEC § 9 — single source of truth at runtime | Both |
 
 ---

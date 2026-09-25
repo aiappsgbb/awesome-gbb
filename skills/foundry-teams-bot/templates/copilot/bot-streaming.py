@@ -19,6 +19,7 @@ import os
 import asyncio
 import traceback
 import uuid
+from invocation_custody import ExistingInvocation, InvocationJournal, invocation_events
 from dataclasses import dataclass
 from typing import AsyncGenerator, Union
 
@@ -91,7 +92,7 @@ StreamEvent = Union[TextChunk, StatusUpdate, SessionComplete]
 # Protocol-specific streaming generators
 # ---------------------------------------------------------------------------
 
-async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGenerator[StreamEvent, None]:
+async def _stream_responses(oai_client, thread_id: str, query: str, journal) -> AsyncGenerator[StreamEvent, None]:
     """Yield events from Responses API streaming (MAF agents)."""
     stream = await oai_client.responses.create(
         conversation=thread_id,
@@ -100,8 +101,11 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
     )
 
     tool_count = 0
+    completed = False
     async for event in stream:
         event_type = getattr(event, "type", None)
+        if getattr(event, "response", None) is not None:
+            journal.response(event.response)
 
         if event_type == "response.output_text.delta":
             chunk = getattr(event, "delta", "")
@@ -124,6 +128,7 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
         elif event_type == "response.mcp_call.completed":
             yield StatusUpdate(f"✅ Done ({tool_count})")
         elif event_type == "response.completed":
+            completed = True
             resp = getattr(event, "response", None)
             if resp:
                 sid = getattr(resp, "agent_session_id", None)
@@ -137,10 +142,12 @@ async def _stream_responses(oai_client, thread_id: str, query: str) -> AsyncGene
                 raise RuntimeError("server_error")
             msg = getattr(resp, "status_details", None) or str(resp) if resp else str(event)
             raise RuntimeError(msg)
+    if not completed:
+        raise RuntimeError("Response stream ended without completion; reconcile original operation")
 
 
 async def _stream_invocations(
-    endpoint: str, credential, agent_name: str, query: str
+    endpoint: str, credential, agent_name: str, query: str, journal
 ) -> AsyncGenerator[StreamEvent, None]:
     """Yield events from Invocations SSE endpoint (GHCP SDK agents).
 
@@ -157,21 +164,12 @@ async def _stream_invocations(
             headers={
                 "Authorization": f"Bearer {token.token}",
                 "Content-Type": "application/json",
-                "Foundry-Features": "HostedAgents=V1Preview",
             },
             timeout=aiohttp.ClientTimeout(total=600),
         ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                raise RuntimeError(f"Invocations returned {resp.status}: {body[:500]}")
-
             tool_count = 0
-            async for line_bytes in resp.content:
-                line = line_bytes.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data: "):
-                    continue
-                try:
-                    event = json.loads(line[6:])
+            async for event in invocation_events(resp, journal):
+                if isinstance(event, dict):
                     event_type = event.get("type", "")
                     data = event.get("data", {})
                     content = data.get("content", "")
@@ -210,8 +208,6 @@ async def _stream_invocations(
                     elif event_type == "assistant.reasoning_delta":
                         if content and tool_count == 0:
                             yield StatusUpdate("🤔 Analyzing...")
-                except json.JSONDecodeError:
-                    continue
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +221,7 @@ def _friendly_error(raw: str) -> str:
     if "permissiondenied" in lower or "401" in lower or "403" in lower:
         return "🔒 The agent doesn't have the right permissions yet. Please contact the administrator."
     if "timeout" in lower or "timed out" in lower:
-        return "⏱️ The request timed out. The agent may be warming up — please try again."
+        return "⏱️ The response timed out. The operation may have completed; reconcile it before submitting again."
     if "rate limit" in lower or "429" in lower:
         return "⏳ Too many requests — please wait and try again."
     if len(raw) > 300:
@@ -246,7 +242,6 @@ async def _send_session_files(context: TurnContext, session_id: str):
 
         headers = {
             "Authorization": f"Bearer {token.token}",
-            "Foundry-Features": "HostedAgents=V1Preview",
         }
 
         async with aiohttp.ClientSession() as http:
@@ -366,7 +361,6 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
     project_client = AIProjectClient(
         endpoint=PROJECT_ENDPOINT,
         credential=credential,
-        allow_preview=True,
     )
 
     # Verify agent exists
@@ -385,7 +379,7 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
     # Responses API client (only used for responses protocol)
     oai_client = None
     if AGENT_PROTOCOL == "responses":
-        oai_client = project_client.get_openai_client(agent_name=AGENT_NAME)
+        oai_client = project_client.get_openai_client(agent_name=AGENT_NAME, max_retries=0, timeout=180)
 
     AGENT_APP = AgentApplication[TurnState](
         storage=STORAGE,
@@ -406,18 +400,23 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
             await context.send_activity("🔄 Conversation reset.")
             return
 
-        max_retries = 2
-        for attempt in range(max_retries):
+        try:
+            journal = InvocationJournal(context.activity)
+        except ExistingInvocation:
+            await context.send_activity("This activity was already submitted. Check its original result; it was not sent again.")
+            return
+        try:
             try:
                 # Start streaming to Teams
                 sr = context.streaming_response
                 sr.queue_informative_update("⏳ Working on your request...")
                 sr.set_generated_by_ai_label(True)
+                journal.record("dispatch-start", {"effect": "UNKNOWN"})
 
                 # Get protocol-specific generator
                 if AGENT_PROTOCOL == "invocations":
                     gen = _stream_invocations(
-                        PROJECT_ENDPOINT, credential, AGENT_NAME, user_message,
+                        PROJECT_ENDPOINT, credential, AGENT_NAME, user_message, journal,
                     )
                 else:
                     # Responses protocol — manage conversation thread
@@ -428,7 +427,7 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                         thread = await oai_client.conversations.create()
                         thread_id = thread.id
                         state.set_value("ConversationState.thread_id", thread_id)
-                    gen = _stream_responses(oai_client, thread_id, user_message)
+                    gen = _stream_responses(oai_client, thread_id, user_message, journal)
 
                 # Stream events to Teams (with 403 cancellation fallback)
                 accumulated_text = ""
@@ -469,6 +468,7 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                         logger.info("Sent full response after stream cancel (%d chars)", len(accumulated_text))
                     else:
                         await sr.end_stream()
+                    journal.record("client-delivered", {"effect": "UNKNOWN"})
                 else:
                     if not stream_cancelled:
                         await sr.end_stream()
@@ -479,23 +479,13 @@ async def setup() -> tuple[AgentApplication[TurnState], MsalConnectionManager]:
                 # Deliver agent-generated files via FileConsentCard
                 if session_id and has_content:
                     await _send_session_files(context, session_id)
-                break
-
-            except RuntimeError as e:
-                if str(e) == "server_error" and attempt < max_retries - 1:
-                    logger.warning("Server error — resetting conversation (attempt %d)", attempt + 1)
-                    state.set_value("ConversationState.thread_id", "")
-                    continue
-                logger.error("Error: %s\n%s", e, traceback.format_exc())
-                await context.send_activity(_friendly_error(str(e)))
-                break
             except Exception as e:
-                logger.error("Error: %s\n%s", e, traceback.format_exc())
-                if attempt < max_retries - 1:
-                    state.set_value("ConversationState.thread_id", "")
-                    continue
-                await context.send_activity(_friendly_error(str(e)))
-                break
+                journal.error(e)
+                logger.error("Invocation/delivery unresolved: %s", type(e).__name__)
+                await context.send_activity(_friendly_error(type(e).__name__) +
+                                            " Check the original operation record before submitting again.")
+        finally:
+            journal.close()
 
     @AGENT_APP.activity("invoke")
     async def on_invoke(context: TurnContext, state: TurnState):

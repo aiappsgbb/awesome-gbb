@@ -119,15 +119,25 @@ bugs):
 
 ## Step 0 — deterministic audit + auth + state bootstrap (FIRST ACTION)
 
+Before Step 2 prepares the image, complete the skill's capability/identity
+preflight using the approved standing CI target. Record environment support,
+registry authorization mode, effective pull boundary and exact identities for
+invoke/source/result readback. An unreadable or incompatible capability is a
+blocker, never permission to change shared registry mode, networking or grants.
+Authentication is required before deploying the real MCP image. The fixture
+never publishes a tool server first and adds its perimeter afterward.
+
 The block below is the sole audit, authentication, naming, and initial-state
 path. Its state file is deliberately removed before validation and published
 with `mv` only after `azd auth login` succeeds. Therefore Step 2 cannot run
 from state created by an unauthenticated invocation.
 
-`MCP_AUTH_APP_CLIENT_ID` is OPTIONAL. When set, it is the client id of a
-standing pre-registered Entra app whose `api://<id>` audience this smoke
-uses to prove the 401→200 Easy Auth contract (Step 5b). When unset, the
-auth sub-test is SKIPPED with a NOTE and the base smoke remains valid.
+`MCP_AUTH_APP_CLIENT_ID` is the client ID of the standing API audience;
+`AZURE_CLIENT_ID` is the distinct authorized caller. The provisioning block
+requires both and validates the complete policy before its first Azure write.
+Only the explicitly named `auth_config.py`, `fixture_ownership.py` and
+`fixture_cleanup_guard.sh` helpers may be executed from the repository;
+the catalog-inspection prohibition is unchanged.
 
 Do NOT invent additional credential checks (no `az ad sp show`, no
 `az role assignment list`, no `az login --service-principal`). Do NOT
@@ -372,6 +382,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output fqdn string = app.properties.configuration.ingress.fqdn
 output appName string = app.name
+
+resource authConfig 'Microsoft.App/containerApps/authConfigs@2025-01-01' = {
+  parent: app
+  name: 'current'
+  properties: loadJsonContent('mcp-authconfig.json').properties
+}
 BICEP
 cat > infra/main.parameters.json <<PARAMS
 {
@@ -461,6 +477,10 @@ AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_SERVER}
 EOF
 echo "azd env created at $AZD_ENV_DIR"
 
+python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/auth_config.py" \
+  --tenant "$AZURE_TENANT_ID" --audience "${MCP_AUTH_APP_CLIENT_ID:?API audience required}" \
+  --caller "$AZURE_CLIENT_ID" > infra/mcp-authconfig.json
+
 OWNERSHIP_HELPER="$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/fixture_ownership.py"
 OWNERSHIP_ARGS=(
   --state /tmp/foundry-mcp-aca-ownership.json
@@ -519,10 +539,12 @@ requests:
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
-INIT_RESPONSE=$(curl -sS -D /tmp/mcp-init-headers.txt \
+TOKEN=$(az account get-access-token --resource "api://$MCP_AUTH_APP_CLIENT_ID" --query accessToken -o tsv)
+INIT_RESPONSE=$(curl -sS --connect-timeout 10 --max-time 30 -D /tmp/mcp-init-headers.txt \
   -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
@@ -589,11 +611,13 @@ Accepted. Capture and assert the exact status code:
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
+TOKEN=$(az account get-access-token --resource "api://$MCP_AUTH_APP_CLIENT_ID" --query accessToken -o tsv)
 SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID" -H "MCP-Protocol-Version: $PROTOCOL_VERSION")
 
-INIT_NOTIFY_BODY=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
+INIT_NOTIFY_BODY=$(curl -sS --connect-timeout 10 --max-time 30 -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/json, text/event-stream" \
   "${SESSION_ARGS[@]}" \
   -d '{ "jsonrpc": "2.0", "method": "notifications/initialized", "params": {} }')
@@ -616,10 +640,12 @@ Then call `tools/list` (with session and protocol version headers):
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
+TOKEN=$(az account get-access-token --resource "api://$MCP_AUTH_APP_CLIENT_ID" --query accessToken -o tsv)
 SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID" -H "MCP-Protocol-Version: $PROTOCOL_VERSION")
-TOOLS_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
+TOOLS_RESPONSE=$(curl -sS --connect-timeout 10 --max-time 30 -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/json, text/event-stream" \
   "${SESSION_ARGS[@]}" \
   -d '{ "jsonrpc": "2.0", "method": "tools/list", "id": 2 }')
@@ -655,10 +681,12 @@ the exact payload and verify `isError` is not `true`:
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env
+TOKEN=$(az account get-access-token --resource "api://$MCP_AUTH_APP_CLIENT_ID" --query accessToken -o tsv)
 SESSION_ARGS=(-H "Mcp-Session-Id: $SESSION_ID" -H "MCP-Protocol-Version: $PROTOCOL_VERSION")
-CALL_RESPONSE=$(curl -sS -w "\n__HTTP_CODE__:%{http_code}" \
+CALL_RESPONSE=$(curl -sS --connect-timeout 10 --max-time 30 -w "\n__HTTP_CODE__:%{http_code}" \
   -X POST "https://${FQDN}/mcp" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/json, text/event-stream" \
   "${SESSION_ARGS[@]}" \
   -d '{
@@ -702,8 +730,8 @@ echo "tools/call echo payload verified: $ECHO_TEXT"
 ```
 
 If all three calls (initialize, tools/list, tools/call) return 200 with
-conformant bodies, the hard gates have passed. Proceed IMMEDIATELY to
-Step 6.
+conformant bodies, the protocol gate has passed. Proceed to Step 5b; do not
+write a PASS marker before the required authorization checks.
 
 DO NOT use `azd ai mcp` preview-CLI subcommands or any other preview
 CLI that hides the HTTP wire protocol (Pattern 16). The HTTP endpoint
@@ -711,7 +739,7 @@ is the GA surface.
 
 ---
 
-## Step 5b — Easy Auth 401→200 proof (HARD GATE only when `MCP_AUTH_APP_CLIENT_ID` is set)
+## Step 5b — Easy Auth and loaded caller policy (HARD GATE)
 
 Layer 1 of the skill's security model is ACA built-in auth: the platform
 must return **401** to an unauthenticated caller and let a caller presenting
@@ -720,13 +748,13 @@ a valid Entra bearer token for `api://$MCP_AUTH_APP_CLIENT_ID` through (not
 proves the documented `## Securing your MCP server` § "Layer 1 — Identity
 perimeter" contract on the live app.
 
-**Gate:** if `MCP_AUTH_APP_CLIENT_ID` is empty, SKIP this entire step — echo
-exactly `NOTE: MCP_AUTH_APP_CLIENT_ID unset — skipping Easy Auth 401/200 proof`
-and proceed to Step 6. Do NOT write a FAIL marker for an unset client id.
+The API audience is mandatory and was validated before provisioning. Do not
+skip this gate or accept an unauthenticated base smoke as its replacement.
 
 ```bash
 if [ -z "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
-  echo "NOTE: MCP_AUTH_APP_CLIENT_ID unset — skipping Easy Auth 401/200 proof"
+  printf 'SMOKE_RESULT=FAIL API audience missing\n' > /tmp/foundry-mcp-aca-smoke-result
+  exit 1
 fi
 ```
 
@@ -734,27 +762,13 @@ When `MCP_AUTH_APP_CLIENT_ID` IS set, run all of the following. Any failure
 here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
 `/tmp/foundry-mcp-aca-smoke-result` inline and stop.
 
-1. **Enable built-in auth on the app you deployed** (`$APP_NAME` from Step 1,
-   resource group `rg-awesome-gbb-ci`, tenant `$AZURE_TENANT_ID`):
+1. **Retain the original policy for the bounded negative test.** It was
+   provisioned before the MCP image, not added to a public tool server:
 
    ```bash
    source /tmp/foundry-mcp-aca-state.env
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
-     # `--allowed-token-audiences` is a SINGLE-value flag (argparse nargs=None):
-     # two space-separated values fail at PARSE time ("unrecognized arguments").
-     # The only CLI-native way to list BOTH api://<id> (delegated / v1 aud) AND
-     # the bare <id> (app-only v2 aud) is a full authConfig PUT that mirrors
-     # references/bicep/mcp-aca-auth.bicep. That PUT also encodes Return401, so
-     # it REPLACES the separate `az containerapp auth update` call. Build the
-     # body with jq (no heredoc → robust to copy indentation), then az rest PUT.
-     SUB=$(az account show --query id -o tsv)
-     jq -n --arg cid "$MCP_AUTH_APP_CLIENT_ID" \
-       --arg iss "https://login.microsoftonline.com/$AZURE_TENANT_ID/v2.0" \
-       '{properties:{platform:{enabled:true},globalValidation:{unauthenticatedClientAction:"Return401"},identityProviders:{azureActiveDirectory:{enabled:true,registration:{clientId:$cid,openIdIssuer:$iss},validation:{allowedAudiences:["api://\($cid)",$cid]}}}}}' \
-       > /tmp/mcp-authconfig.json
-     az rest --method put \
-       --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.App/containerApps/$APP_NAME/authConfigs/current?api-version=2025-01-01" \
-       --body @/tmp/mcp-authconfig.json
+     cp "$PROJECT_DIR/infra/mcp-authconfig.json" /tmp/mcp-authconfig.json
    fi
    ```
 
@@ -767,7 +781,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
    if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
      CODE=""
      for i in $(seq 1 6); do
-       CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+       CODE=$(curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' \
          -H 'Accept: application/json, text/event-stream' \
          "https://${FQDN}/mcp")
        [ "$CODE" = "401" ] && break
@@ -782,7 +796,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
    fi
    ```
 
-3. **Acquire a token and assert the authed call is NOT 401.** The CI managed
+3. **Acquire a token and assert the authed call is 200.** The CI managed
    identity requests a token for the app's audience, then repeats the MCP
    `initialize` round-trip WITH the bearer header:
 
@@ -792,7 +806,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
      TOKEN=$(az account get-access-token \
        --resource "api://$MCP_AUTH_APP_CLIENT_ID" \
        --query accessToken -o tsv)
-     AUTHED_CODE=$(curl -s -o /tmp/mcp-authed.json -w '%{http_code}' \
+     AUTHED_CODE=$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/mcp-authed.json -w '%{http_code}' \
        -X POST "https://${FQDN}/mcp" \
        -H 'Content-Type: application/json' \
        -H 'Accept: application/json, text/event-stream' \
@@ -800,7 +814,7 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}')
      echo "authed status: $AUTHED_CODE"
      case "$AUTHED_CODE" in
-       2*) echo "auth proof: 401 unauth / authed $AUTHED_CODE OK" ;;
+       200) echo "auth proof: 401 unauth / authed $AUTHED_CODE OK" ;;
        *)
          printf 'SMOKE_RESULT=FAIL auth proof: valid token expected 2xx, got %s (401=aud/authz mismatch for api://%s or bare %s; 403=caller not in allowedApplications)\n' \
            "$AUTHED_CODE" "$MCP_AUTH_APP_CLIENT_ID" "$MCP_AUTH_APP_CLIENT_ID" \
@@ -810,15 +824,89 @@ here is a HARD FAIL — write `SMOKE_RESULT=FAIL <reason>` to
    fi
    ```
 
-When both assertions hold (or the step was SKIPPED), proceed to Step 6.
+Both assertions must hold before the caller-exclusion test; do not skip it.
+
+4. **Valid token, excluded caller must be denied (mandatory when auth enabled).**
+   Use the standing worker UAMI client ID only as the alternative ACL entry on
+   this run-owned echo app. Keep the SAME CI token/audience for the negative
+   request; this tests caller authorization, not an invalid audience. Restore
+   the exact approved CI-caller policy even on failure. Never change the worker
+   identity or any other app, and never mint a worker token.
+
+   ```bash
+   source /tmp/foundry-mcp-aca-state.env
+   set -euo pipefail
+   if [ -n "${MCP_AUTH_APP_CLIENT_ID:-}" ]; then
+     TOKEN=$(timeout 40 az account get-access-token --resource "api://$MCP_AUTH_APP_CLIENT_ID" --query accessToken -o tsv)
+     test -n "${MCP_ACA_JOBS_WORKER_IDENTITY_ID:-}" || exit 1
+     NEGATIVE_CALLER=$(timeout 40 az identity show --ids "$MCP_ACA_JOBS_WORKER_IDENTITY_ID" \
+       --query clientId -o tsv --only-show-errors)
+     test -n "$NEGATIVE_CALLER" && test "$NEGATIVE_CALLER" != "$AZURE_CLIENT_ID" || exit 1
+     AUTH_URL="https://management.azure.com/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.App/containerApps/$APP_NAME/authConfigs/current?api-version=2025-01-01"
+     POLICY_RESTORE_ATTEMPTED=0
+     restore_ci_policy() {
+       [ "$POLICY_RESTORE_ATTEMPTED" -eq 0 ] || return 1
+       POLICY_RESTORE_ATTEMPTED=1
+       timeout 60 az rest --method put --url "$AUTH_URL" --body @/tmp/mcp-authconfig.json --only-show-errors >/dev/null
+     }
+     restore_policy_and_preserve_failure() {
+       local original_status=$?
+       trap - EXIT
+       if ! restore_ci_policy; then
+         echo "NOTE: auth policy restoration remains unverified" >&2
+       fi
+       if [ "$original_status" -ne 0 ]; then
+         if ! fixture_owned_cleanup; then
+           echo "NOTE: teardown incomplete; preserve original failure and ownership evidence" >&2
+         fi
+       fi
+       exit "$original_status"
+     }
+     trap restore_policy_and_preserve_failure EXIT
+     python3 "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/auth_config.py" \
+       --tenant "$AZURE_TENANT_ID" --audience "$MCP_AUTH_APP_CLIENT_ID" \
+       --caller "$NEGATIVE_CALLER" > /tmp/mcp-authconfig-negative.json
+     timeout 60 az rest --method put --url "$AUTH_URL" --body @/tmp/mcp-authconfig-negative.json --only-show-errors >/dev/null
+     DENIED_CODE=""
+     for attempt in $(seq 1 6); do
+       DENIED_CODE=$(curl -sS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' \
+         -H "Authorization: Bearer $TOKEN" -H 'Accept: application/json, text/event-stream' \
+         "https://${FQDN}/mcp")
+       [ "$DENIED_CODE" = 403 ] && break
+       sleep 10
+     done
+     restore_ci_policy || exit 1
+     trap fixture_owned_exit EXIT
+     [ "$DENIED_CODE" = 403 ] || {
+       printf 'SMOKE_RESULT=FAIL valid token excluded caller was not denied\n' > /tmp/foundry-mcp-aca-smoke-result
+       exit 1
+     }
+     echo "CALLER_ACL_NEGATIVE_403"
+     RESTORED_CODE=""
+     for attempt in $(seq 1 6); do
+       RESTORED_CODE=$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/mcp-restored.json -w '%{http_code}' \
+         -X POST "https://${FQDN}/mcp" \
+         -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+         -H 'Accept: application/json, text/event-stream' \
+         -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-restored","version":"1"}}}')
+       [ "$RESTORED_CODE" = 200 ] && break
+       sleep 10
+     done
+     [ "$RESTORED_CODE" = 200 ] || {
+       printf 'SMOKE_RESULT=FAIL original caller policy restored in ARM but not proven loaded\n' > /tmp/foundry-mcp-aca-smoke-result
+       exit 1
+     }
+     echo "CALLER_ACL_RESTORED_200"
+   fi
+   ```
 
 ---
 
 ## Step 6 — Write the PASS marker IMMEDIATELY (Pattern 12)
 
 The MOMENT the Step 4 provision gate, the Step 5 MCP round-trip gate, AND
-the Step 5b auth gate (or its documented SKIP when `MCP_AUTH_APP_CLIENT_ID`
-is unset) have all succeeded, write the deterministic PASS
+the Step 5b auth gate, including the restored positive policy, have all
+succeeded, write the deterministic PASS
 marker file via the Bash tool. The file's literal byte content is what
 CI grades — NOT your assistant text reply. The workflow evaluator
 (`.github/workflows/skill-test.yml`) reads `/tmp/foundry-mcp-aca-smoke-result`
@@ -859,6 +947,13 @@ if ! fixture_owned_cleanup; then
 fi
 ```
 
+Never invoke group-scoped teardown against the shared CI resource group.
+The canonical helper requires pre-write absence and exact run ownership,
+deletes only the run's app, and verifies absence. Image and deployment artifacts
+remain explicit residuals unless their immutable ownership is separately proven.
+Shared identities, registry, environment, resource group and standing audience
+are retained.
+
 The marker stays `SMOKE_RESULT=PASS`. Cleanup failure does NOT downgrade
 the smoke verdict. Do NOT re-write the marker file in this step under
 any circumstance.
@@ -894,8 +989,7 @@ it is not an executable replacement for the private inventory.
   payload did not match `"echoed: ci-probe"`
 - JSON parse failed on any MCP response body
 - FQDN could not be resolved post-deploy
-- Step 5b auth proof: unauth call not 401, or valid-token call still 401
-  (only when `MCP_AUTH_APP_CLIENT_ID` is set; SKIPPED and never a FAIL when
-  unset)
+- Missing API audience; anonymous request not 401, excluded caller not 403,
+  or restored permitted caller not 200
 
 Teardown failure is NOT a FAIL condition (Pattern 25 — soft-PASS).

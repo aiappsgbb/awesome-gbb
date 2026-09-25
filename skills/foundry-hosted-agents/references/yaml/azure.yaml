@@ -1,6 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 #
 # Canonical unified hosted-agent azure.yaml — GA container-deploy shape.
+# Compatibility: ../hosted-contract.json owns the supported consumer/profile.
+# requiredVersions is a CLI constraint, not certification of every later version.
 #
 # Source of truth for the prose example in
 # `../../SKILL.md § azure.yaml (unified hosted-agent configuration)`.

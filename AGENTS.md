@@ -3200,6 +3200,17 @@ the merged web-experience-design source and the progress-guard and copilot-docto
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 
+The #518 candidate's earlier 1478 tests were discovered and run locally on 2026-09-25
+in the declared catalog dependency cohort: PASS with 32 existing conditional
+skips (29 Linux-only, 2 optional native-source, 1 redundant fallback shim).
+This macOS run is not Linux CI or live Azure evidence.
+The subsequent CI reuse candidate adds twelve local tests: all 1490 tests
+ran locally with PASS and the same 32 conditional skips on 2026-09-25.
+Neither local run is Linux CI or live Azure evidence.
+The next candidate adds eight producer ACL/resource-custody tests: all 1498
+ran locally with PASS and the same 32 skips in 156.326 seconds on September 25.
+See [the deployment-contract acceptance record](docs/maintenance/foundry-deployment-contracts-validation.md).
+
 ---
 
 ## 13 · License & code of conduct

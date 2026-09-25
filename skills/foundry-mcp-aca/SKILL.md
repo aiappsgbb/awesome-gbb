@@ -14,7 +14,7 @@ description: >
   foundry-mcp-aca-jobs), local MCP development (use mcp-config.json directly),
   general Azure deploy.
 metadata:
-  version: "1.2.7"
+  version: "2.0.0"
 ---
 > **📦 This skill is for MCP server PRODUCERS (deploying servers to ACA).** If you want to CONSUME an existing MCP server from a Foundry hosted agent, see [foundry-hosted-agents](../foundry-hosted-agents/SKILL.md) § MCP Tools or [foundry-toolbox](../foundry-toolbox/SKILL.md) § Learn MCP. If the MCP server should hand work to an ACA Job, use [foundry-mcp-aca-jobs](../foundry-mcp-aca-jobs/SKILL.md) instead.
 
@@ -50,6 +50,41 @@ servers via HTTP at runtime using `client.get_mcp_tool()`.
 - Creating a custom MCP server for an API or data store not covered by Foundry built-ins
 - Deploying an MCP server as an Azure Function (consumption billing)
 
+## Capability and identity preflight
+
+Before preparing an image, record the selected ACA environment type, region,
+supported ingress/auth features, registry authorization mode and exact
+API/SDK cohort from this skill's upstream pin. An unsupported feature is
+`UNSUPPORTED_CAPABILITY`; a missing owner choice is a blocker, not permission
+to change the environment. Do not use the hosted agent's azd profile as proof
+of compatibility for an ACA service.
+
+Reuse the [hosted capability/evidence vocabulary](../foundry-hosted-agents/references/deployment-preflight.md#early-capability-evidence)
+for the producer's read-only review. The producer has distinct subjects:
+deployer, ACA image-pull identity, inbound caller, server MI accessing the
+source, and independent result reader. For each, record the actual target,
+required data actions, effective roles/conditions and API version.
+An RG-wide elevated-role audit is not proof of these permissions.
+
+**Registry feasibility precedes build.** Repository-only access requires an
+ABAC registry, effective repository conditions and exclusion of broader pull
+grants. Legacy `AcrPull` is registry-wide. Do not grant a broad role, change a
+shared registry's mode or treat a successful deployer push as runtime pull.
+The existing ACA module declares an identity; it does not prove that grant.
+
+**Ingress trust is deployment-specific.** Easy Auth must enforce authentication
+on the actual route, replace caller-supplied principal headers, and leave no
+direct backend bypass. Socket peer, forwarded client IP and authenticated
+principal are different facts. Ignore arbitrary forwarded headers; trust only
+the explicitly verified proxy chain. No wildcard trusted-proxy shortcut.
+Private routing, authConfig support and effective config must be verified on
+the selected environment before depending on them.
+
+Follow the [operation recovery contract](../foundry-hosted-agents/references/operation-recovery.md)
+for stateful tools and delivery adapters. A tool error, generic404 or missing
+browser assertion is not permission to repeat a write. Capture the original
+operation identity/status before parsing and use the declared result reader.
+
 ## Architecture
 
 ```
@@ -69,7 +104,9 @@ The hosted agent container:
 
 ## MCP Protocol Requirements
 
-**All JSON-RPC requests must return HTTP 200; notifications must return HTTP 202** (per [MCP 2025-06-18 transport spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)).
+**Successful JSON-RPC requests return HTTP 200; accepted notifications return HTTP 202** (per [MCP 2025-06-18 transport spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)).
+Authentication, transport and invalid-session failures retain their meaningful
+HTTP status; never turn them into a success-shaped response.
 Failing to handle any of these causes `FoundryChatClient.get_mcp_tool()` to silently fail.
 
 | Method | Purpose | Notes |
@@ -198,13 +235,13 @@ disable account keys at the Cosmos resource (`disableLocalAuth: true`).
 >
 > **🛑 DO NOT rely on cross-partition queries for MCP tool calls without explicit user consent** — partition-scoped queries are cheaper and more predictable. **DO scope per-partition or accept the cost & latency impact.** If you must cross-partition, document it as a tool contract in SPEC § 6 so the agent knows to prefer partition-scoped alternatives when available.
 
-> **⚠️ `azd deploy <mcp-service>` poisons every running agent's MCP session — must redeploy the agent too.**
+> **Historical stale-session observation after MCP redeploy — verify the selected client.**
 > FastMCP's streamable-http maintains per-client session state in-memory on the MCP
 > container. When you redeploy the MCP server (`azd deploy cosmos-mcp` /
 > `azd deploy <mock-mcp-service>` / any new container revision), every session is wiped.
-> The Foundry hosted agent's MCP client **caches the `mcp-session-id` from the previous
-> initialize handshake and keeps sending it with every `tools/call`** — and **does NOT
-> auto-detect "Session not found" + re-handshake**. Result: every tool call returns
+> In the observed older client, the cached `mcp-session-id` from the previous
+> initialize handshake kept being sent with `tools/call` without a successful
+> re-handshake. In that incident, tool calls returned
 > 404 silently, agent self-reports `case read failed` / `audit-log query failed`
 > on EVERY tool, MCP container is `Healthy` and `Running`, MCP logs show
 > `POST /mcp HTTP/1.1" 404 Not Found` **without** the preceding `new transport
@@ -219,13 +256,13 @@ disable account keys at the Cosmos resource (`disableLocalAuth: true`).
 > | MCP log line | `POST /mcp HTTP/1.1" 404` (no transport log either way) | `POST /mcp HTTP/1.1" 404` (no `new transport with session ID` log preceding) |
 > | External probe with `Accept: application/json, text/event-stream` | `404 Not Found` (path moved) | `200 OK` (path fine) |
 > | External probe with stale `mcp-session-id` header | `404 Not Found` (path moved) | `404 {"error":{"code":-32600,"message":"Session not found"}}` |
-> | Fix | Pin `fastmcp<3.0.0`, rebuild MCP | Redeploy the AGENT after redeploying MCP |
+> | Discriminator before remediation | Verify the actual mounted route and pinned package | Verify the original session error and the client's reinitialization contract |
 >
-> **Mandatory recovery sequence after redeploying any MCP server:**
+> **Historical recovery sequence, not an automatic repair:**
 >
 > ```bash
 > # After: azd deploy cosmos-mcp   (or any MCP service)
-> # ALSO redeploy the agent so its in-memory MCP client cache is dropped:
+> # Only after identifying the stale session and obtaining explicit authorization:
 > azd deploy <agent-service-name>      # creates a new agent version, fresh compute
 >
 > # And restart the bot ACA replica so its connection pool is dropped:
@@ -239,12 +276,16 @@ disable account keys at the Cosmos resource (`disableLocalAuth: true`).
 > auto-deprovisions; the next user message will spin up fresh compute with a
 > fresh MCP session. But "wait 15 min" isn't a fix you can put in a runbook.
 >
-> **Where this should ideally be solved**: the agent runtime's MCP client should
-> catch JSON-RPC error code `-32600 Session not found` and re-initialize. Until
-> the platform handles this, treat MCP and agent as a **coupled deploy pair** —
-> you cannot redeploy one without the other on a running environment.
+> Client reinitialization support is version-specific. This incident does not
+> establish a universal coupled-redeploy requirement or prove that a failed
+> business call had no effect.
 >
-> **🛑 DO NOT redeploy MCP server without re-importing the consuming agent version** — the cached session ID will become stale and every tool call will 404. **DO bump the agent version pin** (or call `azd ai agent show` to refresh) **immediately after each MCP redeploy.** This is the most common production outage pattern on Foundry hosted agents.
+> Before any recovery, distinguish a wrong route, auth failure and an actual
+> stale session with a bounded handshake/read-only probe using the same client
+> cohort. `azd ai agent show` is a read, not a cache refresh. Do not automatically
+> redeploy the agent or restart the bot, and never replay the failed business
+> tool to diagnose its session. If reinitialization cannot be proven safe for the
+> original operation, preserve UNKNOWN and return the specific blocked decision.
 
 ### Cosmos firewall + ACA egress (the trap that wastes 45 min on every fresh deployment)
 
@@ -334,7 +375,9 @@ In the hosted agent's `mcp-config.json`:
 }
 ```
 
-Set `MCP_SERVER_URL` in `agent.yaml` environment variables to the ACA endpoint.
+Set `MCP_SERVER_URL` in the environment field of the selected
+[hosted profile](../foundry-hosted-agents/references/hosted-contract.json).
+Do not mix legacy `agent.yaml` fields into a unified `azure.yaml`.
 
 ---
 
@@ -663,9 +706,12 @@ child resource, validation-only so it needs **no client secret** — is
 > - a **v2 app-only token's `aud` is the bare client GUID**, not `api://<appId>`
 >   — list **both** forms in `allowedAudiences` so delegated *and* app-only
 >   callers pass audience validation;
-> - **auth-config edits need an auth-sidecar reload** — run `az containerapp
->   revision restart` after changing `authConfig`, or the old policy silently
->   sticks and every authed call keeps returning the stale result.
+> - **authConfig readback is desired configuration, not loaded-policy proof.**
+>   Compare an authenticated/unauthenticated probe on the actual route with the
+>   selected config and revision. A stale response can have several causes.
+>   Do not automatically restart, PATCH again or recreate; one authorized reload
+>   is a discriminator only when the environment supports it, not a guaranteed
+>   fix. A restart error alone does not identify the root cause.
 
 **Caveat — no Dynamic Client Registration.** Entra does not implement DCR, so
 interactive MCP clients must be **pre-registered**; ship a known client id
@@ -694,6 +740,12 @@ server's MI, or the On-Behalf-Of flow if you genuinely must act as the user.
 Grant that MI exactly one role (e.g. `Key Vault Secrets User`) — the role
 assignment is in
 [`references/bicep/mcp-aca-auth.bicep`](references/bicep/mcp-aca-auth.bicep).
+
+The `secret_status` reference currently calls `get_secret` and returns only
+properties. That API/role can **read the value**; it is not a metadata-only
+permission contract. If policy permits only metadata, stop before deployment
+and select a reviewed metadata API/role instead. Do not grant Secrets User as
+a silent fallback merely because the tool's returned payload omits the value.
 
 ### Layer 3 — Secret hygiene and tool-input defense
 
@@ -735,7 +787,7 @@ distributed tracing.
 
 | Client | How it authenticates | Notes |
 |--------|----------------------|-------|
-| **Server-to-server** (Foundry agent, any service) | Its MI requests a token for `api://<appId>`, sends `Authorization: Bearer <token>` | Platform-native; the CI fixture proves this 401→200 contract when the standing `MCP_AUTH_APP_CLIENT_ID` secret is configured (else that step is skipped) |
+| **Server-to-server** (Foundry agent, any service) | Its MI requests a token for `api://<appId>` and sends the bearer token | CI requires the standing `MCP_AUTH_APP_CLIENT_ID` audience and a distinct explicit caller ACL before deploying the MCP image; it checks anonymous 401, permitted 200, excluded-caller 403 and restored-policy 200 |
 | **Interactive — manual bearer** (VS Code / Claude / Copilot) | Paste a token into the client's MCP config | Simplest interactive path |
 | **Interactive — OAuth discovery** (advanced) | Server publishes PRM (RFC 9728); client follows `WWW-Authenticate` → user sign-in | Server's job on ACA — see below |
 
@@ -783,7 +835,7 @@ CI-tested.
 | **`TypeError: 'FunctionTool' object is not callable` inside a tool** | `@MCP.tool` wraps the function in a `FunctionTool` object. Calling it from Python (e.g., tool A calls tool B internally) raises `TypeError`. | **Extract shared logic into a plain `_helper()` function. Both `@MCP.tool` functions call the helper. Never call one `@MCP.tool`-decorated function from inside another.** |
 | **MCP ACA deployed but Foundry agent can't reach it (connection timeout)** | `az containerapp create --ingress internal` — only resources in the same VNET can reach it. Foundry hosted agents run in **Foundry's own infrastructure**, not your VNET. | **Use `--ingress external` for MCP ACA containers that Foundry agents call. Internal ingress only works for VNET-injected agents (private topology) where the agent subnet is peered/injected into the same VNET. See `foundry-vnet-deploy`.** External ingress is safe when fronted by ACA built-in auth (see § Securing your MCP server → Layer 1); it is not the same as "unauthenticated." |
 | `prompts/list` not implemented | Server doesn't handle this method | Return `{"prompts": []}` — agent-framework requires it |
-| MCP container `404` log noise after demo | MAF client occasionally fires 1-3 stray POSTs to `/mcp` after `DELETE` of the session — the server is gone, so they 404. Cosmos calls succeeded; this is post-mortem chatter, not a runtime problem. | Either accept the noise (no functional impact) or suppress in the FastMCP server with a no-op handler that returns 204 for any POST hitting an unknown session id. Document for whoever reads `az containerapp logs show` so they don't chase it as a real bug. |
+| MCP `404` after session teardown | A late request may target the removed session; a 404 alone does not establish this cause | Retain the original session/request correlation and verify the completed work independently. Do not suppress unknown-session POST failures with a success-shaped 204 and do not replay business work to replace logs. |
 
 ---
 
@@ -792,7 +844,7 @@ CI-tested.
 | Symptom | Root cause | DO NOT do | DO instead |
 |---------|-----------|-----------|-----------|
 | Consumer config points to wrong URL (env var not resolved at deploy time) | `${MCP_SERVER_URL}` expands to empty at agent-startup time, not deployment time | **DO NOT use unguarded `${VAR}` substitution in mcp-config.json** — if the var is undefined, the agent skips the server silently | **DO guard with validation:** `if not url or not url.startswith("http"): raise ValueError(f"Invalid MCP URL: {url}")` in agent startup. Fail fast + audit-log. |
-| Session ID stale after MCP redeploy | Foundry hosted agent caches the `mcp-session-id` token from the MCP server's `initialize` response. When MCP redeploys (new container), the session is wiped. Agent keeps sending stale session ID and gets 404. | **DO NOT redeploy MCP server without re-importing + pinning the agent version** — the in-memory client cache persists across requests even after MCP dies | **DO bump the agent version pin** (e.g., `version: "1.2.3"` → `"1.2.4"` in `agent-config.json`) or run `azd ai agent show <agent-id>` to force version refresh. See § Mandatory recovery sequence. |
+| Possible stale session after redeploy | Lost in-memory session is one candidate, not the meaning of every 404 | Do not replay the original tool or force a new agent version from a generic404 | Use a bounded read/handshake discriminator; retain original IDs and reconcile any effect before explicitly authorized recovery. A show command does not refresh runtime configuration. |
 | Wrong mount path (404 on MCP calls) | FastMCP 3.x serves on `/mcp/` with trailing slash; consumer config or curl tests use `/` without slash | **DO NOT assume FastMCP mount path** — it changed between 2.x and 3.x; don't infer from version. Test explicitly. | **DO test with `curl https://<aca-fqdn>/mcp/ -H "Accept: application/json, text/event-stream"` (note trailing slash).** Returns `200 OK` if path is correct. For local: `curl http://localhost:8080/mcp/`. |
 | MCP call returns `401` after enabling built-in auth | Caller sent no token, or a token for the wrong resource | DO NOT switch to `AllowAnonymous` to "make it work" — that deletes the perimeter | Send `Authorization: Bearer $(az account get-access-token --resource api://<appId> --query accessToken -o tsv)`; confirm the token `aud` equals `api://<appId>` |
 | `401` even with a token attached | `allowedAudiences` / issuer mismatch, or a Graph token | DO NOT paste a Microsoft Graph token (`--resource https://graph.microsoft.com`) | Request the token for `api://<appId>`; verify `--allowed-token-audiences` includes exactly that value and issuer is `https://login.microsoftonline.com/<tenant>/v2.0` |
@@ -931,9 +983,10 @@ tool outputs.
 
 ### Severity & error semantics
 
-- Always return HTTP 200 with the error in the JSON body. **Never raise**
-  — Foundry's MCP client will treat HTTP errors as a tool failure and
-  retry with the same arguments, which doesn't help.
+- Domain validation failures use a structured tool error. Do not suppress
+  authentication/transport failures or infer that every client retries them.
+  Measure dispatch behavior for the pinned client. An uncertain write is not
+  safely retryable merely because a domain error can be rendered as JSON.
 - Use a stable `error` enum (`INSUFFICIENT_EVIDENCE`, `NOT_FOUND`,
   `STATE_CONFLICT`, etc.) so the agent can pattern-match.
 - `next_steps` MUST name the exact tool name the agent has access to —
@@ -1007,6 +1060,10 @@ server** — it makes the agent slow and breaks the 100-second tool timeout.
 ---
 
 ## Reset & Replay Scripts
+
+Reset applies only to explicitly approved synthetic run-owned data. It is not
+reconciliation of a lost response, and must never erase unresolved effect
+evidence or reset a real business system to make a test pass.
 
 Every MCP server backed by a mocked system MUST ship two scripts so demos
 recover from failed runs in <30s:

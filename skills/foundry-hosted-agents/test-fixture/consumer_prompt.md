@@ -102,6 +102,7 @@ route around with an ad hoc role grant.
 
 ```bash
 azd ext install microsoft.foundry
+azd ext install azure.ai.agents --version 1.0.0-beta.14 --force
 extensions_json="$(azd ext list --output json)"
 microsoft_foundry_version="$(jq -er \
   '[.[] | select(.id == "microsoft.foundry") | .installedVersion | select(type == "string" and length > 0)]
@@ -128,6 +129,27 @@ any other version-probing command — `azd ext list --output json` is the only
 supported way to verify this in the fixture.
 
 ## Step 2 - deploy the canonical container agent
+
+Create the fixture's isolated management SDK environment before its read-only
+ownership check. Use this interpreter for ownership, invocation and cleanup:
+
+```bash
+python3 -m venv /tmp/foundry-hosted-agents-venv
+/tmp/foundry-hosted-agents-venv/bin/pip install --quiet \
+  "azure-ai-projects~=2.3.0" \
+  "azure-identity~=1.25.3" \
+  "httpx~=0.28.1"
+```
+
+Before artifact preparation, read `references/hosted-contract.json` and compare
+the observed azd/extension pair with its selected profile. Record the actual
+`hosted_contract.py` provenance inventory and consumer versions. A different
+pair is a compatibility blocker, not permission to upgrade or modify the
+manifest. Complete the capability/permission observations in
+`references/deployment-preflight.md#early-capability-evidence`, using the actual
+CI target and identities. Invoke permission alone does not prove version or
+response retrieval. Unsupported/unreadable capability must fail before build;
+never invent receipt fields or change the shared registry/network/RBAC.
 
 Before the deployment script, classify the existing project's network/setup
 mode using [the shared preflight](../references/deployment-preflight.md).
@@ -167,6 +189,12 @@ suffix="$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 agent_name="ci-smoke-ha-${suffix}"
 work_dir="/tmp/foundry-hosted-agents-${suffix}"
 mkdir -p "$work_dir"
+ownership="/tmp/foundry-hosted-agents-owned-${suffix}.json"
+echo "$ownership" > /tmp/foundry-hosted-agents-owned-path
+echo "$agent_name" > /tmp/foundry-hosted-agents-agent-name
+/tmp/foundry-hosted-agents-venv/bin/python \
+  "${GITHUB_WORKSPACE}/skills/foundry-hosted-agents/test-fixture/owned_resources.py" \
+  prepare --state "$ownership" --agent "$agent_name"
 
 # Copy the canonical reference files verbatim - do NOT hand-author these
 # from training-data memory. SKILL.md's references/ directory is the
@@ -261,7 +289,9 @@ PY
   azd deploy "$agent_name" --no-prompt
 )
 record "AZD_DEPLOY_SUCCEEDED name=${agent_name}"
-echo "$agent_name" > /tmp/foundry-hosted-agents-agent-name
+/tmp/foundry-hosted-agents-venv/bin/python \
+  "${GITHUB_WORKSPACE}/skills/foundry-hosted-agents/test-fixture/owned_resources.py" \
+  record --state "$ownership"
 ```
 
 ```bash
@@ -277,16 +307,8 @@ Write the matching FAIL marker and stop.
 
 ## Step 3 - GA SDK hard checks (deterministic, no preview surfaces)
 
-Create an isolated virtual environment and install the complete bounded GA SDK
-probe stack, including its direct HTTP transport:
-
-```bash
-python3 -m venv /tmp/foundry-hosted-agents-venv
-/tmp/foundry-hosted-agents-venv/bin/pip install --quiet \
-  "azure-ai-projects~=2.3.0" \
-  "azure-identity~=1.25.3" \
-  "httpx~=0.28.1"
-```
+Reuse the isolated management SDK environment from Step 2; do not change its
+package cohort after deployment.
 
 Use a Bash heredoc to write the following program to
 `/tmp/foundry-hosted-agents-smoke.py`, then run it once with
@@ -311,6 +333,8 @@ from azure.identity import DefaultAzureCredential
 sys.path.insert(0, str(Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
                        / "skills/foundry-hosted-agents/references/python"))
 from hosted_smoke import model_result, verify_model_readback
+from operation_evidence import begin_operation, capture_response, error_metadata
+import json
 
 evidence_path = "/tmp/foundry-hosted-agents-smoke-evidence"
 
@@ -373,10 +397,18 @@ with DefaultAzureCredential() as credential, AIProjectClient(
     openai_client = project.get_openai_client(agent_name=agent_name)
     # One request, no retry of authorization errors or uncertain create ACKs.
     openai_client = openai_client.with_options(max_retries=0, timeout=180)
-    response = openai_client.responses.create(
-        input="Briefly classify this support request: My invoice doubled this month.",
-        stream=False,
-    )
+    def operation_record(event, metadata):
+        record(json.dumps({"event": event, **metadata}))
+    begin_operation(operation_record, target=endpoint, intent={"agent": agent_name, "purpose": "model-smoke"})
+    try:
+        raw = openai_client.responses.with_raw_response.create(
+            input="Briefly classify this support request: My invoice doubled this month.",
+            stream=False,
+        )
+        response = capture_response(raw, operation_record)
+    except Exception as error:
+        operation_record("invoke-unresolved", error_metadata(error))
+        raise RuntimeError("Original invocation unresolved; do not replay") from None
     result = model_result(response)
     readback = openai_client.responses.retrieve(
         result["id"], extra_headers={"x-agent-session-id": result["session_id"]},
@@ -403,75 +435,19 @@ print one NOTE to stdout and continue to Step 5. The CI resource group is
 periodically pruned of orphaned hosted-agent versions and ACR repositories
 by a separate janitor.
 
-Write the following teardown script to `/tmp/foundry-hosted-agents-teardown.py`:
-
-```python
-#!/usr/bin/env python3
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-evidence = Path("/tmp/foundry-hosted-agents-smoke-evidence")
-agent_name_file = Path("/tmp/foundry-hosted-agents-agent-name")
-
-
-def note(message: str) -> None:
-    print(message)
-    with evidence.open("a", encoding="utf-8") as fp:
-        fp.write(f"{message}\n")
-
-
-if not agent_name_file.exists():
-    note("NOTE teardown skipped: agent name file not found")
-    sys.exit(0)
-
-agent_name = agent_name_file.read_text(encoding="utf-8").strip()
-
-# Best-effort agent delete using stable SDK with force=True.
-try:
-    from azure.ai.projects import AIProjectClient
-    from azure.identity import DefaultAzureCredential
-
-    with DefaultAzureCredential() as credential, AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential
-    ) as project:
-        project.agents.delete(agent_name=agent_name, force=True)
-        note(f"AGENT_DELETED name={agent_name}")
-except Exception as exc:  # noqa: BLE001 - teardown is best-effort
-    note(f"NOTE agent delete best-effort failure: {exc}")
-
-# Best-effort ACR repository delete. ACR_LOGIN_SERVER was required above for
-# deploy-time AZURE_CONTAINER_REGISTRY_ENDPOINT and is reused here only to
-# derive the registry name; deletion itself remains best-effort.
-acr_login_server = os.environ.get("ACR_LOGIN_SERVER", "").strip()
-if not acr_login_server:
-    note("NOTE ACR repository cleanup skipped: ACR_LOGIN_SERVER not set")
-else:
-    try:
-        acr_name = acr_login_server.split(".")[0]
-        result = subprocess.run(
-            ["az", "acr", "repository", "delete",
-             "--name", acr_name,
-             "--repository", agent_name,
-             "--yes"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            note(f"ACR_REPO_DELETED name={agent_name}")
-        else:
-            note(f"NOTE ACR repository delete best-effort failure: {result.stderr.strip()}")
-    except Exception as exc:  # noqa: BLE001 - teardown is best-effort
-        note(f"NOTE ACR repository delete best-effort failure: {exc}")
-```
-
-Then run it with a 5-minute cap:
+Run only the canonical ownership helper. It binds the pre-write absent agent
+and image namespace to the native version creation time, exact definition and
+actual registry manifest. The image repository is **not** inferred from the
+agent name. Additional versions, changed image contents or missing receipts
+block cleanup. This helper must never adopt a retained resource from an earlier
+run or delete an entire shared repository.
 
 ```bash
-timeout 300 /tmp/foundry-hosted-agents-venv/bin/python3 /tmp/foundry-hosted-agents-teardown.py \
-  || echo "NOTE best-effort teardown exceeded 5-minute cap or encountered an error; CI janitor will prune orphaned resources"
+ownership="$(cat /tmp/foundry-hosted-agents-owned-path)"
+timeout 300 /tmp/foundry-hosted-agents-venv/bin/python \
+  "$GITHUB_WORKSPACE/skills/foundry-hosted-agents/test-fixture/owned_resources.py" \
+  cleanup --state "$ownership" \
+  || echo "NOTE cleanup remains unverified; retain the exact ownership receipts for the operator"
 ```
 
 ## Step 5 - Marker contract
