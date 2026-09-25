@@ -3170,10 +3170,10 @@ the merged web-experience-design source and the progress-guard and copilot-docto
 | Issue-only (human / complex deploy) | 4 |
 | Internal IP (no upstream) | 7 |
 | CI workflows | 9 |
-| Unit tests | 1448 |
+| Unit tests | 1469 |
 | Additional doctor protocol tests | 21 synthetic tests in an isolated MCP 1.27.x environment |
 | Additional delegated-auth candidate tests | 45 local tests; live delegated evidence recorded separately |
-| Additional Foundry service contract tests | 18 isolated tests for Toolbox management, Routines creator wire behavior and Skills reader/provider wiring |
+| Additional Foundry service contract tests | 19 isolated tests for Toolbox management, Routines creator wire behavior and Skills reader/provider/fixture wiring |
 | Azure E2E resources | AI Services + ACR + CAE in `<ci-resource-group>` |
 | Plugin installs | `copilot plugin install awesome-gbb@awesome-gbb` |
 

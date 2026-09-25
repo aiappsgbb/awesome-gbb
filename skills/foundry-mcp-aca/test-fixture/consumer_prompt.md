@@ -22,7 +22,9 @@ what you create in the scratch project. Specifically forbidden:
   evidence only — do NOT `cat`/`view` the file)
 - `scripts/tests/*.py` (test files)
 - `.github/workflows/*.yml` (workflow definitions)
-- `skills/foundry-mcp-aca/references/*` (audit trail, pin files)
+- `skills/foundry-mcp-aca/references/*` (audit trail, pin files), except
+  executing the prescribed `fixture_ownership.py` and sourcing
+  `fixture_cleanup_guard.sh`; do not inspect or rewrite either helper
 - `.github/skill-deps.yml`, `.github/ci-shared-preamble.md`
 - Any file under `skills/`, `docs/`, or `scripts/`
 
@@ -162,7 +164,8 @@ azd auth login \
   --client-id "$AZURE_CLIENT_ID" \
   --tenant-id "$AZURE_TENANT_ID" || FAIL "azd auth login failed"
 
-SUFFIX=$(uuidgen | tr 'A-Z' 'a-z' | cut -c1-8)
+SMOKE_RUN_ID=$(uuidgen | tr 'A-Z' 'a-z')
+SUFFIX="${SMOKE_RUN_ID:0:8}"
 APP_NAME="ci-smoke-mcp-${SUFFIX}"
 PROJECT_DIR="${GITHUB_WORKSPACE}/.scratch/${APP_NAME}"
 UAMI_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/rg-awesome-gbb-ci/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-awesome-gbb-ci"
@@ -172,6 +175,7 @@ ACR_SERVER="$ACR_LOGIN_SERVER"
   printf 'PROJECT_DIR=%s\n' "$PROJECT_DIR"
   printf 'UAMI_RESOURCE_ID=%s\n' "$UAMI_RESOURCE_ID"
   printf 'ACR_SERVER=%s\n' "$ACR_SERVER"
+  printf 'SMOKE_RUN_ID=%s\n' "$SMOKE_RUN_ID"
 } > "$STATE_TMP"
 mv "$STATE_TMP" "$STATE_FILE"
 trap - ERR
@@ -192,7 +196,7 @@ deployed FQDN and call the MCP HTTP endpoint with three JSON-RPC requests
 
 Copilot CLI runs each Bash tool invocation in a **fresh process** — env
 vars set in one call are NOT available in the next. Step 0 atomically
-publishes `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, and `ACR_SERVER`
+publishes `APP_NAME`, `PROJECT_DIR`, `UAMI_RESOURCE_ID`, `ACR_SERVER` and `SMOKE_RUN_ID`
 only after authentication succeeds. The next Bash tool invocation is the
 single deterministic scaffold block in Step 2. It restores that state,
 creates the scaffold directories, and enters `$PROJECT_DIR` in the
@@ -229,7 +233,8 @@ preview-CLI flag drift) does NOT downgrade the smoke verdict. The
 7 days.
 
 Do NOT chain marker emission after cleanup. The smoke is the contract;
-cleanup is best-effort.
+cleanup is best-effort. It never authorizes deleting the shared resource group,
+CAE, registry, identity or unproven image/deployment artifacts.
 
 ---
 
@@ -241,7 +246,7 @@ cleanup is best-effort.
 source /tmp/foundry-mcp-aca-state.env || { printf 'SMOKE_RESULT=FAIL scaffold block failed\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; }
 set -Eeuo pipefail
 trap 'printf "SMOKE_RESULT=FAIL scaffold block failed\n" > /tmp/foundry-mcp-aca-smoke-result' ERR
-if [[ -z "${APP_NAME:-}" || -z "${PROJECT_DIR:-}" || -z "${UAMI_RESOURCE_ID:-}" || -z "${ACR_SERVER:-}" ]]; then printf 'SMOKE_RESULT=FAIL scaffold state incomplete\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; fi
+if [[ -z "${APP_NAME:-}" || -z "${PROJECT_DIR:-}" || -z "${UAMI_RESOURCE_ID:-}" || -z "${ACR_SERVER:-}" || -z "${SMOKE_RUN_ID:-}" ]]; then printf 'SMOKE_RESULT=FAIL scaffold state incomplete\n' > /tmp/foundry-mcp-aca-smoke-result; exit 1; fi
 mkdir -p "$PROJECT_DIR/src" "$PROJECT_DIR/infra"
 cd "$PROJECT_DIR"
 cat > src/server.py <<'PY'
@@ -290,6 +295,9 @@ param location string = 'swedencentral'
 @description('Container App name (also used as ACR repo tag).')
 param appName string
 
+@description('Unique fixture run identity, bound to the pre-create inventory.')
+param smokeRunId string
+
 @description('Container image reference. Defaults to placeholder; azd deploy patches with the real image.')
 param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
@@ -311,6 +319,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   location: location
   tags: {
     'azd-service-name': appName
+    'gbb-smoke-run': smokeRunId
   }
   identity: {
     type: 'UserAssigned'
@@ -371,7 +380,8 @@ cat > infra/main.parameters.json <<PARAMS
   "parameters": {
     "appName": { "value": "${APP_NAME}" },
     "uamiResourceId": { "value": "${UAMI_RESOURCE_ID}" },
-    "acrServer": { "value": "${ACR_SERVER}" }
+    "acrServer": { "value": "${ACR_SERVER}" },
+    "smokeRunId": { "value": "${SMOKE_RUN_ID}" }
   }
 }
 PARAMS
@@ -410,9 +420,20 @@ The exact provision block below creates the `azd` environment structure
 directly and then runs `azd up`. Do NOT use `azd env new` or `azd env set`;
 they require interactive prompts that fail in headless CI. The block sources
 the state that Step 0 publishes only after successful `azd auth login`, so
-provision cannot begin on an unauthenticated path. ACA's ARM resolver has a
-documented cross-resource index-rebuild race (`ManagedEnvironmentNotFound`,
-AGENTS.md § 9.7 Pattern 18), so `azd up` uses a bounded retry loop.
+provision cannot begin on an unauthenticated path.
+
+Before the first create, the ownership helper verifies the exact approved
+subscription/tenant and existing resource group, proves the exact app ID is
+absent, and persists a private inventory. The Bicep run tag binds a later
+readback to that intent; a name prefix/suffix alone is not ownership proof.
+The inventory survives a failed step and must never be reset to permit a retry.
+An existing app or inventory blocks deployment rather than being adopted.
+
+The EXIT guard is appended to the existing state file so every later Bash
+step restores it. Any intermediate failure reconciles the exact app ID,
+attempts only owned-app cleanup, and preserves the original failure status.
+An uncertain `azd up` is not automatically replayed, including on a resolver
+race: inspect the saved inventory and receipts first.
 
 ### Deterministic provision Bash block (MANDATORY)
 
@@ -440,19 +461,27 @@ AZURE_CONTAINER_REGISTRY_ENDPOINT=${ACR_SERVER}
 EOF
 echo "azd env created at $AZD_ENV_DIR"
 
-attempts=0
-max_attempts=6
-until azd up --no-prompt; do
-  attempts=$((attempts + 1))
-  if [ $attempts -ge $max_attempts ]; then
-    echo "azd up failed after $max_attempts attempts"
-    printf 'SMOKE_RESULT=FAIL azd up failed after retry exhaustion\n' > /tmp/foundry-mcp-aca-smoke-result
-    azd down --purge --force --no-prompt || true
-    exit 1
-  fi
-  echo "azd up attempt $attempts failed, sleeping 5s before retry (Pattern 18 — ARM cross-resource race)"
-  sleep 5
-done
+OWNERSHIP_HELPER="$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/python/fixture_ownership.py"
+OWNERSHIP_ARGS=(
+  --state /tmp/foundry-mcp-aca-ownership.json
+  --evidence /tmp/foundry-mcp-aca-smoke-evidence
+  --run-id "$SMOKE_RUN_ID"
+  --subscription "$AZURE_SUBSCRIPTION_ID" --tenant "$AZURE_TENANT_ID"
+  --resource-group rg-awesome-gbb-ci --app-name "$APP_NAME" --registry "$ACR_SERVER"
+)
+python3 "$OWNERSHIP_HELPER" prepare "${OWNERSHIP_ARGS[@]}"
+printf '\nsource "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/bash/fixture_cleanup_guard.sh"\n' \
+  >> /tmp/foundry-mcp-aca-state.env
+source "$GITHUB_WORKSPACE/skills/foundry-mcp-aca/references/bash/fixture_cleanup_guard.sh"
+python3 "$OWNERSHIP_HELPER" start "${OWNERSHIP_ARGS[@]}"
+if azd up --no-prompt; then
+  python3 "$OWNERSHIP_HELPER" capture "${OWNERSHIP_ARGS[@]}"
+else
+  DEPLOY_STATUS=$?
+  printf 'SMOKE_RESULT=FAIL azd up exited %s; reconcile owned inventory\n' "$DEPLOY_STATUS" \
+    > /tmp/foundry-mcp-aca-smoke-result
+  exit "$DEPLOY_STATUS"
+fi
 ```
 
 Total budget for this step: ~8-12 min (ACR remote build ~3-5 min + Bicep
@@ -797,11 +826,12 @@ and `cmp -s` against `printf 'SMOKE_RESULT=PASS\n'` for byte-exact
 match (FAIL beats PASS):
 
 ```bash
+source /tmp/foundry-mcp-aca-state.env
 printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-mcp-aca-smoke-result
 ```
 
 If at ANY point in Steps 0-5 a hard gate failed (auth missing, `azd up`
-failed after retry exhaustion, MCP call returned non-200, JSON parse
+failed, MCP call returned non-200, JSON parse
 failed, missing `serverInfo.name`, missing tools), you MUST already have
 written `SMOKE_RESULT=FAIL <one-line reason>` to the same marker file
 inline at the failure site.
@@ -814,29 +844,35 @@ console. Do NOT decorate the marker line with backticks anywhere.
 
 ## Step 7 — Best-effort teardown (Pattern 25 — AFTER the marker)
 
-ONLY AFTER the PASS marker is written, attempt cleanup. The hard cap
-is **5 minutes** (Pattern 25). If teardown stalls past that, emit a
-single NOTE line to stdout and return — the smoke verdict stays PASS:
+ONLY AFTER the PASS marker is written, attempt the same exact-owned cleanup
+used on failure. CLI/HTTP calls and deletion polling are finite. Pattern 25
+keeps a proven functional PASS separate from cleanup status, never from its
+safety boundaries. Unknown/auth/network results are not absence.
 
 ```bash
 source /tmp/foundry-mcp-aca-state.env || {
-  echo "NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days) (state file unavailable)"
+  echo "NOTE: teardown blocked: state unavailable; no deletion authorized"
   exit 0
 }
-TEARDOWN_NOTE="NOTE: teardown skipped, stalled, or errored within 5-minute Pattern-25 budget — leaving orphans for the rg-awesome-gbb-ci janitor (will sweep ci-smoke-mcp-* older than 7 days)"
-if [[ -z "${PROJECT_DIR:-}" || ! -d "$PROJECT_DIR" ]] || ! cd "$PROJECT_DIR"; then
-  echo "$TEARDOWN_NOTE (project directory unavailable)"
-  exit 0
-fi
-set -o pipefail
-if ! timeout 300 azd down --purge --force --no-prompt 2>&1 | tail -20; then
-  echo "$TEARDOWN_NOTE"
+if ! fixture_owned_cleanup; then
+  echo "NOTE: teardown incomplete; inspect the exported ownership inventory and exact residuals"
 fi
 ```
 
 The marker stays `SMOKE_RESULT=PASS`. Cleanup failure does NOT downgrade
 the smoke verdict. Do NOT re-write the marker file in this step under
 any circumstance.
+
+The helper deletes only the app whose pre-create absence, exact ID and run tag
+match the inventory. It never deletes a resource group, CAE, registry, UAMI,
+repository, image or deployment record. `azd` does not supply an immutable
+per-image custody receipt here, so observed app image references and possible
+build/deployment artifacts are exported as explicit residuals for the owner;
+do not claim those artifacts were deleted or delete an entire shared repository.
+The authoritative `/tmp/foundry-mcp-aca-ownership.json` is not reset on retries.
+The raw inventory is owner-readable on the runner. A scope-redacted snapshot
+with a scope hash is written to the existing smoke-evidence artifact path;
+it is not an executable replacement for the private inventory.
 
 ---
 
@@ -845,7 +881,7 @@ any circumstance.
 
 - Missing CI env var (Pattern 11 — workflow bug)
 - `azd auth login` non-zero (workflow OIDC bug)
-- `azd up` failed after 6 retry attempts (Pattern 18 budget exhausted —
+- `azd up` failed (reconcile the exact owned inventory before another attempt —
   infra or skill bug)
 - MCP `initialize` returned non-200 or missing `result.serverInfo.name`
 - MCP `initialize` did not return a `Mcp-Session-Id` header (empty session ID)

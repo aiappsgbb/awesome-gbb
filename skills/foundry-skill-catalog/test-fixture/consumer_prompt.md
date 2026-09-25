@@ -1,15 +1,28 @@
 # Native Skills version/package smoke
 
-This is an execution fixture candidate, not a completed test. Execute only in
-the approved CI project after registration in `.github/skill-deps.yml` and
-resource/cost approval. Never invoke `copilot` recursively from a Bash tool.
-Do not modify repository files, upgrade MAF or provision infrastructure.
-The workflow owns CLI installation/authentication. The existing CI identity
-must already have Foundry User on the project; do not re-grant it.
+**This is an authorized LIVE EXECUTION smoke, not a catalog inspection,
+implementation request or unit-test task.** You are already running inside the
+registered CI matrix leg. The workflow supplied the approved project and
+credentials. Execute Steps -1 through 3 against that project now, including
+real Skills API create/download/promote/delete calls and the final marker.
+Checking that a fixture exists or that unit tests pass does not execute this
+contract and must never replace any step.
+
+Do NOT run `git status`, inspect workflow/registration files, write a plan,
+run unittest/pytest or catalog lint, rebuild docs, or edit repository files.
+Import the canonical reader as instructed below; do not browse or rewrite it.
+Do not upgrade MAF, provision infrastructure, re-grant roles, or select another
+project/identity. Missing workflow inputs or API failures are a FAIL with the
+precise stage, after owned cleanup, not a reason to switch into repo maintenance.
+
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.** You ARE
+the running fixture process. Execute the commands directly, not another CLI.
+The workflow owns tooling and authentication; the existing CI identity must
+already have Foundry User on the project.
 
 ## Step -1 - Acknowledge the contract
 
-First run:
+Your FIRST action must be this separate Bash tool call, not a search or read:
 
 ```bash
 echo "skills/foundry-skill-catalog/SKILL.md"
@@ -112,3 +125,7 @@ This marker proves **native API/package access only**. It does not certify
 model application of instructions, MAF, MCP resource discovery, progressive
 loading, or private networking. Execute `service_acceptance.md` separately for
 those surfaces; do not expand this CI run implicitly.
+
+Do not finish with a repository-status summary. You are not done until the live
+lifecycle (or its exact failure and cleanup) is recorded and the final Bash tool
+call writes the appropriate marker file.

@@ -128,10 +128,52 @@ The unchanged five applicable pin scripts passed through the official isolated
 runner. T0 passed for all 42 skills and 35 pins. The complete repository suite
 passed **1,448 tests (32 skipped)** in a clean environment using the CI dependency
 set. Targeted integration checks passed, including generated-docs versions and
-link validation. Eighteen owned
-offline tests are wired into a separate CI environment; the native Skills
+link validation. Nineteen owned
+offline tests are now wired into a separate CI environment; the native Skills
 consumer fixture is registered without altering auth/retry/quarantine gates.
+The registered repository count is now **1,469** after adding 21 cleanup tests;
+this count does not claim a new full-suite execution. The closure pass covers
+only the changed fixture/cleanup contracts and directly related metadata.
 
 PR checks and their exact source SHA must be recorded in the pull request.
 Manual user-identity evidence is not CI/OIDC evidence, and registration is not
 a passing consumer-fixture execution.
+
+## Accepted fixture recovery and cleanup scope
+
+After the explicitly selected rollback from the failing Citadel driver to the
+working direct-Foundry route, selective Routines and Toolbox CI legs passed.
+The new Skills fixture instead performed repository maintenance, without
+executing its live API lifecycle. Its instructions now explicitly require live
+execution and forbid maintenance/unit-test substitution. This is a fixture
+intent correction, not a new functional Skills API failure; its corrected CI
+execution remains a separate gate.
+
+The pre-existing MCP ACA fixture had two group-scoped teardown calls targeting
+shared infrastructure. Both are replaced by one canonical exact-app ownership
+helper and a per-step failure guard. Authentication and MCP/Easy Auth blocks
+remain unchanged. Pre-create absence, an independent full run UUID/tag and the
+exact approved resource ID bind cleanup; failures preserve their original exit
+status. No shared RG, CAE, registry, UAMI, repository or unproven artifact is a
+delete target.
+
+A narrow manual ARM check exercised `prepare`, `start`, `capture` and cleanup
+using one new MCR-placeholder app and an infra-only `azd provision`. The first
+post-delete observation failed closed on an unclassified HTTP404. A later typed
+ARM read confirmed absence; no app recreation or second DELETE was performed.
+The helper's read-only bounded observation was then refined and covered by
+focused mocks, followed by readback of the same already-absent app.
+
+The helper intentionally keeps generic artifact custody unresolved. The manual
+check independently proved no image build/push occurred, bound the sole new
+deployment-history record through baseline absence, its raw command receipt,
+run parameters and app output, then deleted and verified that exact record.
+All effects of the manual check are closed; shared resources remained present
+with unchanged tags and no new retention was required.
+
+**This is real helper CRUD/cleanup evidence, not the full revised MCP deployment
+and authentication fixture.** The focused cleanup suites passed 96 tests and
+108 subtests. Neither this evidence nor the three protected branch checks
+(`gate`, `validate-pins`, `validate`) waives execution of the corrected Skills
+fixture or permits launching an unsafe legacy Jobs path. The coordinator owns
+the minimal safe Jobs integration and publication decision.
