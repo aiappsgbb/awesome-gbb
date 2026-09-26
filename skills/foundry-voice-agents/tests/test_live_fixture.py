@@ -17,6 +17,32 @@ from synthetic_audio import synthesize
 
 
 class LiveFixtureTests(unittest.TestCase):
+    def test_returned_session_and_error_ids_are_persisted_before_dispatch(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from azure.ai.projects import models
+        events = [
+            models.RealtimeServerEventSessionCreated({
+                "type": "session.created", "event_id": "event-one",
+                "session": {"id": "session-one"}, "conversation_id": "conversation-one",
+            }),
+            models.RealtimeServerEventError({
+                "type": "error", "event_id": "event-two",
+                "error": {"type": "invalid_request_error", "code": "invalid_request_error",
+                          "param": "session.turn_detection", "message": "private-message"},
+            }),
+        ]
+        conn = MagicMock(recv=AsyncMock(side_effect=events))
+        record, snapshots = {}, []
+        wrapped = live_acceptance.RecordedConnection(
+            conn, record, lambda: snapshots.append(json.loads(json.dumps(record))),
+        )
+        asyncio.run(wrapped.recv())
+        self.assertEqual(snapshots[0]["conversation_id"], "conversation-one")
+        asyncio.run(wrapped.recv())
+        self.assertEqual(snapshots[1]["errors"][0]["parameter"], "session.turn_detection")
+        self.assertNotIn("private-message", json.dumps(snapshots))
+
     def test_context_guard_rejects_missing_or_mismatched_scope(self):
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -69,6 +95,7 @@ class LiveFixtureTests(unittest.TestCase):
                 save_pcm(directory / "hours.wav", b"\x01\x00", Consent(save_local_audio=True))
                 raise RuntimeError("synthetic request failed")
             with patch.object(live_acceptance, "verify_context"), \
+                 patch.object(live_acceptance, "begin_ci_attempt"), \
                  patch.object(live_acceptance, "require_no_telemetry"), \
                  patch.object(live_acceptance, "AzureCliCredential"), \
                  patch.object(live_acceptance, "AIProjectClient") as client, \
@@ -82,6 +109,37 @@ class LiveFixtureTests(unittest.TestCase):
             self.assertEqual(inventory["agents"], [])
             self.assertTrue(inventory["source_sha256"])
             self.assertFalse((directory / "hours.wav").exists())
+
+    def test_ci_attempt_is_single_use_and_dirty_source_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict("os.environ", {
+            "GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+            "RUNNER_TEMP": temporary,
+        }):
+            with patch("live_acceptance.subprocess.run") as command:
+                live_acceptance.begin_ci_attempt()
+                command.assert_called_once()
+                self.assertEqual(command.call_args.args[0], ["git", "diff", "--quiet", "HEAD", "--"])
+                with self.assertRaises(FileExistsError):
+                    live_acceptance.begin_ci_attempt()
+            import subprocess
+            with patch("live_acceptance.subprocess.run", side_effect=subprocess.CalledProcessError(1, "git")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    live_acceptance.begin_ci_attempt()
+
+    def test_public_evidence_preserves_custody_not_transcript_or_endpoint(self):
+        inventory = {
+            "run_id": "owned", "endpoint": "private-endpoint",
+            "agents": [{"name": "ci-smoke-voice-owned", "versions": ["1"],
+                        "cleanup": "verified_absent", "conversation_ids": ["private-id"],
+                        "sessions": [{"case": "hours", "functional": "fail",
+                                      "reply_transcript": "private-text",
+                                      "readback_shape": [{"role": "user", "text_characters": 0}]}]}],
+        }
+        text = json.dumps(live_acceptance.public_evidence(inventory))
+        self.assertNotIn("private-", text)
+        self.assertIn("ci-smoke-voice-owned", text)
+        self.assertIn("verified_absent", text)
+        self.assertIn("text_characters", text)
 
     def test_privacy_preflight_refuses_account_or_project_binding(self):
         account = "/subscriptions/example/resourceGroups/example/providers/Microsoft.CognitiveServices/accounts/example"

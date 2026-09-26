@@ -1,42 +1,37 @@
-# Managed Voice Agent live acceptance
+# Execute the checked-in managed Voice contract once
 
-Execute the canonical `skills/foundry-voice-agents` client against the authorized
-existing CI project. Read `SKILL.md` and import its actual modules; do not
-redefine their code. This is real execution, not catalog inspection.
-**Never invoke `copilot` recursively** or rewrite the workflow's transcript.
+You are a **test executor, not a coding agent or fixture maintainer** in this run.
+Read `skills/foundry-voice-agents/SKILL.md`, then execute the single command below.
+Do not edit any source, assertion, test, workflow or instructions. Do not run
+another live attempt if it fails. Do not substitute another script, lower a
+transcript requirement to roles/audio, or write a PASS marker yourself.
+**Never invoke `copilot` recursively.**
 
-## Scope and preconditions
+The canonical entry point records ownership before mutations and performs exact
+cleanup in `finally`. It rejects a dirty checkout and a second entry in the same
+CI run/attempt before Azure work. Failure is a result to report, not permission
+to diagnose by generating more resources. Preserve its private inventory and
+sanitized receipt: **never delete evidence directories or the attempt receipt**.
 
-No infrastructure provisioning, role grant, shared model/endpoint/telemetry
-change, content-capture toggle, phone call, microphone, Docker or hosted pipeline.
-The fixture's controlled operations are three fixed synthetic Speech utterances,
-two unique prompt voice agents, audio sessions, a harmless local tool, one
-persisted synthetic conversation, approved in-memory transcript/audio readback,
-private local WAV capture and exact owned cleanup. These independent consent
-switches are explicit in `live_acceptance.py`; they are not permission to capture
-real content or retain any audio after the test.
+## Authorized coverage
 
-Use the workflow-provided `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_PROJECT_ID`,
-`AZURE_AI_ENDPOINT` and tenant/subscription.
-Select managed `gpt-realtime`, not the fixture driver's chat deployment.
-The project must already have managed voice preview access and **no configured
-AppInsights binding at either account or project scope**. The canonical helper
-checks both scopes before transmitting audio and immediately before each session.
-If a binding exists or cannot be checked, stop; do not disable/overwrite it,
-create a new secret, grant, connection or exporter, or inherit a previous run's
-content-retention consent.
+Only fixed synthetic Speech utterances, two unique managed prompt voice agents,
+audio/greeting/function/barge-in, an explicit no-storage cycle and a separately
+consented transcript/stereo-audio storage/read/delete cycle. No microphone,
+telephony, Docker, new model, role, connection, network or infrastructure change.
+The helper checks account and project connections and refuses configured
+AppInsights tracing. It must not disable another owner's binding.
 
-The workflow provides Python, Azure CLI and credentials. No tool installation
-or filesystem hunts. Install only this skill's dependencies into its own
-private venv; never upgrade the shared test/runtime environment. On a local
-run use the canonical tenant-isolation bootstrap and explicit approved target.
-In GitHub Actions the runner's Azure login profile is already job-private:
-make its path explicit without switching subscriptions or logging in again.
-No such fallback is permitted on a developer machine.
+Use only existing workflow inputs. Managed `gpt-realtime` is independent of the
+Copilot driver chat model. No shared SDK/environment upgrades, credential repair,
+global login or new secrets. The workflow provides tooling; only the candidate's
+locked Python dependencies are installed into a private venv.
 
-## Step 1 - Prepare the isolated client
+## One execution
 
-Run from the repository root. Use these commands only in the authorized runner:
+Run the following from the repository root in the authorized GitHub runner.
+Do not pre-create `VOICE_RUN_DIR`: the helper must create the new directory.
+Do not run offline tests here; those already ran in the workflow's isolated job.
 
 ```bash
 set -euo pipefail
@@ -47,79 +42,50 @@ umask 077
 export AZURE_CONFIG_DIR="${AZURE_CONFIG_DIR:-$HOME/.azure}"
 export AZD_CONFIG_DIR="$RUNNER_TEMP/voice-azd"
 export AZURE_TOKEN_CREDENTIALS=AzureCliCredential
+export PYTHONDONTWRITEBYTECODE=1
 python3 -m venv "$RUNNER_TEMP/voice-client"
 "$RUNNER_TEMP/voice-client/bin/python" -m pip install --quiet \
   -r skills/foundry-voice-agents/requirements.txt \
   -c skills/foundry-voice-agents/constraints.txt
+VOICE_RUN_DIR="$RUNNER_TEMP/voice-case-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+VOICE_STATUS=0
+"$RUNNER_TEMP/voice-client/bin/python" \
+  skills/foundry-voice-agents/test-fixture/live_acceptance.py \
+  --endpoint "$FOUNDRY_PROJECT_ENDPOINT" \
+  --speech-endpoint "$AZURE_AI_ENDPOINT" \
+  --account-id "${AZURE_AI_PROJECT_ID%/projects/*}" \
+  --model gpt-realtime \
+  --evidence-dir "$VOICE_RUN_DIR" \
+  --public-evidence /tmp/foundry-voice-agents-smoke-evidence \
+  --approve-live-synthetic || VOICE_STATUS=$?
+if [ "$VOICE_STATUS" -eq 0 ]; then
+  printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-agents-smoke-result
+else
+  printf 'SMOKE_RESULT=FAIL canonical entry failed; preserve evidence\n' \
+    > /tmp/foundry-voice-agents-smoke-result
+fi
+exit "$VOICE_STATUS"
 ```
 
-Check the exact tenant/subscription through the canonical client's context
-guard, without printing credentials. The account ARM ID is the parent of the
-workflow-resolved `AZURE_AI_PROJECT_ID`, ending immediately before `/projects/`.
-Validate that the project endpoint/account names agree; never substitute a
-default project or rewrite shared environment. Tracing is deliberately not
-configured or exercised by this automated fixture.
+The runner's Azure login profile is already job-private; the explicit default
+cache path above is allowed **only** under `GITHUB_ACTIONS=true`. Local manual
+runs must use the approved tenant-isolation bootstrap, not this fallback.
 
-## Step 2 - Execute the exact synthetic contract
+## Meaning of the result
 
-Invoke `test-fixture/live_acceptance.py` using the isolated interpreter:
-`--endpoint "$FOUNDRY_PROJECT_ENDPOINT"`, `--speech-endpoint "$AZURE_AI_ENDPOINT"`,
-`--account-id <validated-parent-ARM-ID>`, `--model gpt-realtime`,
-`--evidence-dir <new-private-run-directory>` and `--approve-live-synthetic`.
-Do not paste the helper body into another script. Do not reuse an existing
-evidence directory: an interrupted run must be reconciled first, not replaced.
+The helper requires actual audio input/output, startup greeting, a real harmless
+function call, active-audio interruption and a completed latest response.
+Persistence requires actual caller/assistant transcript text and nonempty stereo
+recording bytes. Role names or an audio URL alone do not pass readback. It keeps
+content-free shape/length diagnostics if the transcript assertion fails.
 
-The helper records source hashes and create intents before mutations and
-uses unique run metadata on every created version. It must prove:
+The sanitized receipt at the workflow's existing evidence path records source
+hashes, run custody, functional state and cleanup. It omits endpoint, conversation
+IDs, audio and transcript values. Raw inventory remains private in `VOICE_RUN_DIR`;
+do not print, edit or delete it. On failure, report the receipt and stop. If cleanup
+is blocked, no replacement run or parent-resource deletion is permitted.
 
-- Greeting audio before input, actual PCM input and nonempty spoken reply.
-- Actual function arguments/output and a response completed after tool output.
-- User speech during active answer audio, discarded stale audio, cancellation
-  only on detected interruption and a completed reply to the latest request.
-- Explicit `store=False` baseline with no retrievable persisted conversation.
-- Separately enabled storage, chronological caller/assistant transcript meaning,
-  actual downloaded nonempty stereo audio, not just metadata or a protected URI.
-- Exact inventoried conversation/version/agent absence and local WAV deletion.
-
-The multi-sentence long prompt previously split into two VAD turns; the canonical
-single-sentence utterance avoids that setup defect without weakening the actual
-barge-in check. Do not substitute text-only input or mute errors.
-The helper's `VOICE_FUNCTIONAL=PASS` is only its functional result; require its
-privacy preflight and verified cleanup too. Its `TRACE=NOT_EXERCISED` is an
-explicit coverage boundary, not a trace PASS.
-
-## Step 3 - Preserve the tracing coverage boundary
-
-Manual service trace correlation was proven separately, but its attempted
-metadata-only behavior failed: nonempty message and tool-result attributes were
-emitted without a client content toggle. The owner accepted 30-day retention of
-that existing synthetic test window only. See the sanitized validation record.
-Do not repeat that capture, query its content, or recreate its binding/role.
-This automated fixture proves the functional voice/storage contract and refuses
-configured tracing rather than claiming a metadata-only tracing recipe works.
-
-## Step 4 - Close the result
-
-Review the private inventory and cleanup errors even if the process exited
-nonzero. If cleanup is blocked, fence those exact IDs; no replacement resources.
-No `azd down`, shared RG/agent delete, or silent retention. Conversation deletion
-does not delete independently captured telemetry or previously downloaded copies.
-Keep only the approved metadata evidence with the existing run-artifact policy.
-
-After the no-configured-tracing preflight, all functional and lifecycle gates pass,
-use the Bash tool as the
-final action:
-
-```bash
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-voice-agents-smoke-result
-```
-
-On any missing/failed gate, write a non-sensitive one-line reason instead:
-
-```bash
-printf 'SMOKE_RESULT=FAIL <reason>\n' > /tmp/foundry-voice-agents-smoke-result
-```
-
-Never write PASS from a partial functional run, stale evidence, a bypassed
-privacy preflight or an unknown cleanup outcome. The byte-exact marker does not
-replace proof in the protected evidence artifact.
+Automatic tracing is **not exercised**. A separate manual service-correlation
+test passed, while its metadata-only attempt failed. The owner accepted only that
+existing synthetic trace window's 30-day retention. This is not new trace-capture
+consent or a metadata-only PASS. Do not query or regenerate those traces.

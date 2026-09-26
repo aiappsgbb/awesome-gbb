@@ -13,6 +13,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import uuid
 import wave
@@ -20,7 +21,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from azure.ai.projects import AIProjectClient
+from azure.ai.projects import AIProjectClient, models
 from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
@@ -31,7 +32,7 @@ sys.path.insert(0, str(SKILL / "references/python"))
 from definition import Consent, build_definition, check_endpoint
 from lifecycle import connect, delete_conversation, delete_empty_agent, delete_version, read_audio, read_transcript, require_version
 from main import verify_context
-from session import TurnCollector, exchange, read_pcm, save_pcm
+from session import TurnCollector, error_diagnostic, exchange, read_pcm, save_pcm
 from synthetic_audio import synthesize
 
 
@@ -45,7 +46,14 @@ def write_json(path: Path, data: object) -> None:
     with os.fdopen(descriptor, "w") as output:
         json.dump(data, output, indent=2, default=str)
         output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
     temporary.replace(path)
+    descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def evidence_metadata(collector: TurnCollector) -> dict:
@@ -55,6 +63,40 @@ def evidence_metadata(collector: TurnCollector) -> dict:
     data.pop("reply_transcript")
     data["transcript_sha256"] = hashlib.sha256("\n".join(transcripts).encode()).hexdigest()
     return data
+
+
+def begin_ci_attempt() -> None:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=SKILL.parents[1], check=True)
+    receipt = Path(os.environ["RUNNER_TEMP"]) / (
+        f"voice-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}.started"
+    )
+    with receipt.open("x") as output:
+        output.write(stamp() + "\n")
+
+
+def public_evidence(inventory: dict) -> dict:
+    return {
+        key: inventory.get(key)
+        for key in ("run_id", "mode", "functional", "cleanup", "privacy_preflight",
+                    "trace", "source_sha256", "failure", "cleanup_errors")
+    } | {
+        "agents": [
+            {
+                "name": owned["name"], "versions": owned["versions"],
+                "cleanup": owned.get("cleanup", "pending"),
+                "sessions": [
+                    {key: session.get(key) for key in (
+                        "case", "functional", "completed_turns", "tool_calls",
+                        "interruptions", "readback", "readback_shape", "stored_audio_frames", "errors",
+                    )}
+                    for session in owned["sessions"]
+                ],
+            }
+            for owned in inventory["agents"]
+        ]
+    }
 
 
 def require_no_telemetry(credential, account_id: str, endpoint: str, speech_endpoint: str) -> None:
@@ -82,6 +124,29 @@ def require_no_telemetry(credential, account_id: str, endpoint: str, speech_endp
             raise PermissionError("Configured server tracing requires new content-capture consent; refusing invocation")
 
 
+class RecordedConnection:
+    def __init__(self, connection, record, persist):
+        self.connection, self.record, self.persist = connection, record, persist
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+    async def recv(self):
+        event = await self.connection.recv()
+        if isinstance(event, models.RealtimeServerEventSessionCreated):
+            self.record.update(session_id=event.session.get("id"), conversation_id=event.conversation_id)
+        if isinstance(event, models.RealtimeServerEventError):
+            self.record.setdefault("errors", []).append(error_diagnostic(event))
+        for key in ("event_id", "item_id", "response_id", "call_id"):
+            value = event.get(key)
+            if value:
+                self.record.setdefault("returned_ids", {}).setdefault(key, [])
+                if value not in self.record["returned_ids"][key]:
+                    self.record["returned_ids"][key].append(value)
+        self.persist()
+        return event
+
+
 async def run_session(endpoint, name, version, pcm, interruption, consent, record, persist):
     collector = TurnCollector()
     record.update(started=stamp(), client_session_id=uuid.uuid4().hex)
@@ -93,7 +158,8 @@ async def run_session(endpoint, name, version, pcm, interruption, consent, recor
         ) as client:
             async with connect(client, name, record["client_session_id"], consent) as connection:
                 result = await exchange(
-                    connection, pcm, interruption=interruption, collector=collector,
+                    RecordedConnection(connection, record, persist),
+                    pcm, interruption=interruption, collector=collector,
                 )
         if result.tool_calls < 1:
             raise RuntimeError("No real harmless function call observed")
@@ -115,6 +181,7 @@ async def run_session(endpoint, name, version, pcm, interruption, consent, recor
 def run(args) -> None:
     if not args.approve_live_synthetic:
         raise PermissionError("Explicit synthetic run/lifecycle approval is required")
+    begin_ci_attempt()
     verify_context()
     endpoint = check_endpoint(args.endpoint)
     directory = args.evidence_dir.resolve()
@@ -141,6 +208,8 @@ def run(args) -> None:
     path = directory / "inventory.json"
     def persist():
         write_json(path, inventory)
+        if getattr(args, "public_evidence", None):
+            write_json(args.public_evidence, public_evidence(inventory))
     persist()
     error = None
     cleanup_errors = []
@@ -206,12 +275,20 @@ def run(args) -> None:
                         if not {"user", "assistant"} <= roles:
                             raise RuntimeError("Stored caller/assistant transcript incomplete")
                         texts = {}
+                        record["readback_shape"] = []
                         for item in items:
                             role = item.get("role")
                             parts = item.get("content") or []
                             texts.setdefault(role, []).extend(
                                 part.get("transcript") or part.get("text") or "" for part in parts
                             )
+                            record["readback_shape"].append({
+                                "role": role, "type": item.get("type"),
+                                "part_types": [part.get("type") for part in parts],
+                                "text_characters": sum(len(part.get("transcript") or part.get("text") or "")
+                                                       for part in parts),
+                            })
+                        persist()
                         caller = " ".join(texts.get("user", [])).lower()
                         assistant = " ".join(texts.get("assistant", [])).lower()
                         if "hours" not in caller or "fictional" not in assistant:
@@ -288,4 +365,5 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="gpt-realtime")
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--approve-live-synthetic", action="store_true")
+    parser.add_argument("--public-evidence", type=Path, help="Sanitized receipt retained outside the private run directory")
     run(parser.parse_args())

@@ -4,6 +4,7 @@ Source of truth for `../../SKILL.md § Definition and model selection`.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from urllib.parse import urlsplit
 
 from azure.ai.projects import models
@@ -67,10 +68,15 @@ def build_definition(
         audio=models.VoiceAgentAudioConfig(
             input=models.VoiceAgentAudioInputConfig(
                 format=models.RealtimeAudioFormatsAudioPcm(rate=24000),
-                turn_detection=models.VoiceAgentServerVadTurnDetection(
+                transcription=models.VoiceAgentInputTranscription(
+                    model=models.VoiceAgentInputTranscriptionModel.AZURE_SPEECH,
+                    language="en-US",
+                ),
+                turn_detection=models.VoiceAgentAzureSemanticVadTurnDetection(
                     threshold=0.5,
-                    prefix_padding_ms=300,
-                    silence_duration_ms=500,
+                    prefix_padding_ms=timedelta(milliseconds=300),
+                    silence_duration_ms=timedelta(milliseconds=500),
+                    languages=["en-US"],
                     create_response=True,
                     interrupt_response=True,
                 ),

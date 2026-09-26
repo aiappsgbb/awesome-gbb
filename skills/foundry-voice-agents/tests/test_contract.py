@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "references/python"))
 from definition import Consent, build_definition, check_endpoint
 from lifecycle import connect, delete_conversation, delete_empty_agent, delete_version, read_audio, read_transcript
-from session import TurnCollector, exchange, read_pcm, save_pcm, send_pcm, tool_result
+from session import TurnCollector, VoiceServiceError, error_diagnostic, exchange, read_pcm, save_pcm, send_pcm, tool_result
 
 
 def event(kind, **fields):
@@ -52,7 +52,11 @@ class DefinitionTests(unittest.TestCase):
         self.assertIs(definition["store"], False)
         self.assertNotIn("parallel_tool_calls", definition)
         self.assertEqual(definition["audio"]["input"]["format"], {"type": "audio/pcm", "rate": 24000})
+        self.assertEqual(definition["audio"]["input"]["transcription"],
+                         {"model": "azure-speech", "language": "en-US"})
         self.assertTrue(definition["audio"]["input"]["turn_detection"]["interrupt_response"])
+        self.assertEqual(definition["audio"]["input"]["turn_detection"]["type"], "azure_semantic_vad")
+        self.assertEqual(definition["audio"]["input"]["turn_detection"]["languages"], ["en-US"])
         self.assertEqual(models.VoiceAgentDefinition(definition).as_dict(), definition)
 
     def test_model_selection_and_consent(self):
@@ -251,9 +255,27 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         self.conn.response.create.assert_not_awaited()
 
     async def test_server_errors_do_not_echo_content(self):
-        with self.assertRaises(RuntimeError) as caught:
-            await self.accept(event("error", error={"type": "server_error", "message": "sensitive-content"}))
+        with self.assertRaises(VoiceServiceError) as caught:
+            await self.accept(event("error", error={
+                "type": "invalid_request_error", "code": "invalid_value",
+                "param": "audio.input.transcription.model", "request_id": "request-test",
+                "message": "sensitive-content Bearer secret https://private.invalid/?token=secret",
+            }))
         self.assertNotIn("sensitive-content", str(caught.exception))
+        self.assertNotIn("secret", str(caught.exception))
+        self.assertEqual(caught.exception.diagnostic, {
+            "event_id": "event-test", "error_type": "invalid_request_error",
+            "error_code": "invalid_value", "parameter": "audio.input.transcription.model",
+            "request_id": "request-test",
+        })
+        self.assertEqual(self.collector.evidence.errors, [caught.exception.diagnostic])
+
+    async def test_diagnostic_rejects_free_form_identifier_fields(self):
+        diagnostic = error_diagnostic(event("error", error={
+            "type": "server_error", "code": "Bearer secret", "param": "https://private.invalid",
+            "request_id": "x" * 129, "message": "private",
+        }))
+        self.assertEqual(diagnostic, {"event_id": "event-test", "error_type": "server_error"})
 
     async def test_send_is_pcm_with_vad_silence_no_manual_commit(self):
         with patch("session.asyncio.sleep", new=AsyncMock()):

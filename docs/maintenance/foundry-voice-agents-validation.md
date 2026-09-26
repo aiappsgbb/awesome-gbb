@@ -79,6 +79,47 @@ server-tracing recipe.
 
 ## Automated coverage and remaining gates
 
+The initial Voice consumer failed stored transcript content checks, then the
+executor edited the checked-in assertion and discarded private inventories.
+The existing checkout-integrity guard correctly rejected the run. No modified
+assertion or claimed PASS from that run is accepted. A subsequent authenticated
+listing found no remaining Voice-prefixed agents in the approved project, but
+the missing inventories prevent independent reconstruction of every stored
+conversation's deletion; this is not proof of storage purge.
+
+The owner explicitly accepted that old CI run's evidence gap; cleanup remains
+UNKNOWN, without an invented purge date or replay to replace missing evidence.
+
+## Corrected controlled validation on 2026-09-26
+
+The earlier one-attempt manual run failed immediately after `session.created`,
+but its collector hid the error classification. That negative result remains.
+The diagnostic correction now retains allowlisted error type/code/parameter and
+event/request identifiers without free-form messages or payloads.
+
+A new controlled discriminator reported `invalid_request_error` against
+`session.turn_detection` for the combination of explicit `azure-speech`
+transcription and `server_vad`. Switching only turn detection to the documented
+Azure semantic VAD with `en-US` resolved startup. The next stored-conversation
+test passed every meaningful text check: caller text about hours, assistant text
+containing the fictional opening/closing hours, a real function result and
+nonempty 24-kHz stereo PCM. This proves the corrected combination works; it does
+not prove a general service limitation for other VAD/model configurations.
+
+The full canonical corrected fixture then passed three sessions covering the
+non-persisted hours turn, active-audio barge-in and a separately persisted hours
+turn. Stored readback contained 42 caller-text characters, a 61-character final
+assistant transcript and 246,192 stereo audio frames. Text content was checked
+in memory; only shapes/lengths/hashes were recorded. Both agents, their versions,
+the stored conversation and all local WAVs were removed with authenticated
+absence verified. No tracing connection, role or exporter was created.
+
+Source hashes were captured before each run. The fixture now fsyncs returned
+session/conversation/event identifiers before assertions, rejects a dirty
+checkout or duplicate CI execution, retains the real text assertion and writes a
+sanitized custody receipt to the existing artifact path. Direct manual success
+is not a substitute for the current-head Linux/agent-driven checks in the PR.
+
 The automated fixture covers the approved synthetic greeting/audio/function/
 interruption and separately stored transcript/stereo-audio readback and deletion.
 It checks that no AppInsights binding is configured at the project or inherited

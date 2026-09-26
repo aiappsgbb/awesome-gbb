@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import time
 import wave
 
@@ -21,6 +22,27 @@ RATE = 24000
 FRAME_BYTES = 2400  # 50 ms, mono PCM16.
 MAX_INPUT_BYTES = RATE * 2 * 30
 MAX_OUTPUT_BYTES = RATE * 2 * 120
+
+
+def error_diagnostic(event: models.RealtimeServerEventError) -> dict[str, str]:
+    """Retain protocol identifiers, never the service's free-form message."""
+    values = {
+        "event_id": event.get("event_id"),
+        "error_type": event.error.get("type"),
+        "error_code": event.error.get("code"),
+        "parameter": event.error.get("param"),
+        "request_id": event.error.get("request_id") or event.get("request_id"),
+    }
+    return {
+        key: value for key, value in values.items()
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:\[\]-]{1,128}", value)
+    }
+
+
+class VoiceServiceError(RuntimeError):
+    def __init__(self, diagnostic: dict[str, str]):
+        self.diagnostic = diagnostic
+        super().__init__("Voice service error: " + json.dumps(diagnostic, sort_keys=True))
 
 
 def read_pcm(path: Path) -> bytes:
@@ -78,6 +100,7 @@ class SessionEvidence:
     reply_transcript: str = field(default="", repr=False)
     usage: list[dict[str, object]] = field(default_factory=list)
     response_statuses: list[dict[str, str | None]] = field(default_factory=list)
+    errors: list[dict[str, str]] = field(default_factory=list)
     audio: bytes = field(default=b"", repr=False)
 
 
@@ -102,8 +125,9 @@ class TurnCollector:
         conn: AsyncBetaRealtimeConnection,
     ) -> bool:
         if isinstance(event, models.RealtimeServerEventError):
-            # Service messages may echo content. Keep them out of normal logs.
-            raise RuntimeError("Voice service error; inspect protected diagnostics with authorization")
+            diagnostic = error_diagnostic(event)
+            self.evidence.errors.append(diagnostic)
+            raise VoiceServiceError(diagnostic)
         if isinstance(event, models.RealtimeServerEventSessionCreated):
             session_id = event.session.get("id")
             if not isinstance(session_id, str) or not session_id:

@@ -70,11 +70,20 @@ Copy/import the real modules below; do not restate their function bodies inline.
 ## Definition and model selection
 
 `build_definition` is the complete SDK definition: explicit model, deterministic
-template greeting, mono PCM16 at 24 kHz in both directions, server VAD with
-automatic response and interruption enabled, Azure standard Ava voice, a single
+template greeting, mono PCM16 at 24 kHz in both directions, Azure semantic VAD with
+automatic response and interruption enabled, explicit `azure-speech` input
+transcription in `en-US`, Azure standard Ava voice, a single
 harmless local function, and **`store=False`**. It does not set
 `parallel_tool_calls`: the SDK exposes that field, but the dedicated current
 configuration guide says prompt voice agents do not support it.
+
+Use the paired `azure_semantic_vad` / `azure-speech` configuration shown in the
+canonical definition. With explicit Speech transcription, the tested
+`server_vad` combination returned `invalid_request_error` for
+`session.turn_detection` before greeting. Changing to Azure semantic VAD with
+the explicit language resolved startup and preserved real stored transcripts.
+This finding is scoped to this managed model/configuration, not a universal
+claim that server VAD is unsupported.
 
 Choose `managed` plus a service model name (for example `gpt-realtime`) or
 `self_deployed` plus an existing compatible deployment name. No model is deployed
@@ -263,6 +272,18 @@ synthetic-audio path. No generic Responses invocation, hosted protocol flags,
 container image, or global Voice Live migration is involved.
 
 ## Sources and validation status
+
+The initial CI consumer failed its stored-text assertion and then improperly
+edited the assertion in its checkout; the workflow integrity guard correctly
+rejected that run. Its discarded inventories leave an explicitly accepted
+historical evidence gap, not verified storage deletion.
+
+The corrected source explicitly pairs Azure Speech transcription with Azure
+semantic VAD, retains meaningful text checks, and enforces one canonical CI
+execution with preserved receipts. Direct controlled tests on 2026-09-26 passed
+actual caller/assistant text, audio, tool, barge-in and verified cleanup. Error
+diagnostics retain only validated type/code/parameter/event/request identifiers;
+free-form service messages, transcripts and credential values are excluded.
 
 Authoritative sources checked 2026-09-24:
 

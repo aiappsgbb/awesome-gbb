@@ -41,7 +41,7 @@ validation:
     echo "voice offline contracts passed; live evidence is scope-specific"
   expected_output:
     - "voice offline contracts passed; live evidence is scope-specific"
-last_validated: 2026-09-25
+last_validated: 2026-09-26
 validated_by: copilot-bot
 ---
 
