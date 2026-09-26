@@ -57,7 +57,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-caphost-lifecycle',
         'foundry-toolbox', 'foundry-skill-catalog', 'foundry-memory',
         'foundry-routines',
-        'foundry-voice-live',
+        'foundry-voice-live', 'foundry-voice-agents',
     ],
     # Threadlight Pipeline skills moved to aiappsgbb/threadlight-skills
     '🛠️ Cross-Cutting Helpers': [
@@ -83,6 +83,18 @@ CATEGORIES: dict[str, list[str]] = {
 
 # The legacy "draft" field records release gates, not source availability.
 DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
+    'foundry-voice-agents': {
+        'source_status': 'candidate',
+        'release_status': 'pending',
+        'record': 'maintenance/foundry-voice-agents-validation.md',
+        'summary': (
+            'Managed prompt voice public-preview candidate. Manual synthetic audio, '
+            'greeting, local function, interruption and stored readback/cleanup passed. '
+            'Manual service correlation passed; metadata-only tracing failed. '
+            'Automation refuses configured tracing; see scoped evidence and CI status. '
+            'no telephony, custom hosted pipeline or Voice Live migration.'
+        ),
+    },
     'copilot-doctor': {
         'source_status': 'candidate',
         'release_status': 'pending',
@@ -152,6 +164,7 @@ DRAFT_SKILLS: dict[str, tpl.PublicationStatus] = {
 
 # Only these sanitized records are published to fresh outputs; never copy docs/ wholesale.
 PUBLISHED_DOCS = (
+    'maintenance/foundry-voice-agents-validation.md',
     'maintenance/copilot-doctor-validation.md',
     'maintenance/progress-guard-validation.md',
     'maintenance/foundry-agentops-validation.md',

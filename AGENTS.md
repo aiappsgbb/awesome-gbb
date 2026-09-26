@@ -3103,14 +3103,20 @@ On Copilot-mode PR check-suite success
  └─ auto-merge-copilot.yml    auto-approves + squash-merges when all gates green
 ```
 
-**Draft-inclusive source inventory (42 skills, 35 with upstream pins):**
+**Draft-inclusive source inventory (43 skills, 36 with upstream pins):**
 
 | Category | Count | Coverage |
 |----------|-------|----------|
 | Auto-tier (CI can refresh autonomously) | 31 pins | T0 + T1 + T2 in CI; credentialed pins add T3 via `--include-azure` |
-| Issue-only (human / complex deploy) | 4 pins | T0 in CI; manual validation only |
+| Issue-only (human / complex deploy) | 5 pins | T0 in CI; manual live validation; managed voice also has an offline pin contract |
 | Internal IP (no pin) | 7 skills | T0 plus per-skill local checks; manual output validation |
-| CI execution fixtures | 26 skills | Registered for T3: 25 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
+| CI execution fixtures | 27 skills | Registered for T3: 26 Copilot-driven and 1 runner-native Harness leg; see `.github/skill-deps.yml`; registration is not a passing run |
+
+The `foundry-voice-agents` candidate has manual synthetic managed-voice
+audio/tool/interruption and stored conversation readback/cleanup evidence.
+Manual service correlation passed, but metadata-only tracing failed; automation
+refuses configured tracing and current-head CI is a separate gate. See its
+[validation record](docs/maintenance/foundry-voice-agents-validation.md).
 
 The additional `foundry-mcp-auth` entry is an unreleased candidate with live
 single-user delegated PASS for Prompt/direct-MCP, Prompt/Toolbox and Hosted/Toolbox over private
@@ -3180,17 +3186,17 @@ Consequences:
 ### 12.5 Catalog at a glance
 
 Source counts include the unreleased AgentOps and delegated-auth candidates,
-the merged web-experience-design source and the progress-guard and copilot-doctor source candidates; see the
+the merged web-experience-design source and the progress-guard, copilot-doctor and managed voice source candidates; see the
 [AgentOps status](docs/maintenance/foundry-agentops-validation.md) and
 [web experience status](docs/maintenance/web-experience-design-validation.md) and
 [progress guard status](docs/maintenance/progress-guard-validation.md).
 
 | Metric | Value |
 |--------|-------|
-| Total skills | 42 |
-| Skills with upstream pins | 35 |
+| Total skills | 43 |
+| Skills with upstream pins | 36 |
 | Auto-tier (CI can refresh autonomously) | 31 |
-| Issue-only (human / complex deploy) | 4 |
+| Issue-only (human / complex deploy) | 5 |
 | Internal IP (no upstream) | 7 |
 | CI workflows | 9 |
 | Unit tests | Reported by unittest discovery in each CI run |

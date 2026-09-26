@@ -1,0 +1,10 @@
+# Canonical agent-service fragment, NOT a deployable azure.yaml.
+# Source of truth for `../SKILL.md § Infrastructure boundary`.
+# Merge under services in the official azd-generated project; retain its uses wiring.
+host: azure.ai.agent
+kind: prompt-voice
+name: <run-owned-agent-name>
+modelType: managed
+model:
+  id: gpt-realtime
+store: false

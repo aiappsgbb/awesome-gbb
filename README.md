@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-42-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-43-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -136,6 +136,7 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 |-------|-------------|
 | [**foundry-prompt-agents**](skills/foundry-prompt-agents/) | Create declarative Foundry agents — model + instructions + tools, no containers, no custom code. `PromptAgentDefinition`, tool wiring (web search, code interpreter, file search, MCP, OpenAPI), versioning, structured inputs, agent applications |
 | [**foundry-voice-live**](skills/foundry-voice-live/) | Build real-time voice agents with Azure Voice Live (GA 2026-04-10) through a four-rung migration from Azure OpenAI Realtime to the native Voice Live SDK. Covers semantic VAD, echo cancellation, Neural HD voices, Foundry agent routing, benchmark patterns, and the FastRTC 0.0.34 plus Gradio 5.50 compatibility boundary |
+| [**foundry-voice-agents**](skills/foundry-voice-agents/) | Managed prompt Voice Agent candidate (public preview): synthetic audio turns, greeting, local function tools, barge-in and consented readback/deletion. Separate Projects 2.7 environment. Manual functionality and service correlation passed; metadata-only tracing failed, so automation refuses configured tracing. Not the Voice Live API migration path. See the [validation record](docs/maintenance/foundry-voice-agents-validation.md). |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | GA container-deploy hosted agents via unified `azure.yaml` + `azd` — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, implicit-access identity model (no default role grant), MCP wiring, **`SkillsProvider` progressive skill loading**, stable `update_details` rollout, and an opt-in [private no-tools BASIC consumer](skills/foundry-hosted-agents/references/private-basic.md) with ACR-connection validation and native readback (fresh live acceptance pending). |
 | [agent-framework-harness](skills/agent-framework-harness/) | Build MAF `create_harness_agent` runtimes with accurate defaults, compaction, plan/execute modes, recovery, bounded loops, and Hosted Agents adapter wiring |
 | [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
@@ -223,7 +224,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 42 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard and copilot-doctor are source candidates. Installation does not certify their remaining acceptance gates:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 43 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. Installation does not certify their remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:

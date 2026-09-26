@@ -139,6 +139,10 @@ skills:
   # GA 2026-04-10 surface via native azure-ai-voicelive SDK.
   foundry-voice-live:
     depends_on: []
+  # Managed voice uses the canonical telemetry setup, not the Voice Live SDK.
+  foundry-voice-agents:
+    depends_on:
+      - foundry-observability
 
   # foundry-doc-vision-speech — read-only fixture: Document Intelligence
   # prebuilt-read, Speech TTS→STT round-trip, and gpt-5.4-mini vision, all
