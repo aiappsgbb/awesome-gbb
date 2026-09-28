@@ -3,8 +3,9 @@
 You are the running test consumer, **not a repository editor or reviewer**.
 Your first action MUST execute the complete Bash block below verbatim. Do not
 inspect, edit or repair this fixture, SKILL.md, tests, workflow or dependency
-map. Do not substitute a source audit for HTTP execution. Do not invoke
-`copilot` recursively. The existing workflow owns the runner and transcript.
+map. Do not substitute a source audit for HTTP execution.
+**CRITICAL - never invoke `copilot` recursively.** The existing workflow owns
+the runner and transcript.
 
 **Gate B required.** The existing approval must be exactly
 `MCP_AUTH_NETWORK_SMOKE_APPROVED=yes`; the existing approved
