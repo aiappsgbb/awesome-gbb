@@ -12,8 +12,12 @@ the runner and transcript.
 `MCP_AUTH_SMOKE_ENDPOINT` must be HTTPS and end in `/mcp`. Missing inputs fail
 closed. No deployment, app registration, connection creation, token acquisition,
 consent, role grant, network change, public fallback or alternate endpoint.
-Use only the supplied tenant/API identity to verify the intended `demo.read`
-scope from the canonical connection contract; never discover a replacement.
+Use the independently declared `MCP_AUTH_SMOKE_ISSUER` and
+`MCP_AUTH_SMOKE_SCOPE` exactly. Validate the tenant-specific Entra v2 issuer
+against the supplied `AZURE_TENANT_ID` and the custom API scope shape before
+network access. Missing or malformed expected bindings fail closed. Never
+derive them from the response, the Jobs `MCP_AUTH_APP_CLIENT_ID`, or a sample
+permission name. Do not log supplied issuer/scope values.
 
 This probe sends **no Authorization header** and makes only two requests:
 scoped PRM GET must be 200, anonymous MCP initialize must be 401 with the exact
@@ -34,7 +38,6 @@ import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-from uuid import UUID
 
 
 class ProbeFailure(ValueError):
@@ -70,12 +73,9 @@ def main(environ, opener, marker):
             preflight.validate("foundry-mcp-auth", environ)
         except preflight.PrerequisiteError as error:
             raise ProbeFailure(str(error)) from None
-        try:
-            tenant = str(UUID(environ["AZURE_TENANT_ID"]))
-            api_id = str(UUID(environ["MCP_AUTH_APP_CLIENT_ID"]))
-        except (KeyError, ValueError):
-            raise ProbeFailure("MISSING_OR_INVALID_EXPECTED_TENANT_API") from None
         endpoint = environ["MCP_AUTH_SMOKE_ENDPOINT"]
+        expected_issuer = environ["MCP_AUTH_SMOKE_ISSUER"]
+        expected_scope = environ["MCP_AUTH_SMOKE_SCOPE"]
         parts = urlsplit(endpoint)
         metadata_url = urlunsplit((parts.scheme, parts.netloc,
                                   "/.well-known/oauth-protected-resource" + parts.path, "", ""))
@@ -86,10 +86,8 @@ def main(environ, opener, marker):
         metadata = json.loads(body)
         require(isinstance(metadata, dict), "PRM_NOT_OBJECT")
         require(metadata.get("resource") == endpoint, "PRM_RESOURCE_MISMATCH")
-        require(metadata.get("authorization_servers") ==
-                [f"https://login.microsoftonline.com/{tenant}/v2.0"], "PRM_ISSUER_MISMATCH")
-        require(metadata.get("scopes_supported") == [f"api://{api_id}/demo.read"],
-                "PRM_SCOPE_MISMATCH")
+        require(metadata.get("authorization_servers") == [expected_issuer], "PRM_ISSUER_MISMATCH")
+        require(metadata.get("scopes_supported") == [expected_scope], "PRM_SCOPE_MISMATCH")
         payload = json.dumps({
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"protocolVersion": "2025-03-26", "capabilities": {},
