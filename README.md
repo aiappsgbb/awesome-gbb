@@ -2,7 +2,7 @@
 
 > A curated collection of agentic Skills by **AI Global Black Belts** at Microsoft.
 
-[![Skills](https://img.shields.io/badge/skills-43-blue)](#skills-catalog)
+[![Skills](https://img.shields.io/badge/skills-42-blue)](#skills-catalog)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -109,6 +109,14 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 
 ## Skills Catalog
 
+> **Memory has moved to the official workflow.** Catalog 5.0.0 removes the
+> duplicate `foundry-memory` skill. Use the Memory reference inside Microsoft's
+> `microsoft-foundry` skill; there is no separate official `foundry-memory`
+> entrypoint in the reviewed Azure Skills bundle.
+> See [migration and local installation](docs/maintenance/foundry-memory-retirement.md).
+> This changes coding guidance only, not existing memory stores, application
+> dependencies, Threadlight deployment contracts, or Azure resources.
+
 > [!IMPORTANT]
 > **Merged source, not production readiness.** `foundry-agentops` 1.0.0 merged
 > in [#484](https://github.com/aiappsgbb/awesome-gbb/pull/484) at
@@ -139,7 +147,6 @@ Reference patterns for Microsoft Foundry agents (prompt and hosted), memory, MCP
 | [**foundry-voice-agents**](skills/foundry-voice-agents/) | Managed prompt Voice Agent candidate (public preview): synthetic audio turns, greeting, local function tools, barge-in and consented readback/deletion. Separate Projects 2.7 environment. Manual functionality and service correlation passed; metadata-only tracing failed, so automation refuses configured tracing. Not the Voice Live API migration path. See the [validation record](docs/maintenance/foundry-voice-agents-validation.md). |
 | [**foundry-hosted-agents**](skills/foundry-hosted-agents/) | GA container-deploy hosted agents via unified `azure.yaml` + `azd` — `Agent` + `FoundryChatClient` + `ResponsesHostServer`, implicit-access identity model (no default role grant), MCP wiring, **`SkillsProvider` progressive skill loading**, stable `update_details` rollout, and an opt-in [private no-tools BASIC consumer](skills/foundry-hosted-agents/references/private-basic.md) with ACR-connection validation and native readback (fresh live acceptance pending). |
 | [agent-framework-harness](skills/agent-framework-harness/) | Build MAF `create_harness_agent` runtimes with accurate defaults, compaction, plan/execute modes, recovery, bounded loops, and Hosted Agents adapter wiring |
-| [**foundry-memory**](skills/foundry-memory/) | Native Foundry Memory Store API for persistent agent memory — user profiles, chat summaries, scope isolation via `{{$userId}}` / `x-memory-user-id`, semantic recall, and memory tool wiring as the catalog replacement for Mem0 |
 | [**foundry-routines**](skills/foundry-routines/) | Automate existing agents with the GA Routines service while preserving its beta SDK/client boundaries. Covers isolated creator-identity configuration, real timer versus manual dispatch, run correlation and downstream result checks; delegated consent and external event prerequisites remain separate. |
 | [**foundry-teams-bot**](skills/foundry-teams-bot/) | Connect a hosted agent to Microsoft Teams + M365 Copilot (CEA manifest 1.21) — bot code, Bicep, Teams manifest, UAMI auth, ACA deployment |
 | [**ghcp-hosted-agents**](skills/ghcp-hosted-agents/) | Deploy Foundry hosted agents using GitHub Copilot SDK (GHCP) — BYOK auth, Invocations protocol, SSE streaming, long-running tool loops |
@@ -224,7 +231,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 > **Browse the full catalog →** <https://fluffy-carnival-6qny72q.pages.github.io/> — searchable skill index, per-skill detail pages, plugin install commands, and an [`llms.txt`](https://fluffy-carnival-6qny72q.pages.github.io/llms.txt) machine-readable listing for AI agents. Mirrors the [`github/awesome-copilot`](https://awesome-copilot.github.com/) site pattern.
 
 > [!TIP]
-> **Install the catalog in one command via plugin.** The proposed catalog contains 43 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. Installation does not certify their remaining acceptance gates:
+> **Install the catalog in one command via plugin.** The proposed catalog contains 42 skills in a single [Copilot CLI plugin](plugin.json). Main includes AgentOps, delegated-auth and web-experience-design source; progress-guard, copilot-doctor and managed voice are source candidates. Installation does not certify their remaining acceptance gates:
 >
 > ```bash
 > # Register the marketplace once:

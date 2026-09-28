@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.0.0 — Proposed / Unreleased
+
+- Retire `foundry-memory` from the active plugin, freshness pins and consumer
+  matrix. Memory guidance now belongs to the official `microsoft-foundry`
+  workflow and its linked Microsoft Learn documentation.
+- This is a catalog MAJOR change because the callable `foundry-memory`
+  entrypoint is removed. Inventory becomes **42 skills**, **35 upstream pins**
+  and **26 registered fixtures**. Historical evidence remains unchanged.
+- Update the Memory cross-references in `foundry-prompt-agents` PATCH
+  **1.1.11 → 1.1.12** and `foundry-hosted-agents` PATCH **3.0.0 → 3.0.1**;
+  preserve their runtime, SDK, deployment and test contracts.
+- Preserve the old website URL as a retirement notice. Document selective
+  local installation without changing MCP servers or installing the full
+  Azure plugin. See the [migration note](docs/maintenance/foundry-memory-retirement.md).
+- Existing memory stores, application code, Threadlight and Azure resources
+  are not migrated or removed by this catalog change.
+
 ## Unreleased — gbb-pptx content-first workflow
 
 - [`gbb-pptx`](skills/gbb-pptx/SKILL.md) MINOR **2.0.1 → 2.1.0**:
