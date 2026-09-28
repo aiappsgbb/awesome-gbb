@@ -50,6 +50,14 @@ authentication gate; if it fails, use the matching final-step marker.
 
 ## Step 1 - execute the azd and GA SDK Toolbox contracts
 
+Execute each script once. Never edit tracked source or change the evidence
+destination to recover from a permission failure. Both scripts and the final
+validator use **the same** `/tmp/foundry-toolbox-smoke-evidence` file, which
+the workflow archives. A scratch copy is not equivalent. If access fails,
+write the FAIL marker if permitted and stop before creating replacements.
+Keep any earlier run with missing IDs/cleanup receipts explicitly unverified;
+do not infer deletion from a PASS marker or clean up an earlier run's names.
+
 The Copilot CLI shell-tool permission gate rejects file creation OUTSIDE
 `$GITHUB_WORKSPACE`, even with `--allow-all-tools` (a heredoc write to `/tmp`
 fails with "Permission denied and could not request permission from user"), so
@@ -59,7 +67,12 @@ separate Copilot tool calls, so always spell out the explicit
 `${GITHUB_WORKSPACE}` path in each command. Create the scratch directory first:
 
 ```bash
+set -euo pipefail
 mkdir -p "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox"
+test ! -s /tmp/foundry-toolbox-smoke-evidence
+touch /tmp/foundry-toolbox-smoke-evidence
+test -r /tmp/foundry-toolbox-smoke-evidence
+test -w /tmp/foundry-toolbox-smoke-evidence
 ```
 
 First, run the exact service-target and standalone-file shapes documented by
@@ -72,6 +85,10 @@ then run it once:
 set -euo pipefail
 
 evidence="/tmp/foundry-toolbox-smoke-evidence"
+if [[ -s "$evidence" ]]; then
+  echo "FAIL existing evidence: do not replay the azd smoke"
+  exit 1
+fi
 : >"$evidence"
 
 record() {
@@ -146,11 +163,15 @@ bash "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-azd-smoke.sh"
 
 After that script exits `0`, both azd Toolboxes have been cleaned up
 best-effort and any deletion trouble is transcript-only. Create an isolated
-virtual environment and install the bounded Python stack:
+workspace-local virtual environment and install the bounded Python stack.
+Activation avoids invoking a `/tmp` interpreter through the shell permission
+gate; it does not move the evidence file:
 
 ```bash
-python3 -m venv /tmp/foundry-toolbox-venv
-/tmp/foundry-toolbox-venv/bin/pip install --quiet \
+set -euo pipefail
+python3 -m venv "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/venv"
+source "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/venv/bin/activate"
+python -m pip install --quiet \
   "azure-ai-projects~=2.4.0" \
   "azure-identity~=1.25.3" \
   "agent-framework~=1.13.0" \
@@ -266,7 +287,9 @@ with (
 Run it once:
 
 ```bash
-/tmp/foundry-toolbox-venv/bin/python "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-smoke.py"
+set -euo pipefail
+source "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/venv/bin/activate"
+python "${GITHUB_WORKSPACE}/.scratch/foundry-toolbox/foundry-toolbox-smoke.py"
 ```
 
 Every management call in this Python smoke must stay under stable
@@ -289,17 +312,24 @@ failure.
 ## Step 2 - write the deterministic result marker
 
 After both azd Toolboxes and the Python Toolbox have been cleaned up
-best-effort, verify that the fresh sidecar contains exactly the five required
-hard-success records:
+best-effort, execute this final block unchanged. It reads back the canonical
+archive destination, requires **five TOTAL records (two azd plus three SDK)**,
+and only then writes PASS. A cleanup NOTE remains a cleanup limitation, not
+proof of absence. Do not relocate evidence, rerun creation, or independently
+write PASS if any assertion or file operation fails.
 
 ```bash
+set -euo pipefail
 python3 - <<'PY'
 from pathlib import Path
+import hashlib
 import re
 
-lines = Path("/tmp/foundry-toolbox-smoke-evidence").read_text(
-    encoding="utf-8"
-).splitlines()
+marker = Path("/tmp/foundry-toolbox-smoke-result")
+marker.write_text("SMOKE_RESULT=FAIL evidence incomplete\n", encoding="utf-8")
+evidence = Path("/tmp/foundry-toolbox-smoke-evidence")
+raw = evidence.read_bytes()
+lines = raw.decode("utf-8").splitlines()
 patterns = (
     r"AZD_SERVICE_CREATED name=ci-smoke-azdsvc-[0-9a-f]{8}",
     r"AZD_CLI_CREATED name=ci-smoke-azdcli-[0-9a-f]{8}",
@@ -307,20 +337,20 @@ patterns = (
     r"TOOLBOX_RETRIEVED name=ci-smoke-tbx-[0-9a-f]{8} version=\S+",
     r"TOOL_SEARCH_FUNCTIONS names=.+",
 )
-assert len(lines) == len(patterns), lines
-for pattern in patterns:
-    assert sum(re.fullmatch(pattern, line) is not None for line in lines) == 1, (
-        pattern,
-        lines,
-    )
+assert len(lines) == len(patterns) == 5
+for pattern, line in zip(patterns, lines):
+    assert re.fullmatch(pattern, line), "Missing or out-of-order hard-success record"
+assert lines[2].split(" ", 1)[1] == lines[3].split(" ", 1)[1], "SDK identity/version mismatch"
+names = set(lines[4].split("names=", 1)[1].split(","))
+assert {"tool_search", "call_tool"} <= names, "Tool Search meta-tools missing"
+assert evidence.read_bytes() == raw, "Evidence changed during validation"
+print(f"TOOLBOX_ARCHIVE_EVIDENCE_VERIFIED records=5 sha256={hashlib.sha256(raw).hexdigest()}")
+marker.write_text("SMOKE_RESULT=PASS\n", encoding="utf-8")
 PY
 ```
 
-Only after that check succeeds, your final Bash action is:
-
-```bash
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-toolbox-smoke-result
-```
+This validator is the only success-marker writer. Its canonical file remains
+in place for workflow upload. Do not invoke another tool after it succeeds.
 
 If a required step fails, choose exactly one matching command below as your
 final Bash action:

@@ -220,8 +220,29 @@ def validate(config, data):
             and same(data["executor_identity"].get("clientId"), config["executor_client"]), "EXECUTOR_IDENTITY_MAPPING")
     require(same(data["database"].get("id"), config["cosmos"] + "/sqlDatabases/" + config["database"]), "DATABASE_SCOPE")
     registry = data["registry"]["properties"]
-    require(registry.get("roleAssignmentMode") == "LegacyRegistryPermissions"
-            and registry.get("adminUserEnabled") is False, "REGISTRY_CONTRACT")
+    if (registry.get("roleAssignmentMode") != "LegacyRegistryPermissions"
+            or registry.get("adminUserEnabled") is not False):
+        mode = registry.get("roleAssignmentMode")
+        if "roleAssignmentMode" not in registry:
+            mode_state = "missing"
+        elif mode == "LegacyRegistryPermissions":
+            mode_state = "matched:LegacyRegistryPermissions"
+        elif mode == "AbacRepositoryPermissions":
+            mode_state = "mismatched:AbacRepositoryPermissions"
+        else:
+            mode_state = "unknown"
+        if "adminUserEnabled" not in registry:
+            admin_state = "missing"
+        elif registry["adminUserEnabled"] is False:
+            admin_state = "matched:false"
+        elif registry["adminUserEnabled"] is True:
+            admin_state = "mismatched:true"
+        else:
+            admin_state = "unknown"
+        raise ReuseError(
+            f"REGISTRY_CONTRACT roleAssignmentMode={mode_state} "
+            f"adminUserEnabled={admin_state}"
+        )
     require(registry.get("loginServer") == config["registry_host"], "REGISTRY_HOST_MISMATCH")
     require(endpoint(data["cosmos"]["properties"]["documentEndpoint"]) == config["cosmos_endpoint"], "COSMOS_ENDPOINT")
     require(endpoint(data["storage"]["properties"]["primaryEndpoints"]["blob"]) == config["storage_endpoint"], "STORAGE_ENDPOINT")
