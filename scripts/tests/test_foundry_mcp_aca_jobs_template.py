@@ -490,7 +490,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         prompt_fm, _ = self._frontmatter_and_body(
             ROOT / "skills" / "foundry-prompt-agents" / "SKILL.md"
         )
-        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.12")
+        self.assertEqual(prompt_fm["metadata"]["version"], "1.2.0")
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
