@@ -25,7 +25,12 @@ JOBS = "foundry-mcp-aca-jobs"
 AUTH_ENV = {
     "MCP_AUTH_NETWORK_SMOKE_APPROVED": "yes",
     "MCP_AUTH_SMOKE_ENDPOINT": "https://mcp.example.test/mcp",
+    "MCP_AUTH_SMOKE_ISSUER": "https://login.microsoftonline.com/11111111-2222-4333-8444-555555555555/v2.0",
+    "MCP_AUTH_SMOKE_SCOPE": "api://22222222-3333-4444-8555-666666666666/tools.execute",
+    "AZURE_TENANT_ID": "11111111-2222-4333-8444-555555555555",
 }
+AUTH_BINDINGS = ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE")
+AUTH_SPECIFIC_INPUTS = tuple(name for name in AUTH_ENV if name.startswith("MCP_AUTH_"))
 JOBS_ENV = {
     "MCP_AUTH_APP_CLIENT_ID": "11111111-2222-4333-8444-555555555555",
     "MCP_ACA_JOBS_COSMOS_ENDPOINT": "https://cosmos.example.test:443/",
@@ -142,6 +147,48 @@ class NativeCiPreflightTests(unittest.TestCase):
                     "INVALID_ENDPOINT", "MCP_AUTH_SMOKE_ENDPOINT",
                 )
 
+    def test_auth_expected_bindings_reject_malformed_values_without_echo(self):
+        for value in (
+            "SECRET_CANARY", "https://login.microsoftonline.com/common/v2.0",
+            AUTH_ENV["MCP_AUTH_SMOKE_ISSUER"] + "/",
+            AUTH_ENV["MCP_AUTH_SMOKE_ISSUER"] + "?SECRET_CANARY",
+            AUTH_ENV["MCP_AUTH_SMOKE_ISSUER"] + "\n",
+        ):
+            self.assert_failure(
+                self.invoke(AUTH, {**AUTH_ENV, "MCP_AUTH_SMOKE_ISSUER": value}),
+                "INVALID_ISSUER", "MCP_AUTH_SMOKE_ISSUER",
+            )
+        for value in (
+            "SECRET_CANARY", "demo.read", "https://graph.microsoft.com/.default",
+            "api://22222222-3333-4444-8555-666666666666/.default",
+            AUTH_ENV["MCP_AUTH_SMOKE_SCOPE"] + " offline_access",
+            AUTH_ENV["MCP_AUTH_SMOKE_SCOPE"] + "\n",
+        ):
+            self.assert_failure(
+                self.invoke(AUTH, {**AUTH_ENV, "MCP_AUTH_SMOKE_SCOPE": value}),
+                "INVALID_SCOPE", "MCP_AUTH_SMOKE_SCOPE",
+            )
+
+    def test_auth_issuer_keeps_the_existing_tenant_boundary(self):
+        self.assert_failure(
+            self.invoke(AUTH, {**AUTH_ENV, "AZURE_TENANT_ID": "22222222-3333-4444-8555-666666666666"}),
+            "ISSUER_TENANT_MISMATCH", "MCP_AUTH_SMOKE_ISSUER",
+        )
+        self.assert_failure(
+            self.invoke(AUTH, {**AUTH_ENV, "AZURE_TENANT_ID": "SECRET_CANARY"}),
+            "INVALID_IDENTIFIER", "AZURE_TENANT_ID",
+        )
+
+    def test_auth_does_not_infer_expected_binding_from_jobs_client(self):
+        self.assertEqual(
+            self.invoke(AUTH, {**AUTH_ENV, "MCP_AUTH_APP_CLIENT_ID": "SECRET_CANARY"}).stdout,
+            SUCCESS,
+        )
+        for name in AUTH_BINDINGS:
+            values = {**AUTH_ENV, "MCP_AUTH_APP_CLIENT_ID": JOBS_ENV["MCP_AUTH_APP_CLIENT_ID"]}
+            del values[name]
+            self.assert_failure(self.invoke(AUTH, values), "MISSING_ENV", name)
+
     def test_jobs_endpoints_are_account_origins_not_containers_or_credentials(self):
         for name in ("MCP_ACA_JOBS_COSMOS_ENDPOINT", "MCP_ACA_JOBS_STORAGE_ACCOUNT_URL"):
             for path in ("/container", "/dbs/example", "/mcp"):
@@ -242,6 +289,7 @@ class NativeCiPreflightWorkflowTests(unittest.TestCase):
         self.assertEqual(env, {
             "NATIVE_SMOKE_SKILL": "${{ matrix.skill }}",
             **{name: secret(name) for name in (*AUTH_ENV, *JOBS_ENV)},
+            **{name: auth_secret(name) for name in AUTH_BINDINGS},
         })
         consumers = [
             step for step in self.steps
@@ -250,10 +298,17 @@ class NativeCiPreflightWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(consumers), 2)
         for step in consumers:
-            for name in AUTH_ENV:
+            for name in AUTH_SPECIFIC_INPUTS:
                 self.assertEqual(step["env"].get(name), auth_secret(name))
             for name in JOBS_ENV:
                 self.assertEqual(step["env"].get(name), secret(name))
+        for name in AUTH_BINDINGS:
+            self.assertEqual(env[name], consumers[0]["env"][name])
+            self.assertEqual(consumers[0]["env"][name], consumers[1]["env"][name])
+            self.assertEqual(
+                WORKFLOW.read_text().count(f"{name}: {auth_secret(name)}"), 3,
+                "Only Auth preflight/main/retry may receive these exact bindings",
+            )
 
     def test_unrelated_legs_do_not_select_the_gate(self):
         condition = self.gate()["if"]

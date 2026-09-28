@@ -36,15 +36,14 @@ class AuthExecutionFixtureTests(unittest.TestCase):
             "MCP_AUTH_NETWORK_SMOKE_APPROVED": "yes",
             "MCP_AUTH_SMOKE_ENDPOINT": "https://mcp.example.test/mcp",
             "AZURE_TENANT_ID": str(UUID(int=1)),
-            "MCP_AUTH_APP_CLIENT_ID": str(UUID(int=2)),
+            "MCP_AUTH_SMOKE_ISSUER": f"https://login.microsoftonline.com/{UUID(int=1)}/v2.0",
+            "MCP_AUTH_SMOKE_SCOPE": f"api://{UUID(int=2)}/tools.execute",
         }
         self.metadata_url = "https://mcp.example.test/.well-known/oauth-protected-resource/mcp"
         self.metadata = {
             "resource": self.env["MCP_AUTH_SMOKE_ENDPOINT"],
-            "authorization_servers": [
-                f"https://login.microsoftonline.com/{self.env['AZURE_TENANT_ID']}/v2.0"
-            ],
-            "scopes_supported": [f"api://{self.env['MCP_AUTH_APP_CLIENT_ID']}/demo.read"],
+            "authorization_servers": [self.env["MCP_AUTH_SMOKE_ISSUER"]],
+            "scopes_supported": [self.env["MCP_AUTH_SMOKE_SCOPE"]],
         }
 
     def responses(self, *, status=401, metadata=None, challenge=None):
@@ -76,6 +75,26 @@ class AuthExecutionFixtureTests(unittest.TestCase):
             self.assertEqual(call.kwargs["timeout"], 20)
             self.assertFalse(any(k.lower() == "authorization" for k in call.args[0].headers))
         self.assertNotIn(self.env["MCP_AUTH_SMOKE_ENDPOINT"], output)
+        self.assertNotIn(self.env["MCP_AUTH_SMOKE_ISSUER"], output)
+        self.assertNotIn(self.env["MCP_AUTH_SMOKE_SCOPE"], output)
+
+    def test_declared_scope_is_not_derived_from_jobs_or_sample_permission(self):
+        env = {**self.env, "MCP_AUTH_APP_CLIENT_ID": str(UUID(int=999))}
+        status, marker, _, _ = self.run_probe(self.responses(), env=env)
+        self.assertEqual((status, marker), (0, "SMOKE_RESULT=PASS\n"))
+        wrong = {**self.metadata, "scopes_supported": [f"api://{UUID(int=999)}/demo.read"]}
+        status, marker, _, _ = self.run_probe(self.responses(metadata=wrong), env=env)
+        self.assertEqual((status, marker), (1, "SMOKE_RESULT=FAIL PRM_SCOPE_MISMATCH\n"))
+
+    def test_malformed_expected_bindings_fail_before_network_without_disclosure(self):
+        for field in ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE"):
+            status, marker, output, opener = self.run_probe(
+                env={**self.env, field: "SECRET_CANARY"},
+            )
+            self.assertEqual(status, 1)
+            self.assertTrue(marker.startswith("SMOKE_RESULT=FAIL INVALID_"))
+            self.assertNotIn("SECRET_CANARY", output + marker)
+            opener.open.assert_not_called()
 
     def test_missing_inputs_or_unapproved_gate_never_call_network(self):
         for field in self.env:

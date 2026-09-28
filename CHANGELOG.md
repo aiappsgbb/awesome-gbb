@@ -26,6 +26,10 @@
 - The Jobs registry GET uses the documented 2025-11-01 schema to read
   `roleAssignmentMode`; the older 2023-07-01 schema does not expose that
   prerequisite. Missing/unknown fields still fail closed; no registry mutation.
+- Forward the existing Auth-specific expected issuer/scope only to its
+  preflight and identical initial/retry consumer environments. Validate before
+  network access and compare exact metadata; never infer Auth scope from the
+  Jobs client ID or log the supplied values. No secret values or grants change.
 
 ## 5.0.0 — Proposed / Unreleased
 

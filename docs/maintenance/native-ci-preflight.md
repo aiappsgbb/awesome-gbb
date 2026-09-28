@@ -14,6 +14,8 @@ reads these existing fixture inputs from explicit same-name secret bindings:
 |---|---|---|
 | `foundry-mcp-auth` | `MCP_AUTH_NETWORK_SMOKE_APPROVED` | Exact literal `yes`; no inferred or default approval |
 | `foundry-mcp-auth` | `MCP_AUTH_SMOKE_ENDPOINT` | HTTPS, valid host/port, path ending in `/mcp`, no userinfo/query/fragment |
+| `foundry-mcp-auth` | `MCP_AUTH_SMOKE_ISSUER` | Exact declared tenant-specific Entra v2 issuer, matching the existing `AZURE_TENANT_ID` |
+| `foundry-mcp-auth` | `MCP_AUTH_SMOKE_SCOPE` | One exact declared custom `api://<api-application-id>/<permission>` scope; no derived Jobs binding or `.default` |
 | `foundry-mcp-aca-jobs` | `MCP_AUTH_APP_CLIENT_ID` | Canonical hyphenated UUID, not an audience URI or consent flag |
 | `foundry-mcp-aca-jobs` | `MCP_ACA_JOBS_COSMOS_ENDPOINT` | HTTPS account origin, optional trailing `/` and valid port |
 | `foundry-mcp-aca-jobs` | `MCP_ACA_JOBS_STORAGE_ACCOUNT_URL` | HTTPS account origin, optional trailing `/` and valid port |
@@ -24,13 +26,18 @@ repaired. Host validation is syntactic only, with no DNS or service lookup.
 The approved auth inputs are forwarded only to that leg, identically in the
 initial and retry consumer steps. The Jobs bindings are unchanged. Shared
 workflow identity/project prerequisites retain their existing gates; this
-step deliberately checks only the five skill-specific standing inputs.
+step checks the explicit skill-specific standing inputs and their existing
+platform identity context. The two Auth expected-value bindings already exist
+as repository secrets; forwarding them does not create or change credentials,
+applications, approvals or consent. They are empty for other matrix legs,
+including the Jobs native-preflight step.
 
 ## Interpreting a run
 
 Failure returns exit 1 and exactly one sanitized classification:
 `NATIVE_CI_PREFLIGHT=FAIL <code> <field>`. Codes are `MISSING_ENV`,
-`UNAPPROVED`, `INVALID_ENDPOINT` or `INVALID_IDENTIFIER`; malformed CLI
+`UNAPPROVED`, `INVALID_ENDPOINT`, `INVALID_IDENTIFIER`, `INVALID_ISSUER`,
+`ISSUER_TENANT_MISMATCH` or `INVALID_SCOPE`; malformed CLI
 arguments produce `NATIVE_CI_PREFLIGHT=FAIL ARGUMENTS`. Output contains only
 fixed tokens and variable names, never supplied values, private hosts,
 credentials or parser exceptions.
@@ -52,16 +59,22 @@ renewed by this script.
 
 Supplying a syntactically valid endpoint does not authorize it. The explicit
 approval must come from the owner for the intended target/runner; this boolean
-does not encode approval lifetime or independently bind tenant/scope.
-No approved CI inputs are created by this change. The Jobs app client ID is
+does not encode approval lifetime. The independently supplied issuer and scope
+bind the probe's expected metadata; never derive either from its response or
+the Jobs client ID. Malformed/missing bindings fail before network access,
+without logging their values. No approved CI inputs are created by this change.
+The Jobs app client ID is
 an app-only caller prerequisite, **not delegated user consent**. Existing
 Cosmos/storage resources and documented pre-granted permissions, including
 Storage Blob Data Contributor, still require separately authorized live proof.
 
 The auth fixture's scoped PRM HTTP 200 with exact resource/tenant/scope and
 anonymous MCP initialize HTTP 401 with the correct challenge remain real
-network assertions. A canonical deterministic HTTP probe and its live runner
-execution are unresolved in #492. Offline preflight tests do not replace
+network assertions. The canonical fixture now executes a deterministic anonymous
+probe, using these existing expected-value bindings. Current-head live acceptance
+is still required; the previous `PRM_SCOPE_MISMATCH` came from an unsupported
+Jobs-ID-derived expectation and is not a backend diagnosis.
+Offline preflight tests do not replace
 those assertions or the separate
 [delegated/Playground validation record](foundry-mcp-auth-validation.md).
 Selection/dependency fanout, main/scheduled canaries and quarantine remain
