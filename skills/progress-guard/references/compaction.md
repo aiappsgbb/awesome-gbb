@@ -43,6 +43,9 @@ results into the parent's ledger without forwarding transcripts. Keep active chi
 handles, dependency gates, ownership and unaccepted receipts in the latest snapshot.
 Preserve blocker `blocks`/`does_not_block` boundaries, any declared limits,
 accepted change IDs and the affected evidence delta, not copies of unchanged proofs.
+Preserve approval decision IDs, exact operation/target/effect, source references
+and actual result (including unavailable/revoked). Recover them before asking;
+compaction itself neither grants consent nor reopens an unchanged question.
 Do not compact away the only copy of a receipt before its parent write is read back.
 
 1. Prefer a phase boundary or actual context pressure, not a timer or every turn.
