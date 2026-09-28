@@ -2,9 +2,9 @@
 
 Source of truth for the prose example in `../../SKILL.md § Programmatic last-run introspection`.
 
-Build-to-contract per issue #247; no upstream precedent in threadlight production_ready.py.
-Returns a stable dict shape that threadlight's EVAL-201 finding consumes
-when `kind: sibling-skill`.
+Retains the local stable dict contract introduced for issue #247.
+Current Threadlight source does not demonstrate the historical EVAL-201
+consumer claim; its separate evaluation manifest is not produced here.
 
 Public API:
     from foundry_evals.last_run import last_run_summary

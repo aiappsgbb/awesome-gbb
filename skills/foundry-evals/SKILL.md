@@ -4,17 +4,18 @@ description: >
   Evaluate Foundry agents with agent-target runs or an explicit invoke+score fallback.
   Covers sequential invocation, cold-start handling, dataset
   creation, evaluator configuration, RBAC for eval judges, result interpretation,
-  and cross-refs to community evaluator frameworks (foundry-assert) and eval-driven
-  prompt optimization loops (foundry-agent-optimizer). USE FOR: evaluate agent
+  and native suite/data/evaluator lifecycle with official optimizer handoffs.
+  USE FOR: evaluate agent
   post-deploy, score grounding quality, measure tool_selection, detect dataset drift,
   write custom grader, check URL citations, validate eval RBAC, day-1 smoke test,
   continuous eval loop, pre-merge eval gate, Foundry Evals SDK setup, evaluator
   framework, eval-driven optimization, ASSERT evaluators. DO NOT USE FOR: deploying
   agents (use threadlight-deploy), designing processes (use threadlight-design),
-  unit testing code, reimplementing evaluator framework (use foundry-assert), writing
-  your own optimizer loop (use foundry-agent-optimizer).
+  unit testing code, reimplementing evaluator frameworks (foundry-assert is a
+  historical name, not a shipped skill), writing your own optimizer loop
+  (foundry-agent-optimizer is a historical name; use the official workflow).
 metadata:
-  version: "1.4.2"
+  version: "1.5.0"
 ---
 
 # Foundry Agent Evaluations
@@ -57,7 +58,17 @@ when the surface requires it or the owner approves that fallback.
 > implements a one-item agent-target or explicit invoke+score coherence smoke
 > using `AIProjectClient.get_openai_client().evals`. See the
 > [Day-1 recipe](#day-1-smoke-test-recipe-hosted-agent--mcp-tool-pilots).
-> It does not replace full suites, custom graders or the EVAL-201 adapter.
+> It does not replace full suites, custom graders or the local last-run adapter.
+
+## Native suite, data and evaluator lifecycle
+
+Use [the lifecycle checklist](references/native-lifecycle.md) for reviewed
+suite generation, independent data/evaluator refresh, trace curation,
+versioned comparisons and optimization. It adds the missing native workflow
+without replacing the canonical captured-response `smoke_score`, citation
+graders or existing output contracts. Use the official `microsoft-foundry`
+workflow for native generation/optimizer orchestration; load only that
+specific workflow, not a general deployment pipeline.
 
 ```
 Phase 1: Invoke agent → collect responses
@@ -534,7 +545,7 @@ to work. Extract tool definitions from the agent's MCP tools or `@tool` function
 the judge **what each tool returned for this query**. Without that
 context, `tool_output_utilization` flags any tool-derived fact in the
 response (mailing addresses pulled from `get_customer`, citations
-emitted by `lookup_rule`, account numbers, dates) as **fabricated** ` and
+emitted by `lookup_rule`, account numbers, dates) as **fabricated** and
 the score craters.
 
 Capture the agent's tool transcript during Phase 1 invoke and emit it
@@ -549,10 +560,16 @@ on every row:
 ```json
 {
     "query": "Process dispute CASE-<id>",
-    "response": "Based on Reg E ` 1005.11(c)(1), provisional credit is required ` ",
+    "response": "The retrieved rule describes the conditions for provisional credit.",
     "tool_definitions": [
-        { "name": "get_dispute_case", "type": "function", "parameters": {"} },
-        { "name": "lookup_reg_rule",  "type": "function", "parameters": {"} }
+        { "name": "get_dispute_case", "type": "function", "parameters": {
+            "type": "object", "properties": {"case_id": {"type": "string"}}
+        } },
+        { "name": "lookup_reg_rule", "type": "function", "parameters": {
+            "type": "object", "properties": {
+                "jurisdiction": {"type": "string"}, "rule_id": {"type": "string"}
+            }
+        } }
     ],
     "tool_calls": [
         {
@@ -571,11 +588,11 @@ on every row:
     "tool_outputs": [
         {
             "tool_call_id": "call_001",
-            "output": "{\"case_id\":\"CASE-<id>\",\"customer_address\":\"<example-address>\",}"
+            "output": "{\"case_id\":\"CASE-<id>\",\"customer_address\":\"<example-address>\"}"
         },
         {
             "tool_call_id": "call_002",
-            "output": "{\"text\":\"The financial institution shall provisionally credit ` within 10 business days `\"}"
+            "output": "{\"text\":\"Synthetic fixture: provisional credit depends on the applicable rule conditions.\"}"
         }
     ]
 }
@@ -583,7 +600,7 @@ on every row:
 
 The `data_source_config.item_schema` and per-evaluator `template`
 mapping must thread `tool_calls` + `tool_outputs` through to each
-evaluator that uses them ` add the same `{{item.tool_calls}}` /
+evaluator that uses them; add the same `{{item.tool_calls}}` /
 `{{item.tool_outputs}}` tokens you already use for `{{item.tool_definitions}}`.
 
 Capture pattern in `eval/run_evals.py`:
@@ -743,7 +760,7 @@ signal: **did the agent actually cite real, reachable sources?**
 > **MUST:** Use the canonical reference graders. Do NOT redefine inline — the validator enforces single-source-of-truth.
 >
 > - [`references/python/url_citation_grader.py`](references/python/url_citation_grader.py) — both graders (`grade_citation_present` + `grade_citation_resolves`) plus the `LEARN_URL_PATTERN` regex (swap the domain for your corpus).
-> - [`references/python/eval_runner.py`](references/python/eval_runner.py) — Day-1 smoke recipe runner (`tool_selection >= 0.7` pass gate); see § Day-1 Smoke Test Recipe.
+> - [`references/python/eval_runner.py`](references/python/eval_runner.py) — Day-1 coherence smoke runner (1–5 scale, caller-selected threshold); see § Day-1 Smoke Test Recipe.
 > - [`references/data/sample_eval_dataset.jsonl`](references/data/sample_eval_dataset.jsonl) — 8 representative items from grounded-Q&A + hosted-agent pilots showing the standard simple item shape (`{"item": {"prompt", "expected_tool", ...}}`).
 
 Wire two complementary graders into your eval suite:
@@ -872,8 +889,8 @@ expected finite numeric metric. Preserve **zero** scores — never use
 
 > **MUST:** Copy verbatim from [`references/python/last_run.py`](references/python/last_run.py).
 > Do NOT redefine inline — the validator enforces single-source-of-truth.
-> That file is the canonical last-run summary builder that threadlight's EVAL-201
-> finding consumes when `kind: sibling-skill`.
+> That file preserves the local last-run summary contract. It is not an
+> implementation of Threadlight's separate evaluation manifest.
 
 Extract the most-recent eval run summary with the stable 11-key dict:
 
@@ -904,7 +921,11 @@ else:
 | `source` | str | File path to the run's manifest.json |
 
 The helper returns `None` if no `evals/runs/*/manifest.json` exists (no eval has run yet).
-Consumed by threadlight EVAL-201 when `kind: sibling-skill` (issue #247).
+The historical EVAL-201 integration claim is not demonstrated by current
+Threadlight source. Preserve the helper's 11-key shape for existing callers,
+but do not invent a `foundry_evals` import dependency in another project.
+Threadlight retains its own `threadlight-evals-manifest/v1` evidence contract;
+adapt only at an explicitly implemented and tested boundary.
 
 ## Interpreting Results
 
@@ -1085,8 +1106,8 @@ gate, business acceptance test, or production certification.
 
 Follow a successful execution smoke with the full tool-aware suite and reviewed
 thresholds. Keep `tool_definitions`, actual tool calls/outputs and SPEC-derived
-cases where required. `last_run_summary()` and its EVAL-201 manifest contract are
-unchanged; the helper's private artifact is **not** an EVAL-201 manifest.
+cases where required. `last_run_summary()` and its local manifest contract are
+unchanged; the helper's private artifact is **not** a Threadlight evaluation manifest.
 
 ---
 
@@ -1108,61 +1129,29 @@ proves the agent earned its budget at the next steering committee.
 
 ### Plan A (default): Foundry built-in continuous evaluation
 
-**Use this first.** As of `azure-ai-projects~=2.0` (May 2026), Foundry has a
-first-party `EvaluationRule` API that runs evaluators on **every response**
-(or sampled) without you owning a cron job. It's wired through the Foundry
-project itself, results land in the **Agent Monitoring Dashboard**, and works
-for both Prompt Agents AND hosted agents.
+**Use this first.** Follow the official
+[continuous evaluation workflow](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/observe/references/continuous-eval.md).
+It distinguishes response-triggered **Prompt** evaluation from scheduled
+**Hosted** trace evaluation. Do not assume every hosted transport emits the
+same response-completed event.
 
-**Setup (Python — also available in .NET):**
+Discover the current Foundry MCP command schema before use; these are
+operation names, not Python methods in the pinned SDK:
 
-```bash
-pip install "azure-ai-projects~=2.0" "azure-identity~=1.19" "python-dotenv~=1.0"
-```
+| Operation | Required lifecycle check |
+|---|---|
+| `continuous_eval_get` | Resolve project/agent and inspect existing configuration before any write |
+| `continuous_eval_create` | Supply the complete desired configuration; replacement can drop omitted evaluators |
+| `evaluation_get` | Resolve the linked evaluation group to recover evaluator definitions before changing/disabling |
+| Disable via `enabled=false` | Preserve evaluators, judge deployment, sampling/caps and selected configuration |
+| `continuous_eval_delete` | Use the exact configuration ID from readback, with owner approval; verify absence |
 
-```python
-import os
-from azure.identity import DefaultAzureCredential
-from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import (
-    EvaluationRule,
-    ContinuousEvaluationRuleAction,
-    EvaluationRuleFilter,
-    EvaluationRuleEventType,
-)
-
-with (
-    DefaultAzureCredential() as credential,
-    AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
-    project_client.get_openai_client() as openai_client,
-):
-    # 1. Define the evaluation (judges + criteria)
-    eval_object = openai_client.evals.create(
-        name="threadlight-continuous-eval",
-        data_source_config={"type": "azure_ai_source", "scenario": "responses"},
-        testing_criteria=[
-            {"type": "azure_ai_evaluator", "name": "task_adherence", "evaluator_name": "builtin.task_adherence"},
-            {"type": "azure_ai_evaluator", "name": "intent_resolution", "evaluator_name": "builtin.intent_resolution"},
-            {"type": "azure_ai_evaluator", "name": "tool_call_accuracy", "evaluator_name": "builtin.tool_call_accuracy"},
-        ],
-    )
-
-    # 2. Wire the rule that fires on every agent response
-    rule = project_client.evaluation_rules.create_or_update(
-        id="threadlight-continuous-rule",
-        evaluation_rule=EvaluationRule(
-            display_name="Threadlight continuous eval",
-            description="Sample agent responses, score with built-in evaluators",
-            action=ContinuousEvaluationRuleAction(
-                eval_id=eval_object.id,
-                max_hourly_runs=100,   # default cap; bump for high-volume processes
-            ),
-            event_type=EvaluationRuleEventType.RESPONSE_COMPLETED,
-            filter=EvaluationRuleFilter(agent_name=os.environ["AZURE_AI_AGENT_NAME"]),
-            enabled=True,
-        ),
-    )
-```
+For Prompt, explicitly approve `samplingRate` and `maxHourlyRuns`. For Hosted,
+approve `intervalHours`, `maxTraces` and the connected telemetry source. Do not
+enable an uncapped recurring evaluator as a side effect of running a smoke.
+Persist configuration/eval IDs and the owner/retention decision. Read back
+the configuration and require actual scored output from the intended agent;
+successful creation is not monitoring acceptance.
 
 **Required RBAC** (keyless throughout — three grants on **two distinct identities**):
 
@@ -1197,23 +1186,14 @@ no error surfaced to the caller.
 
 **Where results show up:**
 - Foundry portal → agent → **Monitor** tab → evaluation charts
-- Programmatically: `openai_client.evals.runs.list(eval_id=eval_object.id)`
+- Programmatically: list runs through the project's OpenAI client using the
+  `evalId` returned by the selected continuous configuration
 - Each run has a `report_url` for the deep-dive HTML report
 
-**What you also get for free**:
-- **Scheduled Evaluations (preview)** — same rule shape but `event_type=SCHEDULED`,
-  runs at a cadence against a pinned dataset (regression suite)
-- **Red-team scans (preview)** — adversarial probes on the same agent
-- **Alerts (preview)** — latency / token usage / eval-score / red-team thresholds wired to Action Groups
-
-**Hosted-agent caveat (May 2026)**: continuous-eval works for hosted agents
-on the **responses** protocol out of the box. Hosted agents using the
-**invocations** protocol need `input_messages` shape in the `azure_ai_agent`
-target — the rule still fires, but the data source must use the freeform
-input format. Validate this with a small smoke test on day-1 of the pilot
-(some hosted-agent preview features lag the protocol). If continuous-eval
-silently emits no runs for an invocations-protocol hosted agent, fall back
-to Plan B for that pilot until the gap closes.
+Scheduled regression suites, red teaming and alerts are separate capabilities,
+not free side effects of creating a continuous configuration. Validate the
+actual telemetry/transport path. Missing runs require diagnosis of the source,
+identity and schedule; do not silently replace monitoring with a custom job.
 
 **Reference samples**:
 - [Continuous evaluation sample (Python)](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/evaluations/sample_continuous_evaluation_rule.py)
@@ -1222,7 +1202,8 @@ to Plan B for that pilot until the gap closes.
 
 ### Plan B (fallback): ACA Job continuous-eval pulling App Insights + Cosmos
 
-Use this when **any** of the following is true:
+**Bounded implementation handoff, not a shipped job scaffold.** Use this when
+native monitoring cannot meet the approved requirements, for example:
 - You need **custom KPIs** that aren't expressible as a built-in evaluator
   (e.g., `count(audit.decision == 'approved') / count(audit.decision != null)` —
   a business KPI computed from Cosmos audit records, not from agent traces)
@@ -1230,7 +1211,8 @@ Use this when **any** of the following is true:
   (the Foundry Monitor tab is great for engineers, but COOs want a workbook)
 - You need cross-source correlation (App Insights spans + Cosmos `case_audit` +
   external systems metrics) that the built-in `azure_ai_source` data source can't reach
-- The hosted-agent invocations-protocol gap above (verify with day-1 smoke test)
+- The selected hosted transport does not supply the required native trace data
+  (verify this rather than assuming a platform gap)
 
 **Architecture:**
 
@@ -1284,64 +1266,35 @@ kpis:
     direction: higher-is-better
 ```
 
-The continuous-eval ACA Job translates each row into a query against App
-Insights traces + Cosmos audit container, computes the metric, and writes to
-both an App Insights workbook (for dashboarding) AND a Foundry eval run
-(for trending).
+The application owner must implement the source queries and KPI computation.
+Business aggregates go to telemetry/workbooks; they are not automatically
+valid Foundry evaluation items.
 
 #### Step 2 — Generate the ACA Job (delegates to threadlight-event-triggers)
 
-Use the `aca-job-cron` scaffold from `threadlight-event-triggers`. The job
-runs every N minutes (default: 15) and:
+For a Threadlight project, hand the approved schedule and source contract to
+[threadlight-event-triggers](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/).
+For other applications, use the existing
+[azd-patterns](../azd-patterns/SKILL.md) ACA Job primitives. Neither supplies
+this application's KPI queries or scoring glue automatically.
 
-```python
-# infra/jobs/continuous_eval/job.py
-import asyncio
-from datetime import datetime, timedelta, timezone
-from azure.identity.aio import DefaultAzureCredential
-from azure.monitor.query.aio import LogsQueryClient
-from azure.cosmos.aio import CosmosClient
-from azure.monitor.opentelemetry import configure_azure_monitor
-from opentelemetry import metrics as otel_metrics
+Before deploying, implement and test in the consuming application:
 
-# These five helpers are co-located with this job in
-# infra/jobs/continuous_eval/ — generated alongside job.py from the
-# scaffolds documented in references/continuous-eval-job.md (this skill).
-from .config import load_yaml
-from .telemetry import emit_kpi_telemetry, raise_alert, record_foundry_eval_run
-from .compute import compute_metric, breaches_threshold
-from .sources import fetch_spans, fetch_audits
+1. A bounded time-window query against the approved telemetry/audit sources,
+   with pagination, late-arrival policy, redaction and explicit failures.
+2. A durable checkpoint/dedup key containing source, window and scorer version.
+   Retry must not double-count a completed window.
+3. Conversion of actual captured responses/tool transcripts to the Phase 2
+   item schema. Keep non-LLM business aggregates separate.
+4. Scoring through the project's OpenAI evaluation client, retaining eval/run
+   IDs, terminal status and every per-item score/error. The canonical
+   `smoke_score` proves one captured-response case, not a batch implementation.
+5. Telemetry emission, alert tests and exact resource cleanup/retention custody.
 
-KPI_TABLE = load_yaml("specs/kpis.yaml")  # extracted from SPEC § 9
-
-async def run():
-    window_end = datetime.now(timezone.utc)
-    window_start = window_end - timedelta(minutes=15)
-
-    spans = await fetch_spans(window_start, window_end)
-    audits = await fetch_audits(window_start, window_end)
-
-    metrics = {}
-    for kpi in KPI_TABLE:
-        value = await compute_metric(kpi, spans, audits)
-        metrics[kpi["id"]] = value
-
-        # Threshold check
-        if breaches_threshold(value, kpi):
-            await raise_alert(kpi, value, window_start, window_end)
-
-    # Write to App Insights workbook table (custom telemetry)
-    await emit_kpi_telemetry(metrics, window_end)
-
-    # Write to Foundry eval run for trending
-    await record_foundry_eval_run(metrics, window_end)
-
-asyncio.run(run())
-```
-
-Idempotency: each window is keyed by `(window_start, window_end)` so re-running
-the job for the same window doesn't double-count. Use the dedup pattern from
-`threadlight-event-triggers/references/idempotency-patterns.md`.
+No `continuous-eval-job.md` scaffold or generated `fetch_spans`,
+`compute_metric`, or `record_foundry_eval_run` helper ships in this skill.
+Do not report Plan B complete until the application code exists, a synthetic
+window is scored end-to-end, replay is idempotent, and lifecycle cleanup is verified.
 
 #### Step 3 — Threshold alerts
 
@@ -1361,31 +1314,11 @@ kpis:
     breach_operator: "<"     # KQL operator used in the alert query
 ```
 
-Then the Bicep alert template uses `breach_operator` literally and
-`target_value` as a number — never a glued string:
-
-```yaml
-# infra/modules/alerts.bicep (Phase 6 wires this if SPEC § 9 has KPIs)
-resource alertRule 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = [for kpi in kpis: {
-  name: 'kpi-${kpi.id}-breach'
-  properties: {
-    criteria: {
-      allOf: [{
-        query: 'customMetrics | where name == "${kpi.id}" | summarize avg_value=avg(value) by bin(timestamp, 30m) | where avg_value ${kpi.breach_operator} ${kpi.target_value}'
-        threshold: 0
-        operator: 'GreaterThan'
-        timeAggregation: 'Count'
-      }]
-    }
-    actions: { actionGroups: [actionGroup.id] }
-    evaluationFrequency: 'PT15M'
-    windowSize: 'PT1H'
-  }
-}]
-```
-
-Wire alerts via Azure Monitor Action Groups → Teams channel webhook or
-PagerDuty.
+Use the approved Azure Monitor alert primitives in
+[`azure-monitor-alert-baseline`](../azure-monitor-alert-baseline/SKILL.md),
+not an incomplete inline Bicep resource. Validate operator/value input against
+an allowlist, then test a synthetic threshold breach. Action Group destinations
+and recurring evaluation spend require owner approval.
 
 #### Step 4 — App Insights workbook (the customer-facing KPI dashboard)
 
@@ -1402,55 +1335,42 @@ Make it look like the customer's brand (workbook themes are configurable).
 
 #### Step 5 — Foundry eval trending (long-term quality drift)
 
-Beyond the per-window KPI dashboard, also push each window's results to a
-Foundry eval run so the long-term scoring history is preserved:
-
-```python
-async def record_foundry_eval_run(metrics, window_end):
-    # Reuse the SAME eval definition for trending (per § Eval Trending above)
-    run = await client.evals.runs.create(
-        eval_id=PRODUCTION_EVAL_DEF_ID,
-        name=f"continuous-{window_end.isoformat()}",
-        data_source={
-            "type": "telemetry",
-            "appinsights_id": APPINSIGHTS_RESOURCE_ID,
-            "window_start": (window_end - timedelta(minutes=15)).isoformat(),
-            "window_end": window_end.isoformat(),
-        },
-    )
-    return run
-```
-
-This gives the customer an "eval score over time" chart in Foundry portal
-alongside per-window KPI tiles in App Insights.
+Retain real evaluation run IDs and the curated dataset version for each scored
+window. Use the supported captured-response or agent-target data source from
+this skill, not an invented `type: telemetry` payload. Reuse an eval definition
+only while its evaluator configuration remains unchanged; label dataset changes
+so a changing test population is not mistaken for agent drift.
 
 #### Cost guardrails (Plan B)
 
-A 15-minute cron job is ~96 runs/day = ~2900 runs/month. Each run pulls ~15
-minutes of spans (typically <100 traces per process), scores them with
-Foundry evaluators (~$0.05/run for `gpt-5.4-mini` judge), and emits ~15
-custom metric data points. **Estimated cost: ~$5/month per process.**
-
-If the customer wants to slow it down (e.g., hourly), change cron to `0 * * * *`
-in the SPEC § 10b trigger declaration. The job re-reads SPEC at startup so no
-code change.
+A 15-minute schedule means 96 runs/day before retries. Estimate using measured
+rows, evaluator calls/tokens, job duration and current first-party pricing;
+there is no universal monthly estimate. Agree on cadence, row/token caps,
+retention and a disable path before enabling the job. A schedule or SPEC edit
+does not update deployed infrastructure until the consuming implementation
+explicitly applies it.
 
 ### Troubleshooting (both plans)
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| Plan A: rule created but no eval runs appear | Project managed identity missing **Azure AI User** role on the project | Assign role per Setup section above, then generate fresh agent traffic |
-| Plan A: `max_hourly_runs` exceeded | High-volume process | Bump cap (default 100) or set `event_type=SAMPLED` with sample rate |
-| Plan A: hosted-agent invocations protocol — no runs fire | Service-side gap (preview) | Drop to Plan B for that pilot until protocol gap closes |
+| Plan A: rule created but no eval runs appear | Source, sampling, schedule or judge identity/access mismatch | Inspect the selected config and actual failing identity; obtain approval for any access change |
+| Plan A: hourly cap reached | Traffic exceeds approved sampling | Review sampling/cap with owner; do not silently increase spend |
+| Plan A: hosted agent has no scores | Missing trace source, identity or schedule configuration | Diagnose the scheduled Hosted path before choosing Plan B |
 | Plan B: Continuous-eval job has no spans to score | App Insights connection on Foundry account missing | See `Eval Trending` section + threadlight-deploy gotchas |
-| Plan B: Foundry evaluator 429 | Judge model TPM exhausted from concurrent windows | Use a dedicated judge deployment with 100K TPM |
-| Plan B: KPI workbook shows blank | Custom metric not emitted | Check `emit_kpi_telemetry()` actually called `track_metric()` |
+| Plan B: Foundry evaluator 429 | Judge model capacity exhausted from concurrent windows | Measure actual request/capacity limits, reduce approved concurrency; capacity changes require approval |
+| Plan B: KPI workbook shows blank | Application's telemetry emission or query is incomplete | Verify a synthetic metric through the real producer and workbook query |
 | Plan B: Alert never fires | Threshold off by ratio (forgot `* 100` for percentage) | Test with manual `customMetrics` query first |
-| Plan B: Trending shows flat line | Same eval definition not reused | Hardcode `PRODUCTION_EVAL_DEF_ID` env var; never recreate the def |
+| Plan B: Trending shows flat line | Wrong run group, unchanged data or missing new results | Verify real per-item outputs and dataset lineage; reuse the group only while evaluator criteria are unchanged |
 
 ---
 
 ## Input contract / Output artifacts
+
+The paths below are **application implementation targets**, not files
+shipped or automatically generated by this skill. Native workflow artifacts
+remain in their selected agent root; do not overwrite a Threadlight manifest
+with the private smoke artifact or local 11-key summary.
 
 | Reads | From |
 |-------|------|
@@ -1477,9 +1397,9 @@ code change.
 | Skill | Use When |
 |-------|----------|
 | [**threadlight-design**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-design/) | Generates SPEC.md § 9 KPI table — the input contract for the continuous loop |
-| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Phase 6 wires the Plan-A `EvaluationRule` and (when needed) Plan-B `kpi-workbook.bicep` + `alerts.bicep` if SPEC § 9 has KPIs |
+| [**threadlight-deploy**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-deploy/) | Coordinate the consuming project's deployment and preserve its actual evaluation evidence contract |
 | [**threadlight-event-triggers**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-event-triggers/) | Owns the `aca-job-cron` scaffold the **Plan B** loop runs on |
 | [**threadlight-hitl-patterns**](https://github.com/aiappsgbb/threadlight-skills/tree/main/skills/threadlight-hitl-patterns/) | Writes the `case_audit` records the **Plan B** loop reads for custom KPI computation |
 | [**foundry-hosted-agents**](../foundry-hosted-agents/) | App Insights connection on Foundry account is prerequisite for both plans |
-| [**foundry-assert**](../foundry-assert/) | Use the `responsibleai/ASSERT` community evaluator framework when Foundry built-ins don't cover your assertion shape (custom rubrics, multi-step reasoning checks, domain-specific graders); pairs with `foundry-evals` two-phase pattern |
-| [**foundry-agent-optimizer**](../foundry-agent-optimizer/) | Wraps the `azd ai agent eval/optimize/apply` loop — feeds `foundry-evals` scores into prompt optimization and applies the winning variant back to the hosted agent |
+| [Official evaluator lifecycle](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/observe/observe.md) | Generate/review custom evaluators and native suites; no `foundry-assert` sibling ships here |
+| [Official Agent Optimizer](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/agent-optimizer/agent-optimizer.md) | Optimize a candidate and re-evaluate before owner-approved deployment; no `foundry-agent-optimizer` sibling ships here |

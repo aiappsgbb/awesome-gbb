@@ -18,7 +18,7 @@ description: >
   KB-only RAG (use foundry-iq), generic hosted-agent runtime (use
   foundry-hosted-agents), cross-resource models (use foundry-cross-resource).
 metadata:
-  version: "2.3.0"
+  version: "2.4.0"
   validated: 2026-08-04
 ---
 
@@ -652,6 +652,43 @@ azd ai toolbox create agent-tools \
 azd ai toolbox show agent-tools --output json
 ```
 
+### Connection lifecycle and CLI management
+
+The CLI supports more than deployment-time creation. Use the bounded extension
+bundle above and inspect the installed subcommand help before mutation:
+
+| Command | Effect |
+|---|---|
+| `azd ai toolbox list` | List existing toolboxes |
+| `azd ai toolbox show <name> --version <version>` | Read the candidate and its version-specific MCP endpoint |
+| `azd ai toolbox versions list <name>` | List immutable versions |
+| `azd ai toolbox connection add <name> <connection>` | Attach an existing project connection in a new version |
+| `azd ai toolbox connection add <name> <search-connection> --index <index>` | Attach one Search index, not a Knowledge Base |
+| `azd ai toolbox connection remove <name> <connection>` | Stage detachment; refuses to leave no tools |
+| `azd ai toolbox publish <name> <version>` | Promote or roll back the default |
+| `azd ai toolbox delete <name> --version <version>` | Delete an unreferenced version after authorization |
+
+Resolve/create the **project connection** first using the appropriate
+[auth recipe](#mcp-auth-flavors-deeper). Record its category, target and
+execution identity without retrieving secrets. `connection add` attaches the
+connection; it does not provision the upstream MCP server, Search index or
+OAuth consent. `RemoteTool`, `CognitiveSearch` and `RemoteA2A` are different
+connection categories, not interchangeable aliases.
+
+Read the current default and references before attaching/detaching. Read back
+the resulting candidate version and confirm the default is unchanged; test its
+version-specific MCP endpoint and consent/approval behavior before explicit
+`publish`. Verify the floating consumer after promotion. Detaching does not
+delete the project connection or revoke upstream credentials. Delete a
+connection only with separate resource-owner approval after checking all users.
+
+The `connection add --from-file` convenience input is for **connections**, not
+arbitrary built-in tools. For a changed built-in tool set, append a complete
+version with the stable SDK, retaining required tools/skills/policies. Do not
+recreate the parent or copy older examples using `toolbox_search_preview` or
+`a2a_preview` as defaults. Keep GA Tool Search and A2A 1.0 in the explicitly
+scoped management cohort documented below.
+
 > **Do not conflate manifest shapes:** `host: azure.ai.toolbox` is the canonical
 > `azure.yaml` service target. `toolbox.yaml` above is the standalone
 > `azd ai toolbox create --from-file` input. A `kind: toolbox` block belongs to
@@ -709,8 +746,11 @@ project.toolboxes.delete_version("agent-tools", "1")
 Numeric version strings are returned and rendered under
 `/versions/{version}`.
 
-> **`azd` only supports CREATE** during deployment. Use the SDK or REST
-> for list / get / promote / delete.
+Deployment creates versions; the standalone CLI also supports inspection,
+connection edits, publication and deletion. See
+[CLI management](#connection-lifecycle-and-cli-management). SDK/REST remains
+appropriate for typed full-version composition and capabilities not exposed
+by the installed extension.
 
 ---
 
@@ -1069,6 +1109,28 @@ Consumer endpoint the agent binds to:
 ```
 {FOUNDRY_ENDPOINT}/api/projects/{PROJ}/toolboxes/agent-tools/mcp?api-version=v1
 ```
+
+### Extract Azure AI Search citations
+
+Search results returned through Toolbox MCP carry citation metadata in
+`structuredContent.documents[]`, **not** a universal `citations` array.
+Each document can expose `title`, `url`, `id` and `score`. Preserve the raw
+result for evidence and display only validated links; never invent URLs from
+document IDs. Empty results are not proof of grounded answering.
+
+**MUST:** use
+[`references/python/search_citations.py`](references/python/search_citations.py)
+for strict title/URL extraction from a normalized MCP result dictionary.
+The helper reports malformed/error envelopes and unsafe URLs instead of
+treating them as a successful empty result. It does not fetch URLs or prove
+that a source supports the answer. Keep the existing text extractor for text
+content, and the consent parser for consent: neither replaces citation parsing.
+
+File Search resource metadata and Web Search annotations use different
+locations. Follow the [Toolbox result schemas](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/toolbox)
+for those tools rather than applying this Search-specific helper to all tools.
+Verify the exact discovered tool name, successful call, real documents and
+at least one title/URL citation in a grounding acceptance test.
 
 ### `code_interpreter` & `file_search` — no user isolation
 
