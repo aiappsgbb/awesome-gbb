@@ -80,6 +80,12 @@ class NavigationClassificationTests(unittest.TestCase):
             body, body.replace("`memory`", LINK), {"memory"}
         ))
 
+    def test_unchanged_html_literal_inside_code_does_not_mask_navigation(self):
+        body = '```python\npattern = "<style[^>]*>.*?</style>"\n```\n> See `memory`.\n'
+        self.assertTrue(MATRIX._linkified_navigation_only(
+            body, body.replace("`memory`", LINK), {"memory"}
+        ))
+
     def test_existing_links_remain_byte_identical(self):
         body = f"> Existing {LINK}.\n> Another `memory`.\n"
         # Conservative when an identical link already exists: do not guess which

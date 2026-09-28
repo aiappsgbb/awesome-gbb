@@ -243,8 +243,6 @@ def _workflow_change_scope(repo_root: Path, base_ref: str) -> str:
 
 def _linkified_navigation_only(before: str, after: str, skill_names: set[str]) -> bool:
     """Accept added documentation links, never changed labels or existing targets."""
-    if re.search(r"<(?:pre|code|script|style|textarea)\b", after, re.IGNORECASE):
-        return False
     reference = re.compile(
         r"\[`([a-z][a-z0-9-]*)`\]\("
         r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/blob/"
@@ -265,6 +263,10 @@ def _linkified_navigation_only(before: str, after: str, skill_names: set[str]) -
                 fence = None
             normalized.append(line)
             continue
+        if fence is None and re.search(
+            r"<(?:pre|code|script|style|textarea)(?:\s|>)", content, re.IGNORECASE
+        ):
+            return False
         heading = re.match(r"^#{1,6}\s+(.*)", line)
         if heading and fence is None:
             title = re.sub(r"^\d+\s*[.·-]?\s*", "", heading[1]).casefold().strip()
