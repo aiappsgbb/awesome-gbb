@@ -55,7 +55,7 @@ CATEGORIES: dict[str, list[str]] = {
         'foundry-doc-vision-speech', 'foundry-observability',
         'foundry-cross-resource', 'foundry-vnet-deploy',
         'foundry-caphost-lifecycle',
-        'foundry-toolbox', 'foundry-skill-catalog', 'foundry-memory',
+        'foundry-toolbox', 'foundry-skill-catalog',
         'foundry-routines',
         'foundry-voice-live', 'foundry-voice-agents',
     ],
@@ -423,6 +423,28 @@ def build(out_dir: pathlib.Path, *, validate: bool) -> int:
             render('skills', f'{s["name"]} — awesome-gbb', detail, f'/skills/{s["name"]}/'),
         )
         html_count += 1
+
+    # Keep existing Memory bookmarks useful without a callable catalog entry.
+    memory_body = (
+        '<h1>foundry-memory has been retired</h1>'
+        '<p>The duplicate GBB skill was removed in catalog 5.0.0. '
+        'Use the Memory workflow inside the official microsoft-foundry skill, '
+        'not a separate foundry-memory skill.</p>'
+        '<p><a href="https://github.com/microsoft/azure-skills/blob/main/'
+        '.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/'
+        'create/references/tools/prompt-agent/tool-memory.md">Official Memory workflow</a>'
+        ' · <a href="https://learn.microsoft.com/azure/foundry/agents/how-to/memory-usage">'
+        'Memory documentation</a></p>'
+        '<p><a href="https://github.com/aiappsgbb/awesome-gbb/blob/main/'
+        'docs/maintenance/foundry-memory-retirement.md">Migration and local installation</a></p>'
+        '<p>Existing Azure resources, application dependencies and Threadlight '
+        'deployment contracts are unchanged.</p>'
+    )
+    total_bytes += _write(
+        out_dir / 'skills' / 'foundry-memory' / 'index.html',
+        render('skills', 'foundry-memory — retired', memory_body, '/skills/foundry-memory/'),
+    )
+    html_count += 1
 
     # Plugins index
     plugins_body = tpl.render_plugins_index(plugins)

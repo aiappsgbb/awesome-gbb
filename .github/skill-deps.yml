@@ -42,8 +42,6 @@ skills:
     depends_on: []
   foundry-iq:
     depends_on: []
-  foundry-memory:
-    depends_on: []
   foundry-toolbox:
     depends_on: []
   # Native Skills package fixture uses neither a prompt agent nor Toolbox.

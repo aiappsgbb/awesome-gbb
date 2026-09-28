@@ -19,7 +19,7 @@ description: >
   MCP server deployment (use foundry-mcp-aca), agent evaluation (use
   foundry-evals), Knowledge Base / retrieval (use foundry-iq).
 metadata:
-  version: "1.1.11"
+  version: "1.1.12"
 ---
 
 # Microsoft Foundry Prompt Agents — Reference Guide
@@ -609,7 +609,7 @@ from azure.ai.projects.models import (
 | Agent evaluation | `foundry-evals` |
 | MAF hosted-agent action governance (not prompt-agent GuardrailTool selection) | `foundry-agt` |
 | Observability & tracing | `foundry-observability` |
-| Memory across sessions | `foundry-memory` |
+| Memory across sessions | [`foundry-memory`](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/tools/prompt-agent/tool-memory.md) |
 | Managed Toolbox and preview Prompt bridge | `foundry-toolbox` |
 | Versioned Skills and resource-aware consumers | `foundry-skill-catalog` |
 | A2A peer-agent invocation | `foundry-toolbox` (`a2a` GA 1.0 versus `a2a_preview` 0.3) |
