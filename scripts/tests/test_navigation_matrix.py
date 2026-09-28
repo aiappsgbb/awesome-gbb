@@ -86,6 +86,20 @@ class NavigationClassificationTests(unittest.TestCase):
             body, body.replace("`memory`", LINK), {"memory"}
         ))
 
+    def test_quote_literal_cannot_close_unquoted_fence(self):
+        body = "```markdown\n> ```\n> See `memory`.\n> ```\n```\n"
+        self.assertFalse(MATRIX._linkified_navigation_only(
+            body, body.replace("`memory`", LINK), {"memory"}
+        ))
+
+    def test_inline_code_and_ambiguous_indented_quotes_stay_live(self):
+        for body in ('> Example: ``run("`memory`")``.\n',
+                     '  > ```markdown\n> See `memory`.\n> ```\n'):
+            with self.subTest(body=body):
+                self.assertFalse(MATRIX._linkified_navigation_only(
+                    body, body.replace("`memory`", LINK), {"memory"}
+                ))
+
     def test_existing_links_remain_byte_identical(self):
         body = f"> Existing {LINK}.\n> Another `memory`.\n"
         # Conservative when an identical link already exists: do not guess which

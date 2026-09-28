@@ -249,16 +249,19 @@ def _linkified_navigation_only(before: str, after: str, skill_names: set[str]) -
         r"[A-Za-z0-9_./-]+\.md\)"
     )
     navigation = False
-    fence: tuple[str, int] | None = None
+    fence: tuple[str, int, int] | None = None
     normalized = []
     for line in after.splitlines(keepends=True):
-        content = re.sub(r"^(?:>[ \t]?)+", "", line)
+        quoted = re.match(r"^(?:>[ \t]?)+", line)
+        quote_depth = quoted[0].count(">") if quoted else 0
+        content = line[quoted.end():] if quoted else line
         marker = re.match(r"^[ \t]{0,3}(`{3,}|~{3,})", content)
         if marker:
             token = marker[1]
             if fence is None:
-                fence = (token[0], len(token))
-            elif (token[0] == fence[0] and len(token) >= fence[1]
+                fence = (token[0], len(token), quote_depth)
+            elif (quote_depth == fence[2]
+                  and token[0] == fence[0] and len(token) >= fence[1]
                   and not content[marker.end():].strip()):
                 fence = None
             normalized.append(line)
@@ -266,6 +269,8 @@ def _linkified_navigation_only(before: str, after: str, skill_names: set[str]) -
         if fence is None and re.search(
             r"<(?:pre|code|script|style|textarea)(?:\s|>)", content, re.IGNORECASE
         ):
+            return False
+        if fence is None and ("``" in content or re.match(r"^[ \t]+>", line)):
             return False
         heading = re.match(r"^#{1,6}\s+(.*)", line)
         if heading and fence is None:
