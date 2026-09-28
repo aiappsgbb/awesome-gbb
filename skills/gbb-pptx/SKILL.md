@@ -1,27 +1,32 @@
 ---
 name: gbb-pptx
 description: >
-  Generate professional PowerPoint (PPTX) presentations using python-pptx
-  (the AI Apps GBB dark/light pitch-deck generator).
+  Plan, review and generate content-first PowerPoint (PPTX) presentations.
+  Build audience-specific arguments, evidence-backed messages and storyboards
+  before rendering with python-pptx; preserve approved content and existing themes.
   USE FOR: create PowerPoint, generate PPTX, make slide deck, build presentation,
   convert markdown to slides, pitch deck, report as PPTX, create slides,
-  gbb-pptx, gbb deck, dark-themed deck.
-  DO NOT USE FOR: editing existing PPTX files (use the upstream `pptx` skill),
-  PDF generation, Google Slides.
+  gbb-pptx, gbb deck, dark-themed deck, slide content, presentation storyline,
+  presentation content audit, executive briefing, technical presentation,
+  training slides, evidence review, speaker notes, slide storyboard.
+  DO NOT USE FOR: direct editing of existing PPTX files (use `pptx` for file
+  operations; use this skill for editorial review), PDF generation, Google Slides.
 metadata:
-  version: "2.0.1"
+  version: "2.1.0"
 ---
 
 # GBB PPTX Deck Generator Skill
 
 > **Renamed from `pptx` in v2.0.0** to avoid name collision with the upstream
-> Anthropic-style `pptx` skill (which focuses on reading/editing existing
-> `.pptx` files via markitdown). This GBB variant generates fresh
+> Anthropic-style `pptx` skill (which also creates presentations and supports
+> reading/editing existing `.pptx` files). This GBB variant generates fresh
 > dark/light-themed pitch decks from Markdown using `python-pptx`. Both can
 > coexist at user scope — invoke this one with the `gbb-pptx` / "GBB deck" /
 > "dark-themed deck" trigger phrases.
 
-Generate professional, dark-themed PowerPoint (PPTX) presentations using `python-pptx`.
+Build a presentation worth following before making a PowerPoint worth looking at.
+Use `python-pptx` for new files; retain the dark/light presets and generation
+patterns below. Content quality is not established by a valid file or attractive slides.
 
 ## When to Use
 
@@ -30,8 +35,14 @@ Invoke this skill when the user asks to:
 - Generate a slide deck
 - Convert markdown content into slides
 - Build a pitch deck or report as PPTX
+- Audit slide content, improve a storyline, or revise specific messages
+- Prepare an executive briefing, technical explanation, training or read-ahead
 
 ## Prerequisites
+
+Editorial work needs only accessible source material, not a Python installation.
+For file generation, use an available `python-pptx` environment; install only
+when missing and permitted by the host:
 
 ```bash
 pip install python-pptx
@@ -39,9 +50,93 @@ pip install python-pptx
 
 ## How It Works
 
-1. **Define slide content** — either from user instructions or by reading a markdown file
-2. **Generate a Python script** using the patterns below
-3. **Run the script** to produce the `.pptx` file
+Choose the smallest path that meets the request. Reuse existing decisions;
+do not repeat discovery or impose a questionnaire.
+
+| Request | Path |
+|---|---|
+| Audit or plan only | Inspect content and report slide-specific findings; do not rewrite files or render. |
+| Targeted revision | Preserve unaffected slides and approved meaning; review changed claims and adjacent transitions. |
+| New deck or substantial rewrite | Brief -> evidence -> storyline -> storyboard -> editorial review -> generation -> delivery check. |
+| Render approved content | Preserve wording, facts and sources; proceed to generation. Flag material contradictions rather than silently rewriting. |
+
+For an existing deck, use `pptx` to extract text, notes and relevant visuals.
+Text extraction alone can miss a chart's message or image-only slide; mark such
+content unreviewed until inspected. This skill owns editorial decisions, not
+in-place PPTX manipulation. Do not run two generators against the same output.
+
+### Establish the brief
+
+Identify the audience, what they already know, their main question, and what
+they should understand, decide or be able to do afterwards. Record duration,
+language, source material, required content and delivery mode: **live talk**,
+**standalone reading**, or both. Ask only material unanswered questions.
+Label assumptions; do not invent audience research or decision authority.
+
+A live slide supports a speaker; a read-ahead must explain itself. If both are
+needed, derive two views from the same content, not one compromise with hidden
+essential context. Honor the user's requested scope and output format.
+
+### Build the argument
+
+Read [content planning](references/content.md) for new storylines and
+[evidence rules](references/evidence.md) when using factual claims or data.
+Start from the audience's question, inspect the material, then formulate a
+provisional central message. Test it against contrary evidence. Change or
+qualify the message when the evidence disagrees; do not cherry-pick support.
+
+Choose a structure for the actual purpose: decision, explanation, persuasion,
+training or update. Write a title-only storyline before laying out slides.
+Each step must answer a relevant question and connect to the next. Source
+document headings are not automatically slide boundaries.
+
+### Draft the storyboard
+
+Use [the storyboard template](templates/storyboard.md), or equivalent fields
+in an existing brief. Keep one content source of truth, not duplicate manifests.
+For each substantive slide, specify its role, message, support, implication,
+material caveat, source and placement between slide, notes and appendix.
+See [worked examples](references/examples.md) for concrete rewrites.
+
+Prefer message titles over topic labels when making an argument. The title
+must not claim more than its support. Cover slides, agendas, questions and
+exercises need not pretend to be factual assertions. One coherent message can
+require several facts; do not enforce three bullets, ten slides or a word quota.
+
+Choose a chart, diagram, comparison, example or text because it explains the
+message. A decorative icon is not evidence. Keep claims intelligible to the
+audience: define unfamiliar terms, show mechanisms, give concrete examples.
+Never manufacture metrics, quotations, testimonials or citations to fill a slide.
+
+### Review before rendering
+
+Apply [editorial and delivery review](references/review.md). Check the title
+sequence for gaps and repetition, each claim against its evidence, and whether
+important objections, alternatives and limits remain visible. Estimate timing
+including explanation, demos and discussion; label estimates until rehearsed.
+
+If sources are insufficient, identify the missing proof and its consequence.
+Offer a qualified draft or targeted evidence request, not a fabricated conclusion.
+Reuse prior approvals. For substantial new direction, settle material open
+decisions before expensive rendering; an authorized end-to-end request does not
+need a second routine approval gate. Audit-only work stops at findings.
+
+### Generate and verify
+
+Generate a Python script using the patterns below, then produce the `.pptx`.
+Use approved branding; presets are options, not reasons to change the content.
+Do not shrink away readability or silently drop qualifications to fit a layout.
+Split or restructure overloaded slides while preserving the argument.
+
+Reopen the generated file and compare its text, chart/table values and notes
+with the storyboard. Verify numbers, sources and material caveats survived.
+Inspect rendered slides for readability, clipping and misleading visual emphasis
+when a renderer is available. A successful import is not visual QA. If rendering
+or application opening is unavailable, report that limitation explicitly.
+
+Deliver the requested artifact, not internal review chatter inside the deck.
+State material unresolved content or delivery limitations. For editorial-only
+requests, a reviewed storyboard is the output; do not generate an unwanted file.
 
 ## Core Patterns
 
@@ -148,6 +243,12 @@ def add_notes(slide, text):
 > **Do not** humanize slide bullets or titles — those need to stay punchy
 > and parallel; the humanizer's section-aware mode skips them by default.
 
+For content-first decks, notes should explain rather than simply repeat the
+slide. Put the full source locator and optional spoken transition here, but keep
+qualifications that change the headline's meaning on the slide itself.
+If applying `gbb-humanizer`, restrict it to prose: preserve sources, numbers,
+uncertainty and quotations. Recheck meaning afterwards.
+
 ### Save with Lock Detection
 
 ```python
@@ -163,6 +264,9 @@ prs.save(out)
 ```
 
 ## Theme Presets
+
+These are optional rendering presets. Follow an existing brand or explicit user
+choice; content review does not require a theme change.
 
 ### Dark Navy (ThreadLight style)
 ```python
@@ -188,6 +292,10 @@ MUTED   = RGBColor(0x60, 0x60, 0x60)
 ```
 
 ## Slide Layout Recipes
+
+These recipes are rendering starting points, not narrative structures. A layout,
+decorative accent or three-item example does not determine what must be said.
+For live projection, adapt text size to the actual room and viewing distance.
 
 ### Title Slide
 - Accent bar at ~30% from top
@@ -223,7 +331,7 @@ MUTED   = RGBColor(0x60, 0x60, 0x60)
 - Font hierarchy: Title 28-48pt → Heading 16-20pt → Body 12-15pt → Caption 10-11pt
 - Use `word_wrap = True` on all text frames
 - Keep text boxes slightly taller than needed to prevent clipping
-- Test with `python -c "from pptx import Presentation; ..."` to validate
+- Reopen with `python-pptx` for file integrity; also perform the content and rendered checks above
 - For locked files (open in PowerPoint), auto-version the output filename
 
 ## Example: Complete Slide
@@ -244,6 +352,32 @@ text_box(slide, 1.4, 5.65, 10.5, 0.7,
 add_notes(slide, "Speaker notes with source links here")
 prs.save("output.pptx")
 ```
+
+This is a mechanical rendering example, not a content-quality exemplar. Replace
+its placeholders with reviewed storyboard content; use the worked examples for
+message, evidence and caveat choices.
+
+## Validation boundaries
+
+The [acceptance scenarios](tests/scenarios.md) exercise editorial decisions;
+automated contract checks do not prove model behavior or audience comprehension.
+Preserve the historical generation check in
+[the validation record](references/last_validated.yaml). Do not claim a
+before/after improvement on a real deck without the original and an observed
+comparison. Source changes are not automatic installation or release.
+
+## Reference map
+
+Load only the relevant reference; do not read every file for a two-slide edit.
+
+| Reference | Use |
+|---|---|
+| [Content planning](references/content.md) | Audience questions, narrative choices and content allocation |
+| [Evidence](references/evidence.md) | Provenance, calculations, uncertainty and research basis |
+| [Examples](references/examples.md) | Before/after rewrites with reasoning and limits |
+| [Review](references/review.md) | Editorial checks, severity and post-render preservation |
+| [Storyboard](templates/storyboard.md) | Reusable minimal content contract |
+| [Acceptance scenarios](tests/scenarios.md) | Behavioral probes and actual-output acceptance |
 
 ## See Also
 

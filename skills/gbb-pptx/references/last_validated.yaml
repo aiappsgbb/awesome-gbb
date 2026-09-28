@@ -1,9 +1,22 @@
 # Freshness tier C — internal IP, no upstream to track.
-# Manual validation only: verify python-pptx code samples produce
-# valid PPTX files with correct formatting.
-last_validated: "2026-05-27"
-validated_by: ricchi
+# Local contract and synthetic rendering checks are not audience acceptance.
+last_validated: "2026-09-28"
+validated_by: copilot-bot
 validation_notes: |
-  Skill authored in-house. Key dependency: python-pptx.
-  Validated by generating a test deck and opening in PowerPoint.
-  Next validation due: 180 days from last_validated.
+  Historical generation check (2026-05-27): the author generated a test
+  deck and opened it in PowerPoint.
+  Version 2.1.0 (2026-09-28): 12 local packaging/instruction tests passed,
+  plus catalog lint, plugin integrity and generated-site link checks.
+  All 11 Python code blocks remain byte-identical to the prior 2.0.1 source.
+  A four-slide synthetic decision storyboard was generated with the existing
+  patterns using python-pptx 1.0.2 and reopened: exact titles, body text,
+  visible caveats, source footer and speaker notes were preserved.
+  LibreOffice rendered the file to PDF; independent review of all four slide
+  images found no material visual blockers and noted small, low footers.
+  The source footers were enlarged and moved up; all four slides were rendered
+  again and visually rechecked for readable sources, caveats and unclipped text.
+  This is an author-driven local smoke, not a fresh consumer-session execution
+  of the seven behavioral scenarios. Those scenarios, a real-deck comparison,
+  representative-reader acceptance and updated native skill loading remain
+  unverified. Native PowerPoint opening was not repeated for this version.
+  No Azure resources are needed. No global installation or release is implied.
