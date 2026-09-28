@@ -136,6 +136,49 @@ class JobsReuseTests(unittest.TestCase):
             with self.assertRaisesRegex(reuse.ReuseError, "RUN_TARGET_ALREADY_EXISTS"):
                 reuse.check(self.config, absent=True)
 
+    def test_registry_failure_reports_only_allowlisted_observed_fields(self):
+        cases = (
+            ("roleAssignmentMode", "AbacRepositoryPermissions",
+             "mismatched:AbacRepositoryPermissions", "matched:false"),
+            ("adminUserEnabled", True, "matched:LegacyRegistryPermissions", "mismatched:true"),
+            ("roleAssignmentMode", None, "unknown", "matched:false"),
+            ("adminUserEnabled", "SECRET_CANARY", "matched:LegacyRegistryPermissions", "unknown"),
+            ("adminUserEnabled", 0, "matched:LegacyRegistryPermissions", "unknown"),
+            ("roleAssignmentMode", {"token": "SECRET_CANARY"}, "unknown", "matched:false"),
+        )
+        for field, value, mode, admin in cases:
+            data = copy.deepcopy(self.data)
+            data["registry"]["properties"][field] = value
+            data["registry"]["properties"]["credentials"] = "SECRET_CANARY"
+            with self.subTest(field=field, value=value), self.assertRaises(reuse.ReuseError) as raised:
+                reuse.validate(self.config, data)
+            self.assertEqual(str(raised.exception),
+                             f"REGISTRY_CONTRACT roleAssignmentMode={mode} adminUserEnabled={admin}")
+            self.assertNotIn("SECRET_CANARY", str(raised.exception))
+            self.assertNotIn(self.config["registry"], str(raised.exception))
+
+    def test_registry_missing_fields_are_not_assumed_disabled_or_legacy(self):
+        for field in ("roleAssignmentMode", "adminUserEnabled"):
+            data = copy.deepcopy(self.data)
+            del data["registry"]["properties"][field]
+            with self.subTest(field=field), self.assertRaisesRegex(reuse.ReuseError, f"{field}=missing"):
+                reuse.validate(self.config, data)
+
+    def test_invalid_registry_prevents_target_checks_and_staging(self):
+        data = copy.deepcopy(self.data)
+        data["registry"]["properties"]["adminUserEnabled"] = True
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(reuse, "observations", return_value=data), \
+                 patch.object(reuse, "get") as get, patch.object(reuse, "cli") as cli, \
+                 self.assertRaisesRegex(reuse.ReuseError, "adminUserEnabled=mismatched:true"):
+                reuse.prepare(project, self.config)
+            get.assert_not_called()
+            cli.assert_not_called()
+            self.assertFalse((project / "ci-reuse.json").exists())
+            self.assertFalse((project / "ci-run-owned.json").exists())
+            self.assertFalse((project / "infra/main.bicep").exists())
+
     def manifest(self):
         return {"config_sha256": hashlib.sha256(json.dumps(self.config, sort_keys=True).encode()).hexdigest(),
                 "absent_before": {key: rid for key, (rid, _) in reuse.owned(self.config).items()},

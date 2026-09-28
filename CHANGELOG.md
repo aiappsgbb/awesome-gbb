@@ -18,6 +18,11 @@
   contracts; remove unsupported claims of an existing downstream import.
 - Local schema and regression checks are not live Azure acceptance. No Memory
   skill, Routines workflow, dependency cohort or installed runtime is changed.
+- Correct the existing Auth consumer's execution-not-inspection instructions,
+  retain one canonical five-record Toolbox archive before PASS, and report
+  allowlisted Jobs registry-preflight field states without changing its
+  acceptance predicate or any shared registry setting. No marker, approval,
+  anonymous-auth oracle or resource-ownership gate is relaxed.
 
 ## 5.0.0 — Proposed / Unreleased
 
