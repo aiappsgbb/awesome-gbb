@@ -8,6 +8,11 @@ Do whatever the skill tells you to do. Do NOT improvise from training-data
 knowledge of the Azure SDK — read the skill's `SKILL.md` first, and follow
 its documented contract.
 
+**CRITICAL — never invoke `copilot` recursively from a Bash tool.**
+You are the running consumer. Execute the steps directly; do not launch another
+Copilot process, install Copilot, or overwrite the workflow-owned transcript.
+Never edit tracked source/tests to recover from a failure.
+
 ---
 
 ## Step 0 — Auth context (show, do not assert)
@@ -30,6 +35,21 @@ marker (Step 2) with reason `auth context missing: <var-name>` and stop.
 ---
 
 ## Step 1 — The goal
+
+First exercise the documented constructors in the exact declared SDK cohort.
+Run these commands from the workspace; use the same interpreter for the live
+smoke below. A model import or wire-shape failure is a failure, not permission
+to upgrade the SDK or alter the tests.
+
+```bash
+python3 -m venv .scratch/foundry-prompt-agents/sdk24
+.scratch/foundry-prompt-agents/sdk24/bin/python -m pip install -r skills/foundry-prompt-agents/tests/requirements.txt
+.scratch/foundry-prompt-agents/sdk24/bin/python -m unittest discover -s skills/foundry-prompt-agents/tests -v
+```
+
+These offline checks cover tool construction, not live Fabric/Work IQ/browser
+access. Do not provision those dependencies or claim their live acceptance as
+part of this classifier smoke.
 
 Using the `foundry-prompt-agents` skill, build a prompt agent that
 classifies inbound customer-support messages into one of three categories:

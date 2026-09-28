@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — foundation capability gaps
+
+- `foundry-prompt-agents` MINOR **1.1.12 → 1.2.0**: tool prerequisites and
+  connection setup; SDK 2.4 Preview model names/wire shapes; unsupported
+  GuardrailTool correction; distinguish legacy publication from current endpoints.
+  Preserve structured inputs and the runtime pin.
+- `foundry-toolbox` MINOR **2.3.0 → 2.4.0**: connection/CLI lifecycle and strict
+  Search citation extraction. Preserve GA Tool Search, A2A 1.0, consent and
+  approval boundaries; no parent recreation or management-cohort upgrade.
+- `foundry-skill-catalog` MINOR **2.1.0 → 2.2.0**: safe CLI onboarding,
+  declarative-publication boundary and consumer-specific approval workflow.
+  Preserve unpromoted immutable staging, history and pinned consumers.
+- `foundry-evals` MINOR **1.4.2 → 1.5.0**: native lifecycle/curation/optimizer
+  handoffs, valid enriched JSON, explicit continuous-monitoring ownership and
+  an honest application-owned Plan B. Preserve executable scoring/output
+  contracts; remove unsupported claims of an existing downstream import.
+- Local schema and regression checks are not live Azure acceptance. No Memory
+  skill, Routines workflow, dependency cohort or installed runtime is changed.
+
 ## 5.0.0 — Proposed / Unreleased
 
 - Retire `foundry-memory` from the active plugin, freshness pins and consumer

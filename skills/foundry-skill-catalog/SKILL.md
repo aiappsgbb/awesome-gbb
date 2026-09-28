@@ -16,7 +16,7 @@ description: >
   (use foundry-toolbox), file-system SkillsProvider wiring (use
   foundry-hosted-agents), generic hosted-agent runtime.
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # Foundry Skills Catalog — Reference Guide
@@ -379,6 +379,47 @@ and ZIP update support. Inspect the installed command's help and use the pinned
 SDK `create_from_files` for non-destructive version append. Never use
 `azd ai skill create --force` as an update: documented builds delete the parent
 and all versions before recreating it.
+
+### CLI onboarding and approval workflow
+
+Use the bounded Foundry extension bundle documented by
+[`foundry-toolbox`](../foundry-toolbox/SKILL.md#deploy-with-azure-developer-cli).
+Resolve the existing project context before any command; do not let a default
+subscription or another agent root choose the destination.
+
+| Intent | Command / boundary |
+|---|---|
+| Inspect existing catalog | `azd ai skill list`, then `azd ai skill show <name>` |
+| Create a **new** skill | `azd ai skill create <name> --file ./skills/<name>/SKILL.md` |
+| Retrieve a reviewed immutable version | `azd ai skill download <name> --version <version>` into a clean caller-owned directory |
+| Stage changed content | Use the SDK `create` / `create_from_files` above with `default=False`; CLI upload/update can promote automatically |
+| Promote or roll back | `azd ai skill update <name> --set-default-version <version>`, then read back |
+| Attach a pin | `azd ai toolbox skill add <toolbox> <name>@<version>`; inspect/test the resulting Toolbox version before publishing |
+| Inspect/detach | `azd ai toolbox skill list <toolbox>` / `azd ai toolbox skill remove <toolbox> <name>` |
+
+The declarative `host: azure.ai.skill` service is useful for **new development
+catalogs**, but deployment is a publication operation, not an unpromoted staging
+guarantee. Follow the current [azure.yaml reference](https://learn.microsoft.com/azure/foundry/agents/concepts/azure-yaml-reference)
+and inspect the installed extension's schema before using it. For an existing
+versioned catalog keep the explicit SDK staging/promotion workflow; do not
+replace it with delete-first provisioning or a force-create batch.
+
+For resource-aware consumers, keep the Python MCP provider's default
+`load_skill` approval enabled. Present the skill name, pinned version, body
+provenance and intended action to the reviewer. Resume only the matching
+pending approval through that consumer's supported continuation mechanism.
+A denial must not become approval on retry; resource/script execution requires
+its own approval. Do not send a Responses `mcp_approval_response` to a MAF
+function-approval request: the protocols differ. When using a native MCP
+approval request, correlate its exact request ID and original response/session.
+`trusted_skill_loading=True` remains an explicit reviewed-body exception,
+not a general bypass for scripts or untrusted instructions.
+
+The official [Foundry Skills sample README](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/12-foundry-skills)
+locates the implementation under
+`src/agent-framework-agent-foundry-skills-responses/`, not root `main.py`.
+Its legacy `create_from_package`/delete-first provisioning is not compatible
+with this skill's immutable-history contract; use the canonical helpers here.
 
 ## Verified end-to-end
 
