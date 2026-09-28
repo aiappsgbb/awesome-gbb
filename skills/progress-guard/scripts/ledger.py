@@ -46,6 +46,25 @@ def coordination_fields(state):
         if not valid(state["declared_limits"], list):
             raise ValueError("declared_limits requires a text list of supplied limits and sources")
         result["declared_limits"] = state["declared_limits"]
+    if "approvals" in state:
+        approvals = state["approvals"]
+        fields = ("decision_id", "operation", "target", "effect", "mandate_ref",
+                  "request_ref", "result", "evidence", "reopen_if")
+        if not isinstance(approvals, list) or any(
+                not isinstance(record, dict)
+                or any(not valid(record.get(key), str) for key in fields)
+                for record in approvals):
+            raise ValueError("approvals requires records with nonempty text: " + ", ".join(fields))
+        identifiers, scopes = set(), set()
+        for record in approvals:
+            if record["result"] not in ("authorized", "pending", "unavailable", "denied", "revoked"):
+                raise ValueError("approvals result must record authorized, pending, unavailable, denied or revoked")
+            scope = tuple(record[key] for key in ("operation", "target", "effect"))
+            if record["decision_id"] in identifiers or scope in scopes:
+                raise ValueError("approvals requires unique decision IDs and operation/target/effect scopes")
+            identifiers.add(record["decision_id"])
+            scopes.add(scope)
+        result["approvals"] = approvals
     if "blocker_scope" in result:
         scope = result["blocker_scope"]
         if set(scope["blocks"]) & set(scope["does_not_block"]):

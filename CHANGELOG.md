@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — progress-guard approval reconciliation
+
+- `progress-guard` MINOR **1.3.0 → 1.4.0**: reconcile the current mandate and
+  scoped operation before asking; preserve actual decisions/unavailability across
+  recovery without reopening unchanged questions or inferring new permission.
+- Optional approval records use the existing ledger and terminal output cap.
+  Eight executable data-contract cases and controlled, unexecuted behavior trials
+  distinguish persistence from agent compliance. No automatic authorization.
+
 ## 4.37.0 — Proposed / Unreleased
 
 - Add [`foundry-voice-agents`](skills/foundry-voice-agents/SKILL.md) **1.0.0**:

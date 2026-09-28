@@ -1,5 +1,5 @@
 # Freshness tier C: original protocol and standard-library persistence helper.
-last_validated: "2026-09-25"
+last_validated: "2026-09-28"
 validated_by: copilot
 validation_notes: |
   Local persistence tests and catalog checks are recorded separately from
@@ -12,4 +12,6 @@ validation_notes: |
   coverage, not observed App multi-session enforcement.
   Optional scale-out fields have scripted state/output coverage, not independent
   verification of ownership, capacity, authorization or proof validity.
+  Approval records have scoped-identity/result/persistence coverage; actual
+  question suppression, mandate interpretation and native compaction are unproven.
   No Azure connection, deployment, external service, hooks or watchers required.

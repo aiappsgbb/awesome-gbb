@@ -152,6 +152,52 @@ in `pending_operations`/the scope record across compaction even when other work
 completes. Shorten evidence pointers if a terminal packet exceeds 4 KiB; never drop
 the blocked scope or unresolved handle to make it fit.
 
+## Optional approval records
+
+For an actual approval boundary, reuse `decision` and `avoid` with scoped evidence.
+If several decisions must survive together, optional `state.approvals` is a list
+of current records, one per operation/target/effect. No new table or mandatory
+workflow is introduced. The helper preserves this list in terminal handoffs under
+the same 4 KiB cap; absent/empty records remain valid.
+
+```json
+{
+  "approvals": [{
+    "decision_id": "publish-increment-b",
+    "operation": "publish",
+    "target": "artifact-b@revision-b to staging",
+    "effect": "replace staging artifact; no production release",
+    "mandate_ref": "user-message: current implementation scope",
+    "request_ref": "approval-request: staging publication",
+    "result": "unavailable",
+    "evidence": "request returned unavailable; no user answer",
+    "reopen_if": "user replies or target/effect/mandate materially changes"
+  }]
+}
+```
+
+All fields are nonempty strings; `result` is `authorized`, `pending`,
+`unavailable`, `denied` or `revoked`. For an explicit mandate that already covers
+the operation, `request_ref` points to that user instruction, not an invented
+additional question. `evidence` references the actual answer or tool outcome,
+not an assistant's belief. Record narrowing/revocation by appending an event
+with an updated snapshot; old events retain the prior scope and answer.
+
+Decision IDs and literal `(operation, target, effect)` tuples must each be unique
+within a snapshot. Reuse the ID for paraphrased requests about unchanged scope;
+use a different scoped record for a different target/increment. The helper checks
+shape and duplicate declared identities only. It does not interpret natural
+language, resolve aliases, verify user identity, infer coverage, enforce
+transitions or issue permission. Native SQL callers follow the same contract but
+do not inherit CLI-only checks. `read` remains an unchanged recovery path.
+
+Pending/unavailable/denied/revoked decisions still needed for this assignment
+belong in `blocker`/`blocker_scope`; retain unrelated records without globally
+blocking authorized work. Keep UNKNOWN in `pending_operations` regardless of
+approval status. Missing records are missing evidence, never implied permission.
+When the packet exceeds its cap, shorten references without dropping unanswered
+decisions or safety boundaries. See [reconciliation](children.md#reconcile-approval-before-asking).
+
 ## Read
 
 ```sql

@@ -19,7 +19,7 @@ class ProgressGuardPackagingTests(unittest.TestCase):
         self.assertTrue(text.startswith("---\nname: progress-guard\ndescription: >\n"))
         metadata = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(metadata), {"name", "description", "metadata"})
-        self.assertEqual(metadata["metadata"]["version"], "1.3.0")
+        self.assertEqual(metadata["metadata"]["version"], "1.4.0")
         self.assertTrue(200 <= len(metadata["description"]) <= 1024)
         self.assertIn("USE FOR:", metadata["description"])
         self.assertIn("DO NOT USE FOR:", metadata["description"])
@@ -36,6 +36,10 @@ class ProgressGuardPackagingTests(unittest.TestCase):
         self.assertIn("deny concurrent writes to the same target", children)
         self.assertIn("Duplicate or\nunchanged notices cause no message", children)
         self.assertIn("healthy long build is not expired", children)
+        self.assertIn("Reconcile approval before asking", children)
+        self.assertIn("review-only request does not authorize edits", children)
+        self.assertIn("Missing or unavailable\n   reply is not consent", children)
+        self.assertIn("not a token\ngranting permission", children)
         for path in SKILL.rglob("*.md"):
             for link in re.findall(r"\]\(([^)]+)\)", path.read_text(encoding="utf-8")):
                 if "://" not in link:
@@ -53,7 +57,7 @@ class ProgressGuardPackagingTests(unittest.TestCase):
         self.assertIn(record, site["PUBLISHED_DOCS"])
         text = (ROOT / "docs" / record).read_text(encoding="utf-8")
         self.assertIn("not been executed as observed agent trials", text)
-        self.assertIn("1.3.0", text)
+        self.assertIn("1.4.0", text)
         plugin = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))
         self.assertIn(f'## {plugin["version"]}', (ROOT / "CHANGELOG.md").read_text())
 

@@ -1,7 +1,30 @@
 # Progress guard validation
 
-`progress-guard` 1.3.0 is a follow-up candidate to the source merged in PR #516.
+`progress-guard` 1.4.0 is a follow-up candidate to the source merged in PR #521.
 Source availability is not release approval or proof of agent behavior.
+
+## Approval reconciliation candidate
+
+Before asking approval, compare the current user mandate with the exact operation,
+target/increment and material effect. Covered ordinary work proceeds; an uncovered
+effect requires one precise decision whose actual result survives recovery.
+Unavailable replies are not consent and do not justify repeated unchanged asks.
+Revocation, narrowing or changed effects invalidate only affected authority;
+host/tool gates, explicit limits and UNKNOWN reconciliation remain mandatory.
+
+Optional `approvals` records retain scoped decision identity, provenance and result
+in existing snapshots and bounded terminal output. Eight new executable helper
+cases cover explicit-release records, review/new-permission blocks, unavailable
+reply recovery, paraphrases versus different targets, revoked/changed authority
+with unaffected evidence retained, UNKNOWN, invalid records and the byte cap.
+There are **41 ProgressGuard contract cases** (39 bundled and two packaging).
+The helper checks declared data, not authorization truth or semantic equivalence.
+It does not ask questions, grant permission or install an approval platform.
+
+The existing scenario matrix adds controlled approval trials with observable
+expected actions. These have **not been executed as observed agent trials**;
+no native compaction or model evaluation is claimed. Source and CI evidence for
+this candidate belong in its PR, separately from historical results below.
 
 ## Scale-out contract candidate
 

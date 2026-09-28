@@ -82,6 +82,48 @@ a second channel. Runtime completion notifications may still arrive; do not prom
 to suppress them. An explicit status request can be answered once, briefly, without
 rerunning probes merely to refresh the answer.
 
+## Reconcile approval before asking
+
+Use this at an actual authorization boundary, not as paperwork for every short
+task. Read the current user mandate and any relevant existing decision once.
+
+1. Name the intended operation, exact target/increment, material effect and current
+   limits. Compare them with the scope actually authorized, including later
+   narrowing/revocation. Before asking, identify the **new operation, resource or
+   risk not covered**. A phase label is not a new effect.
+2. If covered, continue ordinary implementation, testing, bounded recovery and
+   delivery within that mandate without another executive release question.
+   An explicit end-to-end release can cover its named increment and target;
+   a review-only request does not authorize edits or publication. General
+   implementation never implies any merge, cloud operation or release. Approval
+   of an earlier increment does not automatically cover a later increment.
+3. If genuinely missing, ask **one precise decision** through the required
+   user/tool channel, naming the uncovered effect and what remains blocked.
+   Retain the question's identity, scope, source mandate, request reference and
+   actual result using existing `state`/`decision`/`avoid` or the optional
+   [approval records](storage.md#optional-approval-records). Missing or unavailable
+   reply is not consent. Keep the affected work blocked; independent authorized
+   work can proceed. Do not ask the same question again without changed facts.
+4. On resume/compaction, recover this record before asking again. Match the
+   operation/target/effect, not wording: a paraphrased question about the same
+   release is the same decision; identical words about another target are not.
+   Resolve aliases against the canonical target, not string similarity. Preserve
+   the same decision ID for an unchanged scope, including an unavailable reply.
+5. A new material effect or target requires reconciliation, not permission copied
+   from the nearest prior answer. Revocation/narrowing invalidates only affected
+   authority: append a correction with provenance/reason, preserve history and
+   unaffected decisions. Notify only owners whose next action changes. An actual
+   new decision or changed constraint can justify one focused follow-up; elapsed
+   time, user absence, a new session or paraphrasing cannot.
+
+An `authorized` record is a reference to an actual mandate/answer, **not a token
+granting permission**. Check that source and current scope before relying on it.
+Host/tool/human confirmations remain mandatory even when high-level intent is
+clear; do not resubmit a tool to evade its approval gate. UNKNOWN effects still
+require reconciliation before replay, an exhausted recovery stays exhausted and
+explicit retry/spend/time limits remain binding. Never relabel an uncertain
+operation as an authorized retry to make a blocked assignment complete.
+
 ## Compact handoff
 
 One packet per changed terminal boundary, not a transcript. Aim for about 200 words

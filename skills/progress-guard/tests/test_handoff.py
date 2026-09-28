@@ -404,6 +404,137 @@ class HandoffTests(unittest.TestCase):
         stored = self.run_cli("read", "--work", "child-task", "--recent", "0")
         self.assertEqual(json.loads(stored.stdout)["state"], self.state)
 
+    def approval(self, **updates):
+        return {
+            "decision_id": "release-a", "operation": "publish",
+            "target": "artifact-a@v1 to staging", "effect": "replace staging artifact",
+            "mandate_ref": "user: publish artifact-a v1 end-to-end to staging",
+            "request_ref": "same explicit user mandate; no extra question",
+            "result": "authorized", "evidence": "user-message-a: explicit staging release",
+            "reopen_if": "target, effect or current mandate materially changes",
+            **updates,
+        }
+
+    def test_explicit_release_record_retains_source_without_new_question(self):
+        self.state["approvals"] = [self.approval()]
+        self.append()
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(packet["approvals"], self.state["approvals"])
+        self.assertEqual(packet["approvals"][0]["request_ref"],
+                         "same explicit user mandate; no extra question")
+        self.assertNotIn("permission_granted", packet)
+
+    def test_review_only_and_new_permission_remain_scoped_blocks(self):
+        for revision, reason in enumerate(("review-only mandate", "new production effect"), 1):
+            self.state.update(
+                status="needs_decision", blocker=reason,
+                blocker_scope={"blocks": ["publish"], "does_not_block": ["review"]},
+                approvals=[self.approval(result="pending", mandate_ref=reason,
+                                         request_ref="request: permit named publication?",
+                                         evidence="request outstanding; no answer")],
+            )
+            self.append(revision, kind="observation")
+            packet = json.loads(self.report().stdout)
+            self.assertEqual(packet["status"], "needs_decision")
+            self.assertEqual(packet["approvals"][0]["result"], "pending")
+            self.assertEqual(packet["blocker_scope"]["does_not_block"], ["review"])
+
+    def test_unavailable_reply_survives_snapshot_recovery_without_reasking(self):
+        self.state.update(
+            status="needs_decision", blocker="No reply to staging publication request",
+            approvals=[self.approval(result="unavailable",
+                                     request_ref="request-a", evidence="request-a unavailable")],
+        )
+        self.append(kind="observation")
+        before = self.db.read_bytes()
+        for _ in range(2):
+            recovered = self.run_cli("read", "--work", "child-task", "--recent", "0")
+            state = json.loads(recovered.stdout)["state"]
+            self.assertEqual(state["approvals"], self.state["approvals"])
+            self.assertEqual(json.loads(self.report().stdout)["approvals"], state["approvals"])
+        self.assertEqual(before, self.db.read_bytes())
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM progress_guard_events").fetchone()[0], 1)
+
+    def test_paraphrase_is_duplicate_scope_but_identical_words_can_target_another_release(self):
+        first = self.approval()
+        self.state["approvals"] = [first, self.approval(
+            decision_id="another-id", request_ref="paraphrased request, same scope")]
+        self.assertIn("unique", self.append(succeeds=False).stderr)
+        self.state["approvals"] = [first, self.approval(
+            decision_id="release-b", target="artifact-b@v2 to staging",
+            result="pending", evidence="no authorization for increment-b")]
+        self.append()
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(len(packet["approvals"]), 2)
+        self.assertEqual(packet["approvals"][1]["result"], "pending")
+
+    def test_revocation_narrowing_and_new_effect_preserve_unaffected_authority_and_history(self):
+        first = self.approval()
+        independent = self.approval(decision_id="review-b", operation="review",
+                                    target="artifact-b@v2", effect="read-only",
+                                    mandate_ref="user: review b", evidence="user-message-b")
+        self.state["approvals"] = [first, independent]
+        self.append()
+        self.state.update(
+            status="blocked", blocker="User narrowed release scope",
+            blocker_scope={"blocks": ["publish-a"], "does_not_block": ["review-b"]},
+            approvals=[self.approval(result="revoked", evidence="user-message-c: review only now"),
+                       independent,
+                       self.approval(decision_id="new-effect", effect="publish to production",
+                                     result="pending", evidence="new effect not in mandate")],
+        )
+        self.append(2, kind="correction")
+        packet = json.loads(self.report().stdout)
+        self.assertEqual(packet["approvals"][1], independent)
+        self.assertEqual(packet["approvals"][0]["result"], "revoked")
+        with closing(sqlite3.connect(self.db)) as db:
+            old = json.loads(db.execute(
+                "SELECT state FROM progress_guard_events WHERE revision=1").fetchone()[0])
+            self.assertEqual(old["approvals"][0], first)
+
+    def test_authorized_record_cannot_clear_unknown_operation(self):
+        self.state.update(approvals=[self.approval()],
+                          pending_operations=[{"handle": "publish-a", "status": "unknown",
+                                               "lookup": "read target before any replay"}])
+        self.append()
+        result = self.report()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Complete handoff requires", result.stderr)
+        recovered = self.run_cli("read", "--work", "child-task", "--recent", "0")
+        self.assertEqual(json.loads(recovered.stdout)["state"]["pending_operations"],
+                         self.state["pending_operations"])
+
+    def test_approval_shapes_results_and_ids_fail_explicitly(self):
+        baseline = copy.deepcopy(self.state)
+        bad = [
+            "authorized",
+            [self.approval(result="assumed")],
+            [self.approval(evidence="")],
+            [self.approval(), self.approval(target="different-target")],
+        ]
+        for value in bad:
+            self.state = dict(baseline, approvals=value)
+            self.assertIn("approvals", self.append(succeeds=False).stderr)
+        self.state = dict(baseline, approvals=[])
+        self.append()
+        self.assertEqual(json.loads(self.report().stdout)["approvals"], [])
+        self.state = baseline
+        self.append(2)
+        self.assertNotIn("approvals", json.loads(self.report().stdout))
+
+    def test_approval_records_cannot_evade_terminal_byte_cap(self):
+        self.state["approvals"] = [self.approval(evidence="x" * 4096)]
+        self.append()
+        result = self.report()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("4096 UTF-8 bytes", result.stderr)
+        recovered = self.run_cli("read", "--work", "child-task", "--recent", "0")
+        self.assertEqual(json.loads(recovered.stdout)["state"]["approvals"],
+                         self.state["approvals"])
+
 
 if __name__ == "__main__":
     unittest.main()

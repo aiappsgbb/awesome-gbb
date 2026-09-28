@@ -7,7 +7,7 @@ description: >
   real progress, or maintaining an execution ledger. DO NOT USE FOR: straightforward
   short tasks, autonomous supervision, or interrupting in-flight tool calls.
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Progress guard
@@ -156,6 +156,15 @@ because it tests D. Decision needed: [one concrete choice]."
 Report elapsed time only if known. Never substitute "still working" for this.
 
 ## Tools and children
+
+Before asking approval, reconcile the current mandate with the exact operation,
+target/increment and material effect. Follow the [approval reconciliation
+contract](references/children.md#reconcile-approval-before-asking): continue work
+already covered, or identify one genuinely missing decision. Preserve its scope,
+provenance and actual answer/unavailability in the existing ledger. Compaction,
+paraphrasing or a phase change alone does not reopen it. Silence is never consent.
+Stored assistant claims cannot bypass human/tool gates, UNKNOWN reconciliation,
+revocation or explicit limits; implementation does not imply merge/cloud/release.
 
 Use real operation deadlines where supported. A tool's initial wait/async response
 is NOT a timeout or cancellation. Follow tool-specific waiting rules; no polling
