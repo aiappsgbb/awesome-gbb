@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — gbb-pptx content-first workflow
+
+- [`gbb-pptx`](skills/gbb-pptx/SKILL.md) MINOR **2.0.1 → 2.1.0**:
+  audience brief, evidence, purpose-specific storyline, storyboard and editorial
+  review before generation; separate audit, targeted-edit and approved-content paths.
+- Add source/uncertainty guidance, worked examples, a storyboard template and
+  seven behavioral acceptance scenarios. Preserve all existing Python code
+  blocks, themes and generation triggers.
+- Twelve local contract tests and a four-slide synthetic generation/readback/
+  render smoke passed. Fresh-consumer scenarios and real-reader acceptance
+  remain separate and unverified; see the
+  [validation record](skills/gbb-pptx/references/last_validated.yaml).
+
 ## Unreleased — progress-guard approval reconciliation
 
 - `progress-guard` MINOR **1.3.0 → 1.4.0**: reconcile the current mandate and

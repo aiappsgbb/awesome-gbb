@@ -92,8 +92,8 @@ Skills are agnostic Markdown contracts — they load in any runtime that underst
 >
 > - **`threadlight-design`** — the seller pitch + spec generator (its primary home).
 > - **`ip-catalog`** — read-only MCP discovery of the GBB IP catalog.
-> - **`gbb-pptx`** — pitch-deck generator (works as long as `python-pptx` is
->   available in the Cowork Python sandbox).
+> - **`gbb-pptx`** — content planning and editorial review work on accessible
+>   text; PPTX generation also requires `python-pptx` in the Cowork Python sandbox.
 > - **`gbb-humanizer`** — pure prose-polish pass over `overview.html`,
 >   prep-guide, demo script, or speaker notes (text-only, no shell needed).
 >
@@ -202,7 +202,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 | Skill | Description |
 |-------|-------------|
 | [**web-experience-design**](skills/web-experience-design/) | **Merged source; release pending:** task-first web experiences for reports, comparisons, catalogs, tools and sites. Content and navigation before styling; meaningful icons/motion; real-content wireframes and browser task evidence. No mandatory theme, stack or external generator. [Output acceptance pending](docs/maintenance/web-experience-design-validation.md). |
-| [**gbb-pptx**](skills/gbb-pptx/) | Generate professional PowerPoint presentations using python-pptx — dark & light themes, card layouts, bullet lists, speaker notes. (Renamed from `pptx` in v2.0.0 to avoid collision with the upstream Anthropic `pptx` skill.) |
+| [**gbb-pptx**](skills/gbb-pptx/) | Plan, review and generate content-first presentations: audience, storyline, evidence, storyboard and editorial checks before python-pptx rendering. Supports executive, technical, training and read-ahead content; retains dark/light themes and speaker notes. |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
 ### 🧬 Org Composition & Zava Workspace
