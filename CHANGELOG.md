@@ -23,6 +23,9 @@
   allowlisted Jobs registry-preflight field states without changing its
   acceptance predicate or any shared registry setting. No marker, approval,
   anonymous-auth oracle or resource-ownership gate is relaxed.
+- The Jobs registry GET uses the documented 2025-11-01 schema to read
+  `roleAssignmentMode`; the older 2023-07-01 schema does not expose that
+  prerequisite. Missing/unknown fields still fail closed; no registry mutation.
 
 ## 5.0.0 — Proposed / Unreleased
 

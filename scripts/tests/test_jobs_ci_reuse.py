@@ -157,6 +157,19 @@ class JobsReuseTests(unittest.TestCase):
             self.assertNotIn("SECRET_CANARY", str(raised.exception))
             self.assertNotIn(self.config["registry"], str(raised.exception))
 
+    def test_registry_get_uses_schema_that_exposes_role_assignment_mode(self):
+        with patch.object(reuse, "cli", return_value=self.data["registry"]) as cli:
+            self.assertEqual(
+                reuse.get(self.config, self.config["registry"], reuse.VERSIONS["registry"]),
+                self.data["registry"],
+            )
+        cli.assert_called_once_with(
+            self.config,
+            ["rest", "--method", "get", "--url",
+             f"https://management.azure.com{self.config['registry']}?api-version=2025-11-01"],
+            absent=False,
+        )
+
     def test_registry_missing_fields_are_not_assumed_disabled_or_legacy(self):
         for field in ("roleAssignmentMode", "adminUserEnabled"):
             data = copy.deepcopy(self.data)

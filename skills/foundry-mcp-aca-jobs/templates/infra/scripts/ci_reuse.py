@@ -47,7 +47,7 @@ TYPES = {
 }
 VERSIONS = {"group": "2022-09-01", "environment": "2024-03-01",
             "app_identity": "2023-01-31", "worker_identity": "2023-01-31",
-            "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2023-07-01"}
+            "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2025-11-01"}
 JOB_ACTIONS = {"Microsoft.App/jobs/read", "Microsoft.App/jobs/start/action",
                "Microsoft.App/jobs/execution/read", "Microsoft.App/jobs/executions/read",
                "Microsoft.App/jobs/stop/execution/action"}
