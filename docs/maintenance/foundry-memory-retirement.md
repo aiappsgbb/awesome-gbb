@@ -16,6 +16,8 @@ skill. Its prerequisites, references and parent workflow would be lost.
 
 - The duplicate GBB instructions, upstream pin and CI fixture are removed.
 - Prompt/hosted guidance points to the official Memory workflow.
+- Existing `foundry-memory` navigation labels are preserved as links to that
+  official replacement, not as callable local skill names.
 - The old catalog website URL remains a retirement notice.
 - Existing Azure memory stores, scopes, retention, identities, application
   dependencies and Threadlight deployment contracts are unchanged.

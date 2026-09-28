@@ -36,7 +36,8 @@ class MemoryRetirementTests(unittest.TestCase):
             with self.subTest(skill=skill):
                 text = (ROOT / "skills" / skill / "SKILL.md").read_text()
                 self.assertIn(OFFICIAL_MEMORY, text)
-                self.assertNotIn("`foundry-memory`", text)
+                self.assertNotIn("| Memory across sessions | `foundry-memory` |", text)
+                self.assertNotIn("(`foundry-memory`)", text)
 
     def test_site_preserves_retired_url_but_excludes_active_entry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

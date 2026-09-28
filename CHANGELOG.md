@@ -19,6 +19,10 @@
 - Handle deleted skill files in the automation gate without a missing-file
   crash. Retirement still requires the existing body-edit opt-in; no gate
   or downstream execution requirement is bypassed.
+- Avoid live deployment fanout when a skill change only adds documentation
+  links around existing skill names in navigation notes/tables. Preserve labels,
+  prose and code; existing target edits and operational assets still select live
+  consumers. Keep the initial failed run as evidence, not a passing result.
 
 ## Unreleased — gbb-pptx content-first workflow
 

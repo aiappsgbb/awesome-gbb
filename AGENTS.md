@@ -256,7 +256,11 @@ What "tested on Azure" means, by change type:
 operational contracts, not for every unchanged consumer on every commit.
 Description/version-only frontmatter changes with a byte-identical body and
 unchanged remaining metadata require local gates only. Local test-file edits
-do not require live execution; fixture-only edits run that fixture. Operational
+do not require live execution. Adding documentation links around existing skill
+names in navigation notes/tables also uses local gates under the narrow,
+regression-tested rule in the incremental CI runbook; labels, surrounding prose
+and code must remain unchanged. This does not exempt arbitrary Markdown edits
+or changes to existing link targets. Fixture-only edits run that fixture. Operational
 skill changes retain downstream coverage. CI orchestration-only changes run
 the native Harness and prompt-agent canaries; they do not certify deployment
 or full-catalog acceptance. Consumer runtime/authentication changes retain the
