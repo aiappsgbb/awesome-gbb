@@ -242,6 +242,28 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(len(errs), 1)
             self.assertIn("chars", errs[0])
 
+    def test_skill_retirement_requires_body_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(gate, "REPO_ROOT", pathlib.Path(tmp)), \
+             mock.patch.object(gate, "file_at_revision", return_value=make_skill_md()):
+            files = ["skills/x/SKILL.md", "skills/x/references/upstream-pin.md"]
+            errors = gate.gate_skill_md_body(files, set(), "origin/main")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("[skill-rewrite]", errors[0])
+            self.assertEqual(
+                gate.gate_skill_md_body(files, {"[skill-rewrite]"}, "origin/main"), []
+            )
+            self.assertEqual(
+                gate.gate_patch_only_for_metadata_diff(files, set(), "origin/main"), []
+            )
+            self.assertEqual(gate.gate_description_length(files, "origin/main"), [])
+
+    def test_missing_skill_with_empty_body_is_still_retirement(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(gate, "REPO_ROOT", pathlib.Path(tmp)), \
+             mock.patch.object(gate, "file_at_revision", return_value=make_skill_md().split("Body")[0]):
+            self.assertTrue(gate.skill_md_body_changed("origin/main", "skills/x/SKILL.md"))
+
 
 class AuditTagTests(unittest.TestCase):
     """Spec 2026-05-30 §9.2: [audit-2026-Q2] tag enables multi-skill +

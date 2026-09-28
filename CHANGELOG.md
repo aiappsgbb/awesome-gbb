@@ -16,6 +16,9 @@
   Azure plugin. See the [migration note](docs/maintenance/foundry-memory-retirement.md).
 - Existing memory stores, application code, Threadlight and Azure resources
   are not migrated or removed by this catalog change.
+- Handle deleted skill files in the automation gate without a missing-file
+  crash. Retirement still requires the existing body-edit opt-in; no gate
+  or downstream execution requirement is bypassed.
 
 ## Unreleased — gbb-pptx content-first workflow
 
