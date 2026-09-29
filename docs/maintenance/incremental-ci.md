@@ -120,6 +120,12 @@ observed reporting on PRs. Never put a path filter on that required aggregate.
 - `FAIL THROTTLED`: inspect measured shared capacity before widening parallelism.
 - `FAIL CLI_RESPONSE` or `FAIL RESPONSE_CONTRACT`: compare the pinned CLI,
   provider protocol and actual configuration. Do not expand success matching.
+- `FAIL TIMEOUT <reason>`: the same 90-second driver deadline remains enforced.
+  The probe classifies partial output in memory as a fixed auth, throttle,
+  backend, network or CLI code; `OUTPUT_PRESENT` / `NO_OUTPUT` means no known
+  signature was available. It never logs the captured payload. A late PONG
+  after termination is still failure; classification does not authorize a
+  retry, provider switch or credential/quota change.
 - `NATIVE_CI_PREFLIGHT=FAIL` or AgentOps approval failure: supply the exact
   authorized prerequisites. A successful driver probe does not supply them.
 - A consumer failure after these gates is still a real investigation target.

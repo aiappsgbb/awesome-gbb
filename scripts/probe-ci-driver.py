@@ -17,6 +17,29 @@ COMMAND = (
 )
 
 
+def failure_reason(text: str) -> str | None:
+    if "HTTP 401" in text or "HTTP 403" in text:
+        return "AUTH"
+    if "429" in text or "Too Many Requests" in text:
+        return "THROTTLED"
+    lower = text.lower()
+    if "unknown option" in lower or "unrecognized option" in lower:
+        return "CLI_ARGUMENTS"
+    if "unable to get resource information" in lower:
+        return "BACKEND_RESOURCE"
+    if any(code in text for code in ("CAPIError: 500", "HTTP 500", "HTTP 502", "HTTP 503")):
+        return "BACKEND_5XX"
+    if any(code in text for code in ("ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "CERT_HAS_EXPIRED")):
+        return "NETWORK"
+    if "Cannot find module" in text or "ERR_MODULE_NOT_FOUND" in text:
+        return "CLI_RUNTIME"
+    return None
+
+
+def captured_text(value: str | bytes | None) -> str:
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+
+
 def probe() -> str:
     env = {
         **os.environ,
@@ -33,29 +56,27 @@ def probe() -> str:
         return "FAIL CLI_START"
     try:
         stdout, stderr = process.communicate(timeout=90)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as timeout:
+        partial = captured_text(timeout.output) + captured_text(timeout.stderr)
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         try:
-            process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired as cleanup_timeout:
+            partial += captured_text(cleanup_timeout.output) + captured_text(cleanup_timeout.stderr)
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.communicate()
-        return "FAIL TIMEOUT"
+            stdout, stderr = process.communicate()
+        # Classify in memory only; even truncated CLI output can contain secrets.
+        partial += captured_text(stdout) + captured_text(stderr)
+        reason = failure_reason(partial) or ("OUTPUT_PRESENT" if partial.strip() else "NO_OUTPUT")
+        return f"FAIL TIMEOUT {reason}"
     if process.returncode:
-        text = stdout + stderr
-        if "HTTP 401" in text or "HTTP 403" in text:
-            return "FAIL AUTH"
-        if "429" in text or "Too Many Requests" in text:
-            return "FAIL THROTTLED"
-        if "unknown option" in text.lower() or "unrecognized option" in text.lower():
-            return "FAIL CLI_ARGUMENTS"
-        return "FAIL CLI_RESPONSE"
+        return f"FAIL {failure_reason(stdout + stderr) or 'CLI_RESPONSE'}"
     if stdout.strip() != "PONG":
         return "FAIL RESPONSE_CONTRACT"
     return "PASS"
