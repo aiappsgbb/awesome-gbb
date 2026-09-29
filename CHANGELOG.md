@@ -30,6 +30,10 @@
   preflight and identical initial/retry consumer environments. Validate before
   network access and compare exact metadata; never infer Auth scope from the
   Jobs client ID or log the supplied values. No secret values or grants change.
+- Select Auth plus normal changed consumers for the exact complete additive
+  Auth-only expected-binding workflow contract. Any other execution delta,
+  partial/modified binding or ambiguous YAML remains conservative/full;
+  scheduled/manual coverage and all acceptance gates remain unchanged.
 
 ## 5.0.0 — Proposed / Unreleased
 
