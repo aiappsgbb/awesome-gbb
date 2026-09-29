@@ -9,6 +9,9 @@ not an unnecessary rewrite of the entire deck.
 | Check | Question | Repair |
 |---|---|---|
 | Audience fit | Can this audience understand the terms and see why the message matters? | Add necessary context or a concrete example; remove irrelevant detail |
+| Audience confirmation | Was audience/depth supplied by the user, brief or authorized coordinator? | Resolve missing/conflicting direction before finalizing a new storyline; do not re-ask settled questions |
+| Complete-deck framing | Does a new complete deck have a cover, framing, development and meaningful closing? | Add the missing role or combine it deliberately; do not inflate an excerpt or targeted edit |
+| Cover metadata | Are presentation date and speaker/team confirmed or explicitly omitted? | Ask for missing facts; do not substitute the generation date or invented attribution |
 | Storyline | Do titles form a reasoned sequence that resolves the opening question? | Expose missing premises, reorder, merge redundant slides |
 | Slide contribution | What is lost if this slide is removed? | Give it a distinct role or remove it while preserving required content |
 | Evidence fit | Does the source actually support the title at this strength and scope? | Qualify the title, find the missing proof or omit the unsupported claim |
@@ -51,6 +54,18 @@ Inspect rendered pages for clipping, text overlap, reading size, contrast,
 chart-label clarity and unintended emphasis. If a rendering or opening tool is
 unavailable, distinguish successful file parsing from unverified visual output.
 Source text extraction is not proof that every text box is visible.
+
+For the optional [browser-first path](browser-first.md), also compare the
+exported deck with its approved browser rendering. Check slide count after
+animation/click expansion, fonts and text wrapping, note/source preservation,
+and which objects remain editable. Exercise a representative required edit
+(for example, change a heading or table cell) in the target application when
+available; mere text extraction is not proof of useful editability.
+If only XML inspection is possible, report structural evidence separately from
+unverified application behavior. A browser screenshot or image-only PPTX cannot
+certify native editability. Unapproved rasterization of required editable
+content blocks delivery; use a permitted fallback or obtain an explicit change
+to the output contract.
 
 For revisions, compare the approved content and required facts before/after,
 not just slide count. An aesthetic change that loses meaning is a regression.

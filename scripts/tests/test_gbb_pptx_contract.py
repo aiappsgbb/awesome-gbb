@@ -25,7 +25,7 @@ class GbbPptxContractTests(unittest.TestCase):
         data = yaml.safe_load(text.split("---", 2)[1])
         self.assertEqual(set(data), {"name", "description", "metadata"})
         self.assertEqual(data["name"], SKILL.name)
-        self.assertEqual(data["metadata"]["version"], "2.1.0")
+        self.assertEqual(data["metadata"]["version"], "2.2.0")
         description = data["description"]
         self.assertGreaterEqual(len(description), 200)
         self.assertLessEqual(len(description), 1024)
@@ -66,6 +66,7 @@ class GbbPptxContractTests(unittest.TestCase):
         text = read("SKILL.md")
         headings = (
             "### Establish the brief", "### Build the argument",
+            "### Give a complete deck a beginning and an ending",
             "### Draft the storyboard", "### Review before rendering",
             "### Generate and verify", "## Core Patterns",
         )
@@ -166,8 +167,8 @@ class GbbPptxContractTests(unittest.TestCase):
 
     def test_scenarios_have_observable_expectations_without_pass_claims(self) -> None:
         text = read("tests/scenarios.md")
-        self.assertEqual(len(re.findall(r"^## Case \d+:", text, re.MULTILINE)), 7)
-        self.assertEqual(text.count("**Reject:**"), 7)
+        self.assertEqual(len(re.findall(r"^## Case \d+:", text, re.MULTILINE)), 12)
+        self.assertEqual(text.count("**Reject:**"), 12)
         self.assertIn("not passing results", text)
         self.assertIn("actual file", text)
         self.assertIn("remain separate", text)
@@ -177,6 +178,89 @@ class GbbPptxContractTests(unittest.TestCase):
         self.assertIn("content planning and editorial review", text)
         self.assertIn("storyline, evidence, storyboard and editorial checks", text)
         self.assertFalse((SKILL / "test-fixture" / "consumer_prompt.md").exists())
+
+    def test_complete_deck_defaults_preserve_small_scope_exceptions(self) -> None:
+        text = " ".join(read("SKILL.md").split())
+        for phrase in (
+            "cover -> introduction/framing -> development -> wrap-up/closing",
+            "presentation date and speaker or team attribution",
+            "not a fixed number of slides",
+            "short deck can combine roles",
+            "Do not prepend a cover to an excerpt",
+            "targeted revision",
+            "wrap-up may itself be the closing slide",
+            "optional backup material after the main closing",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_cover_metadata_is_confirmed_not_invented(self) -> None:
+        text = " ".join(read("references/content.md").split())
+        self.assertIn("substitute generation date for event date", text)
+        self.assertIn("Do not infer identity from the machine account", text)
+        self.assertIn("user-approved omissions", text)
+        self.assertIn("Draft content work can proceed", text)
+        self.assertIn("Cover metadata:", read("templates/storyboard.md"))
+
+    def test_audience_confirmation_reuses_authorized_handoff(self) -> None:
+        text = " ".join(read("SKILL.md").split())
+        self.assertIn("user or session coordinator", text)
+        self.assertIn("handoff counts as confirmation; do not ask again", text)
+        self.assertIn("ask one focused question", text)
+        self.assertIn("keep the outline provisional", text)
+        self.assertIn("Technical does not automatically mean more slides", text)
+        template = read("templates/storyboard.md")
+        self.assertIn("Confirmed depth:", template)
+        self.assertIn("Confirmation source:", template)
+
+    def test_browser_path_is_optional_and_requires_early_export_proof(self) -> None:
+        text = " ".join(read("references/browser-first.md").split())
+        self.assertIn("not a bundled HTML-to-PPTX converter", text)
+        self.assertIn("direct `python-pptx` path remains the default", text)
+        self.assertIn("record its actual version", text)
+        self.assertLess(text.index("## Prove export early"), text.index("## Iterate in the browser"))
+        self.assertIn("discrete fixed-size slide canvases", text)
+        self.assertIn("Wait for fonts, images and charts", text)
+        self.assertIn("storyboard as the content source of truth", text)
+        self.assertIn("(references/browser-first.md)", read("SKILL.md"))
+
+    def test_conversion_never_silently_discards_output_requirements(self) -> None:
+        text = " ".join(read("references/browser-first.md").split())
+        for phrase in (
+            "Never silently rasterize required editable content",
+            "Native PowerPoint objects", "Hybrid",
+            "masters/layouts", "notes are lost",
+            "Render/open the PPTX itself, not the HTML again",
+            "required edits in the target application",
+            "does not preserve presenter notes",
+            "Verify availability in the exact installed release",
+            "not a general mapping of arbitrary HTML/CSS",
+            "Do not upload confidential",
+        ):
+            self.assertIn(phrase, text)
+        review = " ".join(read("references/review.md").split())
+        self.assertIn("Unapproved rasterization of required editable content blocks delivery", review)
+        self.assertIn("report structural evidence separately", review)
+
+    def test_model_selection_is_neutral_and_not_an_automatic_switch(self) -> None:
+        text = " ".join(read("references/browser-first.md").split())
+        self.assertIn("Keep this skill model-neutral", text)
+        self.assertIn("do not turn it into a universal quality ranking", text)
+        self.assertIn("silently switch the session's model", text)
+        self.assertIn("Separate model effects from workflow effects", text)
+        self.assertIn("no GPT/Opus benchmark", text)
+
+    def test_new_scenarios_probe_decisions_not_keyword_success(self) -> None:
+        text = read("tests/scenarios.md")
+        for phrase in (
+            "## Case 8: Complete deck", "## Case 9: Audience confirmation",
+            "## Case 10: Same material", "## Case 11: Browser preview",
+            "## Case 12: Model preference",
+            "Its browser\npreview looks excellent",
+            "one material audience/depth question",
+            "images in PPTX are acceptable",
+            "automatic doubling of slide",
+        ):
+            self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":

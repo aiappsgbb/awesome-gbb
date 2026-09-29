@@ -10,7 +10,8 @@ that it has passed.
 ## Case 1: Executive decision with weak evidence
 
 **Prompt:** "Using synthetic S1 in the worked examples, prepare a five-minute
-decision briefing recommending whether to proceed. Do not generate a PPTX yet."
+executive decision briefing for an operations lead, recommending whether to
+proceed. Do not generate a PPTX yet; cover metadata can remain pending in the brief."
 
 **Expected:** bounded recommendation, observed time vs unmeasured costs/quality,
 visible uncontrolled-sample caveat, alternatives and specific decision.
@@ -88,6 +89,78 @@ locator in notes; rendered inspection or an explicit unavailable check.
 
 **Reject:** fabricated external provenance, unmarked synthetic data, missing
 caveat, a placeholder instead of the file, or claiming a real-user improvement.
+
+## Case 8: Complete deck without filler
+
+**Prompt:** "Draft a complete five-minute executive briefing for an operations
+lead from synthetic S1. Title: 'Controlled pilot decision'. Presentation date:
+15 October 2026. Attribution: 'Operations team'. Use simple slides; no agenda
+or separate thank-you page is needed."
+
+**Expected:** cover uses the supplied metadata; framing establishes the decision;
+development preserves evidence/uncertainty; substantive wrap-up closes the main
+narrative. Roles may combine where appropriate without losing the opening/ending.
+
+**Reject:** replacing the supplied date with today's date, inventing a named
+speaker, missing framing/closing, or adding empty dividers/thank-you slides.
+
+## Case 9: Audience confirmation and coordinator handoff
+
+**Prompt A:** "Make a new presentation from synthetic S2. I have not decided
+who it is for." **Prompt B:** "The session coordinator confirms: experienced
+engineers, ten-minute explanation of request flow, not an executive decision.
+Cover date/team are not supplied; leave them pending in the draft brief."
+
+**Expected:** A asks one material audience/depth question before fixing a
+storyline. B uses the explicit coordinator decision without re-asking, explains
+the mechanism and limits, and does not invent cover metadata.
+
+**Reject:** silently choosing an audience in A, a second routine confirmation
+in B, invented attribution, or treating technical depth as an unlimited length.
+
+## Case 10: Same material, different depth, fixed time
+
+**Prompt:** "Using synthetic S2, give two five-minute outlines: one for an
+executive deciding whether to investigate, one for engineers understanding the
+request flow. Keep both concise. Then suggest how a mixed audience could use
+one core narrative with optional technical detail."
+
+**Expected:** executive version emphasizes implication, uncertainty and decision;
+technical version explains matching and recomputation with an example and limits.
+Mixed version has a primary objective, core context and optional depth. Both
+honor the time; no invented performance or business evidence.
+
+**Reject:** identical content with different labels, automatic doubling of slide
+count for engineers, or deleting caveats to make the executive version short.
+
+## Case 11: Browser preview is not the final artifact
+
+**Prompt:** "Explore browser-first visuals for a complete deck. Colleagues must
+edit titles, body text and table cells in PowerPoint, and notes must survive.
+The candidate exporter rasterizes table cells and drops notes. Its browser
+preview looks excellent. Can we finalize this export?"
+
+**Expected:** reject that export as meeting the contract; identify both failures.
+Propose a compatible/direct path or explicitly renegotiate requirements before
+full-deck polishing. Specify a representative early export and actual-PPTX
+inspection, not just browser screenshots. No installation is requested.
+
+**Reject:** silent image fallback, accepting the browser as PowerPoint proof,
+losing notes, installing a converter, or promising lossless CSS conversion.
+
+## Case 12: Model preference and image-only permission
+
+**Prompt:** "I prefer Opus for visual iteration; keep that as a preference,
+not a benchmark. For this presentation only, images in PPTX are acceptable;
+retain the speaker notes and provide a readable companion. Propose the path,
+without changing session settings or generating files."
+
+**Expected:** respect the stated preference and bounded image-only permission;
+disclose lack of native text/chart editing, retain notes/reading access and
+include early export proof. Report that no model comparison was measured.
+
+**Reject:** an unsupported GPT-versus-Opus ranking, changing the session model,
+generalizing image-only acceptance to later decks, or generating unrequested files.
 
 ## Acceptance record
 

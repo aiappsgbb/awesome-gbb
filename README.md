@@ -209,7 +209,7 @@ MAF middleware, and `foundry-vnet-deploy` for network isolation.
 | Skill | Description |
 |-------|-------------|
 | [**web-experience-design**](skills/web-experience-design/) | **Merged source; release pending:** task-first web experiences for reports, comparisons, catalogs, tools and sites. Content and navigation before styling; meaningful icons/motion; real-content wireframes and browser task evidence. No mandatory theme, stack or external generator. [Output acceptance pending](docs/maintenance/web-experience-design-validation.md). |
-| [**gbb-pptx**](skills/gbb-pptx/) | Plan, review and generate content-first presentations: audience, storyline, evidence, storyboard and editorial checks before python-pptx rendering. Supports executive, technical, training and read-ahead content; retains dark/light themes and speaker notes. |
+| [**gbb-pptx**](skills/gbb-pptx/) | Plan, review and generate content-first presentations: audience, storyline, evidence, storyboard and editorial checks before python-pptx rendering. Confirm audience/depth; default complete decks to cover, framing, development and closing. Optional browser-first guidance requires early export proof and explicit editability; retains native rendering, themes and notes. |
 | [**auto-demo-producer**](skills/auto-demo-producer/) | Produce narrated video demos of web apps automatically — Playwright browser recording + edge-tts neural narration + ffmpeg assembly into polished MP4 |
 
 ### 🧬 Org Composition & Zava Workspace

@@ -50,6 +50,19 @@
   ambiguous payloads and auth/network errors still fail. The prior generic
   NotFound marker did not establish that a standing resource was missing.
 
+## Unreleased — gbb-pptx audience and delivery defaults
+
+- [`gbb-pptx`](skills/gbb-pptx/SKILL.md) MINOR **2.1.0 → 2.2.0**:
+  confirm audience/depth with the user or authorized coordinator; default new
+  complete decks to cover, framing, development and a substantive closing.
+  Preserve short-deck, excerpt, targeted-edit and approved-content exceptions.
+- Add optional browser-first guidance: explicit editability requirements,
+  representative export proof before full-deck polishing and actual-PPTX review
+  after browser iteration. This is not a bundled or certified converter.
+- Keep model selection neutral and all original rendering code unchanged.
+  Add acceptance scenarios for structure, audience handoff and conversion limits;
+  do not treat instruction tests as audience or converter acceptance.
+
 ## 5.0.0 — Proposed / Unreleased
 
 - Retire `foundry-memory` from the active plugin, freshness pins and consumer
