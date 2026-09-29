@@ -1,6 +1,7 @@
 """Driver readiness is not consumer acceptance; probe failures reveal no payloads."""
 
 import importlib.util
+import json
 from pathlib import Path
 import signal
 import subprocess
@@ -15,7 +16,10 @@ SPEC.loader.exec_module(PROBE)
 
 
 class DriverProbeTests(unittest.TestCase):
-    def run_probe(self, stdout="PONG\n", stderr="", status=0):
+    def run_probe(self, stdout=None, stderr="", status=0):
+        if stdout is None:
+            stdout = json.dumps({"type": "assistant.message", "data": {"content": "PONG"}}) + "\n"
+            stdout += json.dumps({"type": "result", "exitCode": 0}) + "\n"
         process = Mock(returncode=status, pid=12345)
         process.communicate.return_value = (stdout, stderr)
         with patch.object(PROBE.subprocess, "Popen", return_value=process) as launch:
@@ -49,6 +53,8 @@ class DriverProbeTests(unittest.TestCase):
         _, process, launch = self.run_probe()
         self.assertIn("--no-custom-instructions", PROBE.COMMAND)
         self.assertIn("--no-ask-user", PROBE.COMMAND)
+        self.assertIn("--output-format", PROBE.COMMAND)
+        self.assertEqual(PROBE.COMMAND[PROBE.COMMAND.index("--output-format") + 1], "json")
         self.assertIn("--disable-builtin-mcps", PROBE.COMMAND)
         self.assertNotIn("--allow-all-tools", PROBE.COMMAND)
         process.communicate.assert_called_once_with(timeout=90)
@@ -124,6 +130,35 @@ class DriverProbeTests(unittest.TestCase):
         with patch.object(PROBE.subprocess, "Popen", return_value=process), \
              patch.object(PROBE.os, "killpg"):
             self.assertEqual(PROBE.probe(), "FAIL TIMEOUT BACKEND_RESOURCE")
+
+    def test_structured_exact_pong_requires_one_clean_completed_response(self):
+        pong = {"type": "assistant.message", "data": {"content": "PONG"}}
+        done = {"type": "result", "exitCode": 0}
+        invalid = (
+            [pong], [done], [pong, pong, done], [pong, done, done],
+            [pong, {"type": "result", "exitCode": 1}],
+            [pong, {"type": "session.error", "data": {"message": "SECRET"}}, done],
+            [pong, {"type": "tool.execution_start", "data": {}}, done],
+            [{"type": "assistant.message", "data": {"content": "PONG extra"}}, done],
+            [{"type": "assistant.message", "data": {"content": "PONG", "toolRequests": ["x"]}}, done],
+        )
+        for items in invalid:
+            with self.subTest(items=items):
+                text = "\n".join(json.dumps(item) for item in items)
+                self.assertEqual(self.run_probe(stdout=text)[0], "FAIL RESPONSE_CONTRACT")
+        self.assertEqual(self.run_probe(stdout=json.dumps(pong)+"\n"+json.dumps(done)+"\nSECRET")[0],
+                         "FAIL RESPONSE_CONTRACT")
+
+    def test_timeout_uses_only_fixed_structured_phase_labels(self):
+        for event, expected in (
+            ({"type": "session.start", "data": {"private": "SECRET"}}, "SESSION_STARTED"),
+            ({"type": "assistant.turn_start"}, "MODEL_TURN_STARTED"),
+            ({"type": "assistant.message_delta", "data": {"deltaContent": "SECRET"}}, "RESPONSE_STARTED"),
+            ({"type": "session.info", "data": {"infoType": "model_retry", "message": "SECRET"}}, "MODEL_RETRY"),
+        ):
+            text = json.dumps(event) + "\n" + '{"truncated":"SECRET'
+            with self.subTest(expected=expected):
+                self.assertEqual(PROBE.timeout_phase(text), expected)
 
 
 if __name__ == "__main__":
