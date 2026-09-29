@@ -177,6 +177,21 @@ class JobsReuseTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(reuse.ReuseError, f"{field}=missing"):
                 reuse.validate(self.config, data)
 
+    def test_prepare_failure_retains_safe_code_for_archived_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with patch.object(sys, "argv", ["ci_reuse.py", "prepare", "--project", tmp, "--run-id", "abcdef12"]), \
+                 patch.dict(reuse.os.environ, environment()), \
+                 patch.object(reuse, "prepare", side_effect=reuse.ReuseError("STANDING_JOB_OPERATOR")):
+                self.assertEqual(reuse.main(), 1)
+            self.assertEqual(reuse.load(project / "ci-preflight-failure.json"),
+                             {"status": "BLOCKED", "stage": "prepare", "code": "STANDING_JOB_OPERATOR"})
+        for error in (ValueError("SECRET_CANARY"), reuse.ReuseError("SECRET_CANARY\nhttps://private.example")):
+            self.assertEqual(reuse.failure_code(error), type(error).__name__)
+        fixture = (ROOT / "skills/foundry-mcp-aca-jobs/test-fixture/consumer_prompt.md").read_text()
+        self.assertIn('fail "standing reuse preflight blocked: $preflight_code"', fixture)
+        self.assertIn('"$PROJECT_DIR/ci-preflight-failure.json"', fixture)
+
     def test_invalid_registry_prevents_target_checks_and_staging(self):
         data = copy.deepcopy(self.data)
         data["registry"]["properties"]["adminUserEnabled"] = True

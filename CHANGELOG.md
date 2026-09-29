@@ -34,6 +34,10 @@
   Auth-only expected-binding workflow contract. Any other execution delta,
   partial/modified binding or ambiguous YAML remains conservative/full;
   scheduled/manual coverage and all acceptance gates remain unchanged.
+- Make the Prompt classifier smoke a canonical SDK program with activated
+  pinned venv, sanitized failures and verified cleanup; stop on tool denials
+  instead of inventing credential/REST fallbacks. Preserve sanitized Jobs
+  preflight failure codes in the archived marker rather than collapsed output.
 
 ## 5.0.0 — Proposed / Unreleased
 
