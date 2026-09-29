@@ -385,6 +385,8 @@ jobs:
           NATIVE_SMOKE_SKILL: ${{ matrix.skill }}
           MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED }}
           MCP_AUTH_SMOKE_ENDPOINT: ${{ secrets.MCP_AUTH_SMOKE_ENDPOINT }}
+          MCP_AUTH_SMOKE_ISSUER: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ISSUER || '' }}
+          MCP_AUTH_SMOKE_SCOPE: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}
           MCP_AUTH_APP_CLIENT_ID: ${{ secrets.MCP_AUTH_APP_CLIENT_ID }}
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
           MCP_ACA_JOBS_STORAGE_ACCOUNT_URL: ${{ secrets.MCP_ACA_JOBS_STORAGE_ACCOUNT_URL }}
@@ -654,6 +656,8 @@ jobs:
           # Owner-supplied reachability inputs, never inferred from the Jobs app.
           MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED || '' }}
           MCP_AUTH_SMOKE_ENDPOINT: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ENDPOINT || '' }}
+          MCP_AUTH_SMOKE_ISSUER: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ISSUER || '' }}
+          MCP_AUTH_SMOKE_SCOPE: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}
           # Required only for the foundry-mcp-aca-jobs fixture; other matrix
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}
@@ -1007,6 +1011,8 @@ jobs:
           # Owner-supplied reachability inputs, never inferred from the Jobs app.
           MCP_AUTH_NETWORK_SMOKE_APPROVED: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_NETWORK_SMOKE_APPROVED || '' }}
           MCP_AUTH_SMOKE_ENDPOINT: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ENDPOINT || '' }}
+          MCP_AUTH_SMOKE_ISSUER: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_ISSUER || '' }}
+          MCP_AUTH_SMOKE_SCOPE: ${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}
           # Required only for the foundry-mcp-aca-jobs fixture; other matrix
           # legs leave these values unused.
           MCP_ACA_JOBS_COSMOS_ENDPOINT: ${{ secrets.MCP_ACA_JOBS_COSMOS_ENDPOINT }}

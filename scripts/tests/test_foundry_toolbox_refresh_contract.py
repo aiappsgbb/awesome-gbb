@@ -587,12 +587,13 @@ class FoundryToolboxScratchPathContractTests(unittest.TestCase):
             f"the Python smoke program must be authored at {PY_SMOKE_PROGRAM!r}",
         )
 
-    def test_python_smoke_program_is_executed_from_scratch(self) -> None:
+    def test_python_smoke_program_is_executed_from_activated_scratch_venv(self) -> None:
         self.assertRegex(
             self.text,
-            r"/tmp/foundry-toolbox-venv/bin/python\s+[\"']?\$\{GITHUB_WORKSPACE\}/"
+            r"source \"\$\{GITHUB_WORKSPACE\}/\.scratch/foundry-toolbox/venv/bin/activate\"\n"
+            r"python\s+[\"']?\$\{GITHUB_WORKSPACE\}/"
             r"\.scratch/foundry-toolbox/foundry-toolbox-smoke\.py",
-            "the Python smoke program must be executed with the venv interpreter "
+            "the Python smoke program must use the activated workspace-local venv "
             "from its workspace-local scratch path via an explicit "
             "`${GITHUB_WORKSPACE}` reference",
         )

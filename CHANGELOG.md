@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased — foundation capability gaps
+
+- `foundry-prompt-agents` MINOR **1.1.12 → 1.2.0**: tool prerequisites and
+  connection setup; SDK 2.4 Preview model names/wire shapes; unsupported
+  GuardrailTool correction; distinguish legacy publication from current endpoints.
+  Preserve structured inputs and the runtime pin.
+- `foundry-toolbox` MINOR **2.3.0 → 2.4.0**: connection/CLI lifecycle and strict
+  Search citation extraction. Preserve GA Tool Search, A2A 1.0, consent and
+  approval boundaries; no parent recreation or management-cohort upgrade.
+- `foundry-skill-catalog` MINOR **2.1.0 → 2.2.0**: safe CLI onboarding,
+  declarative-publication boundary and consumer-specific approval workflow.
+  Preserve unpromoted immutable staging, history and pinned consumers.
+- `foundry-evals` MINOR **1.4.2 → 1.5.0**: native lifecycle/curation/optimizer
+  handoffs, valid enriched JSON, explicit continuous-monitoring ownership and
+  an honest application-owned Plan B. Preserve executable scoring/output
+  contracts; remove unsupported claims of an existing downstream import.
+- Local schema and regression checks are not live Azure acceptance. No Memory
+  skill, Routines workflow, dependency cohort or installed runtime is changed.
+- Correct the existing Auth consumer's execution-not-inspection instructions,
+  and retain one canonical five-record Toolbox archive before PASS. No marker,
+  approval, anonymous-auth oracle or resource-ownership gate is relaxed.
+- Forward the existing Auth-specific expected issuer/scope only to its
+  preflight and identical initial/retry consumer environments. Validate before
+  network access and compare exact metadata; never infer Auth scope from the
+  Jobs client ID or log the supplied values. No secret values or grants change.
+- Select Auth plus normal changed consumers for the exact complete additive
+  Auth-only expected-binding workflow contract. Any other execution delta,
+  partial/modified binding or ambiguous YAML remains conservative/full;
+  scheduled/manual coverage and all acceptance gates remain unchanged.
+- Make the Prompt classifier smoke a canonical SDK program with activated
+  pinned venv, sanitized failures and verified cleanup; stop on tool denials
+  instead of inventing credential/REST fallbacks.
+- Execute the native Skills lifecycle through a canonical cleanup-checked
+  program whose success path writes the exact marker, preventing prose-only
+  success without an archived result. Keep native immutable version tests intact.
+- Remove the obsolete Prompt-to-Jobs dependency: the deterministic Jobs
+  fixture owns its frozen SDK and prompt/MCP recipe rather than consuming
+  modified Prompt artifacts. Preserve its real producer dependencies and direct
+  edit coverage. Incidental Jobs repairs are withdrawn from this foundation PR;
+  prior failed runs remain failed, not accepted or quarantined.
+- Keep expected issuer/scope checks in the Auth probe before network access;
+  leave the shared native preflight and Jobs operational source unchanged.
+
 ## Unreleased — gbb-pptx audience and delivery defaults
 
 - [`gbb-pptx`](skills/gbb-pptx/SKILL.md) MINOR **2.1.0 → 2.2.0**:

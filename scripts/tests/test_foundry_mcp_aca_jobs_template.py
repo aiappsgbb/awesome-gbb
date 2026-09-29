@@ -490,7 +490,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
         prompt_fm, _ = self._frontmatter_and_body(
             ROOT / "skills" / "foundry-prompt-agents" / "SKILL.md"
         )
-        self.assertEqual(prompt_fm["metadata"]["version"], "1.1.12")
+        self.assertEqual(prompt_fm["metadata"]["version"], "1.2.0")
 
     def test_reference_headers_resolve_to_skill_sections(self) -> None:
         section_map = {
@@ -731,7 +731,7 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
             "landing-page prose contains the stale hardcoded skill count",
         )
 
-    def test_dependency_graph_matches_the_approved_four_skill_contract(self) -> None:
+    def test_dependency_graph_matches_consumed_producer_contracts(self) -> None:
         deps = yaml.safe_load(
             (ROOT / ".github" / "skill-deps.yml").read_text(encoding="utf-8")
         )
@@ -741,7 +741,6 @@ class FoundryMcpAcaJobsTemplateTests(unittest.TestCase):
                 "azd-patterns",
                 "foundry-hosted-agents",
                 "foundry-mcp-aca",
-                "foundry-prompt-agents",
             ],
         )
 

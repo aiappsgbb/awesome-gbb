@@ -242,6 +242,7 @@ class NativeCiPreflightWorkflowTests(unittest.TestCase):
         self.assertEqual(env, {
             "NATIVE_SMOKE_SKILL": "${{ matrix.skill }}",
             **{name: secret(name) for name in (*AUTH_ENV, *JOBS_ENV)},
+            **{name: auth_secret(name) for name in ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE")},
         })
         consumers = [
             step for step in self.steps
@@ -254,6 +255,11 @@ class NativeCiPreflightWorkflowTests(unittest.TestCase):
                 self.assertEqual(step["env"].get(name), auth_secret(name))
             for name in JOBS_ENV:
                 self.assertEqual(step["env"].get(name), secret(name))
+        for name in ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE"):
+            self.assertEqual(env[name], auth_secret(name))
+            self.assertEqual(consumers[0]["env"].get(name), env[name])
+            self.assertEqual(consumers[1]["env"].get(name), env[name])
+            self.assertEqual(WORKFLOW.read_text().count(f"{name}: {auth_secret(name)}"), 3)
 
     def test_unrelated_legs_do_not_select_the_gate(self):
         condition = self.gate()["if"]

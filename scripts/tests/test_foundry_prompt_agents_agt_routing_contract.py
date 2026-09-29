@@ -46,14 +46,10 @@ class FoundryPromptAgentsAgtRoutingContractTests(unittest.TestCase):
             "[`foundry-agt`](../foundry-agt/SKILL.md#why-action-governance-matters)",
             section,
         )
-        self.assertRegex(
-            section,
-            re.compile(
-                r"GuardrailTool.{0,260}(prompt agent|PromptAgentDefinition).{0,260}"
-                r"(Azure Content Safety|ACS).{0,160}(connection|server-side)",
-                re.IGNORECASE | re.DOTALL,
-            ),
-        )
+        self.assertIn("not exported by SDK 2.4", section)
+        self.assertIn("no verified Preview alias", section)
+        self.assertIn("not an enforced guardrail", section)
+        self.assertNotRegex(section, r"from azure\.ai\.projects\.models import.*GuardrailTool")
         self.assertRegex(
             section,
             re.compile(
