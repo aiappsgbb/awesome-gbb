@@ -126,6 +126,11 @@ observed reporting on PRs. Never put a path filter on that required aggregate.
   signature was available. It never logs the captured payload. A late PONG
   after termination is still failure; classification does not authorize a
   retry, provider switch or credential/quota change.
+  The pinned CLI's JSON event mode avoids silent text mode suppressing retry
+  events. Only fixed session/model-turn/retry/response phase labels leave the
+  probe; raw events remain in memory. Success still requires one exact `PONG`
+  assistant response, a zero-exit final result and zero process exit, with no
+  tool execution or session error. JSON events alone are never success.
 - `NATIVE_CI_PREFLIGHT=FAIL` or AgentOps approval failure: supply the exact
   authorized prerequisites. A successful driver probe does not supply them.
 - A consumer failure after these gates is still a real investigation target.
