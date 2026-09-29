@@ -167,13 +167,8 @@ mkdir -p "$PROJECT_DIR/.azure/$AZD_ENV_NAME"
 
 # Authenticated GET/list preflight validates exact standing bindings, runtime
 # writers vs executor reader, and absence of every run target BEFORE any write.
-if ! python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" prepare \
-  --project "$PROJECT_DIR" --run-id "$SUFFIX"; then
-  # Preserve the helper's sanitized code in the archived marker, not only collapsed tool output.
-  preflight_code="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["code"])' "$PROJECT_DIR/ci-preflight-failure.json")" \
-    || fail "standing reuse preflight diagnostic unavailable"
-  fail "standing reuse preflight blocked: $preflight_code"
-fi
+python3 "$PROJECT_DIR/infra/scripts/ci_reuse.py" prepare \
+  --project "$PROJECT_DIR" --run-id "$SUFFIX" || fail "standing reuse preflight blocked"
 CI_LOCATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["parameters"]["location"]["value"])' "$PROJECT_DIR/infra/main.parameters.json")"
 
 cat > "$PROJECT_DIR/.azure/config.json" <<EOF

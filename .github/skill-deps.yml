@@ -114,12 +114,14 @@ skills:
     depends_on:
       - foundry-hosted-agents
 
+  # The deterministic Jobs fixture owns its frozen SDK2.3 prompt/MCP recipe;
+  # it does not read/import Prompt Agents skill files or its SDK2.4 pin.
+  # Keep the shared Bicep/Hosted artifacts and MCP producer contracts below.
   foundry-mcp-aca-jobs:
     depends_on:
       - azd-patterns
       - foundry-hosted-agents
       - foundry-mcp-aca
-      - foundry-prompt-agents
 
   # foundry-network-runbook — operational runbook for network-layer
   # failures after a Foundry VNet deploy. Cross-references specific

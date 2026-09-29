@@ -17,7 +17,6 @@ import uuid
 
 
 SKILLS = ("foundry-mcp-auth", "foundry-mcp-aca-jobs")
-UUID_PATTERN = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 CI_REUSE_INPUTS = (
     "MCP_ACA_JOBS_RESOURCE_GROUP_ID", "MCP_ACA_JOBS_ENVIRONMENT_ID",
     "MCP_ACA_JOBS_APP_IDENTITY_ID", "MCP_ACA_JOBS_WORKER_IDENTITY_ID",
@@ -84,18 +83,6 @@ def validate(skill: str, environ: dict[str, str]) -> None:
             required(environ, "MCP_AUTH_SMOKE_ENDPOINT"), "MCP_AUTH_SMOKE_ENDPOINT",
             mcp=True,
         )
-        issuer = required(environ, "MCP_AUTH_SMOKE_ISSUER")
-        match = re.fullmatch(rf"https://login\.microsoftonline\.com/({UUID_PATTERN})/v2\.0", issuer)
-        if match is None:
-            raise PrerequisiteError("INVALID_ISSUER MCP_AUTH_SMOKE_ISSUER")
-        tenant = required(environ, "AZURE_TENANT_ID")
-        if re.fullmatch(UUID_PATTERN, tenant) is None:
-            raise PrerequisiteError("INVALID_IDENTIFIER AZURE_TENANT_ID")
-        if match.group(1).lower() != tenant.lower():
-            raise PrerequisiteError("ISSUER_TENANT_MISMATCH MCP_AUTH_SMOKE_ISSUER")
-        scope = required(environ, "MCP_AUTH_SMOKE_SCOPE")
-        if re.fullmatch(rf"api://{UUID_PATTERN}/[A-Za-z][A-Za-z0-9_.-]*", scope) is None:
-            raise PrerequisiteError("INVALID_SCOPE MCP_AUTH_SMOKE_SCOPE")
     else:
         name = "MCP_AUTH_APP_CLIENT_ID"
         value = required(environ, name)

@@ -19,13 +19,8 @@
 - Local schema and regression checks are not live Azure acceptance. No Memory
   skill, Routines workflow, dependency cohort or installed runtime is changed.
 - Correct the existing Auth consumer's execution-not-inspection instructions,
-  retain one canonical five-record Toolbox archive before PASS, and report
-  allowlisted Jobs registry-preflight field states without changing its
-  acceptance predicate or any shared registry setting. No marker, approval,
-  anonymous-auth oracle or resource-ownership gate is relaxed.
-- The Jobs registry GET uses the documented 2025-11-01 schema to read
-  `roleAssignmentMode`; the older 2023-07-01 schema does not expose that
-  prerequisite. Missing/unknown fields still fail closed; no registry mutation.
+  and retain one canonical five-record Toolbox archive before PASS. No marker,
+  approval, anonymous-auth oracle or resource-ownership gate is relaxed.
 - Forward the existing Auth-specific expected issuer/scope only to its
   preflight and identical initial/retry consumer environments. Validate before
   network access and compare exact metadata; never infer Auth scope from the
@@ -36,19 +31,17 @@
   scheduled/manual coverage and all acceptance gates remain unchanged.
 - Make the Prompt classifier smoke a canonical SDK program with activated
   pinned venv, sanitized failures and verified cleanup; stop on tool denials
-  instead of inventing credential/REST fallbacks. Preserve sanitized Jobs
-  preflight failure codes in the archived marker rather than collapsed output.
+  instead of inventing credential/REST fallbacks.
 - Execute the native Skills lifecycle through a canonical cleanup-checked
   program whose success path writes the exact marker, preventing prose-only
   success without an archived result. Keep native immutable version tests intact.
-- Classify failed Jobs standing reads by fixed operation labels and allowlisted
-  Azure error codes only; raw CLI stderr, resource identifiers and credentials
-  remain private. This diagnoses a prerequisite without changing it.
-- Use one strict ARM error-code parser for explicit absence reads and failure
-  classification. Accept exact parenthesized or valid ARM `error.code`
-  NotFound forms only for optional resource GETs; required reads, malformed/
-  ambiguous payloads and auth/network errors still fail. The prior generic
-  NotFound marker did not establish that a standing resource was missing.
+- Remove the obsolete Prompt-to-Jobs dependency: the deterministic Jobs
+  fixture owns its frozen SDK and prompt/MCP recipe rather than consuming
+  modified Prompt artifacts. Preserve its real producer dependencies and direct
+  edit coverage. Incidental Jobs repairs are withdrawn from this foundation PR;
+  prior failed runs remain failed, not accepted or quarantined.
+- Keep expected issuer/scope checks in the Auth probe before network access;
+  leave the shared native preflight and Jobs operational source unchanged.
 
 ## Unreleased — gbb-pptx audience and delivery defaults
 

@@ -47,7 +47,7 @@ TYPES = {
 }
 VERSIONS = {"group": "2022-09-01", "environment": "2024-03-01",
             "app_identity": "2023-01-31", "worker_identity": "2023-01-31",
-            "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2025-11-01"}
+            "cosmos": "2024-11-15", "storage": "2023-01-01", "registry": "2023-07-01"}
 JOB_ACTIONS = {"Microsoft.App/jobs/read", "Microsoft.App/jobs/start/action",
                "Microsoft.App/jobs/execution/read", "Microsoft.App/jobs/executions/read",
                "Microsoft.App/jobs/stop/execution/action"}
@@ -57,31 +57,10 @@ BUILTIN_ROLES = {
     "AcrPush": "8311e382-0749-4cb8-b61a-304f252e45ec",
     "Storage Blob Data Contributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
 }
-ARM_ERROR_CODES = frozenset({
-    "AuthorizationFailed", "AuthenticationFailed", "InvalidAuthenticationToken",
-    "ExpiredAuthenticationToken", "InvalidApiVersionParameter",
-    "NoRegisteredProviderFound", "MissingSubscriptionRegistration",
-    "ResourceNotFound", "ResourceGroupNotFound", "BadRequest",
-    "InvalidResourceType", "InvalidResourceNamespace", "TooManyRequests",
-})
 
 
 class ReuseError(ValueError):
     pass
-
-
-def failure_code(error):
-    if isinstance(error, ReuseError):
-        value = str(error)
-        pattern = (
-            r"[A-Z][A-Z0-9_]*"
-            r"( roleAssignmentMode=(missing|unknown|matched:LegacyRegistryPermissions|mismatched:AbacRepositoryPermissions)"
-            r" adminUserEnabled=(missing|unknown|matched:false|mismatched:true)"
-            r"| operation=[a-z_]+ azure_code=[A-Za-z]+)?"
-        )
-        if re.fullmatch(pattern, value):
-            return value
-    return type(error).__name__
 
 
 def require(ok, code):
@@ -145,56 +124,6 @@ def settings(environ, run_id):
     return config
 
 
-def arm_error_code(stderr):
-    text = stderr.strip()
-    if text.startswith("ERROR:"):
-        text = text[len("ERROR:"):].strip()
-    parenthesized = re.match(r"^\(([A-Za-z]+)\)(?:[ \t\r\n]|$)", text)
-    if parenthesized:
-        code = parenthesized.group(1)
-        shape = (
-            rf"\({code}\)(?:[ \t]+[^\r\n]*)?"
-            rf"(?:\r?\nCode:[ \t]*{code})?"
-            r"(?:\r?\nMessage:[ \t]*[^\r\n]*)?"
-        )
-        declarations = re.findall(r"\(([A-Za-z]+)\)", text)
-        declarations += re.findall(r"(?m)^[ \t]*Code:[ \t]*(\S+)[ \t]*$", text)
-        if (re.fullmatch(shape, text) is None
-                or "{" in text or "[" in text or code not in ARM_ERROR_CODES
-                or any(value != code for value in declarations)):
-            return None
-        return code
-    not_found_wrapper = text.startswith("Not Found(") and text.endswith(")")
-    if not_found_wrapper:
-        text = text[len("Not Found("):-1]
-    try:
-        document = json.loads(text, object_pairs_hook=unique)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(document, dict) or set(document) != {"error"}:
-        return None
-    error = document["error"]
-    if not isinstance(error, dict) or not isinstance(error.get("code"), str):
-        return None
-    code = error["code"]
-    if code not in ARM_ERROR_CODES:
-        return None
-    if not_found_wrapper and code not in {"ResourceNotFound", "ResourceGroupNotFound"}:
-        return None
-    pending = [error]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, dict):
-            if "code" in item and item["code"] != code:
-                return None
-            pending.extend(item.values())
-        elif isinstance(item, list):
-            pending.extend(item)
-        elif isinstance(item, float) and (item != item or item in (float("inf"), -float("inf"))):
-            return None
-    return code
-
-
 def cli(config, args, *, absent=False):
     command = ["az", *args, "--output", "json", "--only-show-errors"]
     if args[:2] != ["account", "show"]:
@@ -202,35 +131,12 @@ def cli(config, args, *, absent=False):
     result = subprocess.run(command,
                             capture_output=True, text=True, timeout=45)
     if result.returncode:
-        azure_code = arm_error_code(result.stderr)
-        arm_read = (
-            len(args) == 5 and args[:4] == ["rest", "--method", "get", "--url"]
-            and args[4].startswith("https://management.azure.com/")
-        )
-        # An exact service code proves absence only for an explicitly optional read.
-        if absent and arm_read and azure_code in {"ResourceNotFound", "ResourceGroupNotFound"}:
+        # Only exact resource-not-found is absence. Generic HTTP404/auth/transport is unknown.
+        if absent and re.search(r"\((ResourceNotFound|ResourceGroupNotFound)\)", result.stderr):
             return None
         if absent and args[:2] == ["acr", "manifest"] and re.search(r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b", result.stderr):
             return None
-        operation = "other"
-        known_operations = {
-            ("account", "show"): "account_show",
-            ("identity", "list"): "identity_list",
-            ("role", "assignment"): "role_assignment_list",
-            ("cosmosdb", "sql"): "cosmos_role_inventory",
-            ("acr", "repository"): "registry_repository_list",
-            ("acr", "manifest"): "registry_manifest_read",
-        }
-        if args[:3] == ["rest", "--method", "get"]:
-            target = args[args.index("--url") + 1].split("?", 1)[0]
-            operation = "arm_get"
-            for key in VERSIONS:
-                if target == "https://management.azure.com" + config[key]:
-                    operation = key + "_get"
-                    break
-        else:
-            operation = known_operations.get(tuple(args[:2]), "other")
-        raise ReuseError(f"AZURE_READ_OR_OPERATION_FAILED operation={operation} azure_code={azure_code or 'Unknown'}")
+        raise ReuseError("AZURE_READ_OR_OPERATION_FAILED")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -314,29 +220,8 @@ def validate(config, data):
             and same(data["executor_identity"].get("clientId"), config["executor_client"]), "EXECUTOR_IDENTITY_MAPPING")
     require(same(data["database"].get("id"), config["cosmos"] + "/sqlDatabases/" + config["database"]), "DATABASE_SCOPE")
     registry = data["registry"]["properties"]
-    if (registry.get("roleAssignmentMode") != "LegacyRegistryPermissions"
-            or registry.get("adminUserEnabled") is not False):
-        mode = registry.get("roleAssignmentMode")
-        if "roleAssignmentMode" not in registry:
-            mode_state = "missing"
-        elif mode == "LegacyRegistryPermissions":
-            mode_state = "matched:LegacyRegistryPermissions"
-        elif mode == "AbacRepositoryPermissions":
-            mode_state = "mismatched:AbacRepositoryPermissions"
-        else:
-            mode_state = "unknown"
-        if "adminUserEnabled" not in registry:
-            admin_state = "missing"
-        elif registry["adminUserEnabled"] is False:
-            admin_state = "matched:false"
-        elif registry["adminUserEnabled"] is True:
-            admin_state = "mismatched:true"
-        else:
-            admin_state = "unknown"
-        raise ReuseError(
-            f"REGISTRY_CONTRACT roleAssignmentMode={mode_state} "
-            f"adminUserEnabled={admin_state}"
-        )
+    require(registry.get("roleAssignmentMode") == "LegacyRegistryPermissions"
+            and registry.get("adminUserEnabled") is False, "REGISTRY_CONTRACT")
     require(registry.get("loginServer") == config["registry_host"], "REGISTRY_HOST_MISMATCH")
     require(endpoint(data["cosmos"]["properties"]["documentEndpoint"]) == config["cosmos_endpoint"], "COSMOS_ENDPOINT")
     require(endpoint(data["storage"]["properties"]["primaryEndpoints"]["blob"]) == config["storage_endpoint"], "STORAGE_ENDPOINT")
@@ -607,10 +492,8 @@ def main():
                 else:
                     cleanup(config, manifest, load(args.project / "ci-created.json"))
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        failure = {"status": "BLOCKED", "stage": args.action, "code": failure_code(error)}
-        if args.action == "prepare" and args.project.is_dir():
-            write_new(args.project / "ci-preflight-failure.json", failure)
-        print(json.dumps(failure))
+        print(json.dumps({"status": "BLOCKED", "stage": args.action,
+                          "code": str(error) if isinstance(error, ReuseError) else type(error).__name__}))
         return 1
     print("CI_REUSE_" + args.action.upper() + "_PASS")
     return 0

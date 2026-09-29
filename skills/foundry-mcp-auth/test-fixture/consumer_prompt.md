@@ -54,6 +54,26 @@ def require(condition, code):
         raise ProbeFailure(code)
 
 
+def expected_bindings(environ):
+    values = {}
+    for name in ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE", "AZURE_TENANT_ID"):
+        value = environ.get(name, "")
+        require(isinstance(value, str) and bool(value.strip()), f"MISSING_ENV {name}")
+        values[name] = value
+    guid = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+    match = re.fullmatch(rf"https://login\.microsoftonline\.com/({guid})/v2\.0",
+                         values["MCP_AUTH_SMOKE_ISSUER"])
+    require(match is not None, "INVALID_ISSUER MCP_AUTH_SMOKE_ISSUER")
+    require(re.fullmatch(guid, values["AZURE_TENANT_ID"]) is not None,
+            "INVALID_IDENTIFIER AZURE_TENANT_ID")
+    require(match.group(1).lower() == values["AZURE_TENANT_ID"].lower(),
+            "ISSUER_TENANT_MISMATCH MCP_AUTH_SMOKE_ISSUER")
+    require(re.fullmatch(rf"api://{guid}/[A-Za-z][A-Za-z0-9_.-]*",
+                         values["MCP_AUTH_SMOKE_SCOPE"]) is not None,
+            "INVALID_SCOPE MCP_AUTH_SMOKE_SCOPE")
+    return values["MCP_AUTH_SMOKE_ISSUER"], values["MCP_AUTH_SMOKE_SCOPE"]
+
+
 def exchange(opener, request):
     try:
         response = opener.open(request, timeout=20)
@@ -74,8 +94,7 @@ def main(environ, opener, marker):
         except preflight.PrerequisiteError as error:
             raise ProbeFailure(str(error)) from None
         endpoint = environ["MCP_AUTH_SMOKE_ENDPOINT"]
-        expected_issuer = environ["MCP_AUTH_SMOKE_ISSUER"]
-        expected_scope = environ["MCP_AUTH_SMOKE_SCOPE"]
+        expected_issuer, expected_scope = expected_bindings(environ)
         parts = urlsplit(endpoint)
         metadata_url = urlunsplit((parts.scheme, parts.netloc,
                                   "/.well-known/oauth-protected-resource" + parts.path, "", ""))
