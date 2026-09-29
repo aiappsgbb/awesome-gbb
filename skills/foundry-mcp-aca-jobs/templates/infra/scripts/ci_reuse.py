@@ -69,7 +69,8 @@ def failure_code(error):
         pattern = (
             r"[A-Z][A-Z0-9_]*"
             r"( roleAssignmentMode=(missing|unknown|matched:LegacyRegistryPermissions|mismatched:AbacRepositoryPermissions)"
-            r" adminUserEnabled=(missing|unknown|matched:false|mismatched:true))?"
+            r" adminUserEnabled=(missing|unknown|matched:false|mismatched:true)"
+            r"| operation=[a-z_]+ azure_code=[A-Za-z]+)?"
         )
         if re.fullmatch(pattern, value):
             return value
@@ -149,7 +150,36 @@ def cli(config, args, *, absent=False):
             return None
         if absent and args[:2] == ["acr", "manifest"] and re.search(r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b", result.stderr):
             return None
-        raise ReuseError("AZURE_READ_OR_OPERATION_FAILED")
+        operation = "other"
+        known_operations = {
+            ("account", "show"): "account_show",
+            ("identity", "list"): "identity_list",
+            ("role", "assignment"): "role_assignment_list",
+            ("cosmosdb", "sql"): "cosmos_role_inventory",
+            ("acr", "repository"): "registry_repository_list",
+            ("acr", "manifest"): "registry_manifest_read",
+        }
+        if args[:3] == ["rest", "--method", "get"]:
+            target = args[args.index("--url") + 1].split("?", 1)[0]
+            operation = "arm_get"
+            for key in VERSIONS:
+                if target == "https://management.azure.com" + config[key]:
+                    operation = key + "_get"
+                    break
+        else:
+            operation = known_operations.get(tuple(args[:2]), "other")
+        azure_code = "Unknown"
+        for code in (
+            "AuthorizationFailed", "AuthenticationFailed", "InvalidAuthenticationToken",
+            "ExpiredAuthenticationToken", "InvalidApiVersionParameter",
+            "NoRegisteredProviderFound", "MissingSubscriptionRegistration",
+            "ResourceNotFound", "ResourceGroupNotFound", "BadRequest",
+            "InvalidResourceType", "InvalidResourceNamespace", "TooManyRequests",
+        ):
+            if re.search(r"\(" + code + r"\)|\"code\"\s*:\s*\"" + code + r"\"", result.stderr):
+                azure_code = code
+                break
+        raise ReuseError(f"AZURE_READ_OR_OPERATION_FAILED operation={operation} azure_code={azure_code}")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 

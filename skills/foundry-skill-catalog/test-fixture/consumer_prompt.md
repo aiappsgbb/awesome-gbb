@@ -9,7 +9,7 @@ Checking that a fixture exists or that unit tests pass does not execute this
 contract and must never replace any step.
 
 Do NOT run `git status`, inspect workflow/registration files, write a plan,
-run unittest/pytest or catalog lint, rebuild docs, or edit repository files.
+run unrelated unittest/pytest or catalog lint, rebuild docs, or edit repository files.
 Import the canonical reader as instructed below; do not browse or rewrite it.
 Do not upgrade MAF, provision infrastructure, re-grant roles, or select another
 project/identity. Missing workflow inputs or API failures are a FAIL with the
@@ -48,6 +48,25 @@ In a workflow scratch virtual environment install `azure-ai-projects~=2.6.0`,
 checks native package access only. Construct a synchronous `AIProjectClient`
 for the provided endpoint with the existing credential and `allow_preview=True`.
 No model deployment or inference is required.
+
+Execute the checked-in program below **once**, rather than generating a
+replacement script or adapting SDK signatures. It implements the checks in
+Steps 2–3, including valid ZIP frontmatter and the final marker write. An error
+is not permission to create a fresh name or retry an uncertain mutation.
+
+```bash
+set -euo pipefail
+python3 -m venv "${GITHUB_WORKSPACE}/.scratch/foundry-skill-catalog/venv"
+source "${GITHUB_WORKSPACE}/.scratch/foundry-skill-catalog/venv/bin/activate"
+python -m pip install --quiet "azure-ai-projects~=2.6.0" "azure-identity~=1.25.3" "httpx~=0.28.1"
+python -m unittest discover -s skills/foundry-skill-catalog/tests -p test_native_smoke.py
+python skills/foundry-skill-catalog/test-fixture/native_smoke.py
+```
+
+The program logs its UUID-owned name before creating it, imports the canonical
+reader and writes the deterministic result file itself after cleanup. Do not
+write a second program, override its marker, or claim success from a prose
+summary. On tool permission denial stop without another command form.
 
 Import the actual module `skills/foundry-skill-catalog/references/skill_packages.py`
 by adding its directory to `sys.path`; do not redefine `download_catalog` or
@@ -107,15 +126,11 @@ Delete one nondefault owned version; require its deletion response and verify
 Remove only this run's local ZIP/scratch output. Report functional result and
 cleanup status separately. No PASS if this fixture's own parent remains.
 
-The final action is a Bash tool file-write, not a prose assertion. Only after
-all native content checks and cleanup succeeded:
+The canonical program performs the final byte-exact result write after all
+native content checks and cleanup succeed. Do not finish by merely saying that
+the marker was written: the actual file is the workflow's success oracle.
 
-```bash
-printf 'SMOKE_RESULT=PASS\n' > /tmp/foundry-skill-catalog-smoke-result
-```
-
-On any failure, first perform the authorized owned cleanup, report the exact
-failed stage and any residual inventory privately, then write:
+If an earlier setup/tool failure prevents the program from running, write:
 
 ```bash
 printf 'SMOKE_RESULT=FAIL native version/package or cleanup check failed\n' > /tmp/foundry-skill-catalog-smoke-result
@@ -127,5 +142,5 @@ loading, or private networking. Execute `service_acceptance.md` separately for
 those surfaces; do not expand this CI run implicitly.
 
 Do not finish with a repository-status summary. You are not done until the live
-lifecycle (or its exact failure and cleanup) is recorded and the final Bash tool
-call writes the appropriate marker file.
+lifecycle (or its exact failure and cleanup) is recorded by the canonical
+program and the appropriate marker file exists.

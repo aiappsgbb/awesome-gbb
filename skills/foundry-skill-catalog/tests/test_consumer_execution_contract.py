@@ -14,16 +14,18 @@ class ConsumerExecutionContractTests(unittest.TestCase):
         for boundary in (
             "not a catalog inspection",
             "real Skills API create/download/promote/delete calls",
-            "run unittest/pytest",
+            "run unrelated unittest/pytest",
             "Missing workflow inputs or API failures are a FAIL",
             "Your FIRST action must be this separate Bash tool call",
-            "final Bash tool",
+            "canonical program performs the final byte-exact result write",
         ):
             self.assertIn(boundary, fixture)
         first_bash = fixture.split("```bash\n", 1)[1].split("```", 1)[0].strip()
         self.assertEqual(
             first_bash, 'echo "skills/foundry-skill-catalog/SKILL.md"'
         )
+        self.assertIn("python skills/foundry-skill-catalog/test-fixture/native_smoke.py", fixture)
+        self.assertIn("Do not\nwrite a second program, override its marker", fixture)
 
 
 if __name__ == "__main__":
