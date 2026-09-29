@@ -656,6 +656,195 @@ class TestWorkflowChangeScope(unittest.TestCase):
         self.assertEqual(_run_changed_only(self.repo, self.base), [])
 
 
+class TestAuthExpectedBindingScope(unittest.TestCase):
+    KEYS = ("MCP_AUTH_SMOKE_ISSUER", "MCP_AUTH_SMOKE_SCOPE")
+    BOUNDARIES = (
+        "Validate native smoke standing prerequisites",
+        "Run consumer prompt for ${{ matrix.skill }}",
+        "Retry once on classified-transient failure",
+    )
+    PERTINENT = [
+        "foundry-evals", "foundry-mcp-aca-jobs", "foundry-mcp-auth",
+        "foundry-prompt-agents", "foundry-routines", "foundry-skill-catalog",
+        "foundry-toolbox",
+    ]
+
+    def setUp(self):
+        workspace = tempfile.TemporaryDirectory(prefix="matrix-auth-binding-")
+        self.addCleanup(workspace.cleanup)
+        self.repo = Path(workspace.name)
+        self.all = sorted([*self.PERTINENT, "foundry-hosted-agents", "foundry-mcp-aca"])
+        for name in self.all:
+            _write_fixture(self.repo, name)
+        _write_quarantine(self.repo)
+        dependencies = yaml.safe_load((ROOT / ".github/skill-deps.yml").read_text())["skills"]
+        _write_deps(self.repo, {name: dependencies[name].get("depends_on", []) for name in self.all})
+        self.path = self.repo / ".github/workflows/skill-test.yml"
+        self.path.parent.mkdir(parents=True)
+        self.before = yaml.safe_load((ROOT / ".github/workflows/skill-test.yml").read_text())
+        for step in self.boundaries(self.before):
+            for key in self.KEYS:
+                step["env"].pop(key, None)
+        self.path.write_text(yaml.safe_dump(self.before))
+        _init_repo(self.repo)
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "baseline without expected bindings")
+        self.base = _git(self.repo, "rev-parse", "HEAD")
+
+    def boundaries(self, workflow):
+        steps = workflow["jobs"]["copilot-cli-matrix"]["steps"]
+        return [next(step for step in steps if step.get("name") == name) for name in self.BOUNDARIES]
+
+    def addition(self):
+        after = copy.deepcopy(self.before)
+        for step in self.boundaries(after):
+            for key in self.KEYS:
+                step["env"][key] = "${{ matrix.skill == 'foundry-mcp-auth' && secrets." + key + " || '' }}"
+        return after
+
+    def select(self, after, base=None):
+        self.path.write_text(yaml.safe_dump(after))
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "--allow-empty", "-q", "-m", "candidate bindings")
+        return _run_changed_only(self.repo, base or self.base)
+
+    def test_workflow_only_addition_selects_auth_not_empty_or_downstream(self):
+        self.assertEqual(self.select(self.addition()), ["foundry-mcp-auth"])
+        self.assertEqual(_run(self.repo), self.all, "Scheduled/manual full selection must stay full")
+
+    def test_combined_operational_changes_select_exact_seven(self):
+        for name in ("foundry-evals", "foundry-prompt-agents", "foundry-skill-catalog", "foundry-toolbox"):
+            (self.repo / "skills" / name / "SKILL.md").write_text("operational contract change\n")
+        script = self.repo / "scripts/native-ci-preflight.py"
+        script.parent.mkdir()
+        script.write_text("changed auth input validation\n")
+        self.assertEqual(self.select(self.addition()), self.PERTINENT)
+
+    def test_each_missing_or_unequal_boundary_binding_forces_full(self):
+        for index in range(3):
+            for key in self.KEYS:
+                for value in (None, "${{ secrets." + key + " }}", ""):
+                    with self.subTest(index=index, key=key, value=value):
+                        after = self.addition()
+                        env = self.boundaries(after)[index]["env"]
+                        if value is None:
+                            del env[key]
+                        else:
+                            env[key] = value
+                        self.assertEqual(self.select(after), self.all)
+
+    def test_changed_source_guard_or_fallback_forces_full(self):
+        expressions = (
+            "${{ matrix.skill == 'foundry-mcp-auth' && secrets.WRONG_SCOPE || '' }}",
+            "${{ matrix.skill == 'foundry-mcp-auth' && vars.MCP_AUTH_SMOKE_SCOPE || '' }}",
+            "${{ secrets.MCP_AUTH_SMOKE_SCOPE }}",
+            "${{ matrix.skill == 'foundry-mcp-aca-jobs' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}",
+            "${{ matrix.skill != '' && secrets.MCP_AUTH_SMOKE_SCOPE || '' }}",
+            "${{ matrix.skill == 'foundry-mcp-auth' && secrets.MCP_AUTH_SMOKE_SCOPE || 'fallback' }}",
+        )
+        for value in expressions:
+            with self.subTest(value=value):
+                after = self.addition()
+                for step in self.boundaries(after):
+                    step["env"]["MCP_AUTH_SMOKE_SCOPE"] = value
+                self.assertEqual(self.select(after), self.all)
+
+    def test_other_step_execution_changes_force_full(self):
+        for index in range(3):
+            for field, value in (("run", "echo changed"), ("id", "changed"),
+                                 ("if", "always()"), ("name", "unknown boundary"),
+                                 ("shell", "sh"), ("continue-on-error", True)):
+                with self.subTest(index=index, field=field):
+                    after = self.addition()
+                    step = self.boundaries(after)[index]
+                    step[field] = not step.get(field, False) if field == "continue-on-error" else value
+                    self.assertEqual(self.select(after), self.all)
+
+    def test_step_add_remove_reorder_or_duplicate_force_full(self):
+        for action in ("add", "remove", "reorder", "duplicate"):
+            with self.subTest(action=action):
+                after = self.addition()
+                steps = after["jobs"]["copilot-cli-matrix"]["steps"]
+                if action == "add":
+                    steps.append({"run": "echo new"})
+                elif action == "remove":
+                    steps.pop()
+                elif action == "reorder":
+                    steps[0], steps[1] = steps[1], steps[0]
+                else:
+                    steps.append(copy.deepcopy(self.boundaries(after)[0]))
+                self.assertEqual(self.select(after), self.all)
+
+    def test_other_credentials_provider_runtime_and_unknown_jobs_force_full(self):
+        for kind in ("credential", "provider", "runtime", "job", "permissions", "local", "routing"):
+            with self.subTest(kind=kind):
+                after = self.addition()
+                run = self.boundaries(after)[1]
+                if kind == "credential":
+                    run["env"]["AZURE_CLIENT_ID"] = "${{ secrets.OTHER_ID }}"
+                elif kind == "provider":
+                    run["env"]["COPILOT_PROVIDER_TYPE"] = "changed"
+                elif kind == "runtime":
+                    after["jobs"]["copilot-cli-matrix"]["runs-on"] = "windows-latest"
+                elif kind == "job":
+                    after["jobs"]["unknown"] = {"steps": [{"run": "echo unknown"}]}
+                elif kind == "permissions":
+                    after["permissions"] = {"contents": "write"}
+                elif kind == "local":
+                    after["jobs"]["unit-tests"]["steps"].append({"run": "echo changed"})
+                else:
+                    after[True] = {"workflow_dispatch": None}
+                self.assertEqual(self.select(after), self.all)
+
+    def test_adding_binding_outside_recognized_envs_forces_full(self):
+        for location in ("global", "job", "other-step"):
+            with self.subTest(location=location):
+                after = self.addition()
+                value = self.boundaries(after)[0]["env"]["MCP_AUTH_SMOKE_SCOPE"]
+                target = after if location == "global" else after["jobs"]["copilot-cli-matrix"]
+                if location == "other-step":
+                    target = target["steps"][0]
+                target.setdefault("env", {})["MCP_AUTH_SMOKE_SCOPE"] = value
+                self.assertEqual(self.select(after), self.all)
+
+    def test_removing_or_modifying_existing_binding_remains_full(self):
+        self.select(self.addition())
+        base = _git(self.repo, "rev-parse", "HEAD")
+        for removal in (True, False):
+            after = self.addition()
+            for step in self.boundaries(after):
+                if removal:
+                    del step["env"]["MCP_AUTH_SMOKE_SCOPE"]
+                else:
+                    step["env"]["MCP_AUTH_SMOKE_SCOPE"] = "changed"
+            self.assertEqual(self.select(after, base), self.all)
+
+    def test_partial_existing_baseline_is_not_addition_exception(self):
+        partial = copy.deepcopy(self.before)
+        key = "MCP_AUTH_SMOKE_SCOPE"
+        self.boundaries(partial)[0]["env"][key] = self.boundaries(self.addition())[0]["env"][key]
+        self.select(partial)
+        base = _git(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(self.select(self.addition(), base), self.all)
+
+    def test_required_auth_consumer_cannot_disappear_through_quarantine(self):
+        _write_quarantine(self.repo, ["foundry-mcp-auth"])
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "quarantined baseline")
+        base = _git(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(self.select(self.addition(), base),
+                         [name for name in self.all if name != "foundry-mcp-auth"])
+
+    def test_malformed_or_duplicate_yaml_remains_full(self):
+        valid = yaml.safe_dump(self.addition())
+        for text in ("jobs: [broken", valid + "\njobs: {}\n"):
+            with self.subTest(text=text[:20]):
+                self.path.write_text(text)
+                _git(self.repo, "add", "-A")
+                _git(self.repo, "commit", "-q", "-m", "invalid workflow")
+                self.assertEqual(_run_changed_only(self.repo, self.base), self.all)
+
+
 class TestChangedOnly(unittest.TestCase):
     """Behaviour with `--changed-only --base-ref <sha>`: emit only the
     skills affected by `git diff base_ref..HEAD`, expanded via the

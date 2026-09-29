@@ -18,6 +18,7 @@ not skill acceptance; local tests are not Azure evidence.
 | Skill body, references, runtime requirements, README or unknown skill asset | The skill and its existing one-hop downstream consumers |
 | Local-test workflow job | No additional live consumers |
 | Event routing, build-matrix, driver-preflight, aggregate or matrix gate wiring | Native Harness and prompt-agent canaries, plus any changed operational skills |
+| Complete additive Auth-only expected issuer/scope bindings | Auth consumer plus normal changed-skill/dependency selection, under the exact structural rule below |
 | Consumer execution steps, shared credentials, provider configuration, project resolver, preamble or unknown workflow structure | Full matrix |
 
 New, deleted, malformed or ambiguously parsed skill frontmatter is not
@@ -37,6 +38,25 @@ surviving consumers with operational changes retain their normal live fanout.
 This is not a general `docs` label or a per-PR waiver. Local routing/link tests
 must verify the replacement; existing integrity, marker, cleanup and aggregate
 checks remain unchanged for any selected live consumer.
+
+The **Auth expected-binding exception** accepts only addition of both
+`MCP_AUTH_SMOKE_ISSUER` and `MCP_AUTH_SMOKE_SCOPE` to all three recognized
+`copilot-cli-matrix` boundaries: `native-preflight`, `run` and `agentops-retry`
+(the existing retry step). Each value must be the exact expression
+`${{ matrix.skill == 'foundry-mcp-auth' && secrets.<same-input-name> || '' }}`.
+Both keys must be absent at every boundary in the base and complete/equal in
+the candidate. Removing just those six new entries from the parsed candidate
+must reproduce the entire parsed base workflow, including step identities,
+commands, conditions, order, permissions, other credentials and jobs.
+
+This selects `foundry-mcp-auth` even for a workflow-only change, unioned with
+ordinary changed skills and their existing dependants. Partial additions,
+modified/removed existing bindings, another secret source/guard/fallback,
+changes to any other execution content and malformed or duplicate-key YAML
+retain conservative full selection. A missing/quarantined required Auth
+consumer cannot turn this into empty coverage. There is no PR/commit/label
+exception. Scheduled/manual full selection is unchanged; passing configuration
+checks still do not substitute for the actual anonymous PRM/401 smoke.
 
 The two orchestration canaries verify native Azure execution and an
 agent-driven consumer. They do not certify every deployment, delegated flow
