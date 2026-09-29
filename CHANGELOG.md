@@ -44,6 +44,11 @@
 - Classify failed Jobs standing reads by fixed operation labels and allowlisted
   Azure error codes only; raw CLI stderr, resource identifiers and credentials
   remain private. This diagnoses a prerequisite without changing it.
+- Use one strict ARM error-code parser for explicit absence reads and failure
+  classification. Accept exact parenthesized or valid ARM `error.code`
+  NotFound forms only for optional resource GETs; required reads, malformed/
+  ambiguous payloads and auth/network errors still fail. The prior generic
+  NotFound marker did not establish that a standing resource was missing.
 
 ## 5.0.0 — Proposed / Unreleased
 
