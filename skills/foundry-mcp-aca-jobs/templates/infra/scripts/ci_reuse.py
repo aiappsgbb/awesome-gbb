@@ -57,6 +57,13 @@ BUILTIN_ROLES = {
     "AcrPush": "8311e382-0749-4cb8-b61a-304f252e45ec",
     "Storage Blob Data Contributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
 }
+ARM_ERROR_CODES = frozenset({
+    "AuthorizationFailed", "AuthenticationFailed", "InvalidAuthenticationToken",
+    "ExpiredAuthenticationToken", "InvalidApiVersionParameter",
+    "NoRegisteredProviderFound", "MissingSubscriptionRegistration",
+    "ResourceNotFound", "ResourceGroupNotFound", "BadRequest",
+    "InvalidResourceType", "InvalidResourceNamespace", "TooManyRequests",
+})
 
 
 class ReuseError(ValueError):
@@ -138,6 +145,56 @@ def settings(environ, run_id):
     return config
 
 
+def arm_error_code(stderr):
+    text = stderr.strip()
+    if text.startswith("ERROR:"):
+        text = text[len("ERROR:"):].strip()
+    parenthesized = re.match(r"^\(([A-Za-z]+)\)(?:[ \t\r\n]|$)", text)
+    if parenthesized:
+        code = parenthesized.group(1)
+        shape = (
+            rf"\({code}\)(?:[ \t]+[^\r\n]*)?"
+            rf"(?:\r?\nCode:[ \t]*{code})?"
+            r"(?:\r?\nMessage:[ \t]*[^\r\n]*)?"
+        )
+        declarations = re.findall(r"\(([A-Za-z]+)\)", text)
+        declarations += re.findall(r"(?m)^[ \t]*Code:[ \t]*(\S+)[ \t]*$", text)
+        if (re.fullmatch(shape, text) is None
+                or "{" in text or "[" in text or code not in ARM_ERROR_CODES
+                or any(value != code for value in declarations)):
+            return None
+        return code
+    not_found_wrapper = text.startswith("Not Found(") and text.endswith(")")
+    if not_found_wrapper:
+        text = text[len("Not Found("):-1]
+    try:
+        document = json.loads(text, object_pairs_hook=unique)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(document, dict) or set(document) != {"error"}:
+        return None
+    error = document["error"]
+    if not isinstance(error, dict) or not isinstance(error.get("code"), str):
+        return None
+    code = error["code"]
+    if code not in ARM_ERROR_CODES:
+        return None
+    if not_found_wrapper and code not in {"ResourceNotFound", "ResourceGroupNotFound"}:
+        return None
+    pending = [error]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            if "code" in item and item["code"] != code:
+                return None
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, float) and (item != item or item in (float("inf"), -float("inf"))):
+            return None
+    return code
+
+
 def cli(config, args, *, absent=False):
     command = ["az", *args, "--output", "json", "--only-show-errors"]
     if args[:2] != ["account", "show"]:
@@ -145,8 +202,13 @@ def cli(config, args, *, absent=False):
     result = subprocess.run(command,
                             capture_output=True, text=True, timeout=45)
     if result.returncode:
-        # Only exact resource-not-found is absence. Generic HTTP404/auth/transport is unknown.
-        if absent and re.search(r"\((ResourceNotFound|ResourceGroupNotFound)\)", result.stderr):
+        azure_code = arm_error_code(result.stderr)
+        arm_read = (
+            len(args) == 5 and args[:4] == ["rest", "--method", "get", "--url"]
+            and args[4].startswith("https://management.azure.com/")
+        )
+        # An exact service code proves absence only for an explicitly optional read.
+        if absent and arm_read and azure_code in {"ResourceNotFound", "ResourceGroupNotFound"}:
             return None
         if absent and args[:2] == ["acr", "manifest"] and re.search(r"\b(MANIFEST_UNKNOWN|NAME_UNKNOWN)\b", result.stderr):
             return None
@@ -168,18 +230,7 @@ def cli(config, args, *, absent=False):
                     break
         else:
             operation = known_operations.get(tuple(args[:2]), "other")
-        azure_code = "Unknown"
-        for code in (
-            "AuthorizationFailed", "AuthenticationFailed", "InvalidAuthenticationToken",
-            "ExpiredAuthenticationToken", "InvalidApiVersionParameter",
-            "NoRegisteredProviderFound", "MissingSubscriptionRegistration",
-            "ResourceNotFound", "ResourceGroupNotFound", "BadRequest",
-            "InvalidResourceType", "InvalidResourceNamespace", "TooManyRequests",
-        ):
-            if re.search(r"\(" + code + r"\)|\"code\"\s*:\s*\"" + code + r"\"", result.stderr):
-                azure_code = code
-                break
-        raise ReuseError(f"AZURE_READ_OR_OPERATION_FAILED operation={operation} azure_code={azure_code}")
+        raise ReuseError(f"AZURE_READ_OR_OPERATION_FAILED operation={operation} azure_code={azure_code or 'Unknown'}")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 

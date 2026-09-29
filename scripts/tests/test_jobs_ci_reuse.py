@@ -201,7 +201,7 @@ class JobsReuseTests(unittest.TestCase):
             reuse.failure_code(raised.exception),
             "AZURE_READ_OR_OPERATION_FAILED operation=registry_get azure_code=InvalidApiVersionParameter",
         )
-        error.stderr = '{"code":"AuthorizationFailed","message":"SECRET_CANARY"}'
+        error.stderr = '{"error":{"code":"AuthorizationFailed","message":"SECRET_CANARY"}}'
         with patch.object(reuse.subprocess, "run", return_value=error), \
              self.assertRaises(reuse.ReuseError) as raised:
             reuse.cli(self.config, ["identity", "list", "--resource-group", "private"])
@@ -214,6 +214,79 @@ class JobsReuseTests(unittest.TestCase):
         self.assertEqual(str(raised.exception),
                          "AZURE_READ_OR_OPERATION_FAILED operation=account_show azure_code=Unknown")
         self.assertNotIn("SECRET_CANARY", str(raised.exception))
+
+    def test_exact_not_found_formats_prove_only_explicit_arm_read_absence(self):
+        for code in ("ResourceNotFound", "ResourceGroupNotFound"):
+            payload = json.dumps({"error": {"code": code, "message": "synthetic absent target"}})
+            for stderr in (
+                f"({code}) synthetic absent target",
+                f"ERROR: ({code}) synthetic absent target\nCode: {code}\nMessage: absent",
+                payload, "ERROR: " + payload, "ERROR: Not Found(" + payload + ")",
+            ):
+                with self.subTest(code=code, stderr=stderr):
+                    error = SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+                    with patch.object(reuse.subprocess, "run", return_value=error):
+                        self.assertIsNone(reuse.get(self.config, reuse.owned(self.config)["app"][0],
+                                                   "2024-03-01", absent=True))
+                        with self.assertRaisesRegex(reuse.ReuseError, f"azure_code={code}$"):
+                            reuse.get(self.config, reuse.owned(self.config)["app"][0], "2024-03-01")
+                        for args in (
+                            ["rest", "--method", "delete", "--url", "https://management.azure.com/test"],
+                            ["rest", "--method", "post", "--url", "https://management.azure.com/test"],
+                            ["rest", "--method", "get", "--url", "https://other.example/test"],
+                            ["rest", "--method", "get", "--url", "https://management.azure.com.evil.test/test"],
+                            ["account", "show"], ["acr", "repository", "list", "--name", "test"],
+                        ):
+                            with self.assertRaises(reuse.ReuseError):
+                                reuse.cli(self.config, args, absent=True)
+
+    def test_ambiguous_malformed_nested_or_non_not_found_errors_never_prove_absence(self):
+        not_found = '{"error":{"code":"ResourceNotFound","message":"absent"}}'
+        invalid = (
+            "HTTP 404 Not Found", "ResourceNotFound", "timeout: (ResourceNotFound)",
+            '{"code":"ResourceNotFound"}',
+            '{"error":{"details":[{"code":"ResourceNotFound"}]}}',
+            '{"error":{"code":"AuthorizationFailed","details":[{"code":"ResourceNotFound"}]}}',
+            '{"error":{"code":"ResourceNotFound","details":[{"code":"AuthorizationFailed"}]}}',
+            '{"error":{"code":"ResourceNotFound"},"code":"AuthorizationFailed"}',
+            '{"error":{"code":"ResourceNotFound","code":"AuthorizationFailed"}}',
+            '{"error":{"code":"ResourceNotFound"},"error":{"code":"ResourceNotFound"}}',
+            '{"error":{"code":"ResourceNotFound","message":NaN}}',
+            '{"error":{"code":"ResourceNotFound","message":Infinity}}',
+            '[{"error":{"code":"ResourceNotFound"}}]',
+            '{"error":{"code":null}}', '{"error":"ResourceNotFound"}',
+            not_found[:-1], not_found + "\ntrailing", not_found + not_found,
+            "ERROR: Not Found(" + not_found + ") trailing",
+            'ERROR: Not Found({"error":{"code":"AuthorizationFailed"}})',
+            "(ResourceNotFound) absent\nERROR: (AuthorizationFailed) denied",
+            "(ResourceNotFound) absent\nCode: AuthorizationFailed",
+            "(ResourceNotFound) absent\nunrelated trailing output",
+            "(ResourceNotFound) " + not_found,
+            "(ResourceNotFound) absent (AuthenticationFailed)",
+            '{"error":{"code":"SECRET_CANARY"}}',
+            '{"error":{"code":"AuthenticationFailed","message":"404 ResourceNotFound"}}',
+            "Network timeout while requesting resource",
+        )
+        for stderr in invalid:
+            with self.subTest(stderr=stderr), \
+                 patch.object(reuse.subprocess, "run",
+                              return_value=SimpleNamespace(returncode=1, stdout="", stderr=stderr)), \
+                 self.assertRaises(reuse.ReuseError):
+                reuse.get(self.config, reuse.owned(self.config)["app"][0], "2024-03-01", absent=True)
+
+    def test_acr_manifest_absence_behavior_is_unchanged_and_not_arm_absence(self):
+        for code in ("MANIFEST_UNKNOWN", "NAME_UNKNOWN"):
+            error = SimpleNamespace(returncode=1, stdout="", stderr=f"ERROR: {code}")
+            with self.subTest(code=code), patch.object(reuse.subprocess, "run", return_value=error):
+                self.assertIsNone(reuse.cli(
+                    self.config, ["acr", "manifest", "show-metadata", "--name", "owned:run"], absent=True))
+                with self.assertRaises(reuse.ReuseError):
+                    reuse.get(self.config, self.config["registry"], "2025-11-01", absent=True)
+                with self.assertRaises(reuse.ReuseError):
+                    reuse.cli(self.config, ["acr", "manifest", "show-metadata", "--name", "owned:run"])
+        error = SimpleNamespace(returncode=1, stdout="", stderr='{"error":{"code":"ResourceNotFound"}}')
+        with patch.object(reuse.subprocess, "run", return_value=error), self.assertRaises(reuse.ReuseError):
+            reuse.cli(self.config, ["acr", "manifest", "show-metadata", "--name", "owned:run"], absent=True)
 
     def test_invalid_registry_prevents_target_checks_and_staging(self):
         data = copy.deepcopy(self.data)
