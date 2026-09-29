@@ -18,7 +18,7 @@ description: >
   continuous eval (use foundry-evals), Routines (use foundry-routines),
   A2A wiring (use foundry-toolbox).
 metadata:
-  version: "3.0.0"
+  version: "3.0.1"
 ---
 
 # Microsoft Foundry Hosted Agents — Reference Guide
@@ -424,7 +424,7 @@ apply HTTP-layer transport timeouts on the underlying client instead.
 > **See also (MAF 1.8.0, experimental):**
 > - `AgentFileStore` — new abstract base class for agent file-management
 >   backends. Re-exported as `from agent_framework import AgentFileStore`.
->   Concrete implementations + usage patterns live in `foundry-memory` and
+>   Concrete implementations + usage patterns live in [`foundry-memory`](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/tools/prompt-agent/tool-memory.md) and
 >   `foundry-toolbox`. NOT consumed by the hosted-agents runtime patterns
 >   documented in this skill.
 
@@ -477,7 +477,7 @@ from the canonical
 > - **Agent guardrails** (content-safety toggle), **Optimizer**,
 >   and **Memory** remain preview surfaces layered on
 >   top of the GA hosted-agent runtime — see their owning skills
->   (`foundry-memory`) for details; this skill does
+>   ([`foundry-memory`](https://github.com/microsoft/azure-skills/blob/main/.github/plugins/azure-skills/skills/microsoft-foundry/foundry-agent/create/references/tools/prompt-agent/tool-memory.md)) for details; this skill does
 >   not restate their contracts.
 > - **Routines** is a GA service with a Python `beta.routines` client surface.
 >   See `foundry-routines` for client versions, trigger/delivery evidence and

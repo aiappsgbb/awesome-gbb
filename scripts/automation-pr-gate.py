@@ -128,7 +128,10 @@ def parse_fm(text: str) -> dict | None:
 def skill_md_body_changed(base: str, path: str) -> bool:
     """True if the SKILL.md diff includes any line OUTSIDE the YAML
     frontmatter block."""
-    head_text = pathlib.Path(REPO_ROOT / path).read_text(encoding="utf-8")
+    try:
+        head_text = pathlib.Path(REPO_ROOT / path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return True  # Retirement removes the body and still requires explicit opt-in.
     base_text = file_at_revision(base, path) or ""
 
     def body_only(text: str) -> str:
@@ -278,7 +281,10 @@ def gate_description_length(
         m = SKILL_MD_RE.match(f)
         if not m:
             continue
-        new_text = pathlib.Path(REPO_ROOT / f).read_text(encoding="utf-8")
+        try:
+            new_text = pathlib.Path(REPO_ROOT / f).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue  # Deleted skills have no remaining description to validate.
         new_len = description_length(new_text)
         if new_len is None:
             continue

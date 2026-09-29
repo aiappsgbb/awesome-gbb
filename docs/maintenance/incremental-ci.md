@@ -12,6 +12,7 @@ not skill acceptance; local tests are not Azure evidence.
 | Push to main | Changed contracts across `event.before..HEAD`; unavailable history selects full |
 | Schedule or manual Skill tests dispatch | Full eligible catalog |
 | SKILL.md description/version only | None when the body is byte-identical and all other parsed metadata is unchanged |
+| Add a documentation link to an existing skill-name reference | Local gates only under the narrow navigation rule below |
 | `tests/**/test_*.py`, `requirements-test.txt` | Local gates; no Azure fanout |
 | `test-fixture/**` only | The directly changed fixture, not its downstream consumers |
 | Skill body, references, runtime requirements, README or unknown skill asset | The skill and its existing one-hop downstream consumers |
@@ -23,6 +24,19 @@ New, deleted, malformed or ambiguously parsed skill frontmatter is not
 classified as editorial. Changes under a test directory are not all local:
 runtime requirements and helper modules remain operational. README prose can
 contain operational instructions and is deliberately conservative.
+
+The navigation exception only **adds** a GitHub Markdown-document link around
+an existing backtick-quoted skill name from the base catalog. The label and all
+surrounding text must remain byte-identical. It applies only to quoted prose
+notes and tables under `See Also`, `Related skills` or `Cross-skill references`.
+It does not ignore existing link-target edits, renamed labels, new instructions,
+code blocks (including quoted fences), indented code, changed metadata other
+than description/version, or any reference/runtime/fixture file. Unknown
+structure remains operational. Catalog retirement still removes its fixture;
+surviving consumers with operational changes retain their normal live fanout.
+This is not a general `docs` label or a per-PR waiver. Local routing/link tests
+must verify the replacement; existing integrity, marker, cleanup and aggregate
+checks remain unchanged for any selected live consumer.
 
 The two orchestration canaries verify native Azure execution and an
 agent-driven consumer. They do not certify every deployment, delegated flow

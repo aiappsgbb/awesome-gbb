@@ -69,7 +69,7 @@ Sorted alphabetically for deterministic GHA matrix expansion.
 
   PRs and main pushes use --changed-only against the PR base and push
   before SHA respectively. Scheduled and manual runs retain the full canary.
-  Editorial frontmatter and local test changes require no live execution;
+  Editorial frontmatter, narrowly linkified navigation and local tests need no live execution;
   fixture-only edits execute that fixture without downstream fanout.
   Orchestration-only workflow changes run the native Harness and prompt-agent
   canaries; changes to consumer execution still require the full matrix.
@@ -81,6 +81,7 @@ from datetime import datetime, timezone
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -240,7 +241,54 @@ def _workflow_change_scope(repo_root: Path, base_ref: str) -> str:
         return "full"
 
 
-def _editorial_frontmatter_only(repo_root: Path, base_ref: str, path: str) -> bool:
+def _linkified_navigation_only(before: str, after: str, skill_names: set[str]) -> bool:
+    """Accept added documentation links, never changed labels or existing targets."""
+    reference = re.compile(
+        r"\[`([a-z][a-z0-9-]*)`\]\("
+        r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/blob/"
+        r"[A-Za-z0-9_./-]+\.md\)"
+    )
+    navigation = False
+    fence: tuple[str, int, int] | None = None
+    normalized = []
+    for line in after.splitlines(keepends=True):
+        quoted = re.match(r"^(?:>[ \t]?)+", line)
+        quote_depth = quoted[0].count(">") if quoted else 0
+        content = line[quoted.end():] if quoted else line
+        marker = re.match(r"^[ \t]{0,3}(`{3,}|~{3,})", content)
+        if marker:
+            token = marker[1]
+            if fence is None:
+                fence = (token[0], len(token), quote_depth)
+            elif (quote_depth == fence[2]
+                  and token[0] == fence[0] and len(token) >= fence[1]
+                  and not content[marker.end():].strip()):
+                fence = None
+            normalized.append(line)
+            continue
+        if fence is None and re.search(
+            r"<(?:pre|code|script|style|textarea)(?:\s|>)", content, re.IGNORECASE
+        ):
+            return False
+        if fence is None and ("``" in content or re.match(r"^[ \t]+>", line)):
+            return False
+        heading = re.match(r"^#{1,6}\s+(.*)", line)
+        if heading and fence is None:
+            title = re.sub(r"^\d+\s*[.·-]?\s*", "", heading[1]).casefold().strip()
+            navigation = title in {"see also", "related skills", "cross-skill references"}
+        if fence is None and not content.startswith(("    ", "\t")) and (
+            line.startswith(">") or (navigation and line.startswith("|"))
+        ):
+            def unlinked(match: re.Match[str]) -> str:
+                if match[1] in skill_names and match[0] not in before:
+                    return f"`{match[1]}`"
+                return match[0]
+            line = reference.sub(unlinked, line)
+        normalized.append(line)
+    return fence is None and "".join(normalized) == before
+
+
+def _local_only_skill_markdown(repo_root: Path, base_ref: str, path: str) -> bool:
     try:
         versions = [
             subprocess.check_output(
@@ -264,7 +312,15 @@ def _editorial_frontmatter_only(repo_root: Path, base_ref: str, path: str) -> bo
             front.pop("description")
             front["metadata"].pop("version", None)
             parsed.append((front, parts[2]))
-        return parsed[0] == parsed[1]
+        if parsed[0] == parsed[1]:
+            return True
+        if parsed[0][0] != parsed[1][0]:
+            return False
+        names = subprocess.check_output(
+            ["git", "-C", str(repo_root), "ls-tree", "-d", "--name-only", f"{base_ref}:skills"],
+            text=True, stderr=subprocess.PIPE,
+        ).splitlines()
+        return _linkified_navigation_only(parsed[0][1], parsed[1][1], set(names))
     except (OSError, subprocess.CalledProcessError, yaml.YAMLError, ValueError, TypeError):
         return False
 
@@ -277,7 +333,7 @@ def _skill_change_kind(repo_root: Path, base_ref: str, path: str) -> str:
     if (relative.startswith("tests/") and parts[-1].startswith("test_")
             and parts[-1].endswith(".py")) or relative == "requirements-test.txt":
         return "local"
-    if relative == "SKILL.md" and _editorial_frontmatter_only(repo_root, base_ref, path):
+    if relative == "SKILL.md" and _local_only_skill_markdown(repo_root, base_ref, path):
         return "local"
     if relative.startswith("test-fixture/"):
         return "fixture"
