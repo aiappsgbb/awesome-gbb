@@ -38,6 +38,12 @@
   pinned venv, sanitized failures and verified cleanup; stop on tool denials
   instead of inventing credential/REST fallbacks. Preserve sanitized Jobs
   preflight failure codes in the archived marker rather than collapsed output.
+- Execute the native Skills lifecycle through a canonical cleanup-checked
+  program whose success path writes the exact marker, preventing prose-only
+  success without an archived result. Keep native immutable version tests intact.
+- Classify failed Jobs standing reads by fixed operation labels and allowlisted
+  Azure error codes only; raw CLI stderr, resource identifiers and credentials
+  remain private. This diagnoses a prerequisite without changing it.
 
 ## 5.0.0 — Proposed / Unreleased
 

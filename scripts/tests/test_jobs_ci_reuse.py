@@ -192,6 +192,29 @@ class JobsReuseTests(unittest.TestCase):
         self.assertIn('fail "standing reuse preflight blocked: $preflight_code"', fixture)
         self.assertIn('"$PROJECT_DIR/ci-preflight-failure.json"', fixture)
 
+    def test_failed_azure_read_identifies_operation_and_allowlisted_code_only(self):
+        error = SimpleNamespace(returncode=1, stdout="", stderr="(InvalidApiVersionParameter) SECRET_CANARY https://private.example")
+        with patch.object(reuse.subprocess, "run", return_value=error), \
+             self.assertRaises(reuse.ReuseError) as raised:
+            reuse.get(self.config, self.config["registry"], reuse.VERSIONS["registry"])
+        self.assertEqual(
+            reuse.failure_code(raised.exception),
+            "AZURE_READ_OR_OPERATION_FAILED operation=registry_get azure_code=InvalidApiVersionParameter",
+        )
+        error.stderr = '{"code":"AuthorizationFailed","message":"SECRET_CANARY"}'
+        with patch.object(reuse.subprocess, "run", return_value=error), \
+             self.assertRaises(reuse.ReuseError) as raised:
+            reuse.cli(self.config, ["identity", "list", "--resource-group", "private"])
+        self.assertEqual(str(raised.exception),
+                         "AZURE_READ_OR_OPERATION_FAILED operation=identity_list azure_code=AuthorizationFailed")
+        error.stderr = "(SECRET_CANARY) arbitrary error"
+        with patch.object(reuse.subprocess, "run", return_value=error), \
+             self.assertRaises(reuse.ReuseError) as raised:
+            reuse.cli(self.config, ["account", "show"])
+        self.assertEqual(str(raised.exception),
+                         "AZURE_READ_OR_OPERATION_FAILED operation=account_show azure_code=Unknown")
+        self.assertNotIn("SECRET_CANARY", str(raised.exception))
+
     def test_invalid_registry_prevents_target_checks_and_staging(self):
         data = copy.deepcopy(self.data)
         data["registry"]["properties"]["adminUserEnabled"] = True
