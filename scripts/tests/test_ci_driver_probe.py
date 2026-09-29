@@ -36,6 +36,10 @@ class DriverProbeTests(unittest.TestCase):
             ("429 SECRET", "THROTTLED"),
             ("Too Many Requests SECRET", "THROTTLED"),
             ("error: unknown option SECRET", "CLI_ARGUMENTS"),
+            ("CAPIError: 500 Unable to get resource information. SECRET", "BACKEND_RESOURCE"),
+            ("HTTP 503 SECRET", "BACKEND_5XX"),
+            ("ENOTFOUND https://private.example SECRET", "NETWORK"),
+            ("Cannot find module SECRET", "CLI_RUNTIME"),
             ("unexpected SECRET", "CLI_RESPONSE"),
         ):
             with self.subTest(text=text):
@@ -61,7 +65,7 @@ class DriverProbeTests(unittest.TestCase):
         process.communicate.side_effect = [subprocess.TimeoutExpired(PROBE.COMMAND, 90), ("", "")]
         with patch.object(PROBE.subprocess, "Popen", return_value=process), \
                 patch.object(PROBE.os, "killpg") as kill:
-            self.assertEqual(PROBE.probe(), "FAIL TIMEOUT")
+            self.assertEqual(PROBE.probe(), "FAIL TIMEOUT NO_OUTPUT")
         kill.assert_called_once_with(12345, signal.SIGTERM)
 
     def test_stubborn_timeout_is_reaped(self):
@@ -72,9 +76,54 @@ class DriverProbeTests(unittest.TestCase):
         ]
         with patch.object(PROBE.subprocess, "Popen", return_value=process), \
                 patch.object(PROBE.os, "killpg") as kill:
-            self.assertEqual(PROBE.probe(), "FAIL TIMEOUT")
+            self.assertEqual(PROBE.probe(), "FAIL TIMEOUT NO_OUTPUT")
         self.assertEqual([call.args for call in kill.call_args_list],
                          [(12345, signal.SIGTERM), (12345, signal.SIGKILL)])
+
+    def test_timeout_classifies_partial_bytes_without_disclosing_output(self):
+        for text, expected in (
+            (b"CAPIError: 500 Unable to get resource information. SECRET", "BACKEND_RESOURCE"),
+            ("HTTP 401 SECRET", "AUTH"),
+            ("429 SECRET", "THROTTLED"),
+            ("unrecognized option --private SECRET", "CLI_ARGUMENTS"),
+            ("HTTP 503 SECRET", "BACKEND_5XX"),
+            ("ENOTFOUND SECRET", "NETWORK"),
+            ("ERR_MODULE_NOT_FOUND SECRET", "CLI_RUNTIME"),
+            (b"\xffSECRET https://private.example", "OUTPUT_PRESENT"),
+            ("PONG\nSECRET", "OUTPUT_PRESENT"),
+        ):
+            with self.subTest(expected=expected):
+                process = Mock(pid=12345, returncode=0)
+                process.communicate.side_effect = [
+                    subprocess.TimeoutExpired(PROBE.COMMAND, 90, output=text), ("", ""),
+                ]
+                with patch.object(PROBE.subprocess, "Popen", return_value=process), \
+                     patch.object(PROBE.os, "killpg") as kill:
+                    self.assertEqual(PROBE.probe(), f"FAIL TIMEOUT {expected}")
+                kill.assert_called_once_with(12345, signal.SIGTERM)
+
+    def test_timeout_retains_cleanup_stderr_and_never_accepts_late_pong(self):
+        process = Mock(pid=12345, returncode=0)
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(PROBE.COMMAND, 90),
+            subprocess.TimeoutExpired(PROBE.COMMAND, 5, stderr=b"HTTP 403 SECRET"),
+            ("PONG\n", ""),
+        ]
+        with patch.object(PROBE.subprocess, "Popen", return_value=process), \
+             patch.object(PROBE.os, "killpg") as kill:
+            self.assertEqual(PROBE.probe(), "FAIL TIMEOUT AUTH")
+        self.assertEqual([call.args for call in kill.call_args_list],
+                         [(12345, signal.SIGTERM), (12345, signal.SIGKILL)])
+
+    def test_timeout_classifies_reaped_output_when_exception_has_none(self):
+        process = Mock(pid=12345, returncode=1)
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(PROBE.COMMAND, 90),
+            ("", "CAPIError: 500 Unable to get resource information. SECRET"),
+        ]
+        with patch.object(PROBE.subprocess, "Popen", return_value=process), \
+             patch.object(PROBE.os, "killpg"):
+            self.assertEqual(PROBE.probe(), "FAIL TIMEOUT BACKEND_RESOURCE")
 
 
 if __name__ == "__main__":
