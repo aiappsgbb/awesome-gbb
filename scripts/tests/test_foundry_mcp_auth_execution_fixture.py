@@ -96,6 +96,31 @@ class AuthExecutionFixtureTests(unittest.TestCase):
             self.assertNotIn("SECRET_CANARY", output + marker)
             opener.open.assert_not_called()
 
+    def test_expected_binding_shapes_and_tenant_boundary_remain_strict(self):
+        cases = {
+            "MCP_AUTH_SMOKE_ISSUER": (
+                "https://login.microsoftonline.com/common/v2.0",
+                self.env["MCP_AUTH_SMOKE_ISSUER"] + "/",
+                self.env["MCP_AUTH_SMOKE_ISSUER"] + "?private",
+                self.env["MCP_AUTH_SMOKE_ISSUER"] + "\n",
+                f"https://login.microsoftonline.com/{UUID(int=999)}/v2.0",
+            ),
+            "MCP_AUTH_SMOKE_SCOPE": (
+                "demo.read", "https://graph.microsoft.com/.default",
+                f"api://{UUID(int=2)}/.default",
+                self.env["MCP_AUTH_SMOKE_SCOPE"] + " offline_access",
+                self.env["MCP_AUTH_SMOKE_SCOPE"] + "\n",
+            ),
+            "AZURE_TENANT_ID": ("invalid", str(UUID(int=999))),
+        }
+        for name, values in cases.items():
+            for value in values:
+                with self.subTest(name=name, value=value):
+                    status, marker, _, opener = self.run_probe(env={**self.env, name: value})
+                    self.assertEqual(status, 1)
+                    self.assertTrue(marker.startswith("SMOKE_RESULT=FAIL "))
+                    opener.open.assert_not_called()
+
     def test_missing_inputs_or_unapproved_gate_never_call_network(self):
         for field in self.env:
             env = self.env.copy()

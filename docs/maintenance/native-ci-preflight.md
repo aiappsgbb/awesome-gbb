@@ -14,8 +14,6 @@ reads these existing fixture inputs from explicit same-name secret bindings:
 |---|---|---|
 | `foundry-mcp-auth` | `MCP_AUTH_NETWORK_SMOKE_APPROVED` | Exact literal `yes`; no inferred or default approval |
 | `foundry-mcp-auth` | `MCP_AUTH_SMOKE_ENDPOINT` | HTTPS, valid host/port, path ending in `/mcp`, no userinfo/query/fragment |
-| `foundry-mcp-auth` | `MCP_AUTH_SMOKE_ISSUER` | Exact declared tenant-specific Entra v2 issuer, matching the existing `AZURE_TENANT_ID` |
-| `foundry-mcp-auth` | `MCP_AUTH_SMOKE_SCOPE` | One exact declared custom `api://<api-application-id>/<permission>` scope; no derived Jobs binding or `.default` |
 | `foundry-mcp-aca-jobs` | `MCP_AUTH_APP_CLIENT_ID` | Canonical hyphenated UUID, not an audience URI or consent flag |
 | `foundry-mcp-aca-jobs` | `MCP_ACA_JOBS_COSMOS_ENDPOINT` | HTTPS account origin, optional trailing `/` and valid port |
 | `foundry-mcp-aca-jobs` | `MCP_ACA_JOBS_STORAGE_ACCOUNT_URL` | HTTPS account origin, optional trailing `/` and valid port |
@@ -26,8 +24,12 @@ repaired. Host validation is syntactic only, with no DNS or service lookup.
 The approved auth inputs are forwarded only to that leg, identically in the
 initial and retry consumer steps. The Jobs bindings are unchanged. Shared
 workflow identity/project prerequisites retain their existing gates; this
-step checks the explicit skill-specific standing inputs and their existing
-platform identity context. The two Auth expected-value bindings already exist
+step retains its existing standing-input contract. The Auth consumer additionally
+validates `MCP_AUTH_SMOKE_ISSUER` (tenant-specific Entra v2 issuer matching
+`AZURE_TENANT_ID`) and `MCP_AUTH_SMOKE_SCOPE` (one custom
+`api://<api-application-id>/<permission>`, never `.default`) before its first
+network request. This Auth-only validation lives in its canonical probe, not
+the shared native preflight or Jobs code. The two expected-value bindings already exist
 as repository secrets; forwarding them does not create or change credentials,
 applications, approvals or consent. They are empty for other matrix legs,
 including the Jobs native-preflight step.
@@ -36,11 +38,16 @@ including the Jobs native-preflight step.
 
 Failure returns exit 1 and exactly one sanitized classification:
 `NATIVE_CI_PREFLIGHT=FAIL <code> <field>`. Codes are `MISSING_ENV`,
-`UNAPPROVED`, `INVALID_ENDPOINT`, `INVALID_IDENTIFIER`, `INVALID_ISSUER`,
-`ISSUER_TENANT_MISMATCH` or `INVALID_SCOPE`; malformed CLI
+`UNAPPROVED`, `INVALID_ENDPOINT` or `INVALID_IDENTIFIER`; malformed CLI
 arguments produce `NATIVE_CI_PREFLIGHT=FAIL ARGUMENTS`. Output contains only
 fixed tokens and variable names, never supplied values, private hosts,
 credentials or parser exceptions.
+
+The Auth probe's additional expected-binding validation writes a FAIL marker
+with `MISSING_ENV`, `INVALID_ISSUER`, `ISSUER_TENANT_MISMATCH`,
+`INVALID_IDENTIFIER` or `INVALID_SCOPE` before any HTTP request. Tests execute
+the actual probe against missing, malformed and wrong-tenant inputs without
+network calls or value disclosure.
 
 This mandatory step has no `continue-on-error`: a failure prevents both the
 initial consumer launch and its retry. Do not retry missing or unapproved

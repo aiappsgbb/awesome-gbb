@@ -64,6 +64,26 @@ or draft capability. The periodic full run retains that wider regression
 signal. Existing quarantine and explicit AgentOps selection boundaries remain
 unchanged; missing approvals are not bypassed.
 
+### Jobs dependency boundary
+
+The deterministic `foundry-mcp-aca-jobs` fixture owns its prompt/MCP invocation:
+it copies its own `templates/pyproject.toml` and `uv.lock`, then executes the
+literal `PromptAgentDefinition` block under `uv run --frozen --group fixture`
+with its own SDK 2.3 pin. It does not read/import the `foundry-prompt-agents`
+skill, references, generated definitions or SDK 2.4 pin. The navigation link
+to that skill is not a consumed test input. Its former Prompt dependency edge
+is therefore removed; this does not exempt other consumers of Prompt guidance.
+
+Keep the Jobs dependencies on `azd-patterns` (copied Bicep),
+`foundry-hosted-agents` (copied runtime/Dockerfile/evidence helper), and the
+`foundry-mcp-aca` producer contract. Direct Jobs source/fixture edits still
+select Jobs, as do changes to its shared native preflight. Scheduled/manual
+full runs also retain Jobs. Regressions check the fixture's actual source
+and frozen cohort as well as positive producer/direct-edit selection. If Jobs
+starts consuming a Prompt artifact, restore that functional edge in the same
+change. No failed status is relabeled as PASS and no quarantine/label override
+is involved.
+
 ## Early gates and outcomes
 
 Every PR runs local tests and the final `smoke-result` job, including

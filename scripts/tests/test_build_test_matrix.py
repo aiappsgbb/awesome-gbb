@@ -25,6 +25,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -464,9 +465,30 @@ class TestFullMatrix(unittest.TestCase):
                 "azd-patterns",
                 "foundry-hosted-agents",
                 "foundry-mcp-aca",
-                "foundry-prompt-agents",
             ],
         )
+
+    def test_jobs_prompt_recipe_has_its_own_frozen_contract(self) -> None:
+        jobs = ROOT / "skills/foundry-mcp-aca-jobs"
+        fixture = (jobs / "test-fixture/consumer_prompt.md").read_text()
+        self.assertNotIn("foundry-prompt-agents", fixture)
+        self.assertIn("Do NOT browse the repository", fixture)
+        self.assertIn("uv run --frozen --group fixture python", fixture)
+        self.assertIn("from azure.ai.projects.models import MCPTool, PromptAgentDefinition", fixture)
+        self.assertIn("definition=PromptAgentDefinition(", fixture)
+        self.assertIn('cp skills/foundry-mcp-aca-jobs/templates/uv.lock "$PROJECT_DIR/uv.lock"', fixture)
+        manifest = tomllib.loads((jobs / "templates/pyproject.toml").read_text())
+        self.assertEqual(manifest["dependency-groups"]["fixture"], ["azure-ai-projects~=2.3.0"])
+        lock = tomllib.loads((jobs / "templates/uv.lock").read_text())
+        projects = [p for p in lock["package"] if p["name"] == "azure-ai-projects"]
+        self.assertEqual([p["version"] for p in projects], ["2.3.0"])
+        for producer in (
+            "skills/azd-patterns/references/bicep/aca-job.bicep",
+            "skills/foundry-hosted-agents/references/python/operation_evidence.py",
+            "skills/foundry-hosted-agents/references/docker/Dockerfile",
+            "skills/foundry-hosted-agents/references/python/pyproject.toml",
+        ):
+            self.assertIn("cp " + producer, fixture)
 
 
 class TestUnitWorkflowContract(unittest.TestCase):
@@ -664,7 +686,7 @@ class TestAuthExpectedBindingScope(unittest.TestCase):
         "Retry once on classified-transient failure",
     )
     PERTINENT = [
-        "foundry-evals", "foundry-mcp-aca-jobs", "foundry-mcp-auth",
+        "foundry-evals", "foundry-mcp-auth",
         "foundry-prompt-agents", "foundry-routines", "foundry-skill-catalog",
         "foundry-toolbox",
     ]
@@ -673,7 +695,7 @@ class TestAuthExpectedBindingScope(unittest.TestCase):
         workspace = tempfile.TemporaryDirectory(prefix="matrix-auth-binding-")
         self.addCleanup(workspace.cleanup)
         self.repo = Path(workspace.name)
-        self.all = sorted([*self.PERTINENT, "foundry-hosted-agents", "foundry-mcp-aca"])
+        self.all = sorted([*self.PERTINENT, "foundry-mcp-aca-jobs", "foundry-hosted-agents", "foundry-mcp-aca"])
         for name in self.all:
             _write_fixture(self.repo, name)
         _write_quarantine(self.repo)
@@ -712,13 +734,34 @@ class TestAuthExpectedBindingScope(unittest.TestCase):
         self.assertEqual(self.select(self.addition()), ["foundry-mcp-auth"])
         self.assertEqual(_run(self.repo), self.all, "Scheduled/manual full selection must stay full")
 
-    def test_combined_operational_changes_select_exact_seven(self):
+    def test_combined_operational_changes_select_exact_six(self):
         for name in ("foundry-evals", "foundry-prompt-agents", "foundry-skill-catalog", "foundry-toolbox"):
             (self.repo / "skills" / name / "SKILL.md").write_text("operational contract change\n")
+        self.assertEqual(self.select(self.addition()), self.PERTINENT)
+
+    def test_shared_native_preflight_changes_still_select_jobs(self):
         script = self.repo / "scripts/native-ci-preflight.py"
         script.parent.mkdir()
-        script.write_text("changed auth input validation\n")
-        self.assertEqual(self.select(self.addition()), self.PERTINENT)
+        script.write_text("shared preflight change\n")
+        self.assertEqual(self.select(self.addition()), ["foundry-mcp-aca-jobs", "foundry-mcp-auth"])
+
+    def test_direct_jobs_operational_change_is_never_excluded(self):
+        (self.repo / "skills/foundry-mcp-aca-jobs/SKILL.md").write_text("changed contract\n")
+        self.assertEqual(self.select(self.addition()), ["foundry-mcp-aca-jobs", "foundry-mcp-auth"])
+
+    def test_direct_jobs_fixture_edit_remains_selected(self):
+        (self.repo / "skills/foundry-mcp-aca-jobs/test-fixture/consumer_prompt.md").write_text("changed fixture")
+        self.assertEqual(self.select(self.addition()), ["foundry-mcp-aca-jobs", "foundry-mcp-auth"])
+
+    def test_each_real_jobs_producer_still_selects_jobs(self):
+        for producer in ("azd-patterns", "foundry-hosted-agents", "foundry-mcp-aca"):
+            with self.subTest(producer=producer):
+                path = self.repo / "skills" / producer / "SKILL.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("changed producer")
+                selected = self.select(self.addition())
+                self.assertIn("foundry-mcp-aca-jobs", selected)
+                path.unlink()
 
     def test_each_missing_or_unequal_boundary_binding_forces_full(self):
         for index in range(3):
@@ -891,7 +934,6 @@ class TestChangedOnly(unittest.TestCase):
             "azd-patterns",
             "foundry-hosted-agents",
             "foundry-mcp-aca",
-            "foundry-prompt-agents",
         ]
         with tempfile.TemporaryDirectory(prefix="matrix-fanout-", dir=scratch) as td:
             repo = Path(td)
