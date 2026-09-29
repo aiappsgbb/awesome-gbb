@@ -63,6 +63,19 @@ class ReuseError(ValueError):
     pass
 
 
+def failure_code(error):
+    if isinstance(error, ReuseError):
+        value = str(error)
+        pattern = (
+            r"[A-Z][A-Z0-9_]*"
+            r"( roleAssignmentMode=(missing|unknown|matched:LegacyRegistryPermissions|mismatched:AbacRepositoryPermissions)"
+            r" adminUserEnabled=(missing|unknown|matched:false|mismatched:true))?"
+        )
+        if re.fullmatch(pattern, value):
+            return value
+    return type(error).__name__
+
+
 def require(ok, code):
     if not ok:
         raise ReuseError(code)
@@ -513,8 +526,10 @@ def main():
                 else:
                     cleanup(config, manifest, load(args.project / "ci-created.json"))
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        print(json.dumps({"status": "BLOCKED", "stage": args.action,
-                          "code": str(error) if isinstance(error, ReuseError) else type(error).__name__}))
+        failure = {"status": "BLOCKED", "stage": args.action, "code": failure_code(error)}
+        if args.action == "prepare" and args.project.is_dir():
+            write_new(args.project / "ci-preflight-failure.json", failure)
+        print(json.dumps(failure))
         return 1
     print("CI_REUSE_" + args.action.upper() + "_PASS")
     return 0
