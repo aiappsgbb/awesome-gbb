@@ -1,6 +1,6 @@
 # Freshness tier C — internal IP, no upstream to track.
 # Local contract and synthetic rendering checks are not audience acceptance.
-last_validated: "2026-09-28"
+last_validated: "2026-09-29"
 validated_by: copilot-bot
 validation_notes: |
   Historical generation check (2026-05-27): the author generated a test
@@ -19,4 +19,16 @@ validation_notes: |
   of the seven behavioral scenarios. Those scenarios, a real-deck comparison,
   representative-reader acceptance and updated native skill loading remain
   unverified. Native PowerPoint opening was not repeated for this version.
-  No Azure resources are needed. No global installation or release is implied.
+  Version 2.2.0 source candidate (2026-09-29): 19 local packaging/instruction
+  tests passed, plus catalog lint, plugin integrity and generated-site links.
+  All original Python code blocks and all 2.1.0 triggers are preserved.
+  New checks cover complete-deck defaults, confirmed audience/depth, optional
+  browser-first delivery, editability boundaries and model-neutral guidance.
+  The original seven behavioral scenarios and five added cases remain
+  unexecuted as fresh-consumer trials. Browser-first is documented guidance,
+  not a bundled converter: no HTML-to-PPTX export or model comparison was run.
+  The 2.1.0 rendering smoke above is historical evidence, not validation of
+  the new browser workflow or audience-confirmation behavior. At this source
+  validation checkpoint, 2.2.0 was not installed or published; subsequent
+  review, CI, merge and installation evidence belongs in the delivery PR.
+  No Azure resources are needed. These local checks alone imply no release.
