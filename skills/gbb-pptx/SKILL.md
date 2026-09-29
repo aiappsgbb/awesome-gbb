@@ -4,6 +4,8 @@ description: >
   Plan, review and generate content-first PowerPoint (PPTX) presentations.
   Build audience-specific arguments, evidence-backed messages and storyboards
   before rendering with python-pptx; preserve approved content and existing themes.
+  Confirm audience and deck structure; optionally iterate visuals in a browser
+  with an explicit PowerPoint editability contract and early export proof.
   USE FOR: create PowerPoint, generate PPTX, make slide deck, build presentation,
   convert markdown to slides, pitch deck, report as PPTX, create slides,
   gbb-pptx, gbb deck, dark-themed deck, slide content, presentation storyline,
@@ -12,7 +14,7 @@ description: >
   DO NOT USE FOR: direct editing of existing PPTX files (use `pptx` for file
   operations; use this skill for editorial review), PDF generation, Google Slides.
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # GBB PPTX Deck Generator Skill
@@ -25,8 +27,10 @@ metadata:
 > "dark-themed deck" trigger phrases.
 
 Build a presentation worth following before making a PowerPoint worth looking at.
-Use `python-pptx` for new files; retain the dark/light presets and generation
-patterns below. Content quality is not established by a valid file or attractive slides.
+Use `python-pptx` as the default generator for new files; retain the dark/light
+presets and generation patterns below. Browser-first visual iteration is optional,
+not a promise of lossless HTML-to-PPTX conversion. Content quality is not
+established by a valid file or attractive slides.
 
 ## When to Use
 
@@ -73,6 +77,19 @@ language, source material, required content and delivery mode: **live talk**,
 **standalone reading**, or both. Ask only material unanswered questions.
 Label assumptions; do not invent audience research or decision authority.
 
+For a new deck or structural rewrite, confirm the **audience and depth** with
+the user or session coordinator before fixing the storyline. An explicit brief
+or authorized coordinator handoff counts as confirmation; do not ask again.
+If missing or contradictory, ask one focused question through the host's question
+tool, or route it to the coordinator. Without an answer, keep the outline
+provisional rather than silently deciding the audience.
+
+Executive framing emphasizes decisions, implications and concise evidence.
+Technical framing explains mechanisms, examples, interfaces and limits at the
+depth needed for the task. Technical does not automatically mean more slides;
+respect the time available. For mixed audiences, confirm the primary objective
+and layer detail rather than averaging their needs.
+
 A live slide supports a speaker; a read-ahead must explain itself. If both are
 needed, derive two views from the same content, not one compromise with hidden
 essential context. Honor the user's requested scope and output format.
@@ -89,6 +106,27 @@ Choose a structure for the actual purpose: decision, explanation, persuasion,
 training or update. Write a title-only storyline before laying out slides.
 Each step must answer a relevant question and connect to the next. Source
 document headings are not automatically slide boundaries.
+
+### Give a complete deck a beginning and an ending
+
+For a new complete deck, default to **cover -> introduction/framing -> development
+-> wrap-up/closing**. Use a cover with a meaningful title, presentation date and
+speaker or team attribution. Confirm missing cover metadata; do not invent a
+speaker/team or silently use today's date as the event date. Keep unresolved
+fields in the draft brief, not placeholders in a supposedly finished file.
+An explicit user-approved omission is valid.
+
+The introduction establishes the problem, context or question and why the topic
+matters; an agenda is optional. For executives, surface the recommendation early.
+The development follows the purpose-specific argument. End with a substantive
+takeaway and the relevant decision, next step, learning check or open question.
+The wrap-up may itself be the closing slide; do not add a redundant "Thank you"
+slide to satisfy a count. Put optional backup material after the main closing.
+
+These are default roles, not a fixed number of slides or mandatory section
+dividers. A short deck can combine roles; simplified slides are welcome. Do not
+prepend a cover to an excerpt, retrofit a targeted revision, or restructure an
+approved deck without a relevant request. See [content planning](references/content.md).
 
 ### Draft the storyboard
 
@@ -123,7 +161,16 @@ need a second routine approval gate. Audit-only work stops at findings.
 
 ### Generate and verify
 
-Generate a Python script using the patterns below, then produce the `.pptx`.
+Choose the rendering path before styling. Keep direct `python-pptx` generation
+for routine work, approved layouts and short edits. If browser-first iteration
+would help a new visual composition, read
+[browser-first delivery](references/browser-first.md): agree what must remain
+editable, prove export on representative slides early, then iterate and export
+the complete deck. Do not assume arbitrary HTML/CSS converts into native shapes.
+Do not silently replace an editable deliverable with slide-sized images.
+
+For the direct path, generate a Python script using the patterns below, then
+produce the `.pptx`.
 Use approved branding; presets are options, not reasons to change the content.
 Do not shrink away readability or silently drop qualifications to fit a layout.
 Split or restructure overloaded slides while preserving the argument.
@@ -133,6 +180,9 @@ with the storyboard. Verify numbers, sources and material caveats survived.
 Inspect rendered slides for readability, clipping and misleading visual emphasis
 when a renderer is available. A successful import is not visual QA. If rendering
 or application opening is unavailable, report that limitation explicitly.
+For browser-first work, the browser review is an intermediate check, not final
+PowerPoint QA. Verify the exported slides, notes, fonts, slide count and agreed
+editable objects; disclose any rasterized elements or fallback slides.
 
 Deliver the requested artifact, not internal review chatter inside the deck.
 State material unresolved content or delivery limitations. For editorial-only
@@ -298,6 +348,8 @@ decorative accent or three-item example does not determine what must be said.
 For live projection, adapt text size to the actual room and viewing distance.
 
 ### Title Slide
+- Include the confirmed presentation date and speaker or team attribution
+- Apply the complete-deck default above; do not invent missing metadata
 - Accent bar at ~30% from top
 - Title: 44-48pt bold
 - Tagline: 20-22pt accent color
@@ -376,6 +428,7 @@ Load only the relevant reference; do not read every file for a two-slide edit.
 | [Evidence](references/evidence.md) | Provenance, calculations, uncertainty and research basis |
 | [Examples](references/examples.md) | Before/after rewrites with reasoning and limits |
 | [Review](references/review.md) | Editorial checks, severity and post-render preservation |
+| [Browser-first delivery](references/browser-first.md) | Optional HTML iteration, editability, early export proof and model-selection limits |
 | [Storyboard](templates/storyboard.md) | Reusable minimal content contract |
 | [Acceptance scenarios](tests/scenarios.md) | Behavioral probes and actual-output acceptance |
 

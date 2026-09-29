@@ -15,6 +15,54 @@ Avoid treating all executives as nontechnical or all engineers as detail-seeking
 For a mixed audience, keep a shared main argument and provide addressable detail.
 Do not invent separate audience personas just to fill a brief.
 
+### Confirm depth, not a stereotype
+
+For a new deck or substantial restructure, record the audience/depth decision
+and who supplied it: user, explicit brief or authorized session coordinator.
+Do not reopen an already settled question. If the handoff conflicts with the
+current request, surface that conflict before choosing the storyline.
+
+When the answer is missing, ask one material question, such as "Is the primary
+goal an executive decision, technical understanding, or a mixed audience with
+one of those as the priority?" Use the available question tool or coordinator
+channel. If neither can answer, label the structure provisional. Other supplied
+facts may still be organized; do not manufacture audience confirmation.
+
+| Orientation | Main narrative | Detail strategy |
+|---|---|---|
+| Executive | Decision, business consequence, options, concise evidence and risk | Include enough mechanism to make the recommendation credible; use backup for optional depth |
+| Technical | Mental model, flow, assumptions, interfaces, examples and failure modes | Give depth where it resolves the technical question; split complexity, not every sentence |
+| Mixed | Shared question and confirmed primary outcome | Put necessary shared context in the core and make specialist detail easy to reach |
+
+Depth can change explanations, examples, density, sequence and slide count.
+It does not justify exceeding the allotted time or turning every slide into a
+document. An executive can be technically expert; a technical audience may
+need a brief answer rather than an extended tutorial.
+
+## Complete-deck defaults
+
+Use these roles for a new complete presentation unless the user specifies a
+different structure. They frame, rather than replace, the argument below.
+
+| Role | Content | Adaptation |
+|---|---|---|
+| Cover | Meaningful title, confirmed presentation date, speaker or team attribution | Do not infer identity from the machine account or substitute generation date for event date |
+| Introduction / framing | Problem setting, context, scope or audience question; why it matters | A short deck can combine context and recommendation; an agenda is not compulsory |
+| Development | Purpose-specific reasoning, support, examples and material limits | Depth follows the confirmed audience and time, not a fixed template |
+| Wrap-up / closing | Synthesis of the message and the appropriate decision, next step, learning check or unresolved issue | One slide can both summarize and close; an empty "Thank you" is not a substitute |
+
+Missing date or attribution is an explicit metadata question, not permission to
+invent it. Reuse confirmed information, and allow user-approved omissions. Draft
+content work can proceed while metadata is pending; mark the gap in the brief
+and resolve it or agree an omission before calling the deck finished.
+
+Do not force four separate sections onto a tiny deck. Combine roles where
+appropriate, keep cover/closing simple and avoid ornamental section breaks.
+For slide excerpts, targeted revisions and rendering approved content, preserve
+the existing scope rather than automatically adding opening/closing slides.
+An appendix follows the main conclusion and is clearly backup material, not
+an accidental continuation of the argument.
+
 ## Choose a structure
 
 These are starting points, not mandatory sequences or slide counts.

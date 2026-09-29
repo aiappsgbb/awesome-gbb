@@ -22,6 +22,10 @@ are unsupported; even the time change may reflect the selected request mix.
 
 **After: storyboard**
 
+This is the core argument, not a complete-deck cover/framing specification.
+For a new complete deck, apply the opening/closing defaults with confirmed
+metadata; do not add those slides when asked to render only this approved excerpt.
+
 | Slide | Title and role | Support and visible qualification |
 |---|---|---|
 | D1 | "Run a controlled pilot before committing to rollout" — recommendation | The observed time signal warrants investigation, not a claim of proven savings. Proposed decision, not a measured fact. |
